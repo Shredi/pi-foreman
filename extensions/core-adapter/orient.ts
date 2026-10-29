@@ -21,10 +21,35 @@ export interface OrientInput {
   packageJson: string | null;
   reads: { warn: number; every: number };
   maxLines: number;
+  /** Roots of the running pi (resolved at runtime, never a literal path); absent = the lines say they are unresolved. */
+  roots?: PiRoots;
+}
+
+/** Where the running pi and its packages live; each null when it could not be resolved. */
+export interface PiRoots {
+  /** The coding-agent package dir of the running pi (its `getPackageDir()`). */
+  installRoot: string | null;
+  /** `npm root -g`. */
+  npmRoot: string | null;
+  /** The pi-foreman package root (the bundled package roots are below it). */
+  pkgRoot: string | null;
+}
+
+/** The Pi extension API types, relative to the install root. */
+export const PI_TYPES_REL = "dist/core/extensions/types.d.ts";
+
+/** The lines every orientation, child brief and role prompt carries about where Pi, npm and the bundled packages live (R41 Ruling). Generic: values come from `roots`. */
+export function rootsLines(r: PiRoots | undefined): string[] {
+  const install = r?.installRoot ?? null;
+  return [
+    install ? `Pi install root (the running pi): \`${install}\`; extension types: \`${path.join(install, ...PI_TYPES_REL.split("/"))}\`.` : `Pi install root (the running pi): not resolved in this session; extension types: \`${PI_TYPES_REL}\` under it.`,
+    `Global npm root: ${r?.npmRoot ? `\`${r.npmRoot}\`` : "not resolved in this session (`npm root -g`)"}.${r?.pkgRoot ? ` pi-foreman package root: \`${r.pkgRoot}\` (the bundled package roots are below it).` : ""}`,
+    "Whole-filesystem scans (`find /`, `grep -r` over `/` or the home directory) are always denied; read the roots named here directly.",
+  ];
 }
 
 /** Bundled packages under the pi-foreman package root (package.json dependencies). */
-export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@gotgenes/pi-permission-system", "node_modules/@inquirer/prompts", "node_modules/pi-subagents", "node_modules/pi-intercom"];
+export const BUNDLED_PACKAGE_ROOTS = ["node_modules/@inquirer/prompts", "node_modules/pi-subagents", "node_modules/pi-intercom", "node_modules/unbash"];
 
 const byteOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -79,7 +104,7 @@ export function buildOrientation(inp: OrientInput): string {
   const doc = inp.agentsMd !== null ? { name: "AGENTS.md", text: inp.agentsMd } : inp.readmeMd !== null ? { name: "README.md", text: inp.readmeMd } : null;
   const head = ["# Orientation (not a tool call; it does not count against your read budget)", "", "## Tracked files (dir, count; depth 2)"];
   const tool = toolchainLines(files, inp.packageJson);
-  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read reminder before the first launch comes after ${inp.reads.warn} reads, then every ${inp.reads.every} reads.`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`];
+  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read reminder before the first launch comes after ${inp.reads.warn} reads, then every ${inp.reads.every} reads.`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`, ...rootsLines(inp.roots)];
   const tree = treeLines(files);
   let docBlock: string[] = [];
   if (doc) {
@@ -111,7 +136,7 @@ function readHead(cwd: string, name: string): string | null {
 }
 
 /** Collect from `cwd` (the repo root is expected); "" when not a git repo or git is missing. */
-export async function collectOrientation(cwd: string, opts: { reads: { warn: number; every: number }; maxLines: number }): Promise<string> {
+export async function collectOrientation(cwd: string, opts: { reads: { warn: number; every: number }; maxLines: number; roots?: PiRoots }): Promise<string> {
   const out = await git(cwd, ["ls-files", "-z"]);
   if (out === null) return "";
   const files = out.split("\0").filter(Boolean);

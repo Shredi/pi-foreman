@@ -326,7 +326,7 @@ In push mode the probe runs in the SSH environment, but the notice runs in the c
 
 **PATH.** pi-intercom is a package bin. In push mode the relay command must resolve in the parent's non-interactive SSH PATH, because the relay runs `crossMachine.remoteCommand` over SSH on the parent machine; package bins usually are not on that PATH on either machine. The fix is setting `crossMachine.remoteCommand` in the remote's pi-intercom config to the absolute node and cli.mjs paths, which the open's warning prints (see Push). When the probe's relay command is not found on this machine's PATH, the open prints a warning (`the relay command of <machine> was not found on PATH here`). That check is best effort: this process sees its interactive PATH, and the SSH one may differ. Pull mode needs no relay and gives no such warning.
 
-**Permission ask.** The footer's notice command is classed `unknown` by the effect classes ([permissions](permissions.md)), so in the remote pane it can raise a permission ask; with nobody at that pane the notice waits until answered. Allow that exact command in the remote machine's user config.
+**Permission ask.** The footer's notice command is not a gate default ([permissions](permissions.md#defaults)), so in the remote pane it can raise a permission ask; with nobody at that pane the notice waits until answered. Allow that exact command in the remote machine's user config.
 
 **Windows.** The remote needs the OpenSSH server, `pi` on its PATH and Herdr (beta). Set `foremanCommand` to the absolute path of `foreman.cmd` without spaces: a PowerShell default shell would pick `foreman.ps1` and hit the execution policy. Node must resolve to an `.exe` for the notice command (`node_shim` otherwise).
 

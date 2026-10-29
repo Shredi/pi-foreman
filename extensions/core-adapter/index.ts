@@ -11,13 +11,29 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
-import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision, rulesFilePath } from "./permoverlay.ts";
+import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { permFileState, PS_CHILD_ID, PS_PACKAGE, psGlobalConfigPath, psProjectConfigPath, renderPermissions, resolvePermissionSystem } from "./permsys.ts";
-import { npmRootDrift, npmRootDriftNotice, readPolicy } from "./npmrootdrift.ts";
+import { baseFloorEnv, changesState, gateDecide, gitFacts, reviewGitFacts } from "./gate.ts";
+import { GateCache, GateHistory, gateReview, gateReviewTarget, MAX_OWNER_MESSAGES } from "./gatereview.ts";
+import { noReviewModelText } from "./reviewwarn.ts";
+import type { GateReviewRequest } from "./gatereview.ts";
+import { scriptFacts } from "./scriptfact.ts";
+import { pathFacts } from "./pathfact.ts";
+import { webReadFacts } from "./webread.ts";
+import { gateLogFile, openGateLog } from "./gatelog.ts";
+import type { GateKind, GateLog } from "./gatelog.ts";
+import { ChildAskWatch, childAskDir, childAskParentDir } from "./childask.ts";
+import { childNpmNote } from "./childnpm.ts";
+import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
+import { awaitRuling, cut, DEFAULT_ASK_TIMEOUT_MS, dialogBody, DIALOG_OPTIONS, silentDeny, STOP_TEXT, unreachableName, userDeny, writeRoundAsk } from "./gatedialog.ts";
+import type { GateAsk } from "./gatedialog.ts";
+import { loadPolicy } from "./policy.ts";
+import type { LoadedPolicy } from "./policy.ts";
+import { PATH_TOOL_NAMES } from "./pathrules.ts";
+import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
@@ -29,8 +45,13 @@ import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
 import { dormantDoctorLine } from "./features.ts";
+import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
+import { adoptPerms } from "./permsadopt.ts";
+import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
-import { collectOrientation } from "./orient.ts";
+import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
+import type { PiRoots } from "./orient.ts";
+import { applyRootsBlock } from "./childbrief.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
@@ -46,8 +67,9 @@ import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdi
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
-import { autoReviewDoctorLine, autoReviewTarget, ForemanReview, overlayAutoReview, REVIEW_LINK, reviewTarget, userPromptOf } from "./review.ts";
-import { reviewExtras } from "./timeoutallow.ts";
+import { hubWorkflowDriftLines } from "./hubdrift.ts";
+import { gateMigrationLines } from "./gatemigrate.ts";
+import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
@@ -78,7 +100,7 @@ import { defaultSpawner } from "./spawn.ts";
 import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
-import { evaluateRun, translateStop, translateToolCall } from "./translate.ts";
+import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, hideStaleNotice, staleNoticeRunIds } from "./notices.ts";
@@ -92,7 +114,6 @@ import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
-import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
 import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
@@ -123,11 +144,11 @@ import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
-import { blockedConfirm, installBlockedShim, PERMISSIONS_DECISION, PERMISSIONS_UI_PROMPT, withBlocked } from "./herdr.ts";
+import { blockedConfirm, installBlockedShim, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
-import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, planSnapshot, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, sha256 } from "./checkpoint.ts";
+import { builderLaunchRefusal, changedPlans, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, planSnapshot, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
 import { effectivePlannerMode, PLANNER_SELF_MESSAGE, plannerNotBelow, selfPlanRequired } from "./plannerself.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
@@ -177,6 +198,16 @@ const CORE_DIR = path.join(PKG_ROOT, "core");
 const BIN_DIR = path.join(PKG_ROOT, "bin");
 
 /** Launch refusal trace fields: the roles launched and the call as `subagent <roles>`. */
+/** The dir of the session's own Pi session file, or undefined (in-memory session, no file). */
+function sessionDirOf(ctx: ExtensionContext): string | undefined {
+  try {
+    const f = ctx.sessionManager.getSessionFile();
+    return typeof f === "string" && f && path.isAbsolute(f) ? path.dirname(f) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
@@ -204,7 +235,6 @@ interface Session {
   registrationError?: string;
   childExtensionErrors?: string[];
   /** Set when the permission system cannot be resolved: child launches are refused. */
-  permissionSystemError?: string;
   /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
   overlay: OverlayRules | null;
   /** Child only: realpaths of the skills its role names (skilldirs.ts), resolved once. */
@@ -503,7 +533,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let ttlSetting: BridgeTtlSetting = bridgeTtlSetting(undefined);
   /** Derived claude-bridge TTL of this process kind (bridgettl.ts); set at session start, null = no derived value. */
   let bridgeTtlS: number | null = null;
-  const review = new ForemanReview();
   const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter(loadPrices(PKG_ROOT), (model) => piRuntimePoint(model));
   /** Priced run cost per usage file, cached by size and mtime (the widget keeps only 64 rows and loses its total on restart). */
@@ -540,39 +569,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
-  pi.events?.on("permissions:ready", (payload: unknown) => review.onReady(payload));
-  // Radar: forwarded permission prompts put a child run in "ask" (childwidget.ts); blocked/working feed the presence file.
-  const radarEvent = (fn: (s: Session) => void): void => {
-    for (const s of sessions.values()) {
-      fn(s);
-      s.live?.touch();
-      s.widget.refresh();
-    }
-  };
-  // Dialog count (dialogs.ts): one `dialog` record per prompt this session shows (`permission`), or per forwarded child prompt (`child`, never also `permission`).
   const askFlag = new AskFlag(); // /foreman flag-ask (askflag.ts): the last ask the owner answered
-  const promptsSeen = new Set<string>();
-  const traceDialogPrompt = (d: unknown): void => {
-    const p = (d && typeof d === "object" ? d : {}) as { requestId?: unknown; forwarding?: unknown };
-    if (typeof p.requestId === "string") {
-      if (promptsSeen.has(p.requestId)) return;
-      promptsSeen.add(p.requestId);
-      if (promptsSeen.size > 256) promptsSeen.delete(promptsSeen.values().next().value as string);
-    }
-    const f = p.forwarding && typeof p.forwarding === "object" ? (p.forwarding as { requesterAgentName?: unknown }) : null;
-    const who = f && typeof f.requesterAgentName === "string" ? { agent: f.requesterAgentName } : {};
-    [...sessions.values()][0]?.trace?.emit({ event: "dialog", surface: f ? "child" : "permission", ...who });
-  };
-  pi.events?.on(PERMISSIONS_UI_PROMPT, (d: unknown) => {
-    traceDialogPrompt(d);
-    askFlag.prompt(d);
-    radarEvent((s) => s.widget.runs.onPrompt(d));
-  });
-  pi.events?.on(PERMISSIONS_DECISION, (d: unknown) => {
-    const first = [...sessions.values()][0];
-    askFlag.decision(d, first?.id ?? "", first?.cwd ?? process.cwd());
-    radarEvent((s) => s.widget.runs.onDecision(d));
-  });
   // Background rows of the children widget (childwidget.ts): the foreman's foreman_wait waits (pressure waits are not shown), its foreman_bg commands and its PR watches.
   const backgroundOf = (s: Session): BackgroundRow[] => {
     if (s.isChild) return [];
@@ -598,7 +595,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("ui_prompt_start", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(true));
   pi.on("ui_prompt_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
   // orphaned dialog (see herdr.ts): Pi may swallow ui_prompt_end, so any input or the end of the turn also clears the "ui" source
-  pi.on("input", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  pi.on("input", async (e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.setBlocked(false);
+    if (s && (e as { source?: string }).source !== "extension") gateStopped.delete(s.id); // a new user prompt ends a "deny and stop"
+  });
   pi.on("agent_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
   pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
     const e = (data ?? {}) as Record<string, unknown>;
@@ -654,15 +655,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
     const owned = computeOwned(null);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
-    const sessionDir = (() => {
-      try {
-        const f = ctx.sessionManager.getSessionFile();
-        return typeof f === "string" && f && path.isAbsolute(f) ? path.dirname(f) : undefined;
-      } catch {
-        return undefined;
-      }
-    })();
-    const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
+    const sessionDir = sessionDirOf(ctx);
+    const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(get(config.config, "safety.policy.files")), sessionDir) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
     let lastShared: ReturnType<PrBot["read"]> = null;
     const s: Session = {
@@ -879,12 +873,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!npmRoot) return;
         s.owned = computeOwned(npmRoot);
         s.overlay = buildOverlay(s.owned);
-        // R3b point 8c: the policy is not rewritten here; a policy that grants a different root is traced and warned once.
-        const drift = npmRootDrift(npmRoot, readPolicy(psGlobalConfigPath(agentDir)));
-        const note = npmRootDriftNotice(drift, s.notified);
-        if (!drift || !note) return;
-        s.trace?.emit({ event: "npm_root_drift", resolved: drift.resolved, rendered: drift.rendered });
-        if (!s.isChild) ctx.ui.notify(note, "warning");
       })
       .catch(() => undefined);
     if (!isChild) {
@@ -913,7 +901,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const claudeRisks = provider === BRIDGE_PROVIDER ? projectClaudeRisks(cwd) : [];
     if (claudeRisks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${claudeRisks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
-    const bridgeCfgRisks = projectBridgeConfigRisks(cwd);
+    const bridgeCfgRisks = bridgeTrusted(agentDir, cwd) ? [] : projectBridgeConfigRisks(cwd); // silent while the owner's trust record matches the file (bridgetrust.ts)
     if (bridgeCfgRisks.length) ctx.ui.notify(`pi-foreman: the project's claude-bridge config makes the bridge run what the project chose: ${bridgeCfgRisks.join(", ")}. Fix: ${PROJECT_BRIDGE_FIX}`, "error");
     s.trace?.emit({ event: "session_start", role: s.isChild ? "child" : "foreman", model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, tier: s.ceremony.tier });
     tracePoint(s, ctx.model);
@@ -1074,6 +1062,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistRounds(s);
   }
 
+  /**
+   * session_start after a reload or resume (R41 item 17): the checkpoint approval and the plan-review verdicts come back from the harness-only approval
+   * store, keyed by the plan version hash of the plan files now in the scratch dir. A parent ruling is restoreRounds' business.
+   */
+  function restoreStoredPlans(s: Session, ctx: ExtensionContext): void {
+    if (s.isChild || roundStateDir(process.env)) return; // a round session's approval comes from the parent's ruling (restoreRounds), never from a stored human answer
+    const r = restoreFromStore(s.agentDir, planOpts(s, ctx));
+    for (const v of r.reviews) if (!s.planReviews.lineage(v.plan.path)) s.planReviews.restore(v.plan.path, { hash: v.plan.hash, verdict: v.review.verdict, model: v.review.model, findings: Promise.resolve([]) }, v.review.rounds);
+    const a = r.approved;
+    if (a && !s.plan) s.plan = { topic: a.plan.topic, path: a.plan.path, hash: a.plan.hash, status: "approved", approvedAt: a.at, by: a.by, note: "restored after reload from the approval store" };
+    if (a || r.reviews.length) {
+      s.trace?.emit({ event: "round_state_restored", approval: a ? "store" : "none" });
+      persistRounds(s);
+    }
+  }
+
   function sessionFor(ctx: ExtensionContext): Session | undefined {
     return sessions.get(ctx.sessionManager.getSessionId());
   }
@@ -1154,11 +1158,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const extra = normaliseChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir);
     s.childExtensionErrors = extra.errors;
     for (const e of extra.errors) ctx.ui.notify(`pi-foreman: ${e}`, "error");
-    // The permission system is required in every child (design section 5): unresolvable = launches refused.
-    const ps = resolvePermissionSystem({ agentDir: s.agentDir, cwd: s.cwd, pkgRoot: PKG_ROOT });
-    s.permissionSystemError = ps ? undefined : `${PS_PACKAGE} is not installed or not resolvable`;
-    if (s.permissionSystemError) ctx.ui.notify(`pi-foreman: ${s.permissionSystemError}. Children would run without permission checks, so launches are blocked. Run the installer (node setup.mjs), restart and run /foreman doctor.`, "error");
-    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, { id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY }, ...(ps ? [{ id: PS_CHILD_ID, path: ps }] : []), ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== GIT_GUARD_ID && e.id !== PS_CHILD_ID)];
+    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, { id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== GIT_GUARD_ID)];
     try {
       const { fn, via } = await loadRegister();
       s.registration = fn({ sessionId: s.id, extensions: s.childExtensions, requireForAllRunners: true });
@@ -1174,9 +1174,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (toolName !== "subagent") return undefined;
     if (!s.registration) {
       return `pi-foreman: required child extensions are not registered${s.registrationError ? ` (${s.registrationError})` : ""}, so children would run without the guards; the launch is blocked. Fix safety.requiredChildExtensions, restart the session and run /foreman doctor.`;
-    }
-    if (s.permissionSystemError) {
-      return `pi-foreman: ${s.permissionSystemError}, so children would run without permission checks; the launch is blocked. Run the installer (node setup.mjs), restart the session and run /foreman doctor.`;
     }
     if (s.childExtensionErrors && s.childExtensionErrors.length > 0) {
       return `pi-foreman: required child extension config has errors (${s.childExtensionErrors.join("; ")}); the launch is blocked. Fix safety.requiredChildExtensions and restart the session.`;
@@ -1256,6 +1253,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
+    if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
       pullBind = { s, ctx };
@@ -1265,7 +1263,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleBind = { s, ctx };
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
     }
-    review.upsert(s.id, { isChild: s.isChild, cwd: s.cwd, provider: ctx.model?.provider, config: () => sessions.get(s.id)?.config.config, registry: ctx.modelRegistry as never, intent: "", trace: (r) => sessions.get(s.id)?.trace?.emit(r), bridgeDrift: () => sessions.get(s.id)?.claudeCfg.pending(s.cwd) ?? [], recordUsage: (m) => { const x = sessions.get(s.id); if (x) appendUsage(x.usage.file, usageLine({ ...x.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m)); }, scratchDirs: (role) => sessions.get(s.id)?.scratch.live(role) ?? [], ownDirs: () => { const x = sessions.get(s.id); return x ? [...ownHandoffDirs(handoffsRoot(x), intercomIdOf(process.env, x.agentDir, x.id)), ...roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform)] : []; }, roundDirs: () => { const x = sessions.get(s.id); return x ? roundWorktrees(path.join(x.agentDir, "pi-foreman", "state"), x.usage.line.foremanSession, platform) : []; }, ledgerFile: () => { const x = sessions.get(s.id); return x ? boundLedger(x.markerDir, x.usage.line.foremanSession) : null; }, ownedRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).write : []; }, readOnlyRoots: () => { const x = sessions.get(s.id); return x ? sessionOwnedRoots(x).read : []; }, ownReads: () => { const x = sessions.get(s.id); return x && !x.isChild ? [...ownUsageReadable(x.agentDir, platform, x.id, { dir: get(x.config.config, "trace.dir"), stateDir: x.markerDir }, x.usage.line.foremanSession), ...ownTaskReadable([x.cwd, workspaceOf(x.cwd).root, x.usage.line.workspace], x.usage.line.foremanSession, platform), ...asyncResultReads(x.childFiles, platform)] : []; }, ...reviewExtras(baseline, () => sessions.get(s.id)?.config.config, ctx) });
     if (!s.isChild && (event.reason === "startup" || event.reason === "new" || (event.reason === "resume" && restored.status === "restored"))) await applyForemanModel(s, ctx, restored.status === "restored" ? restored.entry.model : undefined);
     await registerChildExtensions(s, ctx);
     const orderNotice = s.isChild ? null : loadOrderNotice(s.cwd, s.agentDir, PKG_ROOT);
@@ -1275,9 +1272,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const registry = ctx.modelRegistry as unknown as RegistryLike;
       for (const gap of modelGaps(s.config.config, provider, registry)) notifyOnce(s, ctx, `model-gap:${gap}`, `pi-foreman: ${gap}; launches that need it fail. Fix the provider map or the login, then run /foreman doctor.`);
       for (const w of familyWarnings(s.config.roles, provider, registry)) notifyOnce(s, ctx, `family:${w}`, w);
-    }
-    if (fs.existsSync(psProjectConfigPath(s.cwd))) {
-      notifyOnce(s, ctx, "ps-project-file", `pi-foreman: ${psProjectConfigPath(s.cwd)} exists. A project permission file can loosen the permission system's rules (it applies once the project is trusted). pi-foreman still enforces its deny rules itself, but put your rules in foreman.json and remove this file. /foreman doctor fails while it exists.`);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
@@ -1308,6 +1302,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s) return;
     asks.get(s.id)?.releaseAll();
     asks.delete(s.id);
+    gateRuntimes.delete(s.id);
+    gateOwnerMessages.delete(s.id);
     try {
       s.registration?.dispose();
     } catch {
@@ -1327,7 +1323,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleModel.stop();
     }
     sweepScratch(s);
-    review.drop(s.id);
+    closeChildAsks(s);
     s.live?.stop();
     s.pressureSampler?.stop();
     s.widget.dispose();
@@ -1338,8 +1334,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("model_select", async (event, ctx) => {
-    const sid = sessionFor(ctx)?.id;
-    if (sid) review.setProvider(sid, event.model?.provider);
     const ps = sessionFor(ctx);
     if (ps) tracePoint(ps, event.model);
     const warmed = sessionFor(ctx);
@@ -1492,7 +1486,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // Only a user run sets the review intent and triages; the section below is built for every run.
     const prompt = userPromptOf(event);
     if (prompt !== null) {
-      review.setIntent(s.id, prompt);
+      if (!s.isChild) gateOwnerMessages.set(s.id, [prompt, ...(gateOwnerMessages.get(s.id) ?? [])].slice(0, MAX_OWNER_MESSAGES));
       // D7: a child never triages; only the foreman's request can escalate on a signal.
       const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
       s.triageHint = "";
@@ -1530,7 +1524,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
     if (s.orientation === undefined) {
       // Once per session, so every later turn (and a compaction re-put) carries identical bytes.
-      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120) });
+      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120), roots: await piRootsOf(s) });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
     const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine({ [s.ceremony.tier]: requiredOf(s, s.ceremony.tier) }, s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
@@ -1538,6 +1532,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.foremanSection = withDigest(text, s.retro.digest);
     event.systemPromptOptions.sections["pi-foreman"] = s.foremanSection;
   });
+  let piInstallRoot: Promise<string | null> | undefined;
+  /** The roots of the running pi: its coding-agent package dir (resolved from the package itself, never a literal path), the global npm root, this package's root. */
+  async function piRootsOf(s: Session): Promise<PiRoots> {
+    piInstallRoot ??= (async () => {
+      try {
+        const d = ((await import("@earendil-works/pi-coding-agent")) as { getPackageDir?: () => unknown }).getPackageDir?.();
+        return typeof d === "string" && d ? d : null;
+      } catch {
+        return null;
+      }
+    })();
+    return { installRoot: await piInstallRoot, npmRoot: s.owned.npmRoot ?? null, pkgRoot: PKG_ROOT };
+  }
   /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
   function promptVariants(s: Session): Record<string, string> {
     return {
@@ -1760,6 +1767,48 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   /** A newer ruling in the handoff dir, taken before a gated action (child launch, checkpoint press); "" when none. */
   const rulingPickup = (s: Session, gate: string): string => (s.isChild ? "" : pickupRuling(steerWatchFor(s), gate));
+  // A child's policy ask (childask.ts, plan Addendum 5): per parent session one watch over the ask dirs of its running children.
+  const childAskWatches = new Map<string, ChildAskWatch>();
+  const childAskWatchFor = (s: Session, ctx: ExtensionContext): ChildAskWatch => {
+    let w = childAskWatches.get(s.id);
+    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a) => answerChildAsk(s, ctx, a), (e) => reportChildAsk(s, e))));
+    return w;
+  };
+  const closeChildAsk = (s: Session, launchId: string | null): void => {
+    if (!launchId) return;
+    const dir = childAskDir(s.agentDir, s.id, launchId);
+    childAskWatches.get(s.id)?.remove(dir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  };
+  const closeChildAsks = (s: Session): void => {
+    childAskWatches.get(s.id)?.stop();
+    childAskWatches.delete(s.id);
+    fs.rmSync(childAskParentDir(s.agentDir, s.id), { recursive: true, force: true });
+  };
+  const reportChildAsk = (s: Session, e: ChildAskEvent): void => {
+    const verdict = e.kind === "answered" ? (e.allow ? "allow" : "deny") : "deny";
+    gateRuntimeOf(s).log.record({ tool: e.ask.tool, layer: "child-ask", verdict, rule: e.ask.entry || "ask", reason: `child run ${e.ask.run} (${e.ask.role}): ${e.kind}${e.detail ? ` ${e.detail}` : ""}`, input: e.ask.payload, role: e.ask.role, kind: roundStateDir(process.env) ? "round" : "owner" });
+  };
+  /** The parent's answer to one child ask: the owner's dialog, or the round path (ask.md in the handoff dir, ruling copied down); never a model. */
+  async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk): Promise<ChildAnswer> {
+    const dir = roundStateDir(process.env);
+    if (dir) {
+      const left = a.deadline ? Math.max(0, a.deadline - Date.now()) : DEFAULT_ASK_TIMEOUT_MS;
+      const n = writeRoundAsk(dir, { cause: "ask", entry: a.entry, reason: a.reason }, { tool: a.tool, payload: a.payload, cwd: a.cwd, session: s.id, role: a.role, run: a.run });
+      const notBefore = fs.statSync(path.join(dir, "ask.md")).mtimeMs;
+      const w = await withBlocked(herdrEvents, `ask ${n}: child ${a.role} ${a.tool}`, () => awaitRuling(dir, n, left, 250, notBefore));
+      steerWatchFor(s).skip(`ruling-${n}.md`); // the copy-down below is its delivery: the steer pickup must not hand it to the session again
+      return w.answer === "allow" ? { allow: true } : { allow: false, reason: w.answer === "timeout" ? "the parent's parent did not answer in time" : (w.reason ?? `ruling-${n}.md first line was "${(w.first ?? "").slice(0, 40)}"`) };
+    }
+    if (!ctx.hasUI) return { allow: false, reason: "the parent session cannot answer asks" };
+    const body = `pi-foreman: ${a.role} (run ${a.run}) asks\n${a.tool}: ${cut(a.payload)}\nentry ${a.entry}: ${a.reason}`;
+    const choice = await withBlocked(herdrEvents, body.split("\n", 1)[0], () => ctx.ui.select(body, ["allow once", "deny with reason"]));
+    if (choice === "allow once") return { allow: true };
+    if (choice !== "deny with reason") return { allow: false, reason: "the dialog was dismissed" };
+    const typed = (await withBlocked(herdrEvents, "deny reason", () => ctx.ui.input("pi-foreman: reason for the deny (shown to the child)", ""))) ?? "";
+    return { allow: false, reason: typed.trim() || "denied by the parent" };
+  }
+  let childAskChain: Promise<void> = Promise.resolve();
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
   pi.on("session_shutdown", async () => launchWaits.abortAll());
 
@@ -1771,7 +1820,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         endActive(s.activeRuns, data);
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
-        if (typeof runId === "string") finishScratch(s, s.scratch.onRunEnd(runId));
+        if (typeof runId === "string") {
+          const ended = s.scratch.onRunEnd(runId);
+          finishScratch(s, ended);
+          closeChildAsk(s, ended);
+        }
         if (typeof runId === "string" && !s.isChild) {
           s.widget.runs.onRunEnd(runId);
           s.live?.touch();
@@ -1900,7 +1953,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
       for (const p of plans) {
         const rp = readPlan(p, opts);
-        if ("plan" in rp) s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+        if ("plan" in rp) {
+          s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+          const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
+          saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
+        }
       }
     }
     persistRounds(s);
@@ -1934,7 +1991,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
-  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, rulingAsk?: Decision) {
+  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, rulingAsk?: Decision, callId = "") {
+    // R41: a call the gate decided has no overlay check, auto review or confirm; a self-ruling ask is not a gate matter and still resolves here
+    if (gateDecided.delete(callId) && !rulingAsk) return undefined;
     if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
     // the session's own bg_run task dirs (`.pi/tasks/<session id>-*`) are readable for the session and its children, no other session's
     // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
@@ -1947,20 +2006,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild && toolName === "bash" && typeof input.command === "string" && mctx.install && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
     // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
     const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
-    // R16 item 1: a foreman ask that is no self-modification goes to the auto reviewer first; allow lets the call go on to the later layers
-    const rulesFile = rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT);
-    // R18: a child's ask goes to the reviewer too, except its self-ruling ask (a ruling write is never a reviewer allow)
-    const childRole = s.usage.line.role;
-    const auto = await overlayAutoReview(review, s.id, s.isChild && d?.rule === "self-ruling" ? null : d, toolName, input, { enabled: get(s.config.config, "safety.permissions.autoReview.enabled") !== false, isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, session: s.usage.line.foremanSession || s.id, requester: s.isChild ? `subagent ${childRole}` : undefined, rules: () => (rulesFile ? fs.readFileSync(rulesFile, "utf8") : "") });
-    if (d && auto) {
-      const df = denyFields(auto === "allow" ? d.reason : auto.reason, toolName, input, s.isChild ? childRole : "foreman", [PKG_ROOT, ctx.cwd]);
-      if (auto === "allow") {
-        s.trace?.emit({ event: "auto_review_allow", toolFamily: toolName, family: dialogFamily(df.command), rule: d.rule ?? null, command: df.command, ...(s.isChild ? { role: childRole } : {}) });
-        return undefined;
-      }
-      s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: "deny", by: "auto", ...df });
-      return auto;
-    }
     const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) {
       const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);
@@ -2016,6 +2061,282 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const manifest = new ManifestRecorder((p) => fs.existsSync(p));
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
 
+  /** The session's roots for the gate's path rules and defaults (pathrules.ts GateRoots). */
+  async function gateRootsOf(s: Session, cwd: string, sessionDir: string | undefined): Promise<GateRoots> {
+    const state = path.join(s.agentDir, "pi-foreman", "state");
+    const rounds = roundWorktrees(state, s.usage.line.foremanSession, platform);
+    const pi = await piRootsOf(s);
+    const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
+    const owned = sessionOwnedRoots(s);
+    return {
+      worktree: workspaceOf(cwd).root,
+      scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
+      tmp: [real(os.tmpdir()), ...(platform === "win32" ? [] : ["/tmp"])],
+      scratchBase: s.owned.childScratchRoot,
+      owned: [...owned.write, ...owned.read],
+      install: [pi.installRoot, pi.npmRoot, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
+      roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
+      handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
+      child: s.isChild,
+      agentDir: s.agentDir,
+      ...(sessionDir ? { sessionDir } : {}),
+      role: s.isChild ? s.usage.line.role : "foreman",
+      tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
+    };
+  }
+
+  /** Per-session gate state: the merged policy (loaded once), the decision log, the review's history and decision cache. */
+  interface GateRuntime {
+    policy: LoadedPolicy;
+    log: GateLog;
+    history: GateHistory;
+    cache: GateCache;
+  }
+  const gateRuntimes = new Map<string, GateRuntime>();
+  /** Tool calls the gate decided (allow); the old overlay skips them. */
+  const gateDecided = new Set<string>();
+  /** Sessions whose owner answered "deny and stop" (until the next user prompt), and per-session allows keyed `tool\0payload`. */
+  const gateStopped = new Set<string>();
+  const gateSessionAllow = new Map<string, Set<string>>();
+  /** The owner's prompts of a session, newest first. */
+  const gateOwnerMessages = new Map<string, string[]>();
+  const gateRuntimeOf = (s: Session): GateRuntime => {
+    let rt = gateRuntimes.get(s.id);
+    if (!rt) {
+      const policy = loadPolicy({ pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, files: get(s.config.config, "safety.policy.files") });
+      const log = openGateLog({ agentDir: s.agentDir, session: s.id, kind: s.isChild ? "child" : "owner", role: s.isChild ? s.usage.line.role : "foreman", cwd: s.cwd, maxBytes: get(s.config.config, "gate.logMaxBytes"), roots: { worktree: workspaceOf(s.cwd).root, scratch: s.scratch.live(null)[0], tmp: os.tmpdir(), home: os.homedir() } });
+      rt = { policy, log, history: new GateHistory(), cache: new GateCache() };
+      gateRuntimes.set(s.id, rt);
+    }
+    return rt;
+  };
+
+  // R41 gate: the first tool_call handler this extension registers, deciding every tool call of every session kind. Pipeline: parse,
+  // floors, selfmod, defaults, path rules, review, dialog per session kind (owner dialog, round ask.md, child / headless deny), decision
+  // log. A floor or review deny blocks; a default or review allow is traced and logged; an ask goes to the dialog; a handler failure
+  // blocks. The handlers below still run for what the gate lets through.
+  pi.on("tool_call", async (event, ctx) => {
+    const gs = sessionFor(ctx);
+    const stoppedMsg = gs?.isChild ? repeatStopped.get(gs.id) : undefined;
+    if (stoppedMsg) return { block: true as const, reason: stoppedMsg };
+    // Role tool denial (roledeny.ts) and MCP scope (mcpscope.ts, r68) only block and run before the gate, so a refusal never becomes an ask or a review answer:
+    // a child's tool matching roles.<role>.denyTools, or an mcp__ call outside roles.<role>.mcp (and the launch's mcp, codemode inner calls included).
+    if (process.env.PI_SUBAGENT_CHILD === "1") {
+      const msg = roleToolDenied(gs ? get(gs.config.config, "roles") : undefined, launchBinding?.role, event.toolName);
+      if (msg) {
+        gs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
+        return { block: true as const, reason: `pi-foreman: ${msg}.` };
+      }
+      const scope = mcpChild?.callBlock(event.toolName);
+      if (scope) {
+        gs?.trace?.emit({ event: "guard", guard: "mcp_scope", toolFamily: event.toolName, decision: "blocked", reason: "mcp_scope" });
+        return { block: true as const, reason: `pi-foreman: ${scope}.` };
+      }
+    }
+    const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx)) : undefined;
+    const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
+    const r = gateDecide(event.toolName, event.input, ctx.cwd, {
+      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, policyFiles: gatePolicyFiles(gs), protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
+      ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
+    });
+    const role = gs?.isChild ? gs.usage.line.role : "foreman";
+    const kind: GateKind = gs?.isChild ? "child" : gs && roundStateDir(process.env) ? "round" : ctx.hasUI ? "owner" : "headless";
+    const rt = gs ? gateRuntimeOf(gs) : undefined;
+    const payload = gatePayload(event.toolName, event.input);
+    const note = (layer: "floor" | "default", verdict: string, rule: string, reason?: string): void => rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), input: payload, role, kind });
+    if (r && "block" in r) {
+      gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
+      note("floor", "deny", r.rule, r.reason);
+      return (gs && (repeatedDeny(gs, ctx, r.reason) ?? undefined)) || { block: true as const, reason: r.reason };
+    }
+    if (r && "ask" in r) {
+      // a self-modification rule (selfmod.ts): the dialog / ask path, never a model call and never a default
+      const smReason = `pi-foreman: self-modification rule ${r.rule}: ${r.reason}. This session cannot answer asks; the call is denied. Report this to the owner.`;
+      if (!gs || !rt) return { block: true as const, reason: smReason };
+      const smKey = `${event.toolName}\u0000${payload}`;
+      if (gateStopped.has(gs.id)) {
+        note("floor", "deny", "user-stop", STOP_TEXT);
+        return { block: true as const, reason: STOP_TEXT };
+      }
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule: r.rule, role });
+      if (!gateSessionAllow.get(gs.id)?.has(smKey)) {
+        const blockedAsk = await gateAsk(gs, ctx, rt, kind, role, event.toolName, event.input, payload, { cause: "selfmod", rule: r.rule, reason: r.reason }, smKey);
+        if (blockedAsk) return blockedAsk;
+      }
+      gateDecided.add(event.toolCallId);
+      rt.history.push(event.toolName, payload);
+      rt.cache.invalidateAllows();
+      return undefined;
+    }
+    if (r) {
+      gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: r.rule, role });
+      note("default", "allow", r.rule);
+      gateDecided.add(event.toolCallId);
+      rt?.history.push(event.toolName, payload);
+      if (changesState(event.toolName, r.rule, event.input as Record<string, unknown>)) rt?.cache.invalidateAllows();
+      return undefined;
+    }
+    // no session: no review, dialog or log to decide with, and the overlay below is no replacement for the gate; floors and defaults ran above
+    if (!gs || !rt) return { block: true as const, reason: "pi-foreman: this tool call has no session to review it in, so it is denied. Report this to the owner." };
+    const surface = gateSurface(event.toolName);
+    const sessionKey = `${event.toolName}\u0000${payload}`;
+    if (gateStopped.has(gs.id)) {
+      note("floor", "deny", "user-stop", STOP_TEXT);
+      return { block: true as const, reason: STOP_TEXT };
+    }
+    if (gateSessionAllow.get(gs.id)?.has(sessionKey)) {
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: "session-allow", role });
+      rt.log.record({ tool: event.toolName, layer: "cache", verdict: "allow", rule: "session-allow", input: payload, role, kind, cached: true });
+      gateDecided.add(event.toolCallId);
+      rt.history.push(event.toolName, payload);
+      return undefined;
+    }
+    try {
+      const facts = reviewGitFacts(ctx.cwd);
+      const req: GateReviewRequest = {
+        surface, tool: event.toolName, role, kind, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, owned: roots?.owned ?? [], ...facts,
+        ownerMessages: gateOwnerMessages.get(gs.id) ?? [], history: rt.history.list(), payload,
+        facts: [
+          ...(surface === "bash" ? scriptFacts(payload, ctx.cwd, workspaceOf(ctx.cwd).root) : []),
+          ...webReadFacts(event.toolName, event.input, { cwd: ctx.cwd, scratch: roots?.scratch ?? [], platform }),
+          ...pathFacts(event.toolName, event.input, payload, ctx.cwd, workspaceOf(ctx.cwd).root, [...(roots?.owned ?? []), ...(roots?.scratch ?? [])], gs.agentDir),
+        ],
+        ...(surface === "file" ? { pathKeys: Object.keys((event.input ?? {}) as object).filter((k) => typeof (event.input as Record<string, unknown>)[k] === "string") } : {}),
+      };
+      const v = await gateReview(req, {
+        policy: rt.policy, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, cache: rt.cache,
+        recordUsage: (m) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: "autoreview", launchId: null, kind: "foreman" }, m as never)),
+        trace: (t) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
+        log: rt.log,
+      });
+      if (v.kind === "deny") {
+        const reason = `pi-foreman: policy ${v.entry}: ${v.reason}`;
+        gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: `review:${v.entry}`, ...denyFields(reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
+        return { block: true as const, reason };
+      }
+      if (v.kind === "allow") {
+        gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: `review:${v.entry}`, role });
+        gateDecided.add(event.toolCallId);
+        rt.history.push(event.toolName, payload);
+        if (changesState(event.toolName, undefined, event.input as Record<string, unknown>)) rt.cache.invalidateAllows();
+        return undefined;
+      }
+      if (v.kind === "unreachable" && v.cause === "no_model") notifyOnce(gs, ctx, "no-review-model", `pi-foreman: ${noReviewModelText(ctx.model?.provider)}`);
+      const ask: GateAsk = v.kind === "unreachable" ? { cause: "unreachable", why: v.cause, detail: v.detail } : { cause: "ask", entry: v.entry, reason: kind === "child" && event.toolName === "bash" ? [v.reason, childNpmNote(String((event.input as Record<string, unknown>)?.command ?? ""), launchBinding?.install === true)].filter(Boolean).join(" ") : v.reason };
+      const blocked = await gateAsk(gs, ctx, rt, kind, role, event.toolName, event.input, payload, ask, sessionKey);
+      if (blocked) return blocked;
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: ask.cause === "ask" ? `dialog:${ask.entry}` : `dialog:${ask.why}`, role });
+      gateDecided.add(event.toolCallId);
+      rt.history.push(event.toolName, payload);
+      if (changesState(event.toolName, undefined, event.input as Record<string, unknown>)) rt.cache.invalidateAllows();
+      return undefined;
+    } catch (e) {
+      const reason = `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.`;
+      note("floor", "deny", "gate-error", reason);
+      return { block: true as const, reason };
+    }
+  });
+
+  /**
+   * The gate's ask routing (plan 2.5). Returns the block, or undefined when the call may go on. Owner pane: one pi-foreman dialog; round
+   * session: ask.md to the parent and a wait for ruling-<n>.md; child and headless: a deny that says what to report. No model decides here.
+   */
+  async function gateAsk(gs: Session, ctx: ExtensionContext, rt: GateRuntime, kind: GateKind, role: string, tool: string, input: unknown, payload: string, a: GateAsk, sessionKey: string): Promise<{ block: true; reason: string } | undefined> {
+    const detail = a.cause === "selfmod" ? `${a.rule}: ${a.reason}` : a.cause === "ask" ? `${a.entry}: ${a.reason}` : `${unreachableName(a.why)}: ${a.detail}`;
+    const rule = a.cause === "selfmod" ? a.rule : a.cause === "ask" ? a.entry : a.why;
+    const done = (answer: string, allow: boolean, reason?: string): { block: true; reason: string } | undefined => {
+      // the trace's field list is pinned (trace.ts): the answer goes in `decision`, the cause detail in `reason`
+      const df = denyFields(detail, tool, input, role, [PKG_ROOT, ctx.cwd]);
+      gs.trace?.emit({ event: "dialog", guard: "gate", cause: a.cause, decision: answer, rule, toolFamily: tool, ...df, ...dialogFields(df.command) });
+      rt.log.record({ tool, layer: "dialog", verdict: allow ? "allow" : "deny", rule, reason: answer, input: payload, role, kind });
+      askFlag.overlay({ command: df.command, rule, approved: allow, session: gs.id });
+      return allow ? undefined : { block: true as const, reason: reason ?? "pi-foreman: denied." };
+    };
+    if (kind === "round") {
+      const dir = roundStateDir(process.env) as string;
+      const t = get(gs.config.config, "gate.askTimeoutMs");
+      const timeoutMs = typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : DEFAULT_ASK_TIMEOUT_MS;
+      let n: number;
+      try {
+        n = writeRoundAsk(dir, a, { tool, payload, cwd: ctx.cwd, session: gs.id });
+      } catch (e) {
+        return done("timeout", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this to the owner.`);
+      }
+      const w = await withBlocked(herdrEvents, `ask ${n}: gate ${tool}`, () => awaitRuling(dir, n, timeoutMs));
+      if (w.answer === "allow") return done("ruling-allow", true);
+      if (w.answer === "deny") return done("ruling-deny", false, `pi-foreman: denied by the parent in ruling-${n}.md.`);
+      if (w.answer === "other") return done("ruling-deny", false, `pi-foreman: denied: the first line of ruling-${n}.md is "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+      return done("timeout", false, `pi-foreman: denied: no ruling-${n}.md within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this to the owner.`);
+    }
+    const askDir = launchBinding?.askDir;
+    if (kind === "child" && a.cause === "ask" && askDir && get(gs.config.config, "gate.childAsk") === "parent") {
+      const t = get(gs.config.config, "gate.askTimeoutMs");
+      const timeoutMs = typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : DEFAULT_ASK_TIMEOUT_MS;
+      const turn = childAskChain; // one ask.md at a time: parallel tool calls of the child queue here
+      let free: () => void = () => {};
+      childAskChain = new Promise<void>((r) => (free = r));
+      await turn;
+      try {
+        const n = writeRoundAsk(askDir, a, { tool, payload, cwd: ctx.cwd, session: gs.id, role, run: launchBinding?.launchId, deadline: Date.now() + timeoutMs });
+        const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
+        const w = await withBlocked(herdrEvents, `ask ${n}: gate ${tool}`, () => awaitRuling(askDir, n, timeoutMs, 250, notBefore));
+        if (w.answer === "allow") return done("parent-allow", true);
+        if (w.answer === "timeout") return done("parent-timeout", false, `pi-foreman: denied: the parent did not answer within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this line to the foreman and continue with what you can.`);
+        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${a.entry}: ${a.reason}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+      } catch (e) {
+        return done("parent-deny", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this line to the foreman.`);
+      } finally {
+        free();
+      }
+    }
+    if (kind !== "owner") {
+      const reason = silentDeny(kind, a);
+      if (kind === "headless") { // no UI: an immediate deny, the cause in the trace
+        const df = denyFields(detail, tool, input, role, [PKG_ROOT, ctx.cwd]);
+        gs.trace?.emit({ event: "dialog", guard: "gate", cause: a.cause, decision: "no-ui", rule, toolFamily: tool, ...df, ...dialogFields(df.command) });
+      }
+      rt.log.record({ tool, layer: "dialog", verdict: "deny", rule, reason: "no-dialog", input: payload, role, kind });
+      return { block: true as const, reason };
+    }
+    const body = dialogBody(a, tool, payload);
+    const choice = await withBlocked(herdrEvents, body.split("\n", 1)[0], () => ctx.ui.select(body, [...DIALOG_OPTIONS]));
+    if (choice === "allow once") return done(choice, true);
+    if (choice === "allow for session") {
+      let set = gateSessionAllow.get(gs.id);
+      if (!set) gateSessionAllow.set(gs.id, (set = new Set()));
+      set.add(sessionKey);
+      return done(choice, true);
+    }
+    if (choice === "deny with reason") {
+      const typed = (await withBlocked(herdrEvents, "deny reason", () => ctx.ui.input("pi-foreman: reason for the deny (shown to the agent)", ""))) ?? "";
+      return done(choice, false, userDeny(typed));
+    }
+    if (choice === "deny and stop") {
+      gateStopped.add(gs.id);
+      return done(choice, false, STOP_TEXT);
+    }
+    return done("dismissed", false, userDeny("the dialog was dismissed"));
+  }
+
+  const gatePolicyFiles = (gs: Session | undefined): string[] => {
+    const v = gs ? get(gs.config.config, "safety.policy.files") : undefined;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  };
+  const SHELL_GATE_TOOLS = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+  /** The review surface of a tool: every tool has one; a tool that is not shell, path, skill or mcp is reviewed on its JSON payload ("json"). */
+  const gateSurface = (tool: string): string => (SHELL_GATE_TOOLS.has(tool) ? "bash" : PATH_TOOL_NAMES.has(tool) ? "file" : tool === "skill" ? "skill" : tool.startsWith("mcp") ? "mcp" : "json");
+  /** The text the log shapes and the review reads: the command, the path operands, or the JSON input. */
+  const gatePayload = (tool: string, input: unknown): string => {
+    const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    if (SHELL_GATE_TOOLS.has(tool)) return String(i.command ?? i.cmd ?? "");
+    if (PATH_TOOL_NAMES.has(tool)) return Object.entries(i).filter(([, v]) => typeof v === "string").map(([k, v]) => `${k}=${v}`).join(" ");
+    try {
+      return JSON.stringify(i);
+    } catch {
+      return "";
+    }
+  };
+
   pi.on("tool_call", async (event, ctx) => {
     const ms = sessionFor(ctx);
     if (ms && !ms.isChild) {
@@ -2064,21 +2385,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const text = ps && agents.length > 0 ? rulingPickup(ps, `launch ${agents.join("+")}`) : "";
       if (text) return { block: true, reason: `pi-foreman: a newer ruling arrived before this launch; it is not started. Act on it, then launch again.\n${text}` };
     }
-    // Role tool denial (roledeny.ts): a child's tool matching roles.<role>.denyTools is denied, never asked.
-    if (process.env.PI_SUBAGENT_CHILD === "1") {
-      const rs = sessionFor(ctx);
-      const msg = roleToolDenied(rs ? get(rs.config.config, "roles") : undefined, launchBinding?.role, event.toolName);
-      if (msg) {
-        rs?.trace?.emit({ event: "guard", guard: "role_tool_denied", toolFamily: event.toolName, decision: "blocked", reason: "role_tool_denied" });
-        return { block: true, reason: `pi-foreman: ${msg}.` };
-      }
-      // MCP scope (mcpscope.ts, r68): an mcp__ call outside roles.<role>.mcp (and the launch's mcp) is blocked, codemode inner calls included.
-      const scope = mcpChild?.callBlock(event.toolName);
-      if (scope) {
-        rs?.trace?.emit({ event: "guard", guard: "mcp_scope", toolFamily: event.toolName, decision: "blocked", reason: "mcp_scope" });
-        return { block: true, reason: `pi-foreman: ${scope}.` };
-      }
-    }
     // A child never deletes an editor backup with rm (effects.ts) on any shell tool; it reports it instead.
     if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
       sessionFor(ctx)?.trace?.emit({ event: "guard", guard: "editor_backup", toolFamily: "bash", decision: "blocked", reason: "editor_backup" });
@@ -2087,7 +2393,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
     if (isOverlayTool(event.toolName)) {
       try {
-        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>, rulingAsk);
+        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>, rulingAsk, event.toolCallId);
         if (blocked) return blocked;
       } catch (err) {
         return { block: true, reason: `pi-foreman: adapter error in the permission overlay (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -2454,6 +2760,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
       const pc = payloadCtx(s, ctx);
+      // safety.preBash.hooks (prebash.ts): user-configured hooks before a bash call; a hook error is traced and ignored unless safety.preBash.strict
+      if (event.toolName === "bash" && typeof input.command === "string") {
+        const pre = preBashConfigOf(get(s.config.config, "safety.preBash"));
+        if (pre.hooks.length) {
+          const hr = await runPreBashHooks(pre, { command: input.command, cwd: ctx.cwd, tool: event.toolName, session: s.id, role: s.isChild ? s.usage.line.role ?? "child" : "foreman" }, { spawner, agentDir: s.agentDir });
+          for (const e of hr.errors) s.trace?.emit({ event: "prebash_hook_error", kind: pre.strict ? "strict" : "ignored", reason: `${e.hook}: ${e.error}` });
+          if (hr.blocked) return { block: true, reason: hr.blocked };
+        }
+      }
       for (const guard of mapping.pre) {
         let agents: string[] = [];
         if (guard === "destructive_guard") {
@@ -2478,7 +2793,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (guard === "git_guard") await s.reviewSync;
         const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews) };
         const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git"), prGate) : preToolPayload(event.toolName, input, pc);
-        if (guard === "ledger_guard_spawn") (payload.tool_input as Record<string, unknown>).prompt = callerTask;
+        if (guard === "ledger_guard_spawn") {
+          (payload.tool_input as Record<string, unknown>).prompt = callerTask;
+          payload.permission_mode = spawnPermissionMode(planModeOn(ctx.sessionManager.getBranch?.() ?? []), agents);
+        }
         const outcome = await run(s, ctx, guard, payload, mapping.coreName);
         if (guard === "destructive_guard" && outcome.kind === "decision" && dropDeadPathRewrite(outcome.d, input.command, os.homedir())) {
           s.trace?.emit({ event: "guard_rewrite_dropped", guard, toolFamily: mapping.coreName });
@@ -2566,6 +2884,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
+      // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
+      if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id) })) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
@@ -2745,7 +3065,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
-    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined, chars: review.intentOf(s.id).length }); // chars: review intent length (a wake run must not reset it)
+    s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined, chars: (gateOwnerMessages.get(s.id)?.[0] ?? "").length }); // chars: latest owner message length (a wake run must not reset it)
     s.pollBash = 0;
     s.turnSeq += 1;
     s.turn = { cause: "other", cacheRead: 0, cacheWrite: 0 };
@@ -2978,6 +3298,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   /** The handoff dirs where this session is the child: the only ones the ask state and the parent-ruling gate read. */
   const childDirsOf = (s: Session): string[] => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id));
+  /** A `ruling.md` / `ruling-plan.md` written by this session in a handoff dir where it is the PARENT gets the `plan-version:` line of that dir's plan.md (checkpoint.ts stampPlanVersion). */
+  function stampParentRuling(s: Session, file: string): void {
+    if (path.basename(file) !== "ruling.md" && path.basename(file) !== PLAN_VERDICT_FILE) return;
+    const realOf = (d: string): string => {
+      try {
+        return fs.realpathSync.native(d);
+      } catch {
+        return path.resolve(d);
+      }
+    };
+    const dir = realOf(path.dirname(file));
+    const own = new Set(childDirsOf(s).map(realOf));
+    if (own.has(dir)) return;
+    const parentOf = ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)).map(realOf);
+    if (!parentOf.includes(dir)) return;
+    const hash = stampPlanVersion(file, path.join(dir, "plan.md"));
+    if (hash) s.trace?.emit({ event: "plan_ruling_stamped", to: hash.slice(0, 16) });
+  }
   const bashRulingSnaps = new Map<string, Map<string, number>>();
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
@@ -3097,6 +3435,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     launchScratch(s, input, b);
+    if (!s.isChild && get(s.config.config, "gate.childAsk") === "parent" && (roundStateDir(process.env) || ctx.hasUI)) {
+      // a parent that can answer (owner pane, round path) gives the child an ask dir; a headless parent gives none, so its children deny
+      const askDir = childAskDir(s.agentDir, s.id, b.launchId);
+      try {
+        fs.mkdirSync(askDir, { recursive: true, mode: 0o700 });
+        b.askDir = askDir;
+        childAskWatchFor(s, ctx).add(askDir);
+      } catch {
+        delete b.askDir;
+      }
+    }
     if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
     if (mcp) b.mcp = mcp;
     if (flags?.reads !== undefined) b.reads = flags.reads;
@@ -3125,6 +3474,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("tool_result", async (event, ctx) => {
+    gateDecided.delete(event.toolCallId);
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
     if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content)); // R6 lane 7f
@@ -3145,6 +3495,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           } catch {
             // keep the resolved path
           }
+          // R41 item 17: the parent pane's harness stamps the plan version into a plan ruling it wrote for a CHILD's handoff dir (never the caller's own dir)
+          if (event.toolName === "write" || event.toolName === "edit") stampParentRuling(owner, real);
           selfRulingsFor(owner).mark(real);
         }
       }
@@ -3212,7 +3564,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
-        finishScratch(s, s.scratch.onLaunched(boundLaunchId(event.input), runId));
+        const launched = s.scratch.onLaunched(boundLaunchId(event.input), runId);
+        finishScratch(s, launched);
+        closeChildAsk(s, launched);
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
           s.widget.runs.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
@@ -3927,6 +4281,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           rec.source = !verdict ? "dialog" : handoff && readPlanVerdictFile(handoff, plan.path, selfRulingsFor(s)) ? "ruling-plan" : "ruling";
           rec.approvedAt = new Date().toISOString();
           rec.by = !verdict && ctx.mode === "tui" ? "user" : "rig";
+          // a human's dialog answer (not a parent verdict) is kept in the harness-only approval store, keyed by the plan version hash
+          if (!verdict) saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
           if (s.planPhase) {
             s.planPhase = false; // an approval ends the plan phase
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
@@ -4039,7 +4395,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** Retro inputs of this session (agent dir, review log, usage, session file, trace). */
   function retroInputs(s: Session, ctx: ExtensionContext, sessionFlag: string, reportOnly = false): string[] {
-    const args = ["--agent-dir", s.agentDir, "--review-log", path.join(s.agentDir, "extensions", "pi-permission-system", "logs", "pi-permission-system-permission-review.jsonl"), "--usage", s.usage.file];
+    const args = ["--agent-dir", s.agentDir, "--usage", s.usage.file];
     const sessionFile = ctx.sessionManager.getSessionFile();
     if (sessionFile) args.push(sessionFlag, sessionFile);
     if (s.trace) args.push("--trace", s.trace.file);
@@ -4109,7 +4465,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman prs [list]",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman prs [list] | /foreman trust bridge | /foreman perms adopt <shape-id>",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -4140,6 +4496,27 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub === "session") return sessionCmd.command(args.trim().slice(sub.length), ctx);
+      if (sub === "trust") {
+        const s = await ensureSession(ctx);
+        if (s.isChild || rest.length !== 1 || rest[0] !== "bridge") {
+          ctx.ui.notify("Usage: /foreman trust bridge (foreman session only)", "warning");
+          return;
+        }
+        // the owner's confirm dialog only: no auto review, no model answer
+        ctx.ui.notify(await trustBridgeCommand(s.agentDir, s.cwd, projectBridgeConfigRisks(s.cwd), { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
+        return;
+      }
+      if (sub === "perms") {
+        const s = await ensureSession(ctx);
+        if (rest[0] !== "adopt" || rest.length !== 2) {
+          ctx.ui.notify("Usage: /foreman perms adopt <shape-id> (owner pane only; list shapes with `foreman perms candidates`)", "warning");
+          return;
+        }
+        const kind: GateKind = s.isChild ? "child" : roundStateDir(process.env) ? "round" : ctx.hasUI ? "owner" : "headless";
+        // the owner's confirm dialog only: no auto review, no model answer
+        ctx.ui.notify(await adoptPerms(s.agentDir, rest[1], kind, { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
+        return;
+      }
       if (sub === "budget") {
         const s = await ensureSession(ctx);
         if (rest[0] !== "lift" || s.isChild) {
@@ -4205,7 +4582,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const inv = setupInvocation(PKG_ROOT, args.trim().slice(sub.length), s.agentDir);
         const r = await spawner(inv.command, inv.args, { timeoutMs: 300_000, cwd: s.cwd, env: inv.env });
         const ok = !r.error && !r.timedOut && r.code === 0;
-        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubDrift(s)].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
+        ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...(gateReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never) ? [] : [`WARN ${noReviewModelText(ctx.model?.provider)}`])].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
       if (sub !== "doctor") {
@@ -4218,12 +4595,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ctx.ui.notify(["pi-foreman doctor", ...lines].join("\n"), failed ? "error" : "info");
     },
   });
-
-  /** hubdrift.ts lines for the doctor and `/foreman setup`: the cwd's checkout and the session's round worktrees. */
-  function hubDrift(s: Session): string[] {
-    const checkouts = [workspaceOf(s.cwd).root, ...roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform)];
-    return hubWorkflowDriftLines({ agentDir: s.agentDir, hubWorkflow: get(s.config.config, "paths.hubWorkflow"), checkouts, platform });
-  }
 
   async function doctor(s: Session, ctx: ExtensionContext): Promise<string[]> {
     const out: string[] = [];
@@ -4329,8 +4700,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
       else ok("no project Claude Code hooks, command helpers or .mcp.json");
     }
-    const bridgeCfg = projectBridgeConfigRisks(s.cwd);
-    if (bridgeCfg.length) fail(`project claude-bridge config: ${bridgeCfg.join(", ")}`, PROJECT_BRIDGE_FIX);
+    const bridgeTrust = bridgeTrusted(s.agentDir, s.cwd);
+    const bridgeCfg = bridgeTrust ? [] : projectBridgeConfigRisks(s.cwd);
+    if (bridgeTrust) ok("project .pi/claude-bridge.json is trusted by the owner (bridge-trust.json, hash matches)");
+    else if (bridgeCfg.length) fail(`project claude-bridge config: ${bridgeCfg.join(", ")}`, PROJECT_BRIDGE_FIX);
     else ok("no executable path, AskClaude or strictMcpConfig false in .pi/claude-bridge.json");
     const userBridge = userBridgeConfigRisks(s.agentDir);
     const userBridgeFile = path.join(s.agentDir, "claude-bridge.json");
@@ -4348,26 +4721,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else if (order === "foreman-first") ok("pi-foreman loads before pi-claude-bridge (the drift check precedes the bridge's summaries)");
     else if (order === "unknown") out.push("INFO load order of pi-foreman and pi-claude-bridge not found in settings.json packages");
     out.push(...intercomDoctor(s.agentDir, [settings?.packages, projectSettings?.packages], process.env, PKG_ROOT));
-    const rt = reviewTarget(s.config.config, ctx.model?.provider);
-    if (!rt) out.push(`WARN no review model for provider ${ctx.model?.provider ?? "(none)"}: model review (${REVIEW_LINK}) is off, every ask goes to you — set providers.<p>.review.model in foreman.json`);
+    const rt = gateReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never);
+    if (!rt) out.push(`WARN ${noReviewModelText(ctx.model?.provider)}`);
     else if (!ctx.modelRegistry.find(rt.provider, rt.modelId)) fail(`review model ${rt.provider}/${rt.modelId} not in the model registry; asks go to you`, "correct providers.<p>.review.model.");
     else ok(`model review: ${rt.provider}/${rt.modelId} (timeout ${rt.timeoutMs} ms)`);
-    out.push(`INFO ${autoReviewDoctorLine(get(s.config.config, "safety.permissions.autoReview.enabled") !== false, rulesFilePath(s.config.basePermissions, s.agentDir, PKG_ROOT), PKG_ROOT, rt ?? autoReviewTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as unknown as Parameters<typeof autoReviewTarget>[2]))}`);
-    if (s.permissionSystemError) fail(s.permissionSystemError, "run the installer (node setup.mjs); the package is pinned in packages.lock.json.");
-    else ok(`permission system resolvable (${PS_PACKAGE})`);
+    const gp = gateRuntimeOf(s);
+    out.push(`INFO gate policy: ${gp.policy.trusted.entries.length} trusted entries (hash ${gp.policy.hash.slice(0, 12)}), project layer ${gp.policy.project ? `${gp.policy.project.entries.length} entries` : "none"}; decision log ${gateLogFile(s.agentDir)}`);
+    for (const w of gp.policy.warnings) out.push(`WARN policy: ${w}`);
+    out.push(...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }));
+    out.push(...gateMigrationLines({ agentDir: s.agentDir, config: s.config.config }));
     if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);
     else fail("permission overlay baseline unreadable (shell and file tools are blocked)", "reinstall pi-foreman: config/permissions.baseline.json is part of the package.");
-    if (fs.existsSync(psProjectConfigPath(s.cwd))) fail(`project permission file ${psProjectConfigPath(s.cwd)} exists; it can loosen the permission system's rules`, "delete it and put your rules in foreman.json (the overlay still enforces denies, but asks and allows would be affected).");
-    else ok("no project permission file");
     for (const sh of shadowedRoles(s.cwd, childRoleIds(get(s.config.config, "roles")))) out.push(`WARN project agent shadows a role (${sh}) — fix: ${SHADOW_FIX}`);
-    const wanted = await renderPermissions({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, spawner });
-    const pf = permFileState(s.agentDir, wanted);
-    if (pf.state === "ok") ok("generated permission-system config is in sync");
-    else if (pf.state === "missing") fail("generated permission-system config is missing", "run the installer (node setup.mjs).");
-    else if (pf.state === "unreadable") fail("generated permission-system config is not valid JSON", "run the installer (node setup.mjs); it backs the file up first.");
-    else if (pf.state === "stale") fail(`generated permission-system config is out of date: ${pf.detail}`, "run the installer (node setup.mjs).");
-    else fail(`generated permission-system config was edited: ${pf.detail}. The installer owns this file`, "put your rules in foreman.json (safety.permissions) and run the installer; it backs the edited file up.");
-    out.push(...hubDrift(s));
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);

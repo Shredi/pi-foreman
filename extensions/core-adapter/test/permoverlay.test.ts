@@ -109,7 +109,6 @@ test("read/write/edit/grep/find/ls paths are checked, relative, absolute and ~",
     assert.equal(bash(r, "cat innocent.txt")?.kind, "deny", "symlink to a secret");
   }
   assert.equal(decide(r, "read", { path: path.join(agentDir, "auth.json") })?.kind, "deny");
-  assert.equal(decide(r, "write", { path: path.join(agentDir, "extensions", "pi-permission-system", "config.json") })?.kind, "deny");
   assert.equal(decide(r, "read", { path: "notes.txt" }), null);
   assert.equal(decide(r, "read", { path: ".env.example" }), null);
   assert.equal(decide(r, "grep", { pattern: "x" }), null, "no path: nothing to check");
@@ -168,7 +167,7 @@ test("matcher differences from the permission system: documented behaviours", ()
   assert.equal(bash(r, "touch ./absent.pem")?.kind, "deny", "path-shaped, absent: stricter than PS");
   // 2. a directory is denied by its own name only when a pattern matches '<dir>/'; ancestors are not walked
   assert.equal(bash(r, "grep -r x ~/.aws")?.kind, "deny");
-  assert.equal(bash(r, "grep -r x ~"), null, "ancestor of a secret directory: known gap, as in PS");
+  assert.equal(bash(r, "grep -r x ~")?.rule, "fs-scan", "whole-filesystem scan from the home directory is denied (r41)");
   // 3. powershell: patterns are case-insensitive, `\` is a path separator, backtick escapes
   assert.equal(decide(r, "powershell", { command: "Get-Content .env" })?.kind, "deny");
   assert.equal(decide(r, "powershell", { command: "gc ~/.ssh/id_ed25519" })?.kind, "deny");
@@ -350,7 +349,7 @@ test("literal row 24 stays denied for a child: the permission system's own sourc
   const r = rules2(false);
   const cmd = `grep -n "externalDirectory" ${ag2}/extensions/pi-permission-system/config.json`;
   assert.equal(sh(r, world(ws, "child"), cmd), "deny");
-  assert.equal(sh(r, world(ws, "main"), cmd), "deny", "a path rule (paths.deny), not the write protection");
+  assert.equal(sh(r, world(ws, "main"), cmd), "pass", "the paths.deny row went with the removed package; only the child stays protected");
 });
 
 test("literal row 25: a child's own scratch dir is open on every overlay surface", () => {

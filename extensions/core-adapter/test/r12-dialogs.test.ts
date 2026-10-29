@@ -35,7 +35,7 @@ test("dialogs_trace_redacts_secrets", (t) => {
   assert.ok(!raw.includes("abcdef0123456789abcdef0123456789") && !raw.includes("ghp_abcdefghijklmnop123456"));
   const rep = JSON.parse(dialogsJson(tr));
   assert.equal(rep.other.count, 2);
-  for (const l of rep.other.lines as string[]) assert.ok(l.length <= 200 && !l.includes("ghp_"), l);
+  for (const l of rep.other.lines as string[]) assert.ok(!l.includes("ghp_") && !l.includes("abcdef0123456789abcdef0123456789"), l); // R41 item 15: no length cap, redaction only
 });
 
 test("dialogs_trace_off_says_so_never_zero_counts", (t) => {

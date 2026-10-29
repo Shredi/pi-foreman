@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { childBashTimeout } from "../bashtimeout.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const cfg = {};
 
@@ -41,7 +41,7 @@ test("custom keys are honoured; invalid config values fall back to the defaults"
 });
 
 test("the adapter's child bash call gets the default and a bash_timeout trace; a cap is traced too", async (t) => {
-  const rig = await r11Rig(t, { childBashTimeoutMaxSeconds: 900 }, { child: true });
+  const rig = await r11Rig(t, { childBashTimeoutMaxSeconds: 900 }, { ...reviewAllowOpts(), child: true });
   const missing: Record<string, unknown> = { command: "echo ok" };
   await rig.call("bash", missing);
   assert.equal(missing.timeout, 600);

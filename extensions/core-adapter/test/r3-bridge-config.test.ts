@@ -14,8 +14,6 @@ import coreAdapter from "../index.ts";
 import { ClaudeConfigWatch, takeClaudeSnapshot } from "../claudedrift.ts";
 import { bridgeLoadOrder, projectBridgeConfigRisks, userBridgeConfigRisks } from "../bridgeiso.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike } from "../review.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PRINT = { mode: "print", hasUI: false };
@@ -136,6 +134,12 @@ test("R3-H1 / round 3: protect set covers .pi/claude-bridge.json and remove/rena
     ["edit", { path: ".pi/claude-bridge.json", edits: [] }],
     ["bash", { command: "echo '{}' > .pi/claude-bridge.json" }],
     ["foreman_move", { src: "x.json", dst: ".pi/claude-bridge.json" }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    assert.equal(kind(tool, input, "main"), "ask", `main ${tool} ${JSON.stringify(input)}`);
+    assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
+  }
+  // the state folder and its parent hold floored files: removing or renaming them is a floor deny (no dialog), was ask for the main agent
+  for (const [tool, input] of [
     ["bash", { command: "trash ~/.pi/agent/pi-foreman" }],
     ["bash", { command: "mv ~/.pi/agent/pi-foreman ~/.pi/agent/pf-old" }],
     ["bash", { command: `rm -r "$HOME/.pi/agent/pi-foreman/"` }],
@@ -146,7 +150,7 @@ test("R3-H1 / round 3: protect set covers .pi/claude-bridge.json and remove/rena
     ["powershell", { command: `Remove-Item -Recurse ${pf}` }],
     ["foreman_move", { src: pf, dst: path.join(root, "pf") }],
   ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "ask", `main ${tool} ${JSON.stringify(input)}`);
+    assert.equal(kind(tool, input, "main"), "deny", `main ${tool} ${JSON.stringify(input)}`);
     assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
   }
   assert.equal(kind("write", { path: path.join(cwd, "sub", ".pi", "claude-bridge.json"), content: "{}" }, "child"), "deny", "nested project bridge config: children denied");
@@ -160,23 +164,6 @@ test("R3-H1 / round 3: protect set covers .pi/claude-bridge.json and remove/rena
     assert.equal(kind(tool, input, "main"), "pass", `main ${tool} ${JSON.stringify(input)}`);
     assert.equal(kind(tool, input, "child"), "pass", `child ${tool} ${JSON.stringify(input)}`);
   }
-});
-
-test("R3-H1: the review link defers instead of calling claude-bridge while drift is pending", async () => {
-  let calls = 0;
-  const registry: RegistryLike = { find: () => ({}), complete: async () => (calls++, { content: [{ type: "text", text: '{"verdict":"allow"}' }], stopReason: "stop" }) };
-  const config = { providers: { "claude-bridge": { review: { model: "claude-bridge/small" } }, other: { review: { model: "other/small" } } } };
-  const bash = { requestId: "r1", surface: "bash", command: "uname -s" };
-  let drift = [".pi/claude-bridge.json: created"];
-  const r = new ForemanReview();
-  r.upsert("s", { isChild: false, cwd: "/w", provider: "claude-bridge", config: () => config, registry, intent: "", bridgeDrift: () => drift });
-  assert.deepEqual(await r.authorize("s", bash), { kind: "defer" });
-  assert.equal(calls, 0, "never called with drift pending");
-  r.upsert("o", { isChild: false, cwd: "/w", provider: "other", config: () => config, registry, intent: "", bridgeDrift: () => drift });
-  assert.deepEqual(await r.authorize("o", bash), { kind: "allow" }, "other providers are not gated");
-  drift = [];
-  assert.deepEqual(await r.authorize("s", bash), { kind: "allow" });
-  assert.equal(calls, 2);
 });
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -239,7 +226,7 @@ test("win32 (simulated): a Windows path in inline code is seen with single, doub
     checkToolCall(r, "bash", { command }, { cwd: "C:\\proj", home, platform: "win32", role, exists: () => false, isDir: () => false, realpath: () => null, list: () => [] })?.kind ?? "pass";
   for (const lit of [`'${pf}'`, `r'${pf}'`, `'${pf.replace(/\\/g, "\\\\")}'`]) {
     const command = `python3 -c "import shutil; shutil.rmtree(${lit})"`;
-    assert.equal(kind(command, "main"), "ask", command);
+    assert.equal(kind(command, "main"), "deny", command);
     assert.equal(kind(command, "child"), "deny", command);
   }
 });

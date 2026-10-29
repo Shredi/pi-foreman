@@ -7,9 +7,6 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike, ReviewSession } from "../review.ts";
-import { bashRules } from "../timeoutallow.ts";
 import { hubWorkflowDirs, hubWorkflowReadable } from "../roundsurface.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { bashPath } from "./_bashpath.ts";
@@ -57,21 +54,6 @@ test("hub .workflow is readable by the read tool and read-only bash for main and
 });
 
 const posix = process.platform !== "win32";
-const DEFER = '{"verdict":"defer","reason":"outside the workspace"}';
-const registry = { find: () => ({}), complete: async () => ({ content: [{ type: "text", text: DEFER }], stopReason: "stop" }) } as never as RegistryLike;
-const reviewSession = (hubCfg: unknown): ReviewSession => ({ isChild: false, cwd: ws, provider: "a", config: () => ({ providers: { a: { review: { model: "a/small", timeoutMs: 500 } } }, paths: { hubWorkflow: hubCfg } }), registry, intent: "", bashRules: () => bashRules(baseline, {}), ownedRoots: () => [path.join(w, "scratch")], readOnlyRoots: () => [], roundDirs: () => [ws], childDefer: () => "owner" });
-const ask = (command: string, n: number) => ({ requestId: `h${n}`, surface: "bash", command, forwarding: true, agentName: "reviewer" });
-
-test("review: a forwarded child's bash read of the configured hub ledger is allowed, a write and an unconfigured sibling defer", { skip: !posix }, async () => {
-  const on = new ForemanReview();
-  on.upsert("s", reviewSession([hub]));
-  assert.deepEqual(await on.authorize("s", ask(`cat ${hub}/.workflow/LEDGER.md`, 1)), { kind: "allow" });
-  assert.deepEqual(await on.authorize("s", ask(`touch ${hub}/.workflow/LEDGER.md`, 2)), { kind: "defer" });
-  assert.deepEqual(await on.authorize("s", ask(`cat ${sibling}/.workflow/LEDGER.md`, 3)), { kind: "defer" });
-  const off = new ForemanReview();
-  off.upsert("s", reviewSession([]));
-  assert.deepEqual(await off.authorize("s", ask(`cat ${hub}/.workflow/LEDGER.md`, 4)), { kind: "defer" });
-});
 
 test("hub .workflow stays read-only: a write or a redirect into it is not allowed", () => {
   for (const role of ["main", "child"] as const) {

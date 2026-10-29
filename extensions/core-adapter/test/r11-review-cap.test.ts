@@ -7,14 +7,14 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { reviewCapCheck } from "../costguard.ts";
 import { planReviewSection, type PlanVerdict } from "../planreview.ts";
-import { r11Rig, writeAt } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts, writeAt } from "./_r11rig.ts";
 
 const review = (n: number) => ({ agent: "reviewer", task: `review items ${n}` });
 const planReview = (n: number) => ({ agent: "reviewer", task: `[plan-review] review plan-x.md version ${n}` });
 const capRefused = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[review_cap\]/.test(r.reason ?? "");
 
 test("review_cap_fix_round_counted_separately", async (t) => {
-  const a = await r11Rig(t, { reviewRuns: 2 });
+  const a = await r11Rig(t, { reviewRuns: 2 }, reviewAllowOpts());
   // two plan reviews fill the plan counter only
   for (const n of [1, 2]) assert.equal((await a.launch(planReview(n))).res, undefined, `plan review ${n}`);
   assert.ok(capRefused((await a.launch(planReview(3))).res), "a third plan review is capped");
@@ -32,7 +32,7 @@ test("review_cap_fix_round_counted_separately", async (t) => {
 });
 
 test("ruling_review_cap_line_has_no_effect_but_ruling_file_lifts", async (t) => {
-  const a = await r11Rig(t, { reviewRuns: 1 });
+  const a = await r11Rig(t, { reviewRuns: 1 }, reviewAllowOpts());
   const dir = a.handoff("round", "child");
   const now = Date.now();
   writeAt(path.join(dir, "ask.md"), "ask: one more review round?\n", now - 60_000);

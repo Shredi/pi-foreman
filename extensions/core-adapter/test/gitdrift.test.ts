@@ -11,7 +11,7 @@ function tempRepo(t: { after(fn: () => void): void }): string {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-drift-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, ".git", "hooks"), { recursive: true });
-  fs.writeFileSync(path.join(dir, ".git", "config"), "[core]\n\tbare = false\n[user]\n\tname = t\n");
+  fs.writeFileSync(path.join(dir, ".git", "config"), "[core]\n\tbare = false\n[user]\n\tname = t\n[remote \"origin\"]\n\turl = https://example.invalid/r.git\n");
   fs.writeFileSync(path.join(dir, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 0\n");
   fs.mkdirSync(path.join(dir, "sub"));
   return dir;
@@ -157,4 +157,36 @@ test("branch tracking keys are routine: added or removed they are no drift, a ch
   assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), [], "removal");
   fs.writeFileSync(cfg, base + trackCfg(BR).replace("refs/heads/main", "refs/heads/evil"));
   assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), ["git:config: changed branch.main.merge"]);
+});
+
+function trackingDiff(t: { after(fn: () => void): void }, extra: string, mutate?: (base: string) => string, start = ""): string[] {
+  const dir = tempRepo(t);
+  const cfg = path.join(dir, ".git", "config");
+  const base = fs.readFileSync(cfg, "utf8");
+  fs.writeFileSync(cfg, base + start);
+  const before = takeGitSnapshot(dir, HOME);
+  fs.writeFileSync(cfg, mutate ? mutate(base) : base + start + extra);
+  return diffGitSnapshots(before, takeGitSnapshot(dir, HOME));
+}
+
+test("tracking: merge refs/heads/<b> is routine, a foreign ref is drift", (t) => {
+  assert.deepEqual(trackingDiff(t, '[branch "a.b"]\n\tmerge = refs/heads/a.b\n'), []);
+  assert.deepEqual(trackingDiff(t, '[branch "a"]\n\tmerge = refs/heads/evil\n'), ["git:config: added branch.a.merge"]);
+  assert.deepEqual(trackingDiff(t, "", (b) => b + '[branch "a"]\n\tmerge = refs/heads/evil\n', '[branch "a"]\n\tmerge = refs/heads/a\n'), ["git:config: changed branch.a.merge"]);
+});
+
+test("tracking: remote with an unchanged url is routine, a changed url is drift", (t) => {
+  assert.deepEqual(trackingDiff(t, '[branch "a"]\n\tremote = origin\n'), []);
+  const changedUrl = trackingDiff(t, "", (b) => b.replace("r.git", "x.git") + '[branch "a"]\n\tremote = origin\n');
+  assert.deepEqual(changedUrl, ["git:config: added branch.a.remote; changed remote.origin.url"]);
+});
+
+test("tracking: pushRemote and URL or path valued remote are drift", (t) => {
+  assert.deepEqual(trackingDiff(t, '[branch "a"]\n\tpushRemote = origin\n'), ["git:config: added branch.a.pushremote"]);
+  assert.deepEqual(trackingDiff(t, '[branch "a"]\n\tremote = https://example.invalid/r.git\n'), ["git:config: added branch.a.remote"]);
+  assert.deepEqual(trackingDiff(t, '[branch "a"]\n\tremote = ../evil\n'), ["git:config: added branch.a.remote"]);
+});
+
+test("tracking: removal of remote and merge is routine", (t) => {
+  assert.deepEqual(trackingDiff(t, "", (b) => b, '[branch "a"]\n\tremote = ../evil\n\tmerge = refs/heads/evil\n'), []);
 });

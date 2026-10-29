@@ -8,8 +8,6 @@ import { fileURLToPath } from "node:url";
 import { mkTestTmp } from "./_tmpbase.ts";
 import { effectCtx } from "../effects.ts";
 import { readBaseline } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike, ReviewSession } from "../review.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -68,16 +66,4 @@ test("a symlink inside the handoff dir cannot lead a write out", { skip: !posix 
   fs.mkdirSync(out, { recursive: true });
   fs.symlinkSync(out, path.join(handoff, "esc"));
   assert.notEqual(allow(`cp ${handoff}/brief.md ${handoff}/esc/b.md`), "own-handoff");
-});
-
-test("the link allows the foreman's own (not forwarded) ask without the model, and only for this label", async () => {
-  const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-  const r = new ForemanReview();
-  const s: ReviewSession = { isChild: false, cwd: wt, provider: "a", config: () => ({}), registry: reg, intent: "", bashRules: () => rules, ownDirs: () => [handoff] };
-  r.upsert("s", s);
-  const own = { requestId: "r", surface: "bash", agentName: "foreman", value: `cp ${handoff}/brief.md ${wt}/.workflow/scratch/b.md` };
-  if (posix) assert.deepEqual(await r.authorize("s", own), { kind: "allow" });
-  if (posix) assert.deepEqual(await r.authorize("s", { ...own, value: `mkdir -p ${wt}/x` }), { kind: "allow" });
-  const asked = await r.authorize("s", { ...own, value: "git push origin main" });
-  assert.notEqual(asked.kind, "allow");
 });

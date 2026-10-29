@@ -1,7 +1,9 @@
 // R19 item 2: a reviewer PASS on a plan-review occasion does not start the post-PASS recheck window; any other PASS does.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig as baseRig, reviewAllowOpts } from "./_r11rig.ts";
+
+const r11Rig = (t: Parameters<typeof baseRig>[0], ceremony: Record<string, unknown> = {}) => baseRig(t, ceremony, reviewAllowOpts());
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 

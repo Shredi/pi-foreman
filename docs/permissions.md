@@ -1,557 +1,241 @@
-# Permissions: effect classes and chains
+# Permissions: the tool gate
 
-> Covers how the review link decides a child's forwarded bash ask without a model call: effect classes, chain composition and the deterministic allow labels.
-> Read it when a child command is reviewed or denied that you expected to run, or before you widen an allow.
-> The overlay deny and protect rules and the git guard run first; nothing here can allow what they refuse.
+> Covers how pi-foreman decides every tool call: the gate's steps, who sees an ask, the decision log, the config keys and the migration from the old permission package.
+> Read it when a call is denied or asks that you expected to run, before you adopt a new default, or when you upgrade from a release that used `@gotgenes/pi-permission-system`.
+> The floors run first and nothing here (policy, review model, dialog) can allow what a floor refuses.
 
-## Two layers
+pi-foreman decides tool calls with its own gate, `extensions/core-adapter/gate.ts`. It is the first `tool_call` handler in load order and decides every tool call of every session kind. The permission package it replaces is no longer loaded, rendered or configured: there is no rendered permission file and no shadow mode.
 
-The foreman's permission decisions come in two layers.
+A guard rail, not a sandbox: a prompt-injected agent can still find commands the parser marks opaque. Those go to the review model, never to a default allow, and the floors run on the raw text so obfuscation reaches a review or a deny, not an allow.
 
-- **Basic blockers**, the deterministic floor: `protect.deny`, `childDeny`, credential reads, foreign session dirs and
-  an own ruling written by a plain path are overlay denies; they are never judged by a model. The destructive guard
-  and the secrets-in-commit check run after the overlay: they are later deterministic layers that an auto-review
-  allow does not skip.
-- **Auto reviewer**: every other foreman overlay ask goes to the review model first, judged by the prose rules in
-  `config/permissions.rules.md`. Its verdict decides: an allow lets the call go on to the later layers. A child's overlay ask (not a self-modification) goes there too, headless included: the prompt says `requester: subagent <role>`, an allow traces `auto_review_allow` with the child role, a high or critical deny blocks, and a defer keeps the child block "ask the foreman".
+## Session kinds
 
-What reaches a human: a reviewer deny is a block (the call is refused with its reason) only with riskLevel high or
-critical; a deny with riskLevel low, medium or missing, a defer, an error, a timeout or no review model is the dialog
-as before. Self-modification writes (`selfMod`: a protect ask hit on a shell write or remove target, or on a
-write, edit, move or copy tool) go to the human dialog with no model call; they are not refused. A write into the session's own `{cwd}/.pi/scratch/` is not selfMod and goes to the reviewer. A headless foreman (print or json mode, no UI) gets no auto review and behaves as before. An overlay
-replaces the rules file through `safety.permissions.autoReview.rulesFile` (user layer only; see
-[overlays](overlays.md#reviewer-rules-file)); `safety.permissions.autoReview.enabled` switches the reviewer off.
-
-## Where this applies
-
-A child (subagent) bash command the permission system asks about is forwarded to the foreman's review link
-(`foreman-review`, see [safety](safety.md)). Before any model call, the link tries a deterministic allow. It applies to
-forwarded child asks only; the foreman's own asks go to the review model as before. The child runs in the foreman's
-cwd, so relative paths resolve there.
-
-The permission system forwards one unit of a chained command with the whole command as evidence. Every
-deterministic allow must hold for that unit and for the full command.
-
-## Shell tools that count as bash
-
-`foreman_bg` (the foreman's detached run) and the optional background-tasks add-on's `bg_run` are shell tools: every overlay
-deny/ask rule, the shell-write guard, the destructive guard and the git guard see their `command` as a bash command, and
-`shellTools` in `config/permissions.baseline.json` maps both to the bash rules for the permission system (`commandArgument: command`,
-the same alias `powershell` has). A missing or non-string `command` is denied.
-
-The harness's own tools carry a tool-level `allow` in the baseline `tools` block, so the foreman gets no permission dialog (formerly
-"not on the chair allow list, escalated") for `subagents_enable`, `bg_status`, `bg_logs`, `bg_kill`, `bg_wait` and the `foreman_*` tools.
-`bg_run` and `foreman_bg` stay gated as bash above. Children keep their role's `tools` list, which holds none of them.
-
-The add-on's own task output (`<repo>/.pi/tasks/<own session id>-<pid>/**`) is readable through the read tool and a strictly read-only
-shell command (`cat`, `tail`, `grep`, ...) for the foreman and its children, although the write protection covers `.pi`; another
-session's `<id>-<pid>` dir, a symlink or `..` leading out, and every write there stay protected. `/foreman waits` prints each task's
-output file relative to the worktree (a `  log .pi/tasks/<id>-<pid>/<task>.output` line after the tail).
-
-## Effect classes
-
-`extensions/core-adapter/effects.ts` sorts a command by what it does:
-
-| Class | What | Goes to the model |
+| Kind | What it is | Who answers an ask |
 |---|---|---|
-| read | `ls`, `cat`, `head`, `tail`, `wc`, `stat`, `file`, `tree`, `diff`, `grep`, `rg`, `find`; print-only sed; `git status/log/diff/show`; `git add/clean/mv/rm` with `-n`/`--dry-run`; `npm install/ci/update/... --dry-run` (not `publish`/`pack`), `make -n <test target>`; `cd` into an allowed place | no |
-| build-test | the project's own commands, from its manifest at the worktree root, run from that root; also `node --test <contained files>`, `npx tsc --noEmit [-p <contained tsconfig>]` and `python3 [-I\|-B\|-u] -m unittest discover -s <contained dir> -p <pattern>` (and `-m pytest`) | no |
-| write-in | `mkdir`, `touch`, `cp`, `mv`, `rm`, `tee`, `sed -i ''`/`-i<suffix>` with one plain `s///` script given by `-e`, the test restore | no |
-| write-out | one of those writes, or a redirect, that reaches outside the allowed places | yes |
-| net-read | a network read in the exact grammar of [Network reads](#network-reads-r31c) (label `net-read`); never auto-allowed alone, it composes only with `read` segments | no (inside the grammar) |
-| unknown | everything else, and every command the chain splitter refuses | yes |
+| owner | a pane with a human and no parent | a dialog in the pane |
+| round | a session opened by a parent foreman (`foreman session open`) | `ask.md` to the parent, which brings it to its owner |
+| child | a subagent run (builder, reviewer, ...) | its parent, via `gate.childAsk` (below) |
+| headless | no UI (print or json mode) | nobody: the ask is denied |
 
-Paths. Every path argument (operands, `--opt=value` values, input redirects) of a read or a write must resolve inside
-the worktree (the git top level of the cwd) or a live `$FOREMAN_SCRATCH` dir of the asking role; a write may also go
-under `/tmp` (not on Windows), a read never does (the shared `/tmp` holds other programs' files). A path that starts with `~` or holds `=~` or `:~` (bash expands those too), holds a `..` component, is drive-relative (`C:x`) or resolves elsewhere
-(`/etc/passwd`, another absolute path) is outside, and the command goes to the model review. The realpath of the
-nearest existing ancestor must stay inside too, so a symlink cannot lead out. The cwd a classified program runs in
-must be such a place as well (`cd /etc && ls` goes to the model). `cd` with no operand, an option or `-` (`cd`,
-`cd -P`, `cd --`, `cd -`) or a `~` operand goes to `$HOME` or `$OLDPWD`: the whole command goes to the model. Outside a
-git repository there is no worktree; only the scratch dir and `/tmp` count.
+## The steps
 
-Read roots. `safety.permissions.readRoots` (list of dirs, default `[]`) adds places a read may reach: a read inside a
-listed dir is a read too. `~` and `%USERPROFILE%` at the start mean the home dir; an empty, relative or missing entry is
-dropped, and so is a filesystem root (`/`, a drive root `C:\`, a UNC share root `\\server\share`), the home dir
-itself and any dir that contains it (`/Users`, `~/..`, `/private` when the home realpath lies below it), checked on the
-path as written and on its realpath, case-folded on macOS and Windows (each would make every read below it deterministic). Each root is taken by its realpath and the realpath rule above applies, so a symlink inside a root cannot lead
-out. Roots count for reads only: writes, `rm` and the build-test cwd stay in the worktree, scratch dir and `/tmp`. Only
-the user and overlay config may set it; a project or session value is ignored with a warning. pi-foreman is generic and
-must be safe without an overlay; an overlay adds e.g. the folder holding the user's repos.
+Every call goes through these steps in order. All are deterministic except step 4.
 
-Writes must lie strictly below an allowed place (never the worktree root itself) and never under `.git`; the `.git`
-check runs on the path as written and again on the realpath of its nearest existing ancestor. On Windows a component
-with a trailing dot or space (`.git.`) or an 8.3 short-name shape (`GIT~1`) counts as `.git`. `rm` and `mv`
-never count `/tmp` (as `tmp-scratch`: `rm -rf /tmp/...` stays reviewed). Allowed flags are fixed per program
-(`cp -Rapfnv`, `rm -rRfdv`, `mkdir -pv`, `touch -acm`, `mv -fnv`, `tee -aip`); any other flag is unknown. A recursive
-`cp` (`-R`, `-a`) copies only from the worktree: `-R` and `-a` keep the symlinks of the source tree on GNU and BSD, and
-`/tmp` is shared. A lowercase `cp -r` is unknown: BSD (macOS) `cp -r` follows every symlink in the tree.
-For `cp` and `mv` the path really written is checked: a destination that is a symlink is write-out (cp writes through
-it), and into an existing directory each `dest/<basename of source>` must be a contained write that is not a symlink
-(a committed `d/f -> outside` makes `cp f d` write-out). A recursive `cp -R`/`-a` into an existing directory is unknown:
-the tree below it is not walked.
+1. **Parse.** `shellast.ts` parses `bash` input with `unbash` into segments: the commands of chains, pipelines, `$(...)`, backticks and subshells, `bash -c`/`sh -c`/`eval` with a literal string, and the wrappers `env`, `timeout`, `nice`, `nohup`, `xargs`, `time`, `command`, `stdbuf`, `setsid`, `watch`, `flock -c`. Each segment has its argv, redirect targets, heredoc presence and effective cwd (a `cd` inside the line, `git -C`). Variables resolve only through the closed grammar of `shellvars.ts` (see [Variables in bash lines](#variables-in-bash-lines)). A segment whose program or targets the walker cannot resolve is **opaque**: an unresolved variable, a glob in a target, a process substitution, a runner with a non-literal script, nesting deeper than 4, a parser error, a function definition, `alias`, `trap` and similar builtins, an assignment outside a short closed allowlist of harmless names, a shell fed by heredoc or stdin, and PowerShell or cmd. The `powershell` tool is one opaque segment. The path tools yield a path and a direction, `fetch` a method and URL, and MCP and skill tools their name and input. An opaque segment is never a default allow.
+2. **Floors.** A deny with a reason that names the allowed alternative. No model, no dialog, no override by policy, config or dialog; no config key turns them off. They run on the raw text of every tool before parsing and again on the AST, so an unparseable command can be denied but never allowed by default. See [Floors](#floors).
+3. **Defaults.** Named allow rules (`default-<name>`, with tests), evaluated per segment. The whole line is allowed only when every segment matches a default and none is opaque. See [Defaults](#defaults). The path tools have their own runtime rules (`path-read-*`, `path-write-*`) computed from the session's roots.
+4. **Review.** One call to the review model with the merged trusted policy and the facts the gate computed. It returns a closed JSON verdict. See [The review call](#the-review-call).
+5. **Dialog.** Only when the verdict is `ask`, or when the review is unreachable, in a session with someone to ask. See [Who sees an ask](#who-sees-an-ask).
+6. **Decision log.** Every decision of every layer is one JSON line. See [Decision log](#decision-log).
+7. **Gradual growth.** `foreman perms candidates` lists what can become a default. See [Candidates](#candidates).
 
-`sed -i` is write-in only in a shape GNU and BSD (macOS) sed read the same way: `-i ''` (an empty separate word) or an
-attached suffix (`-i.bak`, `--in-place[=suffix]`), the script given by `-e`/`--expression` as one plain `s///` (no `w`
-or `e` flag, nothing after it), no option after the first file operand, and every file operand an existing regular
-file (not a symlink) inside the allowed places with no blank in its name. A bare `-i` is unknown: BSD sed takes the next
-word as the backup suffix and the word after it as the script (`sed -i 's/a/b/' 'w /x' f` writes `/x` on macOS). A
-print-only sed with an option after its first operand is unknown too (BSD stops option parsing there, GNU does not).
+Self-modification writes (`selfMod`), git-config drift on non-routine keys and the bridge trust record are dialogs by rule and never cleared by the model.
 
-Read guards. `find` with `-exec`, `-execdir`, `-ok`, `-delete`, `-fprint*`, `-fls`, `-L`/`-H`/`-follow`; `rg --pre`
-or `--follow`; `grep -R`; `diff -r`/`--recursive` (it follows symlinks below its operands); `tree -o`; git global
-options (`git -c`, `git -C`); `git status/log/diff/show` with `-c`, `--output`, `--ext-diff` or `--textconv`; and any
-option that names a program (`rg --hostname-bin`, `--*-command`, `--exec*`) are unknown. `-n`/`--dry-run` counts as a
-dry run only for `git add/clean/mv/rm`, only before `--`, and only without a value-taking option (`-e`/`--exclude`,
-`--chmod`, `--pathspec-from-file`, also abbreviated) that could take it as its value: `git clean -fdx -e -n` deletes.
-`git commit -n` means `--no-verify` and is unknown.
+## Floors
 
-Build-test, from the manifest only (no per-task list):
+Floors deny with a reason and no model call, for every session kind:
 
-- `package.json` scripts `test`, `build`, `lint`: `npm test`, `npm run <script>`; also `npm ci` and a bare
-  `npm install` (no package names, no `-g`);
-- `Makefile` targets named `test*`: `make <target>`;
-- `Cargo.toml`: `cargo test`, `cargo build`, `cargo clippy`, `cargo fmt --check`;
-- `go.mod`: `go test`, `go build`, `go vet`;
-- `make -n` (also `--dry-run`, `--just-print`, `--recon`) with `test*` targets only is a read, with no other option
-  than `-s`/`--silent`, `-k`/`--keep-going` and `-j[N]`; any other option is unknown, also an abbreviated long one
-  (GNU make takes `--eva=`, `--fil=`, `--dir=`); `--eval`/`-E` is unknown;
-- pytest config (`pytest.ini`, `tox.ini [pytest]`, `setup.cfg [tool:pytest]`, `pyproject.toml [tool.pytest]`):
-  `pytest`, `python -m pytest`.
+- secrets and key paths (`~/.ssh`, `~/.gnupg`, `~/.aws`, cloud and kube credentials, `.env`, `.npmrc`, `.pypirc`, `.netrc`, git credential stores, Pi's auth file) for read and write;
+- writes to pi-foreman's config and policy files of every layer, `safety.*` config, `managed.json`, `state/round-parents.json`, `state/bridge-trust.json`, `state/approvals/**`, `state/gate/**`, and (for any child tool write) `state/child-asks/**`;
+- force, mirror and delete pushes, pushes to the default or a protected branch, and **any `git push` from a subagent child** (children never push; the foreman pushes). Round sessions opened with `foreman session open` keep going to review;
+- `git config` of the keys listed in `extensions/core-adapter/git-floor-keys.json` (hooksPath, sshCommand, credential helpers, `url.*.insteadOf`, remote urls, push configuration), in every form: `git config` in any scope, the `-c key=value` prefix, `--config-env`, `GIT_CONFIG_*` environment words, and `git remote add|set-url|rename|remove|set-branches|set-head`; `core.attributesFile` outside `.workflow/` or with a verb other than `merge`;
+- deletes and recursive overwrites outside the session's worktree, scratch and `/tmp`; `rm` of `/`, home or a system dir;
+- `sudo`, `su`, `doas`; shutdown, disk formatting, `dd` to a device;
+- whole-filesystem scans (`find /`, `grep -r ... /`, `du /`, `ls -R /`);
+- a download piped into a shell; package publish;
+- the existing guards, unchanged: the git guard, the shell-write guard, the destructive guard, secrets-in-commit, `protect.deny`, `childDeny`, own-ruling writes and foreign session dirs;
+- an opaque segment whose raw text contains a floor pattern.
 
-A build command that is not in the manifest is left to the permission rules (`safety.permissions.projectCommands`).
-After a `cd` that leaves the worktree root (`cd /x && npm test`, `cd src && make test-unit`) a build tool (`npm`,
-`cargo`, `go`, `make`, `pytest`, `python`) is unknown and the rules do not allow it either. `cargo publish` is unknown,
-`--dry-run` included (it runs `build.rs` and reaches the registry).
-An `npm`, `cargo`, `go` or pytest command with an option that writes where it chooses or names a program goes to the
-model, manifest or not: `-o`, `-exec`, `-toolexec`, `--basetemp`, `--junitxml`, `--target-dir`, `--out-dir`,
-`--manifest-path`, `--prefix`, `--script-shell`, `--config`, `--cache`, profile outputs, `go vet -vettool`, pytest
-`-o`/`-p`, and the like.
+## Defaults
 
-## Chains
+A default is a named rule that allows without a model. The shipped rules (`defaults.ts`):
 
-`extensions/core-adapter/shellchain.ts` splits a command on top-level `&&`, `||`, `;` and `|`, quote-aware. The whole
-command is refused (model review) when it holds `$(`, a backtick or a newline anywhere; an unquoted `(`, `)`, `{`, `}`,
-`$`, `\`, glob, `!`, `#` or lone `&`; a heredoc or herestring; or a runner program in any segment (`eval`, `xargs`,
-`sh`/`bash`/`zsh` and other shells, `env`, `sudo`, `nohup`, `nice`, `time`, `exec`, `source`, ...) or an `X=y` prefix.
-`timeout N` is the only wrapper that is unwrapped, and only around an allowed segment.
-
-Redirects go only to `/dev/null`, into a scratch dir (`$FOREMAN_SCRATCH` is expanded), or under `/tmp/`; fd dups
-such as `2>&1` are fine. Every segment must then be allowed on its own: a deterministic label below, or a unit the
-permission rules allow when the effect layer does not know the program (`echo`, `pwd`, `git blame`, ...). A `cd`
-moves the cwd the later segments resolve against. A segment that names a path at or below a destination an earlier
-segment wrote (a `cp`/`mv`/`ln`/`install`/`rsync` target, `tee` file or output redirect) goes to the model: the copy may
-have planted a symlink there that the review-time check cannot see (`cp -R /tmp/pkg vendor && cat vendor/link`). A user's `ask` or `deny` pattern that catches the command or any
-segment wins.
-
-Examples that run without a model call: `sed -n '1,40p' f; grep -n x f`, `timeout 900 cargo test -p x | tail -50`,
-`cd <worktree> && grep -rn x . | head`. Examples that go to the model: `ls | xargs rm`, `cat ~/.ssh/id_rsa`,
-`cat /etc/passwd`, `ls > ~/x`, `find . -exec ...`, `git commit -n`.
-
-## Deterministic labels
-
-The `review` trace's `decision` is one of these when no model was called:
-
-| Label | Allows |
+| Rule | Allows |
 |---|---|
-| `tmp-scratch` | one `cp`/`mkdir` writing only under `/tmp/`; every `cp` source a contained read (worktree, scratch dir, read roots), a recursive source from the worktree only, lowercase `-r` on Linux only, into an existing dir each `dest/<name>` checked and no recursive copy |
-| `child-scratch` | `cp`/`mkdir`/`rm`/`cd` inside a live `$FOREMAN_SCRATCH` dir of the asking role; the chain composer must allow the whole command too (every segment a deterministic allow, `cp` sources checked as reads, the earlier-write rule) |
-| `own-handoff` | a chain segment `mkdir [-pv]`, `cp [-fpnv]` (no recursion), `cat [-n]` or `ls [-alh1d]` whose operands stay below this session's own handoff dirs (`parent`/`child` file matches, owned paths) or its round worktree: write operands (`mkdir` paths, the `cp` destination) contained there with symlinks resolved, never below `.git`, never a handoff dir's `parent` or `child` file; read operands the same or any contained read, a trailing `<dir>/*` accepted on a read; no redirects, `$`, `~` or `..`. Applies to a child's forwarded ask and to the foreman's own ask (without the model); every other segment of the chain must pass on its own |
-| `timeout-wrapper` | `timeout N <allowed segment>` in the chain |
-| `test-restore` | `git restore [--worktree\|-W] [--] <paths>` or `git checkout -- <paths>`, every path a relative test path (the `isTestPath` rule) inside the worktree, no `..`, no `--source`/`-s`/`--staged`, glob or `:` pathspec magic |
-| `own-cli` | the foreman session's own `<root>/bin/foreman` (explicit path, realpath inside the root) with `session open\|brief\|list`, `dialogs` or `findings list`; one simple command, never a forwarded child ask (see Own CLI below) |
-| `npm-ci-worktree` | a child's exact `npm ci` (no flag, env prefix or chain; trace `overlay_allow{rule: npm-ci-worktree}`) whose cwd realpath lies in a `roundRoots` entry or in a pi-subagents managed worktree (`worktree: true`: nearest `.git` above is a file, directory name `pi-worktree-*`) and whose npm local prefix does too; never the parent checkout. POSIX only: win32 still asks. Never when that prefix's `node_modules` is a symlink (lstat; `npm ci` would wipe the tree it points to): it asks, and so does the owned-root install rule for such a worktree. A Worktrunk leaf has no marker and still asks |
-| `sed-read` | a print-only `sed -n '<addr>p' <file>` in the chain |
-| `effect-write-in`, `effect-build-test`, `effect-read` | a chain whose segments are of those classes |
+| `default-own-tool` | pi-foreman's own tools that carry no file path and no shell or message payload: `plan_mode_question`, `plan_mode_complete`, `ask_user_question`, `foreman_ledger`, `foreman_triage`, `foreman_checkpoint`, `foreman_dialogs`, `foreman_wait`, `contact_supervisor`, `subagent_supervisor`, `bg_wait`, `bg_status`, `bg_logs`, `bg_kill`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `pr_track`, `pr_untrack`, `git_status`, `git_log`, `git_diff_stat`, `git_branch_state`, `subagents_enable`. Every other tool (`foreman_bg`, `bg_run`, `foreman_move`, `foreman_copy`, `foreman_session_open`, `pr_create`, `subagent` (except `default-role-launch`), `intercom`, `fetch`, `codemode`, every MCP and skill tool) goes through the pipeline on its actual payload |
+| `default-role-launch` | the foreman session's own single `subagent` launch of one of `explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`, with no `action`, `tasks`, `chain` or `workflow`. No review model is needed. The gate runs first, but the adapter's role, ceremony and spawn gates run after it and still refuse a launch they refuse; the allow only replaces the review. Not covered, so they keep the review or ask path: management actions (workflow scripts, agent-definition actions, `schedule.*`), unknown agents, a `tasks` or `chain` form, and every launch a child makes. Floors and denies run first. The trace and the decision log name the rule |
+| `default-read` | the read class of `effects.ts` (`ls`, `cat`, `head`, `tail`, `wc`, `stat`, `grep`, `rg`, `find`, print-only `sed`, ...) on paths inside the session's roots |
+| `default-build-test` | the project's own build and test commands from its manifest, run from the worktree |
+| `default-write-in` | `mkdir`, `touch`, `cp`, `mv`, `rm`, `tee` inside the worktree, scratch and `/tmp` (`gate.tmpAccess`, default on) |
+| `default-git-read`, `default-git-add`, `default-git-commit` | read-only git; `add`; `commit` with a message (secrets-in-commit still runs) |
+| `default-git-fetch`, `default-git-pull` | `fetch`; `pull --ff-only` |
+| `default-git-switch` | `switch`/`checkout` of the own branch |
+| `default-git-push` | `git push [-u] origin <own branch>\|HEAD` with an empty environment prefix, and no force, delete, mirror, tag, `:` refspec, `-o`, `--repo`, `--receive-pack`, `--exec`, `-c`, or `remote.origin.push`. Never for a child (floor) |
+| `default-gh-read` | read-only `gh`/`glab` (`run view\|list`, `pr view\|checks\|diff\|list\|status`, `api` with no method, no graphql and no `-f/-F/--input`; `run download` only into scratch), writing only to scratch, `/tmp` or a reader pipe |
+| `default-assign` | the closed allowlist of harmless assignments |
 
-A `cd` to a contained directory is a neutral prefix of a chain: it carries no label of its own, so `cd <worktree> && node --test x.test.ts` is allowed with the label of the other segments (trace `chain_allow`). A `cd` outside the allowed places, or a redirect such as `node --test x > out.txt`, still asks.
+Children get the same defaults minus pushes, parent `.workflow` writes and anything outside their worktree.
 
-A chain takes the first label of the list above (after the scratch labels) that one of its segments carries. The git
-guard still decides `git restore`/`git checkout` first (tracked, modified test files only).
+### Owned paths
 
-Own CLI (`ForemanReview.authorize`, trace `overlay_allow{rule: own_cli}`): for the foreman session only, never a forwarded child ask, one simple bash command whose head is an explicit path (contains `/`, so a bare `foreman` via PATH is refused) and resolves by realpath to the session's own `<root>/bin/foreman` inside the root is allowed without the auto reviewer when its verbs are exactly `session open|brief|list`, `dialogs` or `findings list`. It is refused (normal path) for `..`, shell control, redirects, substitution, a `VAR=` prefix, `$VAR`, globs, or a matching user bash ask/deny rule. Every other verb (setup, config, `findings record|dismiss|export`, close, worktree, sync, retro, backlog, bench, radar, update-check) takes the normal path. Residual: `session open --cwd` / `--agent-dir` accepts any path.
+Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `foreman_copy`) go through `pathrules.ts`. The allowed places are computed at runtime from the session's roots, not rendered into a file:
 
-## Dialog keys
+- the worktree, the session's scratch dir and the OS temp dirs (`gate.tmpAccess`; for a child only its own `$FOREMAN_SCRATCH`);
+- reads of the Pi install dir, the global npm root, the bundled package roots and the owned roots (state dirs, handoffs, sibling worktrees);
+- the registered round-parent `.workflow` dir, read-only, for the session whose parent it is;
+- the session's own handoff dir: `plan.md` and `result.md` may be written;
+- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree.
 
-The ask dialog is the bundled permission system's (`@gotgenes/pi-permission-system`), not the harness's. `y` (`approve`) approves and
-`n` (`deny`) denies. With its default `doublePressToConfirm: true` the first `y` only arms the choice and the second `y` confirms,
-which reads as an ignored key. Set `doublePressToConfirm: false` in the permission-system config to confirm on one press, or
-rebind keys with `permissionDialogKeys` (actions `approve`, `approveSession`, `approveSessionBoth`, `deny`, `denyWithReason`;
-defaults `y`, `s`, `b`, `n`, `r`).
-
-## Traces
-
-- `review {decision, model, class, ...}`: `class` is the effect class of the full command (bash asks).
-- `chain_allow {segments, decision, role}`: a chain of two or more segments was allowed without the model.
-- `review_defer_headless {role, cmd}`: a forwarded ask deferred with no human to ask and was denied.
-- `review_defer_child {decision, role, cmd}`: a forwarded child ask the review would defer; `decision` is `deny` (default) or `owner`. `review.childDefer: "owner"` restores the old defer to the owner pane, which blocks every later forwarded ask until the owner answers; the default denies with a text naming the allowed shapes.
-
-## Owned paths
-
-The foreman session owns a few places outside the workspace. Access to them is granted by default, in two layers:
-
-1. **Policy grants** (permission system, "PS"). `foreman setup` renders `external_directory` (and
-   `external_directory_read`) from the `externalDirectory` block of `config/permissions.baseline.json` into the one
-   global policy file `<agentDir>/extensions/pi-permission-system/config.json`. `/foreman doctor` re-renders it with
-   the same generator and reports drift. PS has no per-session or per-role scope, so these grants hold for every role
-   of the user's pi processes. A review-link answer cannot grant them: PS turns an `allow` on the `external_directory`
-   family into `defer`.
-2. **Overlay narrowing** (adapter). The overlay can only block. For a child (path tools and shell operands alike) it
-   denies: `handoffs/**` except `plan.md` and `result.md` (so `ruling.md` at any depth is the foreman's), the session's
-   `subagent-artifacts`, `<agentDir>/foreman.json`, `<agentDir>/pi-foreman/claude-config/**` (credentials, also for
-   reads), `*.worktrees/*` except below the child's own workspace root (sibling round worktrees), and
-   `<tmp>/pi-foreman-scratch/**` except the asking child's own `$FOREMAN_SCRATCH` subtree (another child's dir). The
-   operands of `git worktree remove` are left to PS, which asks. The `parent` and `child` handoff files and all
-   write-protect rules keep asking or denying. A child's write permissions are therefore unchanged by this section.
-   **Child input dirs** (R14): a child keeps the files it hands to a command (a `git commit -F` message file) only in
-   `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir. The message-file
-   operand of `git commit` (`-F f`, `--file f`, `--file=f`) is a read: the write protection lifts only `{cwd}/.pi/*` and
-   the writeAsk package-root pair for it; every other protect rule (another session's `state/*`, `intercom/*`,
-   `settings.json`, `.git`, the handoff `parent`/`child` files) still applies. A `git tag` message file has no such
-   exemption: a child's tag `-F` operand under any protect rule is denied by the overlay with its own reason. It still
-   meets the child read-block above (handoffs, artifacts, sibling worktrees, other children's scratch: denied). The git
-   guard decides: only below `<worktree>/.workflow/scratch/` (by realpath, that dir no symlink) or below the exact
-   realpath of the child's own scratch dir from the launch environment; nowhere else in the worktree (no parent,
-   sibling or symlink escape; an inline `FOREMAN_SCRATCH=` never counts; a launch value with white space is
-   unresolvable and denied).
-   The baseline rows `npm ci` and `npm install` are per user like every policy grant, so PS would allow them to
-   children too; the child layer narrows them: a child's `git fetch`, `npm ci`, `npm install` and `npm i` ask
-   (`npm install` rewrites `package-lock.json` and `node_modules`), the foreman keeps the two npm rows. `npm ci` and
-   `npm install` run the project's lifecycle scripts without a prompt for the foreman. Exception: a child whose cwd is
-   inside its owned worktree root (a `roundRoots` entry or a subdir of it, resolved by realpath) runs a bare `npm ci` / `npm install` there unasked,
-   with only `--no-audit`, `--no-fund`, `--ignore-scripts`, `--prefer-offline`, `--offline`, `--legacy-peer-deps`,
-   `--no-progress`, `--silent`, `--loglevel=x` and a `--prefix` that names that root; `-g`, a foreign `--prefix`, a package
-   name, any other option, a `cd` out of the root, another cwd, or a `git fetch` in the line ask as before. A pi-subagents managed
-   worktree is no `roundRoots` entry; there only the exact `npm ci` passes (label `npm-ci-worktree`, see above). Known gap: a
-   child's forwarded ask is judged by the review layer with the foreman's cwd, so it still ignores the child's worktree. There is no `git fetch` row
-   (`--upload-pack=<cmd>` runs code): a `git fetch` asks for every role.
-
-The write-only protect rules (package root, `protect.ask`) are skipped for a shell command only when every unit is a
-pure read-only verb and the command has no write redirect at all (any target but `/dev/null` and fd dups, so `> $f`
-counts): a protected path named in an assignment (`f=...`) or a `for`/`select`/`case` list is still scanned and
-protected as soon as a redirect could write through it; the skip covers only the minimal reader set `cat head tail wc grep egrep fgrep rg ls stat file diff cmp md5sum sha1sum sha256sum shasum` (plus `cd`, and `sed` when it provably only reads: see "Ask families of lane 2"), and a `$`, `${` or backtick in any argument of the unit (any quoting) loses the skip, so awk/gawk, sort, uniq, less, find, xargs, tee and interpreters keep full protection on protected operands whatever their flags; so a read of a protected file combined with any write redirect (e.g. `cat config/foreman.defaults.json > out.txt`) stays protected for children.
-
-Heredoc bodies are scanned like any shell text (a `.pi` or `$x` in prose heredocs still trips the guards; write such text with the write tool).
-
-| Pattern (`external_directory`, read and write) | Why |
-|---|---|
-| `<agentDir>/pi-foreman/handoffs/*` | the session's handoff dirs (plan, ruling, result) |
-| `<agentDir>/sessions/*/subagent-artifacts[/*]` | child run artifacts |
-| `*.worktrees[/*]` | the round worktree convention dir `../<repo>.worktrees/<branch>`. PS has no workspace-relative token, so the pattern is broader than one repo: any dir named `*.worktrees` |
-| `<tmp>/pi-foreman-scratch[/*]` | the children's scratch root (`<realpath tmpdir>/pi-foreman-scratch`, as `childscratch.ts`). Per user: every child's dir, not only one's own; the overlay lets a child use only its own `$FOREMAN_SCRATCH` and denies the rest of the root |
-| `<agentDir>/foreman.json`, `<agentDir>/settings.json` (bare keys) | reads, including a word in a `for f in ...; do cat "$f"; done` list (PS checks it in both directions). Writes still hit `protect.ask` |
-
-| Pattern (`external_directory_read`) | Why |
-|---|---|
-| `<agentDir>/pi-foreman[/*]` | reads of the handoff, state and config files of pi-foreman |
-| `<npm root -g>[/*]` | global packages, for bash reads (PS already allows the read tools there) |
-| `<agentDir>/install/releases[/*]` | Pi's own installed releases (`ls <agentDir>/install/releases/<v>/node_modules`) |
-| `<tmp>/pi-subagents-uid-*/async-subagent-runs[/*]` | the pi-subagents run root (`<tmp>` is the realpath of the OS temp dir, token `{tmpRoot}`; dropped when it does not resolve) |
-| `externalDirectory.probe`, each `[/*]` | toolchain probes: `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `~/.local/bin`, `~/.npm/_npx`, `~/.npm-global/bin`, `%APPDATA%/npm` (Windows only). `~` is the home dir at render time; an entry that does not resolve is dropped. Read keys only. The overlay narrows them for every role: only a shell line whose every unit is a plain `ls`, `stat` or `which` (no pipe into another command, no redirect, substitution, env or wrapper prefix) and the `ls` tool pass; any other command naming a path there, and the read/grep/find/write/edit tools, ask (a child: deny). A found binary run as the command word is left to PS's bash rules, which ask. After an update that adds this list, `/foreman doctor` reports drift until `foreman setup` is run again |
-
-Each `safety.permissions.readRoots` entry is also rendered as `external_directory_read` keys (dir and `dir/*`, plus the realpath
-spelling; relative or `..` entries, filesystem roots, the home dir and its ancestors are dropped), so a bash line that reads below
-a read root raises no directory ask. The policy layer does this because a review-link `allow` on the `external_directory` family is
-capped to `defer`. Re-run `foreman setup` after changing `readRoots`.
-
-Skill reads. For each name in any role's `roles.<id>.skills` (user or overlay config) whose dir exists, the policy layer renders
-`external_directory_read` keys (dir and `dir/*`, plus the realpath spelling) at `~/.agents/skills/<name>` and
-`<agentDir>/skills/<name>`, with the same drops as `readRoots`; a name that is not one plain path segment renders nothing.
-Re-run `foreman setup` after changing a role's `skills`.
-
-In the overlay, a child's strictly read-only shell word (`cat`, `grep`, `ls` and the other read verbs, no redirect or write target)
-whose every path candidate, after realpath, lies inside a skill dir its own role names skips the `protect.childDeny` `.agents` rules
-only. `protect.deny`, `protect.ask`, `writeAsk` and every other rule still apply, writes stay denied, and `..` or a link out of the
-dir is outside it. Scope, honestly: the shell read is per role (the overlay), but the `read` tool of any child can read the union
-of the skills any role names (the keys are per user; skills are instructions, not secrets). `protect.ask` `{cwd}/.agents/*` keeps
-a shell read of an in-repo named skill denied in a child (the `read` tool works there). Residual: package skills under
-`{agentDir}/npm/node_modules` and skills from the settings `skills` paths still ask.
-
-Last: `ask` for `<agentDir>/pi-foreman/handoffs/*/parent` and `.../child` stay on the write side (`protect.writeAsk`
-asks too). Reads of those two files are allowed by the read pattern above.
-
-`git worktree add|list|prune|lock|unlock|move|repair *` are in the global bash allow. PS has no main-session scope
-(the main session has no agent file, and agent frontmatter overrides only apply to agents), so children are kept off
-them by the git guard and the overlay, not by the policy. `git worktree remove *` asks.
-
-**Global npm root, resolution order** (generator at setup time; `owned.ts` `resolveNpmRoot` in the adapter):
-`npm root -g` (4 s cap), else `npm_config_prefix` (POSIX `<prefix>/lib/node_modules`, Windows
-`<prefix>\node_modules`), else the prefix of the running node binary (POSIX) or `%AppData%\npm\node_modules`
-(Windows). There is no environment override of the result; a root that does not resolve drops its patterns.
-The policy is rendered when `foreman setup` runs: change the npm prefix, then run it again.
-
-**Drift (R3b point 8c).** At session start the adapter compares the resolved root with the npm root the rendered policy
-(`<agent dir>/extensions/pi-permission-system/config.json`) grants, its `<root>` and `<root>/*` read keys. When the policy
-grants a different root, the session writes one `npm_root_drift` trace event and shows one warning
-(`npm root drifted: run \`foreman setup\``, with both roots). A policy with no npm root grant (an open or unrendered
-policy) stays silent. The adapter never rewrites the policy; reads under the
-resolved root are asked until `foreman setup` re-renders it. Pi's permission system has no session-scoped grant for
-this, so the warning is the whole mechanism. Children do not show the warning, but they write the trace event.
-
-**Trade-off.** The patterns are static and per user, not per session. A second pi session of the same user can read
-and write the first one's handoff dirs. Narrower grants would need PS to take the session id as a token.
-
-**Session grants (`b`/`s` on an ask) and a directory that did not exist.** PS derives the session pattern from the
-asked path (`deriveApprovalPatterns`, `src/path/approval-pattern.ts`): an existing directory yields `D` and `D/*`;
-anything else (a file, or a path that does not exist when asked) yields its parent's `<parent>/*`. `D/*` does not match
-the bare `D`. So a grant answered on a read of `<dir>/file` while `<dir>` did not exist is `<dir>/*`, and a later
-`cd <dir> && npm ci` (token `<dir>`, no trailing slash) or a `ls <dir>` asks again. This lives inside PS; the adapter
-records and compares no grants. Workaround: create the directory first, or answer the grant on the bash ask for the
-directory itself. Owned paths above are not affected: the policy patterns carry the bare directory form too.
+A path outside every root is no allow; it falls through to the review. Secret paths are floors and never reach this step.
 
 ### Variables in bash lines
 
-A session grant for a directory covers a bash line that names a path under it through a variable
-(`D=<dir>/x; mkdir -p $D`, `mkdir -p $FOREMAN_SCRATCH/x`). The adapter (`extensions/core-adapter/shellvars.ts`
-`resolveVars`, used by the path collection in `permoverlay.ts`) replaces `$NAME` / `${NAME}` in a word by its value
-only when the whole line is inside a CLOSED GRAMMAR (the same in both implementations, pinned by
-`tests/fixtures/shellvars-grammar.json`). A line is eligible only if EVERY statement is one of:
-
-- (a) a sole assignment `NAME=literal`: the literal is a plain path of letters, digits and `/ . _ - ~`, starting with `/`,
-  `~` or a `$FOREMAN_SCRATCH` / `$HOME` prefix (only an absolute value, or the harness `$FOREMAN_SCRATCH`, is certain;
-  the rest stays unresolved). `NAME` is not `IFS`, `HOME` or `FOREMAN_*` (a `FOREMAN_*` name comes from the harness
-  env, never from the line). It stands at the start of the line or after `;` / a newline, or after `&&` that follows
-  another assignment: a conditional assignment (`cmd && D=/a`, `cmd || D=/a`) makes the line ineligible.
-- (b) a simple command whose first word is one of `cd mkdir cp mv cat ls tee touch tar node npm npx python3 git test echo
-  true` and whose other words are plain words (letters, digits and `/ . _ ~ = : @ % + , -`), `$NAME`, `"$NAME"` or
-  `${NAME}` (also inside a word), `2>&1`, `>/dev/null`, or `>` / `>>` with one such plain word.
-
-Statements are split on `;`, `&&`, `||` and newline only. A line holding `|`, `&` (other than `&&`), `(`, `)`, `{`,
-`}`, `[`, `]`, a backtick, `#`, `<`, `>` outside those redirects, `$(`, `${` with anything but a bare name, a backslash
-or a single quote is ineligible, as is any statement outside (a) and (b) (`export`, `read`, `declare -n`, `printf -v`,
-`exec {H}>`, `coproc`, `for`, `if`, `case`, `eval`, `trap`, ...). An eligible line resolves a later `$NAME` with the last
-assignment before it; a name nothing assigns stays as written. An ineligible line resolves nothing and everything
-asks as before: the word is checked as written.
-
-Two forms extend this (ledger item 7d). `cd <literal>` (one plain operand, no option) updates the tracked cwd, which
-starts as the directory the line runs in; `NAME=$PWD` / `NAME=$PWD/sub` takes it (an unknown cwd leaves `NAME`
-unresolved, and `$PWD` anywhere but an assignment value keeps the line ineligible). `NAME=$FOREMAN_SCRATCH[/sub]` and
-`NAME=<literal under an owned dir>` resolve for every later `$NAME` / `"$NAME/…"` operand and redirect in the line, so
-`cd <round worktree>; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt` never asks. A heredoc opener (`<<EOF`,
-unquoted, a word of its own) ends the checked text at its line: `S=$FOREMAN_SCRATCH; python3 - "$S/probe.test.ts" <<EOF`
-resolves `$S`, but the line keeps its class (an interpreter reading a heredoc is still reviewed or asked as before);
-the body and what follows the heredoc resolve nothing. Cases in `tests/fixtures/shellvars-cases.json`, read by both
-implementations.
-
-The foreman's shell write guard (`scripts/shell_write_guard.py`, `grammar_statements`) applies the same grammar.
+`shellvars.ts` resolves `$NAME` / `${NAME}` only when every statement of the line is in a closed grammar: a sole `NAME=literal` assignment of a plain absolute path (or a `$FOREMAN_SCRATCH` prefix), or a simple command from a fixed list of programs with plain words, `$NAME` words, `2>&1`, `>/dev/null` or one plain redirect target. Anything else leaves the variable unresolved and the segment opaque. The cases are pinned by `tests/fixtures/shellvars-grammar.json` and `tests/fixtures/shellvars-cases.json`.
 
 ### Split literals
 
-The git guard (`scripts/git_guard.py`, also for the main role) denies, never asks, a bash line whose quoted, ANSI-C or
-escaped pieces of one word (`'.g''it'`, `$'.'"git"`) or whose `"a"+"b"+…` literal chain (also inside `python3 -c`, `node
--e` code or a heredoc body) spell a guarded path component (`.git`, `.git.`, `GIT~1`, any case) that no single piece
-spells; the reason is `split literal reassembles a guarded token`. A plain `.git`, `.github`, `'.gi'` alone and
-`"a"+"b"` are not affected. The adapter starts the guard in the main role for such lines too (`mainNeedsGitGuard`).
+The git guard (`scripts/git_guard.py`, also for the main role) denies, never asks, a bash line whose quoted, ANSI-C or escaped pieces of one word (`'.g''it'`) or whose `"a"+"b"` literal chain spell a guarded path component (`.git`, `.git.`, `GIT~1`, any case) that no single piece spells; the reason is `split literal reassembles a guarded token`. For a child the guard also denies string fragments joined by `+`, `..`, `.concat(...)`, `[...].join(...)` or `.replace(All)` whose reassembly is a whole guarded command token (`rm`, `dd`, `git`, `push --force`, `reset --hard`, ...). Cases: `tests/fixtures/split-literal-cases.json`.
 
-For a child (R6 lane 1c) the guard also denies string-literal fragments joined by `+`, `..`, `.concat(…)`, `[…].join(…)`
-or `.replace(All)` whose reassembly is a whole guarded command token that no single fragment spells: `rm`, `dd`,
-`truncate`, `mkfs`, `shred`, `cd`, `git` (so `git clean`), `push --force`, `reset --hard`, `checkout --`; same reason text.
-Words that merely contain them (`format`, `perm`, `add`), `git add`, a token written whole in one literal and unsplit
-`echo rm …` are not affected. `>` of a tracked file stays on the redirect guard. Cases: `tests/fixtures/split-literal-cases.json`,
-read by `tests/test_git_guard_split_literal.py` and `gitguard-split.test.ts` (`splitliteral.ts` mirrors the Python).
+## The review call
 
-### Read-only children run only tracked code (R6 lane 1)
+**No review model.** Without a review model (`providers.<p>.roles.review.model`, or the older `providers.<p>.review.model`) every tool call that is not a default allow asks you, and a child or headless session denies it. Role launches are a default allow and still run. `foreman doctor` and `/foreman setup` print `WARN no review model for provider <p>: ...`, and the first gate review in a session that finds no model shows the same text once as a session notice naming the key to set.
 
-Besides the script rule above, a test run of a child that may only read its cwd (round worktree) names only operands
-that resolve, symlinks followed, inside the round worktree and are git-tracked: positional paths of `node --test`,
-`pytest`, `python3 -m pytest|unittest` (a dotted module is its tracked `.py`), every positional of `npm test|run <script>` (with or
-without `--`), values of the module-loading options `--require`/`-r`/`--import`/`--loader`/`--test-reporter`/
-`--test-reporter-destination`/`--test-global-setup` (built-in reporter names and `stdout`/`stderr` stay allowed) and of
-`-C`/`-f`/`-I`/`-s`/`-t`/`-c` and similar, also attached (`make test -C/x`, `--directory=`, `--file=`). A `make` `K=V`
-word is no operand; its value is checked only when it contains a `/`. A pytest `-p` value is a plugin name, not a path. A glob is
-allowed iff every file it matches is tracked inside the worktree (`**` and `{}` are denied). A word with `$VAR`, `${VAR}`, `$(…)`, a
-backtick or a leading `~` is expanded (`$FOREMAN_SCRATCH`, `$HOME`, `~`) and then checked like any path operand; one that cannot be
-expanded is denied (a plain unknown word such as a test name is fine). Only the `make` long options `--keep-going`, `--jobs[=N]`,
-`--silent`, `--quiet`, `--always-make`, `--print-directory`, `--no-print-directory`, `--dry-run`, `--ignore-errors` and similar pass;
-any other (or abbreviated) one is denied. Untracked paths are denied with a reason. A builder in its own worktree may run its own new untracked test.
+One call on the role map's `review` rung (`providers.<p>.roles.review.model`, `roles.review`), the inexpensive rung by default. The doctor warns when none is set.
 
-`git config` is a read only as `git config <key>`, `get`/`list`, `--get|--get-all|--get-regexp <key> [<re>]`,
-`--get-urlmatch <name> <url>` or `--list`/`-l`, with `--local --worktree --global --system --includes --no-includes -z
---null --show-origin --show-scope --name-only --type=<t> --bool --int --bool-or-int --path --expiry-date --default <v>`.
-`--file`/`-f`, `--blob`, `set`, `unset`, `--add`, `--unset*`, `--replace-all`, `--rename-section`, `--remove-section`,
-`--edit` and two operands without a `--get*` mode are writes and are denied for a role without write roots (also with `--global`/`--system`, from any cwd).
+**Policy.** The review reads the merged trusted policy: the shipped `config/permissions.policy.md`, the user's file (`<agentDir>/pi-foreman/policy.md`; `gate.policy.userFile` names another), and the overlay's `safety.policy.files[]`. Each file has `## allow`, `## deny`, `## ask` and `## context` sections of entries `- id: <kebab-id>` followed by prose. Precedence in the prompt: floors, `ask`, `deny`, `allow`. No matching entry is a deny that says so (`no-matching-entry`).
 
-Probe-file scan: for a child of any role, a script run with `node`, `python`, `python3`, `bash`, `sh` or `npx` from a path
-that is not git-tracked in a round worktree (scratch, `$FOREMAN_SCRATCH`, tmp, an untracked file) is read before it
-runs (every word of the command is looked at, not only the first positional); a directory operand there (`node $FOREMAN_SCRATCH`,
-`python3 <dir>`, `python3 -m pkg`) would run `index.js`, the `package.json` main or `__main__.py` unscanned and is denied
-(`runs an untracked directory`) unless it is inside a round worktree and tracked-clean; one that reassembles a guarded token from fragments (above), `String.fromCharCode(…)` or a base64 literal that
-decodes to one is denied. Files of the round worktree that are tracked in HEAD and unmodified against it (a staged or
-modified one is scanned) are not read. `npx tsx|node|ts-node|python3|bash <file>` and `<interp> < file` stdin files are scanned
-like a named script. Known limit: modules a scanned script imports are not read. A script path held in a variable other than
-`$FOREMAN_SCRATCH` is not resolved.
+**Facts the gate computes.** The model never guesses them: surface, tool, role, session kind, cwd, worktree root, owned roots, branch and remotes, HEAD, the script state of a script the line runs (`tracked-unchanged`, `untracked`, `modified`, `outside-repo`), and the web-read facts below. The prompt also carries the owner's last message and up to 10 earlier ones (cut), the gate's own history of what the agent ran this session (commands and paths, never output), and the full command in nonce fences as untrusted data.
 
-### Hub ledger read
+**Verdict.** Closed JSON: `{"verdict": "allow"|"deny"|"ask", "entry": "<id>", "reason": "<=300 chars"}`. The entry must exist in a trusted layer and lie in the section the verdict names. An unknown field, a foreign or wrong-section id or unparseable JSON is an invalid verdict, which counts as an unreachable review with the cause `invalid verdict` (below). A deny verdict is final at every level and its reason reaches the agent as the tool error.
 
-`paths.hubWorkflow` (a string or a list of absolute dirs, default none; user or overlay config only, a project or session
-value is ignored with a warning) names hub checkouts whose `.workflow/` path family (the dir and everything below) is
-readable, read-only, for the foreman and its children in a round worktree: the read tool and read-only bash, no dialog,
-and the rendered `external_directory_read` carries the two patterns, so no ask either. Writes stay denied. A sibling
-that is not configured is handled as before. Relative entries, `..` components and a filesystem root are dropped.
-After setting or changing `paths.hubWorkflow`, or after upgrading to this release, re-run `foreman setup` to re-render the hub
-read keys (the realpath spelling of a symlinked hub dir is now rendered too).
+**Project layer.** `<cwd>/.workflow/policy.md` (only `## deny` and `## ask`) runs as a second, tighten-only call after a trusted allow and may answer `deny`, `ask` or `none`. A project can therefore never create an allow. A call with a project layer costs two model calls.
 
-#### Plain-session ledger read asks (`external_directory_read`)
+**Timeout.** `gate.reviewTimeoutMs` (default 15000, minimum 100). A timeout is an unreachable review.
 
-Cause: the permission-system config (`extensions/pi-permission-system/config.json`, written by `foreman setup` from
-`scripts/permissions_gen.py render`) was rendered while `paths.hubWorkflow` was unset. It then has no
-`external_directory_read` key for `<hub>/.workflow`, so a read of `<hub>/.workflow/LEDGER-*.md` from a plain session
-matches only the catch-all `external_directory["*"] = "ask"` and raises an ask. pi-foreman's own layers allow the read;
-the permission system caps a review-link allow on this family, so only the rendered keys help.
+### Cache
 
-Fix: set `paths.hubWorkflow` to the hub checkout in your user (or overlay) foreman.json and re-run `foreman setup`. No
-other allow rule is added: the hub root outside `.workflow/` and a `.workflow/` of a repo you did not configure still ask.
-`/foreman doctor` and `/foreman setup` print a WARN when `paths.hubWorkflow` is set but the live config lacks the hub
-keys, and an INFO hint (the key is never set for you) when it is unset while a `.workflow/` with a `LEDGER-*.md` file
-sits one level above the main checkout of the cwd or a round worktree.
+Decisions are cached per session. The key is the exact input JSON plus the session context: the policy hashes, the review provider and model, session kind, role, cwd, branch, HEAD, MERGE_HEAD, the gate's facts, the tool and the payload. A cached deny holds for the session (and for every command of the same normalised shape); a cached allow holds only for the exact input and is dropped after the next state-changing call (anything but a pure read).
 
-### Round surfaces
+### web-read
 
-What the foreman session owns for the length of a round is one shared set (`roundsurface.ts`, ledger items 7c, 7e),
-the same for the foreman and every child it launches, and nothing else is inherited session-wide:
+A plain download needs no dialog. `fetch` GET/HEAD, or `curl`/`wget` writing into scratch (or to stdout read by a reader such as `head`, `grep`, `jq`), has these gate checks, computed deterministically and passed to the review as facts:
 
-- **Handoff dir.** The session's own handoff dirs (`ownHandoffDirs`), as before; the `own-handoff` deterministic allow
-  and the child overlay use them.
-- **Round worktree, from the manifest.** The unremoved `worktree` entries the foreman session itself recorded in its
-  manifest (`<agentDir>/pi-foreman/state/sessions/<id>/manifest.json`, owner = the session id, never a child's). Every
-  child of the round may read it; only the foreman and the `builder` child whose cwd is in it write it. A child of any
-  other role (explorer, reviewer, senior-reviewer, finalizer, planner) gets it read-only: reads pass, writes are denied
-  (path tools, bash redirects, `mkdir`, `cp`), and a forwarded ask of such a child gets no own-dir allow there. A child in
-  an isolation worktree of the round may read the round worktree and never writes it. Other round worktrees stay denied.
-  The child's scratch dir stays writable.
-- **Own isolation worktree only.** The isolation worktrees pi-subagents makes under
-  `<repo>.worktrees/worktrees/<round>/pi-worktree-*` are not a root as a set. A child whose cwd is in one of them owns
-  that isolation worktree (its git top level), whatever its role, and nothing else of the dir; a sibling child's `pi-worktree-*` stays denied
-  for the path tools and bash redirects (`*.worktrees/*`), and a child in the round worktree cannot reach them at all.
-- **Bound ledger as read root.** The ledger file bound to the session is a read root for every forwarded ask, and
-  `LEDGER-*.md` in its dir is a readable glob. Read only.
-- **Round worktree add by the foreman.** The foreman's own `git [-C <main>] worktree add <repo>.worktrees/<round> [-b
-  <round>] [<base>]` is allowed without a question (label `round-worktree`); a child's `git worktree` stays denied, and
-  `git worktree remove` still asks. After `worktree add` the foreman runs `npm ci` in the new worktree itself; never symlink
-  `node_modules` to another checkout (a later `npm ci` would wipe that checkout's tree). A child on POSIX may run the exact
-  `npm ci` in its own worktree (label `npm-ci-worktree`).
-- **Isolation worktree as the child's own root.** The worktree pi-subagents makes for a child
-  (`<repo>.worktrees/worktrees/<round>/pi-worktree-*`) is that child's own workspace root; its writes there follow the
-  normal child rules.
+- (a) GET/HEAD only: no body, no upload, no other method;
+- (b) no auth or cookie material, no userinfo in the URL;
+- (c) nothing runs the download: no pipe or substitution into a shell or interpreter, no config file;
+- (d) the output goes into scratch, or to a non-executing reader.
 
-### Ask families of lane 2 (R6)
+Check (e) is the review's: the URL must not smuggle data (a long or encoded query value, a secret-like value, file or session content). Any doubt is `ask`. A failed check names its letter and never makes the call routine. There is no host list. One review is cached per distinct URL. Running a downloaded file asks (`unseen-script-run`).
 
-- **Owned roots in the reviewer prompt (2a).** The permission reviewer's request lists the roots the foreman session owns under
-  "Owned roots (owned — allow reads and writes)": its live child scratch dirs, the round worktrees and their isolation dirs (read-write
-  only for the main session and the builder; read only for any other forwarded child), its handoff dirs and `state/scratch/<session>`.
-  The global npm root and the pi-subagents async run dirs of its OWN child runs are listed apart as "owned, read only": reads below
-  them count, a write never does and stays a defer (`roundsurface.ts` `sessionOwnedSplit`). A run is recorded AT LAUNCH from the launch result
-  (`details.asyncDir`, the `Async: <agent> [<id>]` line giving `<tmp>/pi-subagents-uid-<uid>/async-subagent-runs/<id>`,
-  `budget.ts` `launchLocations`), so its `output-*.log` is readable with read-only verbs (`tail -c 2500 $TMPDIR/pi-subagents-uid-<uid>/async-subagent-runs/<run>/output-0.log`;
-  `$TMPDIR` is read as the foreman's own tmp dir, never when the command sets `TMPDIR` itself). Pi's truncated bash output log
-  (`pi-bash-<hex>.log`, `details.fullOutputPath` of a bash `tool_result` in Pi 1.3.x) is recorded per session as an exact own path
-  (`roundsurface.ts` `bashOutputLogs`, `recordBashOutputLog`: the structured field only, never a `Full output:` line of the result text; the newest 50 are kept): read-only verbs (`cut -c1-600 <path> | head -40`; `cut` is a read verb of the effect layer) pass for
-  the session that produced it, never another session's log, never a write; dialogs count it as the family `own_bash_output_log`. A model `defer` (never a deny, never a soft-deny) for a bash command is turned into an
-  allow (label `owned-roots`) only when the effect layer, with the read-write roots added as scratch dirs and the read only roots as read roots, finds EVERY path operand and write
-  target inside the workspace, scratch or an owned root, and no ask or deny rule catches the command. /tmp does not count as owned here;
-  one non-owned write target (also under /tmp) keeps the defer.
-- **The `*` path rule matches path operands only (2b).** A catch-all `*` deny does not fire on a word of command prose or on a sed
-  expression (`sed 's/=.*//'`), and never denies a READ below an owned root (the scratch dir, the round roots, the ledger and handoff
-  read roots). A more specific rule (a secret inside an owned root) still denies. The prose exemption applies only to a word that is not a
-  write target: a write target (a redirect target, `tee`/`cp`/`touch` operand) and the path of the `write` / `edit` tools are always path
-  operands, so a `*` deny still matches them even with white space in the name.
-- **sed as a reader (2b).** `sed` skips the protected-file write ask only without `-i`/`--in-place`, `-f`/`--file`,
-  and with a script that has no `w`/`W`/`r`/`R`/`e`/`a`/`i`/`c` command and no `s///w` or `s///e` flag. Inline `python -c` is never a
-  reader: a blocklist cannot classify python as read-only, so inline python over the state dir or any protected file still asks (fail
-  closed). awk is not a protected reader.
-- **`../x` after `cd` (2c).** A relative word with `..` that follows `cd <dir> &&` (or `;`) resolves from the cd'd directory, not the
-  session cwd. A cd that may not run first (`||`, a missing directory, a `$` or glob in the target) does not move the base.
-- **State dir reads (2d).** Only reads of `<agent dir>/pi-foreman/state` lose the protected-configuration ask; writes there still ask.
-- **`git apply` and `patch` (2e).** They read the patch file and write the cwd worktree: a patch under `<main>/.workflow/scratch/` or
-  the child's own scratch applied inside an owned worktree does not ask; in a worktree the child does not own it is as closed as any
-  other write; for a read-only child it stays a write (denied). `git apply --check|--stat|--numstat|--summary` writes nothing.
-- **Ledger and handoff read roots (2f).** The bound round ledger, its `LEDGER-*.md` siblings, the session's own handoff dirs and its
-  round worktrees are readable for every child (`MatchCtx.readable`, `roundsurface.ts` `childReadable`); a write there stays closed.
-- **Nested worktree ownership (2-I).** Ownership is the innermost git worktree of the cwd: an isolation worktree nested below a
-  round worktree is its own root and the round worktree is not.
-- **Directory operands (2-0).** A directory operand of a test run inside the round roots is scanned file by file.
-- **Session-wide grants (2g).** The review link is keyed by the foreman session, so an answer it gives holds for every fresh reviewer
-  child of that session. A grant of the permission system itself ("approve for this session") lives in
-  `@gotgenes/pi-permission-system`, which the adapter does not own: its default scope is the asking subagent only, and the adapter
-  cannot make it session-wide. Limit: a second reviewer child is asked again unless the user chose the "whole serving session" scope.
-- **The backtick over-block is deliberate.** A backtick in a read-only child's test-run line is refused even when it would be harmless:
-  it cannot be expanded and checked, so the line fails closed.
+### MCP tools
 
-### Search patterns are not paths
+MCP tools (`mcp__<server>__<tool>`, or the `mcp` proxy tool) are allowed after review only when the name and arguments together show a read: `list_*`, `get_*`, `search_*`, `read_*`, `take_snapshot`, `take_screenshot`, or read-only navigation to a plain URL (judged by the web-read rules). Tools that act (click, fill, type, submit, upload, evaluate, create, update, delete, ...) and read-looking calls with smuggled data are `ask` (`mcp-act`).
 
-The patterns of `grep`, `egrep`, `fgrep`, `rg` and `git grep` are never path operands, in any role (read, write,
-external directory): `-e <re>`, the word after `--` when no `-e` is given, the bare first operand, the pattern in a
-cluster such as `-nE "<re>"`, and the separate values of their other options (`-A 3`, `-m 5`, `--glob <g>`, `-t <type>`).
-A regex that looks like an absolute path therefore raises no external-path ask. Options that read a file keep their
-value as a path word: `-f`, `--file`, `--exclude-from`, `--ignore-file`, `--pre`. The remaining operands are paths
-as before.
+## Who sees an ask
 
-### Windows spellings (R13 win32 fixes)
+An `ask` verdict, or an unreachable review (cause `timeout`, `provider error`, `no model configured` or `invalid verdict`), becomes:
 
-On win32 a path may be spelled two ways: a native drive path with backslashes, and the 8.3 short name of a segment (`RUNNER~1`
-for `runneradmin`). `realSpelling()` (`extensions/core-adapter/effects.ts`) takes the deepest existing ancestor of a word through
-the native realpath, so `RUNNER~1\h` gets its long spelling. `contained()` then compares the word and the base by their real
-spellings as well, so a read root stored by its realpath (`readRootsOf`) still matches a path written in short form. `realInside`
-still decides on real paths, the `.git` check runs on the spelling that matched, and a different file still does not match. Off
-win32 nothing changes.
+- **Owner pane:** one dialog with the full command, the entry or the cause, and the reason. For an unreachable review it states plainly why; it is never a silent allow or deny. Choices: allow once, allow for session, deny with a typed reason, deny and stop the turn. `y` and `n` answer as the dialog shows.
+- **Round session:** the gate files `ask.md` to its parent with the same fields and waits `gate.askTimeoutMs` (default 900000, 15 min) for `ruling-<n>.md`, then denies. The parent brings it to its owner.
+- **Child:** see below.
+- **Headless:** deny, with a reason that says what to report.
 
+A self-modification ask stays a deny for children, and a floor never reaches the ask.
 
-### Known limit: the permission system package
+### Child asks
 
-The permission system package (`node_modules/@gotgenes/pi-permission-system`) runs its own path extraction before the
-adapter. Its `shell-variable-expansion.ts` resolves only `HOME` and `PWD`, so `D=<dir>/x; mkdir -p $D` can still raise
-an `external_directory` ask there even when the adapter resolved the variable. Its `token-collection.ts` has
-pattern-first handling for `grep`/`egrep`/`fgrep`/`rg` but not for `git grep`, so a `git grep` pattern that looks like
-a path can still ask. A review-link answer cannot grant external-directory asks (see "Policy grants" above). A
-change on the package side is a separate round.
+`gate.childAsk` is `"parent"` (default) or `"deny"`. With `"parent"`, a child's plain policy `ask` goes to the parent's pane:
 
-## Developing pi-foreman itself
+1. When the parent adapter launches a child it creates an ask dir `<agentDir>/pi-foreman/state/child-asks/<parent session id>/<launch id>/` and passes it in the launch binding. The child gate writes `ask.md` there (the round ask format plus `role` and `run` lines) with `fs`, never through a tool, and waits for `ruling-<n>.md` up to `gate.askTimeoutMs`.
+2. A floor denies any child tool write (write, edit, move, copy, a shell redirect, or an opaque line naming the path) under `state/child-asks/`, so a child can never write its own ruling. A ruling is accepted only as `ruling-<n>.md` for an `n` the child gate itself wrote, with an mtime not before its ask. A stale ruling is ignored.
+3. The parent adapter polls the ask dirs of its running children (500 ms) and answers each new `ask.md` once. In an owner pane it opens one select dialog naming the child role and run, the tool and the payload, with `allow once` or `deny with reason`. A round parent forwards through its own round path (`ask.md` into its handoff dir with the child's role and run in the text) and copies its parent's ruling down. A headless parent writes `DENY`.
+4. Dialogs from several children queue, one at a time. When a child has timed out its pending dialog is dropped; a late answer is logged, not applied.
+5. `ALLOW` lets the call run once. Anything else, or the timeout, denies. No child tool and no tool at all writes inside `state/child-asks/`; the adapter alone writes the rulings there. The parent model never answers a child ask directly.
 
-When the session's working directory is the package root or inside it (symlinks resolved; case-insensitive on
-Windows and macOS), the baseline's `protect.writeAsk` entries for `{pkgRoot}` and `{pkgRoot}/*` are replaced by
-`protect.writeAskSelfHost`: only `config/permissions*.json`, `config/permissions.rules.md`, `config/foreman.defaults.json`
-and `package.json` under the package root still ask in the main session and are denied to children. Other writes in the
-checkout (docs, extensions, tests, scripts) pass. The child ban on naming a protected path in a shell narrows the same
-way, to these paths. Every other protect list is unchanged (`.git`, agent dir, `.pi`, handoffs). The session writes a `protect_selfhost` trace event and a top
-session shows one notice: "pi-foreman: dev checkout: package-root write protection narrowed".
+With `"deny"`, or when the binding has no ask dir (a headless parent, or a launcher that cannot answer), the child is denied with a text that names what to report to the foreman. An invalid verdict or an unreachable review is a deny for a child (`policy_invalid_verdict` for an invalid verdict). This replaces the old package's ask forwarding.
 
-## R31c allowlist shapes
+## Decision log
 
-Every shape below is an allowlist: a word outside it ends the allow and the command goes to the model review and the owner. The round-29 stop tokens end every allow: env prefixes, wrappers, loops, brace words, `$( )` and backticks. Single-quoted words are literal; double quotes count only without `$`, a backtick or a backslash; `$'..'` ends the allow. Each shape has positive and bypass tests (`r31c-*.test.ts`).
+One JSON line per gate decision, every layer, in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind, role, tool, layer (floor|default|review|dialog|cache|child-ask), verdict, rule or entry, reason, shape, cwdHash`. `shape` is the normalised, redacted command: program and option words kept, literal paths reduced to a class (`<worktree>/...`, `<scratch>/...`, `<tmp>/...`, `<home>/...`, `<parent>/.workflow/...`, `<abs>`), URLs to the host, every quoted string and every secret-like value replaced by `<v>`. The log rotates to `log.1.jsonl` at `gate.logMaxBytes` (default 20 MB). A child's answered ask is logged with `layer: "dialog"` and reason `parent-allow`, `parent-deny` or `parent-timeout`; the parent logs one `child-ask` record with the child run id.
 
-### Own-record reads with `grep`
+### Candidates
 
-The foreman may `grep` its own records (its own usage file `state/usage/<foreman session>.jsonl`, its own trace and presence file; never another session's file and never the whole usage dir). Options: bundles of `n c i w v x o h H l L s E F`, `-m N`, `-A N`, `-B N`, `-C N` and `--color=never`; any other option ends the allow. A dash word before `--` is an option, every word after `--` is an operand, and a digit word is an option value only after `-n`/`-c` (head/tail) or `-m/-A/-B/-C` (grep), otherwise it is an operand and must be an own record. The usage file name comes from the session's usage record (`usageFile`), not from a guess. A child gets none of this. A chain with other units (`;`, `&&`, `||`, `|`) may not name another state or trace file in any unit, and a `grep` unit in such a chain is no recursive read (`-r`, `-R`, `-d`, `--recursive`, `--directories`) and names no directory; a grep word written with `$'..'`, `$".."`, a backslash, or a double quote holding `$` (other than a leading `$HOME/`) or a backtick ends the allow.
+`foreman perms candidates` is read-only. It groups the log by shape and lists what can become a default: shapes the review allowed at least 5 times with 0 denies and 0 owner overrides, and shapes the owner approved in dialogs repeatedly. Columns: count, last seen, one example, proposed section. `foreman perms export-eval` turns the log into the eval fixture. Nothing adopts by itself: `/foreman perms adopt <id>` in the owner pane writes an entry to the user policy file's `## allow` behind a confirm dialog the model never clears. The user policy file and `state/gate/**` stay floored for every tool and shell write.
 
-### Child `npm ci` ask text
+## Config keys
 
-The ask for a child's `npm ci` that carries a pipe, chain, background or flags says: run a bare `npm ci` in your worktree, or ask the foreman.
+| Key | Meaning | Project layer |
+|---|---|---|
+| `gate.reviewTimeoutMs` | review call timeout (default 15000, minimum 100) | lower only |
+| `gate.askTimeoutMs` | how long a round session or a child waits for a ruling (default 900000) | lower only |
+| `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
+| `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
+| `gate.logMaxBytes` | log rotation size | user or overlay only |
+| `gate.policy.userFile` | the user's own policy file (absolute, `~/...` or relative to the agent dir) | user or overlay only |
+| `providers.<p>.roles.review`, `roles.review` | the review model | user or overlay only |
+| `safety.policy.files[]` | extra policy files of an overlay | user or overlay only |
+| `safety.preBash` | pre-bash hooks | user or overlay only |
 
-### Network reads (R31c)
-
-Effect class `net-read`, label `net-read`, decided deterministically for foremen and children (`netread.ts`; the review link, the overlay and the timeout allow use the same predicate):
-
-- `gh`: `run view|list`, `pr view|list|checks|diff`, `issue view|list`, `repo view`, and `api <endpoint>` with GET only (no `-f`, `-F`, `--input`, header options or a non-GET method). Only the listed options per subcommand; a `--jq` expression that reads the environment, imports or reads input is refused.
-- `npm`: `view|info|search|ls` with `--json --depth N --all --long --parseable` and registry-name specs only (a name or version that npm reads as a tarball or file asks: a loose `.tgz`, `.tar`, `.tar<any char>gz` such as `x.tar-gz`, `.tar.bz2` or `.zip` ending, or a version starting with `.`; the same ending test applies to `search` terms).
-- `curl`: plain GET/HEAD with a fixed flag list (`-s -S -f -I -i -L -v` and their long forms), checked `http(s)` URLs on any host (no host list), no data, upload, config or `@file` option; output (`-o`/`-O`) only into the session scratch dir (orchestrators) or the role scratch dir (children).
-- `wget` (orchestrators only): exactly `wget -q -O - <url>` or `wget -q --spider <url>`.
-
-In the child deny branch a network read is no write: its output file lies in the bound scratch dir. A URL operand is not read as a path.
-
-### Handoff files an orchestrator writes (R31c)
-
-An orchestrator may write `plan.md`, `result.md`, `update*.md` and `ask*.md` in its own handoff dir (the dir where it is the child role) by any means, a shell heredoc included. The command must be exactly one `cat > T <<'D'` / `cat >> T <<'D'` / `cat <<'D' > T` / `cat <<'D' >> T` heredoc (POSIX shell tools) whose body runs to the one terminator line `D`, the last line; the body is never lexed. A command holding a CR or NUL byte is no handoff write. `T` has no `..`, lies directly in that dir (no symlinked spelling), is no symlink, has a single link when it exists, and has exactly such a name. A write in a parent-role dir needs no lift. The parent files (`ruling*`, `brief*`, `steer*`, `parent`) and the `child` files stay write-protected for everyone; children get no new write right.
+Every other `gate.*` key is user or overlay only; a project value is dropped with a warning. A project cannot remove a user `deny` entry, and a project policy file can only add `deny` and `ask` entries.
 
 ## Known limits
 
-The splitter and the classes work on the command string; they are not a sandbox. Git config in the repository
-(`diff.external`, a pager) still applies to `git diff`/`git log`. Shell forms are POSIX; on Windows only forward-slash
-paths are recognised, and `/tmp` never counts.
+- Another extension loaded before the gate, or one that mutates `event.input` after it, could change the input between the decision and the execution. The gate is first in load order; the doctor warns when any extension precedes it.
+- Extension-registered providers: the review model call goes through Pi's registry, so a provider an extension registers at runtime must be loaded before the first review.
+- The `bash` tool is parsed as bash. When the resolved shell is not a bash binary (a custom `shellPath`, or the Unix `sh` fallback) the gate treats the tool as opaque.
+- The decision is made on the command string, not at run time: another local user can swap a `/tmp` path for a symlink in between.
+- Git config in the repository (`diff.external`, a pager) still applies to `git diff` and `git log`.
+- Windows: shell writes to the system temp dir ask; no default-allowed tmp on win32 yet.
+- The live eval (`node scripts/foreman_perms.mjs eval --model <provider/id>`) calls the review model's provider directly (the Anthropic API for the default Haiku review model), needs a logged-in provider and Node >= 22.18, and never runs in CI; CI runs only the offline eval with fixture answers.
 
-- `npm ci` and a bare `npm install` are build-test: they run the packages' lifecycle scripts and reach the registry.
-- `make -n <test target>` is a read, but make still runs `+` recipe lines and `$(shell ...)` while it parses the Makefile.
-- `cd <rel>` is resolved as `./<rel>`; an exported `CDPATH` can send it elsewhere.
-- Paths are checked when the ask is reviewed, not when the command runs: another local user can swap a `/tmp` path
-  for a symlink in between. The `tmp-scratch` allow has the same gap.
-- `/tmp` counts for writes only. Reads under `/tmp` go to the model review: the shared `/tmp` holds other programs'
-  files, such as a Kerberos ticket cache `/tmp/krb5cc_<uid>`. Children read their own files through `$FOREMAN_SCRATCH`.
+## Windows
+
+The `bash` tool on native Windows runs Git Bash, so the bash AST applies as on Linux and macOS. The optional `powershell` tool has no parser: every `powershell` call is opaque. The floors run on its raw text (with the PowerShell-aware shell-write grammar), then the review model decides, never a default allow. Inside a bash line, `powershell`, `pwsh`, `cmd`, `cmd.exe`, `wsl` and any invocation of a `.ps1`, `.cmd` or `.bat` file are opaque segments and the whole line goes to review. On win32 a path has two spellings (backslashes, 8.3 short names such as `RUNNER~1`); `effects.ts` `realSpelling()` compares the real spellings, so a read root stored by its realpath still matches. `/tmp` never counts on Windows. The gate tests run on the three CI operating systems with path fixtures for both separators and drive letters.
+
+## Parser and prior art
+
+The gate parses with `unbash` 6 (pinned exact, upgraded only with the eval green). Its AST types are isolated in `shellast.ts`, because the v5 to v6 change shows node shapes can move.
+
+| Option | Install | Platforms | Accuracy | Verdict |
+|---|---|---|---|---|
+| `unbash` 6 (ISC) | one dependency, pure TypeScript, no transitive deps | Windows-neutral pure JS | GNU Bash 5.3 syntax, typed AST with positions, tolerant parser with a partial AST plus errors; zsh, PowerShell and cmd unsupported (documented) | **chosen**: about 15x faster than tree-sitter wasm, no native or wasm build |
+| `tree-sitter-bash` over `web-tree-sitter` (wasm) | grammar plus wasm runtime; what the old permission package used | wasm, any platform | full grammar | not chosen: wasm dependency, about 15x slower |
+| a regex or quote-aware splitter (the old `shellchain.ts`) | none | any | splits on `&&`, `||`, `;`, `|`; refuses `$(`, backticks, subshells and heredocs | not chosen: refuses most real lines, so they all went to a model; kept only as a thin layer over the AST |
+
+Packages that build on `unbash` were considered and not used (`pi-bouncer`, `@cad0p/pi-steering` with `@cad0p/unbash-walker`, `pi-access-guard`, `pi-guards`): each pins an older `unbash`, none covers the policy layers, role-aware defaults, round-parent reads or the ask-to-parent flow, and running one beside the gate would double the dialogs. Three designs come from `pi-bouncer` as reference: its always-deny set and rule names, its judge context (command, cwd, branch and remotes, the owner's recent messages, what the agent ran, never tool output) and its rule that an unparseable command is never allowed. pi-foreman writes its own small walker (`shellast.ts`) instead of depending on `unbash-walker`.
+
+| Role of the old package | Now |
+|---|---|
+| decides every tool call from rendered rules | the gate, first in load order |
+| permission dialog UI | pi-foreman's own dialog (owner pane) |
+| subagent ask forwarding to the parent | replaced by the gate's own parent ask (child asks, above) |
+| rendered config keys, managed hash, doctor drift | removed; path rules are computed at runtime |
+| delegation envelope | dropped |
+| authorizer link `foreman-review` | the gate's review step, without the link API |
+| bash parsing with tree-sitter-bash | `unbash` via `shellast.ts` |
+
+## Developing pi-foreman itself
+
+When the session's working directory is the package root or inside it (symlinks resolved; case-insensitive on Windows and macOS), the write protection of the package root narrows to the config and policy files (`config/permissions*.json`, `config/permissions.policy.md`, `config/foreman.defaults.json`, `package.json`); other writes in the checkout (docs, extensions, tests, scripts) pass. The session writes a `protect_selfhost` trace event.
+
+## Migration from the permission package
+
+This release removes `@gotgenes/pi-permission-system`. `foreman setup` migrates the user's `foreman.json` keys and prints one line per key:
+
+| Old key | New |
+|---|---|
+| `providers.<p>.review.model` | `providers.<p>.roles.review.model` |
+| `providers.<p>.review.timeoutMs` | `gate.reviewTimeoutMs` |
+| `safety.permissions.autoReview.rulesFile` | `gate.policy.userFile` |
+| `review.childDefer: "owner"` | `gate.childAsk: "parent"` |
+| `review.childDefer` (any other value) | `gate.childAsk: "deny"` |
+| `review.headless` | removed ("a session with no pane above it denies an ask") |
+| `review.fallback` | removed ("nothing reads it") |
+| every other `safety.permissions.*` key | removed ("the permission package is gone; the gate decides") |
+
+A key whose target is already set is dropped with the reason `<target> is already set`.
+
+**Backups.** Before it changes anything, setup writes `<agentDir>/pi-foreman/state/migration/foreman.json.pre-gate` (your config) and `permission-system-config.json` (the package's rendered config), then removes the rendered config file.
+
+**The package entry in `settings.json`** is a separate, explicit step that setup never runs. Preview it, then apply it:
+
+```
+node scripts/foreman_migrate_gate.mjs settings --dry-run
+node scripts/foreman_migrate_gate.mjs settings
+```
+
+It backs up `settings.json` to `state/migration/settings.json.pre-gate` and drops the package entry.
+
+**Doctor.** `/foreman doctor` prints one `FAIL` line per leftover, with the same text setup prints and the fix: a leftover `safety.permissions.*` or `review.*` key (`<key>: removed (...)`, fix: run `foreman setup`), the rendered permission config, the package entry in `settings.json` (fix: the two commands above) and a package install (`permission package install <dir>: remove it`).
+
+**The way back** is the previous pi-foreman release: install it (`npm install pi-foreman@<previous>`), copy the backups back (`foreman.json.pre-gate` over your `foreman.json`, `permission-system-config.json` back to `<agentDir>/extensions/pi-permission-system/config.json`, and `settings.json.pre-gate` over `settings.json` if you ran the settings step), and run its `foreman setup`. The previous release rejects `gate.*` keys, so the backup copy is the way back, not an automatic restore. Setup prints these steps when it migrates.

@@ -10,8 +10,6 @@ import type { EffectCtx } from "../effects.ts";
 import { splitChain } from "../shellchain.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
 import { readBaseline } from "../permoverlay.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike, ReviewSession } from "../review.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = bashRules(readBaseline(pkgRoot)!, {});
@@ -161,37 +159,6 @@ test("effect classes: win32 paths (drive letters, case, drive-relative)", () => 
   for (const cmd of ["cat C:/Windows/win.ini", "cat C:foo", "cat D:/w/a", "cat /etc/passwd"]) assert.equal(classify(cmd, w), "unknown", cmd);
   assert.equal(classify("touch src/x.ts", w), "write-in");
   assert.equal(classify("touch .GIT/config", w), "write-out");
-});
-
-const deferring: RegistryLike = { find: () => ({}), complete: async () => ({ content: [{ type: "text", text: '{"verdict":"defer","reason":"destructive"}' }], stopReason: "stop" }) };
-const cfg = { providers: { a: { review: { model: "a/small", timeoutMs: 50 } } } };
-function session(traces: Record<string, unknown>[], calls: { n: number }): ReviewSession {
-  const reg: RegistryLike = { ...deferring, complete: async (...a) => (calls.n++, deferring.complete(...a)) };
-  return { isChild: false, cwd: repo, provider: "a", config: () => cfg, registry: reg, intent: "", trace: (r) => traces.push(r), headless: () => true, bashRules: () => rules };
-}
-const childAsk = (command: string, unit = command) => ({ requestId: "r", surface: "bash", agentName: "builder", forwarding: { x: 1 }, value: unit, payload: { evidence: [{ label: "full command", text: command }] } });
-
-test("review link, headless child: the 2k test restore is allowed without the model; a source restore still goes to it", async () => {
-  const traces: Record<string, unknown>[] = [];
-  const calls = { n: 0 };
-  const r = new ForemanReview();
-  r.upsert("s", session(traces, calls));
-  assert.deepEqual(await r.authorize("s", childAsk("git checkout -- internal/api/websocket_hub_test.go")), { kind: "allow" });
-  assert.equal(calls.n, 0);
-  assert.ok(!traces.some((t) => t.event === "review_defer_headless"));
-  assert.deepEqual(traces.find((t) => t.event === "review"), { event: "review", decision: "test-restore", model: null, class: "write-in", latencyMs: traces[0].latencyMs, errorKind: null, by: undefined });
-  assert.equal((await r.authorize("s", childAsk("git checkout -- src/main.go"))).kind, "deny");
-  assert.equal(calls.n, 1);
-  assert.equal(traces.filter((t) => t.event === "review").pop()?.class, "unknown");
-  assert.ok(traces.some((t) => t.event === "review_defer_headless"));
-});
-
-test("review link: an allowed chain traces chain_allow {segments}", async () => {
-  const traces: Record<string, unknown>[] = [];
-  const r = new ForemanReview();
-  r.upsert("s", session(traces, { n: 0 }));
-  assert.deepEqual(await r.authorize("s", childAsk(`cd ${bashPath(repo)} && grep -rn x . | head`, "grep -rn x .")), { kind: "allow" });
-  assert.equal(traces.find((t) => t.event === "chain_allow")?.segments, 3);
 });
 
 test("security review 2: sed -i only in shapes GNU and BSD sed read alike, on existing regular files (B1)", () => {

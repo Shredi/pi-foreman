@@ -9,7 +9,7 @@ import * as path from "node:path";
 import { DEFAULT_READ_LIMITS } from "../budget.ts";
 import { restoreRoundState, ROUND_STATE_FILE } from "../roundstate.ts";
 import { isBriefName, isCapsResetName, isTrackedRulingName } from "../ruling.ts";
-import { r11Rig, writeAt } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts, writeAt } from "./_r11rig.ts";
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 type Res = { block?: boolean; reason?: string } | undefined;
@@ -28,7 +28,8 @@ async function rig(t: Parameters<typeof r11Rig>[0], ceremony: Record<string, unk
     if (saved === undefined) delete process.env.PI_FOREMAN_HANDOFF_DIR;
     else process.env.PI_FOREMAN_HANDOFF_DIR = saved;
   });
-  return r11Rig(t, ceremony);
+  // R41: a bash call with no default allow goes to the gate review; the stub allows it
+  return r11Rig(t, ceremony, reviewAllowOpts());
 }
 
 /** reviewRuns 1 with one review used and the second refused. */

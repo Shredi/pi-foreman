@@ -118,14 +118,12 @@ def pi_cli():
 
 
 def bundled_check():
-    """The repo package entry brings pi-subagents, the permission system and pi-intercom from <repo>/node_modules."""
-    for rel in ("pi-subagents", "@gotgenes/pi-permission-system", "pi-intercom"):
+    """The repo package entry brings pi-subagents and pi-intercom from <repo>/node_modules."""
+    for rel in ("pi-subagents", "pi-intercom"):
         if not (REPO / "node_modules" / rel / "package.json").is_file():
             raise RuntimeError("%s missing under %s (run npm install in the repo)" % (rel, REPO / "node_modules"))
 
 
-# permissions="open" keeps the older scenarios unchanged; "baseline" is what the installer writes.
-OPEN_PERMISSIONS = {"permission": {"*": "allow", "bash": {"*": "allow"}}}
 
 
 def deep_merge(base, over):
@@ -136,7 +134,9 @@ def deep_merge(base, over):
 
 
 def provider_map(providers, unmapped=()):
-    return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES if r not in unmapped}} for p in providers}
+    # every fake provider also gets a review model: the gate sends lines that are neither floor nor default to review
+    return {p: {"roles": {r: {"model": "%s/%s" % (p, r)} for r in ROLES if r not in unmapped},
+                "review": {"model": "%s/review-allow" % p}} for p in providers}
 
 
 def _under_tmp(p):
@@ -206,7 +206,7 @@ class Rig:
         self.script = self.root / "script.json"
         self.script.write_text(json.dumps(script, indent=1), "utf-8")
         l2 = {
-            "providers": provider_map(providers, unmapped) if l2_providers else {},
+            "providers": provider_map(providers, unmapped) if l2_providers else {p: {"review": {"model": "%s/review-allow" % p}} for p in providers},  # the review model is user-layer only
             "trace": {"enabled": True},
             # the presence probe never reads the host's keyboard state in a rig; a case that tests the gate sets presence itself
             "presence": {"enabled": False},
@@ -226,21 +226,12 @@ class Rig:
             raise RuntimeError("generate-subagents failed: %s" % gen.stderr.decode())
         block = json.loads(gen.stdout.decode())["subagents"]
         bundled_check()
-        # one package entry: the repo brings pi-subagents, permission system and intercom; non-intercom rigs filter intercom out
+        # one package entry: the repo brings pi-subagents and intercom; non-intercom rigs filter intercom out
         entry = str(REPO) if intercom else {"source": str(REPO), "extensions": ["!node_modules/pi-intercom/**"]}
         st = {"packages": [entry], "subagents": block}
         if settings:
             st = deep_merge(st, settings)
         (self.agent / "settings.json").write_text(json.dumps(st, indent=1), "utf-8")
-        ps_cfg = self.agent / "extensions" / "pi-permission-system" / "config.json"
-        ps_cfg.parent.mkdir(parents=True)
-        if permissions == "baseline":
-            out = _run([sys.executable, str(REPO / "scripts" / "permissions_gen.py"), "render", "--agent-dir", str(self.agent)], 60)
-            if out.returncode != 0:
-                raise RuntimeError("permissions_gen failed: %s" % out.stderr.decode())
-            ps_cfg.write_text(json.dumps(json.loads(out.stdout.decode())["config"], indent=1), "utf-8")
-        else:
-            ps_cfg.write_text(json.dumps(OPEN_PERMISSIONS), "utf-8")
         if project_config is not None:
             (self.project / ".pi").mkdir()
             (self.project / ".pi" / "foreman.json").write_text(json.dumps(project_config, indent=1), "utf-8")

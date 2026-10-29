@@ -345,8 +345,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "headless": { "type": "boolean", "description": "true = a deferred forwarded child permission ask is denied with the allowed forms instead of waiting for a human (headless and bench runs). User or overlay config only." },
-        "childDefer": { "type": "string", "enum": ["deny", "owner"], "description": "What a forwarded child bash ask that the model review defers gets. deny (default) = denied at once with the forms a child can run without a forward, so the parent's serial permission inbox does not wait on the owner pane. owner = the human pane (old behaviour; one pending dialog then parks every later child ask). User or overlay config only." },
         "critic": { "type": "array", "items": { "type": "string" }, "description": "Questions rendered into every reviewer and senior-reviewer task; the review answers each once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`. The harness does not parse the lines. Empty list = no block. Default: the four owner questions." }
       }
     },
@@ -522,37 +520,36 @@
         "sampleSeconds": { "type": "integer", "minimum": 5, "description": "Sampling interval. A project file cannot set it." }
       }
     },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The tool gate (gate.ts) that decides every tool call.",
+      "properties": {
+        "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
+        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a round session waits for the owner's ruling-<n>.md before the call is denied, in ms (default 900000)." },
+        "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
+        "tmpAccess": { "type": "boolean", "description": "Writes (and for the owner reads) under the OS temp dirs are allowed (default true)." },
+        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "userFile": { "type": ["string", "null"], "description": "The user's own policy file (absolute, ~/... or relative to the agent dir); null = none." }
+          }
+        }
+      }
+    },
     "safety": {
       "type": "object",
       "description": "Safety policy. An invalid value in a layer is dropped from that layer with a warning; the other layers still apply. The project layer can only tighten it.",
       "additionalProperties": false,
       "properties": {
-        "permissions": {
+        "policy": {
           "type": "object",
           "additionalProperties": false,
+          "description": "Tool gate policy files.",
           "properties": {
-            "deny": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns that are always denied, on top of the baseline. A project can add entries, not remove them." },
-            "ask": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns that need approval. A project can add entries, not remove them." },
-            "allow": { "type": "array", "items": { "type": "string" }, "description": "Bash patterns (permission-system wildcard syntax) allowed without asking, on top of the baseline. A project or session cannot extend it." },
-            "projectCommands": { "type": "array", "items": { "type": "string" }, "description": "The repo's own test and build commands, as bash patterns; allowed without asking. A project or session cannot set it." },
-            "readRoots": { "type": "array", "items": { "type": "string" }, "description": "Absolute dirs (or ~/...) a child's read-class bash ask may also read without the model review (docs/permissions.md). Reads only. A project or session cannot set it." },
-            "autoReview": {
-              "type": "object",
-              "additionalProperties": false,
-              "description": "The foreman's own overlay asks go to the review model (providers.<p>.review) before the human dialog: allow runs the call, a high or critical deny blocks it, anything else asks the human. Deny decisions, self-modification asks, children and sessions without a UI never reach the model. User or overlay config only.",
-              "properties": {
-                "enabled": { "type": "boolean", "description": "Review the foreman's overlay asks before the dialog. Default true." },
-                "rulesFile": { "type": ["string", "null"], "description": "Reviewer rules (prose) that replace the shipped config/permissions.rules.md: absolute, ~/... or relative to the agent dir. null = the shipped file. Read from the user layer only; the file is write-protected like protect.ask." }
-              }
-            },
-            "paths": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "deny": { "type": "array", "items": { "type": "string" }, "description": "Path patterns that tools and shell commands may never touch, on top of the baseline secret paths. A project can add entries, not remove them." },
-                "ask": { "type": "array", "items": { "type": "string" }, "description": "Path patterns that need approval. A project can add entries, not remove them." }
-              }
-            }
+            "files": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Extra policy files of the owner's overlay, merged after the shipped and the user policy: absolute, ~/... or relative to the agent dir." }
           }
         },
         "requiredChildExtensions": { "type": "array", "items": { "type": "string" }, "description": "Extension paths every child must load. A project can add entries, not remove them." },
@@ -598,6 +595,15 @@
           "type": "object",
           "additionalProperties": false,
           "properties": { "allowWorkflow": { "type": "boolean", "description": "Let subagent workflow scripts and schedule.* actions through; they can launch any agent with any model, unchecked by the role allowlist and the role map. Loosening key: L1, overlays and the user file only; project and session values are ignored." } }
+        },
+        "preBash": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Pre-bash hook extension point. A project or session cannot set it (a hook runs code).",
+          "properties": {
+            "hooks": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Ordered hooks run before every bash tool call. An entry ending .mjs, .cjs or .js is a module (absolute path, or relative to the agent dir) whose default export or preBash(input) returns { block: true, reason } to block; any other entry is a command (split on whitespace, no shell) that gets the input JSON {command, cwd, tool, session, role} on stdin and blocks with exit 2 (stderr = reason). A hook can only block, never allow." },
+            "strict": { "type": "boolean", "description": "false (default) = fail-open: a hook error (throw, other exit code, start failure, 5 s timeout) is traced as prebash_hook_error and ignored. true = a hook error blocks the bash call." }
+          }
         },
         "preconditionOps": { "type": "object", "description": "Settings for the precondition-checked operations. A project cannot set it." }
       }

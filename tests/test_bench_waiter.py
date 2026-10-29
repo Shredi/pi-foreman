@@ -92,6 +92,12 @@ class RefusalTest(unittest.TestCase):
 
 
 class BuildWorldTest(unittest.TestCase):
+    def test_foreman_fake_row_names_the_allowing_review_model(self):
+        preset = json.loads((ROOT / "bench" / "presets" / "smoke.json").read_text())
+        r = next(x for x in preset["rows"] if x["id"] == "foreman-fake")
+        cfg = ws.foreman_config(dict(r, roles={"foreman": {"model": "%s/foreman" % r["provider"]}}, _fake=True))
+        self.assertEqual(cfg["providers"][r["provider"]]["review"]["model"], r["provider"] + "/review-allow")
+
     def test_review_strong_trace_and_schema(self):
         cfg = ws.foreman_config(row(_required_child_extensions=["/x/fake.ts"]))
         p = cfg["providers"]["p"]
@@ -101,7 +107,7 @@ class BuildWorldTest(unittest.TestCase):
         self.assertNotIn("ceremony", cfg)
         self.assertEqual(ws.foreman_config(row(review_model="p/other"))["providers"]["p"]["review"]["model"], "p/other")
         fake = ws.foreman_config(row(_fake=True))["providers"]["p"]["review"]["model"]
-        self.assertEqual(fake, "p/review-defer")
+        self.assertEqual(fake, "p/review-allow")  # was review-unreachable: the gate's review of the foreman's own subagent launch failed the cell
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "foreman.json").write_text(json.dumps(cfg))
             r = subprocess.run([sys.executable, str(ROOT / "scripts" / "foreman_config.py"), "validate", "--json",
@@ -124,15 +130,9 @@ class BuildWorldTest(unittest.TestCase):
             os.environ.pop("PI_FOREMAN_PYTHON", None)
             self.assertNotIn("python", ws.foreman_config(row()))
 
-    def test_project_commands_reach_the_permission_config(self):
+    def test_project_commands_reach_the_config(self):
         cfg = ws.foreman_config(row(project_commands=["cargo test *"]))
         self.assertEqual(cfg["safety"]["permissions"]["projectCommands"], ["cargo test *"])
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "foreman.json").write_text(json.dumps(cfg))
-            r = subprocess.run([sys.executable, str(ROOT / "scripts" / "permissions_gen.py"), "--agent-dir", tmp, "render"],
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            self.assertEqual(r.returncode, 0, r.stderr.decode())
-            self.assertIn('"cargo test *"', r.stdout.decode())
 
 
 class BenchRetroTest(unittest.TestCase):
@@ -277,6 +277,24 @@ class ReviewDenyCountTest(unittest.TestCase):
         self.assertEqual(status["asks"], 3)
         self.assertEqual([d["method"] for d in status["asks_denied"]], ["confirm", "review_defer_child", "review_defer_headless"])
         self.assertEqual(status["asks_denied"][1]["role"], "builder")
+
+    def test_gate_dialog_deny_record_counts_as_one_denied_ask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Path(tmp) / "agent"
+            state = agent / "pi-foreman" / "state"
+            state.mkdir(parents=True)
+            lines = [
+                {"event": "dialog", "guard": "gate", "cause": "ask", "decision": "deny with reason", "toolFamily": "bash", "role": "builder"},
+                {"event": "dialog", "guard": "gate", "cause": "ask", "decision": "parent-deny", "toolFamily": "bash", "role": "builder"},
+                {"event": "dialog", "guard": "gate", "cause": "ask", "decision": "allow once", "toolFamily": "bash"},
+            ]
+            (state / "trace-s1.jsonl").write_text("\n".join(json.dumps(r) for r in lines) + "\n", "utf-8")
+            status = {"asks": 0, "asks_denied": []}
+            ws.count_review_denies(agent, status)
+            self.assertEqual((status["asks"], [d["method"] for d in status["asks_denied"]]), (1, ["gate_dialog"]))
+            seen = {"asks": 1, "asks_denied": [{"method": "select", "title": "", "role": "builder"}]}  # the RPC driver saw it already
+            ws.count_review_denies(agent, seen)
+            self.assertEqual((seen["asks"], len(seen["asks_denied"])), (1, 1))
 
 
 if __name__ == "__main__":

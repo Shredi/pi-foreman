@@ -4,7 +4,7 @@
 // `<stateDir>/scratch/<session>/wait-<id>.log`) and registers a `pid` wait for it, so the foreman ends its turn and is
 // woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
 // index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard, destructive and git guard)
-// and the permission system maps it to its bash rules (`shellTools.foreman_bg` in config/permissions.baseline.json).
+// and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
 // This file only spawns; it never decides.
 //
 // The add-on package `pi-background-tasks` is never imported or required. It is detected by its tool `bg_run` (or its

@@ -114,7 +114,7 @@ export function registerGitPack(pi: Pick<ExtensionAPI, "registerTool">, deps: Gi
   | Child | true | No change. The role's allowlist decides, so a child never gains a tool its role lacks. |
 
   A child never writes `PACK_ENV`.
-- **`config/permissions.baseline.json`.** Add `"git_status"`, `"git_log"`, `"git_diff_stat"` and `"git_branch_state"` as `"allow"`, after `foreman_copy`. They are unconditional, since inactive tools are harmless. Extend the `test_permissions_gen.py` allow assertion.
+- **`config/permissions.baseline.json`.** Add `"git_status"`, `"git_log"`, `"git_diff_stat"` and `"git_branch_state"` as `"allow"`, after `foreman_copy`. They are unconditional, since inactive tools are harmless. (The former `test_permissions_gen.py` assertion is gone with the permission package; the gate's own tests cover the allow.)
 
 ## 4. Child inheritance
 
@@ -173,7 +173,7 @@ Python tests use a `tempfile.mkdtemp` repo built with `git init`. They never har
 | `tests/test_config_layers.py` | A project `tools.git: true` is dropped with a warning; `false` is kept |
 | `tests/test_foreman_config.py` | `tools.git` on: `resolve_role` and `generate_subagents` add the 4 tools to the bash roles and not to the planner; off: none |
 | `tests/test_foreman_retro.py` | `git:` line from a fixture trace with `tool_pack` events and session bash git calls (incl. `cd x && git status`, excluding `gitleaks`) |
-| `tests/test_permissions_gen.py` | The baseline allows `git_status` (extend the existing assertion) |
+| `tests/test_permissions_gen.py` | Removed in r41 with the permission package; the gate's tests cover the allow |
 | `extensions/core-adapter/test/gitpack.test.ts` (new) | 4 tools registered with `defaultActive: false`; foreman on activates them and sets the env; foreman off clears the env; a child with env and config on keeps them; a child missing the env, and one with config off, have them removed; `pack_off` refusal; `tool_pack` traced with pack and op over a fake spawner; preflight block |
 | `extensions/core-adapter/test/safeops.test.ts` | `tool_pack` is emitted when `packOn` and not when off |
 | `extensions/core-adapter/test/trace.test.ts` | `pack` and `op` survive `sanitizeTrace` |

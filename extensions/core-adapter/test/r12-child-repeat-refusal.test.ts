@@ -2,9 +2,9 @@
 // failed with `run failed: repeated guarded-token probe` (stderr, exit code 1, block reason), aborts its turn and traces
 // `child_repeat_refusal`; every later tool call is blocked (no third attempt). The parent's runEndOf reads the marker as repeatRefusal
 // (the R11 policy_block family): failed, not paused, no retry, no climb, no relaunch hint.
-// Only probe-class reasons (launchwait.ts REPEAT_STOP_REASONS) are stop-eligible; a repeated cd outside the workspace never stops a run.
-// Probe lines: `HOME=/x; ls ~` binds HOME and uses it (a stop-eligible rebinding deny); `git worktree add|prune` are foreman-only
-// worktree ops and `cd /` leaves the workspace (denied for a child, not stop-eligible) (permoverlay.ts checkShell).
+// Only probe-class reasons (launchwait.ts REPEAT_STOP_REASONS) are stop-eligible; a repeated floor-rm-system deny never stops a run.
+// R41: the gate (index.ts first tool_call handler) feeds a child's floor denies into repeatedDeny. Probe lines: `cat ~/.ssh/id_rsa` is
+// floor-secret-path (stop-eligible); `rm -rf /` is floor-rm-system (denied, not stop-eligible).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -13,7 +13,7 @@ import * as path from "node:path";
 import coreAdapter from "../index.ts";
 import { LadderState } from "../ladder.ts";
 import { launchWaitText, REPEAT_REFUSAL_ERROR, REPEAT_REFUSAL_LINE, REPEAT_STOP_REASONS, runEndOf } from "../launchwait.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -100,13 +100,13 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }) {
 
 test("child_second_identical_deny_stops_run", async (t) => {
   const c = await childRig(t);
-  const first = await c.bash("HOME=/x; ls ~");
+  const first = await c.bash("cat ~/.ssh/id_rsa");
   assert.equal(first?.block, true);
-  assert.match(first?.reason ?? "", /the line binds HOME and uses it/);
+  assert.match(first?.reason ?? "", /is a secret or key path/);
   assert.doesNotMatch(first?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
   assert.equal(c.aborts(), 0);
   assert.equal(c.events("child_repeat_refusal").length, 0);
-  const second = await c.bash("HOME=/x; ls ~");
+  const second = await c.bash("cat ~/.ssh/id_rsa");
   assert.equal(second?.block, true);
   assert.match(second?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
   assert.ok((second?.reason ?? "").includes(first!.reason!), "the stop names the refusal");
@@ -125,8 +125,8 @@ test("child_second_identical_deny_stops_run", async (t) => {
 
 test("child_two_different_denies_do_not_stop", async (t) => {
   const c = await childRig(t);
-  const a = await c.bash("git worktree add ../x");
-  const b = await c.bash("git worktree prune");
+  const a = await c.bash("cat ~/.ssh/id_rsa");
+  const b = await c.bash("cat ~/.ssh/id_ed25519");
   assert.equal(a?.block, true);
   assert.equal(b?.block, true);
   assert.notEqual(a?.reason, b?.reason);
@@ -139,13 +139,11 @@ test("child_two_different_denies_do_not_stop", async (t) => {
 test("child_repeated_cd_outside_workspace_does_not_stop", async (t) => {
   const c = await childRig(t);
   for (let i = 0; i < 5; i++) {
-    const r = await c.bash("cd /");
-    assert.equal(r?.block, true, `cd ${i}`);
-    assert.match(r?.reason ?? "", /children may cd only inside the workspace/);
+    const r = await c.bash("rm -rf /");
+    assert.equal(r?.block, true, `rm ${i}`);
+    assert.match(r?.reason ?? "", /rm|delet|system/i);
     assert.doesNotMatch(r?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
   }
-  // a repeated worktree-op deny is no probe either
-  for (let i = 0; i < 3; i++) assert.doesNotMatch((await c.bash("git worktree add ../x"))?.reason ?? "", new RegExp(REPEAT_REFUSAL_ERROR));
   assert.equal(c.aborts(), 0);
   assert.equal(c.events("child_repeat_refusal").length, 0);
   // the run goes on: a harmless call passes
@@ -155,6 +153,8 @@ test("child_repeated_cd_outside_workspace_does_not_stop", async (t) => {
 test("repeat_stop_reasons_eligible_and_not", () => {
   const hit = (r: string): boolean => REPEAT_STOP_REASONS.some((re) => re.test(r));
   const eligible = [
+    "pi-foreman: '/h/.ssh/id_rsa' is a secret or key path (SSH, GnuPG, cloud or registry credentials, private keys, Pi's auth file). Never read or write it; ask the user for the value you need.",
+    "pi-foreman: write to 'policy.md', a policy file or a harness state file (policy.md of any layer, managed.json). Ask the user to change it.",
     "pi-foreman: 'x.py' denied for a child: the script spells a guarded token from pieces (split literal reassembles a guarded token). No split, concatenated or encoded guarded tokens; a probe that needs one runs through the test suite's fixtures.",
     "pi-foreman: denied by the permission policy (the line binds HOME and uses it; a rebound HOME is never trusted as a path). Use the literal path.",
     "pi-foreman: denied by the permission policy (the line binds FOREMAN_SCRATCH and uses it; a rebound FOREMAN_SCRATCH is never trusted as a path). Use the literal path.",
@@ -201,7 +201,7 @@ test("parent_run_end_repeat_refusal_no_retry", async (t) => {
   assert.equal(runEndOf({ runId: "a", agent: "reviewer", success: true, summary: `VERDICT: PASS\n${STOPPED}` })?.repeatRefusal, undefined);
   assert.equal(runEndOf({ runId: "b", agent: "builder", success: false, summary: "STATUS: stuck" })?.repeatRefusal, undefined);
   // through the adapter: the parent's stop record, one launch, nothing relaunched or made climb-eligible
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   const input = { agent: "builder", task: "fix item 4" };
   const { id } = await a.launch(input);
   await a.started(id, input, "run-r");

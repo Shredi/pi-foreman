@@ -20,11 +20,10 @@ USER = {"kind": "user", "via": "dialog"}
 
 
 def ask(rid, family_cmd, outcome, session, ts, decided=USER):
-    return [
-        {"event": "permission_request.%s" % outcome, "requestId": rid, "toolName": "bash", "command": family_cmd,
-         "timestamp": ts, "decidedBy": decided},
-        {"event": "foreman_review.decision", "requestId": rid, "sessionId": session},
-    ]
+    verdict = "allow" if outcome == "approved" else "deny"
+    layer = "dialog" if decided == USER else "review"
+    return [{"id": rid, "ts": ts, "session": session, "tool": "bash", "layer": layer, "verdict": verdict,
+             "shape": family_cmd, **({"model": "m"} if layer == "review" else {})}]
 
 
 class RetroTest(unittest.TestCase):
@@ -53,7 +52,6 @@ class RetroTest(unittest.TestCase):
         recs += ask("a", "git push origin %s" % SECRET, "denied", "s1", "2026-01-01T00:00:01")
         recs += ask("b", "git push origin main", "approved", "s1", "2026-01-01T00:00:02")
         recs += ask("c", "ls -la", "approved", "s1", "2026-01-01T00:00:03", {"kind": "authorizer", "name": "foreman-review", "verdict": "allow"})
-        recs.append({"event": "foreman_review.decision", "requestId": "c", "sessionId": "s1", "model": "m", "verdict": "allow"})
         recs += ask("d", "ls", "approved", "other", "2026-01-01T00:00:04")
         rep = fr.build(None, None, None, recs, 5, str(self.tmp))
         r = rep["review"]

@@ -57,6 +57,11 @@ class ReplayCase(unittest.TestCase):
         self.addCleanup(r.close)  # runs after errors and failures too
         return r
 
+    def assert_default_role_launch(self, records):
+        """Ledger item 26: a gate record names `default-role-launch` for the owner's role launch (no review call stands in for it)."""
+        rules = [r.get("rule") for r in records if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
+        self.assertIn("default-role-launch", rules, rules)
+
     def golden(self, name, actual):
         """Compare {key: shaped trace} with golden/<name>.json (or rewrite it on request)."""
         path = GOLDEN / (name + ".json")
@@ -110,6 +115,8 @@ class TestLedgerFlow(ReplayCase):
         b.close()
 
         t = rig.traces()
+        self.assert_default_role_launch(t["trace-" + sid_a])  # ledger item 26: the launch no longer shows as a review 'allow' in the golden
+        self.assert_default_role_launch(t["trace-" + sid_b])
         self.golden("ledger_flow", {"sessionA": shape(t["trace-" + sid_a]), "sessionB": shape(t["trace-" + sid_b])})
 
 
@@ -148,13 +155,14 @@ class TestDestructiveGuard(ReplayCase):
         sid = pi.session_id()
         res = tool_results(pi.prompt("[[replay:c1]] start", timeout=60))
         # The nested call made by the codemode script is hooked and reported as its own bash call.
-        # then a heredoc that only mentions `.pi` in prose: bodies are scanned (documented limit, point 17), so the overlay stops it
-        self.assertEqual([(n, e) for n, e, _ in res], [("bash", True), ("bash", True), ("codemode", True), ("bash", True)])
+        # then a heredoc that only mentions `.pi` in prose: the gate walks a heredoc body as data (item 23: the old
+        # overlay scanned bodies and stopped it), so the read-only `cat` runs
+        self.assertEqual([(n, e) for n, e, _ in res], [("bash", True), ("bash", True), ("codemode", True), ("bash", False)])
         self.assertTrue(res[0][2].startswith("DESTRUCTIVE GUARD:"), res[0][2])
         self.assertTrue(res[1][2].startswith("DESTRUCTIVE GUARD:"), res[1][2])
         self.assertIn("Script failed", res[2][2])
         self.assertIn("DESTRUCTIVE GUARD:", res[2][2])
-        self.assertIn("protected configuration", res[3][2])
+        self.assertIn("the .pi dir and $x are prose", res[3][2])
         pi.close()
         self.golden("destructive", {"session": shape(rig.traces()["trace-" + sid])})
 
@@ -214,6 +222,8 @@ class TestProviderSwitch(ReplayCase):
             seen[provider] = [r["model"] for r in child if r.get("event") in ("session_start", "llm")]
         self.assertEqual(seen, {PROVIDER_A: ["foreman-fake/explorer"] * 2, PROVIDER_B: ["foreman-fake-b/explorer"] * 2})
         t = rig.traces()
+        for p in (PROVIDER_A, PROVIDER_B):
+            self.assert_default_role_launch(trace_of(t, "foreman", p + "/"))  # ledger item 26: no review 'allow' for the launch in the golden
         self.golden("provider_switch", {p: shape(trace_of(t, "foreman", p + "/")) for p in (PROVIDER_A, PROVIDER_B)})
 
 
@@ -269,7 +279,9 @@ class TestDetachedLaunch(ReplayCase):
                 self.assertEqual(len([n for n in notifications(recs) if "always detached" in n]), 1)
         pi.close()
         t = rig.traces()
-        foreman = shape(t.pop("trace-" + sid))
+        raw = t.pop("trace-" + sid)
+        self.assert_default_role_launch(raw)  # ledger item 26: the launches no longer show as review 'allow' in the golden
+        foreman = shape(raw)
         self.assertEqual([r for r in foreman if r["event"] == "detach_override"], [{"event": "detach_override"}] * 2)
         children = sorted((shape(v) for v in t.values() if v and v[0].get("role") == "child"), key=json.dumps)
         self.assertEqual(len(children), 2, "adapter did not load in both children")
@@ -295,7 +307,11 @@ class TestRoleAllowlist(ReplayCase):
         pi.close()
         t = rig.traces()
         fr = [r for r in t["trace-" + sid] if r["event"] == "friction"]
-        foreman = shape(t.pop("trace-" + sid))
+        raw = t.pop("trace-" + sid)
+        # ledger item 26: the builder launch is allowed by the gate default `default-role-launch` with no review call; the unknown `worker` launch still reaches the review (golden keeps its one review record)
+        rules = [r.get("rule") for r in raw if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
+        self.assertEqual(rules[-1:], ["default-role-launch"], rules)
+        foreman = shape(raw)
         self.assertEqual([r["role"] for r in foreman if r["event"] == "role_launch"], ["builder"])
         self.assertEqual([(r["role"], r["kind"], r["note"]) for r in fr], [("builder", "permission", "needed permission twice for [path]")])  # the trace scrubs every string field
         self.golden("role_allowlist", {"foreman": foreman})
@@ -318,7 +334,9 @@ class TestRoleModel(ReplayCase):
         self.assertIn("explorer child result", notice)
         pi.close()
         t = rig.traces()
-        foreman = shape(t.pop("trace-" + sid))
+        raw = t.pop("trace-" + sid)
+        self.assert_default_role_launch(raw)  # ledger item 26: the launches no longer show as review 'allow' in the golden
+        foreman = shape(raw)
         self.assertEqual([r["role"] for r in foreman if r["event"] == "role_launch"], ["explorer"])
         self.golden("role_model", {"foreman": foreman})
 
@@ -340,7 +358,8 @@ class TestLaunchModel(ReplayCase):
         rig = self.rig(name, load_fixture("project_map"), providers=(PROVIDER_A, PROVIDER_B),
                        l2_providers=False, project_config=_project_map())
         block = json.loads((rig.agent / "settings.json").read_text("utf-8"))["subagents"]
-        self.assertEqual(block.get("agentOverridesByProvider") or {}, {})
+        # the user layer maps no role (R41: it only names the gate's review model, so a provider key may be present and empty)
+        self.assertEqual({k: v for k, v in (block.get("agentOverridesByProvider") or {}).items() if v}, {})
         return rig
 
     def _launch(self, rig, pi, tag, expect_model):
@@ -368,7 +387,9 @@ class TestLaunchModel(ReplayCase):
         # q2: the foreman names its own model; the provider B map replaces it.
         self._launch(rig, pi, "q2", PROVIDER_B + "/reviewer")
         pi.close()
-        foreman = shape(rig.traces()["trace-" + sid])
+        raw = rig.traces()["trace-" + sid]
+        self.assert_default_role_launch(raw)  # ledger item 26: the launches no longer show as review 'allow' in the golden
+        foreman = shape(raw)
         self.assertEqual([r for r in foreman if r["event"] == "model_override"],
                          [{"event": "model_override", "role": "explorer", "model": PROVIDER_B + "/reviewer"}])
         self.golden("launch_model_switch", {"foreman": foreman})

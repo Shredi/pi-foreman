@@ -107,17 +107,16 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual(res["errors"], [])
 
     def test_invalid_project_value_keeps_lower_tightening(self):
-        res = self.load(l3={"safety": {"permissions": {"deny": ["curl *"]}}},
+        res = self.load(l3={"safety": {"git": {"protectedBranches": ["hotfix"]}}},
                         l2={"safety": {"git": {"protectedBranches": ["release"]}}},
                         proj={"safety": {"children": {"mayPush": "no"},
-                                         "permissions": {"deny": ["wget *", 7]}}})
+                                         "git": {"protectedBranches": ["stable", 7]}}})
         s = res["config"]["safety"]
         self.assertFalse(res["safetyFallback"])
-        self.assertEqual(s["permissions"]["deny"], ["curl *", "wget *"])
-        self.assertEqual(s["git"]["protectedBranches"], ["release"])
+        self.assertEqual(s["git"]["protectedBranches"], ["release", "stable"])
         joined = "\n".join(res["warnings"])
         self.assertIn("project invalid safety value dropped: safety.children.mayPush", joined)
-        self.assertIn("project invalid safety value dropped: safety.permissions.deny[1]", joined)
+        self.assertIn("project invalid safety value dropped: safety.git.protectedBranches[1]", joined)
 
     def test_trace_dir_must_stay_in_workspace(self):
         res = self.load(proj={"trace": {"dir": "logs/trace"}})

@@ -22,6 +22,13 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
    "decision": "deny"
@@ -48,6 +55,13 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
+   "toolFamily": "write",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
    "toolFamily": "Write",
    "guard": "ledger_guard_write",
    "decision": "none"
@@ -61,6 +75,17 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",
@@ -77,6 +102,13 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
    "decision": "none"
@@ -85,6 +117,10 @@
    "event": "role_launch",
    "role": "explorer",
    "model": "foreman-fake/explorer"
+  },
+  {
+   "event": "roots_block",
+   "role": "explorer"
   },
   {
    "event": "role_launched",
@@ -207,6 +243,13 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
+   "toolFamily": "subagent",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
    "decision": "deny"
@@ -214,6 +257,17 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",

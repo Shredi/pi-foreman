@@ -4,14 +4,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_READ_LIMITS } from "../budget.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const WARN = DEFAULT_READ_LIMITS.before.warn;
 const reminds = (a: Awaited<ReturnType<typeof r11Rig>>): number => a.events("read_budget").filter((r) => r.action === "remind").length;
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
 
 async function finalized(t: Parameters<typeof r11Rig>[0]) {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   const finalizer = { agent: "finalizer", task: "write the changelog and result" };
   const l = await a.launch(finalizer);
   assert.equal(l.res, undefined);

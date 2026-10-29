@@ -12,12 +12,11 @@ import { r11Rig } from "./_r11rig.ts";
 
 const FIXTURE = path.join(import.meta.dirname, "fixtures", "r18-dialogs-mixed.jsonl");
 
-test("mixed_fixture_one_per_surface_total_seven", () => {
+test("mixed_fixture_one_per_surface_total_five", () => {
   const rep = JSON.parse(dialogsJson({ file: FIXTURE })) as Record<string, { count: number; lines: string[] } | number>;
   const counts = Object.fromEntries(Object.entries(rep).filter(([k]) => k !== "total").map(([k, v]) => [k, (v as { count: number }).count]).filter(([, n]) => n !== 0));
-  assert.deepEqual(counts, { toolchain_probe: 1, self_ruling_refusal: 1, auto_review_allow: 1, permission_prompt: 1, child_dialogs: 1, checkpoint: 1, ask_user_question: 1, guard_ask: 1, drift_ask: 1 });
-  assert.equal(rep.total, 7, "seven blocking surfaces; the auto allow and the refusal are not dialogs");
-  assert.deepEqual((rep.child_dialogs as { lines: string[] }).lines, ["builder"]);
+  assert.deepEqual(counts, { toolchain_probe: 1, self_ruling_refusal: 1, auto_review_allow: 1, checkpoint: 1, ask_user_question: 1, guard_ask: 1, drift_ask: 1 });
+  assert.equal(rep.total, 5, "five blocking surfaces; the auto allow and the refusal are not dialogs");
   assert.deepEqual((rep.guard_ask as { lines: string[] }).lines, ["git:bash"], "no-ui and child outcomes opened no dialog");
 });
 
@@ -38,11 +37,9 @@ test("dialog_surface_survives_the_trace_writer", (t) => {
   assert.equal(JSON.parse(dialogsJson(tr)).total, 1, "an unknown surface counts nowhere");
 });
 
-test("forwarded_prompt_counts_once_as_child_and_a_plain_prompt_as_permission", async (t) => {
+test("package_permission_events_count_nowhere", async (t) => {
   const a = await r11Rig(t);
   a.channel("permissions:ui_prompt", { requestId: "r1", forwarding: { requesterAgentName: "builder" } });
-  a.channel("permissions:ui_prompt", { requestId: "r1", forwarding: { requesterAgentName: "builder" } });
   a.channel("permissions:ui_prompt", { requestId: "r2" });
-  const recs = a.events("dialog");
-  assert.deepEqual(recs.map((r) => [r.surface, r.agent]), [["child", "builder"], ["permission", undefined]]);
+  assert.deepEqual(a.events("dialog"), []);
 });

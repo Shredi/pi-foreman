@@ -1,8 +1,8 @@
 // Owned paths outside the workspace (harness-friction, ledger items 1, 2, 12; docs/permissions.md,
 // "Owned paths"). One pure source for the dirs the foreman session owns, shared by the overlay
 // (children are kept out), the shell write guard (`--allow-dir`), `foreman_wait` file paths and
-// the recheck exemptions. The permission-system policy that grants the same dirs is rendered
-// from config/permissions.baseline.json (scripts/permissions_gen.py); keep the two in step.
+// the recheck exemptions. The gate's rules that grant the same dirs (docs/permissions.md,
+// "Owned paths") must stay in step with it.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { SCRATCH_DIR_NAME } from "./childscratch.ts";

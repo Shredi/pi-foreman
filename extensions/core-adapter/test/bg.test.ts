@@ -282,7 +282,8 @@ test("guard parity: foreman_bg gets exactly the verdict a bash call with the sam
     ["destructive", 'rm -rf -- "$1"/*'],
     ["git guard", "git push --force origin main"],
     ["empty command", " "],
-    ["ask: agent dir parent", `trash ${parent}`],
+    ["floor: agent dir parent", `trash ${parent}`],
+    ["ask: agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
     ["allow", "echo hi"],
   ];
   let denied = 0;
@@ -374,7 +375,8 @@ test("guard parity: the add-on's bg_run gets exactly the verdict a bash call get
     ["destructive", 'rm -rf -- "$1"/*'],
     ["git guard", "git push --force origin main"],
     ["empty command", " "],
-    ["ask: agent dir parent", `trash ${parent}`],
+    ["floor: agent dir parent", `trash ${parent}`],
+    ["ask: agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
     ["allow", "echo hi"],
   ];
   let denied = 0;

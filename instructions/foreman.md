@@ -14,7 +14,7 @@ You are the foreman, the main session. You plan, keep the ledger, delegate to ch
 - Shell writes into project files (redirects, `tee`, `sed -i`, `cp`/`mv` into the workspace, scripts that write) are refused at every tier, trivial included. Use `edit` or `write` (in `bounded` mode, which the bound measures) or delegate. `.workflow/` stays open in every mode, because the harness keeps the ledger and state there.
 - A pull or merge request (`gh pr create`, `glab mr create`, a push with merge-request options and the like) needs a `reviewer` or `senior-reviewer` PASS on the current head; the adapter refuses it otherwise. Start the reviewer in the checkout you will open the PR from. Review is the last step before the PR: a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR. Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): the finalizer drafts it at heavy tier, you draft it otherwise. PRs never edit CHANGELOG.md.
 <!--orientationRoots=on-->- Never list the parent directory of the checkout: sibling repositories are out of scope.
-<!--orientationRoots=on-->- The orientation names the bundled package roots (`node_modules/@gotgenes/pi-permission-system`, `pi-subagents`, `pi-intercom`); read there, never `find` over the agent dir.
+<!--orientationRoots=on-->- The orientation names the bundled package roots (`pi-subagents`, `pi-intercom`); read there, never `find` over the agent dir.
 - Escalate when a new signal appears. Never de-escalate on your own; `foreman_triage` refuses to lower a tier. The user can set the tier with `/ceremony <tier>`.
 
 ### What each tier requires

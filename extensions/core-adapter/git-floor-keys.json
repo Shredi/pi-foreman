@@ -1,0 +1,16 @@
+{
+  "comment": "Single source of the git-config and remote floors (round 41). floors.ts reads this file at module load and test/gate-floors.test.ts reads the same file. keyPatterns: lower-case regular expressions over a git config key; a write of a matching key (git config, -c, --config-env) is a floor deny in every session kind. It is the union of scripts/git_guard.py CHILD_CONFIG_DENY and the plan's Addendum B list (url.*.insteadOf, url.*.pushInsteadOf, branch.*.pushRemote, remote.pushDefault, remote.*.push, remote.*.url, remote.*.pushurl, core.hooksPath, core.sshCommand, credential.*, include.path, includeIf.*, protocol.*.allow). remoteSubcommands: git remote subcommands that change remotes (git_guard.py CHILD_REMOTE_DENY). envPattern: environment words that inject git config. protectedBranches: the branch names that are always protected, beside safety.git.protectedBranches and the remote HEAD.",
+  "keyPatterns": [
+    "^(remote|push|include|includeif|credential)(\\..*)?$",
+    "^branch\\..+\\.pushremote$",
+    "^core\\.(hookspath|fsmonitor|sshcommand)$",
+    "^diff\\.external$",
+    "^.+\\.textconv$",
+    "^url\\..+\\.(insteadof|pushinsteadof)$",
+    "^protocol(\\..+)?\\.allow$"
+  ],
+  "sectionNames": ["core", "url", "protocol", "branch"],
+  "remoteSubcommands": ["add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"],
+  "envPattern": "^GIT_CONFIG_(COUNT|KEY_[0-9]+|VALUE_[0-9]+|GLOBAL|SYSTEM|PARAMETERS)$",
+  "protectedBranches": ["main", "master"]
+}

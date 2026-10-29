@@ -5,11 +5,11 @@ import { HUB_ROOT_FIX, hubWorkflowDriftLines } from "../hubdrift.ts";
 
 test("doctor_hub_workflow_basename_warns", () => {
   for (const v of ["/a/hub/.workflow", "/a/hub/.workflow/"]) {
-    const lines = hubWorkflowDriftLines({ agentDir: "/nonexistent-agent", hubWorkflow: v, checkouts: [] });
+    const lines = hubWorkflowDriftLines({ hubWorkflow: v });
     assert.equal(lines.length, 1, v);
     assert.ok(lines[0].startsWith("WARN ") && lines[0].includes(HUB_ROOT_FIX), lines[0]);
   }
-  const list = hubWorkflowDriftLines({ agentDir: "/nonexistent-agent", hubWorkflow: ["/a/hub", "/b/.workflow"], checkouts: [] });
+  const list = hubWorkflowDriftLines({ hubWorkflow: ["/a/hub", "/b/.workflow"] });
   assert.equal(list.filter((l) => l.includes("hub ROOT")).length, 1);
-  assert.deepEqual(hubWorkflowDriftLines({ agentDir: "/nonexistent-agent", hubWorkflow: "/a/hub", checkouts: [] }), []);
+  assert.deepEqual(hubWorkflowDriftLines({ hubWorkflow: "/a/hub" }), []);
 });

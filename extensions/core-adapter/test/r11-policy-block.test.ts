@@ -2,6 +2,7 @@
 // stopped, never climb-eligible, never relaunched by the harness; trace `child_policy_block` is the stop record; the report says so.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -32,17 +33,12 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  // a resolvable permission-system package (permsys.ts resolvePermissionSystem), so a checkout without node_modules can launch
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   process.env.PI_CODING_AGENT_DIR = agentDir;
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
   const l2 = {
-    providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}`, ...(r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
+    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}`, ...(r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
   };
@@ -74,7 +70,7 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);

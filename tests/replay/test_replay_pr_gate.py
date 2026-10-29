@@ -42,15 +42,6 @@ def fake_gh(rig):
     return bindir, marker
 
 
-def allow_tool(rig, name):
-    """The owner allows the package tool, so only the foreman's gate stands in its way."""
-    cfg = rig.agent / "extensions" / "pi-permission-system" / "config.json"
-    data = json.loads(cfg.read_text("utf-8"))
-    data.setdefault("tools", {})[name] = "allow"
-    data.setdefault("permission", {})[name] = "allow"
-    cfg.write_text(json.dumps(data, indent=1), "utf-8")
-
-
 def last(res):
     return res[-1]
 
@@ -69,7 +60,6 @@ class TestPrGate(ReplayCase):
 
     def test_gate_walk(self):
         rig, env, marker = self.pr_rig("prgate")
-        allow_tool(rig, PR_TOOL)
         pi = rig.start(env=env)
 
         none = last(self.attempt(pi, "pr-gh"))
@@ -91,7 +81,9 @@ class TestPrGate(ReplayCase):
         self.assertIn("reviewer", stale[2])
 
         mr = last(self.attempt(pi, "pr-mr"))
-        self.assertIn("pr_refused:stale_review", mr[2])
+        # item 23: the rig sits on the default branch, so the gate floor git-push-protected refuses the push before the PR rule runs
+        # (old: pr_refused:stale_review; still a deny; the merge_request option case stays covered by the PR-rule unit tests)
+        self.assertIn("git-push-protected", mr[2])
         ci = last(self.attempt(pi, "pr-ci"))
         self.assertNotIn("pr_refused", ci[2], "ci.skip must not be gated by the PR rule")
 
@@ -101,11 +93,10 @@ class TestPrGate(ReplayCase):
         pi.close()
 
         reasons = [r.get("reason") for r in trace_of(rig.traces(), "foreman") if r.get("event") == "pr_refused"]
-        self.assertEqual(reasons, ["no_review", "stale_review", "stale_review", "stale_review"])
+        self.assertEqual(reasons, ["no_review", "stale_review", "stale_review"])
 
     def test_pr_tool_without_review(self):
         rig, env, _ = self.pr_rig("prtool")
-        allow_tool(rig, PR_TOOL)
         pi = rig.start(env=env)
         tool = last(self.attempt(pi, "pr-tool"))
         pi.close()

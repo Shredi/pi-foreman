@@ -11,7 +11,7 @@ const input = { files: ["a/x.ts"], agentsMd: null, readmeMd: null, packageJson: 
 test("orient: one line names the bundled package roots", () => {
   const lines = buildOrientation(input).split("\n").filter((l) => l.startsWith("Bundled package roots"));
   assert.equal(lines.length, 1);
-  for (const r of ["node_modules/@gotgenes/pi-permission-system", "node_modules/pi-subagents", "node_modules/pi-intercom"]) assert.ok(lines[0].includes(`\`${r}\``), r);
+  for (const r of ["node_modules/pi-subagents", "node_modules/pi-intercom"]) assert.ok(lines[0].includes(`\`${r}\``), r);
 });
 
 test("orient: the named roots are the package.json dependencies", () => {

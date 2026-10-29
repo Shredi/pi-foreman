@@ -11,7 +11,7 @@
 // after that user message, so the script is stateless across processes and turns.
 //
 // Reviewer models (`<provider>/review-<kind>`) ignore the script and answer every request with
-// a fixed verdict, for the model-review link: allow, deny-high, deny-low, defer, garbage, empty,
+// a fixed verdict, for the model-review link: allow, deny, ask, invalid, unreachable,
 // error (the provider throws) and hang (never answers until aborted).
 //
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
@@ -43,14 +43,15 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
-export const REVIEW_MODELS = ["allow", "deny-high", "deny-low", "defer", "garbage", "empty", "error", "hang"].map((k) => `review-${k}`);
+// R41 gate models: allow, deny, ask, invalid (closed JSON verdicts of the shipped policy), unreachable (throws like review-error).
+export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "child-unreachable", "child-ask", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
-  "review-allow": '{"verdict":"allow"}',
-  "review-deny-high": '{"verdict":"deny","reason":"scripted hard deny","riskLevel":"high"}',
-  "review-deny-low": '{"verdict":"deny","reason":"scripted soft deny","riskLevel":"low"}',
-  "review-defer": '{"verdict":"defer","reason":"scripted unsure","lean":"allow"}',
-  "review-garbage": "Sure, that looks fine to me.",
-  "review-empty": "",
+  "review-allow": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow"}',
+  "review-deny": '{"verdict":"deny","entry":"secret-access","reason":"scripted deny"}',
+  "review-ask": '{"verdict":"ask","entry":"package-install","reason":"scripted ask"}',
+  "review-child-ask": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow (owner)"}',
+  "review-child-unreachable": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow (owner)"}',
+  "review-invalid": '{"verdict":"allow","entry":"not-an-entry"}',
 };
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 
@@ -205,11 +206,15 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
       // the log is a test aid only
     }
   }
-  if (model.id === "review-error") throw new Error("fake: scripted provider failure");
+  if (model.id === "review-error" || model.id === "review-unreachable") throw new Error("fake: scripted provider failure");
+  // review-child-unreachable: the owner's calls are allowed, every child call hits an unreachable reviewer
+  if (model.id === "review-child-unreachable" && (context.messages as { role: string; content: unknown }[]).some((m) => textOf(m.content).includes("session kind: child"))) throw new Error("fake: scripted provider failure");
+  // review-child-ask: the owner's calls are allowed, every child call is an ask
+  const childAsk = model.id === "review-child-ask" && (context.messages as { role: string; content: unknown }[]).some((m) => textOf(m.content).includes("session kind: child"));
   const stream = createAssistantMessageEventStream();
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
     .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));
-  const step: Step = model.id.startsWith("review-") ? { text: REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
+  const step: Step = model.id.startsWith("review-") ? { text: childAsk ? REVIEW_REPLIES["review-ask"] : REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
   if (process.env.FOREMAN_FAKE_FROZEN === "1" && !model.id.startsWith("review-") && !summary) freezeTools(step, context);
   const output: AssistantMessage = {
     role: "assistant",

@@ -37,12 +37,9 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const project = path.join(root, "project");
   const agentDir = path.join(root, "agent");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
+  fs.mkdirSync(agentDir, { recursive: true });
   const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
   const sessionId = `r14-rs-${++n}`;
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
   fs.mkdirSync(handoff, { recursive: true });
@@ -99,7 +96,11 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
       hasUI: true,
       isProjectTrusted: () => false,
       isIdle: () => true,
-      modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+      modelRegistry: {
+        find: () => ({ id: "m" }),
+        getProviderAuthStatus: () => ({ configured: false }),
+        complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }),
+      },
       ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined },
     };
     await handlers.get("session_start")!({ reason: "reload" }, ctx);

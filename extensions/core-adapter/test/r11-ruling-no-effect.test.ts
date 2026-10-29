@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_READ_LIMITS, finalizationCommand } from "../budget.ts";
-import { r11Rig, writeAt } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts, writeAt } from "./_r11rig.ts";
 
 const review = (n: number) => ({ agent: "reviewer", task: `review items ${n}` });
 const capRefused = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[review_cap\]/.test(r.reason ?? "");
@@ -17,7 +17,7 @@ const fin = (command: string) => finalizationCommand("bash", { command });
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 /** A rig with reviewRuns 1, one review used, and a child-side handoff dir with an old ask.md. */
 async function capped(t: Parameters<typeof r11Rig>[0]): Promise<{ a: Rig; dir: string }> {
-  const a = await r11Rig(t, { reviewRuns: 1 });
+  const a = await r11Rig(t, { reviewRuns: 1 }, reviewAllowOpts());
   const dir = a.handoff("round", "child");
   writeAt(path.join(dir, "ask.md"), "ask: one more review round?\n", Date.now() - 60_000);
   assert.equal((await a.launch(review(1))).res, undefined);

@@ -84,7 +84,7 @@ test("dry run writes nothing and runs no install", () => {
   assert.doesNotMatch(r.out, /would run: pi (install|remove)/);
   assert.match(r.out, /package pi-subagents@0\.78\.0: bundled with pi-foreman/);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
-  assert.match(r.out, /permission-system config: absent, would write/);
+  assert.doesNotMatch(r.out, /permission-system config|gate migration/);
   assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);
 });
 
@@ -159,8 +159,8 @@ test("leftover top-level bundled packages and a legacy local pi-foreman entry ar
   assert.deepEqual(snapshot(env.base), before);
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
-  assert.deepEqual(readSettings(env).packages, ["npm:keep-me@1.0.0", FOREMAN]);
-  assert.equal(installs(env).filter((a) => a[0] === "remove").length, 4);
+  assert.deepEqual(readSettings(env).packages, ["npm:@gotgenes/pi-permission-system@39.0.2", "npm:keep-me@1.0.0", FOREMAN]); // setup never drops the package entry itself
+  assert.equal(installs(env).filter((a) => a[0] === "remove").length, 3);
 });
 
 test("without a pi-foreman package entry setup prints the install line and fails", () => {
@@ -310,53 +310,55 @@ test("overlay needs an exact version", () => {
 });
 
 const permFile = (env) => path.join(env.agentDir, "extensions", "pi-permission-system", "config.json");
-const permBackups = (env) => fs.readdirSync(path.dirname(permFile(env))).filter((f) => f.startsWith("config.json.bak-"));
+const migrationDir = (env) => path.join(env.agentDir, "pi-foreman", "state", "migration");
 
-test("permission-system config is generated, hashed in managed state, and a second run leaves it alone", () => {
+test("a fresh install writes no permission-system config and records no permission hash", () => {
   const env = fresh();
-  fs.writeFileSync(path.join(env.agentDir, "foreman.json"), JSON.stringify({ version: 1, providers: {}, safety: { permissions: { deny: ["make nuke*"], projectCommands: ["make check *"] } } }));
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
-  const cfg = JSON.parse(fs.readFileSync(permFile(env), "utf8"));
-  assert.equal(cfg.permission.bash["git status *"], "allow");
-  assert.equal(cfg.permission.bash["make check *"], "allow");
-  assert.equal(cfg.permission.bash["make nuke*"].action, "deny");
-  assert.equal(cfg.permission.path["*.env"].action, "deny");
-  assert.ok(cfg.permission.path[`${env.agentDir.split(path.sep).join("/")}/auth.json`]);
+  assert.equal(fs.existsSync(permFile(env)), false);
+  assert.doesNotMatch(r.out, /permission-system config|gate migration/);
   const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
-  assert.match(managed.files[permFile(env)], /^[0-9a-f]{64}$/);
-  assert.equal(permBackups(env).length, 0);
+  assert.equal(managed.files?.[permFile(env)], undefined);
   const before = snapshot(env.base);
-  const again = run(env, []);
-  assert.match(again.out, /permission-system config: in sync/);
+  assert.equal(run(env, []).code, 0);
   assert.deepEqual(snapshot(env.base), before);
 });
 
-test("a hand-edited permission-system config is backed up and overwritten; the notice names foreman.json", () => {
+test("setup migrates old permission keys and the rendered config with backups; a dry run writes nothing and a rerun is a no-op", () => {
   const env = fresh();
-  assert.equal(run(env, []).code, 0);
-  const edited = JSON.parse(fs.readFileSync(permFile(env), "utf8"));
-  edited.permission.bash = "allow";
-  fs.writeFileSync(permFile(env), `${JSON.stringify(edited, null, 2)}\n`);
+  const foreman = path.join(env.agentDir, "foreman.json");
+  fs.writeFileSync(foreman, JSON.stringify({ version: 1, providers: {}, safety: { permissions: { deny: ["make nuke*"], autoReview: { rulesFile: "rules.md" } } } }));
+  fs.mkdirSync(path.dirname(permFile(env)), { recursive: true });
+  fs.writeFileSync(permFile(env), '{"permission": {"*": "ask"}}\n');
+  const before = snapshot(env.base);
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /gate migration: would write .*foreman\.json\.pre-gate/);
+  assert.deepEqual(snapshot(env.base), before);
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /edited by hand.*put your own rules in foreman\.json/s);
-  assert.equal(permBackups(env).length, 1);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(path.dirname(permFile(env)), permBackups(env)[0]), "utf8")).permission.bash, "allow");
-  assert.equal(JSON.parse(fs.readFileSync(permFile(env), "utf8")).permission.bash["*"], "ask");
+  assert.match(r.out, /safety\.permissions\.autoReview\.rulesFile: moved to gate\.policy\.userFile/);
+  assert.match(r.out, /safety\.permissions\.deny: removed/);
+  assert.equal(fs.existsSync(permFile(env)), false);
+  assert.ok(fs.existsSync(path.join(migrationDir(env), "foreman.json.pre-gate")));
+  assert.equal(fs.readFileSync(path.join(migrationDir(env), "permission-system-config.json"), "utf8"), '{"permission": {"*": "ask"}}\n');
+  const cfg = JSON.parse(fs.readFileSync(foreman, "utf8"));
+  assert.equal(cfg.safety?.permissions, undefined);
+  assert.equal(cfg.gate.policy.userFile, "rules.md");
+  const again = run(env, []);
+  assert.doesNotMatch(again.out, /gate migration/);
 });
 
-test("--remove deletes an unchanged permission-system config (with a backup) and keeps an edited one", () => {
+test("--remove does not migrate or touch the rendered permission config", () => {
   const env = fresh();
   assert.equal(run(env, []).code, 0);
-  assert.equal(run(env, ["--remove"]).code, 0);
-  assert.equal(fs.existsSync(permFile(env)), false);
-  assert.equal(permBackups(env).length, 1);
-  const env2 = fresh();
-  assert.equal(run(env2, []).code, 0);
-  fs.writeFileSync(permFile(env2), '{"permission": {"*": "allow"}}\n');
-  assert.equal(run(env2, ["--remove"]).code, 0);
-  assert.equal(fs.existsSync(permFile(env2)), true);
+  fs.mkdirSync(path.dirname(permFile(env)), { recursive: true });
+  fs.writeFileSync(permFile(env), '{"permission": {"*": "allow"}}\n');
+  const r = run(env, ["--remove"]);
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /gate migration|permission-system config/);
+  assert.equal(fs.existsSync(permFile(env)), true);
 });
 
 test("pi-foreman is placed before pi-claude-bridge in packages: dry run shows it, the run backs up and moves it, a rerun is a no-op", () => {

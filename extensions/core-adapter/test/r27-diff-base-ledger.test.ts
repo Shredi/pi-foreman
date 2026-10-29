@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig as baseRig, reviewAllowOpts } from "./_r11rig.ts";
+
+const r11Rig = (t: Parameters<typeof baseRig>[0], ceremony: Record<string, unknown> = {}) => baseRig(t, ceremony, reviewAllowOpts());
 
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", ...args], { cwd, encoding: "utf8" }).trim();
 const HUB = (sig: string) => `package api\n\nfunc Send(${sig}) error {\n\treturn nil\n}\n`;

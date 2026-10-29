@@ -21,6 +21,17 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
    "event": "guard",
    "toolFamily": "Bash",
    "guard": "destructive_guard",
@@ -29,6 +40,28 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "codemode",
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "review",
+   "decision": "allow"
+  },
+  {
+   "event": "guard",
+   "role": "foreman",
+   "toolFamily": "bash",
+   "guard": "gate",
+   "decision": "allowed"
   },
   {
    "event": "guard",
@@ -45,14 +78,20 @@
   },
   {
    "event": "review",
-   "decision": "empty",
-   "model": "foreman-fake/foreman"
+   "decision": "allow"
   },
   {
-   "event": "overlay",
+   "event": "guard",
    "role": "foreman",
    "toolFamily": "bash",
-   "decision": "ask-denied"
+   "guard": "gate",
+   "decision": "allowed"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Bash",
+   "guard": "destructive_guard",
+   "decision": "none"
   },
   {
    "event": "llm",

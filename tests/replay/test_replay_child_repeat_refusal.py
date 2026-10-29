@@ -1,7 +1,7 @@
 """R12 item 4: a child that gets the same overlay deny twice stops its run (replay fixture child_repeat_refusal).
 
-The builder runs `HOME=x; touch ~/rebound.txt` (binds HOME and uses it: a stop-eligible probe-class deny, launchwait.ts
-REPEAT_STOP_REASONS) twice: the second identical deny reason stops the run with
+The builder runs `cat ~/.ssh/id_rsa` (the gate floor floor-secret-path: a stop-eligible probe-class deny, launchwait.ts
+REPEAT_STOP_REASONS; item 23: the old fixture line `HOME=x; touch ~/rebound.txt` was an overlay deny, the gate sends it to review) twice: the second identical deny reason stops the run with
 `run failed: repeated guarded-token probe` and the child traces `child_repeat_refusal`; its third scripted step (`touch third.txt`)
 never runs (no third attempt) and the foreman launches the builder once (no auto-retry).
 Same prerequisites and skips as test_replay.py."""

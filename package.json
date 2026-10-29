@@ -14,7 +14,6 @@
     "extensions": [
       "./extensions/core-adapter/index.ts",
       "./node_modules/pi-subagents/index.js",
-      "./node_modules/@gotgenes/pi-permission-system/src/index.ts",
       "./node_modules/pi-intercom/index.ts"
     ],
     "subagents": {
@@ -41,9 +40,9 @@
   "type": "module",
   "dependencies": {
     "@inquirer/prompts": "8.7.4",
-    "@gotgenes/pi-permission-system": "39.0.2",
     "pi-intercom": "0.17.0",
-    "pi-subagents": "0.78.0"
+    "pi-subagents": "0.78.0",
+    "unbash": "6.0.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

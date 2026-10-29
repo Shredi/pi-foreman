@@ -5,7 +5,9 @@ import assert from "node:assert/strict";
 import { occasionOf } from "../occasion.ts";
 import { initialReviewGate, onReviewVerdicts, onRevision, reviewHint } from "../bound.ts";
 import { planLedgerCall } from "../ledgercall.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig as baseRig, reviewAllowOpts } from "./_r11rig.ts";
+
+const r11Rig = (t: Parameters<typeof baseRig>[0], ceremony: Record<string, unknown> = {}) => baseRig(t, ceremony, reviewAllowOpts());
 
 test("occasionOf: the efc47f12 brief sentence mentions the tags in backticks: an item", () => {
   assert.equal(occasionOf("skipped for `[pre-pr]`, `[second-opinion]`, `[plan-review]` via `occasionOf`"), "item");

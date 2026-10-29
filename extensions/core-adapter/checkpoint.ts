@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { scratchRoot } from "./editmode.ts";
 import { resolveToolPath } from "./payload.ts";
 import { parentApproval } from "./ruling.ts";
+import type { Verdict } from "./rounds.ts";
 import type { SelfRulings } from "./ruling.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
@@ -207,6 +208,139 @@ export function builderLaunchRefusal(rec: PlanRecord | null | undefined, tier: s
   return currentHash === rec.hash ? null : "plan_changed";
 }
 
+// ---------------------------------------------------------------- reload survival (R41 item 17)
+// A checkpoint approval and a plan-review verdict outlive /reload keyed by the plan VERSION hash (planVersionHash).
+// Human approvals: <agentDir>/pi-foreman/state/approvals/<hash>.json, written only by this harness (never a model tool: the
+// path is a policy floor) and never in round-state.json. Parent rulings: a `plan-version: <hash>` line that the PARENT pane's
+// harness appends to a ruling it just wrote into a CHILD's handoff dir (stampPlanVersion; never the session brief CLI, never the
+// caller's own dir); a ruling without the line falls back to the ctime binding.
+
+export const approvalsDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "approvals");
+const HASH_RE = /^[0-9a-f]{64}$/;
+
+/** What the store keeps for one plan version. */
+export interface StoredPlan {
+  hash: string;
+  topic: string;
+  approval: { at: string; by: "user" | "rig" } | null;
+  review: { verdict: Verdict; model: string | null; rounds: number } | null;
+}
+
+const storeFile = (agentDir: string, hash: string): string => path.join(approvalsDir(agentDir), `${hash}.json`);
+
+/** The stored approval / review of a plan version, or null (no file, bad shape, a hash that is not the file's name). */
+export function readStored(agentDir: string, hash: string): StoredPlan | null {
+  if (!HASH_RE.test(hash)) return null;
+  try {
+    const st = fs.lstatSync(storeFile(agentDir, hash));
+    if (!st.isFile() || st.size > 16 * 1024) return null;
+    const v = JSON.parse(fs.readFileSync(storeFile(agentDir, hash), "utf8")) as Record<string, unknown>;
+    if (!v || typeof v !== "object" || v.hash !== hash || typeof v.topic !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(v.topic)) return null;
+    const a = v.approval as Record<string, unknown> | null | undefined;
+    const r = v.review as Record<string, unknown> | null | undefined;
+    const approval = a && typeof a === "object" && typeof a.at === "string" && (a.by === "user" || a.by === "rig") ? { at: a.at, by: a.by as "user" | "rig" } : null;
+    const review = r && typeof r === "object" && (r.verdict === "pass" || r.verdict === "fail") && (r.model === null || typeof r.model === "string") && typeof r.rounds === "number" && Number.isInteger(r.rounds) && r.rounds >= 1 ? { verdict: r.verdict as Verdict, model: r.model as string | null, rounds: r.rounds } : null;
+    return { hash, topic: v.topic, approval, review };
+  } catch {
+    return null;
+  }
+}
+
+/** Merge `patch` into the stored entry of a plan version (temp file + rename); a failure is not fatal and returns false. */
+export function saveStored(agentDir: string, hash: string, topic: string, patch: { approval?: StoredPlan["approval"]; review?: StoredPlan["review"] }): boolean {
+  if (!HASH_RE.test(hash)) return false;
+  const dir = approvalsDir(agentDir);
+  const file = storeFile(agentDir, hash);
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (fs.lstatSync(dir).isSymbolicLink()) return false;
+    const old = readStored(agentDir, hash);
+    const next: StoredPlan = { hash, topic, approval: patch.approval ?? old?.approval ?? null, review: patch.review ?? old?.review ?? null };
+    fs.writeFileSync(tmp, JSON.stringify({ v: 1, ...next }) + "\n", { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    return true;
+  } catch {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      // best effort
+    }
+    return false;
+  }
+}
+
+/** The restorable state of the plan files now in the scratch dir: the newest stored human approval and every stored review. */
+export interface StoredRestore {
+  approved: { plan: PlanFile; at: string; by: "user" | "rig" } | null;
+  reviews: { plan: PlanFile; review: NonNullable<StoredPlan["review"]> }[];
+}
+
+export function restoreFromStore(agentDir: string, o: PlanOpts): StoredRestore {
+  const out: StoredRestore = { approved: null, reviews: [] };
+  const scratch = scratchRoot(realDeep(path.resolve(workspaceOf(o.cwd).root)), o.scratchDir, o.platform);
+  if (!scratch) return out;
+  let names: string[];
+  try {
+    names = fs.readdirSync(scratch).filter((n) => PLAN_NAME.test(n)).sort();
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    const r = readPlan(path.join(scratch, name), o);
+    if (!("plan" in r)) continue;
+    const st = readStored(agentDir, r.plan.hash);
+    if (!st) continue;
+    if (st.review) out.reviews.push({ plan: r.plan, review: st.review });
+    if (st.approval && (!out.approved || st.approval.at > out.approved.at)) out.approved = { plan: r.plan, ...st.approval };
+  }
+  return out;
+}
+
+const PLAN_VERSION_LINE = /^plan-version: ([0-9a-f]{64})[ \t]*$/m;
+const PLAN_VERSION_LINES = /^plan-version: .*(?:\r?\n|$)/gm;
+
+/** The plan version a ruling text names in its `plan-version:` line, or null. */
+export const planVersionLineOf = (text: string): string | null => PLAN_VERSION_LINE.exec(text)?.[1] ?? null;
+
+/**
+ * Parent pane harness only: append `plan-version: <hash>` (version hash of `<handoffDir>/plan.md`) to a ruling file the parent just wrote
+ * in a child's handoff dir. Returns the hash, or null when there is no readable plan.md or the file cannot be rewritten.
+ */
+export function stampPlanVersion(rulingFile: string, handoffPlan: string): string | null {
+  try {
+    const ps = fs.lstatSync(handoffPlan);
+    const rs = fs.lstatSync(rulingFile);
+    if (!ps.isFile() || ps.size > PLAN_MAX_BYTES || !rs.isFile() || rs.size > PLAN_MAX_BYTES) return null;
+    const hash = planVersionHash(fs.readFileSync(handoffPlan));
+    const text = fs.readFileSync(rulingFile, "utf8").replace(PLAN_VERSION_LINES, "").replace(/\s+$/, "");
+    fs.writeFileSync(rulingFile, `${text}\nplan-version: ${hash}\n`);
+    return hash;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The stamped `ruling.md` of `dir` for the plan version `planHash`: `{ file }` when its first line is APPROVED and the plan-version line
+ * names `planHash` (no ctime needed); `"stale"` when it is APPROVED for another version (no approval at all); null when there is no usable
+ * ruling.md or it carries no line (the caller falls back to the ctime binding).
+ */
+export function stampedApproval(dir: string, planHash: string, self?: SelfRulings): { file: string } | "stale" | null {
+  try {
+    const file = path.join(dir, "ruling.md");
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > PLAN_MAX_BYTES || self?.has(file, st.mtimeMs)) return null;
+    const text = fs.readFileSync(file, "utf8");
+    if (text.split(/\r?\n/, 1)[0].trim() !== "APPROVED") return null;
+    const v = planVersionLineOf(text);
+    if (v === null) return null;
+    return v === planHash ? { file } : "stale";
+  } catch {
+    return null;
+  }
+}
+
 /** The parent-written verdict file of the plan checkpoint, in the session's handoff dir. */
 export const PLAN_VERDICT_FILE = "ruling-plan.md";
 export type CheckpointMode = "parent" | "human";
@@ -228,6 +362,9 @@ export function readPlanVerdict(dir: string, planFile: string, self?: SelfRuling
   const own = readPlanVerdictFile(dir, planFile, self);
   if (own) return own;
   try {
+    const stamped = stampedApproval(dir, planVersionHash(fs.readFileSync(planFile)), self);
+    if (stamped === "stale") return null;
+    if (stamped) return { kind: "approve" };
     return parentApproval([dir], fs.statSync(planFile).ctimeMs, self, true) ? { kind: "approve" } : null;
   } catch {
     return null;
@@ -238,8 +375,12 @@ export function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRu
   try {
     const file = path.join(dir, PLAN_VERDICT_FILE);
     const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= fs.statSync(planFile).ctimeMs || self?.has(file, st.mtimeMs)) return null;
-    const text = fs.readFileSync(file, "utf8");
+    if (!st.isFile() || st.size > PLAN_MAX_BYTES || self?.has(file, st.mtimeMs)) return null;
+    const raw = fs.readFileSync(file, "utf8");
+    // a stamped verdict (stampPlanVersion) is bound to the plan version it was written for; an unstamped one to the plan file's ctime
+    const stamp = planVersionLineOf(raw);
+    if (stamp !== null ? stamp !== planVersionHash(fs.readFileSync(planFile)) : st.ctimeMs <= fs.statSync(planFile).ctimeMs) return null;
+    const text = raw.replace(PLAN_VERSION_LINES, "");
     const first = text.split(/\r?\n/, 1)[0].trim();
     if (first === "APPROVED") return { kind: "approve" };
     if (first === "REJECT") return { kind: "reject" };

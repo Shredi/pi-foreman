@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""Count permission decisions per session from the permission system's review log (stdlib, 3.13+).
+"""Count gate decisions per session from the gate log (stdlib, 3.13+).
 
     python scripts/review_log_stats.py [LOG] [--agent-dir DIR] [--json]
 
-LOG defaults to <agent dir>/extensions/pi-permission-system/logs/
-pi-permission-system-permission-review.jsonl (agent dir: --agent-dir, else
+LOG defaults to <agent dir>/pi-foreman/state/gate/log.jsonl (agent dir: --agent-dir, else
 $PI_CODING_AGENT_DIR, else ~/.pi/agent).
 
-Per session it counts each ask (requestId) once:
-  human_approved / human_denied  the terminal permission_request.approved|denied was decided by
-                                 the user (directly, or nested inside a forwarded decision)
-  review_allow / review_deny / review_defer
-                                 a reviewer model gave that verdict (foreman_review.decision with
-                                 a model, or ai_guard.decision)
-  forwarded                      the ask came from a subagent (child and parent lines join on
-                                 requestId, so it counts once)
-The session of an ask is the sessionId of its foreman_review.decision line, else the
-targetSessionId of its forwarded_permission.* line, else "unknown". Commands, paths and
-reasons are never printed.
+Per session it counts each decision record (gatelog.ts; the record's own id counts once):
+  decisions                      every gate record
+  floor_deny / default_allow     a floor denied, or a default policy entry allowed
+  review_allow / review_deny / review_ask
+                                 the reviewer model decided that verdict (layer review)
+  review_unreachable             the reviewer gave no usable verdict (layer review, verdict
+                                 unreachable; the call then asked or denied)
+  cached                         the verdict came from the decision cache (layer cache or cached)
+  human_approved / human_denied  a dialog was answered by the user (layer dialog)
+  no_dialog                      a dialog was due but none could open (reason no-dialog)
+  child                          the call came from a child or headless session (kind child, headless)
+The session of a decision is its `session` field, else "unknown". Commands, paths and reasons
+are never printed.
 """
 from __future__ import annotations
 
@@ -27,8 +28,8 @@ import os
 import sys
 from pathlib import Path
 
-LOG_REL = Path("extensions") / "pi-permission-system" / "logs" / "pi-permission-system-permission-review.jsonl"
-FIELDS = ["asks", "human_approved", "human_denied", "review_allow", "review_deny", "review_defer", "forwarded"]
+LOG_REL = Path("pi-foreman") / "state" / "gate" / "log.jsonl"
+FIELDS = ["decisions", "floor_deny", "default_allow", "review_allow", "review_deny", "review_ask", "review_unreachable", "cached", "human_approved", "human_denied", "no_dialog", "child"]
 
 
 def agent_dir(arg):
@@ -51,51 +52,36 @@ def read_records(lines):
             yield rec
 
 
-def human_kind(decided):
-    """'user' if the decision (or the decision nested in a forwarded one) came from the user."""
-    if not isinstance(decided, dict):
-        return None
-    if decided.get("kind") == "forwarded":
-        return human_kind(decided.get("decision"))
-    return decided.get("kind")
-
-
 def stats(records):
-    asks = {}
-    for rec in records:
-        rid = rec.get("requestId")
-        if not isinstance(rid, str) or not rid:
-            continue
-        a = asks.setdefault(rid, {"session": None, "fallback": None, "human": None, "review": None, "forwarded": False, "ask": False})
-        ev = str(rec.get("event", ""))
-        if ev.startswith("permission_request.") or ev.startswith("forwarded_permission."):
-            a["ask"] = True
-        if ev.startswith("forwarded_permission.") or rec.get("forwarded") is True or (isinstance(rec.get("decidedBy"), dict) and rec["decidedBy"].get("kind") == "forwarded"):
-            a["forwarded"] = True
-        if ev.startswith("forwarded_permission.") and isinstance(rec.get("targetSessionId"), str):
-            a["fallback"] = rec["targetSessionId"]
-        if ev == "foreman_review.decision":
-            if isinstance(rec.get("sessionId"), str):
-                a["session"] = rec["sessionId"]
-            if rec.get("model") and rec.get("verdict") in ("allow", "deny", "defer"):
-                a["review"] = rec["verdict"]
-        elif ev == "ai_guard.decision" and rec.get("verdict") in ("allow", "deny", "defer"):
-            a["review"] = rec["verdict"]
-        if ev in ("permission_request.approved", "permission_request.denied") and human_kind(rec.get("decidedBy")) == "user":
-            a["human"] = "approved" if ev.endswith("approved") else "denied"
     out = {}
-    for a in asks.values():
-        if not a["ask"]:
-            continue
-        sid = a["session"] or a["fallback"] or "unknown"
-        row = out.setdefault(sid, dict.fromkeys(FIELDS, 0))
-        row["asks"] += 1
-        if a["human"]:
-            row["human_" + a["human"]] += 1
-        if a["review"]:
-            row["review_" + a["review"]] += 1
-        if a["forwarded"]:
-            row["forwarded"] += 1
+    seen = set()
+    for rec in records:
+        rid = rec.get("id")
+        if isinstance(rid, str) and rid:
+            if rid in seen:
+                continue
+            seen.add(rid)
+        sid = rec.get("session")
+        row = out.setdefault(sid if isinstance(sid, str) and sid else "unknown", dict.fromkeys(FIELDS, 0))
+        layer, verdict = rec.get("layer"), rec.get("verdict")
+        row["decisions"] += 1
+        if rec.get("kind") in ("child", "headless"):
+            row["child"] += 1
+        if rec.get("cached") is True or layer == "cache":
+            row["cached"] += 1
+        elif layer == "floor" and verdict == "deny":
+            row["floor_deny"] += 1
+        elif layer == "default" and verdict == "allow":
+            row["default_allow"] += 1
+        elif layer == "review" and verdict in ("allow", "deny", "ask", "unreachable"):
+            row["review_" + verdict] += 1
+        elif layer == "dialog":
+            if rec.get("reason") == "no-dialog":
+                row["no_dialog"] += 1
+            elif verdict == "allow":
+                row["human_approved"] += 1
+            elif verdict == "deny":
+                row["human_denied"] += 1
     return out
 
 

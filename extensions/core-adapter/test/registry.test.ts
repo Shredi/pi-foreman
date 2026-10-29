@@ -80,8 +80,8 @@ test("/foreman setup switches the picker off in the child, even when the parent 
 
 test("missingBundled names the bundled packages without a package.json under node_modules", () => {
   const root = path.join(tmp, "bundle");
-  assert.deepEqual(missingBundled(root), ["pi-subagents", "@gotgenes/pi-permission-system", "pi-intercom"]);
-  for (const name of ["pi-subagents", "@gotgenes/pi-permission-system"]) {
+  assert.deepEqual(missingBundled(root), ["pi-subagents", "pi-intercom"]);
+  for (const name of ["pi-subagents"]) {
     fs.mkdirSync(path.join(root, "node_modules", ...name.split("/")), { recursive: true });
     fs.writeFileSync(path.join(root, "node_modules", ...name.split("/"), "package.json"), "{}");
   }
@@ -90,7 +90,7 @@ test("missingBundled names the bundled packages without a package.json under nod
 
 test("missingBundled also checks every ./node_modules manifest entry", () => {
   const root = path.join(tmp, "manifest");
-  for (const name of ["pi-subagents", "@gotgenes/pi-permission-system", "pi-intercom"]) {
+  for (const name of ["pi-subagents", "pi-intercom"]) {
     fs.mkdirSync(path.join(root, "node_modules", ...name.split("/")), { recursive: true });
     fs.writeFileSync(path.join(root, "node_modules", ...name.split("/"), "package.json"), "{}");
   }

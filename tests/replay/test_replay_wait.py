@@ -29,7 +29,7 @@ class TestLongWait(ReplayCase):
         res = tool_results(recs)
         self.assertEqual([(n, e) for n, e, _ in res], [("foreman_wait", False), ("foreman_wait", True), ("foreman_wait", True)], res)
         self.assertIn("Wait w1 (timer) started", res[0][2])
-        self.assertIn("external_directory", res[1][2])
+        self.assertIn("a file wait must resolve", res[1][2])
         self.assertIn("write protection", res[2][2])
 
         # No prompt from here on: the wake alone must start a run.

@@ -50,6 +50,7 @@ from driver import PiRpc  # noqa: E402
 ACTIVE_STATES = ("queued", "running")
 DIALOGS = ("select", "confirm", "input", "editor")
 REVIEW_DEFERS = ("review_defer_child", "review_defer_headless")
+GATE_DIALOG_DENIES = ("deny", "deny with reason", "dismissed", "no-ui")
 USAGE_LIMIT = re.compile(r"usage limit|limit reached|hit your (?:usage |session |weekly )?limit|quota exceeded", re.I)
 
 # A provider refusal (safety classifier) is an infrastructure error too, but it does not stop the run.
@@ -110,7 +111,7 @@ def note_refusal(status, text):
 
 
 ROLE_IDS = ("senior-reviewer", "finalizer", "explorer", "planner", "builder", "reviewer", "foreman")
-FAKE_REVIEW_MODEL = "review-defer"  # never auto-allows: the ask reaches the dialog
+FAKE_REVIEW_MODEL = "review-allow"  # the gate reviews the foreman's own subagent launch; the fake review model allows (as tests/replay/driver.py)
 
 
 KEEP_ASK_LINES = re.compile(r"^\s*(tool|subagent|rule)\s*:", re.I)
@@ -175,7 +176,7 @@ def run_bench_retro(args, row, agent, status, runner=subprocess.run):
 
 def foreman_config(row):
     """The user-layer foreman.json for a foreman row: the row's roles (incl. builder.strong),
-    the review model (the row's review_model; the fake provider's non-allowing review model for
+    the review model (the row's review_model; the fake provider's allowing review model for
     fake rows; else none, so the harness picks the cheapest role-map model, review.ts), trace on, and the row's `project_commands` as
     safety.permissions.projectCommands. The row's `foreman_edits` becomes ceremony.foremanEdits; ceremony.requireTriage
     stays at its default. The row's `user_config` object is deep-merged in last, so a preset can set any knob."""
@@ -389,7 +390,7 @@ def read_secret(path):
 
 def _subprocess_failure(label, proc):
     """Failure message for a helper subprocess: return code plus the last 800 chars of each stream
-    (foreman_config.py and permissions_gen.py print their errors as JSON on stdout)."""
+    (foreman_config.py prints its errors as JSON on stdout)."""
     def tail(stream):
         return (stream or b"").decode("utf-8", "replace")[-800:]
     return "%s failed (rc=%s): stdout: %s stderr: %s" % (label, proc.returncode, tail(proc.stdout), tail(proc.stderr))
@@ -411,19 +412,6 @@ def build_world(args, row):
         if gen.returncode != 0:
             raise RuntimeError(_subprocess_failure("generate-subagents", gen))
         settings["subagents"] = json.loads(gen.stdout.decode("utf-8"))["subagents"]
-        if row.get("_permission_system"):  # same render the installer runs (setup.mjs)
-            pg = subprocess.run([sys.executable, str(REPO / "scripts" / "permissions_gen.py"), "render", "--agent-dir", str(agent)],
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
-            if pg.returncode != 0:
-                raise RuntimeError(_subprocess_failure("permissions_gen", pg))
-            cfg = agent / "extensions" / "pi-permission-system" / "config.json"
-            cfg.parent.mkdir(parents=True, exist_ok=True)
-            rendered = json.loads(pg.stdout.decode("utf-8"))["config"]
-            # Opt-in rig-side extras (row key `permission_tools_allow`), e.g. bash for the scripted
-            # fake rows. foreman_triage is in the baseline since 17a3412.
-            for tool in row.get("permission_tools_allow") or []:
-                rendered.setdefault("permission", {})[tool] = "allow"
-            write_json(cfg, rendered)
     write_json(agent / "settings.json", settings)
     return agent
 
@@ -533,6 +521,8 @@ def drive_rpc(args, row, env, status):
         status["waiter_end_ms"] = int(time.time() * 1000)
         pi.close()
         rpc_log.close()
+        # Pi's startup errors only reach stderr; keep them next to rpc.jsonl.
+        (Path(args.out) / "pi-stderr.log").write_text("\n".join(pi.stderr) + "\n", encoding="utf-8")
 
 
 def drive_print(args, row, env, status):
@@ -568,8 +558,10 @@ def drive_print(args, row, env, status):
 
 def count_review_denies(agent, status):
     """A child defer that review.ts answers as a deny opens no dialog, so it is counted from the trace: `review_defer_child`
-    with decision deny, and every `review_defer_headless` (always a deny)."""
+    with decision deny, and every `review_defer_headless` (always a deny). The gate's own dialogs (`dialog` records of guard gate
+    answered deny, dismissed or no-ui) count too, for those the RPC driver did not see as an extension_ui_request."""
     denies = []
+    gate_denied = []
     for f in sorted((agent / "pi-foreman" / "state").glob("trace-*.jsonl")):
         for line in f.read_text("utf-8").splitlines():
             try:
@@ -578,6 +570,10 @@ def count_review_denies(agent, status):
                 continue
             if rec.get("event") in REVIEW_DEFERS and rec.get("decision", "deny") == "deny":
                 denies.append({"method": rec["event"], "title": "", "role": rec.get("role", "?")})
+            elif rec.get("event") == "dialog" and rec.get("guard") == "gate" and rec.get("decision") in GATE_DIALOG_DENIES:
+                gate_denied.append({"method": "gate_dialog", "title": str(rec.get("toolFamily") or ""), "role": rec.get("role", "?")})
+    # an owner dialog the driver answered is both an RPC request and a trace record: add only the shortfall
+    denies.extend(gate_denied[len(status.get("asks_denied") or []):])
     status["asks"] = status.get("asks", 0) + len(denies)
     status.setdefault("asks_denied", []).extend(denies)
 
@@ -635,6 +631,7 @@ def versions(row):
     except (OSError, subprocess.SubprocessError, IndexError):
         v["pi"] = None
     for pkg in list(row.get("_packages") or []) + list(row.get("_version_packages") or []):
+        pkg = pkg.get("source") if isinstance(pkg, dict) else pkg
         try:
             meta = json.loads((Path(pkg) / "package.json").read_text("utf-8"))
             v[meta.get("name", pkg)] = meta.get("version")
@@ -649,7 +646,6 @@ def setup_check(args, row, env):
     import stat as stat_mod
     res = {"claude_config_dir_before": empty_dir_check(env["CLAUDE_CONFIG_DIR"])}
     res["python"] = {"version": "%d.%d.%d" % sys.version_info[:3], "ok": sys.version_info >= (3, 13)}
-    res["permission_system_config"] = (Path(env["PI_CODING_AGENT_DIR"]) / "extensions" / "pi-permission-system" / "config.json").is_file()
 
     def run(cmd):
         try:

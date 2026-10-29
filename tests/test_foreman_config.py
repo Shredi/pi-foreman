@@ -71,14 +71,14 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(res["config"]["fanout"]["max"], 4)
 
     def test_read_roots_user_only(self):
-        self.l2({"safety": {"permissions": {"readRoots": ["~/src"]}}})
-        self.proj({"safety": {"permissions": {"readRoots": ["/"]}}})
+        self.l2({"gate": {"policy": {"userFile": "~/my-policy.md"}}})
+        self.proj({"gate": {"policy": {"userFile": "/etc/passwd"}}})
         res = self.load(trusted_project=True)
         self.assertEqual(res["errors"], [])
-        self.assertEqual(res["config"]["safety"]["permissions"]["readRoots"], ["~/src"])
-        self.assertIn("safety.permissions.readRoots", "\n".join(res["warnings"]))
+        self.assertEqual(res["config"]["gate"]["policy"]["userFile"], "~/my-policy.md")
+        self.assertIn("gate.policy ignored", "\n".join(res["warnings"]))
         self.l2({})
-        self.assertEqual(self.load()["config"]["safety"]["permissions"]["readRoots"], [])
+        self.assertNotIn("policy", self.load(trusted_project=True)["config"]["gate"])
 
     def test_ladder_keys_user_only_and_presets_valid(self):
         p1 = dict(PROV["p1"], strongAbove=6000, childMaxTurns=5, ranks=[{"match": "m-*", "tier": 2}])
@@ -167,9 +167,10 @@ class ConfigTest(unittest.TestCase):
         s = res["config"]["safety"]
         self.assertIs(s["children"]["mayPush"], True)  # L2 value stays; project cannot change it up
         self.assertIs(s["review"]["required"], True)  # project false ignored
-        self.assertEqual(s["permissions"]["deny"], ["a", "b"])
-        self.assertEqual(s["permissions"]["ask"], ["c"])
-        self.assertEqual(s["permissions"]["allow"], ["y"])
+        # safety.permissions is gone from the tighten table: the project value changes nothing
+        self.assertEqual(s["permissions"]["deny"], ["a"])
+        self.assertNotIn("ask", s["permissions"])
+        self.assertEqual(s["permissions"]["allow"], ["x", "y"])
         self.assertEqual(s["git"]["protectedBranches"], ["main", "master", "release"])
         self.assertEqual(s["requiredChildExtensions"], ["ext"])
         self.assertNotIn("preconditionOps", s)
@@ -207,10 +208,13 @@ class ConfigTest(unittest.TestCase):
         self.assertIn("providers.p2.review", "\n".join(res["warnings"]))
 
     def test_project_cannot_add_allow(self):
-        self.proj({"safety": {"permissions": {"allow": ["rm *"]}}})
+        self.l2({"gate": {"tmpAccess": False}})
+        self.proj({"gate": {"tmpAccess": True, "allow": ["rm *"], "logMaxBytes": 5000}})
         res = self.load(trusted_project=True)
-        self.assertEqual(res["config"]["safety"]["permissions"]["allow"], [])
-        self.assertIn("safety.permissions.allow", "\n".join(res["warnings"]))
+        self.assertEqual(res["config"]["gate"]["tmpAccess"], False)
+        self.assertNotIn("allow", res["config"]["gate"])
+        self.assertEqual(res["config"]["gate"]["logMaxBytes"], 20971520)
+        self.assertIn("gate.allow ignored", "\n".join(res["warnings"]))
 
     def test_unknown_key_warns(self):
         self.l2({"bogus": 1, "fanout": {"wide": 2}})

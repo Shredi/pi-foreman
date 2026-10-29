@@ -14,8 +14,6 @@ import { dropBase, loadBase } from "./_r31c-base.ts";
 import { classify, effectCtx, SAFE_CLASSES } from "../effects.ts";
 import { deterministicAllow } from "../timeoutallow.ts";
 import type { BashRules } from "../timeoutallow.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike } from "../review.ts";
 import { netUrlOk } from "../netread.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 
@@ -153,31 +151,6 @@ test("R4.5 a network read never composes with a user-allowed program, a write or
   assert.equal(allow("gh pr list && npm test"), null);
   assert.equal(allow("cd . && gh pr list | wc -l"), "net-read");
   assert.equal(allow("gh pr list | sed -n 1p"), "net-read");
-});
-
-test("R4.4 / R5 the review link: the foreman and a forwarded child both get net-read", { skip: !posix }, async () => {
-  const noModel: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-  const link = async (value: string, forwarded: boolean): Promise<string> => {
-    const r = new ForemanReview();
-    r.upsert("s", { isChild: false, cwd: repo, provider: "a", config: () => ({}), registry: noModel, intent: "", bashRules: () => rules, scratchDirs: (role) => (role ? [kid] : [kid, orch]), ownDirs: () => [] });
-    const v = await r.authorize("s", { requestId: "r", surface: "bash", agentName: forwarded ? "reviewer" : "foreman", value, toolName: "bash", ...(forwarded ? { forwarding: { requesterAgentName: "reviewer", requesterSessionId: "x" } } : {}) } as never);
-    return v.kind;
-  };
-  for (const cmd of ["gh pr view 1 | head -5", "curl -sSL https://example.org/x", "npm view left-pad version"]) {
-    assert.equal(await link(cmd, false), "allow", `own: ${cmd}`);
-    assert.equal(await link(cmd, true), "allow", `forwarded: ${cmd}`);
-  }
-  // output: the foreman only into the ceremony scratch dir (not every live child scratch), a child only into its role scratch
-  assert.equal(await link(`curl -sSL -o ${orch}/f https://h.example/x`, false), "allow");
-  assert.notEqual(await link(`curl -sSL -o ${kid}/f https://h.example/x`, false), "allow");
-  assert.equal(await link(`curl -sSL -o ${kid}/f https://h.example/x`, true), "allow");
-  assert.notEqual(await link(`curl -sSL -o ${orch}/f https://h.example/x`, true), "allow");
-  // wget: the foreman only
-  assert.equal(await link("wget -q -O - https://h.example/x", false), "allow");
-  assert.notEqual(await link("wget -q -O - https://h.example/x", true), "allow");
-  // a forwarded child's -o into its worktree stays a no, also through the owned-roots path after a defer
-  assert.notEqual(await link(`curl -o ${repo}/f https://h.example/x`, true), "allow");
-  assert.notEqual(await link("gh pr merge 1", false), "allow");
 });
 
 test("R4.6 / R4.7 the child overlay: a read-only worktree child may run a network read, not write", { skip: !posix }, () => {

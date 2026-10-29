@@ -107,10 +107,12 @@ test("R2-M1: the pi-foreman state folder is protected (foreman asked, child deni
     ["write", { path: snap, content: "{}" }],
     ["edit", { path: snap, edits: [] }],
     ["bash", { command: `echo x > ${snap}` }],
-    ["bash", { command: `trash ${state}` }],
     ["bash", { command: "trash ~/.pi/agent/pi-foreman/state/claudecfg-abc.seen" }],
   ] as Array<[string, Record<string, unknown>]>) {
     assert.equal(kind(tool, input, "main"), "ask", `main ${tool} ${JSON.stringify(input)}`);
     assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
   }
+  // the state folder holds floored files: removing it is a floor deny (no dialog), was ask for the main agent
+  assert.equal(kind("bash", { command: `trash ${state}` }, "main"), "deny");
+  assert.equal(kind("bash", { command: `trash ${state}` }, "child"), "deny");
 });

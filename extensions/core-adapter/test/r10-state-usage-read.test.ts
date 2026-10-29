@@ -12,9 +12,6 @@ import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import type { MatchCtx, OverlayRules } from "../permoverlay.ts";
 import { ownUsageReadable } from "../roundsurface.ts";
-import { ForemanReview } from "../review.ts";
-import type { RegistryLike, ReviewSession } from "../review.ts";
-import { bashRules } from "../timeoutallow.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
@@ -85,21 +82,6 @@ test("a symlink in state/usage that leads to a protected path stays protected fo
   fs.mkdirSync(path.join(ag, "intercom"), { recursive: true });
   fs.symlinkSync(path.join(ag, "intercom"), path.join(usage, "lnk"));
   assert.notEqual(sh("main", `stat ${path.join(usage, "lnk", "x")}`), "pass");
-});
-
-// the review.ts allow chain for the bash surface: what the permission system forwards when its own rules ask
-const reg: RegistryLike = { find: () => { throw new Error("model called"); }, complete: async () => ({}) };
-const prules = bashRules(baseline, {});
-const session = (): ReviewSession => ({ isChild: false, cwd: ws, provider: "a", config: () => ({}), registry: reg, intent: "", bashRules: () => prules, ownReads: () => ownReads });
-const link = async (command: string) => { const r = new ForemanReview(); r.upsert("s", session()); return (await r.authorize("s", { requestId: "r", surface: "bash", agentName: "foreman", value: command, toolName: "bash" })).kind; };
-
-test("review chain: the D1 python forms are allowed without the model (permission link, foreman)", { skip: !posix }, async () => {
-  assert.equal(await link(PY_READ), "allow");
-  assert.equal(await link(PY_JSON), "allow");
-});
-
-test("review chain: every other python form is not allowed by the link (permission link, foreman)", { skip: !posix }, async () => {
-  for (const cmd of ASK.filter((c) => c.startsWith("python3"))) assert.notEqual(await link(cmd), "allow", cmd);
 });
 
 // the rendered external_directory_read rules (permissions_gen.py external_rules): last match wins, `*` matches any characters including `/`

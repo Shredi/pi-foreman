@@ -1,10 +1,16 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features [args]` -> scripts/foreman_<name>.py (features: .mjs).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]` -> scripts/foreman_<name>.py (features, perms: .mjs).
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
     shift
-    exec node "$here/../setup.mjs" "$@"
+    rc=0
+    node "$here/../setup.mjs" "$@" || rc=$?
+    # the no-review-model warning (item 26); best effort, needs Node >= 22.6
+    if [ "$rc" -eq 0 ]; then
+        node --no-warnings --experimental-strip-types "$here/../scripts/foreman_review_warn.mjs" "$@" 2>/dev/null || true
+    fi
+    exit "$rc"
 fi
 if [ "$sub" = "dialogs" ]; then
     shift
@@ -18,6 +24,10 @@ if [ "$sub" = "features" ]; then
     shift
     exec node "$here/../scripts/foreman_features.mjs" "$@"
 fi
+if [ "$sub" = "perms" ]; then
+    shift
+    exec node "$here/../scripts/foreman_perms.mjs" "$@"
+fi
 case "$sub" in
     update-check) script="$here/../scripts/foreman_update_check.py" ;;
     retro) script="$here/../scripts/foreman_retro.py" ;;
@@ -30,7 +40,7 @@ case "$sub" in
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
-    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features [args]" >&2; exit 2 ;;
+    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

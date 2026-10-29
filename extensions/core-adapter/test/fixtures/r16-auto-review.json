@@ -40,11 +40,16 @@
     { "name": "other_session_state_read", "note": "ruling 2: a read of another session's state goes to the reviewer (prose hard_deny), not selfMod", "line": "cat {agentDir}/pi-foreman/state/live/{other}.json; node --version" }
   ],
   "verdicts": [
-    { "name": "deny_high", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"high\"}", "expect": "deny" },
-    { "name": "deny_critical", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"critical\"}", "expect": "deny" },
-    { "name": "deny_without_risk_level", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\"}", "expect": "dialog" },
-    { "name": "deny_unknown_risk_level", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"severe\"}", "expect": "dialog" },
-    { "name": "soft_deny_medium", "reply": "{\"verdict\":\"deny\",\"reason\":\"meh\",\"riskLevel\":\"medium\"}", "expect": "dialog" },
-    { "name": "defer", "reply": "{\"verdict\":\"defer\"}", "expect": "dialog" }
+    { "name": "deny_closed", "reply": "{\"verdict\":\"deny\",\"entry\":\"secret-access\",\"reason\":\"no\"}", "gate": "blocked:review:secret-access" },
+    { "name": "ask_closed", "reply": "{\"verdict\":\"ask\",\"entry\":\"tool-config-edit\",\"reason\":\"unsure\"}", "gate": "dialog:ask:deny with reason" },
+    { "name": "old_deny_high", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"high\"}", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "old_deny_critical", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"critical\"}", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "old_deny_without_risk_level", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\"}", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "old_deny_unknown_risk_level", "reply": "{\"verdict\":\"deny\",\"reason\":\"no\",\"riskLevel\":\"severe\"}", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "old_soft_deny_medium", "reply": "{\"verdict\":\"deny\",\"reason\":\"meh\",\"riskLevel\":\"medium\"}", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "unknown_entry", "reply": "{\"verdict\":\"allow\",\"entry\":\"no-such-entry\",\"reason\":\"x\"}", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "garbage", "reply": "looks fine to me", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "empty", "reply": "", "gate": "dialog:unreachable:deny with reason" },
+    { "name": "old_defer", "reply": "{\"verdict\":\"defer\"}", "gate": "dialog:unreachable:deny with reason" }
   ]
 }

@@ -77,6 +77,17 @@ export class SteerWatch {
     return this.dir()?.trim() || undefined;
   }
 
+  /** Mark `name` in the handoff dir as delivered at its current mtime (a forwarded child ruling is no steer for this session). */
+  skip(name: string): void {
+    const dir = this.handoffDir();
+    if (!dir) return;
+    try {
+      this.seen.set(name, fs.statSync(path.join(dir, name)).mtimeMs);
+    } catch {
+      // gone
+    }
+  }
+
   /** Names of the files the last `take` delivered. */
   lastTaken(): string[] {
     return [...this.delivered];

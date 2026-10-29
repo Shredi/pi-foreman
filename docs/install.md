@@ -17,7 +17,7 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 
 `npm:pi-foreman` is planned once v0.1.0 is published. Pi clones the repository to
 `<agentDir>/git/github.com/Shredi/pi-foreman` (`<agentDir>` is `$PI_CODING_AGENT_DIR`, default `~/.pi/agent`) and runs
-`npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-permission-system` and
+`npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents` and
 `pi-intercom`, pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
 meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
 `skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
@@ -31,7 +31,7 @@ Then run setup once:
 bin/foreman setup          # from a checkout (or: node setup.mjs)
 ```
 
-Upgrading from a setup that installed `pi-subagents`, `pi-permission-system` or `pi-intercom` as top-level `npm:`
+Upgrading from a setup that installed `pi-subagents` or `pi-intercom` as top-level `npm:`
 packages: Pi stops at start with a tool conflict until setup has removed them, so `/foreman setup` cannot run yet. Run
 setup from the clone once: `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs`.
 
@@ -144,9 +144,15 @@ safety relaxations on: <ids>` whenever a relaxation is on, with or without a pro
 
 Setup does not install pi-foreman or the bundled packages: the package brings them. It migrates a setup from before
 the package install: leftover top-level `npm:` entries of the bundled packages in `settings.json` are removed with
-`pi remove`, because a second copy registers the same tools and Pi stops with a fatal tool conflict. It writes the
-config of `pi-permission-system`, generated from the permission baseline and your `safety.permissions` (see
-[safety](safety.md)), and the generated `subagents` block into `settings.json` (backup
+`pi remove`, because a second copy registers the same tools and Pi stops with a fatal tool conflict. It no longer writes any
+permission config: the tool gate decides from the shipped policy and your own policy file (see
+[permissions](permissions.md)). If your `foreman.json` still has keys of the removed permission package
+(`safety.permissions.*`, `review.headless`, `review.childDefer`, `review.fallback`, `providers.<p>.review.*`), setup maps them to
+`gate.*` keys, prints one line per key, backs up your config and the package's rendered config under
+`<agent dir>/pi-foreman/state/migration/`, and removes the rendered file. It never edits the package entry in
+`settings.json`: run `node scripts/foreman_migrate_gate.mjs settings --dry-run`, then `node scripts/foreman_migrate_gate.mjs settings`
+yourself (the doctor prints a `FAIL` line until you do). The way back is the previous pi-foreman release plus those
+backups ([migration](permissions.md#migration-from-the-permission-package)). Setup writes the generated `subagents` block into `settings.json` (backup
 `settings.json.bak-<timestamp>` first), and creates `<agent dir>/foreman.json` only if absent. Unless
 `--no-intercom`, it writes `<agent dir>/intercom/config.json`
 (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent; an existing file that sets

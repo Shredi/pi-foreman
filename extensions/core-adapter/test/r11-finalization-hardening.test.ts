@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { DEFAULT_READ_LIMITS, finalizationCommand } from "../budget.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const WARN = DEFAULT_READ_LIMITS.before.warn;
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
@@ -25,7 +25,7 @@ test("finalization_command_redirect_or_procsub_refused", () => {
 });
 
 test("read_budget_finalizer_phase_ends_on_edit", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   const finalizer = { agent: "finalizer", task: "write the changelog and result" };
   const l = await a.launch(finalizer);
   assert.equal(l.res, undefined);

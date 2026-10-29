@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 import { planMcpLaunch, workflowBindingBlock } from "../mcplaunch.ts";
 import { readBinding, stripBinding } from "../usage.ts";
 
@@ -14,7 +14,7 @@ type T = { after(fn: () => void | Promise<void>): void };
 const ROLES = { roles: { builder: { mcp: ["fx", "other/probe"] } } };
 const GATE = /^pi-foreman: group launches with MCP need pi-subagents with per-entry bindings \(pinned [^)]+\); launch these roles as single subagent\(\{agent, task\}\) calls$/;
 
-const rig = (t: T, config: Record<string, unknown> = ROLES) => r11Rig(t, {}, { config, deps: { mcpChild: { resolveRoot: () => null } } });
+const rig = (t: T, config: Record<string, unknown> = ROLES) => r11Rig(t, {}, { ctx: reviewAllowOpts().ctx, config: { ...reviewAllowOpts().config, ...config }, deps: { mcpChild: { resolveRoot: () => null } } });
 const bound = (input: Record<string, unknown>) => (input.extensionBindings as Record<string, Record<string, unknown>> | undefined)?.["pi-foreman/1"];
 
 test("a single launch's mcp is validated, stripped and carried in the binding", async (t) => {
@@ -131,7 +131,7 @@ test("a group of roles without a ceiling runs as before", async (t) => {
 
 test("a server mcp.json does not know is traced as mcp_launch_unknown_server; the launch still runs", async (t) => {
   const piRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "node_modules", "@earendil-works", "pi-coding-agent");
-  const r = await r11Rig(t, {}, { config: { roles: { builder: { mcp: ["fx", "ghostsrv"] } } }, deps: { mcpChild: { resolveRoot: () => piRoot } } });
+  const r = await r11Rig(t, {}, { ctx: reviewAllowOpts().ctx, config: { ...reviewAllowOpts().config, roles: { builder: { mcp: ["fx", "ghostsrv"] } } }, deps: { mcpChild: { resolveRoot: () => piRoot } } });
   fs.writeFileSync(path.join(r.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { fx: { command: "node", args: ["x.mjs"] } } }));
   const { res } = await r.launch({ agent: "builder", task: "go" });
   assert.equal(res, undefined);

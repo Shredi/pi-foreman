@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { DEFAULT_READ_LIMITS } from "../budget.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const WARN = DEFAULT_READ_LIMITS.before.warn;
 const EVERY = DEFAULT_READ_LIMITS.before.every;
@@ -51,7 +51,7 @@ test("r37: a started launch restarts the count", async (t) => {
 });
 
 test("r37: coordination calls do not count and never remind", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   const dir = a.handoff("round", "child");
   const calls: [string, Record<string, unknown>][] = [];
   for (let i = 0; i < 6; i++) {
@@ -71,7 +71,7 @@ test("r37: coordination calls do not count and never remind", async (t) => {
 });
 
 test("r37: a foreman session command chained with a read still counts", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   for (let i = 0; i < WARN; i++) await a.toolDoing("bash", { command: `foreman session list; cat x${i}` }, () => undefined);
   assert.deepEqual(reminds(a).map((r) => r.count), [WARN]);
 });

@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { sessionBrief, writeRegistry } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 type Res = { block?: boolean; reason?: string } | undefined;
@@ -22,7 +22,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], ceremony: Record<string, unk
     if (saved === undefined) delete process.env.PI_FOREMAN_HANDOFF_DIR;
     else process.env.PI_FOREMAN_HANDOFF_DIR = saved;
   });
-  return r11Rig(t, ceremony);
+  return r11Rig(t, ceremony, reviewAllowOpts());
 }
 
 /** The parent's deps: the registry of the rig's agent dir, the opener's id, and a sender that records each send. */

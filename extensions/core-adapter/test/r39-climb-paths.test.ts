@@ -2,6 +2,7 @@
 // a launch that stays on the bottom rung says why (pressure suppression, no strong rung mapped).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -40,16 +41,11 @@ async function rig(t: { after(fn: () => void): void }, o: { strong: boolean }): 
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  // the launch guard needs the permission package to resolve; a stub keeps the rig independent of node_modules
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   process.env.PI_CODING_AGENT_DIR = agentDir;
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const roles = Object.fromEntries(ROLES.map((r) => [r, r === "builder" ? { model: "fake/bottom", ...(o.strong ? { strong: { model: "fake/strong" } } : {}) } : { model: `fake/${r}` }]));
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { roles } }, trace: { enabled: true }, ceremony: { launchWait: "detach" } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles } }, trace: { enabled: true }, ceremony: { launchWait: "detach" } }));
   const handlers = new Map<string, Handler>();
   const channels = new Map<string, (d: unknown) => void>();
   const pi = {
@@ -78,7 +74,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong: boolean }): 
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
+    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);

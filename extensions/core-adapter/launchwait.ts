@@ -85,6 +85,9 @@ export const REPEAT_STOP_REASONS: readonly RegExp[] = [
   /cannot write its own parent's ruling/,
   /\(path rule '(?![^']*(?:\.worktrees|scratch))[^']*' matched /,
   /denied by the write protection \(rule '/,
+  // R41 gate floors a child only hits by probing: a secret or key path, a policy or harness state file
+  /' is a secret or key path \(SSH, GnuPG/,
+  /', a policy file or a harness state file \(/,
 ];
 
 /** The line a repeat_refusal run's report carries: stopped, not retried, not climb-eligible (the policy_block family). */

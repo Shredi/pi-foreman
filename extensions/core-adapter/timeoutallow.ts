@@ -196,17 +196,3 @@ function compose(rules: BashRules, text: string, deps: AllowDeps): { label: Allo
 export function timeoutCommandAllowed(rules: BashRules, command: string): boolean {
   return deterministicAllow(rules, command) !== null;
 }
-
-/**
- * The two session hooks of the review link (index.ts wiring): `headless` is true in print/json mode,
- * without a UI, or when `review.headless` is set (a rig that answers every dialog with "no");
- * `bashRules` feeds the `timeout N <allowed>` rule; `childDefer` is `review.childDefer` (`deny` unless set to `owner`).
- */
-export function reviewExtras(baseline: Baseline | null, config: () => Json | undefined, ctx: { mode?: string; hasUI?: boolean }): { headless: () => boolean; childDefer: () => "deny" | "owner"; bashRules: () => BashRules | null } {
-  const human = ctx.hasUI === true && (ctx.mode === "tui" || ctx.mode === "rpc");
-  return {
-    headless: () => !human || get(config(), "review.headless") === true,
-    childDefer: () => (get(config(), "review.childDefer") === "owner" ? "owner" : "deny"),
-    bashRules: () => (baseline ? bashRules(baseline, config()) : null),
-  };
-}

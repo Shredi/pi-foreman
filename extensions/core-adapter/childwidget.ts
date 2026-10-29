@@ -149,7 +149,6 @@ export class ChildRuns {
   private pending = new Map<string, { launchId: string | null; role: string; rung: Rung; model?: string | null }>();
   private rows = new Map<string, Row>();
   private ended = new Map<string, number>();
-  private prompts = new Map<string, string>();
 
   private readonly tail: UsageTail | null;
   constructor(tail: UsageTail | null = null) {
@@ -181,27 +180,6 @@ export class ChildRuns {
     }
   }
 
-  /** `permissions:ui_prompt`: only a forwarded one (a child asked) counts, by the requesting agent name. */
-  onPrompt(data: unknown): void {
-    const d = (data && typeof data === "object" ? data : {}) as { requestId?: unknown; forwarding?: unknown };
-    const f = d.forwarding && typeof d.forwarding === "object" ? (d.forwarding as { requesterAgentName?: unknown }) : null;
-    if (typeof d.requestId !== "string" || !f) return;
-    this.prompts.set(d.requestId, text(f.requesterAgentName));
-  }
-
-  onDecision(data: unknown): void {
-    const id = (data as { requestId?: unknown } | undefined)?.requestId;
-    if (typeof id === "string") this.prompts.delete(id);
-  }
-
-  clearPrompts(): void {
-    this.prompts.clear();
-  }
-
-  /**
-   * Matching rule: a run is in ask while an open forwarded prompt names one of its roles
-   * (requesterAgentName === role id). With n open prompts for a role, its n oldest working runs ask.
-   */
   /** Duration (once ended) and priced cost of one run, by run id; null for an unknown run. */
   info(runId: string): { ms: number | null; cost: number } | null {
     const r = this.rows.get(runId);
@@ -213,18 +191,9 @@ export class ChildRuns {
 
   views(): RunView[] {
     this.tail?.refresh();
-    const left = new Map<string, number>();
-    for (const name of this.prompts.values()) left.set(name, (left.get(name) ?? 0) + 1);
     const out: RunView[] = [];
     for (const r of [...this.rows.values()].sort((a, b) => a.startedAt - b.startedAt)) {
-      let state: RunState = r.endedAt !== null ? "done" : "working";
-      if (state === "working") {
-        const hit = r.roles.find((x) => (left.get(x) ?? 0) > 0);
-        if (hit !== undefined) {
-          left.set(hit, (left.get(hit) ?? 0) - 1);
-          state = "ask";
-        }
-      }
+      const state: RunState = r.endedAt !== null ? "done" : "working";
       const u = r.launchId ? this.tail?.by.get(r.launchId) : undefined;
       out.push({ launchId: r.launchId ?? r.runId, role: r.roles.join("+") || "child", rung: r.rung, model: r.model, state, tokensIn: u?.input ?? 0, tokensOut: u?.output ?? 0, cost: u?.cost ?? 0, startedAt: r.startedAt, endedAt: r.endedAt });
     }

@@ -21,7 +21,7 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 class TestChildSed(ReplayCase):
     def test_sed_chain_allowed_and_headless_defer_denied_with_forms(self):
         rig = self.rig("child-sed", load_fixture("child_sed"), permissions="baseline",
-                       config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-defer" % PROVIDER_A}}},
+                       config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-child-unreachable" % PROVIDER_A}}},
                                "review": {"headless": True}})
         sub = rig.project / "sub"
         sub.mkdir()
@@ -36,18 +36,18 @@ class TestChildSed(ReplayCase):
         self.assertEqual(dialogs, [], dialogs)
         events = [r for recs_ in rig.traces().values() for r in recs_]
         reviews = [r for r in events if r.get("event") == "review"]
-        # the sed chain is allowed by the link with no model call; both writes reach the model and defer
-        self.assertEqual([r.get("decision") for r in reviews], ["sed-read", "defer", "defer"], reviews)
+        # ledger item 26: the owner's subagent launch is allowed by the gate default `default-role-launch` (a guard record, no review call), so it no longer shows as a review 'allow'
+        launch = [r for r in events if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
+        self.assertTrue(any(r.get("decision") == "allowed" and r.get("rule") == "default-role-launch" for r in launch), launch)
+        self.assertEqual([r.get("decision") for r in reviews], ["unreachable", "unreachable"], reviews)  # R41: the sed chain is a gate default (no record), both writes reach the unreachable review and a child is denied
         self.assertIsNone(reviews[0].get("model"), reviews[0])
-        headless = [r for r in events if r.get("event") == "review_defer_headless"]
-        self.assertEqual([h.get("role") for h in headless], ["builder", "builder"], headless)
-        self.assertIn("touch [path]", headless[0].get("cmd", ""))  # the trace scrubs every string field
-        self.assertIn("1wwritten", headless[1].get("cmd", ""))
+        self.assertEqual([r for r in events if r.get("event") == "review_defer_headless"], [])  # the old headless defer record is gone
+        self.assertEqual([r.get("role") for r in reviews], ["builder", "builder"], reviews)
         self.assertFalse((rig.project.parent / "made.txt").exists())
         self.assertFalse((rig.project / "written").exists())
         self.assertFalse((sub / "written").exists())
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
-        self.assertIn("no human is available", text)
+        self.assertIn("the permission review is unreachable", text)
         self.assertIn("package g", text)  # the sed chain ran
         self.assertIn("sed -n", text)
 

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreAdapter from "../index.ts";
-import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
+import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 export type Block = { block?: boolean; reason?: string } | undefined;
@@ -12,10 +12,11 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 let rigs = 0;
 
 /** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
-export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean; deps?: Record<string, unknown>; piExtra?: Record<string, unknown> } = {}) {
+export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean; deps?: Record<string, unknown>; piExtra?: Record<string, unknown>; inTmp?: boolean } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "HERDR_PANE_ID", "HERDR_ENV"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")));
+  // inTmp: the rig lives in the OS temp dir (a gate tmp root even on Linux, where mkTestTmp stays out of /tmp), for a case that relies on the tmp class
+  const root = fs.realpathSync(opts.inTmp ? fs.mkdtempSync(path.join(os.tmpdir(), "pf-r11-p2-")) : mkTestTmp("pf-r11-p2-"));
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {
     try { await shutdown?.(); } catch { /* best effort */ }
@@ -28,10 +29,6 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  const ps = path.join(agentDir, "npm", "node_modules", "@gotgenes", "pi-permission-system");
-  fs.mkdirSync(path.join(ps, "src"), { recursive: true });
-  fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
-  fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   const sessionId = `r11-p2-${++rigs}`;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   process.env.PI_INTERCOM_SESSION_ID = sessionId;
@@ -163,4 +160,27 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
 export function writeAt(file: string, text: string, at: number): void {
   fs.writeFileSync(file, text);
   fs.utimesSync(file, at / 1000, at / 1000);
+}
+
+/** R41: the gate's outcome of the trace records of one tool call: `allowed:<rule>`, `blocked:<rule>`, `dialog:<cause>:<answer>`, or `pass` (no gate record). */
+export function gateOutcome(recs: Record<string, unknown>[]): string {
+  const g = recs.filter((x) => x.event === "guard" && x.guard === "gate");
+  const last = g[g.length - 1];
+  const dlg = recs.find((x) => x.event === "dialog" && x.guard === "gate");
+  if (dlg && !(last && last.decision === "allowed")) return `dialog:${dlg.cause}:${dlg.decision}`;
+  return last ? `${last.decision}:${last.rule}` : "pass";
+}
+
+/** R41: r11Rig options whose gate review always allows (policy entry read-only-inspection), for rigs whose bash calls have no default allow. */
+export function reviewAllowOpts(): { ctx: Record<string, unknown>; config: Record<string, unknown> } {
+  return {
+    ctx: {
+      modelRegistry: {
+        find: () => ({ id: "m" }),
+        getProviderAuthStatus: () => ({ configured: false }),
+        complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }),
+      },
+    },
+    config: { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } } },
+  };
 }

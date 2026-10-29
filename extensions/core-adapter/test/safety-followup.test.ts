@@ -85,7 +85,10 @@ test("remove/rename of the agent dir's parent is asked in the foreman, denied in
     ["bash", { command: `python3 -c "import shutil; shutil.rmtree('${dotPi}')"` }],
     ["foreman_move", { src: dotPi, dst: path.join(root, "pi-old") }],
   ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "ask", `main ${tool} ${JSON.stringify(input)}`);
+    // R41 rev4: an ancestor of the agent dir as a shell removal or rename destination is a floor deny (ledger item 23); the interpreter and path-tool forms stay an ask
+    const floored = tool === "bash" && !/python3/.test(JSON.stringify(input));
+    assert.equal(kind(tool, input, "main"), floored ? "deny" : "ask", `main ${tool} ${JSON.stringify(input)}`);
+    if (floored) assert.equal(checkToolCall(r, tool, input, { cwd, home, platform: process.platform, role: "main" })?.rule, "floor", `main ${tool} ${JSON.stringify(input)}`);
     assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
   }
   for (const [tool, input] of [

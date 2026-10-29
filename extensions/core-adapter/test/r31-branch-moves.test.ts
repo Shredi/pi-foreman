@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { branchMove, setGhRunnerForTest } from "../shellwriteguard.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const win = process.platform === "win32";
 
@@ -330,7 +330,7 @@ test("plain switch|checkout to a branch that adds an ignored file refuses, and n
 });
 
 test("a refused branch move traces shell_write_refused with its precondition", async (t) => {
-  const a = await r11Rig(t);
+  const a = await r11Rig(t, {}, reviewAllowOpts());
   execFileSync("git", ["-C", a.project, "init", "-q", "-b", "main"]);
   execFileSync("git", ["-C", a.project, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: one"]);
   execFileSync("git", ["-C", a.project, "branch", "round/31-t"]);
