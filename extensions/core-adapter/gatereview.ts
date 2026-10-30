@@ -4,7 +4,6 @@
 import { randomBytes } from "node:crypto";
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
-import { normalizeShape } from "./gatelog.ts";
 import type { GateKind, GateLog } from "./gatelog.ts";
 import { policyHash } from "./policy.ts";
 import type { LoadedPolicy, PolicyEntry, PolicyLayer, PolicySection } from "./policy.ts";
@@ -47,7 +46,7 @@ export interface GateReviewRequest {
   payload: string;
   /** Facts the gate computed itself (never the model), one line each, e.g. `script: scripts/x.sh tracked-unchanged`. */
   facts?: string[];
-  /** Path tools: the path keys of the call (cache key: tool + sorted keys). */
+  /** Path tools: the path keys of the call (informational; the cache key uses the full payload, which holds the path values). */
   pathKeys?: string[];
 }
 
@@ -245,11 +244,9 @@ async function callReview(deps: GateReviewDeps, target: ReviewTarget | null, sys
 function cacheKeys(r: GateReviewRequest, policyHashHex: string, projectHashHex: string, targetKey: string): { deny: string; allow: string } {
   // the review target is part of the key: a provider or model switch must not replay a verdict another reviewer gave
   const base = [policyHashHex, projectHashHex, targetKey, r.kind, r.role, r.cwd, r.branch ?? "", r.head ?? "", r.mergeHead ?? "", ...(r.facts ?? [])];
-  // The tool name is part of every key. Shell commands share a denial by shape; any other payload (JSON of intercom, codemode, ...) masks to the same
-  // shape whatever it says, so its denial holds for the exact input only.
-  const shape = r.pathKeys ? [...r.pathKeys].sort().join("\0") : r.surface === "bash" ? normalizeShape(r.payload, { worktree: r.worktree }) : r.payload;
-  // A denial of a shape also holds for every command of that shape; an allow only for the exact input (the shape masks quoted values).
-  return { deny: JSON.stringify([...base, "shape", r.tool, shape]), allow: JSON.stringify([...base, "exact", r.tool, r.payload]) };
+  // Both keys cover the tool name and the full payload (command, path=value pairs, or the JSON input): a verdict never replays onto a different call.
+  const exact = JSON.stringify([...base, "exact", r.tool, r.payload]);
+  return { deny: exact, allow: exact };
 }
 
 // ------------------------------------------------------------------ gateReview

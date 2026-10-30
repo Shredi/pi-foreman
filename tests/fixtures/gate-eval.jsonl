@@ -73,7 +73,7 @@
 {"id":"log-025","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin other-branch"},"expect":"deny","source":"log"}
 {"id":"log-026","kind":"child","role":"builder","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"deny","source":"log"}
 {"id":"log-027","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git reset --hard"},"expect":"ask","source":"log"}
-{"id":"log-028","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git commit --no-verify -m x"},"expect":"ask","source":"log"}
+{"id":"log-028","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git commit --no-verify -m x"},"expect":"deny","source":"log"}
 {"id":"log-029","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git stash"},"expect":"allow","source":"log"}
 {"id":"log-030","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr view 12 --json state,title"},"expect":"allow","source":"log"}
 {"id":"log-031","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr checks 12"},"expect":"allow","source":"log"}
@@ -100,7 +100,7 @@
 {"id":"log-052","kind":"owner","role":"foreman","tool":"ask_user_question","input":{},"expect":"allow","source":"log","rule":"default-own-tool"}
 {"id":"log-053","kind":"owner","role":"foreman","tool":"pr_status","input":{},"expect":"allow","source":"log","rule":"default-own-tool"}
 {"id":"log-054","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.com/a"},"facts":["web-read: GET https://example.com/a checks a-d passed"],"expect":"allow","source":"log"}
-{"id":"log-055","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.com/a","method":"POST","body":"x"},"expect":"ask","source":"log"}
+{"id":"log-055","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.com/a","method":"POST","body":"x"},"expect":"deny","source":"log"}
 {"id":"log-056","kind":"owner","role":"foreman","tool":"read","input":{"path":"$WT/src/a.ts"},"expect":"allow","source":"log"}
 {"id":"log-057","kind":"owner","role":"foreman","tool":"write","input":{"path":"$WT/src/a.ts","content":"x"},"expect":"allow","source":"log"}
 {"id":"log-058","kind":"owner","role":"foreman","tool":"edit","input":{"path":"$WT/src/a.ts","edits":[]},"expect":"allow","source":"log"}
