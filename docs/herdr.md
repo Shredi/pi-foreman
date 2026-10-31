@@ -207,7 +207,7 @@ are additive: older readers ignore them, and each is present only when there is 
 | `prs` | the `pr_watch` wait | the watched PR numbers |
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
 | `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
-| `dots` | live file, radar session node | the dots row: `[{n, state, label, src}]`, at most 14; `n` is the PR number or `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters, `src` `pr` or `ext` (the external status hook). The radar copies it unchanged to the session node; the `prs` field of the `pr_watch` wait is separate and unchanged |
+| `dots` | live file, radar session node | the dots row: `[{n, state, label, src, url?}]`, at most 14; `url` is the `https://` PR page of a `pr` dot (omitted when unknown, not `https` or not made of URL characters; the herdr-app mod opens it); `n` is the PR number or `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters, `src` `pr` or `ext` (the external status hook). The radar copies it unchanged to the session node; the `prs` field of the `pr_watch` wait is separate and unchanged |
 
 The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
 (with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the
@@ -592,8 +592,12 @@ The mod reads only `foreman radar --json` (every 3 s locally, 15 s per remote sp
 dim line and retries every 30 s. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
 name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
 `rundll32 url.dll,FileProtocolHandler`; never a shell) on an `https://` URL made of URL characters only (no whitespace, no
-`& | ^ < > " '`). The URL comes from radar (a PR `url`, else an `https://` repository URL plus `/pull/<n>`); where radar gives
-neither the chip is not clickable. Install:
+`& | ^ < > " '`). The URL comes from radar (the `url` of the PR dot, which the installed pi-foreman reports for a tracked PR, else
+an `https://` repository URL plus `/pull/<n>`); a chip opens the PR page when the installed pi-foreman reports PR URLs, and is
+plain where radar gives neither. Session status glyph (hc status of the joined terminal first, else radar; most urgent first):
+"Needs you" pill (ask or hc `blocked`), spinner (working), filled dot (hc `done`, not yet seen), hollow spinner (child agents run;
+`N agents: roles`), small square (background tasks; `bg: <name> <age>`), hollow muted ring (waits; `wait: <note> <age>`), hollow dot
+(idle). Ended sessions are hidden under an agent. Install:
 
 1. Copy `integrations/herdr-app/pi-foreman/` to `~/.config/herdr-app/mods/pi-foreman/`.
 2. `herdr-app do layout.clone '{"name":"main","as":"foreman"}'`
@@ -601,7 +605,41 @@ neither the chip is not clickable. Install:
    `"props": { "foreman": "<absolute path>" }` (optional when `foreman` is on the PATH of your environment).
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
 
-Tests: `node --test integrations/herdr-app/pi-foreman/model.test.mjs`.
+Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs"`.
+
+### Open PRs
+
+The mod's **Open PRs** section lists PRs that no agent works on. Besides the tracked PRs of ended sessions it shows the
+`openPrs` field of `foreman radar --json`, which is off by default. It lists your open PRs (author), the open PRs with your
+review requested (`mine`), and the open PRs of configured bot authors inside a configured scope. A PR that a live agent row
+already shows is not listed again (matched by URL, else by repository and number).
+
+User or overlay config only (a project cannot turn on a GitHub search):
+
+```json
+{ "radar": { "openPrs": { "enabled": true, "refreshSeconds": 900, "mine": true,
+                         "authors": ["renovate[bot]"], "scope": ["example-org", "acme/widgets"] } } }
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `radar.openPrs.enabled` | `false` | search GitHub through `gh` |
+| `radar.openPrs.refreshSeconds` | `900` | minimum seconds between two searches (60..86400) |
+| `radar.openPrs.mine` | `true` | list PRs you authored and PRs with your review requested |
+| `radar.openPrs.authors` | `[]` | other authors, for example `renovate[bot]` (a GitHub App `<name>[bot]` is searched as `author:app/<name>`) |
+| `radar.openPrs.scope` | `[]` | owners (`example-org`) or `owner/repo`; authors are searched only inside it, never unscoped |
+
+A Pi session (not a child) refreshes `<agent dir>/pi-foreman/state/open-prs.json` in the background, at most once per
+`refreshSeconds` across all sessions on the machine (an exclusive lock file with a stale timeout, then an atomic rename). One
+`gh api graphql` search runs per query: `author:@me`, `review-requested:@me`, and one per author and scope entry. `foreman
+radar --json` reads the file and never calls the network, so its 3 s polls cost nothing. It adds `openPrs` (`repo`, `number`,
+`title`, `url` (https only), `state`, `author`, `checks` as `{n, state, label}` with the states `fail`, `run`, `ok`, `none`) and
+`openPrsAt`, the time of the last refresh in which a search succeeded (absent, so the mod shows no list, until one did); the mod shows its age on the section header. When `gh` is missing, not
+logged in or rate limited, the last file stays and carries `error` and `errorAt` (when only some queries fail, the others' PRs are kept and `error` counts the failed ones); radar and the sessions go on. Only `tools.prHost`
+`auto` or `gh` is searched. Remote spaces: the radar on that machine reads its own file.
+
+**Renovate.** The Renovate GitHub App opens PRs as `renovate[bot]`: list it under `authors` with the owners or repositories in
+`scope`. A self-hosted Renovate that uses a personal token opens them as that user, which `mine` already covers.
 
 ### Retirement inventory
 

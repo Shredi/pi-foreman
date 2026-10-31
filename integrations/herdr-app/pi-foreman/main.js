@@ -6,7 +6,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, sessionRows, treeItems, openPrGroups, shownNodes,
+  parseRadarDoc, buildTree, joinAgents, sessionRows, treeItems, openPrGroups, openPrsAge, shownNodes,
   radarBinary, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
 } from "./model.js";
 
@@ -28,7 +28,9 @@ function glyph(t, spec) {
   const ink = t[spec.tone] ?? t.dim;
   switch (spec.kind) {
     case "spin":
-      return svg(SPINNER).flex_none().size(13).mx(1).text_color(ink).spin(1100);
+      return svg(SPINNER).flex_none().size(13).mx(1).text_color(spec.hollow ? ink + "99" : ink).spin(spec.ms ?? 1100);
+    case "square":
+      return div().flex_none().size(7).mx(2).rounded(2).bg(ink);
     case "pill":
       return h_flex().flex_none().items_center().h(17).px(7).rounded(6)
         .bg(ink + "2e").border(1).border_color(ink + "55")
@@ -98,7 +100,7 @@ export default class ForemanAgents extends View {
         try {
           const r = await exec(radarBinary(this.foremanProp, machine), ["radar", "--json"], { on: machine });
           const doc = r.code === 0 ? parseRadarDoc(r.stdout) : null;
-          next = doc ? { ok: true, tree: buildTree(doc.nodes), openPrs: doc.openPrs, tried: Date.now() } : { ok: false, tried: Date.now() };
+          next = doc ? { ok: true, tree: buildTree(doc.nodes), openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : { ok: false, tried: Date.now() };
         } catch {
           next = { ok: false, tried: Date.now() };
         }
@@ -146,8 +148,8 @@ export default class ForemanAgents extends View {
       .when(Boolean(summary), (el) => el.child(div().text_color(t.dim).child(summary)));
   }
 
-  topRows(t, node) {
-    const r = sessionRows(node);
+  topRows(t, node, hcStatus = null) {
+    const r = sessionRows(node, hcStatus);
     const line = () => h_flex().pl(33).pr(8).h(20).flex_none().items_center().gap(4).text_size(11.5);
     const rows = [line()
       .child(div().truncate().text_color(t.foreground).child(r.label))
@@ -219,10 +221,11 @@ export default class ForemanAgents extends View {
   }
 
   // "Open PRs": PRs no agent works on, one row per repo.
-  openPrRows(t, groups) {
+  openPrRows(t, groups, age = "") {
     if (!groups.length) return [];
-    const rows = [h_flex().id("op-head").px(8).pt(8).h(30).flex_none().items_center().text_size(11).font_medium()
-      .child(div().text_color(t.dim).child("Open PRs"))];
+    const rows = [h_flex().id("op-head").px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
+      .child(div().text_color(t.dim).child("Open PRs"))
+      .when(age !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(age)))];
     for (const g of groups) {
       rows.push(h_flex().id(`op-${g.repo}`).pl(8).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
         .child(div().text_color(t.dim).truncate().max_w(140).child(g.repo))
@@ -274,13 +277,14 @@ export default class ForemanAgents extends View {
       const head = this.agentLine(t, a, now);
       const live = childTerminals(all, a.address).map((row) => this.childLine(t, row, shown, listedStatus));
       if (!f) return [head, ...live];
-      const foreman = [...guard(() => this.topRows(t, f), []), ...guard(() => this.treeRows(t, f, skip), [])];
+      const foreman = [...guard(() => this.topRows(t, f, listedStatus.get(a.address) ?? null), []), ...guard(() => this.treeRows(t, f, skip), [])];
       return [head, ...foreman, ...live, div().h(4).flex_none()];
     };
     const rows = groups.flatMap((g) => [...header(g), ...g.members.flatMap(withRows)]);
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
     const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownNodes(joined)), []);
-    rows.push(...guard(() => this.openPrRows(t, orphanGroups), []));
+    const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
+    rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
     const needs = list.filter((a) => a.status === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)

@@ -372,7 +372,20 @@
     "radar": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." } }
+      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
+        "openPrs": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The Open PRs source of the herdr-app mod (radar --json `openPrs`): PRs no agent works on, searched through gh and cached in the state dir. User or overlay config only.",
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Search GitHub through gh for open PRs (default false)." },
+            "refreshSeconds": { "type": "integer", "minimum": 60, "maximum": 86400, "description": "Seconds between two searches (default 900); the radar polls read the cache only." },
+            "mine": { "type": "boolean", "description": "List the open PRs you authored and those with your review requested (default true)." },
+            "authors": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$" }, "description": "Other authors whose open PRs are listed, for example renovate[bot] (a GitHub App is searched as author:app/<name>). Searched only inside scope." },
+            "scope": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(/[A-Za-z0-9._-]+)?$" }, "description": "Owners or owner/repo that authors are searched in; without scope no author is searched." }
+          }
+        }
+      }
     },
     "retro": {
       "type": "object",

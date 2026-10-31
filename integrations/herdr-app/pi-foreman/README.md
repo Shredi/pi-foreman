@@ -18,9 +18,17 @@ a top-most foreman session:
 - workers (builder, reviewer, explorer …) as one tree row "role model", with a spinner while they run;
 - live `hc` children of the agent keep their tree rows below (click: `terminal.peek`).
 
+Status legend of a session's glyph (the hc status of its terminal first, then radar; most urgent first): **Needs you** pill
+(ask, or hc blocked) > spinner (working) > filled dot (hc done: finished turn not yet seen) > hollow spinner (child agents run;
+line `N agents: roles`) > small square (background task; `bg: <name> <age>`) > hollow muted ring (waiting on something external;
+`wait: <note> <age>`) > hollow dot (idle). Ended sessions are not drawn under an agent. Without a joined terminal the radar state decides.
+
 A click on an agent row focuses its pane. The footer reads "N agents · k need you". An **Open PRs** section at the bottom lists
 PRs no agent works on, one chip row per repo: the `openPrs` field of radar when the installed pi-foreman provides it, else only
-the tracked PRs of sessions that have ended or joined no agent. It is hidden when empty.
+the tracked PRs of sessions that have ended or joined no agent. It is hidden when empty. With `radar.openPrs.enabled` (user or
+overlay config, off by default) radar also lists your open PRs, those with your review requested and those of configured bot
+authors inside a configured scope; the header shows the age of that list ("updated 12m ago"), and a PR that an agent row
+already shows is not repeated. See `docs/herdr.md#open-prs`.
 
 ## Install
 
@@ -52,7 +60,7 @@ The only other thing the mod runs is the platform opener (`open` on macOS, `xdg-
 on Windows, never through `cmd` or a shell), on a chip click, and only for an `https://` URL made of URL characters: no
 whitespace, no `& | ^ < > " '`, no control characters. The URL is taken from radar: a `url` on the PR, else `<repository
 URL>/pull/<number>` from an `https://` `repoUrl`/`repo` that radar provides. The mod never derives a URL from a git remote.
-Radar of the current pi-foreman release gives neither, so chips are plain (not clickable) until it does.
+A chip opens the PR page when the installed pi-foreman reports PR URLs (the `url` of a PR dot in `foreman radar --json`); with an older pi-foreman that gives neither, chips stay plain.
 
 ## Limits
 

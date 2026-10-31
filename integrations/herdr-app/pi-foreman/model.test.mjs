@@ -185,6 +185,15 @@ test("prUrl: own URL, else https repository URL, else none", () => {
   assert.equal(prUrl(n, n.prs[0]), "");
 });
 
+test("a dot url makes the chip clickable; an unsafe one does not", () => {
+  const good = "https://example.test/acme/app/pull/7";
+  const [n] = parseRadar(JSON.stringify({ roots: [session("r", "r", { dots: [dot(7, "ok", { url: good }), dot(8, "ok", { url: "https://example.test/a&b" }), dot(9, "ok", { url: "http://example.test/x" })] })] }));
+  const by = (num) => n.prs.find((p) => p.number === num);
+  assert.equal(prUrl(n, by(7)), good);
+  assert.equal(prUrl(n, by(8)), "");
+  assert.equal(prUrl(n, by(9)), "");
+});
+
 test("radarBinary: string, object by machine, default", () => {
   assert.equal(radarBinary("/opt/fm/foreman", null), "/opt/fm/foreman");
   assert.equal(radarBinary("/opt/fm/foreman", "box"), "foreman");
