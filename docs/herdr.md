@@ -543,8 +543,7 @@ peer range for `@earendil-works/pi-coding-agent` with the running Pi version, ne
 **Experimental.** herdr-app is the desktop app on herdr-core, a terminal host driven by the `hc` command. Its panes set
 `HC_TERMINAL_ID` (an address such as `t1`), `HC_SCOPE` and `HC_TERMINAL_SOCKET` and no `HERDR_*` variable, so the TUI-only
 pieces above (the `herdr:blocked` shim, the group tag, the sidebar plugin and its tokens) stay off there by construction. A Pi
-in such a terminal reports its own state to herdr-core, so no shim is needed. The herdr-app mod that shows the pi-foreman tree
-follows in this round.
+in such a terminal reports its own state to herdr-core, so no shim is needed.
 
 **Detection.** `foreman session open` reads `HC_TERMINAL_ID` and finds `hc` on PATH, or at `HC_BIN`. The rule lives in one
 place, `backend_of` in `scripts/foreman_session.py`. With `HERDR_PANE_ID` set the TUI wins, even inside an herdr-app terminal.
@@ -579,6 +578,30 @@ Two decisions:
 
 `foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent}`.
 `launch.txt` keeps the usual shell line, so a relaunch is a copy. The final screen of a finished child stays readable (no `--rm`).
+
+**The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
+it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
+gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
+waits; one chip per PR with its check dots (failing, pending, green; newest first; red border on a failing check), wrapping,
+then "N PRs · k failing · m pending" or "all green". Nested sessions (any depth) are tree rows with their own cost and up to two
+inline PR chips (more go on a line below); workers are one tree row "role model" with a spinner. An "Open PRs" section at the
+bottom shows the `openPrs` field of radar when the installed pi-foreman provides it, else only the tracked PRs of ended sessions.
+
+The mod reads only `foreman radar --json` (every 3 s locally, 15 s per remote space) and joins a not-done node to an agent on
+`hcTerminal` (the `machine/` prefix for remote spaces; when both sides have a pid they must match). Without a radar it shows one
+dim line and retries every 30 s. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
+name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
+`rundll32 url.dll,FileProtocolHandler`; never a shell) on an `https://` URL made of URL characters only (no whitespace, no
+`& | ^ < > " '`). The URL comes from radar (a PR `url`, else an `https://` repository URL plus `/pull/<n>`); where radar gives
+neither the chip is not clickable. Install:
+
+1. Copy `integrations/herdr-app/pi-foreman/` to `~/.config/herdr-app/mods/pi-foreman/`.
+2. `herdr-app do layout.clone '{"name":"main","as":"foreman"}'`
+3. In `~/.config/herdr-app/layouts/foreman.json` change the sidebar list block's `"mod": "agents"` to `"mod": "pi-foreman"` and add
+   `"props": { "foreman": "<absolute path>" }` (optional when `foreman` is on the PATH of your environment).
+4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
+
+Tests: `node --test integrations/herdr-app/pi-foreman/model.test.mjs`.
 
 ### Retirement inventory
 
