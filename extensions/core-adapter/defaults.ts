@@ -194,15 +194,20 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
 // ------------------------------------------------------------------ gh / glab
 
 const GH_CMDS: Record<string, ReadonlySet<string>> = {
-  gh: new Set(["run view", "run list", "run download", "pr view", "pr checks", "pr diff", "pr list", "pr status", "issue view", "issue list", "repo view"]),
-  glab: new Set(["mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "repo view"]),
+  gh: new Set(["run view", "run list", "run download", "pr view", "pr checks", "pr diff", "pr list", "pr status", "issue view", "issue list", "issue status", "repo view", "search prs", "search issues", "search repos", "search commits", "search code", "release view", "release list", "label list"]),
+  glab: new Set(["mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "repo view", "release view", "release list", "label list"]),
 };
 const GH_FLAGS = new Set(["--log", "--log-failed", "--name-only", "--paginate", "-i", "--include", "--comments"]);
 const GH_VALUES = new Set(["-R", "--repo", "--json", "-q", "--jq", "-L", "--limit", "-b", "--branch", "-s", "--state", "--author", "--job", "-j", "-n", "--name", "-D", "--dir", "--page", "--per-page"]);
 const JQ_BAD = /env|import|include|input/i;
 const POSITIONAL = /^[A-Za-z0-9_.\/#:@-]+$/;
+const API_FIELD_OPTS = new Set(["-f", "-F", "--field", "--raw-field"]);
+const API_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const API_VALUE = /^[A-Za-z0-9_.,:\/#-]*$/;
+const API_QUERY = /^[A-Za-z0-9_ {}():,"]+$/;
+const API_WRITE_WORD = /mutation|subscription/i;
 
-/** Read-only gh/glab: a listed command, listed options (no method, field, input or header option, no graphql), `run download` only into scratch. */
+/** Read-only gh/glab: a listed command, listed options (no input or header option; `api` takes `-X GET` and plain `key=value` fields only with `-X GET` or a literal graphql query without mutation), `run download` only into scratch. */
 function ghDefault(prog: string, argv: string[], cwd: string, ec: EffectCtx): boolean {
   const api = argv[0] === "api";
   const key = api ? "api" : `${argv[0]} ${argv[1]}`;
@@ -210,6 +215,9 @@ function ghDefault(prog: string, argv: string[], cwd: string, ec: EffectCtx): bo
   const rest = argv.slice(api ? 1 : 2);
   const pos: string[] = [];
   let dir: string | null = null;
+  let get = false;
+  let query: string | null = null;
+  let fields = 0;
   for (let i = 0; i < rest.length; i++) {
     let w = rest[i];
     let val: string | null = null;
@@ -219,6 +227,26 @@ function ghDefault(prog: string, argv: string[], cwd: string, ec: EffectCtx): bo
       w = w.slice(0, eq);
     }
     if (GH_FLAGS.has(w) && val === null) continue;
+    if (api && (w === "-X" || w === "--method")) {
+      if (val === null) val = rest[++i] ?? null;
+      if (val !== "GET") return false;
+      get = true;
+      continue;
+    }
+    if (api && API_FIELD_OPTS.has(w)) {
+      if (val === null) val = rest[++i] ?? null;
+      const kv = val === null ? -1 : val.indexOf("=");
+      if (val === null || kv < 0) return false;
+      const k = val.slice(0, kv);
+      const v = val.slice(kv + 1);
+      if (!API_KEY.test(k) || API_WRITE_WORD.test(v)) return false;
+      if (k === "query") {
+        if (query !== null || !API_QUERY.test(v) || !/^\s*(?:\{|query\b)/.test(v)) return false;
+        query = v;
+      } else if (!API_VALUE.test(v)) return false;
+      fields++;
+      continue;
+    }
     if (GH_VALUES.has(w)) {
       if (val === null) val = rest[++i] ?? null;
       if (val === null) return false;
@@ -230,7 +258,14 @@ function ghDefault(prog: string, argv: string[], cwd: string, ec: EffectCtx): bo
     if (w.startsWith("-") || !POSITIONAL.test(w)) return false;
     pos.push(w);
   }
-  if (api && (pos.length !== 1 || /graphql/i.test(pos[0]))) return false;
+  if (api) {
+    if (pos.length !== 1) return false;
+    const gql = /^graphql$/i.test(pos[0]);
+    if (/graphql/i.test(pos[0]) && !gql) return false;
+    // a field makes gh send a POST unless the method is GET; graphql is a POST that is a read only for a literal query operation
+    if (gql ? query === null : fields > 0 && !get) return false;
+    if (query !== null && !gql) return false;
+  }
   if (key === "run download") return dir !== null && contained(ec, cwd, dir, true, ec.scratch ?? []);
   return dir === null;
 }
@@ -366,8 +401,8 @@ function deploySeg(s: ShellSegment): boolean {
 }
 
 const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B", "--base", "-H", "--head", "-t", "--title", "--body", "-q", "--jq", "--json", "-L", "--limit", "-s", "--state", "-a", "--assignee", "-l", "--label", "-m", "--milestone", "-A", "--author", "-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "--template", "-D", "--dir", "-n", "--name", "-j", "--job", "--page", "--per-page", "--cache", "-p"]);
-const GH_SAFE = new Set(["pr create", "pr view", "pr list", "pr diff", "pr checks", "pr status", "issue view", "issue list", "repo view", "repo clone", "run view", "run list", "run watch", "run download", "release view", "release list", "release download", "auth status", "config get", "config list"]);
-const GLAB_SAFE = new Set(["mr create", "mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "repo view", "repo clone", "auth status", "config get"]);
+const GH_SAFE = new Set(["pr create", "pr view", "pr list", "pr diff", "pr checks", "pr status", "issue view", "issue list", "issue status", "label list", "repo view", "repo clone", "run view", "run list", "run watch", "run download", "release view", "release list", "release download", "auth status", "config get", "config list"]);
+const GLAB_SAFE = new Set(["mr create", "mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "label list", "release view", "release list", "repo view", "repo clone", "auth status", "config get"]);
 
 /** `gh api` / `glab api` writes: an explicit non-GET method, or fields / input (which make gh send a POST). */
 function apiWrites(a: string[], graphql = false): boolean {
@@ -404,7 +439,7 @@ function forgeSeg(s: ShellSegment): boolean {
   const pos = positionals(s.argv, GH_VALUED);
   if (HELPFLAG(s.argv) && pos.length === 0) return false;
   if (pos.length === 0 || pos[0] === "help" || pos[0] === "version" || pos[0] === "status" || pos[0] === "search") return false;
-  if (pos[0] === "api") return apiWrites(s.argv, p === "gh" && pos[1] === "graphql");
+  if (pos[0] === "api") return apiWrites(s.argv, pos[1] === "graphql");
   return !(p === "gh" ? GH_SAFE : GLAB_SAFE).has(`${pos[0]} ${pos[1] ?? ""}`);
 }
 

@@ -760,7 +760,37 @@ function protectedEntries(env: FloorEnv): Protected[] {
 /** A `permissions.json` directly below a `.workflow` or `.pi` dir, wherever that is (the main checkout's file is reached from a worktree too). */
 const PERMS_BASENAME = /(?:^|\/)\.(?:workflow|pi)\/permissions\.json$/i;
 
-const globRe = (g: string, fold: boolean): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")}$`, fold ? "i" : "");
+/**
+ * A word glob as a RegExp: `*` and `?` are translated, a closed `[..]` is a shell bracket class (its text is escaped except a leading `!`),
+ * every other metacharacter (an unclosed `[`, `]`) is escaped. A word that still does not compile is compared literally, never treated as protected.
+ */
+const globRe = (g: string, fold: boolean): RegExp => {
+  const lit = (s: string): string => s.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const flags = fold ? "i" : "";
+  try {
+    let body = "";
+    for (let i = 0; i < g.length; i++) {
+      const c = g[i];
+      if (c === "*") body += "[^/]*";
+      else if (c === "?") body += "[^/]";
+      else if (c === "[") {
+        let j = i + 1;
+        if (g[j] === "!" || g[j] === "^") j++;
+        if (g[j] === "]") j++;
+        while (j < g.length && g[j] !== "]") j++;
+        if (j >= g.length) body += "\\[";
+        else {
+          const neg = g[i + 1] === "!" || g[i + 1] === "^";
+          body += `[${neg ? "^" : ""}${g.slice(i + (neg ? 2 : 1), j).replace(/[\\[\]^]/g, "\\$&")}]`;
+          i = j;
+        }
+      } else body += lit(c);
+    }
+    return new RegExp(`^${body}$`, flags);
+  } catch {
+    return new RegExp(`^${lit(g.replace(/[*?]/g, "\u0000"))}$`, flags);
+  }
+};
 
 /** The protected entry a word names (a glob word is matched against the entries), or null. */
 function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
