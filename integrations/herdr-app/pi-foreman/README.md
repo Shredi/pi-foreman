@@ -21,7 +21,7 @@ a top-most foreman session:
 Status legend of a session's glyph (the hc status of its terminal first, then radar; most urgent first): **Needs you** pill
 (ask, or hc blocked) > spinner (working) > filled dot (hc done: finished turn not yet seen) > hollow spinner (child agents run;
 line `N agents: roles`; also the running `pi-subagents` child records of `hc get <terminal> --json`, for a terminal with no radar node too, radar's runs not counted twice; a blocked record shows as **Needs you**) > small square (background task; `bg: <name> <age>`) > hollow muted ring (waiting on something external;
-`wait: <note> <age>`) > hollow dot (idle). Ended sessions are not drawn under an agent. Each running async agent that radar does not already show as a row (radar runs keep their worker row) has its own indented line below its session or agent row (small spinner, red when blocked; `title · msg` from the hc record, radar fallback `role · age`; at most 4, then `+N more`). Without a joined terminal the radar state decides.
+`wait: <note> <age>`) > hollow dot (idle). Ended sessions are not drawn under an agent. Each running async agent that radar does not already show as a row (radar runs keep their worker row) has its own indented line below its session or agent row (small spinner, red when blocked; `title · msg` from the hc record; at most 4, then `+N more`). Without a joined terminal the radar state decides.
 
 A click on an agent row focuses its pane. The footer reads "N agents · k need you". An **Open PRs** section at the bottom lists
 PRs no agent works on, one chip row per repo: the `openPrs` field of radar when the installed pi-foreman provides it, else only
