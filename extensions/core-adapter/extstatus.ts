@@ -277,6 +277,7 @@ export class ExtStatus {
 
   /** A rejected run keeps the previous items for one more interval, then clears them. */
   private reject(outcome: StatusOutcome, stderr?: string): void {
+    if (this.disposed) return;
     this.rejected += 1;
     const detail = stderr ? { stderr: redactCommand(stderr.split(/\r?\n/)[0].replace(CONTROL, "")).slice(0, 200) } : {};
     this.deps.trace({ event: "sidebar_status", outcome, count: this.list.length, ...detail });
