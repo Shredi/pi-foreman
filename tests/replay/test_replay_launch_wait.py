@@ -15,6 +15,7 @@ import re
 import sys
 import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -162,6 +163,12 @@ class TestLaunchWait(ReplayCase):
         starts = sorted(recs[0]["ts"] for name, recs in rig.traces().items() if recs and recs[0].get("event") == "session_start" and recs[0].get("role") == "child")
         self.assertEqual(len(starts), 2)
         self.assertLess(starts[1], min(w["ts"] for w in waits), "the second child started before the first wait ended")
+        # the product promise: both holds of one message run at the same time. A launch_wait record is written when its hold ends
+        # and carries the hold's `ms`, so the hold began at ts - ms; the holds overlap when the later start precedes the earlier end.
+        def at(ts):
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        held = [(at(w["ts"]) - timedelta(milliseconds=w["ms"]), at(w["ts"])) for w in waits]
+        self.assertLess(max(s for s, _ in held), min(e for _, e in held), f"the two launch holds did not overlap: {held}")
 
     def test_detach_keeps_todays_behaviour(self):
         rig = self.rig("lw-detach", load_fixture("launch_wait"), config={"ceremony": {"launchWait": "detach"}})
