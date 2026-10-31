@@ -63,6 +63,24 @@ test("floors-only: a bare git push is denied as floors-only-push", async (t) => 
   assert.equal(r.counts.review, 0);
 });
 
+test("floors-only: path, quoted, escaped, nested and variable git pushes are denied as floors-only-push", async (t) => {
+  const r = await rig(t, "floors-only");
+  const lines = ["/usr/bin/git push", `"git" push`, `'git' push`, `sh -c "git push"`, `bash -c 'git push'`, "\\git push", "$G push"];
+  for (const command of lines) {
+    const res = await r.call("bash", { command });
+    assert.equal(res?.block, true, command);
+  }
+  assert.equal(r.log().filter((e) => e.rule === "floors-only-push").length, lines.length, JSON.stringify(r.log()));
+  assert.equal(r.counts.review, 0);
+});
+
+test("floors-only: a plain explicit own-branch push keeps its default allow", async (t) => {
+  const r = await rig(t, "floors-only");
+  const res = await r.call("bash", { command: "git push -u origin feature/x" });
+  assert.equal(res, undefined);
+  assert.ok(!r.log().some((e) => e.rule === "floors-only-push"), JSON.stringify(r.log()));
+});
+
 test("floors-only: an inline interpreter and a no-matching-entry line are allowed with no review and no dialog", async (t) => {
   const r = await rig(t, "floors-only");
   for (const command of [INLINE, NOMATCH]) {

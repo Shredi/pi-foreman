@@ -11,11 +11,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import foreman_config as fc  # noqa: E402
 
 
-def schema_has_mode():
-    schema = json.loads((ROOT / "config" / "foreman.schema.json").read_text())
-    return "mode" in schema["properties"]["gate"]["properties"]
-
-
 class GateModeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -50,7 +45,6 @@ class GateModeTest(unittest.TestCase):
         res = self.load(session={"gate": {"mode": "floors-only"}})
         self.assertEqual(self.mode(res), "full")
 
-    @unittest.skipUnless(schema_has_mode(), "gate.mode is not in config/foreman.schema.json yet: the owner applies .workflow/scratch/gate-mode-schema.patch")
     def test_user_layer_keeps_floors_only(self):
         res = self.load(l2={"gate": {"mode": "floors-only"}})
         self.assertEqual(self.mode(res), "floors-only")

@@ -2194,7 +2194,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!gs || !rt) return { block: true as const, reason: "pi-foreman: this tool call has no session to review it in, so it is denied. Report this to the owner." };
     if (floorsOnly) {
       // a push the default pushOk (defaults.ts) did not allow would have gone to review and can reach a protected branch
-      if (SHELL_GATE_TOOLS.has(event.toolName) && /(?:^|[\s;&|(`])git\b[^;&|\n]*\bpush\b/.test(payload)) {
+      if (SHELL_GATE_TOOLS.has(event.toolName) && /(?:\bgit\b|\$)[\s\S]*\bpush\b/.test(payload)) { // best-effort word check on the raw line, fails toward deny: git as a word (path, quoted, escaped, nested) or a variable program, then push
         const reason = "pi-foreman: floors-only mode: this git push is not a plain `git push origin <own branch>`, so it is denied. Name the remote and your own branch, or ask the owner.";
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: "floors-only-push", ...denyFields(reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
         note("floor", "deny", "floors-only-push", reason);
