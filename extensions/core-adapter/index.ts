@@ -90,7 +90,7 @@ import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
 import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack, PR_TOOL_NAMES } from "./gitpack.ts";
 import type { PrOp } from "./gitpack.ts";
-import { PrWatches, pollSnapshot } from "./prwatch.ts";
+import { PRWATCH_ENTRY, PrWatches, latestWatches, pollSnapshot } from "./prwatch.ts";
 import { PrDots, branchOf, prDotsEnabled } from "./prdots.ts";
 import { PrWidget } from "./prwidget.ts";
 import { PrBot, prBotDir, sharedDoctorLines } from "./prbot.ts";
@@ -689,7 +689,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prPack: false,
       prCtx: null,
       prWatches: new PrWatches({
-        poll: (n, until) => pollSnapshot((op, args) => prRun(s, s.prCtx?.cwd ?? s.cwd, op, { ...args, number: n }), n, until),
+        poll: (n, until, cwd) => pollSnapshot((op, args) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, { ...args, number: n }), n, until),
+        cwd: () => s.prCtx?.cwd ?? s.cwd,
+        persist: (watches) => pi.appendEntry(PRWATCH_ENTRY, { v: 1, piSessionId: s.id, watches }),
         send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
         idle: () => s.prCtx?.isIdle() ?? true,
         trace: (r) => s.trace?.emit(r),
@@ -1259,6 +1261,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
+    if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1") {
+      // PR watches survive a restart of the same Pi session (prwatch.ts): resumed, or one visible "lost" notice each.
+      s.prCtx ??= ctx;
+      s.prWatches.restore(latestWatches((ctx.sessionManager.getBranch?.() ?? []) as unknown[], ctx.sessionManager.getSessionId?.() ?? ""));
+      await waits.restore(ctx); // foreman_wait waits do not survive a restart: one visible notice (waitstate.ts)
+    }
     if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
