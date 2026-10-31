@@ -16,7 +16,7 @@ type Fn = (...a: unknown[]) => Promise<unknown>;
 type Block = { block?: boolean; reason?: string } | undefined;
 
 const PLAN = "# Widget\n\n## Goal\nShip it.\n";
-const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR"];
+const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PLAN_PHASE"];
 const tick = () => new Promise((r) => setTimeout(r, 25)); // ctime steps apart
 let n = 0;
 
@@ -50,6 +50,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   delete process.env.PI_INTERCOM_STABLE_ID;
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
+  delete process.env.PI_FOREMAN_PLAN_PHASE; // a plan-phase session running the suite would refuse builders as plan_phase, not plan_required
   if (env) process.env.PI_FOREMAN_HANDOFF_DIR = handoff;
   else delete process.env.PI_FOREMAN_HANDOFF_DIR;
   const planFile = path.join(project, ".workflow", "scratch", "plan-widget.md");
@@ -145,10 +146,20 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
       fs.writeFileSync(f, text);
     }
   };
+  /** Waits on the event itself: until a file written now has a ctime strictly greater than both plan files' (ctime cannot be set back), no fixed sleep. */
+  const pastPlans = () => {
+    const planCtime = Math.max(...[planFile, path.join(handoff, "plan.md")].map((p) => fs.statSync(p).ctimeMs));
+    const probe = path.join(handoff, ".ctime-probe");
+    try {
+      do fs.writeFileSync(probe, "x"); while (fs.statSync(probe).ctimeMs <= planCtime);
+    } finally {
+      fs.rmSync(probe, { force: true });
+    }
+  };
   const stored = () => JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
   const forge = (data: Record<string, unknown>) => fs.writeFileSync(stateFile, JSON.stringify(data));
   const hash = () => planVersionHash(fs.readFileSync(planFile));
-  return { adapter, rule, stored, forge, hash, handoff, planFile, stateFile };
+  return { adapter, rule, pastPlans, stored, forge, hash, handoff, planFile, stateFile };
 }
 
 const planRequired = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_required\]/.test(r.reason ?? "");
@@ -249,7 +260,7 @@ test("ruling-<n>.md APPROVED only (no ruling.md APPROVED) -> nothing granted", a
   const w = world(t);
   const a = await w.adapter();
   assert.equal(await a.checkpoint(), "approve");
-  await tick();
+  w.pastPlans();
   w.rule("ruling-2.md", "APPROVED\n");
   w.rule("ruling.md", "SHIP\n");
   await a.down();
@@ -262,7 +273,7 @@ test("scratch plan differs from the handoff plan.md the parent approved -> nothi
   fs.writeFileSync(path.join(w.handoff, "plan.md"), PLAN + "\nThe version the parent read.\n");
   const a = await w.adapter();
   assert.equal(await a.checkpoint(), "approve");
-  await tick();
+  w.pastPlans();
   w.rule("ruling.md", "APPROVED\n"); // newer than both plan files: only the hashes differ
   await a.down();
   assert.equal((w.stored().plan as { hash: string }).hash, w.hash(), "dir and scratch hash match");
