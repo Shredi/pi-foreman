@@ -152,6 +152,58 @@ test("testConcurrency: env override, invalid env, 1 core, 12 cores", () => {
   assert.equal(testConcurrency({ env: {}, cores: 12 }), 6);
 });
 
+test("invoked through a symlinked directory the wrapper still runs the child and propagates its exit code", (t) => {
+  const dir = tmp();
+  try {
+    const link = path.join(dir, "linked-scripts");
+    try {
+      fs.symlinkSync(path.dirname(SCRIPT), link, "dir");
+    } catch (e) {
+      if (e.code === "EPERM" || e.code === "EACCES") return t.skip("symlinks not permitted");
+      throw e;
+    }
+    const r = spawnSync(process.execPath, [path.join(link, "foreman_test_run.mjs"), "--exec", "--", process.execPath, "-e", "console.log('child ran'); process.exit(5)"], { env: env(dir), encoding: "utf8" });
+    assert.equal(r.status, 5, r.stdout + r.stderr);
+    assert.match(r.stdout, /child ran/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent waiters on a stale lock never hold the lock at the same time", async () => {
+  const dir = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: dead.pid ?? 2 ** 22 - 1, started: new Date().toISOString(), cwd: "/x" }));
+    const marker = path.join(dir, "marker");
+    const code = `const fs=require("fs");try{fs.writeFileSync(${JSON.stringify(marker)},"x",{flag:"wx"})}catch{process.exit(9)}setTimeout(()=>{fs.rmSync(${JSON.stringify(marker)});},300)`;
+    const results = await Promise.all(Array.from({ length: 4 }, () => finish(run(dir, code))));
+    assert.deepEqual(results.map((r) => r.code), [0, 0, 0, 0]);
+    assert.ok(!fs.existsSync(lockFile(dir)));
+    assert.ok(!fs.existsSync(`${lockFile(dir)}.takeover`));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an abandoned takeover mutex does not block a stale-lock takeover", async () => {
+  const dir = tmp();
+  try {
+    const dead = spawnSync(process.execPath, ["-e", ""]);
+    fs.writeFileSync(lockFile(dir), JSON.stringify({ pid: dead.pid ?? 2 ** 22 - 1, started: new Date().toISOString(), cwd: "/x" }));
+    const mutex = `${lockFile(dir)}.takeover`;
+    fs.writeFileSync(mutex, "1");
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(mutex, past, past);
+    const r = await finish(run(dir, `console.log("ran")`));
+    assert.equal(r.code, 0);
+    assert.match(r.out, /ran/);
+    assert.ok(!fs.existsSync(mutex));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("nodeTestArgs keeps leading options before --test", () => {
   assert.deepEqual(nodeTestArgs(["--import", "./h.mjs", "a/*.ts", "b/*.ts"], 2), ["--import", "./h.mjs", "--test", "--test-concurrency=2", "a/*.ts", "b/*.ts"]);
   assert.deepEqual(nodeTestArgs(["x.test.ts"], 1), ["--test", "--test-concurrency=1", "x.test.ts"]);

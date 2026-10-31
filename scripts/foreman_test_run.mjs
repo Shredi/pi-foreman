@@ -95,12 +95,28 @@ export async function acquireLock(file, { maxMinutes = 30, pollMs = POLL_MS, std
       if (e.code !== "EEXIST") throw e;
     }
     if (staleReason(file, maxMs)) {
-      // rename is atomic: of several waiters only one moves the stale file away, the others see ENOENT and retry.
-      const grave = `${file}.stale-${process.pid}`;
+      // Takeovers are serialised by a short-lived mutex: staleness is re-checked while holding it, so a live lock that
+      // another waiter created after our first check is never removed. A mutex older than 10 s counts as abandoned.
+      const mutex = `${file}.takeover`;
+      let held = false;
       try {
-        fs.renameSync(file, grave);
-        fs.rmSync(grave, { force: true });
-      } catch {}
+        fs.writeFileSync(mutex, String(process.pid), { flag: "wx" });
+        held = true;
+      } catch (e) {
+        if (e.code !== "EEXIST") throw e;
+        try {
+          if (Date.now() - fs.statSync(mutex).mtimeMs > 10_000) fs.rmSync(mutex, { force: true });
+        } catch {}
+      }
+      if (held) {
+        try {
+          if (staleReason(file, maxMs)) fs.rmSync(file, { force: true });
+        } finally {
+          fs.rmSync(mutex, { force: true });
+        }
+        continue;
+      }
+      await sleep(Math.min(pollMs, 50));
       continue;
     }
     if (!announced) {
@@ -152,7 +168,17 @@ async function main(argv, env = process.env) {
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+function realPath(p) {
+  let r;
+  try {
+    r = fs.realpathSync.native(p);
+  } catch {
+    r = path.resolve(p);
+  }
+  return process.platform === "win32" ? r.toLowerCase() : r;
+}
+
+if (process.argv[1] && realPath(process.argv[1]) === realPath(fileURLToPath(import.meta.url))) {
   // A signal while waiting for the lock ends the process; nothing is held yet.
   process.exitCode = await main(process.argv.slice(2));
 }
