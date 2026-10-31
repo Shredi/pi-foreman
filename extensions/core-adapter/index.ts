@@ -424,7 +424,7 @@ export interface AdapterDeps {
   /** Tests: the clock the pressure file's staleness is judged by. */
   pressureNow?: () => number;
   /** Tests: replaces the call of scripts/foreman_pressure.py (a fixture sampler); the args are its argv. */
-  pressureRun?: (args: string[]) => Promise<{ ok: boolean; text: string }>;
+  pressureRun?: (args: string[], signal?: AbortSignal) => Promise<{ ok: boolean; text: string }>;
   /** Tests: the running Pi version the doctor compares the add-on's peer range against (default: Pi's VERSION export). */
   piVersion?: () => Promise<string | null>;
   /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
@@ -1239,7 +1239,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         file: pressurePath(s.agentDir),
         workspace: s.cwd,
         config: () => s.config.config,
-        run: deps.pressureRun ?? ((args) => runScript(s, "foreman_pressure.py", args, 20_000)),
+        run: deps.pressureRun ?? ((args, signal) => runScript(s, "foreman_pressure.py", args, 20_000, undefined, signal)),
         trace: (r) => s.trace?.emit(r),
         fixture: process.env[PRESSURE_FIXTURE_ENV]?.trim() || undefined,
       });
@@ -1275,7 +1275,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     closeChildAsks(s);
     s.live?.stop();
     s.openPrs?.stop();
-    s.pressureSampler?.stop();
+    await s.pressureSampler?.stop();
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
     pythonCache.drop(s.id);
@@ -4296,10 +4296,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   /** Run one scripts/*.py of the package with the resolved interpreter; the text to show. */
-  async function runScript(s: Session, script: string, args: string[], timeoutMs = 60_000, input?: string): Promise<{ text: string; ok: boolean }> {
+  async function runScript(s: Session, script: string, args: string[], timeoutMs = 60_000, input?: string, signal?: AbortSignal): Promise<{ text: string; ok: boolean }> {
     const py = pyPath(s);
     if (!py) return { text: `${script}: no usable Python (run /foreman doctor).`, ok: false };
-    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd, input });
+    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", script), ...args], { timeoutMs, cwd: s.cwd, input, signal });
     const text = (r.stdout.trim() || r.stderr.trim() || `${script} produced no output.`);
     return { text, ok: !r.error && !r.timedOut && r.code === 0 };
   }

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -180,6 +181,10 @@ def main(argv=None):
             print("foreman_pressure: %s" % exc, file=sys.stderr)
             return 2
         rec = classify(host, limits)
+        if sys.platform != "win32":
+            # A stop kills the sampler: unwind through write_state so its temp file is unlinked.
+            # Not on Windows: Node's kill terminates the process outright, so a handler is useless there.
+            signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
         write_state(args.state, rec)
     else:
         rec = read_state(args.state, args.sample_seconds)

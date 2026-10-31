@@ -6,7 +6,7 @@
 
 A sampler in the foreman session measures the host every `resources.sampleSeconds` and writes
 `<agent dir>/pi-foreman/state/pressure.json`. The child-launch path only reads that file. A missing, unreadable or stale file
-(older than 3 x `sampleSeconds`) counts as `ok`: a dead sampler never blocks work.
+(older than 3 x `sampleSeconds`) counts as `ok`: a dead sampler never blocks work. Parallel full test suites are a common cause of load; `npm run test:node` and `npm test` queue behind a machine-wide test lock (see [development](development.md#tests)).
 
 ## Keys
 

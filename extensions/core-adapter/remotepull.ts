@@ -121,6 +121,8 @@ export function createRemotePull(deps: PullDeps): RemotePull {
   let queue: Promise<unknown> = Promise.resolve();
   let timer: unknown = null;
   let ticking = false;
+  /** Aborted by stop(): an in-flight pull is killed and its reply is not applied (no registry write after shutdown). */
+  let ctl = new AbortController();
 
   const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
     const p = queue.then(fn, fn);
@@ -146,11 +148,14 @@ export function createRemotePull(deps: PullDeps): RemotePull {
 
   /** One pull process for `child` and the read-apply-write of its reply. */
   const pollOnce = async (h: PullHost, child: string): Promise<PullOutcome & { more?: boolean }> => {
+    const signal = ctl.signal;
+    if (signal.aborted) return { ok: false, entries: 0, skipped: 0, error: "stopped" };
     const e0 = newest(readRegistry(h.agentDir), child);
     if (!e0) return { ok: false, entries: 0, skipped: 0, error: "no registry entry" };
     if (!h.python) return fail(h, child, "no usable Python (run /foreman doctor)");
     const after = isAge(e0.outboxSeq) ? e0.outboxSeq : 0;
-    const r = await deps.spawner(h.python, ["-E", "-s", script, "--agent-dir", h.agentDir, "pull", "--json", "--", child], { timeoutMs: PULL_TIMEOUT_MS });
+    const r = await deps.spawner(h.python, ["-E", "-s", script, "--agent-dir", h.agentDir, "pull", "--json", "--", child], { timeoutMs: PULL_TIMEOUT_MS, signal });
+    if (signal.aborted) return { ok: false, entries: 0, skipped: 0, error: "stopped" };
     if (r.error) return fail(h, child, r.error.message);
     if (r.timedOut) return fail(h, child, "pull timed out");
     let data: { pulled?: unknown; errors?: unknown } | null = null;
@@ -249,6 +254,7 @@ export function createRemotePull(deps: PullDeps): RemotePull {
       if (r.closed) out.closed = true;
       if (!r.more || r.closed) break;
     }
+    if (out.error === "stopped") return out; // aborted by stop(): write no state and no trace
     const prev = state.get(child);
     const failures = out.ok ? 0 : (prev?.failures ?? 0) + 1;
     const e = newest(readRegistry(h.agentDir), child);
@@ -280,6 +286,7 @@ export function createRemotePull(deps: PullDeps): RemotePull {
 
   return {
     start: () => {
+      if (ctl.signal.aborted) ctl = new AbortController();
       const h = deps.host();
       if (timer || !h || h.isChild) return;
       const t = (deps.setInterval ?? ((fn, ms) => setInterval(fn, ms)))(() => void tick(), TICK_MS);
@@ -287,6 +294,7 @@ export function createRemotePull(deps: PullDeps): RemotePull {
       timer = t;
     },
     stop: () => {
+      ctl.abort();
       if (timer === null) return;
       (deps.clearInterval ?? ((t) => clearInterval(t as NodeJS.Timeout)))(timer);
       timer = null;

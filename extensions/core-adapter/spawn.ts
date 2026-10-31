@@ -6,6 +6,8 @@ export interface SpawnOptions {
   env?: Record<string, string>;
   cwd?: string;
   timeoutMs: number;
+  /** Aborting kills the child (SIGTERM, SIGKILL after 2 s) and resolves once it has closed. */
+  signal?: AbortSignal;
 }
 
 export interface SpawnResult {
@@ -20,6 +22,7 @@ export interface SpawnResult {
 export type Spawner = (command: string, args: string[], options: SpawnOptions) => Promise<SpawnResult>;
 
 const MAX_OUTPUT = 1024 * 1024;
+const ABORT_KILL_GRACE_MS = 2000;
 
 export const defaultSpawner: Spawner = (command, args, options) =>
   new Promise((resolve) => {
@@ -31,8 +34,35 @@ export const defaultSpawner: Spawner = (command, args, options) =>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
+      options.signal?.removeEventListener("abort", onAbort);
       resolve(result);
     };
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let aborted = false;
+    const abortError = (): Error => new Error("aborted");
+    const onAbort = (): void => {
+      if (aborted || settled) return;
+      aborted = true;
+      clearTimeout(timer);
+      try {
+        child.kill();
+      } catch {
+        // already gone
+      }
+      killTimer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
+        finish({ code: null, stdout, stderr, error: abortError(), timedOut });
+      }, ABORT_KILL_GRACE_MS);
+    };
+    if (options.signal?.aborted) {
+      resolve({ code: null, stdout: "", stderr: "", error: abortError(), timedOut: false });
+      return;
+    }
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(command, args, {
@@ -64,7 +94,8 @@ export const defaultSpawner: Spawner = (command, args, options) =>
       if (stderr.length < MAX_OUTPUT) stderr += chunk;
     });
     child.on("error", (error) => finish({ code: null, stdout, stderr, error, timedOut }));
-    child.on("close", (code) => finish({ code, stdout, stderr, timedOut }));
+    child.on("close", (code) => finish({ code, stdout, stderr, timedOut, ...(aborted ? { error: abortError() } : {}) }));
+    options.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdin?.on("error", () => {
       // EPIPE when the child exits before reading stdin; the exit code tells the story.
     });

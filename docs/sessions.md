@@ -251,7 +251,8 @@ the command in its pane. Without Herdr, or if it fails, it prints the command, f
 
 `sessions.backend` (`auto` by default, `herdr`, `hc` or `terminal`; user or overlay config only) chooses between these for a
 local open. `auto` tries Herdr first, then herdr-core (`hc run`, when `HC_TERMINAL_ID` is set) and then the printed
-command. A forced backend that cannot run is refused `[backend_unavailable]`. See
+command. A forced backend that cannot run is refused `[backend_unavailable]`. An hc child is always run with `--keep`, so it
+survives core loss and reboot, and gets its own tab in the opener's herdr-app space when that terminal carries `herdr.space`. See
 [herdr-app and herdr-core](herdr.md#herdr-app-and-herdr-core) (experimental).
 
 ### Providers in opened sessions

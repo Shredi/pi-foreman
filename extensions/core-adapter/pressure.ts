@@ -76,7 +76,7 @@ export interface SamplerDeps {
   workspace: string;
   config: () => unknown;
   /** Runs `foreman_pressure.py <args>`; a failure is a rejection or `ok: false`. */
-  run: (args: string[]) => Promise<{ ok: boolean; text: string }>;
+  run: (args: string[], signal?: AbortSignal) => Promise<{ ok: boolean; text: string }>;
   trace: (rec: Record<string, unknown>) => void;
   /** Host sample file for the sampler's `--fixture` (tests; never set in production). */
   fixture?: string;
@@ -89,6 +89,8 @@ export class PressureSampler {
   private handle: unknown = null;
   private busy = false;
   private failed = false;
+  private stopped = false;
+  private inflight: { done: Promise<void>; abort: AbortController } | null = null;
   private readonly d: SamplerDeps;
 
   constructor(d: SamplerDeps) {
@@ -106,25 +108,38 @@ export class PressureSampler {
     this.handle = every(() => void this.tick(), sampleSecondsOf(this.d.config()) * 1000);
   }
 
-  stop(): void {
-    if (this.handle === null) return;
-    (this.d.clearInterval ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>)))(this.handle);
-    this.handle = null;
+  /** Stops the timer, aborts the in-flight sample and resolves once its child has exited: nothing writes after this. */
+  stop(): Promise<void> {
+    this.stopped = true;
+    if (this.handle !== null) {
+      (this.d.clearInterval ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>)))(this.handle);
+      this.handle = null;
+    }
+    this.inflight?.abort.abort();
+    return this.inflight?.done ?? Promise.resolve();
   }
 
-  async tick(): Promise<void> {
-    if (this.busy) return;
+  tick(): Promise<void> {
+    if (this.busy || this.stopped) return Promise.resolve();
     this.busy = true;
+    const abort = new AbortController();
+    const done = this.sample(abort.signal).finally(() => {
+      this.busy = false;
+      this.inflight = null;
+    });
+    this.inflight = { done, abort };
+    return done;
+  }
+
+  private async sample(signal: AbortSignal): Promise<void> {
     try {
       const cfg = this.d.config();
       const args = ["sample", "--workspace", this.d.workspace, "--state", this.d.file, "--limits", JSON.stringify(limitsOf(cfg))];
       if (this.d.fixture) args.push("--fixture", this.d.fixture);
-      const r = await this.d.run(args);
-      if (!r.ok) this.fail("sampler_failed");
+      const r = await this.d.run(args, signal);
+      if (!r.ok && !signal.aborted) this.fail("sampler_failed");
     } catch {
-      this.fail("sampler_error");
-    } finally {
-      this.busy = false;
+      if (!signal.aborted) this.fail("sampler_error");
     }
   }
 
