@@ -3,23 +3,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseRadarDoc, buildTree, parseRecords, nodeStatus, agentStatus, agentsText, sessionRows, radarBinary } from "./model.js";
 
-// Shape of `hc get <terminal> --json`, titles neutral.
-const SAMPLE = JSON.stringify({
-  status: { app: "pi", state: "working" },
-  records: [
-    { id: null, state: "working", title: "explorer", msg: "Running bash", app: "pi-subagents" },
-    { id: null, state: "done", title: "builder", msg: "Finished", app: "pi-subagents" },
-    { id: null, state: "blocked", title: "reviewer", msg: "Waiting for an answer", app: "pi-subagents" },
-    { id: null, state: "working", title: "other", msg: "x", app: "some-tool" },
-  ],
+// A capture of `hc get <terminal> --json`: `records` is an object keyed by record id.
+const SAMPLE = readFileSync(new URL("./hc-get-sample.json", import.meta.url), "utf8");
+
+test("parseRecords: working and blocked pi-subagents records only (object keyed by id)", () => {
+  assert.deepEqual(parseRecords(SAMPLE), [
+    { title: "explorer", state: "working", msg: "Running bash" },
+    { title: "builder", state: "working", msg: "Editing files" },
+    { title: "reviewer", state: "blocked", msg: "Waiting for an answer" },
+  ]);
 });
 
-test("parseRecords: working and blocked pi-subagents records only", () => {
-  assert.deepEqual(parseRecords(SAMPLE), [{ title: "explorer", state: "working", msg: "Running bash" }, { title: "reviewer", state: "blocked", msg: "Waiting for an answer" }]);
+test("parseRecords: array shape and other apps", () => {
+  const arr = JSON.stringify({ records: [
+    { state: "working", title: "explorer", msg: "Running bash", app: "pi-subagents" },
+    { state: "working", title: "other", msg: "x", app: "some-tool" },
+  ] });
+  assert.deepEqual(parseRecords(arr), [{ title: "explorer", state: "working", msg: "Running bash" }]);
 });
 
 test("parseRecords: bad input answers []", () => {
-  for (const bad of ["", "nope", "null", "[]", "{}", '{"records":5}', '{"records":[null,7,{"app":"pi-subagents"}]}']) {
+  for (const bad of ["", "nope", "null", "[]", "{}", '{"records":5}', '{"records":[null,7,{"app":"pi-subagents"}]}', '{"records":{"a":null,"b":7,"c":{"app":"pi-subagents"}}}']) {
     assert.deepEqual(parseRecords(bad), []);
   }
 });
@@ -32,7 +36,7 @@ test("terminal with no radar node: records give the status and the text", () => 
   assert.equal(nodeStatus(null, "idle", blocked), "blocked");
   assert.equal(nodeStatus(null, "working", working), "working");
   assert.equal(nodeStatus(null, "idle", []), "idle");
-  assert.equal(agentsText(null, parseRecords(SAMPLE)), "2 agents: explorer, reviewer");
+  assert.equal(agentsText(null, parseRecords(SAMPLE)), "3 agents: explorer, builder, reviewer");
   assert.equal(agentsText(null, working), "1 agent: explorer");
   assert.equal(agentsText(null, []), "");
 });

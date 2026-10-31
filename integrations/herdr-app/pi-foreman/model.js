@@ -317,8 +317,10 @@ const radarRuns = (n) => listOf(n?.children).filter((c) => c.kind === "run" && !
 export function parseRecords(text) {
   let doc;
   try { doc = JSON.parse(text); } catch { return []; }
-  if (!isObj(doc) || !Array.isArray(doc.records)) return [];
-  return doc.records
+  if (!isObj(doc)) return [];
+  // Real `hc get --json`: an object keyed by record id; an array is accepted too.
+  const rows = Array.isArray(doc.records) ? doc.records : isObj(doc.records) ? Object.entries(doc.records).map(([id, r]) => (isObj(r) ? { id, ...r } : r)) : [];
+  return rows
     .filter((r) => isObj(r) && r.app === "pi-subagents" && (r.state === "working" || r.state === "blocked"))
     .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg) }));
 }
@@ -390,20 +392,21 @@ export function agentsText(node, recs = []) {
 const MAX_AGENT_LINES = 4;
 
 /** One line per running async agent under a session or agent row: `[{glyph: "working"|"blocked"|"", text}]`, at most 4,
- *  then a `+N more` item (glyph ""). Records give `title · msg`; working radar runs radar does not repeat in the records
- *  give `role · age`. Finished records are not parsed in. `node` may be null. */
+ *  then a `+N more` item (glyph ""). Only records without a live worker row (matched by title/role, with counts) get a
+ *  line, `title · msg`; radar runs are drawn as worker rows already. Finished records are not parsed in. `node` may be null. */
 export function agentLines(node, recs = []) {
   const left = new Map();
-  for (const r of listOf(recs)) left.set(r.title, (left.get(r.title) ?? 0) + 1);
-  const runs = listOf(node?.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").filter((c) => {
-    const k = left.get(c.role || c.name) ?? 0;
-    if (k > 0) left.set(c.role || c.name, k - 1);
+  const count = (n, depth) => {
+    if (!isObj(n) || depth > MAX_DEPTH) return;
+    for (const w of listOf(n.workers)) if (!w.ended) left.set(w.role || w.name, (left.get(w.role || w.name) ?? 0) + 1);
+    for (const s of listOf(n.sessions)) count(s, depth + 1);
+  };
+  count(node, 0);
+  const all = listOf(recs).filter((r) => {
+    const k = left.get(r.title) ?? 0;
+    if (k > 0) left.set(r.title, k - 1);
     return k === 0;
-  });
-  const all = [
-    ...listOf(recs).map((r) => ({ glyph: r.state === "blocked" ? "blocked" : "working", text: [r.title || "agent", r.msg].filter(Boolean).join(" · ") })),
-    ...runs.map((c) => ({ glyph: "working", text: [c.role || c.name || "agent", c.ageS ? fmtAge(c.ageS) : ""].filter(Boolean).join(" · ") })),
-  ];
+  }).map((r) => ({ glyph: r.state === "blocked" ? "blocked" : "working", text: [r.title || "agent", r.msg].filter(Boolean).join(" · ") }));
   const out = all.slice(0, MAX_AGENT_LINES);
   if (all.length > MAX_AGENT_LINES) out.push({ glyph: "", text: `+${all.length - MAX_AGENT_LINES} more` });
   return out;

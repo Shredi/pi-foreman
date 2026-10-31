@@ -117,7 +117,8 @@ export default class ForemanAgents extends View {
 
   // One `hc get` per agent terminal per interval; a failure leaves no records.
   pollRecords(cx, now) {
-    const list = guard(() => agents().map((a) => a?.address).filter((x) => typeof x === "string" && x), []);
+    // Only pi terminals (listing field `app`) can have pi-subagents records.
+    const list = guard(() => agents().filter((a) => a?.app === "pi").map((a) => a.address).filter((x) => typeof x === "string" && x), []);
     for (const addr of this.recs.keys()) if (!list.includes(addr)) this.recs.delete(addr);
     for (const addr of list) {
       const rec = this.recs.get(addr);
@@ -131,8 +132,8 @@ export default class ForemanAgents extends View {
           const r = await exec(radarBinary(this.hcProp, machine, "hc"), ["get", addr.slice(cut + 1), "--json"], { on: machine });
           if (r.code === 0) recs = parseRecords(r.stdout);
         } catch { /* no hc here: no records */ }
-        this.recs.set(addr, { recs, tried: Date.now() });
         this.busy.delete(`hc:${addr}`);
+        if (guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, tried: Date.now() });
         cx.notify();
       });
     }
