@@ -162,7 +162,11 @@ class TestLaunchWait(ReplayCase):
         self.assertEqual([w["outcome"] for w in waits], ["done", "done"])
         starts = sorted(recs[0]["ts"] for name, recs in rig.traces().items() if recs and recs[0].get("event") == "session_start" and recs[0].get("role") == "child")
         self.assertEqual(len(starts), 2)
-        self.assertLess(starts[1], min(w["ts"] for w in waits), "the second child started before the first wait ended")
+        # every child start precedes the LATER wait end. A sequential product (wait for child 1, then launch child 2) passes this
+        # looser check but fails the overlap check below: its second hold begins after the first hold has ended.
+        last_end = max(w["ts"] for w in waits)
+        for s in starts:
+            self.assertLess(s, last_end, "a child started after the last wait ended")
         # the product promise: both holds of one message run at the same time. A launch_wait record is written when its hold ends
         # and carries the hold's `ms`, so the hold began at ts - ms; the holds overlap when the later start precedes the earlier end.
         def at(ts):
