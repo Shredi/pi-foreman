@@ -66,7 +66,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/ladder.md`: ladder rungs, live rung, context and failure climbs, `rung_top`, reviewer climb, traces.
 - `docs/review.md`: review occasions, different-model rule, plan review, per-occasion overrides, review panel, findings store, `foreman findings`, `retro models`.
 - `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.
-- `docs/safety.md`: shell-write and repository guards, PR gate, permissions and auto-review, known limits.
+- `docs/safety.md`: shell-write and repository guards, PR gate, the tool gate, known limits (rules and classifier in `docs/permissions.md`).
 - `docs/permissions.md`: effect classes of child bash asks, chain composition, deterministic allow labels, traces.
 - `docs/close.md`: session manifest, CLOSE report, cleanup preconditions, take/drop, `foreman worktree sweep`.
 - `docs/sessions.md`: `/sync`, `/retro`, `/foreman close`, footer, `bin/foreman`, intercom, Herdr.

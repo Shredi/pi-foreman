@@ -12,7 +12,7 @@ of one ledger item sends the next launch to `roles.reviewer.strong` (`rung_up` r
 security-shaped diff sends it to `ladder.reviewerClimb.securityRung` (reason `security`; see [ladder](ladder.md)).
 `senior-reviewer` never climbs. There is no climb on a finding: see [Why one reviewer](#why-one-reviewer).
 
-The gate's permission review is a separate path: one review-model call judges a policy ask of any session kind, a child's included; see [permissions](permissions.md#the-review-call).
+The gate's classifier is a separate path: one cheap model call clears a dangerous-class tool call only by citing a sentence of the owner's whitelist, in any session kind; see [permissions](permissions.md#the-classifier).
 
 ## Review occasions
 

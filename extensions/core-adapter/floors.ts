@@ -2,6 +2,7 @@
 // Pure functions over the shellast.ts segments and the raw text. The same rules for every session kind.
 // The git-config key list is one file shared with the tests (git-floor-keys.json, read at module load).
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
@@ -84,6 +85,8 @@ interface GitCall {
   /** `-c key=value` and `--config-env key=ENV` keys. */
   overrides: string[];
   cwd: string | null;
+  /** The `--git-dir` value, resolved against the cwd. */
+  gitDir: string | null;
 }
 
 function gitCall(seg: ShellSegment, env: FloorEnv): GitCall | null {
@@ -91,10 +94,15 @@ function gitCall(seg: ShellSegment, env: FloorEnv): GitCall | null {
   const a = seg.argv;
   const overrides: string[] = [];
   let cwd = seg.cwd ?? env.cwd;
+  let gitDir: string | null = null;
   let i = 0;
   while (i < a.length && a[i].startsWith("-") && a[i] !== "--") {
     const w = a[i];
-    if (w === "-c") {
+    if (w === "--git-dir" || w.startsWith("--git-dir=")) {
+      const v = w === "--git-dir" ? a[i + 1] : w.slice("--git-dir=".length);
+      if (v !== undefined) gitDir = path.resolve(cwd, v);
+      i += w === "--git-dir" ? 2 : 1;
+    } else if (w === "-c") {
       overrides.push(a[i + 1] ?? "");
       i += 2;
     } else if (/^-c.+/.test(w)) {
@@ -112,7 +120,7 @@ function gitCall(seg: ShellSegment, env: FloorEnv): GitCall | null {
     } else if (GLOBAL_VALUE.has(w)) i += 2;
     else i++;
   }
-  return { sub: (a[i] ?? "").toLowerCase(), rest: a.slice(i + 1), overrides, cwd };
+  return { sub: (a[i] ?? "").toLowerCase(), rest: a.slice(i + 1), overrides, cwd, gitDir };
 }
 
 const keyOfOverride = (o: string): string => o.split("=", 1)[0];
@@ -248,6 +256,26 @@ function attributesFloor(call: GitCall, value: string, env: FloorEnv): FloorHit 
   return null;
 }
 
+/** The paths a `git config` call writes into: its repo dir, `--git-dir` and `--file` (item 4: a repo under the own scratch or the OS temp dir is not the repo's config). */
+function configTargets(call: GitCall): string[] {
+  const out = [call.cwd, call.gitDir].filter((x): x is string => !!x);
+  const cwd = call.cwd ?? ".";
+  call.rest.forEach((w, i) => {
+    const v = w.startsWith("--file=") ? w.slice(7) : w === "-f" || w === "--file" ? call.rest[i + 1] : undefined;
+    if (v) out.push(path.resolve(cwd, v));
+  });
+  return out;
+}
+
+/** Every path is below the child's scratch root (`env.scratch`, `$FOREMAN_SCRATCH`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
+function inOwnTemp(paths: string[], env: FloorEnv): boolean {
+  if (!paths.length) return false;
+  const plat = env.platform ?? process.platform;
+  const roots = [...(env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : [])), path.join(os.tmpdir(), "pi-foreman-scratch")].filter(Boolean);
+  const rootForms = roots.flatMap((r) => formsOf(r, env));
+  return paths.every((p) => formsOf(p, env).every((f) => rootForms.some((r) => lexUnder(plat, r, f))));
+}
+
 /** All git floors of one segment: config writes in every form, remote changes, the push floors. */
 function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   const call = gitCall(seg, env);
@@ -260,7 +288,7 @@ function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
       if (h) return h;
     }
   }
-  if (call.sub === "config") return configFloor(call);
+  if (call.sub === "config") return !call.rest.some((w) => w === "--global" || w === "--system") && inOwnTemp(configTargets(call), env) ? null : configFloor(call);
   if (call.sub === "remote") return remoteFloor(call);
   if (call.sub === "push" && env.child) return hit("git-push-child", "Children never push; the foreman pushes. Commit your work and report the branch.");
   if (call.sub === "push") return pushFloor(call, env);
@@ -812,7 +840,11 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
   const cwd = seg.cwd ?? env.cwd;
   const entries = protectedEntries(env);
   const keys = lineKeyWords(line).some((w) => FLOOR_KEYS.test(w));
-  const configWord = (w: string): boolean => keys && !dataWord(w) && CONFIG_FILE.test(slash(resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env) ?? w));
+  const configWord = (w: string): boolean => {
+    if (!keys || dataWord(w)) return false;
+    const abs = resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env);
+    return CONFIG_FILE.test(slash(abs ?? w)) && !(abs !== null && inOwnTemp([abs], env));
+  };
   for (const r of seg.redirects) {
     if (r.op === "<" || r.op === "dup") continue;
     if (protectedWord(r.target, cwd, env, entries)) return protHit("This shell redirect writes", r.target);
@@ -835,7 +867,7 @@ function opaqueProtected(text: string, env: FloorEnv): FloorHit | null {
   const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
   if (w !== undefined) return askHit("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`);
   if (FLOOR_KEYS.test(text)) {
-    const c = words.find((x) => CONFIG_FILE.test(x));
+    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env));
     if (c !== undefined) return askHit("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`);
   }
   return null;
@@ -852,7 +884,7 @@ function protectedToolWrite(tool: string, input: Record<string, unknown>, env: F
     if (typeof v !== "string" || !v) continue;
     if (protectedWord(v, env.cwd, env, entries)) return protHit(`\`${tool}\` writes`, v);
     const abs = resolveWord(v, env.cwd, env);
-    if (!moves && abs !== null && CONFIG_FILE.test(slash(abs)) && body.some((b) => FLOOR_KEYS.test(b))) return configHit(`\`${tool}\` writes`, v);
+    if (!moves && abs !== null && CONFIG_FILE.test(slash(abs)) && !inOwnTemp([abs], env) && body.some((b) => FLOOR_KEYS.test(b))) return configHit(`\`${tool}\` writes`, v);
   }
   return null;
 }

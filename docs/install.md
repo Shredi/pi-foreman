@@ -152,7 +152,7 @@ permission config: the tool gate decides from the shipped policy and your own po
 `<agent dir>/pi-foreman/state/migration/`, and removes the rendered file. It never edits the package entry in
 `settings.json`: run `node scripts/foreman_migrate_gate.mjs settings --dry-run`, then `node scripts/foreman_migrate_gate.mjs settings`
 yourself (the doctor prints a `FAIL` line until you do). The way back is the previous pi-foreman release plus those
-backups ([migration](permissions.md#migration-from-the-permission-package)). Setup writes the generated `subagents` block into `settings.json` (backup
+backups ([migration](permissions.md#from-the-permission-package)). Setup writes the generated `subagents` block into `settings.json` (backup
 `settings.json.bak-<timestamp>` first), and creates `<agent dir>/foreman.json` only if absent. Unless
 `--no-intercom`, it writes `<agent dir>/intercom/config.json`
 (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent; an existing file that sets

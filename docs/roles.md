@@ -66,7 +66,7 @@ keeps your other keys, backs up the old file; see [install](install.md)), or cop
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
   reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; planner, finalizer and senior-reviewer
-  (high) on Sonnet 5.5; auto-review on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
+  (high) on Sonnet 5.5; the permission classifier on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
   `childPolicy: below` with `rolePolicy` reviewer and senior-reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
   `rolePolicy.<role>: at-or-below`; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
@@ -82,8 +82,8 @@ role and either set `ladder.childPolicy: "any"` (every model available) or rank 
 
 ## Auto review model
 
-The permission auto-review (see [safety](safety.md)) uses `providers.<p>.review.model`; when unset it picks the
-cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, asks go to you.
+The model of the permission classifier (the `review` role; see [permissions](permissions.md#the-classifier)) uses the `review` role (`providers.<p>.roles.review.model`); when unset it picks the
+cheapest role-map model (by registry input price, with auth) and traces it as `by: "auto"`; with none, dangerous calls ask you.
 
 ## Review critic
 
