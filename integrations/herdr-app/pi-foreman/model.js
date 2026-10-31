@@ -30,13 +30,13 @@ export function openerArgv(platform, url) {
 
 /** The foreman binary for a machine from the `foreman` prop: a string (local only) or an object keyed by machine name
  *  (`local` for this computer). A missing entry is plain `foreman`. */
-export function radarBinary(prop, machine) {
+export function radarBinary(prop, machine, fallback = "foreman") {
   if (typeof prop === "string" && prop.trim() && !machine) return prop.trim();
   if (isObj(prop)) {
     const v = prop[machine || "local"];
     if (typeof v === "string" && v.trim()) return v.trim();
   }
-  return "foreman";
+  return fallback;
 }
 
 // ---- parse ---------------------------------------------------------------------------------------------------
@@ -71,6 +71,7 @@ function normNode(raw, depth, budget) {
   const waits = Array.isArray(raw.waits) ? raw.waits.filter(isObj).map((w) => ({
     kind: str(w.kind), note: str(w.note), ageS: num(w.age_s),
   })) : [];
+  const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ label: str(t.label), ageS: num(t.ageSeconds) })) : [];
   const asks = Array.isArray(raw.asks) ? raw.asks.filter((a) => isObj(a) && int(a.n) !== null).map((a) => ({ n: a.n, topic: str(a.topic) })) : [];
   const own = isObj(raw.own) ? num(raw.own.cost) : 0;
   const children = [];
@@ -85,7 +86,7 @@ function normNode(raw, depth, budget) {
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
     hcTerminal: str(raw.hcTerminal), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
-    cost: own, waits, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
+    cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
   };
 }
 
@@ -107,7 +108,8 @@ export function parseRadarDoc(text) {
   if (!isObj(doc) || !Array.isArray(doc.roots)) return null;
   const budget = { left: MAX_NODES };
   const nodes = doc.roots.map((r) => normNode(r, 0, budget)).filter(Boolean);
-  return { nodes, openPrs: normOpenPrs(doc.openPrs) };
+  const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
+  return { nodes, openPrs: normOpenPrs(doc.openPrs), ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
@@ -227,6 +229,9 @@ const GLYPHS = {
   blocked: { kind: "pill", tone: "blocked", hollow: false },
   idle: { kind: "dot", tone: "idle", hollow: true },
   done: { kind: "dot", tone: "done", hollow: false },
+  agents: { kind: "spin", tone: "working", hollow: true, ms: 1800 },
+  bg: { kind: "square", tone: "working", hollow: false },
+  waiting: { kind: "dot", tone: "muted", hollow: true },
 };
 
 /** How a status is drawn: {kind: "spin"|"pill"|"dot", tone: theme colour name, hollow}; unknown statuses are a dim filled dot. */
@@ -304,13 +309,61 @@ export function prUrl(node, pr) {
   return isSafeHttpsUrl(url) ? url : "";
 }
 
-/** Status for the glyph: working, blocked, idle or done. */
-export function nodeStatus(n) {
-  if (!isObj(n)) return "idle";
-  if (n.state === "done") return "done";
-  if (n.glyph === "blocked" || n.state === "ask" || (Array.isArray(n.asks) && n.asks.length > 0)) return "blocked";
-  if (n.glyph === "working" || n.glyph === "starting") return "working";
+const listOf = (x) => (Array.isArray(x) ? x : []);
+const radarRuns = (n) => listOf(n?.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").map((c) => c.role || c.name);
+
+/** The running async agents from the text of `hc get <terminal> --json`: `[{title, state}]` of the `pi-subagents` child
+ *  records in state working or blocked; [] for anything else. */
+export function parseRecords(text) {
+  let doc;
+  try { doc = JSON.parse(text); } catch { return []; }
+  if (!isObj(doc)) return [];
+  // Real `hc get --json`: an object keyed by record id; an array is accepted too.
+  const rows = Array.isArray(doc.records) ? doc.records : isObj(doc.records) ? Object.entries(doc.records).map(([id, r]) => (isObj(r) ? { id, ...r } : r)) : [];
+  return rows
+    .filter((r) => isObj(r) && r.app === "pi-subagents" && (r.state === "working" || r.state === "blocked"))
+    .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg) }));
+}
+
+// Records radar does not show already: each working radar run cancels one record with the same title.
+function extraRecords(n, recs) {
+  const left = new Map();
+  for (const t of radarRuns(n)) left.set(t, (left.get(t) ?? 0) + 1);
+  return listOf(recs).filter((r) => {
+    const k = left.get(r.title) ?? 0;
+    if (k > 0) left.set(r.title, k - 1);
+    return k === 0;
+  });
+}
+
+/** Status for the glyph: hidden (ended session), blocked, working, done (hc: finished turn not yet seen), agents, bg, waiting
+ *  or idle. `hcStatus` is the status of the joined hc terminal; without one the radar state decides. `recs` are the
+ *  parseRecords of that terminal; `n` may be null for a terminal with no radar node. */
+export function nodeStatus(n, hcStatus = null, recs = []) {
+  if (!isObj(n)) {
+    if (listOf(recs).length === 0) return "idle";
+    n = {};
+  }
+  const extra = extraRecords(n, recs);
+  if (n.state === "done") return "hidden";
+  if (n.sym === "needs-you" || n.state === "ask" || listOf(n.asks).length > 0 || hcStatus === "blocked" || extra.some((r) => r.state === "blocked")) return "blocked";
+  if (hcStatus === "working") return "working";
+  if (hcStatus === "done") return "done";
+  if (hcStatus === null || hcStatus === undefined) {
+    if (n.state === "blocked" || n.sym === "blocked") return "blocked";
+    if (n.state === "working" || n.state === "starting" || n.sym === "working" || n.sym === "starting") return "working";
+  }
+  if (radarRuns(n).length > 0 || extra.length > 0) return "agents";
+  if (listOf(n.tasks).length > 0) return "bg";
+  if (n.sym === "waiting-external" || listOf(n.waits).length > 0) return "waiting";
   return "idle";
+}
+
+/** Status of an agent row: nodeStatus over the joined node (or none) and the records; the listed status stays when that
+ *  finds nothing more than idle. */
+export function agentStatus(listed, node, recs = []) {
+  const s = nodeStatus(node, listed, recs);
+  return s === "idle" || s === "hidden" ? listed : s;
 }
 
 function askText(node) {
@@ -330,15 +383,50 @@ function waitText(node) {
   return `wait: ${w.join(" · ")}${node.waits.length > 2 ? ` +${node.waits.length - 2}` : ""}`;
 }
 
-/** Data of the lines under a top-most session's agent row. */
-export function sessionRows(node) {
+/** "N agents: titles" from radar's working runs plus the records radar does not show; "" for none. `node` may be null. */
+export function agentsText(node, recs = []) {
+  const roles = [...radarRuns(node), ...extraRecords(node, recs).map((r) => r.title || "agent")];
+  return roles.length ? `${roles.length} agent${roles.length === 1 ? "" : "s"}: ${roles.join(", ")}` : "";
+}
+
+const MAX_AGENT_LINES = 4;
+
+/** One line per running async agent under a session or agent row: `[{glyph: "working"|"blocked"|"", text}]`, at most 4,
+ *  then a `+N more` item (glyph ""). Only records without a live worker row (matched by title/role, with counts) get a
+ *  line, `title · msg`; radar runs are drawn as worker rows already (the workers `treeItems` draws under this row: sessions in
+ *  `skip` and hidden ones are left out). Finished records are not parsed in. `node` may be null. */
+export function agentLines(node, recs = [], skip = new Set()) {
+  const left = new Map();
+  const count = (n, depth) => {
+    if (!isObj(n) || depth > MAX_DEPTH) return;
+    for (const w of listOf(n.workers)) if (!w.ended) left.set(w.role || w.name, (left.get(w.role || w.name) ?? 0) + 1);
+    for (const s of listOf(n.sessions)) if (!skip.has(s) && nodeStatus(s) !== "hidden") count(s, depth + 1);
+  };
+  count(node, 0);
+  const all = listOf(recs).filter((r) => {
+    const k = left.get(r.title) ?? 0;
+    if (k > 0) left.set(r.title, k - 1);
+    return k === 0;
+  }).map((r) => ({ glyph: r.state === "blocked" ? "blocked" : "working", text: [r.title || "agent", r.msg].filter(Boolean).join(" · ") }));
+  const out = all.slice(0, MAX_AGENT_LINES);
+  if (all.length > MAX_AGENT_LINES) out.push({ glyph: "", text: `+${all.length - MAX_AGENT_LINES} more` });
+  return out;
+}
+
+function bgText(node) {
+  const t = listOf(node.tasks)[0];
+  return t ? `bg: ${t.label || "task"}${t.ageS ? ` ${fmtAge(t.ageS)}` : ""}${node.tasks.length > 1 ? ` +${node.tasks.length - 1}` : ""}` : "";
+}
+
+/** Data of the lines under a top-most session's agent row. `hcStatus` is the status of the joined hc terminal. */
+export function sessionRows(node, hcStatus = null, recs = []) {
   if (!isObj(node)) return { label: "", tier: "", cost: 0, costText: "", sessions: 0, ask: "", blocked: false, prs: [], summary: "", status: "idle" };
   const ask = askText(node);
-  const status = nodeStatus(node);
+  const status = nodeStatus(node, hcStatus, recs);
   const total = totalCost(node);
   return {
     label: node.name, tier: node.tier || node.rung || "", cost: total, costText: total > 0 ? fmtCost(total) : "",
-    sessions: sessionCount(node), ask: ask || waitText(node), blocked: Boolean(ask) || status === "blocked",
+    sessions: sessionCount(node), ask: ask || agentsText(node, recs) || bgText(node) || waitText(node), blocked: Boolean(ask),
     prs: sortPrs(node.prs), summary: prSummary(node.prs), status,
   };
 }
@@ -349,7 +437,7 @@ export function treeItems(node, skip = new Set(), lead = [], depth = 0) {
   if (!isObj(node) || depth > MAX_DEPTH) return [];
   const kids = [
     ...(node.workers ?? []).filter((w) => !w.ended).map((n) => ({ n, worker: true })),
-    ...(node.sessions ?? []).filter((s) => !skip.has(s)).map((n) => ({ n, worker: false })),
+    ...(node.sessions ?? []).filter((s) => !skip.has(s) && nodeStatus(s) !== "hidden").map((n) => ({ n, worker: false })),
   ];
   return kids.flatMap((k, i) => {
     const last = i === kids.length - 1;
@@ -374,6 +462,11 @@ function repoName(url, fallback) {
 export function openPrGroups(openPrs, tops, shown = new Set()) {
   const groups = new Map();
   const seen = new Set();
+  // PRs under a live agent row: a radar PR is a duplicate when both have a URL and the URLs match, else when repo and number match.
+  const under = allSessions(tops).filter((s) => shown.has(s)).flatMap((s) => s.prs.map((pr) => ({
+    url: prUrl(s, pr), id: `${repoName(pr.repo || s.repoUrl, s.name || "other")}#${pr.number}`,
+  })));
+  const underAgent = (p) => under.some((u) => (u.url && p.url ? u.url === p.url : u.id === `${repoName(p.repo, p.repo || "")}#${p.number}`));
   const add = (repo, pr, href) => {
     const id = `${repo}#${pr.number}`;
     if (seen.has(id)) return;
@@ -382,7 +475,7 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
     groups.get(repo).push({ ...pr, href, title: str(pr.title) });
   };
   for (const p of Array.isArray(openPrs) ? openPrs : []) {
-    if (!isObj(p) || p.state === "merged" || p.state === "closed") continue;
+    if (!isObj(p) || p.state === "merged" || p.state === "closed" || underAgent(p)) continue;
     add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p));
   }
   for (const s of allSessions(tops)) {
@@ -390,6 +483,11 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
     for (const pr of s.prs) add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr));
   }
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
+}
+
+/** "updated 12m ago" for the Open PRs header from the `openPrsAt` time (ms) and now (ms); "" when the time is unknown. */
+export function openPrsAge(at, now) {
+  return Number.isFinite(at) && Number.isFinite(now) ? `updated ${fmtAge(Math.max(0, now - at) / 1000)} ago` : "";
 }
 
 /** Nodes displayed under joined agents: each joined node, its workers and its nested sessions. */
