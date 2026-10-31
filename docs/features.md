@@ -762,6 +762,7 @@ No config key.
 
 | Key | Default | Layer |
 |---|---|---|
+| `gate.mode` | unset | any layer |
 | `gate.reviewTimeoutMs` | `15000` | tighten-only (lower only, minimum 100) |
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.logMaxBytes` | `20971520` | any layer |

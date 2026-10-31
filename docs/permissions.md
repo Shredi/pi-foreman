@@ -156,6 +156,7 @@ One JSON line per gate decision, every layer, in `<agentDir>/pi-foreman/state/ga
 
 | Key | Meaning | Project layer |
 |---|---|---|
+| `gate.mode` | `full` (default) or `floors-only` (temporary, see below) | user or overlay only |
 | `gate.reviewTimeoutMs` | review call timeout (default 15000, minimum 100) | lower only |
 | `gate.askTimeoutMs` | how long a round session or a child waits for a ruling (default 900000) | lower only |
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
@@ -167,6 +168,14 @@ One JSON line per gate decision, every layer, in `<agentDir>/pi-foreman/state/ga
 | `safety.preBash` | pre-bash hooks | user or overlay only |
 
 Every other `gate.*` key is user or overlay only; a project value is dropped with a warning. A project cannot remove a user `deny` entry, and a project policy file can only add `deny` and `ask` entries.
+
+### Floors-only mode (temporary)
+
+`gate.mode: "floors-only"` is a temporary switch that stays until the permission redesign. A missing or unknown value means `full`. Only the user config or an overlay can set it; a project value is dropped with a warning. The top session shows one warning line at start; children get no notice.
+
+What still applies: the floors (secret paths, `.git` and git-config writes, force and protected-branch pushes, a child's push), the deterministic defaults with their own rules, and a bare or unclear `git push` (anything but `git push [-u] origin <own branch>`), which is denied with rule `floors-only-push`. That push deny is a best-effort check on the command line (the word `git`, or a variable as the program, followed by the word `push`); it can also deny a line that only mentions both. In this mode scripts and inline interpreters run unreviewed and could still push. A call with no session stays denied. The guards outside the gate layer (role tool denial, MCP scope, the permission overlay, the intercom, PR and spawn gates, git-guard) are unchanged.
+
+Everything else is allowed: no review model call, no dialog, no ask.md, in every session kind. The gate log records each such allow with `layer: "default"` and rule `floors-only`. That includes self-modification rules: writes to the package and extension dirs run unreviewed.
 
 ## Known limits
 

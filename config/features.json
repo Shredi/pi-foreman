@@ -713,7 +713,7 @@
       "title": "Gate review and dialog",
       "purpose": "The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report).",
       "doc": "docs/permissions.md#the-steps",
-      "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes"],
+      "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes", "gate.mode"],
       "commands": ["/foreman perms", "foreman perms"],
       "switch": null,
       "state": "on",

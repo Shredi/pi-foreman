@@ -942,6 +942,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const w of config.warnings) ctx.ui.notify(`pi-foreman config: ${w}`, "warning");
     const firstRun = firstRunNotice({ mode: ctx.mode, isChild: s.isChild, config: config.config, presets: presetNames(PKG_ROOT) });
     if (firstRun) ctx.ui.notify(firstRun, "info");
+    if (!s.isChild && get(config.config, "gate.mode") === "floors-only") ctx.ui.notify("pi-foreman: gate in floors-only mode (gate.mode): only the floors decide; every other tool call runs without review or asks.", "warning");
     const gap = providerGapNotice({ provider, config: config.config, presets: presetProviders(PKG_ROOT), mode: ctx.mode, isChild: s.isChild });
     if (gap) notifyOnce(s, ctx, "provider-gap", gap, "warning");
     if (!s.isChild) for (const sh of shadowedRoles(cwd, childRoleIds(get(config.config, "roles")), home)) ctx.ui.notify(`pi-foreman: project agent shadows a role (${sh}); ${SHADOW_FIX}`, "warning");
@@ -2150,10 +2151,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       note("floor", "deny", r.rule, r.reason);
       return (gs && (repeatedDeny(gs, ctx, r.reason) ?? undefined)) || { block: true as const, reason: r.reason };
     }
+    // gate.mode (temporary, until the permission redesign): in "floors-only" the floors above decide alone; every other outcome that
+    // would reach review, a dialog or ask.md is an allow. Missing or unknown counts as "full".
+    const floorsOnly = gs ? get(gs.config.config, "gate.mode") === "floors-only" : false;
+    const floorsOnlyAllow = (): undefined => {
+      gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: "floors-only", role });
+      note("default", "allow", "floors-only");
+      gateDecided.add(event.toolCallId);
+      rt?.history.push(event.toolName, payload);
+      rt?.cache.invalidateAllows();
+      return undefined;
+    };
     if (r && "ask" in r) {
       // a self-modification rule (selfmod.ts): the dialog / ask path, never a model call and never a default
       const smReason = `pi-foreman: self-modification rule ${r.rule}: ${r.reason}. This session cannot answer asks; the call is denied. Report this to the owner.`;
       if (!gs || !rt) return { block: true as const, reason: smReason };
+      if (floorsOnly) return floorsOnlyAllow();
       const smKey = `${event.toolName}\u0000${payload}`;
       if (gateStopped.has(gs.id)) {
         note("floor", "deny", "user-stop", STOP_TEXT);
@@ -2179,6 +2192,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // no session: no review, dialog or log to decide with, and the overlay below is no replacement for the gate; floors and defaults ran above
     if (!gs || !rt) return { block: true as const, reason: "pi-foreman: this tool call has no session to review it in, so it is denied. Report this to the owner." };
+    if (floorsOnly) {
+      // a push the default pushOk (defaults.ts) did not allow would have gone to review and can reach a protected branch
+      if (SHELL_GATE_TOOLS.has(event.toolName) && /(?:\bgit\b|\$)[\s\S]*\bpush\b/.test(payload)) { // best-effort word check on the raw line, fails toward deny: git as a word (path, quoted, escaped, nested) or a variable program, then push
+        const reason = "pi-foreman: floors-only mode: this git push is not a plain `git push origin <own branch>`, so it is denied. Name the remote and your own branch, or ask the owner.";
+        gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: "floors-only-push", ...denyFields(reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
+        note("floor", "deny", "floors-only-push", reason);
+        return { block: true as const, reason };
+      }
+      return floorsOnlyAllow();
+    }
     const surface = gateSurface(event.toolName);
     const sessionKey = `${event.toolName}\u0000${payload}`;
     if (gateStopped.has(gs.id)) {
