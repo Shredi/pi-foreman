@@ -538,6 +538,88 @@ peer range for `@earendil-works/pi-coding-agent` with the running Pi version, ne
 - `bg_run` passes the same bash guards as `bash` (overlay rules, shell-write, destructive and git guards), reading the command from its
   `command` field; a missing or non-string `command` is denied.
 
+## herdr-app and herdr-core
+
+**Experimental.** herdr-app is the desktop app on herdr-core, a terminal host driven by the `hc` command. Its panes set
+`HC_TERMINAL_ID` (an address such as `t1`), `HC_SCOPE` and `HC_TERMINAL_SOCKET` and no `HERDR_*` variable, so the TUI-only
+pieces above (the `herdr:blocked` shim, the group tag, the sidebar plugin and its tokens) stay off there by construction. A Pi
+in such a terminal reports its own state to herdr-core, so no shim is needed.
+
+**Detection.** `foreman session open` reads `HC_TERMINAL_ID` and finds `hc` on PATH, or at `HC_BIN`. The rule lives in one
+place, `backend_of` in `scripts/foreman_session.py`. With `HERDR_PANE_ID` set the TUI wins, even inside an herdr-app terminal.
+
+**Presence field.** The presence file of a session (`<agent dir>/pi-foreman/live/<session id>.json`) gains `hcTerminal`: the
+trimmed `HC_TERMINAL_ID`, only when `HERDR_PANE_ID` is empty (a herdr TUI inside an herdr-app terminal would otherwise stamp
+every Pi with the same terminal), else `null`. `foreman radar --json` passes it through as `hcTerminal` on each node. The
+machine stays on the radar node, as before: an address is relative to its viewer.
+
+**Backend.** `sessions.backend` (user or overlay config only) picks where a local `foreman session open` runs the child:
+
+| Value | Behaviour |
+|---|---|
+| `auto` (default) | `herdr` when `HERDR_PANE_ID` is set and herdr is found, else `hc` when `HC_TERMINAL_ID` is set and `hc` is found, else the printed command |
+| `herdr` | the herdr tab; refused `[backend_unavailable]` without the binary or a server |
+| `hc` | `hc run`; refused `[backend_unavailable]` without `hc`; without `HC_TERMINAL_ID` it runs parentless and the receipt says `not nested: no parent terminal` |
+| `terminal` | the printed command |
+
+The remote `open --machine` path keeps its SSH rule. `sessions.hc.outliveParent` (default `true`) passes `--outlive-parent`,
+so a parent crash never kills a child with uncommitted work; set `false` to let hc end the child with its parent. A child
+nests under the terminal that opened it; `--focus` is ignored (a child has no pane of its own) and `foreman close` still asks
+the child over intercom. The child runs as `hc run --json --bg --no-notify --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent]
+-- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
+`powershell -NoProfile -Command "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID …; $env:PATH = '…'; <the usual PowerShell line>"`.
+Two decisions:
+
+- `--no-notify` is always passed and not configurable. Without it hc types notes about a child (blocked, error, exit) into the
+  parent terminal, which for a Pi parent is input to its editor. Intercom is the report channel.
+- The child gets the core's environment, not the opener's, so the opener's `PATH` is passed explicitly (`pi` and `node` then
+  resolve). The two `-u` options drop a TUI pane identity the core may carry, so the child's presence file never records a
+  foreign `paneId`.
+
+`foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent}`.
+`launch.txt` keeps the usual shell line, so a relaunch is a copy. The final screen of a finished child stays readable (no `--rm`).
+
+**The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
+it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
+gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
+waits; one chip per PR with its check dots (failing, pending, green; newest first; red border on a failing check), wrapping,
+then "N PRs · k failing · m pending" or "all green". Nested sessions (any depth) are tree rows with their own cost and up to two
+inline PR chips (more go on a line below); workers are one tree row "role model" with a spinner. An "Open PRs" section at the
+bottom shows the `openPrs` field of radar when the installed pi-foreman provides it, else only the tracked PRs of ended sessions.
+
+The mod reads only `foreman radar --json` (every 3 s locally, 15 s per remote space) and joins a not-done node to an agent on
+`hcTerminal` (the `machine/` prefix for remote spaces; when both sides have a pid they must match). Without a radar it shows one
+dim line and retries every 30 s. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
+name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
+`rundll32 url.dll,FileProtocolHandler`; never a shell) on an `https://` URL made of URL characters only (no whitespace, no
+`& | ^ < > " '`). The URL comes from radar (a PR `url`, else an `https://` repository URL plus `/pull/<n>`); where radar gives
+neither the chip is not clickable. Install:
+
+1. Copy `integrations/herdr-app/pi-foreman/` to `~/.config/herdr-app/mods/pi-foreman/`.
+2. `herdr-app do layout.clone '{"name":"main","as":"foreman"}'`
+3. In `~/.config/herdr-app/layouts/foreman.json` change the sidebar list block's `"mod": "agents"` to `"mod": "pi-foreman"` and add
+   `"props": { "foreman": "<absolute path>" }` (optional when `foreman` is on the PATH of your environment).
+4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
+
+Tests: `node --test integrations/herdr-app/pi-foreman/model.test.mjs`.
+
+### Retirement inventory
+
+Nothing is removed this round: the TUI path keeps working. This is what herdr-app makes redundant and when each piece can go.
+
+| Piece | Files | Under herdr-app | Removable now | Later, precondition |
+|---|---|---|---|---|
+| Sidebar plugin + token daemon | `integrations/herdr/pi-foreman-sidebar/`, `sidebarlive.ts` | replaced by the mod | no | TUI support dropped |
+| `fm_*` tokens | `sidebarlive.ts`, `sidebar.py` | not used (no token API) | no | same |
+| `herdr:blocked` shim | `herdr.ts` | not needed (Pi's own state report is native) | no | TUI integration ≥ 10 as floor |
+| Group tag | `herdrmeta.ts`, `report_group_tag` | not needed (native `parent`) | no | TUI support dropped |
+| Braille activity frame | `sidebarlive.ts` `syncSpin`, radar | not needed (native spinner) | no | TUI support dropped |
+| Presence + radar | `livestate.ts`, `foreman_radar.py` | still the single source | never | n/a |
+| Radar prune via `herdr pane list` | `foreman_radar.py` `provably_closed` | never answers, so done files are not pruned (as in plain terminals today) | no | `hc ls --json` as a second witness |
+| Pane joins (`paneId`, `pane.agent_detected`) | `sidebar.py`, `livestate.ts` | replaced by `hcTerminal` | no | TUI support dropped |
+| `herdr pane open` backend | `foreman_session.py` `open_in_herdr` | replaced by `hc run` | no | TUI support dropped |
+| Remote sessions over SSH | `remotesession.ts`, `cmd_open_remote` | `hc run --on` could replace it | no | backlog round |
+
 ## Known limits
 
 - Subagent runs inside a Pi session are text on that session's row, not rows: Herdr has rows only for real panes.

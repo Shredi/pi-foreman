@@ -243,6 +243,11 @@ the command in its pane. Without Herdr, or if it fails, it prints the command, f
 `env PI_FOREMAN_HANDOFF_DIR=… pi [--model ID] 'Read the handoff brief at …'` or, on Windows, the PowerShell form
 `$env:PI_FOREMAN_HANDOFF_DIR='…'; pi …`, and the session stays `pending`.
 
+`sessions.backend` (`auto` by default, `herdr`, `hc` or `terminal`; user or overlay config only) chooses between these for a
+local open. `auto` tries Herdr first, then herdr-core (`hc run`, when `HC_TERMINAL_ID` is set) and then the printed
+command. A forced backend that cannot run is refused `[backend_unavailable]`. See
+[herdr-app and herdr-core](herdr.md#herdr-app-and-herdr-core) (experimental).
+
 ### Providers in opened sessions
 
 The opened command is a plain `pi [--model ID] '<prompt>'`: it loads the same packages as any start, so
