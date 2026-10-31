@@ -2,7 +2,7 @@
 
 The gate's review model reads this file (plus the user's `policy.md` and the overlay's `safety.policy.files[]`) as trusted policy.
 Entries are list items `- id: <kebab-id>` followed by indented prose; ids are unique across all trusted layers.
-Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is a deny (`no-matching-entry`).
+Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is an ask (`no-matching-entry`): the owner decides in a session with a UI; a session that cannot ask denies at once.
 
 ## allow
 
@@ -45,11 +45,10 @@ Precedence: floors, then `ask`, then `deny`, then `allow`. No matching entry is 
   Deleting, overwriting or moving files outside the worktree, this session's scratch dir and the OS temp area it owns.
 - id: unknown-network-host
   Network access that is not a plain download covered by allow entry web-read (a failed or missing web-read fact): curl or wget with a body, upload, auth or cookie material, a non-scratch output or a pipe into a shell, downloaded code that is run, reverse shells, exfiltration.
-- id: no-matching-entry
-  No entry of this policy matches the request. Answer with this id when nothing else applies; the reason must say that no entry matched.
-
 ## ask
 
+- id: no-matching-entry
+  No entry of this policy matches the request. Answer ask with this id when nothing else applies (an allow, deny or ask entry that fits decides instead); the reason must say that no entry matched. The owner is asked; a session that cannot ask denies the call.
 - id: package-install
   Installing or removing packages or global tools: npm/pnpm/yarn install or ci, pip install, brew, apt, cargo install, go install. Also when the output is redirected to /tmp or the scratch dir (`npm ci > /tmp/x.log`): the redirect does not make an install routine.
 - id: inline-interpreter-script

@@ -1319,7 +1319,7 @@ async function main(argv) {
 
     if (dry) {
       for (const a of [...removeArgs, ...installArgs]) say(`would run: pi ${a.join(" ")}`);
-      if (needRecord || permNeedRecord) say(`would record the managed hash in ${managedFile}`);
+      if (needRecord) say(`would record the managed hash in ${managedFile}`);
       if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);
     } else if (anyChange) {
       if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed) backup();

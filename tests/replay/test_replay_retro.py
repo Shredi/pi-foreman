@@ -59,10 +59,11 @@ class TestRetro(ReplayCase):
         self.assertRegex(text, r"counters: denies=\d+ rereviews=\d+ budget_hits=\d+ rung_up=\d+")
         self.assertIn("- fake: missing an allow rule\n- fake: enhance the brief", text)
 
-        # The adapter writes the retro file and the V hint in one synchronous block, so a reply to an RPC command sent once the
-        # retro file is complete comes after the hint's rename. That reply is the wait; the ledger is then read once.
-        pi.request({"type": "get_state"})
-        led = (rig.project / ".workflow" / "LEDGER-rt.md").read_text("utf-8")
+        # The adapter writes the retro file and the V hint one after the other in the compaction callback, so the file being
+        # complete does not mean the hint is in the ledger yet. Wait on the hint itself; `read` returns "" while Windows
+        # holds the ledger (the hint's rename), and the poll then tries again.
+        ledger = rig.project / ".workflow" / "LEDGER-rt.md"
+        led = wait_until(lambda: (lambda t: t if "retro written" in t else "")(read(ledger)), describe=lambda t: t)
         self.assertIn("retro written", led)
         self.assertEqual([r for recs in rig.traces().values() for r in recs if r.get("event") == "hint_write_failed"], [])
         self.assertRegex(led, r"- \[x\] 1\. a" + HINT + r"ledger mark\n")

@@ -19,18 +19,24 @@ const base = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r2
 after(() => rmTestTmp(base));
 
 const agentDir = path.join(base, "agent");
-const main = path.join(base, "repo");
 const scratch = path.join(base, "tmp", "pi-foreman-scratch", "child1");
-for (const d of [scratch, path.join(agentDir, "pi-foreman"), main]) fs.mkdirSync(d, { recursive: true });
-const owned = ownedRoots({ agentDir, workspaceRoot: main, tmpRoot: path.join(base, "tmp"), npmRoot: null });
-const rules = buildOverlayRules(baseline, {}, {}, agentDir, pkgRoot, undefined, false, owned);
+for (const d of [scratch, path.join(agentDir, "pi-foreman")]) fs.mkdirSync(d, { recursive: true });
 
-// a child of the package checkout: `package.json` there is a writeAsk path (`{pkgRoot}/*`)
-const child = (command: string): string => {
-  const s = childSurface([pkgRoot], pkgRoot, "builder", process.platform);
-  const ctx: MatchCtx = { cwd: pkgRoot, home: base, platform: process.platform, role: "child", scratch, roundRoots: s.write, roundReadRoots: s.read };
-  return checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
+// A child whose cwd is its own workspace root `root` (a tmp package checkout), so the result does not depend on where the real checkout lives:
+// the real one may sit under `<repo>.worktrees/<x>`, where the `*.worktrees/*` block reads any other cwd as a sibling worktree.
+// `package.json` there is a writeAsk path (`{root}/*`).
+const childIn = (root: string): ((command: string) => string) => {
+  fs.mkdirSync(path.join(root, "sub"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), "{}\n");
+  const owned = ownedRoots({ agentDir, workspaceRoot: root, tmpRoot: path.join(base, "tmp"), npmRoot: null });
+  const rules = buildOverlayRules(baseline, {}, {}, agentDir, root, undefined, false, owned);
+  return (command: string): string => {
+    const s = childSurface([root], root, "builder", process.platform);
+    const ctx: MatchCtx = { cwd: root, home: base, platform: process.platform, role: "child", scratch, roundRoots: s.write, roundReadRoots: s.read };
+    return checkToolCall(rules, "bash", { command }, ctx)?.kind ?? "pass";
+  };
 };
+const child = childIn(path.join(base, "pkg"));
 
 test("a child's read of a protected file passes: git diff, grep, cat", { skip: !posix }, () => {
   assert.equal(child("git diff HEAD~1..HEAD -- package.json"), "pass");
@@ -166,4 +172,10 @@ test("an env prefix or wrapper on any reader, and a loop anywhere, end a protect
     `for x in a; do cat ${F}; done`,
   ]) assert.equal(child(c), "deny", c);
   for (const c of [`cat ${F}`, `grep x ${F}`, `git diff a..b -- ${F}`, `git -C sub diff -- ${F}`, `cd sub && git diff -- ../${F}`]) assert.equal(child(c), "pass", c);
+});
+
+test("the protected read-only split holds for a child workspace under a `<repo>.worktrees/<x>` path", { skip: !posix }, () => {
+  const inWorktree = childIn(path.join(base, "x.worktrees", "y"));
+  for (const c of ["git diff -- package.json", "git log -p -- package.json", "grep x package.json", "cat package.json | head -2"]) assert.equal(inWorktree(c), "pass", c);
+  for (const c of ["echo x > package.json", "sed -i 's/a/b/' package.json", "git checkout -- package.json"]) assert.equal(inWorktree(c), "deny", c);
 });

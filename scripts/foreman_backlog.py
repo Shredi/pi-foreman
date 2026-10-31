@@ -280,7 +280,10 @@ class locked:
                 os.write(fd, str(os.getpid()).encode("ascii"))
                 os.close(fd)
                 return self
-            except FileExistsError:
+            except (FileExistsError, PermissionError) as err:
+                # Windows: creating a file whose delete is still pending (the previous holder's unlink) is access denied, i.e. held
+                if isinstance(err, PermissionError) and sys.platform != "win32":
+                    raise
                 try:
                     if time.time() - os.path.getmtime(self.lock) > LOCK_STALE:
                         os.unlink(self.lock)
