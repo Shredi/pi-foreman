@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
 import os
@@ -205,6 +206,57 @@ class BacklogTest(unittest.TestCase):
         self.cli("mark", eid, "planned", code=2)
         uid = [r["id"] for r in rows if r["candidate"] == "only in a"][0]
         self.assertIn("only in a", self.cli("show", uid, "--workspace", "ws-c"))
+
+
+class LockCreateErrorTest(unittest.TestCase):
+    """locked() when the O_EXCL create fails with PermissionError, which Windows gives while the previous holder's unlink is pending."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="lock_test_"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = str(self.tmp / "store.jsonl")
+        self.real_open = os.open
+        self.calls = 0
+
+    def failing_open(self, error, times):
+        def fake(path, *args, **kw):
+            if str(path).endswith(".lock") and self.calls < times:
+                self.calls += 1
+                raise error
+            return self.real_open(path, *args, **kw)
+        return fake
+
+    def test_win32_permission_error_is_retried_until_acquired(self):
+        with mock.patch.object(fb.sys, "platform", "win32"), mock.patch.object(fb.time, "sleep"), \
+                mock.patch.object(fb.os, "open", self.failing_open(PermissionError(13, "Access is denied"), 3)):
+            with fb.locked(self.store):
+                self.assertTrue(os.path.exists(self.store + ".lock"))
+        self.assertEqual(self.calls, 3)
+        self.assertFalse(os.path.exists(self.store + ".lock"))
+
+    def test_other_platforms_still_raise_permission_error(self):
+        with mock.patch.object(fb.sys, "platform", "linux"), mock.patch.object(fb.time, "sleep"), \
+                mock.patch.object(fb.os, "open", self.failing_open(PermissionError(13, "Permission denied"), 3)):
+            with self.assertRaises(PermissionError):
+                fb.locked(self.store).__enter__()
+        self.assertEqual(self.calls, 1)
+
+    def test_win32_permission_error_that_never_clears_times_out(self):
+        with mock.patch.object(fb.sys, "platform", "win32"), mock.patch.object(fb.time, "sleep"), \
+                mock.patch.object(fb, "LOCK_TIMEOUT", 0.05), \
+                mock.patch.object(fb.os, "open", self.failing_open(PermissionError(13, "Access is denied"), 10 ** 9)):
+            with self.assertRaises(fb.LockTimeout):
+                fb.locked(self.store).__enter__()
+        self.assertGreater(self.calls, 1)
+
+    def test_win32_other_os_errors_still_raise(self):
+        err = OSError(errno.ENOSPC, "No space left on device")
+        with mock.patch.object(fb.sys, "platform", "win32"), mock.patch.object(fb.time, "sleep"), \
+                mock.patch.object(fb.os, "open", self.failing_open(err, 3)):
+            with self.assertRaises(OSError) as ctx:
+                fb.locked(self.store).__enter__()
+        self.assertEqual(ctx.exception.errno, errno.ENOSPC)
+        self.assertEqual(self.calls, 1)
 
 
 if __name__ == "__main__":
