@@ -572,6 +572,18 @@
       "enable": ""
     },
     {
+      "id": "open-prs",
+      "area": "sessions",
+      "title": "Open PRs in radar and the herdr-app mod",
+      "purpose": "When enabled, the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 900) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk. `foreman radar --json` reports them as `openPrs` for the Open PRs section of the herdr-app mod; radar polls never call the network. Off by default. User or overlay config only.",
+      "doc": "docs/herdr.md#open-prs",
+      "keys": ["radar.openPrs.enabled", "radar.openPrs.refreshSeconds", "radar.openPrs.mine", "radar.openPrs.authors", "radar.openPrs.scope"],
+      "commands": ["foreman radar --json"],
+      "switch": {"key": "radar.openPrs.enabled", "on": "true"},
+      "state": "off",
+      "enable": "{\"radar\": {\"openPrs\": {\"enabled\": true}}}"
+    },
+    {
       "id": "remote-sessions",
       "area": "sessions",
       "title": "Remote child sessions over SSH",
@@ -738,7 +750,7 @@
       "title": "Radar",
       "purpose": "`foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files.",
       "doc": "docs/sessions.md#radar",
-      "keys": ["radar"],
+      "keys": ["radar.doneTtlMinutes", "radar.recentRunSeconds"],
       "commands": ["foreman radar"],
       "switch": null,
       "state": "on",

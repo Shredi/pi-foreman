@@ -1,0 +1,38 @@
+{
+  "status": {
+    "app": "pi",
+    "state": "working"
+  },
+  "records": {
+    "subagents/04b0d2706d9b": {
+      "app": "pi-subagents",
+      "msg": "Finished",
+      "state": "done",
+      "title": "reviewer"
+    },
+    "subagents/1fcd65b172e9": {
+      "app": "pi-subagents",
+      "msg": "Running bash",
+      "state": "working",
+      "title": "explorer"
+    },
+    "subagents/2db1ef140dd1": {
+      "app": "pi-subagents",
+      "msg": "Editing files",
+      "state": "working",
+      "title": "builder"
+    },
+    "subagents/39a52fad6c8e": {
+      "app": "pi-subagents",
+      "msg": "Waiting for an answer",
+      "state": "blocked",
+      "title": "reviewer"
+    },
+    "subagents/b34bcffb97cb": {
+      "app": "pi-subagents",
+      "msg": "Finished",
+      "state": "done",
+      "title": "finalizer"
+    }
+  }
+}

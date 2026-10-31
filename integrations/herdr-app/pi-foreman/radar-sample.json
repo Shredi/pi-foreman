@@ -1,0 +1,168 @@
+{
+ "roots": [
+  {
+   "age_s": 12,
+   "blocked_s": 12,
+   "children": [],
+   "cwd": "/work/x",
+   "done_children": 0,
+   "glyph": "\u270b",
+   "hcTerminal": "t1",
+   "key": "fm-ask",
+   "kind": "session",
+   "name": "asker",
+   "own": {
+    "cost": 0.0,
+    "in": 0,
+    "out": 0,
+    "uncached": null
+   },
+   "paneId": null,
+   "pid": 1,
+   "role": null,
+   "rung": null,
+   "sid": "s-ask",
+   "started": 1791543600.0,
+   "state": "blocked",
+   "sym": "blocked",
+   "tot": {
+    "cost": 0.0,
+    "in": 0,
+    "out": 0,
+    "uncached": null
+   },
+   "waits": []
+  },
+  {
+   "age_s": 12,
+   "blocked_s": null,
+   "children": [],
+   "cwd": "/work/x",
+   "done_children": 0,
+   "glyph": "\u23f3",
+   "hcTerminal": "t2",
+   "key": "fm-work",
+   "kind": "session",
+   "name": "worker",
+   "own": {
+    "cost": 0.0,
+    "in": 0,
+    "out": 0,
+    "uncached": null
+   },
+   "paneId": null,
+   "pid": 1,
+   "role": null,
+   "rung": null,
+   "sid": "s-work",
+   "started": 1791543600.0,
+   "state": "working",
+   "sym": "working",
+   "tot": {
+    "cost": 0.0,
+    "in": 0,
+    "out": 0,
+    "uncached": null
+   },
+   "waits": []
+  },
+  {
+   "age_s": 12,
+   "blocked_s": null,
+   "children": [
+    {
+     "age_s": 12,
+     "blocked_s": null,
+     "children": [],
+     "cwd": null,
+     "done_children": 0,
+     "ended_s": null,
+     "glyph": "\u23f3",
+     "hcTerminal": null,
+     "key": "run:s-fan:L1",
+     "kind": "run",
+     "model": null,
+     "name": "builder",
+     "own": {
+      "cost": 0.0,
+      "in": 0,
+      "out": 0,
+      "uncached": null
+     },
+     "paneId": null,
+     "pid": null,
+     "role": "builder",
+     "rung": null,
+     "state": "working",
+     "sym": "working",
+     "tot": {
+      "cost": 0.0,
+      "in": 0,
+      "out": 0,
+      "uncached": null
+     }
+    },
+    {
+     "age_s": 12,
+     "blocked_s": null,
+     "children": [],
+     "cwd": null,
+     "done_children": 0,
+     "ended_s": null,
+     "glyph": "\u23f3",
+     "hcTerminal": null,
+     "key": "run:s-fan:L2",
+     "kind": "run",
+     "model": null,
+     "name": "reviewer",
+     "own": {
+      "cost": 0.0,
+      "in": 0,
+      "out": 0,
+      "uncached": null
+     },
+     "paneId": null,
+     "pid": null,
+     "role": "reviewer",
+     "rung": null,
+     "state": "working",
+     "sym": "working",
+     "tot": {
+      "cost": 0.0,
+      "in": 0,
+      "out": 0,
+      "uncached": null
+     }
+    }
+   ],
+   "cwd": "/work/x",
+   "done_children": 0,
+   "glyph": "\u23f8",
+   "hcTerminal": "t3",
+   "key": "fm-fan",
+   "kind": "session",
+   "name": "fanout",
+   "own": {
+    "cost": 0.0,
+    "in": 0,
+    "out": 0,
+    "uncached": null
+   },
+   "paneId": null,
+   "pid": 1,
+   "role": null,
+   "rung": null,
+   "sid": "s-fan",
+   "started": 1791543600.0,
+   "state": "idle",
+   "sym": "waiting",
+   "tot": {
+    "cost": 0.0,
+    "in": 0,
+    "out": 0,
+    "uncached": null
+   },
+   "waits": []
+  }
+ ]
+}
