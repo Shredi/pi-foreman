@@ -81,12 +81,11 @@
     ]
   },
   "sync": { "repos": [], "runRetro": true },
-  "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": false, "refreshSeconds": 900, "mine": true, "authors": [], "scope": [] } },
+  "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": true, "refreshSeconds": 120, "mine": true, "authors": [], "scope": [] } },
   "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent", "remote-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },
   "footer": { "usage": true, "style": "foreman", "cacheBar": true },
-  "widget": { "children": true, "prs": true, "prLinks": true },
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },
   "sessions": { "backend": "auto", "hc": { "outliveParent": true }, "machines": {}, "remoteInlineMaxBytes": 32768, "pull": { "intervalSeconds": 20, "fastSeconds": 5 }, "ssh": { "controlMaster": true } },
@@ -120,6 +119,6 @@
   "bridge": { "isolateClaudeConfig": "auto", "promptCacheTtl": { "main": "1h", "subagent": "5m" } },
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
-  "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },
+  "tools": { "git": false, "pr": true, "prHost": "auto", "prWatchSeconds": 60 },
   "sidebar": { "statusSeconds": 60 }
 }

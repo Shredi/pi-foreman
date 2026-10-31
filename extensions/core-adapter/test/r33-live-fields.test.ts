@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ChildWidget, runLine, type WidgetRows } from "../childwidget.ts";
 import { readOwnAddonTasks, readAddonTasks } from "../bg.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 import { writeStampAtomic } from "../sidebarlive.ts";
@@ -27,63 +26,6 @@ test("four glyph sets (unknown -> unicode) with the new keys and the spinner fra
   assert.equal(spinnerFrame(frames, 249), "a");
   assert.equal(spinnerFrame(frames, 250), "b");
   assert.equal(spinnerFrame(frames, 750), "a");
-});
-
-test("runLine: the spinner frame only for a running run and only when a clock is given", () => {
-  assert.ok(runLine(run).startsWith("⏳ b"));
-  assert.ok(runLine(run, "unicode", 250).startsWith("⣽ b"));
-  assert.ok(runLine({ ...run, state: "done" }, "unicode", 250).startsWith("✓ b"));
-});
-
-function stubUi() {
-  const st = { sets: 0, renders: 0, rows: null as WidgetRows | null };
-  const ui = {
-    setWidget: (_k: string, c: ((tui: { requestRender(): void }) => WidgetRows) | undefined) => {
-      st.sets++;
-      st.rows = c ? c({ requestRender: () => st.renders++ }) : null;
-    },
-    notify: () => {},
-  };
-  return { st, ui };
-}
-
-test("widget spinner opt-in: the frame is the epoch index, it advances on the 250 ms tick and the tick stops with no active run", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100_250 });
-  const { st, ui } = stubUi();
-  const d = tmp();
-  const w = new ChildWidget(path.join(d, "u.jsonl"));
-  const opts = { enabled: true, agentDir: d, intercomId: null, spinner: true };
-  const frames = symbolSet("unicode").spinner;
-  w.runs.onLaunched("c", "r1", ["builder"], 100_250);
-  w.request({ mode: "tui", ui }, opts, 100_250);
-  assert.ok(st.rows?.render(80)[0].includes(`${spinnerFrame(frames, 100_250)} builder`));
-  assert.equal(frames.indexOf(spinnerFrame(frames, 100_250)), 1);
-  t.mock.timers.tick(250);
-  assert.ok(st.rows?.render(80)[0].includes(`${spinnerFrame(frames, 100_500)} builder`));
-  assert.equal(frames.indexOf(spinnerFrame(frames, 100_500)), 2);
-  t.mock.timers.tick(250);
-  assert.equal(frames.indexOf(spinnerFrame(frames, 100_750)), 3);
-  assert.ok(st.rows?.render(80)[0].includes(`${frames[3]} builder`));
-  w.runs.onRunEnd("r1", 100_800);
-  t.mock.timers.tick(250);
-  const after = { sets: st.sets, renders: st.renders };
-  t.mock.timers.tick(5000);
-  assert.deepEqual({ sets: st.sets, renders: st.renders }, after, "no tick without an active run");
-  w.dispose();
-});
-
-test("widget without the spinner option keeps the static glyph and sets no tick", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100_000 });
-  const { st, ui } = stubUi();
-  const d = tmp();
-  const w = new ChildWidget(path.join(d, "u.jsonl"));
-  w.runs.onLaunched("c", "r1", ["builder"], 100_000);
-  w.request({ mode: "tui", ui }, { enabled: true, agentDir: d, intercomId: null }, 100_000);
-  const renders = st.renders;
-  t.mock.timers.tick(2000);
-  assert.deepEqual(st.rows?.render(80), [" ⏳ builder · working · ↑0 ↓0 · $0.00"]);
-  assert.equal(st.renders, renders);
-  w.dispose();
 });
 
 function task(cwd: string, dir: string, id: string, extra: Record<string, unknown> = {}) {

@@ -42,6 +42,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   const l2 = {
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },
     trace: { enabled: true },
+    radar: { openPrs: { enabled: false } }, // no rig calls the real gh
     ceremony: { launchWait: "detach", ...ceremony },
     ...opts.config,
   };

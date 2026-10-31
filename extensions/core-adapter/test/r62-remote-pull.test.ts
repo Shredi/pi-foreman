@@ -5,7 +5,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { closeChildren } from "../closechildren.ts";
-import { readOpened, sessionLine } from "../childwidget.ts";
 import { backoffSeconds, cleanError, createRemotePull, periodSeconds, validLive } from "../remotepull.ts";
 import type { PullDeps, PullHost } from "../remotepull.ts";
 import type { SpawnResult, Spawner } from "../spawn.ts";
@@ -433,7 +432,7 @@ test("/foreman session pull [label] polls now and prints the result", async () =
   assert.equal(child.ok, false);
 });
 
-test("session list and the widget show the pull age and the last error", () => {
+test("session list shows the pull age and the last error", () => {
   const e = entry(mk("list"), { pulledAt: new Date(Date.now() - 12_000).toISOString(), pullError: "ssh: down\u001b[0m" });
   const push = entry(mk("list2"), { child: "c2", label: "pushy", returnPath: "push" });
   const text = formatList(regOf(e, push));
@@ -442,12 +441,6 @@ test("session list and the widget show the pull age and the last error", () => {
   assert.ok(!/\u001b/.test(text));
   assert.ok(!/ · pull /.test(line2));
   assert.match(formatList(regOf(entry(mk("list3")))), / · pull never$/);
-  const agent = mk("widget");
-  writeRegistry(agent, regOf({ ...e, pulledAt: new Date().toISOString() }, { ...push, parent: "sess-1" }));
-  const rows = readOpened(agent, "sess-1");
-  assert.match(rows[0].pull ?? "", /^pull \d+s · pull error: ssh: down/);
-  assert.equal(rows[1].pull, undefined);
-  assert.match(sessionLine(rows[0], Date.now()), /demo · open · .* · pull \d+s · pull error:/);
 });
 
 test("closeChildren keeps its shape: with the optional runners a remote child is closed through runRemote", async () => {

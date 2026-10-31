@@ -4,7 +4,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { closeChildren } from "../closechildren.ts";
-import { readOpened, remoteLine, remoteState, widgetLines } from "../childwidget.ts";
 import { CloseFlow, closeFrom, closePrompt, CLOSE_SOURCES, HANDOFF_DIR_ENV, INTERCOM_INBOUND_TYPE, PARENT_INTERCOM_ENV, REMOTE_PARENT_ENV, registerClose, remoteParentClose } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 import { applyRemoteNotice, parseRemoteNotice } from "../remotesession.ts";
@@ -316,44 +315,3 @@ test("foreman_session_open tool schema lists machine and trust", () => {
   assert.ok("error" in parseSessionArgs("open demo b.md --print-all"));
 });
 
-// ------------------------------------------------------------------ widget row
-
-const T = Date.parse("2026-10-25T12:00:00Z");
-const ago = (s: number): string => new Date(T - s * 1000).toISOString();
-
-test("remoteState follows the radar: live state while the pull is fresh, ask and closing first, lost when stale", () => {
-  const live = (state: string, beat: number) => ({ state, heartbeatAgeSeconds: beat, lastEventAgeSeconds: 1, blockedAgeSeconds: null, workingRuns: 1, paneId: null });
-  const e = (over: Partial<SessionEntry>): SessionEntry => remoteEntry("/x", { pulledAt: ago(5), remoteLive: live("working", 3), ...over });
-  assert.equal(remoteState(e({}), T), "working");
-  assert.equal(remoteState(e({ remoteLive: live("blocked", 3) }), T), "blocked");
-  assert.equal(remoteState(e({ remoteLive: live("waiting", 3) }), T), "idle");
-  assert.equal(remoteState(e({ remoteLive: live("done", 3) }), T), "done");
-  assert.equal(remoteState(e({ remoteLive: live("working", 200) }), T), "idle");
-  assert.equal(remoteState(e({ ask: { at: ago(1) } }), T), "ask");
-  assert.equal(remoteState(e({ status: "closing" }), T), "closing");
-  assert.equal(remoteState(e({ pulledAt: ago(300) }), T), "lost");
-  assert.equal(remoteState(e({ pulledAt: undefined, remoteLive: undefined }), T), "starting");
-  assert.equal(remoteState(e({ status: "pending", pulledAt: undefined, remoteLive: undefined }), T), "starting");
-});
-
-test("children widget: a remote entry is a label@machine row with the live glyph, state, age and pull age", () => {
-  const agent = mk("widget");
-  const now = Date.now();
-  const live = { state: "working", heartbeatAgeSeconds: 3, lastEventAgeSeconds: 1, blockedAgeSeconds: null, workingRuns: 1, paneId: null };
-  writeRegistry(agent, { version: 1, sessions: [
-    remoteEntry(agent, { pulledAt: new Date(now - 7_000).toISOString(), remoteLive: live }),
-    remoteEntry(agent, { label: "asky", child: "c2", pulledAt: new Date(now - 7_000).toISOString(), ask: { at: new Date(now).toISOString() } }),
-    remoteEntry(agent, { label: "stopping", child: "c3", status: "closing", pulledAt: new Date(now - 7_000).toISOString() }),
-    { label: "local", child: "c4", parent: "sess-1", status: "open", opened: new Date(now - 60_000).toISOString() },
-  ] });
-  const rows = readOpened(agent, "sess-1");
-  assert.deepEqual(rows.map((r) => [r.label, r.machine, r.state]), [["demo", "alpha", "working"], ["asky", "alpha", "ask"], ["stopping", "alpha", "closing"], ["local", undefined, undefined]]);
-  const lines = widgetLines([], rows, now, null, "ascii");
-  assert.equal(lines.length, 4);
-  const sets = (l: string) => l.replace(/^\S+ /, "");
-  assert.match(sets(lines.find((l) => l.includes("demo@alpha"))!), /^demo@alpha · working · \d+s · pull \d+s$/);
-  assert.match(lines.find((l) => l.includes("asky@alpha"))!, /asky@alpha · ask · /);
-  assert.match(lines.find((l) => l.includes("stopping@alpha"))!, /stopping@alpha · closing · /);
-  assert.ok(lines.includes("local · open · 1m"));
-  assert.equal(remoteLine({ label: "a", status: "open", at: now - 5_000, machine: "m", state: "lost" }, now, "ascii").endsWith("a@m · lost · 5s"), true);
-});

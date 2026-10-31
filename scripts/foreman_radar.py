@@ -196,11 +196,11 @@ def config_recent_runs(adir):
 
 
 def config_open_prs(adir):
-    """True when radar.openPrs.enabled is set in the merged config; False on any failure."""
+    """True unless radar.openPrs.enabled is false in the merged config (on by default); False on any failure."""
     try:
         import foreman_config
         v = ((foreman_config.load_config(agent_dir=str(adir))["config"].get("radar") or {}).get("openPrs") or {}).get("enabled")
-        return v is True
+        return v is not False
     except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
         return False
 
@@ -226,12 +226,19 @@ def read_open_prs(adir):
         if isinstance(num_, bool) or not isinstance(num_, int) or not all(isinstance(x, str) for x in (repo, title, author)) or not repo:
             continue
         checks = []
-        for c in (p.get("checks") if isinstance(p.get("checks"), list) else [])[:10]:
+        for c in (p.get("checks") if isinstance(p.get("checks"), list) else [])[:20]:
             if isinstance(c, dict) and c.get("state") in OPEN_PR_STATES and isinstance(c.get("n"), str) and isinstance(c.get("label"), str):
                 checks.append({"n": c["n"][:120], "state": c["state"], "label": c["label"][:20]})
         state = p.get("state") if p.get("state") in ("open", "draft") else "open"
         out.append({"repo": repo[:140], "number": num_, "title": title[:200], "url": p["url"], "state": state,
                     "author": author[:60], "checks": checks})
+        head, body, mergeable = p.get("headRefName"), p.get("bodyText"), p.get("mergeable")
+        if isinstance(head, str) and head:
+            out[-1]["headRefName"] = head[:255]
+        if isinstance(body, str) and body:
+            out[-1]["bodyText"] = body[:500]
+        if mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
+            out[-1]["mergeable"] = mergeable
     return out, datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

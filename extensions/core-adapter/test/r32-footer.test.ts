@@ -14,7 +14,7 @@ function line1(status: string | undefined): string {
   const data = { getGitBranch: () => null, getExtensionStatuses: () => statuses };
   const ctx = { mode: "tui", model: { id: "m", reasoning: false, contextWindow: 200_000 }, getContextUsage: () => ({ percent: 10, contextWindow: 200_000 }), ui: { setStatus: () => undefined } };
   const mount = f.mount("s", ctx, { requestRender: () => undefined }, theme, data, () => "off");
-  f.update("s", ctx, MSG, { enabled: true, isChild: false, children: 0 });
+  f.update("s", ctx, MSG, { enabled: true, isChild: false });
   return mount.render(200)[0];
 }
 
