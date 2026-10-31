@@ -8,7 +8,7 @@
 //   Read(<path glob>)   read, grep, find, ls.  Edit(...) edit, write, foreman_move, foreman_copy.  Write(...) write, foreman_move, foreman_copy.
 //                       The glob meets the resolved absolute path: `~/x` home, `//x` the absolute path `/x` (`//c:/x` on win32), `/x` and `x`
 //                       relative to the MAIN checkout (not the worktree), `**` any depth, `*` within one segment, `?` one character. Slash and case
-//                       rules are pathnorm.ts's (win32 folds case, backslashes equal slashes). Lexical: a symlink is not followed.
+//                       rules are pathnorm.ts's (win32 and darwin fold case, win32 backslashes equal slashes). Lexical: a symlink is not followed.
 //   fetch(<glob>)       the URL of a fetch call.
 //   mcp__server__tool, mcp__server__*, mcp__server    MCP tools; the optional glob meets the JSON payload.
 //   <Name>(<glob>)      any other tool by exact name; the glob meets the JSON payload.
@@ -16,7 +16,7 @@
 // when EVERY unit is non-opaque and matches an allow rule or a built-in allow (the caller's callback); else `none`.
 import * as path from "node:path";
 import type { ShellSegment } from "./shellast.ts";
-import { comparable, foldCase, slashForm } from "./pathnorm.ts";
+import { comparableFs, slashForm } from "./pathnorm.ts";
 
 export type RuleFamily = "bash" | "read" | "edit" | "write" | "named";
 
@@ -115,7 +115,7 @@ function pathPattern(pattern: string, env: RuleEnv): string {
   else if (win && /^[A-Za-z]:\//.test(p)) p = p;
   else if (p.startsWith("/")) p = `${slashForm(env.platform, env.checkout)}${p}`;
   else p = `${slashForm(env.platform, env.checkout)}/${p.replace(/^\.\//, "")}`;
-  return foldCase(env.platform, slashForm(env.platform, p));
+  return comparableFs(env.platform, p);
 }
 
 // ------------------------------------------------------------------ the call
@@ -210,7 +210,7 @@ interface Unit {
 
 function unitsOf(call: RuleCall, env: RuleEnv): Unit[] {
   if (call.segments) return call.segments.map((s) => ({ kind: "segment", text: s.text, opaque: s.opaque, writesRedirect: s.writesRedirect }));
-  if (call.paths) return call.paths.map((p) => ({ kind: "path", text: comparable(env.platform, p), opaque: false, writesRedirect: false }));
+  if (call.paths) return call.paths.map((p) => ({ kind: "path", text: comparableFs(env.platform, p), opaque: false, writesRedirect: false }));
   if (call.tool === "fetch") return [{ kind: "url", text: call.url ?? "", opaque: false, writesRedirect: false }];
   return [{ kind: "payload", text: call.payload ?? "", opaque: false, writesRedirect: false }];
 }

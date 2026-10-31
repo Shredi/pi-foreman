@@ -1,6 +1,7 @@
 // R41 defaults (ledger item 4): named allow rules, evaluated per shell segment. A line is a default allow only when the floors
 // found nothing (the caller ran lineFloors first), no segment is opaque and every segment matches a rule below. Anything else
 // returns null and falls through to the review. Rule names: `default-<name>`.
+import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
@@ -259,7 +260,8 @@ function ghDefault(prog: string, argv: string[], cwd: string, ec: EffectCtx): bo
     pos.push(w);
   }
   if (api) {
-    if (pos.length !== 1) return false;
+    const f = apiFlags(rest);
+    if (pos.length !== 1 || (f.method !== null && f.method !== "GET") || f.override !== null) return false;
     const gql = /^graphql$/i.test(pos[0]);
     if (/graphql/i.test(pos[0]) && !gql) return false;
     // a field makes gh send a POST unless the method is GET; graphql is a POST that is a read only for a literal query operation
@@ -404,33 +406,64 @@ const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B",
 const GH_SAFE = new Set(["pr create", "pr view", "pr list", "pr diff", "pr checks", "pr status", "issue view", "issue list", "issue status", "label list", "repo view", "repo clone", "run view", "run list", "run watch", "run download", "release view", "release list", "release download", "auth status", "config get", "config list"]);
 const GLAB_SAFE = new Set(["mr create", "mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "label list", "release view", "release list", "repo view", "repo clone", "auth status", "config get"]);
 
-/** `gh api` / `glab api` writes: an explicit non-GET method, or fields / input (which make gh send a POST). */
-function apiWrites(a: string[], graphql = false): boolean {
+/** What the flags of a `gh api` / `glab api` call say; one parser for the dangerous class and the built-in read allow. */
+export interface ApiFlags {
+  /** The effective method, upper-cased: the LAST `-X` / `--method` wins (gh honours the last), null when none was given. */
+  method: string | null;
+  /** The method of an `X-HTTP-Method-Override` header (the last one), upper-cased. */
+  override: string | null;
+  /** Any `-f|-F|--field|--raw-field` (gh sends a POST for it unless the method is GET). */
+  fields: boolean;
+  input: boolean;
+  /** The literal `query=` field value (the last), null when none. */
+  query: string | null;
+}
+
+export function apiFlags(a: string[]): ApiFlags {
+  const f: ApiFlags = { method: null, override: null, fields: false, input: false, query: null };
+  const header = (v: string | undefined): void => {
+    const m = v === undefined ? null : /^\s*x-http-method-override\s*:\s*(\S*)/i.exec(v);
+    if (m) f.override = m[1].toUpperCase();
+  };
   for (let i = 0; i < a.length; i++) {
     const w = a[i];
-    const m = w === "-X" || w === "--method" ? a[i + 1] : w.startsWith("--method=") ? w.slice(9) : /^-X.+/.test(w) ? w.slice(2) : undefined;
-    if (m !== undefined) return m.toUpperCase() !== "GET";
+    if (w === "--") break;
+    if (w === "-X" || w === "--method") f.method = (a[++i] ?? "").toUpperCase();
+    else if (w.startsWith("--method=")) f.method = w.slice(9).toUpperCase();
+    else if (/^-X.+/.test(w)) f.method = w.slice(2).toUpperCase();
+    else if (w === "-H" || w === "--header") header(a[++i]);
+    else if (w.startsWith("--header=")) header(w.slice(9));
+    else if (/^-H.+/.test(w)) header(w.slice(2));
+    else if (/^--input(?:=|$)/.test(w)) f.input = true;
+    else {
+      let v: string | undefined;
+      if (/^(?:-f|-F|--field|--raw-field)$/.test(w)) v = a[++i];
+      else if (/^--(?:field|raw-field)=/.test(w)) v = w.slice(w.indexOf("=") + 1);
+      else if (/^-[fF].+/.test(w)) v = w.slice(2);
+      else continue;
+      f.fields = true;
+      if (v !== undefined && v.startsWith("query=")) f.query = v.slice(6);
+    }
   }
-  if (graphql) return !graphqlRead(a);
-  return a.some((w) => /^(?:-f|-F|--field|--raw-field|--input)(?:=|$)/.test(w) || /^-[fF].+/.test(w));
+  return f;
+}
+
+/** `gh api` / `glab api` writes: a last method other than GET, a method-override header other than GET / HEAD, or fields / input (which make gh send a POST). */
+function apiWrites(a: string[], graphql = false): boolean {
+  const f = apiFlags(a);
+  if (f.override !== null && f.override !== "GET" && f.override !== "HEAD") return true;
+  if (graphql) return f.method !== null && f.method !== "GET" && f.method !== "POST" ? true : !graphqlRead(f);
+  if (f.method !== null) return f.method !== "GET";
+  return f.fields || f.input;
 }
 
 /**
  * A `gh api graphql` call is a read when its query is a literal `-f|-F|--field|--raw-field query=<text>` without the word `mutation`. A query from a
  * file (`--input`, `query=@file`) or no literal query is opaque, so it counts as a write.
  */
-function graphqlRead(a: string[]): boolean {
-  if (a.some((w) => /^--input(?:=|$)/.test(w))) return false;
-  let query: string | null = null;
-  for (let i = 0; i < a.length; i++) {
-    const w = a[i];
-    let v: string | undefined;
-    if (/^(?:-f|-F|--field|--raw-field)$/.test(w)) v = a[i + 1];
-    else if (/^--(?:field|raw-field)=/.test(w)) v = w.slice(w.indexOf("=") + 1);
-    else if (/^-[fF].+/.test(w) && !w.startsWith("--")) v = w.slice(2);
-    if (v !== undefined && v.startsWith("query=")) query = v.slice(6);
-  }
-  return query !== null && query !== "" && !query.startsWith("@") && !/^\$|mutation/i.test(query);
+function graphqlRead(f: ApiFlags): boolean {
+  const query = f.query;
+  return !f.input && query !== null && query !== "" && !query.startsWith("@") && !/^\$|mutation/i.test(query);
 }
 
 function forgeSeg(s: ShellSegment): boolean {
@@ -520,6 +553,28 @@ function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
 }
 
 const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
+const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
+
+/**
+ * A `git push` that only publishes the session's own branches: no URL remote, no tag, `--tags`, `--mirror`, `--all`, delete or colon refspec, and every
+ * refspec `HEAD` or a branch that is the cwd branch or checked out in a linked worktree of the repo. `git push` and `git push origin` push the current branch.
+ * Anything else is `danger-git` (the push floors deny force and protected-branch pushes before this question).
+ */
+function pushOwn(rest: string[], cwd: string, env: DangerEnv): boolean {
+  if (rest.some((w) => w.startsWith("--repo=") && URLISH.test(w.slice(7)))) return false;
+  if (rest.some((w) => /^--(?:tags|mirror|all|branches|delete|prune|follow-tags)$/.test(w) || /^-[A-Za-z]*d[A-Za-z]*$/.test(w))) return false;
+  const pos = positionals(rest, PUSH_VALUED);
+  const remote = pos[0];
+  if (remote !== undefined && URLISH.test(remote)) return false;
+  const refs = pos.slice(1);
+  if (refs.length === 0) return true;
+  const own = new Set([...(env.facts?.currentBranch(cwd) ? [env.facts.currentBranch(cwd) as string] : []), ...(env.facts?.ownBranches?.(cwd) ?? [])]);
+  return refs.every((r) => {
+    if (r === "HEAD") return true;
+    if (r === "tag" || r.startsWith("+") || r.includes(":")) return false;
+    return own.has(r.replace(/^refs\/heads\//, ""));
+  });
+}
 
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   if (progOf(s) !== "git") return false;
@@ -538,11 +593,8 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
     case "branch":
       return flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete");
-    case "push": {
-      if (rest.some((w) => w.startsWith("--repo=") && URLISH.test(w.slice(7)))) return true;
-      const first = positionals(rest, new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec"]))[0];
-      return first !== undefined && URLISH.test(first);
-    }
+    case "push":
+      return !pushOwn(rest, s.cwd ?? env.cwd, env);
     case "rebase":
     case "filter-branch":
     case "filter-repo":
@@ -591,9 +643,158 @@ function pathWriteOutside(c: DangerCall, env: DangerEnv): boolean {
   return pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) === undefined;
 }
 
-/** A shell segment that writes (a redirect or a write-class effect) outside the worktree, scratch and tmp. */
+/** Operands of a command: the words that are no option, past `--` all of them; the options in `valued` swallow the next word. */
+function operands(a: string[], valued: ReadonlySet<string> = new Set()): string[] {
+  const out: string[] = [];
+  let opts = true;
+  for (let i = 0; i < a.length; i++) {
+    const w = a[i];
+    if (opts && w === "--") opts = false;
+    else if (opts && valued.has(w)) i++;
+    else if (!opts || !w.startsWith("-") || w === "-") out.push(w);
+  }
+  return out;
+}
+
+/** The values of an option given as `-t X`, `-tX`, `--long X` or `--long=X`. */
+function optValues(a: string[], short: string[], long: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < a.length; i++) {
+    const w = a[i];
+    if (w === "--") break;
+    if (short.includes(w) || long.includes(w)) {
+      if (a[i + 1] !== undefined) out.push(a[++i]);
+    } else if (long.some((l) => w.startsWith(`${l}=`))) out.push(w.slice(w.indexOf("=") + 1));
+    else if (!w.startsWith("--") && short.some((s) => w.startsWith(s) && w.length > s.length)) out.push(w.slice(2));
+  }
+  return out;
+}
+
+const GIT_WRITE_SUBS = new Set(["commit", "add", "rm", "mv", "merge", "rebase", "reset", "checkout", "switch", "restore", "stash", "tag", "cherry-pick", "revert", "apply", "am", "pull", "fetch", "clone", "init", "clean", "worktree", "branch", "submodule", "config", "gc", "prune", "update-index", "update-ref", "notes", "bisect"]);
+const PKG_READ_VERBS = new Set(["ls", "list", "ll", "la", "view", "info", "show", "search", "help", "config", "root", "prefix", "bin", "whoami", "outdated", "why", "explain", "docs", "licenses", "version", "-v", "--version"]);
+const CODE_FLAG: Record<string, RegExp> = { python: /^-[A-Za-z]*c(?:.+)?$/, node: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, nodejs: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, bun: /^(?:-e|--eval(?:=.*)?|--print(?:=.*)?)$/, perl: /^-[A-Za-z]*[eE]$/, ruby: /^-[A-Za-z]*e$/, php: /^-[A-Za-z]*r$/, lua: /^-[A-Za-z]*e$/, rscript: /^-e$/ };
+
+/** An interpreter run with code on its command line (`python3 -c`, `node -e`, `perl -e` ...): the code is not read by the gate. */
+function inlineCode(s: ShellSegment): boolean {
+  const p = progOf(s);
+  if (p === "deno") return s.argv[0] === "eval";
+  const key = /^python/.test(p) ? "python" : p.replace(/[0-9.]+$/, "");
+  const re = CODE_FLAG[key];
+  if (!re) return false;
+  for (const w of s.argv) {
+    if (key === "python" && (w === "-m" || !w.startsWith("-"))) return false;
+    if (/\.(?:[cm]?js|ts|mts|cts|pl|rb|php|lua)$/.test(w)) return false;
+    if (re.test(w)) return true;
+  }
+  return false;
+}
+
+/** The path words one segment writes (resolved against its cwd by the caller); `.` stands for the cwd itself. In-place and output-flag forms included. */
+function writeTargets(s: ShellSegment): string[] {
+  const p = progOf(s);
+  const a = s.argv;
+  switch (p) {
+    case "sed": {
+      const scripts = optValues(a, ["-e"], ["--expression"]);
+      const files = operands(a, new Set(["-e", "-f", "--expression", "--file"])).filter((w) => w !== "");
+      if (scripts.length === 0 && optValues(a, ["-f"], ["--file"]).length === 0 && files.length > 0) scripts.push(files.shift() as string);
+      const inPlace = a.some((w) => w === "--in-place" || w.startsWith("--in-place=") || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
+      const wfiles: string[] = [];
+      for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
+      return [...(inPlace ? files : []), ...wfiles];
+    }
+    case "truncate":
+      return operands(a, new Set(["-s", "--size", "-r", "--reference"]));
+    case "perl":
+      return a.some((w) => /^-[pnla]*i/.test(w)) ? operands(a, new Set(["-e", "-E", "-I"])) : [];
+    case "dd":
+      return a.filter((w) => w.startsWith("of=")).map((w) => w.slice(3));
+    case "sort":
+      return optValues(a, ["-o"], ["--output"]);
+    case "cp":
+    case "mv":
+    case "install":
+    case "ln": {
+      const t = optValues(a, ["-t"], ["--target-directory"]);
+      const ops = operands(a, new Set(["-S", "--suffix", "-m", "--mode", "-o", "--owner", "-g", "--group", "-t", "--target-directory"]));
+      if (p === "mv") return [...t, ...ops];
+      if (t.length) return t;
+      if (p === "install" && a.includes("-d")) return ops;
+      if (p === "ln" && ops.length === 1) return ["."];
+      return ops.length >= 2 ? [ops[ops.length - 1]] : [];
+    }
+    case "rm":
+    case "rmdir":
+    case "unlink":
+    case "shred":
+    case "mkdir":
+    case "touch":
+      return operands(a);
+    case "awk":
+    case "gawk": {
+      const inplace = a.some((w, i) => w === "-iinplace" || w === "--include=inplace" || ((w === "-i" || w === "--include") && a[i + 1] === "inplace"));
+      if (!inplace) return [];
+      const ops = operands(a, new Set(["-f", "-v", "-F", "-i", "--include", "-e"]));
+      return optValues(a, ["-f"], ["--file"]).length ? ops : ops.slice(1);
+    }
+    case "patch": {
+      const dir = optValues(a, ["-d"], ["--directory"]);
+      const out = optValues(a, ["-o"], ["--output"]);
+      const files = operands(a, new Set(["-d", "--directory", "-o", "--output", "-i", "--input", "-r", "--reject-file", "-p", "--strip", "-B", "-V", "-Y", "-z", "-F"]));
+      return [...(dir.length ? dir : ["."]), ...out, ...files];
+    }
+    case "rsync": {
+      const ops = operands(a, new Set(["-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--files-from", "--filter", "-f"]));
+      return ops.length >= 2 ? [ops[ops.length - 1]] : [];
+    }
+    case "tar":
+      return a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? "") ? [...optValues(a, ["-C"], ["--directory"]), "."] : [];
+    case "unzip":
+      return [...optValues(a, ["-d"], []), "."];
+    case "git": {
+      const { sub, rest } = gitParts(a);
+      if (sub === undefined || !GIT_WRITE_SUBS.has(sub)) return [];
+      const head = a.slice(0, a.indexOf(sub));
+      const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
+      if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);
+      return [".", ...extra];
+    }
+    case "npm":
+    case "pnpm":
+    case "yarn":
+    case "bun": {
+      const prefix = optValues(a, p === "pnpm" ? ["-C"] : [], ["--prefix", "--dir", "--cwd", "--workspace-root"]);
+      if (prefix.length) return prefix;
+      const verb = operands(a, new Set(["--prefix", "--dir", "--cwd", "-w", "--workspace"]))[0];
+      return verb !== undefined && PKG_READ_VERBS.has(verb) ? [] : a.some((w) => PKG_READ_VERBS.has(w) && w.startsWith("-")) ? [] : ["."];
+    }
+    case "make":
+      return [...optValues(a, ["-C"], ["--directory"]), "."];
+    case "cargo":
+    case "go": {
+      const verb = operands(a)[0];
+      const write = p === "cargo" ? ["build", "test", "run", "clean", "install", "add", "remove", "update", "fmt", "fix", "init", "new", "bench", "doc"] : ["build", "test", "run", "install", "get", "mod", "generate", "clean", "fmt"];
+      if (verb === undefined || !write.includes(verb)) return [];
+      return [".", ...optValues(a, p === "go" ? ["-C"] : [], ["--manifest-path", "--target-dir"]).map((w) => (w.endsWith("Cargo.toml") ? w.slice(0, -10) || "." : w))];
+    }
+    default:
+      return [];
+  }
+}
+
+const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
+
+/** The write target `w` (run from `cwd`) lies where the path rules allow a write: the worktree, scratch, and (outside children) the OS temp dir. */
+function writable(w: string, cwd: string | null, env: DangerEnv): boolean {
+  if (SINK.has(w)) return true;
+  if (cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) return false;
+  return pathDecide("write", { path: w }, cwd ?? env.cwd, env.roots, env.platform) !== undefined;
+}
+
+/** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp. */
 function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
   const ec = effectCtxOf(env);
+  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env))) return true;
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;
     const chain = toChain(s);
@@ -650,10 +851,24 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, push to a URL, rebase, amend of published work, stash drop, worktree removal, history rewrite)", test: segs(gitSeg) },
   { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
-  { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable or an unparsed form)", test: (c) => (c.segments ?? []).some((s) => s.opaque !== null) },
+  { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable, an unparsed form or an interpreter one-liner such as python -c or node -e)", test: (c, e) => (c.segments ?? []).some((s) => s.opaque !== null) || segs(inlineCode)(c, e) },
   { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
 ];
+
+/** True when the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry on its own; gate.ts childDenied). */
+export function writesOutside(call: DangerCall, env: DangerEnv): boolean {
+  return pathWriteOutside(call, env) || shellWriteOutside(call, env);
+}
+
+/** `gh pr create`, `glab mr create`: opens a pull or merge request. */
+export function createsPullRequest(segments: ShellSegment[]): boolean {
+  return segments.some((s) => {
+    const p = progOf(s);
+    const pos = positionals(s.argv, GH_VALUED);
+    return (p === "gh" && pos[0] === "pr" && pos[1] === "create") || (p === "glab" && pos[0] === "mr" && pos[1] === "create");
+  });
+}
 
 /** The first dangerous-class entry a call falls into, or null. */
 export function dangerMatch(call: DangerCall, env: DangerEnv): DangerHit | null {

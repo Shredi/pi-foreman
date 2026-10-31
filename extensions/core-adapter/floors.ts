@@ -256,15 +256,63 @@ function attributesFloor(call: GitCall, value: string, env: FloorEnv): FloorHit 
   return null;
 }
 
-/** The paths a `git config` call writes into: its repo dir, `--git-dir` and `--file` (item 4: a repo under the own scratch or the OS temp dir is not the repo's config). */
+/**
+ * The git dir git would use from `start` (a `.git` directory, a gitfile `gitdir:` pointer or a symlink, found walking up like git does) and its common dir
+ * (`commondir`, set for a linked worktree), both as real paths; null when no repo is found or anything cannot be read.
+ */
+function gitDirsOf(start: string, explicit: string | null): { gitDir: string; common: string } | null {
+  try {
+    let gitDir = explicit;
+    for (let cur = start, n = 0; !gitDir && n < 64; n++) {
+      const dot = path.join(cur, ".git");
+      let st: fs.Stats | null = null;
+      try {
+        st = fs.lstatSync(dot);
+      } catch {
+        st = null;
+      }
+      if (st) {
+        const m = st.isFile() ? /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dot, "utf8")) : null;
+        gitDir = st.isFile() ? (m ? path.resolve(cur, m[1].trim()) : null) : dot;
+        if (!gitDir) return null;
+        break;
+      }
+      const parent = path.dirname(cur);
+      if (parent === cur) return null;
+      cur = parent;
+    }
+    if (!gitDir) return null;
+    if (fs.statSync(gitDir).isFile()) {
+      const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(gitDir, "utf8"));
+      if (!m) return null;
+      gitDir = path.resolve(path.dirname(gitDir), m[1].trim());
+    }
+    const real = fs.realpathSync(gitDir);
+    let common = real;
+    try {
+      common = fs.realpathSync(path.resolve(real, fs.readFileSync(path.join(real, "commondir"), "utf8").trim()));
+    } catch {
+      // no commondir file: a plain repo
+    }
+    return { gitDir: real, common };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The files a `git config` write would change (item 4): the `--file` operand, else the config of the git dir git resolves from the cwd / `-C` / `--git-dir`
+ * (for a linked worktree or a gitfile that is the REAL repo's shared config, wherever the work tree sits). Nothing found: no target, so no exemption.
+ */
 function configTargets(call: GitCall): string[] {
-  const out = [call.cwd, call.gitDir].filter((x): x is string => !!x);
   const cwd = call.cwd ?? ".";
-  call.rest.forEach((w, i) => {
+  const files = call.rest.flatMap((w, i) => {
     const v = w.startsWith("--file=") ? w.slice(7) : w === "-f" || w === "--file" ? call.rest[i + 1] : undefined;
-    if (v) out.push(path.resolve(cwd, v));
+    return v ? [path.resolve(cwd, v)] : [];
   });
-  return out;
+  if (files.length) return files;
+  const dirs = gitDirsOf(cwd, call.gitDir);
+  return dirs ? [path.join(dirs.common, "config"), path.join(dirs.gitDir, "config.worktree")] : [];
 }
 
 /** Every path is below the child's scratch root (`env.scratch`, `$FOREMAN_SCRATCH`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
@@ -760,40 +808,119 @@ function protectedEntries(env: FloorEnv): Protected[] {
 /** A `permissions.json` directly below a `.workflow` or `.pi` dir, wherever that is (the main checkout's file is reached from a worktree too). */
 const PERMS_BASENAME = /(?:^|\/)\.(?:workflow|pi)\/permissions\.json$/i;
 
-/**
- * A word glob as a RegExp: `*` and `?` are translated, a closed `[..]` is a shell bracket class (its text is escaped except a leading `!`),
- * every other metacharacter (an unclosed `[`, `]`) is escaped. A word that still does not compile is compared literally, never treated as protected.
- */
-const globRe = (g: string, fold: boolean): RegExp => {
-  const lit = (s: string): string => s.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  const flags = fold ? "i" : "";
-  try {
-    let body = "";
-    for (let i = 0; i < g.length; i++) {
-      const c = g[i];
-      if (c === "*") body += "[^/]*";
-      else if (c === "?") body += "[^/]";
-      else if (c === "[") {
-        let j = i + 1;
-        if (g[j] === "!" || g[j] === "^") j++;
-        if (g[j] === "]") j++;
-        while (j < g.length && g[j] !== "]") j++;
-        if (j >= g.length) body += "\\[";
-        else {
-          const neg = g[i + 1] === "!" || g[i + 1] === "^";
-          body += `[${neg ? "^" : ""}${g.slice(i + (neg ? 2 : 1), j).replace(/[\\[\]^]/g, "\\$&")}]`;
-          i = j;
-        }
-      } else body += lit(c);
-    }
-    return new RegExp(`^${body}$`, flags);
-  } catch {
-    return new RegExp(`^${lit(g.replace(/[*?]/g, "\u0000"))}$`, flags);
+/** One element of a glob segment: a literal char, `?`, a bracket class or `*`. */
+type GlobTok = { t: "lit"; c: string } | { t: "any" } | { t: "star" } | { t: "cls"; neg: boolean; set: string };
+
+function globToks(seg: string): GlobTok[] {
+  const out: GlobTok[] = [];
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === "*") {
+      if (out[out.length - 1]?.t !== "star") out.push({ t: "star" }); // a run of stars is one star
+    } else if (c === "?") out.push({ t: "any" });
+    else if (c === "[") {
+      let j = i + 1;
+      const neg = seg[j] === "!" || seg[j] === "^";
+      if (neg) j++;
+      const from = j;
+      if (seg[j] === "]") j++;
+      while (j < seg.length && seg[j] !== "]") j++;
+      if (j >= seg.length) out.push({ t: "lit", c });
+      else {
+        out.push({ t: "cls", neg, set: seg.slice(from, j) });
+        i = j;
+      }
+    } else out.push({ t: "lit", c });
   }
-};
+  return out;
+}
+
+function inClass(set: string, ch: string): boolean {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === "-" && i + 2 < set.length) {
+      if (ch >= set[i] && ch <= set[i + 2]) return true;
+      i += 2;
+    } else if (set[i] === ch) return true;
+  }
+  return false;
+}
+
+const tokMatch = (k: GlobTok, ch: string): boolean => (k.t === "lit" ? k.c === ch : k.t === "any" ? true : k.t === "cls" ? inClass(k.set, ch) !== k.neg : true);
+
+/** One path segment against a glob segment: the two-pointer wildcard walk (stars collapsed first), O(n*m), never a RegExp. */
+function globSegMatch(toks: GlobTok[], s: string): boolean {
+  let ti = 0;
+  let si = 0;
+  let star = -1;
+  let mark = 0;
+  while (si < s.length) {
+    const k = toks[ti];
+    if (k !== undefined && k.t === "star") {
+      star = ti++;
+      mark = si;
+    } else if (k !== undefined && tokMatch(k, s[si])) {
+      ti++;
+      si++;
+    } else if (star >= 0) {
+      ti = star + 1;
+      si = ++mark;
+    } else return false;
+  }
+  while (toks[ti]?.t === "star") ti++;
+  return ti === toks.length;
+}
+
+/**
+ * A word glob against a path, by hand (item 18: a command word is never compiled into a RegExp, so no pattern can stall the gate). `*` and `?` stay
+ * inside one path segment, a closed `[..]` is a bracket class, an unclosed `[` is a literal. Folded on request.
+ */
+function globMatch(glob: string, text: string, fold: boolean): boolean {
+  const g = glob.split("/");
+  const t = text.split("/");
+  if (g.length !== t.length) return false;
+  return g.every((seg, i) => globSegMatch(globToks(fold ? seg.toLowerCase() : seg), fold ? t[i].toLowerCase() : t[i]));
+}
 
 /** The protected entry a word names (a glob word is matched against the entries), or null. */
 function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
+  for (const v of braceVariants(word)) {
+    const found = protectedOne(v, cwd, env, entries);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+const BRACE_LIMIT = 64;
+
+/** `word` with its first top-level `{a,b}` group expanded (not `${..}`), recursively, at most BRACE_LIMIT variants; the word itself when it has none. */
+function braceVariants(word: string): string[] {
+  const out: string[] = [];
+  const walk = (w: string): void => {
+    if (out.length >= BRACE_LIMIT) return;
+    for (let i = 0; i < w.length; i++) {
+      if (w[i] !== "{" || w[i - 1] === "$" || w[i - 1] === "\\") continue;
+      let depth = 0;
+      const cuts: number[] = [];
+      let end = -1;
+      for (let j = i; j < w.length; j++) {
+        if (w[j] === "{") depth++;
+        else if (w[j] === "}" && --depth === 0) {
+          end = j;
+          break;
+        } else if (w[j] === "," && depth === 1) cuts.push(j);
+      }
+      if (end < 0 || cuts.length === 0) continue;
+      const bounds = [i, ...cuts, end];
+      for (let k = 0; k < bounds.length - 1; k++) walk(w.slice(0, i) + w.slice(bounds[k] + 1, bounds[k + 1]) + w.slice(end + 1));
+      return;
+    }
+    out.push(w);
+  };
+  walk(word);
+  return out.length ? out : [word];
+}
+
+function protectedOne(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
   const w = slash(word.replace(/^(['"])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w) ?? /^[A-Za-z_]\w*=(.+)$/.exec(w);
   for (const x of m ? [w, m[1]] : [w]) {
@@ -807,11 +934,11 @@ function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protec
     if (cut >= 0) v = v.slice(0, cut);
     if (!v) continue;
     const abs = path.posix.isAbsolute(v) || path.win32.isAbsolute(v) ? v : slash(path.resolve(cwd, v));
-    if (/[*?]/.test(abs)) {
-      const re = globRe(abs, foldFor(env));
-      const lit = abs.slice(0, abs.search(/[*?]/));
+    if (/[*?[]/.test(abs)) {
+      const fold = foldFor(env);
+      const lit = abs.slice(0, abs.search(/[*?[]/));
       const dir = formsOf(lit.endsWith("/") ? lit.slice(0, -1) : path.posix.dirname(lit), env);
-      const found = entries.find((e) => formsOf(e.p, env).some((g) => (e.ext !== undefined ? (abs.endsWith(e.ext) || /[*?]$/.test(abs)) && dir.some((f) => (e.flat ? f === g : f === g || f.startsWith(`${g}/`))) : re.test(g) || (e.tree && dir.some((f) => f === g || f.startsWith(`${g}/`))))));
+      const found = entries.find((e) => formsOf(e.p, env).some((g) => (e.ext !== undefined ? (abs.endsWith(e.ext) || /[*?\]]$/.test(abs)) && dir.some((f) => (e.flat ? f === g : f === g || f.startsWith(`${g}/`))) : globMatch(abs, g, fold) || (e.tree && dir.some((f) => f === g || f.startsWith(`${g}/`))))));
       if (found) return found.p;
       continue;
     }
@@ -893,7 +1020,9 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
 /** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1). */
 function opaqueProtected(text: string, env: FloorEnv): FloorHit | null {
   const entries = protectedEntries(env);
-  const words = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "").split(/[\s;&|<>(){},]+/).filter(Boolean);
+  // both spellings: split on braces and commas (the pieces of a brace group) and whole (a brace group inside one word is expanded by protectedWord)
+  const flat = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
+  const words = [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
   const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
   if (w !== undefined) return askHit("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`);
   if (FLOOR_KEYS.test(text)) {

@@ -119,7 +119,7 @@ type Expect = [string, number, number, boolean?];
 // later guard (self_ruling, the shell write guard) still refuses is marked blocked: the gate's allow does not skip those.
 const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
-  own_async_results_python_read: [OK, 0, 0],
+  own_async_results_python_read: [CLASSIFIED, 0, 1], // r79 revision (finding C): an interpreter one-liner is danger-opaque, the classifier decides
   handoff_ruling_for_cat: [CLASSIFIED, 0, 1],
   cp_ruling_into_scratch: [OK, 0, 0, true],
   usage_ls_grep_node_version: [OK, 0, 0],

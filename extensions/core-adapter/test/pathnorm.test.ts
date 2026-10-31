@@ -77,5 +77,6 @@ test("rule path patterns use the same spellings: win32 case and slashes meet, dr
   assert.equal(matchRules(sets("Read(src/**)"), read("C:\\Repo2\\src\\a.ts"), env).verdict, "none");
   const posix = { cwd: "/Repo", home: "/Users/me", platform: "darwin", checkout: "/Repo" };
   assert.equal(matchRules(sets("Read(src/**)"), read("/Repo/src/a.ts"), posix).verdict, "allow");
-  assert.equal(matchRules(sets("Read(src/**)"), read("/repo/src/a.ts"), posix).verdict, "none", "darwin is not folded");
+  assert.equal(matchRules(sets("Read(src/**)"), read("/repo/src/a.ts"), posix).verdict, "allow", "darwin folds case like the floors (r79 revision, finding I)");
+  assert.equal(matchRules(sets("Read(src/**)"), read("/repo/src/a.ts"), { ...posix, platform: "linux" }).verdict, "none", "linux is not folded");
 });

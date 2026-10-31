@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { OWN_TOOLS, dangerMatch, effectCtxOf, segmentDefault, toolDefault } from "./defaults.ts";
+import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
@@ -51,6 +51,19 @@ function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
   if (!h) return undefined;
   if (child) return { block: true, rule: h.rule, layer: "floor", reason: `pi-foreman: self-modification rule ${h.rule}: ${h.reason}. Children cannot make this change; report this line to the foreman and continue with what you can.` };
   return { ask: true, rule: h.rule, reason: h.reason, cause: "selfmod" };
+}
+
+/**
+ * The child deny set (r79 item 2; marked `childDeny` in the launch binding): a child never writes outside its worktree and its own scratch dir, and never
+ * opens a pull or merge request (the foreman does). It runs before the deny rules, allow rules, built-in allows, classifier and mode step, so no allow rule,
+ * classifier verdict or mode lifts it. The child floors and self-modification rules run before it.
+ */
+function childDenied(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): GateResult {
+  const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
+  if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
+  const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
+  if (writesOutside(call, env)) return deny("child-write-outside", "Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories.");
+  return undefined;
 }
 
 /** The command text of a shell-like tool call, or null. */
@@ -194,6 +207,10 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         if (sm) return decided(sm);
       }
       const dctx = { roots, facts, platform, cwd };
+      if (roots.child && toolName !== "powershell") {
+        const cd = childDenied(toolName, inp, segs, cmd, dctx);
+        if (cd) return decided(cd);
+      }
       const ec = effectCtxOf(dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
       const builtin = (i: number): string | null => {
@@ -213,6 +230,10 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
+      if (roots.child) {
+        const cd = childDenied(toolName, inp, undefined, null, { roots, facts, platform, cwd });
+        if (cd) return decided(cd);
+      }
       const pv = pathDecide(toolName, inp, cwd, roots, platform);
       const result = ruled(ruleCallOf(toolName, inp, callCtx()), h, () => (pv ? pv.rule : null));
       if (result) return decided(result);
@@ -222,6 +243,10 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const ph = OWN_TOOLS.has(toolName) ? fieldFloors(inp, "", env, true) : payloadFloors(toolName, inp, env);
     if (ph && ph.kind === "deny") return decided(blocked(ph));
     if (!roots) return decided(ph ? askFromFloor(ph) : undefined);
+    if (roots.child) {
+      const cd = childDenied(toolName, inp, undefined, null, { roots, facts, platform, cwd });
+      if (cd) return decided(cd);
+    }
     const web = toolName === "fetch" ? webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform }) : null;
     const builtinRule = toolDefault(toolName, inp, { child: roots.child, roots, cwd, platform }) ?? (web && web.candidate && web.ok ? WEB_READ_RULE : undefined);
     const result = ruled(ruleCallOf(toolName, inp, callCtx()), ph, () => builtinRule ?? null);

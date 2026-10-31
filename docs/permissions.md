@@ -58,7 +58,7 @@ A missing user file is `mode: "auto"` with empty lists. The project file lives i
 
 The lowercase tool names (`bash`, `read`, ...) are not rule names: a rule `bash(...)` is refused, write `Bash(...)`.
 
-**Pattern syntax.** One glob over the whole text: `*` is any run of characters, `?` one character, the whole string must match. In `Bash` patterns a trailing ` *` also matches the bare prefix, so `Bash(git status *)` matches `git status` and `git status -s`. Path patterns: `~/x` is under home, `//x` is the absolute path `/x` (`//c:/x` on Windows), `/x` and `x` are relative to the **main checkout** (not the worktree), `**` crosses directories, `*` stays within one path part. Matching is lexical: a symlink is not followed. On Windows case is folded and backslashes equal slashes.
+**Pattern syntax.** One glob over the whole text: `*` is any run of characters, `?` one character, the whole string must match. In `Bash` patterns a trailing ` *` also matches the bare prefix, so `Bash(git status *)` matches `git status` and `git status -s`. Path patterns: `~/x` is under home, `//x` is the absolute path `/x` (`//c:/x` on Windows), `/x` and `x` are relative to the **main checkout** (not the worktree), `**` crosses directories, `*` stays within one path part. Matching is lexical: a symlink is not followed. On Windows and macOS case is folded, and on Windows backslashes equal slashes.
 
 ```
 Bash(npm run test *)        any "npm run test ..." segment
@@ -190,7 +190,7 @@ Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `fore
 - reads of the Pi install dir, the global npm root, the bundled package roots and the owned roots (state dirs, handoffs, sibling worktrees, your `additionalDirectories`);
 - the registered parent's `.workflow` dir, read-only, for a session opened by another session;
 - the session's own handoff dir: `plan.md` and `result.md` may be written;
-- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree.
+- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree and scratch dir, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
 
 A path write outside every root is `danger-write-outside`. Secret paths are floors and never reach this step.
 

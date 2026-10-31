@@ -56,6 +56,29 @@ test("a cited allow entry runs and is cached for the exact call; clearCache forg
   assert.equal(reg.calls.length, 3);
 });
 
+test("different tools with the same payload do not share a cached verdict", async () => {
+  const k = new Classifier();
+  const { c, reg } = ctx([V("allow", "A1")]);
+  await k.classify(CALL, c);
+  await k.classify({ ...CALL, tool: "foreman_bg" }, c);
+  assert.equal(reg.calls.length, 2);
+});
+
+test("the cache key includes cwd and role; a changed permissions stamp drops the cache", async () => {
+  const k = new Classifier();
+  let stamp = "1";
+  const { c, reg } = ctx([V("allow", "A1")], { stamp: () => stamp });
+  await k.classify(CALL, c);
+  await k.classify({ ...CALL, cwd: "/other" }, c);
+  await k.classify({ ...CALL, role: "builder" }, c);
+  assert.equal(reg.calls.length, 3);
+  await k.classify(CALL, c);
+  assert.equal(reg.calls.length, 3, "same stamp: cached");
+  stamp = "2";
+  await k.classify(CALL, c);
+  assert.equal(reg.calls.length, 4, "the permissions.json changed: asked again");
+});
+
 test("an allow that cites no entry, an unknown id or a deny entry escalates", async () => {
   for (const reply of [V("allow", null), V("allow", "A9"), V("allow", "D1"), V("allow", "")]) {
     const r = await new Classifier().classify(CALL, ctx([reply]).c);

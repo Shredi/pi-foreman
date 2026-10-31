@@ -2202,6 +2202,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             recordUsage: (m) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
             trace: (t) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
             notify: (text) => notifyOnce(gs, ctx, "no-classifier-model", text),
+            stamp: () => {
+              try {
+                return String(fs.statSync(rt.store.filePath("user")).mtimeMs);
+              } catch {
+                return "none";
+              }
+            },
           },
         );
         if (v.verdict === "allow") return allowed(`prose:${v.entry}`, v.cached ? "cache" : "classifier", `classifier:${v.entry}`);
@@ -3459,7 +3466,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (!s.isChild) {
       const pr = gateRuntimeOf(s).store.resolve();
-      b.perms = { mode: pr.mode, ...(pr.modeSource === "session" ? { override: pr.mode } : {}), ...(pr.profile ? { profile: pr.profile } : {}) };
+      b.perms = { mode: pr.mode, ...(pr.modeSource === "session" ? { override: pr.mode } : {}), ...(pr.profile ? { profile: pr.profile } : {}), childDeny: true };
     }
     if (retroEnabled(get(s.config.config, "retro.enabled"), ctx.mode)) b.retro = true; // the child traces for the retro
     if (mcp) b.mcp = mcp;

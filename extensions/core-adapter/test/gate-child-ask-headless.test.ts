@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import { r11Rig } from "./_r11rig.ts";
 import { gateLogFile } from "../gatelog.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
+import { NO_PANE_TEXT } from "../presencewait.ts";
 
 type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
@@ -41,5 +42,5 @@ test("headless parent: the launch binding has no askDir, and the child's ask is 
   const recs = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
   const rec = recs.filter((x) => x.layer === "dialog").at(-1)!;
   assert.deepEqual([rec.verdict, rec.kind], ["deny", "child"]);
-  assert.match(String(rec.reason), /no pane|no-parent|nobody/);
+  assert.equal(rec.reason, `${NO_PANE_TEXT} The call was: danger-install: installs, runs or removes software from a package registry.`);
 });

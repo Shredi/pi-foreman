@@ -64,6 +64,12 @@ export function foldCase(platform: string, s: string): string {
   return platform === "win32" ? s.toLowerCase() : s;
 }
 
+/** `comparable` for permission rules and floors: darwin's default file system is case-insensitive too, so it folds like win32 (the floors' own rule). */
+export function comparableFs(platform: string, p: string): string {
+  const s = slashForm(platform, p);
+  return platform === "win32" || platform === "darwin" ? s.toLowerCase() : s;
+}
+
 /** The lexical comparable form of an absolute path: `slashForm` then `foldCase`. */
 export function comparable(platform: string, p: string): string {
   return foldCase(platform, slashForm(platform, p));

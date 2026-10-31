@@ -2428,7 +2428,8 @@ function expandWord(w: string, ctx: MatchCtx): string {
 }
 
 /** Bash glob of one path segment: `*`, `?`, `[...]` / `[!...]`; an unclosed `[` is literal. */
-function globRegExp(segment: string): RegExp {
+function globRegExp(segmentWord: string): RegExp {
+  const segment = segmentWord.replace(/\*{2,}/g, "*"); // a run of stars is one star: `.*` repeated would backtrack polynomially (item 18)
   let body = "";
   for (let i = 0; i < segment.length; i++) {
     const c = segment[i];

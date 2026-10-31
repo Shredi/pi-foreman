@@ -56,6 +56,8 @@ export interface ClassifierCtx {
   log?: GateLog;
   /** One-time session notice (no model configured). */
   notify?: (text: string) => void;
+  /** A stamp of the user's permissions.json (its mtime): a changed stamp drops the cached allows, which were decided against the older whitelist. */
+  stamp?: () => string;
   now?: () => number;
 }
 
@@ -201,8 +203,9 @@ export const NO_MODEL_NOTICE = "pi-foreman: no classifier model is configured, s
 export const denyText = (id: string, text: string): string => `pi-foreman: denied by whitelist rule ${id}: ${flat(text).slice(0, DENY_TEXT_CAP)}`;
 
 export class Classifier {
-  /** `tool\0payload` -> the allow entry that covered it. */
+  /** `tool\0cwd\0role\0payload` -> the allow entry that covered it. */
   private readonly allowed = new Map<string, string>();
+  private stamp: string | undefined;
   private noticed = false;
 
   /** `/foreman perms reload` and every remember write: the cached allows were decided against an older whitelist. */
@@ -214,7 +217,16 @@ export class Classifier {
     const now = ctx.now ?? Date.now;
     const t0 = now();
     let model = "";
-    const key = `${call.tool}\0${call.payload}`;
+    try {
+      const st = ctx.stamp?.();
+      if (st !== undefined) {
+        if (this.stamp !== undefined && st !== this.stamp) this.allowed.clear();
+        this.stamp = st;
+      }
+    } catch {
+      this.allowed.clear();
+    }
+    const key = `${call.tool}\0${call.cwd}\0${call.role}\0${call.payload}`;
     const done = (r: ClassifyResult, entry: string, cached = false): ClassifyResult => {
       try {
         ctx.trace?.({ decision: r.verdict, entry, cached, latencyMs: r.latencyMs });
