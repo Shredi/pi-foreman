@@ -77,6 +77,14 @@ def parse_ts(value):
         return None
 
 
+SAFE_URL = re.compile(r"https://[A-Za-z0-9][A-Za-z0-9\-._~:/?#\[\]@!$()*+,;=%]*\Z")
+
+
+def safe_https_url(value):
+    """An https URL of URL characters only (no whitespace, control characters or " ' < > ^ | & backslash)."""
+    return isinstance(value, str) and len(value) <= 2048 and SAFE_URL.match(value) is not None
+
+
 def num(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
 
@@ -185,6 +193,46 @@ def config_recent_runs(adir):
     except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
         pass
     return RECENT_RUN_SECONDS
+
+
+def config_open_prs(adir):
+    """True when radar.openPrs.enabled is set in the merged config; False on any failure."""
+    try:
+        import foreman_config
+        v = ((foreman_config.load_config(agent_dir=str(adir))["config"].get("radar") or {}).get("openPrs") or {}).get("enabled")
+        return v is True
+    except Exception:  # noqa: BLE001 - display tool: a broken config must not stop the radar
+        return False
+
+
+OPEN_PR_STATES = ("fail", "run", "ok", "none")
+
+
+def read_open_prs(adir):
+    """(entries, fetched-at stamp) from state/open-prs.json, re-validated; None when the file is absent or unusable.
+    The file is written by the extension (extensions/core-adapter/openprs.ts); this reads it and never uses the network."""
+    d = read_json(Path(adir) / "pi-foreman" / "state" / "open-prs.json")
+    if not isinstance(d, dict) or not isinstance(d.get("openPrs"), list):
+        return None
+    at = parse_ts(d.get("fetchedAt"))
+    if at is None:
+        return None
+    out = []
+    for p in d["openPrs"][:100]:
+        if not isinstance(p, dict) or not safe_https_url(p.get("url")):
+            continue
+        num_ = p.get("number")
+        repo, title, author = p.get("repo"), p.get("title"), p.get("author")
+        if isinstance(num_, bool) or not isinstance(num_, int) or not all(isinstance(x, str) for x in (repo, title, author)) or not repo:
+            continue
+        checks = []
+        for c in (p.get("checks") if isinstance(p.get("checks"), list) else [])[:10]:
+            if isinstance(c, dict) and c.get("state") in OPEN_PR_STATES and isinstance(c.get("n"), str) and isinstance(c.get("label"), str):
+                checks.append({"n": c["n"][:120], "state": c["state"], "label": c["label"][:20]})
+        state = p.get("state") if p.get("state") in ("open", "draft") else "open"
+        out.append({"repo": repo[:140], "number": num_, "title": title[:200], "url": p["url"], "state": state,
+                    "author": author[:60], "checks": checks})
+    return out, datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def config_symbols(adir):
@@ -523,7 +571,10 @@ def build(data, now):
                 continue
             if not isinstance(label, str) or not label:
                 continue
-            dots.append({"n": dn, "state": x["state"], "label": label[:20], "src": x["src"]})
+            dot = {"n": dn, "state": x["state"], "label": label[:20], "src": x["src"]}
+            if safe_https_url(x.get("url")):
+                dot["url"] = x["url"]
+            dots.append(dot)
         if dots:
             n["dots"] = dots
         u = data["usage"].get(sid)
@@ -904,24 +955,28 @@ def to_json_node(n, now, symbols):
     return out
 
 
-def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS):
+def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=None):
     stamp = datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {"v": 1, "now": stamp, "symbols": sym_name, "recentRunSeconds": recent,
-            "roots": [to_json_node(r, now, symbols) for r in roots]}
+    doc = {"v": 1, "now": stamp, "symbols": sym_name, "recentRunSeconds": recent,
+           "roots": [to_json_node(r, now, symbols) for r in roots]}
+    if open_prs is not None:
+        doc["openPrs"], doc["openPrsAt"] = open_prs
+    return doc
 
 
-def json_line(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS):
-    return json.dumps(json_doc(roots, now, sym_name, symbols, recent), separators=(",", ":"))
+def json_line(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=None):
+    return json.dumps(json_doc(roots, now, sym_name, symbols, recent, open_prs), separators=(",", ":"))
 
 
-def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS, closed=None):
+def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None, recent=RECENT_RUN_SECONDS, closed=None, open_prs=False):
     """One JSON line per refresh, flushed; quiet exit 0 on a closed pipe or Ctrl-C. No TTY handling."""
     cache = UsageCache()
     tick = 0
     try:
         while max_ticks is None or tick < max_ticks:
             now = time.time()
-            print(json_line(snapshot(adir, now, since_h, cache, done_ttl, closed=closed), now, sym_name, symbols, recent))
+            print(json_line(snapshot(adir, now, since_h, cache, done_ttl, closed=closed), now, sym_name, symbols, recent,
+                            read_open_prs(adir) if open_prs else None))
             sys.stdout.flush()
             tick += 1
             if max_ticks is None or tick < max_ticks:
@@ -1016,11 +1071,13 @@ def main(argv=None):
     symbols = load_symbols(sym_name)
     if a.follow or a.json:
         recent = config_recent_runs(adir)
+        with_prs = config_open_prs(adir)
     if a.follow:
-        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent, provably_closed)
+        return follow(adir, a.interval, a.since, ttl, sym_name, symbols, a.max_ticks, recent, provably_closed, with_prs)
     if a.json:
         now = time.time()
-        print(json_line(snapshot(adir, now, a.since, None, ttl, closed=provably_closed), now, sym_name, symbols, recent))
+        print(json_line(snapshot(adir, now, a.since, None, ttl, closed=provably_closed), now, sym_name, symbols, recent,
+                        read_open_prs(adir) if with_prs else None))
         return 0
     if a.once or not sys.stdout.isatty():
         now = time.time()

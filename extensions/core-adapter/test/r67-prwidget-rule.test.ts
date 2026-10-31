@@ -166,7 +166,7 @@ test("dots() and views() agree on fail for a PR with failed and running checks",
   h.d.start();
   await h.fire();
   const v = h.d.views().find((x) => x.key.n === 1);
-  assert.deepEqual(h.d.dots(), [{ n: 1, state: "fail" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 1, state: "fail", url: url("acme/app", 1) }]);
   assert.equal(v?.dot, "fail");
   assert.deepEqual(v?.checks.running, ["build"]);
   assert.deepEqual(v?.checks.failed, ["lint"]);
