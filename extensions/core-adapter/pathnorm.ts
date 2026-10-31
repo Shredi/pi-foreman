@@ -43,6 +43,39 @@ export function normPath(platform: string, p: string, base: string, real: Resolv
   return platform === "win32" ? long.replace(/\//g, "\\").toLowerCase() : long;
 }
 
+// ------------------------------------------------------------------ lexical forms (r79: the one place for slash and case rules)
+
+/**
+ * `p` with the separators of `platform` unified to `/` (win32 only: backslashes become `/`), runs of `/` collapsed (a UNC `//host` prefix
+ * on win32 keeps its two slashes) and a trailing `/` cut (a root such as `/` or `c:/` keeps it). Case is untouched; see `foldCase`.
+ */
+export function slashForm(platform: string, p: string): string {
+  const win = platform === "win32";
+  let s = win ? p.replace(/\\/g, "/") : p;
+  const unc = win && /^\/\/[^/]/.test(s);
+  s = s.replace(/\/{2,}/g, "/");
+  if (unc) s = `/${s}`;
+  if (s.length > 1 && s.endsWith("/") && !/^[A-Za-z]:\/$/.test(s)) s = s.slice(0, -1);
+  return s;
+}
+
+/** Case folding of a path: win32 file systems are case-insensitive, POSIX (darwin included) ones are compared as spelled. */
+export function foldCase(platform: string, s: string): string {
+  return platform === "win32" ? s.toLowerCase() : s;
+}
+
+/** The lexical comparable form of an absolute path: `slashForm` then `foldCase`. */
+export function comparable(platform: string, p: string): string {
+  return foldCase(platform, slashForm(platform, p));
+}
+
+/** Lexical containment: `p` is `root` or below it (both absolute, compared through `comparable`). */
+export function lexUnder(platform: string, root: string, p: string): boolean {
+  const r = comparable(platform, root);
+  const c = comparable(platform, p);
+  return c === r || c.startsWith(r.endsWith("/") ? r : `${r}/`);
+}
+
 /** `p` is `root` or below it, both normalised with `normPath`. */
 export function sameOrUnder(platform: string, root: string, p: string, base: string, real: Resolver = nativeResolver): boolean {
   const r = normPath(platform, root, base, real);

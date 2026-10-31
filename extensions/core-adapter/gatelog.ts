@@ -9,7 +9,8 @@ import { redactCommand, scrubReason } from "./trace.ts";
 
 export const GATE_LOG_MAX_BYTES = 20 * 1024 * 1024;
 export const GATE_KINDS = ["owner", "round", "child", "headless"] as const;
-export const GATE_LAYERS = ["floor", "default", "review", "dialog", "cache", "child-ask"] as const;
+// r79: `classifier` replaces `review` in new lines (the old values stay readable); `rule` (pattern, danger-* name or prose:<id>) and `mode` are the new gate layers
+export const GATE_LAYERS = ["floor", "default", "review", "dialog", "cache", "child-ask", "classifier", "rule", "mode"] as const;
 export type GateKind = (typeof GATE_KINDS)[number];
 export type GateLayer = (typeof GATE_LAYERS)[number];
 

@@ -1,4 +1,5 @@
-// Plan Addendum 5: a child's policy ask goes to the parent (ask dir in the launch binding, ask.md / ruling-<n>.md), the parent
+// r79 items 5, 10, 11: a child's ask is written as ask.md with the cause (danger-<name>, rule, selfmod) and answered by the owner pane of the parent;
+// a session opened by another session asks in its own pane. Plan Addendum 5: a child's policy ask goes to the parent (ask dir in the launch binding, ask.md / ruling-<n>.md), the parent
 // side (owner dialog, round forward, queue, lateness), the floor on the ask tree and the stale-ruling rule.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -8,8 +9,7 @@ import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
 import { shPath } from "./_shpath.ts";
 import { gateLogFile } from "../gatelog.ts";
-import { awaitRuling, writeRoundAsk } from "../gatedialog.ts";
-import { childAskDir, ChildAskWatch } from "../childask.ts";
+import { awaitChildRuling as awaitRuling, childAskDir, ChildAskWatch, writeChildAsk } from "../childask.ts";
 import { SteerWatch } from "../steerwatch.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 
@@ -17,6 +17,8 @@ type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
 const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: `because ${entry}` });
 const ASK = V("ask", "package-install");
+// the ask file as the gate writes it (r79 item 5): a cause line and a reason line
+const writeRoundAsk = (dir: string, a: { cause: string; entry: string; reason: string }, f: Omit<Parameters<typeof writeChildAsk>[1], "cause" | "reason" | "entry">): number => writeChildAsk(dir, { ...f, cause: a.cause, reason: a.reason, entry: a.entry });
 const CMD = { command: "pip install requests" };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until<X>(f: () => X | undefined | false, ms = 4000): Promise<X> {
@@ -31,7 +33,7 @@ async function until<X>(f: () => X | undefined | false, ms = 4000): Promise<X> {
 function registry(reply: string) {
   return { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
 }
-const config = (gate?: Record<string, unknown>) => ({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } }, ...(gate ? { gate } : {}) });
+const config = (gate?: Record<string, unknown>) => ({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } }, ...(gate ? { gate } : {}), presence: { enabled: false } });
 const logOf = (agentDir: string): Record<string, unknown>[] => {
   const f = gateLogFile(agentDir);
   return fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : [];
@@ -116,24 +118,24 @@ test("owner parent: one dialog names the child role and run; allow once writes r
   const ruling = path.join(askDir!, `ruling-${n}.md`);
   await until(() => fs.existsSync(ruling));
   assert.equal(fs.readFileSync(ruling, "utf8").split("\n")[0], "ALLOW");
-  assert.match(r.titles[0], /builder \(run L9\) asks/);
-  assert.match(r.titles[0], /bash: pip install requests/);
+  assert.match(r.titles[0], /from the builder \(run L9\)/);
+  assert.match(r.titles[0], /pip install requests/);
   const rec = await until(() => logOf(r.agentDir).find((x) => x.layer === "child-ask"));
   assert.deepEqual([rec.verdict, rec.rule], ["allow", "package-install"]);
   assert.match(String(rec.reason), /child run L9/);
 });
 
 test("owner parent: deny with reason writes DENY and the reason; a dismissed dialog denies", async (t) => {
-  const r = await parentRig(t, { answers: ["deny with reason", undefined], typed: "not this one" });
+  const r = await parentRig(t, { answers: ["deny with comment", undefined], typed: "not this one" });
   const { askDir } = await r.launch();
   writeRoundAsk(askDir!, { cause: "ask", entry: "e", reason: "r" }, ASK_FIELDS);
   const f1 = path.join(askDir!, "ruling-1.md");
   await until(() => fs.existsSync(f1));
-  assert.equal(fs.readFileSync(f1, "utf8"), "DENY\nnot this one\n");
+  assert.equal(fs.readFileSync(f1, "utf8"), "DENY\npi-foreman: denied by the user: not this one\n");
   writeRoundAsk(askDir!, { cause: "ask", entry: "e", reason: "r" }, ASK_FIELDS);
   const f2 = path.join(askDir!, "ruling-2.md");
   await until(() => fs.existsSync(f2));
-  assert.match(fs.readFileSync(f2, "utf8"), /^DENY\nthe dialog was dismissed/);
+  assert.match(fs.readFileSync(f2, "utf8"), /^DENY\npi-foreman: denied by the user: the dialog was dismissed/);
 });
 
 test("two children's asks queue: one dialog at a time", async (t) => {
@@ -177,26 +179,16 @@ test("run end removes the ask dir", async (t) => {
   await until(() => !fs.existsSync(askDir!));
 });
 
-test("round parent: the ask is forwarded into its handoff dir with role and run; the top foreman's ruling (written there) is copied down", async (t) => {
-  const r = await parentRig(t, { handoff: true });
+// r79 item 5: the round-ask forward is gone; a session opened by another session asks in its own pane, and never writes into its handoff dir
+test("a session opened by another session asks its child's ask in its own pane", async (t) => {
+  const r = await parentRig(t, { handoff: true, answers: ["allow once"] });
   const { askDir } = await r.launch();
   writeRoundAsk(askDir!, { cause: "ask", entry: "package-install", reason: "because" }, ASK_FIELDS);
-  const text = await until(() => (fs.existsSync(path.join(r.handoff!, "ask.md")) ? fs.readFileSync(path.join(r.handoff!, "ask.md"), "utf8") : false));
-  assert.match(text, /^# Ask 1: /);
-  assert.match(text, /role: builder/);
-  assert.match(text, /run: L9/);
-  assert.equal(r.titles.length, 0, "no dialog in a round session");
-  fs.writeFileSync(path.join(r.handoff!, "ruling-1.md"), "ALLOW\nfine\n"); // the top foreman's write tool
   const down = path.join(askDir!, "ruling-1.md");
   await until(() => fs.existsSync(down));
   assert.equal(fs.readFileSync(down, "utf8").split("\n")[0], "ALLOW");
-  // the next ask is DENIED the same way, with the reason copied down
-  writeRoundAsk(askDir!, { cause: "ask", entry: "package-install", reason: "because" }, ASK_FIELDS);
-  await until(() => /^# Ask 2: /.test(fs.readFileSync(path.join(r.handoff!, "ask.md"), "utf8")));
-  fs.writeFileSync(path.join(r.handoff!, "ruling-2.md"), "DENY\nnot allowed here\n");
-  const down2 = path.join(askDir!, "ruling-2.md");
-  await until(() => fs.existsSync(down2));
-  assert.equal(fs.readFileSync(down2, "utf8"), "DENY\nnot allowed here\n");
+  assert.equal(r.titles.length, 1, "one dialog in its own pane");
+  assert.equal(fs.existsSync(path.join(r.handoff!, "ask.md")), false);
 });
 
 test("steerwatch does not deliver a ruling the child-ask forward consumed", () => {
@@ -237,16 +229,16 @@ test("child ask: ask.md carries role and run; an ALLOW ruling lets the call run 
   const p = r.call("bash", CMD);
   const text = await until(() => (fs.existsSync(path.join(dir, "ask.md")) ? fs.readFileSync(path.join(dir, "ask.md"), "utf8") : false));
   assert.match(text, /^# Ask 1: /);
-  assert.match(text, /entry: package-install/);
+  assert.match(text, /cause: danger-install/);
   assert.match(text, /role: builder/);
   assert.match(text, /run: L9/);
   assert.match(text, /deadline: \d+/);
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
   assert.equal(await p, undefined);
   const d = r.events("dialog").at(-1)!;
-  assert.deepEqual([d.cause, d.decision], ["ask", "parent-allow"]);
+  assert.deepEqual([d.cause, d.kind, d.decision], ["danger", "child", "parent-allow"]);
   const rec = logOf(r.agentDir).filter((x) => x.layer === "dialog").at(-1)!;
-  assert.deepEqual([rec.verdict, rec.reason, rec.kind], ["allow", "parent-allow", "child"]);
+  assert.deepEqual([rec.verdict, rec.rule === "danger-install" && rec.kind, rec.kind], ["allow", "child", "child"]);
 });
 
 test("child ask: DENY blocks with the parent's reason (parent-deny); a foreign first line denies", async (t) => {
@@ -274,23 +266,24 @@ test("child ask: no ruling within gate.askTimeoutMs denies with parent-timeout",
   assert.equal(r.events("dialog").at(-1)!.decision, "parent-timeout");
 });
 
-test("child ask: an invalid verdict still denies with policy_invalid_verdict and writes no ask", async (t) => {
+test("child ask: an unusable classifier reply escalates, so the ask is written for the parent", async (t) => {
   const dir = tmpAskDir(t);
   const r = await childRig(t, dir, "this is not json");
-  const res = await r.call("bash", CMD);
-  assert.ok(res?.block);
-  assert.match(String(res.reason), /policy_invalid_verdict/);
-  assert.equal(fs.existsSync(path.join(dir, "ask.md")), false);
+  const p = r.call("bash", CMD);
+  const text = await until(() => (fs.existsSync(path.join(dir, "ask.md")) ? fs.readFileSync(path.join(dir, "ask.md"), "utf8") : false));
+  assert.match(text, /cause: danger-install/);
+  fs.writeFileSync(path.join(dir, "ruling-1.md"), "DENY\n");
+  assert.ok((await p)?.block);
 });
 
-test("child ask: gate.childAsk deny, or no askDir in the binding, keeps today's deny text and writes no ask", async (t) => {
-  const text = "pi-foreman: policy ask package-install: because package-install. Children cannot answer asks; report this line to the foreman and continue with what you can.";
+test("child ask: gate.childAsk deny, or no askDir in the binding, denies with the no-pane text and writes no ask", async (t) => {
+  const text = /^pi-foreman: denied: nobody is at this session \(no pane\)\..*The call was: danger-install/;
   const dir = tmpAskDir(t);
   const denied = await childRig(t, dir, ASK, { childAsk: "deny" });
-  assert.equal((await denied.call("bash", CMD))?.reason, text);
+  assert.match(String((await denied.call("bash", CMD))?.reason), text);
   assert.equal(fs.existsSync(path.join(dir, "ask.md")), false);
   const none = await childRig(t, null, ASK);
-  assert.equal((await none.call("bash", CMD))?.reason, text);
+  assert.match(String((await none.call("bash", CMD))?.reason), text);
 });
 
 test("a stale ruling (mtime before its ask) is ignored", async () => {

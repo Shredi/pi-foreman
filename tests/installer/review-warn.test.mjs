@@ -23,14 +23,15 @@ function warn(config, extra = []) {
   }
 }
 
-test("a provider with no review model prints the warning naming the config key", () => {
+// r79 ledger item 10 wording: the review gate is the classifier; the config key keeps its name.
+test("a provider with no classifier model prints the warning naming the config key", () => {
   const out = warn({ version: 1, providers: { fake: { roles: {} } } });
-  assert.match(out, /^WARN no review model for provider fake: /m);
+  assert.match(out, /^WARN no classifier model for provider fake: /m);
   assert.match(out, /providers\.<p>\.roles\.review\.model/);
 });
 
 test("no config at all prints the warning too", () => {
-  assert.match(warn(null), /^WARN no review model for provider \(none\)/m);
+  assert.match(warn(null), /^WARN no classifier model for provider \(none\)/m);
 });
 
 test("a configured review model prints nothing", () => {

@@ -1,11 +1,10 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features [args]` for cmd.
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
 if /i "%~1"=="dialogs" goto dialogs
 if /i "%~1"=="features" goto features
-if /i "%~1"=="perms" goto perms
 set "PF_PY=%PI_FOREMAN_PYTHON%"
 set "PF_PYARGS="
 set "PF_SCRIPT="
@@ -20,7 +19,7 @@ if /i "%~1"=="backlog" set "PF_SCRIPT=foreman_backlog.py"
 if /i "%~1"=="findings" set "PF_SCRIPT=foreman_findings.py"
 if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|features^|perms [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|features [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS="
 :collect
@@ -81,17 +80,6 @@ shift
 goto collectf
 :runfeatures
 node "%PF_HERE%..\scripts\foreman_features.mjs" %PF_ARGS%
-exit /b %ERRORLEVEL%
-:perms
-shift
-set "PF_ARGS="
-:collectp
-if "%~1"=="" goto runperms
-set PF_ARGS=%PF_ARGS% %1
-shift
-goto collectp
-:runperms
-node "%PF_HERE%..\scripts\foreman_perms.mjs" %PF_ARGS%
 exit /b %ERRORLEVEL%
 :run
 "%PF_PY%" %PF_PYARGS% -E -s "%PF_HERE%..\scripts\%PF_SCRIPT%" %PF_ARGS%

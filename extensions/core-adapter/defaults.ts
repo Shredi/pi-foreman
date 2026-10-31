@@ -3,7 +3,10 @@
 // returns null and falls through to the review. Rule names: `default-<name>`.
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
+import { injection } from "./floors.ts";
+import { pathDecide, under } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
 
@@ -14,6 +17,10 @@ export interface GitFacts {
   protectedBranches: (cwd: string) => string[];
   /** True when `remote.*.push`, `remote.pushDefault` or `branch.*.pushRemote` is set (a push would not go where it says). */
   pushConfigured: (cwd: string) => boolean;
+  /** r79: the branch has an upstream (a `commit --amend` rewrites published history). Absent: no amend is held back. */
+  hasUpstream?: (cwd: string) => boolean;
+  /** r79 item 3: branches checked out in the other (linked) worktrees of the repo; a plain push of one from a second worktree is as routine as the cwd branch. */
+  ownBranches?: (cwd: string) => string[];
 }
 
 export interface DefaultCtx {
@@ -38,11 +45,32 @@ export const DEFAULT_RULES = [
   "default-role-launch",
 ] as const;
 
-/** Tools without a shell line: the own-tools enumeration. `fetch` has no default: every URL goes to the web-read review (ledger item 25). Undefined = no default. */
-export function toolDefault(tool: string, input: unknown, opts: { child?: boolean } = {}): string | undefined {
+/**
+ * Tools without a shell line: the own-tools enumeration. `fetch` has no default here (its built-in allow is `webReadAllow`). Undefined = no default.
+ * r79 item 3: a role launch is a default only inside the owned roots; a `cwd` / `worktree` the roots do not cover (or any, when `roots` is not passed) is
+ * `danger-launch-outside`.
+ */
+export function toolDefault(tool: string, input: unknown, opts: { child?: boolean; roots?: GateRoots; cwd?: string; platform?: string } = {}): string | undefined {
   if (OWN_TOOLS.has(tool)) return "default-own-tool";
-  if (tool === "subagent" && opts.child === false && isRoleLaunch(input)) return "default-role-launch";
+  if (tool === "subagent" && opts.child === false && isRoleLaunch(input) && launchInside(input, opts.roots, opts.cwd, opts.platform)) return "default-role-launch";
   return undefined;
+}
+
+const LAUNCH_DIR_KEYS = ["cwd", "worktree", "workdir"] as const;
+
+/** The `cwd` / `worktree` strings of a subagent launch. */
+function launchDirs(input: unknown): string[] {
+  const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  return LAUNCH_DIR_KEYS.map((k) => i[k]).filter((v): v is string => typeof v === "string" && v !== "");
+}
+
+/** Every named launch directory is in an owned root: the worktree, owned roots (sibling worktrees, state), scratch dirs, handoff dirs. No dir named = the session's own. */
+function launchInside(input: unknown, roots: GateRoots | undefined, cwd: string = roots?.worktree ?? "", platform: string = process.platform): boolean {
+  const dirs = launchDirs(input);
+  if (dirs.length === 0) return true;
+  if (!roots) return false;
+  const owned = [roots.worktree, ...roots.owned, ...roots.scratch, ...roots.handoffs, ...(roots.openedHandoffs ?? [])];
+  return dirs.every((d) => owned.some((r) => under(platform, r, d, cwd)));
 }
 
 /** The roles the foreman launches (ledger item 26). */
@@ -60,7 +88,7 @@ function isRoleLaunch(input: unknown): boolean {
 const quote = (w: string): string => (/^[A-Za-z0-9_.\/,:@%+=^-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
 
 /** The effect context of the session: the worktree root, scratch, tmp (when allowed) and the extra read roots of its role. */
-export function effectCtxOf(c: DefaultCtx): EffectCtx {
+export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): EffectCtx {
   const r = c.roots;
   const ec = effectCtx(c.cwd, r.scratch, c.platform);
   ec.root = r.worktree;
@@ -112,7 +140,7 @@ function commitOk(rest: string[]): boolean {
 const BRANCH_LIST = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--list", "--show-current"]);
 const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev"]);
 
-/** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. */
+/** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */
 function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boolean {
   if (c.roots.child) return false;
   // a harmless env prefix is dropped by the walker; the push default wants none at all
@@ -122,8 +150,11 @@ function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boole
   if (a.length !== 2 || a[0] !== "origin") return false;
   const cur = c.facts.currentBranch(cwd);
   const ref = a[1];
-  if (!cur || (ref !== "HEAD" && ref !== cur) || !NAME.test(cur)) return false;
-  if (c.facts.protectedBranches(cwd).includes(cur) || /^(?:main|master)$/.test(cur)) return false;
+  if (!cur) return false;
+  const target = ref === "HEAD" ? cur : ref;
+  if (target !== cur && !(c.facts.ownBranches?.(cwd) ?? []).includes(target)) return false;
+  if (!NAME.test(target)) return false;
+  if (c.facts.protectedBranches(cwd).includes(target) || /^(?:main|master)$/.test(target)) return false;
   return !c.facts.pushConfigured(cwd);
 }
 
@@ -141,7 +172,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
     case "add":
       return addOk(ec, cwd, rest) ? "default-git-add" : null;
     case "commit":
-      return commitOk(rest) ? "default-git-commit" : null;
+      return commitOk(rest) && !(rest.includes("--amend") && c.facts.hasUpstream?.(cwd)) ? "default-git-commit" : null;
     case "fetch":
       return rest.filter((w) => w.startsWith("-")).every((w) => ["-q", "--quiet", "-p", "--prune", "--tags", "--no-tags", "-v", "--verbose"].includes(w)) && remoteOperands(rest.filter((w) => !w.startsWith("-"))) ? "default-git-fetch" : null;
     case "pull": {
@@ -219,6 +250,8 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   const cwd = seg.cwd;
   const chain = toChain(seg);
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;
+  // r79 item 3: a segment of the dangerous class is never a built-in allow (the class is the question the classifier answers)
+  if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts }) !== null) return null;
   for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform)) return null;
   if (seg.program === "git") return gitDefault(seg.argv, text, cwd, c, ec, chain);
   if (seg.program === "gh" || seg.program === "glab") return ghDefault(seg.program, seg.argv, cwd, ec) ? "default-gh-read" : null;
@@ -239,4 +272,366 @@ export function lineDefault(text: string, segs: ShellSegment[], c: DefaultCtx): 
     if (!rules.includes(r)) rules.push(r);
   }
   return rules.join("+");
+}
+
+// ------------------------------------------------------------------ the dangerous class (r79 item 3)
+//
+// Calls no rule decided and no built-in allow covers are safe under mode `auto`, unless one of these entries matches. A match goes to the
+// classifier (mode auto), to the owner (mode ask) or runs (mode allow). The table is data: `name` and `reason` are what logs, dialogs and the
+// classifier prompt show. No built-in allow above matches a dangerous call: `segmentDefault` returns null for a dangerous segment.
+
+export interface DangerEnv {
+  roots: GateRoots;
+  platform: string;
+  cwd: string;
+  facts?: GitFacts;
+}
+
+/** What the dangerous class sees of a call. `segments` is the parse of a shell tool's line; `text` its raw text. */
+export interface DangerCall {
+  tool: string;
+  input: unknown;
+  segments?: ShellSegment[];
+  text?: string;
+}
+
+export interface DangerRule {
+  /** `danger-<name>`. */
+  name: string;
+  /** One line: why this class asks. */
+  reason: string;
+  test: (call: DangerCall, env: DangerEnv) => boolean;
+}
+
+export interface DangerHit {
+  name: string;
+  reason: string;
+}
+
+const progOf = (s: ShellSegment): string => (s.program.split(/[\\/]/).pop() ?? s.program).toLowerCase().replace(/\.exe$/, "");
+
+/** The non-flag words of an argv; the flags in `valued` swallow the next word. */
+function positionals(argv: string[], valued: ReadonlySet<string> = new Set()): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const w = argv[i];
+    if (valued.has(w)) i++;
+    else if (!w.startsWith("-")) out.push(w);
+  }
+  return out;
+}
+
+const live = (c: DangerCall): ShellSegment[] => (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
+const BASH_TOOL_NAMES: ReadonlySet<string> = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
+
+/** An operand that names another machine: `host:path`, `user@host:path`, `ssh://`, `rsync://`. */
+const remoteOperand = (w: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(w) || (!w.startsWith("-") && !/^[A-Za-z]:[\\/]/.test(w) && /^(?:[^@\s/:]+@)?[^\s/:@]+:/.test(w));
+
+const KUBE = new Set(["kubectl", "oc"]);
+const KUBE_VALUED = new Set(["-n", "--namespace", "--context", "--kubeconfig", "-s", "--server", "--cluster", "--user", "-l", "--selector", "-o", "--output"]);
+const KUBE_READ = new Set(["get", "describe", "logs", "explain", "version"]);
+const SYSTEMD_READ = new Set(["status", "list-units", "list-unit-files", "list-timers", "list-sockets", "list-dependencies", "show", "is-active", "is-enabled", "is-failed", "cat"]);
+const LAUNCHCTL_READ = new Set(["list", "print", "print-disabled", "blame", "version", "help", "error"]);
+const CLOUD = new Set(["gcloud", "aws", "az", "flyctl", "fly", "vercel", "netlify", "wrangler"]);
+const CLOUD_BARE = new Set(["flyctl", "fly", "vercel", "netlify", "wrangler"]);
+const CLOUD_READ = new Set(["describe", "get", "list", "ls", "show", "logs", "status", "whoami"]);
+const CLOUD_WRITE = /^(?:delete|rm|remove|create|put|update|deploy|publish|push|apply|terminate|start|stop|run|invoke|cp|mv|sync|set|add|attach|detach|reboot|scale|promote|rollback|destroy|launch|import|up|down|restart|exec|ssh)$|^(?:delete|create|put|update|terminate|start|stop|run|invoke|remove)-/;
+const HELPFLAG = (a: string[]): boolean => a.some((w) => /^(?:--help|-h|--version|-v|-V|version|help)$/.test(w));
+
+function deploySeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  const a = s.argv;
+  const pos = positionals(a, KUBE.has(p) ? KUBE_VALUED : new Set());
+  if (p === "ssh") return !HELPFLAG(a);
+  if (p === "scp" || p === "sftp" || p === "rsync") return a.some(remoteOperand);
+  if (KUBE.has(p)) return pos.length > 0 && !KUBE_READ.has(pos[0]) && !(pos[0] === "config" && pos[1] === "view");
+  if (p === "helm") return ["install", "upgrade", "uninstall", "rollback", "delete"].includes(pos[0]);
+  if (p === "terraform" || p === "tofu") return ["apply", "destroy", "import"].includes(pos[0]);
+  if (p === "pulumi") return ["up", "destroy"].includes(pos[0]);
+  if (p.startsWith("ansible")) return true;
+  if (p === "docker" || p === "podman" || p === "docker-compose") {
+    const v = p === "docker-compose" ? ["compose", ...pos] : pos;
+    return ["push", "run", "exec", "rm"].includes(v[0]) || (v[0] === "compose" && ["up", "down", "restart"].includes(v[1]));
+  }
+  if (p === "systemctl") return pos.length > 0 && !SYSTEMD_READ.has(pos[0]);
+  if (p === "service") return pos.length >= 2 && pos[1] !== "status";
+  if (p === "launchctl") return pos.length > 0 && !LAUNCHCTL_READ.has(pos[0]);
+  if (p === "crontab") return a.includes("-e") || a.includes("-r") || positionals(a, new Set(["-u"])).length > 0;
+  if (CLOUD.has(p)) {
+    if (pos.length === 0) return CLOUD_BARE.has(p) && !HELPFLAG(a);
+    const read = pos.some((w) => CLOUD_READ.has(w) || /^(?:describe|list|get)-/.test(w));
+    return !read || pos.some((w) => CLOUD_WRITE.test(w));
+  }
+  return false;
+}
+
+const GH_VALUED = new Set(["-R", "--repo", "--hostname", "-b", "--branch", "-B", "--base", "-H", "--head", "-t", "--title", "--body", "-q", "--jq", "--json", "-L", "--limit", "-s", "--state", "-a", "--assignee", "-l", "--label", "-m", "--milestone", "-A", "--author", "-X", "--method", "-f", "-F", "--field", "--raw-field", "--input", "--template", "-D", "--dir", "-n", "--name", "-j", "--job", "--page", "--per-page", "--cache", "-p"]);
+const GH_SAFE = new Set(["pr create", "pr view", "pr list", "pr diff", "pr checks", "pr status", "issue view", "issue list", "repo view", "repo clone", "run view", "run list", "run watch", "run download", "release view", "release list", "release download", "auth status", "config get", "config list"]);
+const GLAB_SAFE = new Set(["mr create", "mr view", "mr list", "mr diff", "ci status", "ci list", "ci view", "issue view", "issue list", "repo view", "repo clone", "auth status", "config get"]);
+
+/** `gh api` / `glab api` writes: an explicit non-GET method, or fields / input (which make gh send a POST). */
+function apiWrites(a: string[], graphql = false): boolean {
+  for (let i = 0; i < a.length; i++) {
+    const w = a[i];
+    const m = w === "-X" || w === "--method" ? a[i + 1] : w.startsWith("--method=") ? w.slice(9) : /^-X.+/.test(w) ? w.slice(2) : undefined;
+    if (m !== undefined) return m.toUpperCase() !== "GET";
+  }
+  if (graphql) return !graphqlRead(a);
+  return a.some((w) => /^(?:-f|-F|--field|--raw-field|--input)(?:=|$)/.test(w) || /^-[fF].+/.test(w));
+}
+
+/**
+ * A `gh api graphql` call is a read when its query is a literal `-f|-F|--field|--raw-field query=<text>` without the word `mutation`. A query from a
+ * file (`--input`, `query=@file`) or no literal query is opaque, so it counts as a write.
+ */
+function graphqlRead(a: string[]): boolean {
+  if (a.some((w) => /^--input(?:=|$)/.test(w))) return false;
+  let query: string | null = null;
+  for (let i = 0; i < a.length; i++) {
+    const w = a[i];
+    let v: string | undefined;
+    if (/^(?:-f|-F|--field|--raw-field)$/.test(w)) v = a[i + 1];
+    else if (/^--(?:field|raw-field)=/.test(w)) v = w.slice(w.indexOf("=") + 1);
+    else if (/^-[fF].+/.test(w) && !w.startsWith("--")) v = w.slice(2);
+    if (v !== undefined && v.startsWith("query=")) query = v.slice(6);
+  }
+  return query !== null && query !== "" && !query.startsWith("@") && !/^\$|mutation/i.test(query);
+}
+
+function forgeSeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  if (p !== "gh" && p !== "glab") return false;
+  const pos = positionals(s.argv, GH_VALUED);
+  if (HELPFLAG(s.argv) && pos.length === 0) return false;
+  if (pos.length === 0 || pos[0] === "help" || pos[0] === "version" || pos[0] === "status" || pos[0] === "search") return false;
+  if (pos[0] === "api") return apiWrites(s.argv, p === "gh" && pos[1] === "graphql");
+  return !(p === "gh" ? GH_SAFE : GLAB_SAFE).has(`${pos[0]} ${pos[1] ?? ""}`);
+}
+
+function publishSeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  const pos = positionals(s.argv);
+  if (["npm", "pnpm", "yarn", "bun"].includes(p)) return pos[0] === "publish" || (pos[0] === "npm" && pos[1] === "publish");
+  if (p === "cargo") return pos[0] === "publish";
+  if (p === "twine") return pos[0] === "upload";
+  if (p === "gem") return pos[0] === "push";
+  if (p === "docker" || p === "podman") return pos[0] === "push";
+  if (p === "gh") return pos[0] === "release" && pos[1] === "upload";
+  return false;
+}
+
+const METHOD_READ = new Set(["GET", "HEAD"]);
+
+function netWriteSeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  const a = s.argv;
+  if (["nc", "ncat", "netcat", "socat"].includes(p)) return true;
+  if (p === "curl") {
+    for (let i = 0; i < a.length; i++) {
+      const w = a[i];
+      const m = w === "-X" || w === "--request" || /^-[A-Za-z]*X$/.test(w) ? a[i + 1] : w.startsWith("--request=") ? w.slice(10) : /^-X.+/.test(w) ? w.slice(2) : undefined;
+      if (m !== undefined && !METHOD_READ.has(m.toUpperCase())) return true;
+      if (/^--(?:data(?:-[a-z]+)?|form(?:-string)?|upload-file|json)(?:=|$)/.test(w) || /^-[a-zA-Z]*[dFT]/.test(w) && !w.startsWith("--")) return true;
+    }
+    return false;
+  }
+  if (p === "wget") {
+    for (let i = 0; i < a.length; i++) {
+      const w = a[i];
+      if (/^--(?:post-data|post-file|body-data|body-file)(?:=|$)/.test(w)) return true;
+      const m = w === "--method" ? a[i + 1] : w.startsWith("--method=") ? w.slice(9) : undefined;
+      if (m !== undefined && !METHOD_READ.has(m.toUpperCase())) return true;
+    }
+    return false;
+  }
+  if (p === "http" || p === "https" || p === "xh" || p === "xhs") {
+    if (a.some((w) => /^(?:--form|-f|--json|-j|--multipart)$/.test(w))) return true;
+    const pos = positionals(a);
+    if (pos[0] !== undefined && /^[A-Za-z]+$/.test(pos[0]) && ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(pos[0].toUpperCase()) && !METHOD_READ.has(pos[0].toUpperCase())) return true;
+    return pos.some((w) => /^[\w.-]+(?::=|=(?!=)|@)/.test(w));
+  }
+  return false;
+}
+
+const PKG = new Set(["npm", "pnpm", "yarn", "bun"]);
+const PKG_VERBS = new Set(["install", "i", "ci", "add", "uninstall", "remove", "rm", "un"]);
+const SYS_PKG = new Set(["apt", "apt-get", "dnf", "yum", "choco", "winget", "scoop"]);
+const SYS_VERBS = new Set(["install", "remove", "uninstall", "purge", "upgrade", "autoremove", "reinstall", "erase", "add"]);
+const BREW_READ = new Set(["list", "ls", "info", "search", "outdated", "deps", "uses", "leaves", "doctor", "config", "--prefix", "--version", "--cellar", "--repository"]);
+
+function installSeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  const a = s.argv;
+  const pos = positionals(a);
+  if (PKG.has(p)) return PKG_VERBS.has(pos[0]) || pos[0] === "dlx" || (p === "yarn" && pos.length === 0 && !HELPFLAG(a));
+  if (p === "npx" || p === "bunx" || p === "uvx") return true;
+  if (p === "pip" || p === "pip3") return pos[0] === "install" || pos[0] === "uninstall";
+  if (p === "uv") return pos[0] === "pip" && (pos[1] === "install" || pos[1] === "uninstall");
+  if (/^python[0-9.]*$/.test(p)) return a[0] === "-m" && a[1] === "pip" && (a.includes("install") || a.includes("uninstall"));
+  if (p === "cargo" || p === "gem") return pos[0] === "install" || pos[0] === "uninstall";
+  if (p === "brew") return !(pos.length === 0 ? a.some((w) => BREW_READ.has(w)) : BREW_READ.has(pos[0]));
+  if (SYS_PKG.has(p)) return SYS_VERBS.has(pos[0]);
+  if (p === "pacman") return a.some((w) => /^-(?:S$|S[^sicgl]|R|U)/.test(w));
+  return false;
+}
+
+const GIT_GLOBAL_VALUED = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+
+/** The git subcommand and its words, past the global options. */
+function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
+  let i = 0;
+  while (i < a.length && a[i].startsWith("-")) i += GIT_GLOBAL_VALUED.has(a[i]) ? 2 : 1;
+  return { sub: a[i], rest: a.slice(i + 1) };
+}
+
+const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
+
+function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
+  if (progOf(s) !== "git") return false;
+  const { sub, rest } = gitParts(s.argv);
+  const flag = (re: RegExp): boolean => rest.some((w) => re.test(w));
+  switch (sub) {
+    case "reset":
+      return rest.includes("--hard");
+    case "clean":
+      return (flag(/^-[a-z]*f/) || rest.includes("--force")) && !(flag(/^-[a-z]*n/) || rest.includes("--dry-run"));
+    case "checkout": {
+      const dd = rest.indexOf("--");
+      return (dd >= 0 && rest.length > dd + 1) || rest.includes(".") || rest.some((w) => ["-f", "--force", "--ours", "--theirs", "-p", "--patch"].includes(w));
+    }
+    case "restore":
+      return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
+    case "branch":
+      return flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete");
+    case "push": {
+      if (rest.some((w) => w.startsWith("--repo=") && URLISH.test(w.slice(7)))) return true;
+      const first = positionals(rest, new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec"]))[0];
+      return first !== undefined && URLISH.test(first);
+    }
+    case "rebase":
+    case "filter-branch":
+    case "filter-repo":
+      return true;
+    case "commit":
+      return rest.includes("--amend") && env.facts?.hasUpstream?.(s.cwd ?? env.cwd) === true;
+    case "stash":
+      return rest[0] === "drop" || rest[0] === "clear";
+    case "worktree":
+      return rest[0] === "remove" || rest[0] === "prune";
+    case "reflog":
+      return rest[0] === "expire";
+    case "gc":
+      return flag(/^--prune(?:=|$)/);
+    default:
+      return false;
+  }
+}
+
+const DETACH = new Set(["nohup", "setsid", "disown"]);
+const detachSeg = (s: ShellSegment): boolean => DETACH.has(progOf(s)) || s.wrappers.some((w) => DETACH.has(w));
+
+function processSeg(s: ShellSegment): boolean {
+  const p = progOf(s);
+  const a = s.argv;
+  const pos = positionals(a);
+  if (["kill", "pkill", "killall", "taskkill", "chown", "mount"].includes(p)) return true;
+  if (p === "chmod") return a.some((w) => /^-[a-zA-Z]*R/.test(w) || w === "--recursive");
+  if (p === "defaults") return pos[0] === "write" || pos[0] === "delete";
+  if (p === "reg") return pos[0] === "add" || pos[0] === "delete";
+  if (p === "launchctl") return pos[0] === "load" || pos[0] === "unload";
+  return false;
+}
+
+function injectSeg(s: ShellSegment): boolean {
+  return injection(s, progOf(s)) !== null;
+}
+
+const segs = (test: (s: ShellSegment, env: DangerEnv) => boolean) => (c: DangerCall, env: DangerEnv): boolean => live(c).some((s) => test(s, env));
+
+/** A path tool that writes where no path rule allows (`pathDecide` found no root that covers it). */
+function pathWriteOutside(c: DangerCall, env: DangerEnv): boolean {
+  if (!["write", "edit", "foreman_move", "foreman_copy"].includes(c.tool)) return false;
+  const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
+  if (!["path", "file_path", "filePath", "dst"].some((k) => typeof i[k] === "string")) return false;
+  return pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) === undefined;
+}
+
+/** A shell segment that writes (a redirect or a write-class effect) outside the worktree, scratch and tmp. */
+function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
+  const ec = effectCtxOf(env);
+  for (const s of live(c)) {
+    const cwd = s.cwd ?? env.cwd;
+    const chain = toChain(s);
+    if (!chain) continue;
+    for (const r of chain.redirects) if (r.op !== "<" && r.op !== "dup" && !redirectOk(r, ec, cwd, ec.scratch ?? [], env.platform) && !contained(ec, cwd, r.target, true)) return true;
+    // the redirects are judged above; the effect class of the words alone (a redirect into the worktree is write-out to segmentEffect)
+    if (segmentEffect(ec, cwd, { ...chain, redirects: [] }).cls === "write-out") return true;
+  }
+  return false;
+}
+
+const MCP_READ = /^(?:list|get|search|read|take|find|describe)_/;
+
+/** An `mcp__server__tool` call that is not named as a read; `navigate_page` to a plain URL is a read. */
+function mcpAct(c: DangerCall): boolean {
+  if (!c.tool.startsWith("mcp__")) return false;
+  const name = c.tool.split("__").slice(2).join("__") || c.tool;
+  if (MCP_READ.test(name)) return false;
+  if (name === "navigate_page") {
+    const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
+    const type = i.type === undefined ? "url" : i.type;
+    if (type === "back" || type === "forward" || type === "reload") return false;
+    return !(type === "url" && typeof i.url === "string" && /^https?:\/\/[^/?#@\s]*(?:[/?#]|$)/i.test(i.url));
+  }
+  return true;
+}
+
+/** A role launch outside the owned roots, a workflow script, or a tasks / chain form. Management actions are no launch. */
+function launchOutside(c: DangerCall, env: DangerEnv): boolean {
+  if (c.tool !== "subagent") return false;
+  const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
+  if (i.action !== undefined && i.action !== null && !(typeof i.action === "string" && i.action.trim() === "")) return false;
+  if (i.tasks !== undefined || i.chain !== undefined || i.workflow !== undefined) return true;
+  return !launchInside(c.input, env.roots, env.cwd, env.platform);
+}
+
+/** `fetch` / `curl` / `wget` that webReadAllow does not pass (S5: the finding-6 fixes decide between silent allow and the classifier). */
+function webNotRead(c: DangerCall, env: DangerEnv): boolean {
+  const cmd = (c.input && typeof c.input === "object" ? (c.input as Record<string, unknown>).command : undefined) as unknown;
+  if (c.tool !== "fetch" && !(BASH_TOOL_NAMES.has(c.tool) && typeof cmd === "string")) return false;
+  const v = webReadAllow(c.tool, c.input, { cwd: env.cwd, scratch: env.roots.scratch, platform: env.platform });
+  return v.candidate && !v.ok;
+}
+
+const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && c.tool !== "foreman_bg" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
+
+export const DANGER_RULES: readonly DangerRule[] = [
+  { name: "danger-write-outside", reason: "writes files outside the worktree, the session's scratch dir and the OS temp dir", test: (c, e) => pathWriteOutside(c, e) || shellWriteOutside(c, e) },
+  { name: "danger-deploy", reason: "reaches another machine or changes a deployment, cluster, service or cloud account", test: segs(deploySeg) },
+  { name: "danger-forge", reason: "changes something on the code forge (merge, close, comment, create or delete, a non-GET API call)", test: segs(forgeSeg) },
+  { name: "danger-publish", reason: "publishes a package, image or release", test: segs(publishSeg) },
+  { name: "danger-net-write", reason: "sends data over the network (a method other than GET or HEAD, a body, an upload, a raw socket, or a download with credentials or an unsafe target)", test: (c, e) => segs(netWriteSeg)(c, e) || webNotRead(c, e) },
+  { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: segs(installSeg) },
+  { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, push to a URL, rebase, amend of published work, stash drop, worktree removal, history rewrite)", test: segs(gitSeg) },
+  { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
+  { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
+  { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable or an unparsed form)", test: (c) => (c.segments ?? []).some((s) => s.opaque !== null) },
+  { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
+  { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
+];
+
+/** The first dangerous-class entry a call falls into, or null. */
+export function dangerMatch(call: DangerCall, env: DangerEnv): DangerHit | null {
+  for (const r of DANGER_RULES) if (r.test(call, env)) return { name: r.name, reason: r.reason };
+  return null;
+}
+
+const SEGMENT_RULES = [deploySeg, forgeSeg, publishSeg, netWriteSeg, installSeg, gitSeg, (s: ShellSegment) => processSeg(s) || detachSeg(s), injectSeg] as const;
+
+/** The `danger-*` name of a single non-opaque segment (every entry that needs no path facts), or null. `segmentDefault` refuses such a segment. */
+export function dangerSegment(seg: ShellSegment, env: DangerEnv): string | null {
+  if (seg.opaque !== null || seg.program === "") return null;
+  const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject"];
+  const i = SEGMENT_RULES.findIndex((f) => f(seg, env));
+  return i < 0 ? null : names[i];
 }

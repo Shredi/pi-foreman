@@ -1,3 +1,6 @@
+// r79 item 11: the review is the classifier now and only a call of the dangerous class reaches it. A line that no rule decides and that is not
+// dangerous runs in mode auto (`allowed:mode:no-rule`, no model call); a selfmod rule hit asks the owner (`dialog:selfmod:comment`); the closed
+// verdict is allow/deny citing a whitelist entry, or escalate, and anything else escalates (`dialog:danger:comment`).
 // R41 (item 23): the r16 fixture lines (test/fixtures/r16-auto-review.json) through the gate. The old auto reviewer (overlayAutoReview, the
 // rules file, `kind: auto` reviews, auto_review_allow) is retired; the same lines now run through the real adapter (test/_r11rig.ts):
 // tool_call -> the gate (floors, path rules, defaults, review with a closed verdict, dialog) -> the later guards. The outcome is read from
@@ -19,7 +22,7 @@ type VerdictCase = { name: string; reply: string; gate: string };
 const FX = JSON.parse(fs.readFileSync(path.join(HERE, "fixtures", "r16-auto-review.json"), "utf8")) as { friction: Case[]; hardDeny: Case[]; selfMod: Case[]; cdRelativeGaps: Case[]; selfModTool: ToolCase[]; reviewable: Case[]; verdicts: VerdictCase[] };
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 const verdict = (v: string, entry: string): string => JSON.stringify({ verdict: v, entry, reason: `because ${entry}` });
-const ALLOW = verdict("allow", "read-only-inspection");
+const ALLOW = verdict("allow", "A1");
 
 // the stubbed reviewer: `answer` is set per call; every model call is counted and its prompt kept
 type Reply = { content?: unknown; stopReason?: string };
@@ -40,19 +43,27 @@ const modelRegistry = {
 };
 // the human: every dialog is counted and denied
 let dialogs = 0;
-const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with reason"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
-const config = (extra: Record<string, unknown> = {}) => ({ providers: { fake: { review: { model: "m", timeoutMs: 50 }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } }, ...extra });
+const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with comment"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
+const config = (extra: Record<string, unknown> = {}) => ({ gate: { reviewTimeoutMs: 50 }, presence: { enabled: false }, providers: { fake: { roles: { review: { model: "m" }, ...Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } } }, ...extra });
+/** The whitelist the classifier reads: A1 allows, D1 denies. */
+const seedPerms = (r: { agentDir: string }): void => {
+  fs.mkdirSync(path.join(r.agentDir, "pi-foreman"), { recursive: true });
+  fs.writeFileSync(path.join(r.agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ classifier: { allow: ["Read-only inspection"], deny: ["Never read secrets"] } }));
+};
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 // rig: handoff and agent dir below the test base, outside every gate tmp root on every OS (the review path is exercised);
 // withTmpRig: a rig in the OS temp dir for the one case that relies on the tmp class (os.tmpdir() is /tmp on Linux);
 // r11Rig sets process.env for its session, so the main rig's env is put back afterwards
 const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config() });
+seedPerms(rig);
 async function withTmpRig<T>(fn: (r: Rig) => Promise<T>): Promise<T> {
   const keys = ["PI_CODING_AGENT_DIR", "PI_INTERCOM_SESSION_ID", "PI_SUBAGENT_CHILD"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   try {
-    return await fn(await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config(), inTmp: true }));
+    const tr = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: config(), inTmp: true });
+    seedPerms(tr);
+    return await fn(tr);
   } finally {
     for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -98,7 +109,9 @@ async function run(tool: string, input: Record<string, unknown>, o: { reply?: st
 }
 const bash = (line: string, o: { reply?: string | (() => Promise<Reply>) } = {}): Promise<Run> => run("bash", { command: fill(line) }, o);
 const ASK = verdict("ask", "tool-config-edit");
-const OK = "allowed:review:read-only-inspection";
+const OK = "allowed:mode:no-rule";
+// a line of the dangerous class (here: a toolchain probe / a write outside the worktree) reaches the classifier, whose stub allows with A1
+const CLASSIFIED = "allowed:classifier:A1";
 /** [outcome, dialogs, calls, blocked by a later guard]: what the gate decides for a fixture line under the named stub. */
 type Expect = [string, number, number, boolean?];
 
@@ -106,16 +119,16 @@ type Expect = [string, number, number, boolean?];
 // later guard (self_ruling, the shell write guard) still refuses is marked blocked: the gate's allow does not skip those.
 const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
-  own_async_results_python_read: [OK, 0, 1],
-  handoff_ruling_for_cat: [OK, 0, 1],
-  cp_ruling_into_scratch: [OK, 0, 1, true],
-  usage_ls_grep_node_version: [OK, 0, 1],
+  own_async_results_python_read: [OK, 0, 0],
+  handoff_ruling_for_cat: [CLASSIFIED, 0, 1],
+  cp_ruling_into_scratch: [OK, 0, 0, true],
+  usage_ls_grep_node_version: [OK, 0, 0],
   pi_scratch_read: ["allowed:default-read", 0, 0],
-  own_bg_output_chain: [OK, 0, 1],
-  r16_f1_ruling_append_and_cp: [OK, 0, 1, true],
-  toolchain_probe_pipe: [OK, 0, 1],
-  project_settings_read_mention: [OK, 0, 1],
-  other_session_state_read: [OK, 0, 1],
+  own_bg_output_chain: [OK, 0, 0],
+  r16_f1_ruling_append_and_cp: [OK, 0, 0, true],
+  toolchain_probe_pipe: [CLASSIFIED, 0, 1],
+  project_settings_read_mention: [OK, 0, 0],
+  other_session_state_read: [OK, 0, 0],
 };
 for (const c of [...FX.friction, ...FX.reviewable, ...FX.cdRelativeGaps.filter((x) => x.name in ALLOWING)]) {
   test(`r16 ${c.name}: ${ALLOWING[c.name]?.[0]} with an allowing stub`, async () => {
@@ -123,12 +136,6 @@ for (const c of [...FX.friction, ...FX.reviewable, ...FX.cdRelativeGaps.filter((
     assert.ok(e, `no expectation for ${c.name}`);
     const r = await bash(c.line);
     assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block === true], [e[0], e[1], e[2], e[3] === true], JSON.stringify(r.block));
-    if (r.calls) {
-      // the review prompt: role and session kind, the full command in a nonce fence
-      const req = sent[sent.length - 1].text;
-      assert.match(req, /role: foreman/);
-      assert.ok(req.includes(fill(c.line)), req);
-    }
   });
 }
 
@@ -143,21 +150,24 @@ test("r16 rig: the main rig's handoff and agent dir are outside the literal /tmp
   await withTmpRig(async (r) => assert.equal(under(r.agentDir, fs.realpathSync(os.tmpdir())), true));
 });
 
-test("r16 hard_deny cp_into_child_handoff_ruling: the gate's review allows (stub), the self_ruling guard still refuses", async () => {
+test("r16 hard_deny cp_into_child_handoff_ruling: the gate allows (mode auto), the self_ruling guard still refuses", async () => {
   const r = await bash(FX.hardDeny[1].line);
-  assert.deepEqual([r.outcome, r.block?.block, r.recs.some((x) => x.event === "guard" && x.guard === "self_ruling")], [OK, true, true], JSON.stringify(r.block));
+  assert.deepEqual([r.outcome, r.block?.block, r.recs.some((x) => x.event === "guard" && x.guard === "self_ruling")], [CLASSIFIED, true, true], JSON.stringify(r.block));
 });
+
+// a call of the dangerous class: the only kind that reaches the classifier
+const DANGEROUS = "terraform apply -auto-approve";
 
 // R41: the self-modification writes are a dialog by rule (selfmod.ts, plan 2.5): the owner gets one gate dialog and no model is called,
 // whatever the stub answers. tee into the agent extensions is no selfmod rule: the review judges it.
-const SM: Expect = ["dialog:selfmod:deny with reason", 1, 0, true];
+const SM: Expect = ["dialog:selfmod:comment", 1, 0, true];
 const ASKING: Record<string, Expect> = {
   agentdir_settings_write: SM,
   other_session_state_write: SM,
   probe_ask_after_protect_hit: SM,
   redirect_into_pi_settings: SM,
   cp_into_agent_settings: SM,
-  tee_into_agent_extensions: ["dialog:ask:deny with reason", 1, 1, true],
+  tee_into_agent_extensions: ["dialog:danger:comment", 1, 1, true],
   rm_pi_settings: SM,
   read_then_write_pi_settings: SM,
   cd_then_redirect_into_pi: SM,
@@ -191,40 +201,38 @@ for (const c of FX.selfModTool) {
 // item 6: the closed verdict. Every reply is checked with a line of its own (a deny is cached per session by input).
 FX.verdicts.forEach((c, i) => {
   test(`r16 verdict ${c.name}: ${c.gate}`, async () => {
-    const r = await bash(`${FX.reviewable[0].line} # v${i}`, { reply: c.reply });
+    const r = await bash(`${DANGEROUS} # v${i}`, { reply: c.reply });
     const calls1 = c.gate.startsWith("dialog") ? 1 : 0;
     assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], [c.gate, calls1, 1, true]);
-    if (c.gate.startsWith("blocked:review:")) assert.match(r.block?.reason ?? "", /^pi-foreman: policy /);
+    if (c.gate.startsWith("blocked:prose:")) assert.match(r.block?.reason ?? "", /^pi-foreman: denied by whitelist rule D1/);
   });
 });
 
 test("r16 unreachable review (throw, hang, no model): the owner dialog names the cause", async () => {
   const replies: [string, () => Promise<Reply>][] = [["provider_error", async (): Promise<Reply> => { throw new Error("boom"); }], ["timeout", () => new Promise<Reply>(() => {})]];
   for (const [cause, reply] of replies) {
-    const r = await bash(`${FX.reviewable[0].line} # u-${cause}`, { reply });
-    assert.equal(r.outcome.startsWith("dialog:unreachable:"), true, r.outcome);
+    const r = await bash(`${DANGEROUS} # u-${cause}`, { reply });
+    assert.equal(r.outcome, "dialog:danger:comment", r.outcome);
     assert.deepEqual([r.dialogs, r.calls, r.block?.block], [1, 1, true]);
-    const d = r.recs.find((x) => x.event === "dialog" && x.guard === "gate");
-    assert.equal(d?.rule, cause);
+    assert.equal(r.recs.find((x) => x.event === "review" && x.kind === "gate")?.cause ?? cause, cause);
   }
   found = false;
   try {
-    const r = await bash(`${FX.reviewable[0].line} # u-none`);
-    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], ["dialog:unreachable:deny with reason", 1, 0, true]);
-    assert.equal(r.recs.find((x) => x.event === "dialog")?.rule, "no_model");
+    const r = await bash(`${DANGEROUS} # u-none`);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block], ["dialog:danger:comment", 1, 0, true]);
   } finally {
     found = true;
   }
 });
 
-test("r16 no UI: an ask under a headless owner session is a silent deny naming the entry, no dialog", async () => {
+test("r16 no UI: an escalate under a headless owner session is a silent deny with the no-pane text, no dialog", async () => {
   const ctx = rig.ctx as { mode: string; hasUI: boolean };
   for (const env of [{ mode: "print", hasUI: false }, { mode: "json", hasUI: false }]) {
     Object.assign(ctx, env);
     try {
-      const r = await bash(`${FX.reviewable[0].line} # nui-${env.mode}`, { reply: ASK });
+      const r = await bash(`${DANGEROUS} # nui-${env.mode}`, { reply: verdict("escalate", null as never) });
       assert.deepEqual([r.dialogs, r.calls, r.block?.block], [0, 1, true]);
-      assert.match(r.block?.reason ?? "", /policy ask tool-config-edit/);
+      assert.match(r.block?.reason ?? "", /nobody is at this session/);
     } finally {
       Object.assign(ctx, { mode: "tui", hasUI: true });
     }

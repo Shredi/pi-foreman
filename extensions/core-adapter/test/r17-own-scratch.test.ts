@@ -2,6 +2,8 @@
 // (reviewer for the scratch, selfMod human dialog for the rest) is gone; the gate's rules decide, and what they leave goes to the review
 // (stubbed here: an allowing stub for the scratch lines, an asking stub for the rest, so the owner gets one gate dialog). Modelled on
 // r16-auto-review.test.ts (real adapter via _r11rig).
+// r79 item 11: the selfmod rule asks the owner (no classifier call); a target the parser cannot resolve is the dangerous class (an ask, the classifier
+// has no model here); a plain scratch write is no rule and not dangerous, so mode auto runs it.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -21,7 +23,7 @@ let calls = 0;
 const base = reviewAllowOpts();
 const modelRegistry = { ...(base.ctx.modelRegistry as object), complete: async () => (calls++, { content: [{ type: "text", text: answer }], stopReason: "stop" }) };
 let dialogs = 0;
-const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with reason"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
+const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with comment"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
 const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: base.config });
 const H = rig.handoff("own", "child");
 fs.mkdirSync(path.join(rig.project, ".pi", "scratch"), { recursive: true });
@@ -49,7 +51,7 @@ const UNRESOLVED = /^scratch_(var|braced_var|glob|subst)_dotdot$/;
 for (const c of FX.selfMod) {
   test(`r17 selfMod ${c.name}: ${UNRESOLVED.test(c.name) ? "the review asks, one dialog" : "the selfmod rule asks, one dialog, no model call"}`, async () => {
     const r = await bash(c.line, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], UNRESOLVED.test(c.name) ? ["dialog:ask:deny with reason", 1, 1] : ["dialog:selfmod:deny with reason", 1, 0]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], UNRESOLVED.test(c.name) ? ["dialog:danger:comment", 1, 0] : ["dialog:selfmod:comment", 1, 0]);
   });
 }
 
@@ -63,6 +65,6 @@ for (const c of FX.reviewableTool) {
 for (const c of FX.selfModTool) {
   test(`r17 selfMod tool ${c.name}: the selfmod rule asks, one dialog, no model call`, async () => {
     const r = await run(c.tool, c.input, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:selfmod:deny with reason", 1, 0]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:selfmod:comment", 1, 0]);
   });
 }

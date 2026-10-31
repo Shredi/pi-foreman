@@ -1,5 +1,5 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]` -> scripts/foreman_<name>.py (features, perms: .mjs).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features [args]` -> scripts/foreman_<name>.py (features: .mjs).
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
@@ -24,10 +24,6 @@ if [ "$sub" = "features" ]; then
     shift
     exec node "$here/../scripts/foreman_features.mjs" "$@"
 fi
-if [ "$sub" = "perms" ]; then
-    shift
-    exec node "$here/../scripts/foreman_perms.mjs" "$@"
-fi
 case "$sub" in
     update-check) script="$here/../scripts/foreman_update_check.py" ;;
     retro) script="$here/../scripts/foreman_retro.py" ;;
@@ -40,7 +36,7 @@ case "$sub" in
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
-    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]" >&2; exit 2 ;;
+    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

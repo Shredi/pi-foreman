@@ -143,7 +143,7 @@ export interface OverlayRules {
    */
   probeDirs?: string[];
   /** R41: the floors (policy files, harness state) and the roots named in a whole-filesystem scan deny; set by buildOverlayRules. */
-  floors?: { agentDir: string; pkgRoot?: string; policyFiles: string[] };
+  floors?: { agentDir: string; pkgRoot?: string };
 }
 
 export interface Baseline {
@@ -804,7 +804,7 @@ export function isSelfHost(cwd: string, pkgRoot: string, platform: string = proc
  * the project and session layers (the config CLI's `basePermissions`); asks present there are
  * PS's job, only the added ones are enforced here. Without `base` no ask is enforced.
  */
-export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots, policyFiles: string[] = [], sessionDir?: string): OverlayRules {
+export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unknown, agentDir: string, pkgRoot?: string, xdgConfigHome: string | undefined = process.env.XDG_CONFIG_HOME, selfHost = false, owned?: OwnedRoots, sessionDir?: string): OverlayRules {
   const m = obj(merged);
   const b = obj(base);
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
@@ -842,7 +842,7 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
     childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
     ...(owned ? { owned } : {}),
     probeDirs: probeDirPatterns(baseline.externalDirectory?.probe ?? []),
-    floors: { agentDir, ...(pkgRoot ? { pkgRoot } : {}), policyFiles },
+    floors: { agentDir, ...(pkgRoot ? { pkgRoot } : {}) },
   };
 }
 
@@ -2899,22 +2899,17 @@ const CONFIG_FILE = /(?:^|[\\/])foreman(?:[.-][\w.-]*)?\.json$/;
 /** The config keys no agent write may touch: safety.permissions*, safety.policy*, gate.* (read from the written text, fail closed). */
 const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
 
-/** The policy files of every layer and the harness state files no tool or shell write may touch (patterns, `dir` + `dir/*` for a subtree). */
+/** The permissions.json files of every layer and the harness state files no tool or shell write may touch (patterns, `dir` + `dir/*` for a subtree). */
 function floorPatterns(rules: OverlayRules, ctx: MatchCtx, workspace = true): string[] {
   const f = rules.floors;
   const slash = (d: string): string => d.split(path.sep).join("/").replace(/\/+$/, "");
   const out: string[] = [];
-  if (f?.pkgRoot) out.push(`${slash(f.pkgRoot)}/config/permissions.policy.md`);
   if (f?.agentDir) {
     const s = `${slash(f.agentDir)}/pi-foreman`;
-    out.push(`${s}/policy.md`, `${s}/managed.json`, `${s}/state/round-parents.json`, `${s}/state/bridge-trust.json`, `${s}/state/approvals`, `${s}/state/approvals/*`, `${s}/state/gate`, `${s}/state/gate/*`);
+    out.push(`${s}/permissions.json`, `${s}/managed.json`, `${s}/state/round-parents.json`, `${s}/state/bridge-trust.json`, `${s}/state/approvals`, `${s}/state/approvals/*`, `${s}/state/gate`, `${s}/state/gate/*`);
   }
   const bases = ctx.cwd && workspace ? [...new Set([ctx.cwd, workspaceOf(ctx.cwd).root])] : [];
-  for (const b of bases) out.push(`${slash(b)}/.workflow/policy.md`);
-  for (const p of f?.policyFiles ?? []) {
-    if (path.isAbsolute(p) || path.win32.isAbsolute(p) || p.startsWith("~")) out.push(slash(p));
-    else if (workspace) for (const b of bases) out.push(`${slash(b)}/${p.replace(/^\.\//, "")}`);
-  }
+  for (const b of bases) out.push(`${slash(b)}/.workflow/permissions.json`, `${slash(b)}/.pi/permissions.json`);
   return out;
 }
 

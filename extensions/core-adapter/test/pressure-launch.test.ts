@@ -1,7 +1,6 @@
 // Pressure gate on child launches through the real adapter hooks (index.ts tool_call): pressure file injected, sampler and clock faked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
@@ -67,8 +66,11 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
     providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
+    presence: { enabled: false }, // r79 item 11: see reviewAllowOpts in _r11rig.ts
   };
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify(l2));
+  fs.mkdirSync(path.join(agentDir, "pi-foreman"), { recursive: true });
+  fs.writeFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ allow: ["subagent"] })); // a tasks call is dangerous-class
   const handlers = new Map<string, Handler>();
   const tools = new Map<string, Tool>();
   const wakes: { customType: string; content: string }[] = [];
@@ -101,7 +103,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
+    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);

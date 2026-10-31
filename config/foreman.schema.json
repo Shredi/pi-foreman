@@ -527,7 +527,7 @@
       "properties": {
         "mode": { "type": "string", "enum": ["full", "floors-only"], "description": "Temporary, until the permission redesign. full (default): the whole gate. floors-only: only the floors decide (plus the unclear-push deny); every other tool call runs without review, dialog or ask. User config or overlay only; a project value is dropped." },
         "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
-        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a round session waits for the owner's ruling-<n>.md before the call is denied, in ms (default 900000)." },
+        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a child waits for its parent's ruling-<n>.md before the call is denied, in ms (default 900000). The value only bounds a child's ask wait; a session opened by another session asks in its own pane and has no timeout while the owner is present." },
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "tmpAccess": { "type": "boolean", "description": "Writes (and for the owner reads) under the OS temp dirs are allowed (default true)." },
         "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." },

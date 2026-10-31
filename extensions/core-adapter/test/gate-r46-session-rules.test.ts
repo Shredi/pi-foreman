@@ -14,11 +14,13 @@ type Rig = Awaited<ReturnType<typeof r11Rig>>;
 async function rig(t: Parameters<typeof r11Rig>[0], o: { child?: boolean; reviewAllows?: boolean; reviewAsks?: boolean } = {}) {
   const titles: string[] = [];
   const ui = { notify: () => undefined, confirm: async () => false, select: async (title: string) => (titles.push(title), "deny with reason"), input: async () => "not now", setStatus: () => undefined, setWidget: () => undefined };
-  const base = o.reviewAllows || o.reviewAsks ? reviewAllowOpts() : { ctx: {}, config: {} };
-  if (o.reviewAsks) {
-    const reg = base.ctx.modelRegistry as { complete: () => Promise<unknown> };
-    reg.complete = async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "ask", entry: "package-install", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } });
-  }
+  // r79 item 11: the review is the classifier now; an escalating one stands for the "asking review"
+  const base: { ctx: Record<string, unknown>; config: Record<string, unknown> } = o.reviewAsks
+    ? {
+        ctx: { modelRegistry: { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "escalate", entry: null, reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }) } },
+        config: { providers: { fake: { roles: { review: { model: "m" } } } } },
+      }
+    : reviewAllowOpts();
   const r = await r11Rig(t, {}, { ctx: { ...base.ctx, ui }, config: base.config, child: o.child });
   const sessions = path.join(r.agentDir, "sessions");
   const outer = path.join(sessions, "--proj--");
@@ -123,7 +125,7 @@ for (const child of [false, true]) {
   });
 }
 
-test("a child's npm ci is not a default allow: an unreachable or asking review denies it", async (t) => {
+test("a child's npm ci is not a default allow: an unreachable or escalating classifier denies it", async (t) => {
   for (const o of [{}, { reviewAsks: true }]) {
     const r = await rig(t, { child: true, ...o });
     const res = await r.call("bash", { command: "npm ci" });

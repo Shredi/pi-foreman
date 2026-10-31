@@ -21,7 +21,7 @@ export const tick = (ms = 25) => new Promise((r) => setTimeout(r, ms));
 let n = 0;
 
 export interface WorldOpts {
-  /** PI_FOREMAN_HANDOFF_DIR set (a round session). */
+  /** PI_FOREMAN_HANDOFF_DIR set (a session opened by another session). */
   handoff?: boolean;
   /** Also PI_FOREMAN_PARENT_INTERCOM: checkpoint mode `parent` (the verdict comes from ruling-plan.md). */
   parent?: boolean;

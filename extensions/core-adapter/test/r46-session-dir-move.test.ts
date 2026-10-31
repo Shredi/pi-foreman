@@ -21,7 +21,7 @@ const sessionDir = path.join(outer, "sub");
 const art = path.join(sessionDir, "subagent-artifacts");
 for (const d of [cwd, agentDir, art]) fs.mkdirSync(d, { recursive: true });
 
-const guarded = buildOverlayRules(baseline, {}, {}, agentDir, path.join(root, "pkg"), undefined, false, undefined, [], sessionDir);
+const guarded = buildOverlayRules(baseline, {}, {}, agentDir, path.join(root, "pkg"), undefined, false, undefined, sessionDir);
 const plain = buildOverlayRules(baseline, {}, {}, agentDir, path.join(root, "pkg"));
 const ctx = (role: "main" | "child"): MatchCtx => ({ cwd, home: path.join(root, "home"), platform: process.platform, role });
 const kind = (rules: typeof guarded, tool: string, input: Record<string, unknown>, role: "main" | "child"): string => checkToolCall(rules, tool, input, ctx(role))?.kind ?? "pass";

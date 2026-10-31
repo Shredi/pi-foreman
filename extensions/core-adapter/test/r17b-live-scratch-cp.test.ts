@@ -1,23 +1,24 @@
 // R17b (ledger 5): the literal live line `cp <outside-workspace>/.workflow/scratch/<dir>/f.md .pi/scratch/f.md` (absolute source in another
 // repo, relative target not yet existing, `.pi/scratch` existing) reaches the (stubbed) auto reviewer, not the human dialog.
+// r79 item 11: the line is the dangerous class (danger-write-outside); the reviewer is the classifier, which allows it citing the rig's allow entry A1.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 
 let calls = 0;
 let system = "";
 const modelRegistry = {
   find: () => ({ cost: { input: 1 } }),
   getProviderAuthStatus: () => ({ configured: true }),
-  complete: async (_m: unknown, c: { systemPrompt?: string }) => (calls++, system = c.systemPrompt ?? "", { content: [{ type: "text", text: '{"verdict":"allow","entry":"read-only-inspection","reason":"stub"}' }], stopReason: "stop" }),
+  complete: async (_m: unknown, c: { systemPrompt?: string }) => (calls++, system = c.systemPrompt ?? "", { content: [{ type: "text", text: '{"verdict":"allow","entry":"A1","reason":"stub"}' }], stopReason: "stop" }),
 };
 let dialogs = 0;
 const ui = { notify: () => undefined, confirm: async () => (dialogs++, false), select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined };
-const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: { providers: { fake: { review: { model: "fake/small", timeoutMs: 50 } } } } });
+const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui, [RIG_PERMISSIONS]: { classifier: { allow: ["Copying a file from another workspace's scratch dir into this session's own scratch dir."] } } }, config: { providers: { fake: { roles: { review: { model: "fake/small" } } } } } });
 fs.mkdirSync(path.join(rig.project, ".pi", "scratch"), { recursive: true });
 execFileSync("git", ["init", "-q", rig.project]);
 const hub = fs.mkdtempSync(path.join(os.tmpdir(), "r17b-hub-"));

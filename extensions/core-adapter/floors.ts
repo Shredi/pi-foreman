@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
-import { normPath, sameOrUnder, type Resolver } from "./pathnorm.ts";
+import { lexUnder, normPath, sameOrUnder, type Resolver } from "./pathnorm.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -30,14 +30,14 @@ export interface FloorEnv {
   protectedBranches?: string[];
   /** Roots a delete or a recursive overwrite may reach: the worktree, scratch dirs, the OS temp dir, owned write roots. */
   writeRoots?: string[];
+  /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: `$FOREMAN_SCRATCH`. */
+  scratch?: string[];
   /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
   agentDir?: string;
   /** The dir of the session's own Pi session file: its `*.jsonl` files are floored writes (the adapter writes them through pi.appendEntry). */
   sessionDir?: string;
-  /** The bundled package root (its config/permissions.policy.md is a floored write). */
+  /** The bundled package root. */
   pkgRoot?: string;
-  /** safety.policy.files: extra policy files of the owner's overlay (absolute, `~` or cwd-relative). */
-  policyFiles?: string[];
   currentBranch?: (cwd: string) => string | null;
   remoteHead?: (cwd: string) => string | null;
   /** A subagent child session: it never pushes (the foreman pushes). */
@@ -50,9 +50,15 @@ export interface FloorHit {
   /** The floor rule name, `floor-<name>`. */
   rule: string;
   reason: string;
+  /**
+   * `deny`: the call is refused, nothing lifts it. `ask` (r79 item 4): a text match on a line the parser could not state exactly; the owner is
+   * asked before the mode step. Never classifier-allowable, never run under mode `allow`. A deny always wins over an ask on the same line.
+   */
+  kind: "deny" | "ask";
 }
 
-const hit = (name: string, reason: string): FloorHit => ({ rule: `floor-${name}`, reason: `pi-foreman: denied by the permission floor (${name}). ${reason} No review, policy entry or dialog lifts this floor.` });
+const hit = (name: string, reason: string): FloorHit => ({ rule: `floor-${name}`, kind: "deny", reason: `pi-foreman: denied by the permission floor (${name}). ${reason} No review, policy entry or dialog lifts this floor.` });
+const askHit = (name: string, reason: string): FloorHit => ({ rule: `floor-${name}`, kind: "ask", reason: `${reason} (the line is not plain enough for the parser, so the owner decides)` });
 
 const base = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCase().replace(/\.exe$/, "");
 const isWord = (w: string): boolean => !/[$`*?[\]{}~]/.test(w);
@@ -273,16 +279,9 @@ const SYSTEM_DIRS = ["bin", "boot", "dev", "etc", "lib", "lib32", "lib64", "opt"
 
 const slash = (p: string): string => p.replace(/\\/g, "/").replace(/\/+/g, "/");
 
-/** `p` is `root` or below it (lexical, case-folded on win32 and darwin). */
+/** `p` is `root` or below it (lexical; the slash and case rules are pathnorm.ts's: case-folded on win32 only, r79 item 16). */
 export function insideRoot(p: string, root: string, platform: string = process.platform): boolean {
-  const fold = platform === "win32" || platform === "darwin";
-  let a = slash(p).replace(/(.)\/$/, "$1");
-  let b = slash(root).replace(/(.)\/$/, "$1");
-  if (fold) {
-    a = a.toLowerCase();
-    b = b.toLowerCase();
-  }
-  return a === b || a.startsWith(`${b}/`);
+  return lexUnder(platform, root, p);
 }
 
 function resolveWord(word: string, cwd: string | null, env: FloorEnv): string | null {
@@ -383,13 +382,21 @@ function overwriteDests(seg: ShellSegment, prog: string): string[] {
 function outside(word: string, cwd: string | null, env: FloorEnv): boolean {
   const abs = resolveWord(word, cwd, env);
   if (abs === null) return false; // unknown: the walker cannot say, the gate's other steps decide
-  return !(env.writeRoots ?? []).some((r) => insideRoot(abs, r, env.platform));
+  // r79 item 4: the session's own scratch root (`<tmp>/pi-foreman-scratch/<session>/<run>`, FOREMAN_SCRATCH) is inside, also under another spelling of
+  // the temp dir (macOS /var vs /private/var)
+  const own = env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : []);
+  const roots = [...(env.writeRoots ?? []), ...own];
+  if (roots.some((r) => insideRoot(abs, r, env.platform))) return false;
+  const mine = formsOf(abs, env);
+  return !roots.some((r) => formsOf(r, env).some((rf) => mine.some((f) => lexUnder(env.platform ?? process.platform, rf, f))));
 }
 
 function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
   const prog = base(seg.program);
   const git = gitFloors(seg, env);
   if (git) return git;
+  const inj = injectFloor(seg, prog);
+  if (inj) return inj;
   const pw = protectedWrite(seg, prog, env, line);
   if (pw) return pw;
   if (PRIVILEGE.has(prog)) return hit("privilege", `\`${prog}\` escalates privileges. Run the command as the current user; ask the user when root is needed.`);
@@ -416,11 +423,68 @@ function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): 
   const pub = publishFloor(prog, seg.argv);
   if (pub) return hit("publish", `${pub} publishes a package or image. Ask the user to publish; build and test locally instead.`);
   if (SHELL_LIKE.has(prog) && seg.opaque === "stdin_fed" && line.some((s) => s !== seg && DOWNLOAD.has(base(s.program)))) return hit("download-shell", "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.");
+  // quoted text and regexes are data (r79 item 4); a terminal payload is typed text, judged by the inject floor above
+  const payload = injection(seg, prog)?.words ?? [];
   for (const w of [...seg.argv, ...seg.redirects.map((r) => r.target)]) {
+    if (dataWord(w) || payload.includes(w)) continue;
     const s = secretPath(w, env);
     if (s) return s;
   }
   return null;
+}
+
+/** A word that is text or a pattern, not a path: it holds whitespace (and does not start like a path), or an alternation or group character. */
+function dataWord(w: string): boolean {
+  return (/\s/.test(w) && !/^(?:~|\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(w)) || /[|()]/.test(w);
+}
+
+// ------------------------------------------------------------------ terminal injection (r79 Addendum S3)
+
+const KEY_ANY_CASE = /^(?:enter|return|escape|esc|tab|bspace|backspace|pageup|pagedown|pgup|pgdn|c-.|m-.|ctrl-.+|alt-.+|kp.*|f[0-9]{1,2})$/i;
+const KEY_CAPITAL = new Set(["Space", "Up", "Down", "Left", "Right", "Home", "End", "Delete", "Insert"]);
+
+/** The typed payload of a terminal-injection command (`herdr pane send-keys|send-text`, `tmux send-keys`, `osascript ... keystroke`), or null. */
+export function injection(seg: ShellSegment, prog: string): { words: string[]; text: string } | null {
+  const a = seg.argv;
+  if (prog === "herdr") {
+    const i = a.findIndex((w) => w === "send-keys" || w === "send-text");
+    if (i < 0 || a[0] !== "pane") return null;
+    const pos = a.slice(i + 1).filter((w) => !w.startsWith("--"));
+    const words = pos.slice(1);
+    return { words, text: words.join(" ") };
+  }
+  if (prog === "tmux") {
+    const i = a.indexOf("send-keys");
+    if (i < 0 && !a.includes("send")) return null;
+    const words: string[] = [];
+    const rest = a.slice((i < 0 ? a.indexOf("send") : i) + 1);
+    for (let k = 0; k < rest.length; k++) {
+      if (/^-[tNcl]$/.test(rest[k]) && rest[k] !== "-l") k++;
+      else if (!rest[k].startsWith("-") || rest[k] === "-") words.push(rest[k]);
+    }
+    return { words, text: words.join(" ") };
+  }
+  if (prog === "osascript") {
+    const joined = a.join("\n");
+    if (!/keystroke|key code/i.test(joined)) return null;
+    const words: string[] = [];
+    for (const m of joined.matchAll(/keystroke\s+("(?:[^"\\]|\\.)*"|'[^']*'|\S+)/gi)) words.push(m[1].replace(/^(["'])(.*)\1$/s, "$2"));
+    if (/key code/i.test(joined)) words.push("Enter");
+    return { words, text: words.join(" ") };
+  }
+  return null;
+}
+
+/** A payload typed into a terminal is denied when a line starts with `/` (a slash command), it is 2 characters or fewer (a dialog answer) or a token is a key name. */
+function injectFloor(seg: ShellSegment, prog: string): FloorHit | null {
+  const inj = injection(seg, prog);
+  if (!inj) return null;
+  const tokens = inj.words.flatMap((w) => w.split(/\s+/)).filter(Boolean);
+  const slashLine = inj.words.some((w) => w.split(/\r?\n|\\n/).some((l) => /^\s*\//.test(l)));
+  const key = tokens.find((t) => KEY_ANY_CASE.test(t) || KEY_CAPITAL.has(t));
+  if (!slashLine && !key && inj.text.trim().length > 2) return null;
+  const why = slashLine ? "a line that starts with `/` is a slash command" : key ? `'${key}' is a key name` : "a payload of 2 characters or fewer answers a dialog";
+  return hit("terminal-inject", `Typing into another terminal pane: ${why}. Such input drives dialogs and commands of the other session, which only its owner may do. Send a full sentence of text instead.`);
 }
 
 function publishFloor(prog: string, a: string[]): string | null {
@@ -479,6 +543,9 @@ const RAW: { name: string; re: RegExp; reason: string }[] = [
   { name: "disk", re: /\bdd\b[^\n;&|]*\bof=(?:\/dev\/|\\\\\.\\)/i, reason: "`dd` to a device overwrites a disk. Write to a file inside the worktree or /tmp instead." },
   { name: "git-config", re: /(?:^|[\s;&|(=])GIT_CONFIG_(?:COUNT|KEY_[0-9]+|VALUE_[0-9]+|GLOBAL|SYSTEM|PARAMETERS)\s*=/, reason: "Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials. Run git without them." },
   { name: "git-config", re: /--config-env\b/, reason: "`--config-env` injects git config. Run git without it." },
+  // r79 Addendum S4: the profile is the owner's choice (CLI in the owner's own terminal), never an agent's
+  { name: "perms-profile", re: /PI_FOREMAN_PERMS_PROFILE\s*=|\b(?:export|declare|typeset|readonly|setenv|unset)\s+(?:-\S+\s+)*PI_FOREMAN_PERMS_PROFILE\b|\$env:PI_FOREMAN_PERMS_PROFILE\b|SetEnvironmentVariable\(\s*['"]PI_FOREMAN_PERMS_PROFILE|\benv:PI_FOREMAN_PERMS_PROFILE\b/i, reason: "The permissions profile is chosen by the owner when the session is opened; an agent never sets PI_FOREMAN_PERMS_PROFILE. Ask the user to open the session with the profile." },
+  { name: "perms-profile", re: /(?:\bforeman(?:\.(?:ps1|cmd))?\s+(?:\S+\s+)*session\s+(?:\S+\s+)*open\b|foreman_session\.py)[^\n]*--profile\b|--profile\b[^\n]*(?:\bforeman(?:\.(?:ps1|cmd))?\s+(?:\S+\s+)*session\s+(?:\S+\s+)*open\b|foreman_session\.py)/, reason: "`--profile` of `foreman session open` is the owner's choice and only the owner runs it, in their own terminal. Open the session without it." },
 ];
 
 /** Floors that need the raw text only: specific enough to apply to every shell line (a download piped into a shell, privilege, power, disk, injected git config). */
@@ -491,38 +558,87 @@ export function rawFloors(text: string): FloorHit | null {
 const rawWords = (text: string): string[] => text.toLowerCase().split(/[\s'"`=;&|()<>]+/).filter(Boolean);
 
 /**
- * Floors on the raw text of a line the walker could not state exactly (opaque segment or parse error): a floor pattern anywhere in the text
- * denies, so obfuscation reaches a review or a deny, never a default allow.
+ * Floors on the raw text of a line the walker could not state exactly (opaque segment or parse error). A word match on a git push, a git config
+ * key, a remote change, a force push or a protected branch is an ASK (r79 item 4, Addendum S1): the text may be quoted prose, so it is the owner's
+ * call, never a deny and never the classifier's. A package publish or a removal of the root stays a deny. Obfuscation reaches the owner or a deny,
+ * never a default allow and never the mode step.
  */
 export function opaqueTextFloors(text: string, env: FloorEnv): FloorHit | null {
   const lower = text.toLowerCase();
   if (/\bgit\b/.test(lower)) {
-    if (env.child && /\bpush\b/.test(lower)) return hit("git-push-child", "The unparsed line looks like a git push. Children never push; the foreman pushes.");
+    if (env.child && /\bpush\b/.test(lower)) return askHit("git-push-child", "The unparsed line looks like a git push. Children never push; the foreman pushes.");
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
-    if (key !== undefined) return hit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses. Run a plain, literal command.`);
-    if (/\bremote\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(lower)) return hit("git-config", "The unparsed line changes a git remote. Run a plain, literal command; ask the user to change remotes.");
-    if (/\bpush\b/.test(lower) && /(?:\s--(?:force|force-with-lease|force-if-includes|mirror|delete|prune|all)\b|\s-[a-z]*[fd][a-z]*\b|\s\+\S|\s:\S)/.test(lower)) return hit("git-push-force", "The unparsed line looks like a force, delete, mirror or colon-refspec push. Push your own branch explicitly: `git push -u origin <your-branch>`.");
+    if (key !== undefined) return askHit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`);
+    if (/\bremote\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(lower)) return askHit("git-config", "The unparsed line changes a git remote.");
+    if (/\bpush\b/.test(lower) && /(?:\s--(?:force|force-with-lease|force-if-includes|mirror|delete|prune|all)\b|\s-[a-z]*[fd][a-z]*\b|\s\+\S|\s:\S)/.test(lower)) return askHit("git-push-force", "The unparsed line looks like a force, delete, mirror or colon-refspec push.");
     const prot = [...protectedSet(env)].find((b) => new RegExp(`\\bpush\\b[^\\n;&|]*\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
-    if (prot !== undefined) return hit("git-push-protected", `The unparsed line pushes '${prot}', a default or protected branch. Push your own branch explicitly: \`git push -u origin <your-branch>\`.`);
+    if (prot !== undefined) return askHit("git-push-protected", `The unparsed line pushes '${prot}', a default or protected branch.`);
   }
   if (/\b(?:npm|pnpm|yarn|bun|cargo|twine|gem|poetry)\s+(?:\S+\s+)*(?:publish|upload|push)\b/.test(lower)) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.");
   if (new RegExp(`${CMD}rm\\s+(?:-\\S+\\s+)*(?:--\\s+)?(?:/|~|\\$HOME|\\$\\{HOME\\})/?\\*?(?:\\s|$)`).test(text)) return hit("rm-system", "Removing the file system root or the home directory is never allowed.");
   return null;
 }
 
-/** The floors of a parsed shell line: raw-text floors, the opaque-line scan, then every segment. */
+/**
+ * `text` with the content of its quoted strings blanked: single quotes and `$'..'` always (nothing expands there), double quotes unless the
+ * string holds a `$(`, `${` or backtick (those run). Only used for lines whose every segment is a data program (see DATA_PROGS), where a quoted
+ * argument is text for the program, not a command line.
+ */
+export function maskQuoted(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\") {
+      out += c + (text[i + 1] ?? "");
+      i++;
+    } else if (c === "'" || (c === "$" && text[i + 1] === "'")) {
+      const open = c === "$" ? i + 1 : i;
+      const end = text.indexOf("'", open + 1);
+      if (end < 0) return out + text.slice(i);
+      out += "''";
+      i = end;
+    } else if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      if (j >= text.length) return out + text.slice(i);
+      const inner = text.slice(i + 1, j);
+      out += /\$\(|\$\{|`/.test(inner) ? text.slice(i, j + 1) : '""';
+      i = j;
+    } else out += c;
+  }
+  return out;
+}
+
+/** Programs whose quoted arguments are text, not a command line: output, search, paging and git (whose `-c` overrides are floored on the parsed argv). */
+const DATA_PROGS = new Set(["echo", "printf", "grep", "egrep", "fgrep", "rg", "git", "cat", "head", "tail", "wc", "ls", "jq", "cut", "sort", "uniq", "tr", "tee", "true", "test", "[", "herdr"]);
+
+function dataLine(segments: ShellSegment[]): boolean {
+  return segments.length > 0 && segments.every((s) => s.wrappers.length === 0 && DATA_PROGS.has(base(s.program)) && !(base(s.program) === "git" && s.argv.some((w) => /^-c|^--config/.test(w))));
+}
+
+/**
+ * The floors of a parsed shell line (r79): raw-text floors (quoted strings of a data-program line are blanked first: pinned steward cases 1 and 2),
+ * every segment (a deny), then the opaque-line scan, whose hits are asks. A deny of any kind wins over an ask.
+ */
 export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
-  const raw = rawFloors(text);
+  const data = dataLine(segments);
+  const scan = data ? maskQuoted(text) : text;
+  const raw = rawFloors(scan);
   if (raw) return raw;
+  // a quoted assignment runs inside `bash -c '...'`: the profile floor reads the unmasked text
+  const profile = RAW.find((r) => r.name === "perms-profile" && r.re.test(text));
+  if (profile) return hit(profile.name, profile.reason);
+  let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
-    const o = opaqueTextFloors(text, env) ?? opaqueProtected(text, env);
-    if (o) return o;
+    const o = opaqueTextFloors(scan, env) ?? opaqueProtected(text, env);
+    if (o?.kind === "deny") return o;
+    pending = o;
   }
   for (const s of segments) {
     const h = segmentFloors(s, env, segments);
     if (h) return h;
   }
-  return null;
+  return pending;
 }
 
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
@@ -601,21 +717,20 @@ function covers(e: Protected, g: string, f: string): boolean {
 /** Policy files of every layer and the harness state files. */
 function protectedEntries(env: FloorEnv): Protected[] {
   const out: Protected[] = [];
-  if (env.pkgRoot) out.push({ p: path.join(env.pkgRoot, "config", "permissions.policy.md"), tree: false });
+  // r79 item 4: policy.md and permissions.policy.md are no longer read, so no longer protected; the three permissions.json files are
   for (const a of agentDirs(env)) {
     const s = path.join(a, "pi-foreman");
-    for (const f of ["policy.md", "managed.json", "state/round-parents.json", "state/bridge-trust.json"]) out.push({ p: path.join(s, f), tree: false });
+    for (const f of ["permissions.json", "managed.json", "state/round-parents.json", "state/bridge-trust.json"]) out.push({ p: path.join(s, f), tree: false });
     for (const d of ["state/approvals", "state/gate", "state/child-asks"]) out.push({ p: path.join(s, d), tree: true });
     out.push({ p: path.join(a, "sessions"), tree: true, ext: ".jsonl" });
   }
   if (env.sessionDir) out.push({ p: env.sessionDir, tree: false, ext: ".jsonl", flat: true });
-  out.push({ p: path.join(env.cwd, ".workflow", "policy.md"), tree: false });
-  for (const f of env.policyFiles ?? []) {
-    const r = f.startsWith("~") ? resolveWord(f, env.cwd, env) : path.resolve(env.cwd, f);
-    if (r) out.push({ p: r, tree: false });
-  }
+  for (const d of [".workflow", ".pi"]) out.push({ p: path.join(env.cwd, d, "permissions.json"), tree: false });
   return out;
 }
+
+/** A `permissions.json` directly below a `.workflow` or `.pi` dir, wherever that is (the main checkout's file is reached from a worktree too). */
+const PERMS_BASENAME = /(?:^|\/)\.(?:workflow|pi)\/permissions\.json$/i;
 
 const globRe = (g: string, fold: boolean): RegExp => new RegExp(`^${g.replace(/[.+^${}()|\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")}$`, fold ? "i" : "");
 
@@ -624,7 +739,7 @@ function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protec
   const w = slash(word.replace(/^(['"])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w) ?? /^[A-Za-z_]\w*=(.+)$/.exec(w);
   for (const x of m ? [w, m[1]] : [w]) {
-    if (!x || /\s/.test(x)) continue;
+    if (!x || /\s/.test(x) || /[|()]/.test(x)) continue;
     let v = x;
     if (/^(~|\$HOME|\$\{HOME\})(\/|$)/.test(v)) {
       if (!env.home) continue;
@@ -645,11 +760,12 @@ function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protec
     const mine = formsOf(abs, env);
     const found = entries.find((e) => formsOf(e.p, env).some((g) => mine.some((f) => covers(e, g, f))));
     if (found) return found.p;
+    if (mine.some((f) => PERMS_BASENAME.test(f))) return abs;
   }
   return null;
 }
 
-const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a policy file or a harness state file (policy.md of any layer, managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate, state/child-asks) or a Pi session file (*.jsonl under the sessions dir). Ask the user to change it.`);
+const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a permissions file (permissions.json of the user, the project's .workflow or the tracked .pi), a harness state file (managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate, state/child-asks) or a Pi session file (*.jsonl under the sessions dir). Ask the user to change it.`);
 const configHit = (what: string, word: string): FloorHit => hit("config-keys", `${what} the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${word.slice(0, 120)}'. The agent never changes these keys. Ask the user to change them.`);
 
 const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
@@ -679,14 +795,24 @@ function copySourceWords(seg: ShellSegment, prog: string): Set<string> {
   return out;
 }
 
-const lineWords = (line: ShellSegment[]): string[] => line.flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]);
+const INTERPRETERS = new Set(["python", "python2", "python3", "node", "nodejs", "bun", "deno", "perl", "ruby", "php", "lua", "rscript"]);
+/** Code that writes, runs or removes something: a snippet with none of these is read-only. */
+const WRITEISH = /\b(?:write|writelines|writeFile\w*|appendFile\w*|dump|dumps?_to|truncate|unlink|remove|rename|replace|rmtree|copy\w*|move|chmod|chown|system|popen|exec\w*|eval|subprocess|spawn\w*|fork|mkdir|touch|rm)\b|open\([^)]*['"][^'"]*[wxa+]|(?:^|[^=!<>-])>(?!=)|\bsed\s+-i/;
 
-/** Floor: a shell write to a policy file or harness state file, or to a foreman config file in a line that carries a floored key. */
+/** The words of the line that can carry a floored config key; the code of a read-only interpreter snippet is not one (pinned steward case 6). */
+function lineKeyWords(line: ShellSegment[]): string[] {
+  return line.flatMap((s) => {
+    const ws = [s.program, ...s.argv, ...s.redirects.map((r) => r.target)];
+    return INTERPRETERS.has(base(s.program)) && s.opaque === null ? ws.filter((w) => !(/\s/.test(w) && !WRITEISH.test(w))) : ws;
+  });
+}
+
+/** Floor: a shell write to a permissions file or harness state file, or to a foreman config file in a line that carries a floored key. */
 function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: ShellSegment[]): FloorHit | null {
   const cwd = seg.cwd ?? env.cwd;
   const entries = protectedEntries(env);
-  const keys = lineWords(line).some((w) => FLOOR_KEYS.test(w));
-  const configWord = (w: string): boolean => keys && CONFIG_FILE.test(slash(resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env) ?? w));
+  const keys = lineKeyWords(line).some((w) => FLOOR_KEYS.test(w));
+  const configWord = (w: string): boolean => keys && !dataWord(w) && CONFIG_FILE.test(slash(resolveWord(w.replace(/^[^=/]*=/, ""), cwd, env) ?? w));
   for (const r of seg.redirects) {
     if (r.op === "<" || r.op === "dup") continue;
     if (protectedWord(r.target, cwd, env, entries)) return protHit("This shell redirect writes", r.target);
@@ -702,15 +828,15 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
   return null;
 }
 
-/** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word denies. */
+/** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1). */
 function opaqueProtected(text: string, env: FloorEnv): FloorHit | null {
   const entries = protectedEntries(env);
   const words = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "").split(/[\s;&|<>(){},]+/).filter(Boolean);
   const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
-  if (w !== undefined) return protHit("The unparsed line names", w);
+  if (w !== undefined) return askHit("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`);
   if (FLOOR_KEYS.test(text)) {
     const c = words.find((x) => CONFIG_FILE.test(x));
-    if (c !== undefined) return configHit("The unparsed line names a file next to", c);
+    if (c !== undefined) return askHit("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`);
   }
   return null;
 }

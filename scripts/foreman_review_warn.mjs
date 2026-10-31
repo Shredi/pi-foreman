@@ -1,6 +1,6 @@
-// The no-review-model warning for `foreman setup` (ledger item 26): bin/foreman runs this after a successful setup.
+// The no-classifier-model warning for `foreman setup` (ledger item 26): bin/foreman runs this after a successful setup.
 // It reads the user foreman.json of the agent dir and prints the same text as `foreman doctor` (reviewwarn.ts) for each
-// provider that has no review rung (gateReviewTarget); nothing when every provider has one. There is no model registry on
+// provider that has no classifier rung (classifierTarget); nothing when every provider has one. There is no model registry on
 // the command line, so every model the role map names counts as present.
 // Usage (Node >= 22.6): node --no-warnings --experimental-strip-types scripts/foreman_review_warn.mjs [setup args]
 import * as fs from "node:fs";
@@ -22,8 +22,8 @@ export function agentDirOf(args, env = process.env) {
 
 /** The WARN lines for the user config of `agentDir`. */
 export async function reviewWarnLines(agentDir) {
-  const { gateReviewTarget } = await adapter("gatereview.ts");
-  const { noReviewModelText } = await adapter("reviewwarn.ts");
+  const { classifierTarget } = await adapter("classifier.ts");
+  const { noClassifierModelText } = await adapter("reviewwarn.ts");
   let config;
   try {
     config = JSON.parse(fs.readFileSync(path.join(agentDir, "foreman.json"), "utf8"));
@@ -32,7 +32,7 @@ export async function reviewWarnLines(agentDir) {
   }
   const registry = { find: () => ({}) };
   const names = Object.keys(config?.providers && typeof config.providers === "object" ? config.providers : {});
-  return (names.length ? names : [undefined]).filter((p) => !gateReviewTarget(config, p, registry)).map((p) => `WARN ${noReviewModelText(p)}`);
+  return (names.length ? names : [undefined]).filter((p) => !classifierTarget(config, p, registry)).map((p) => `WARN ${noClassifierModelText(p)}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
