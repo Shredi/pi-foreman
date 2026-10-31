@@ -120,6 +120,7 @@ import { ChildWidget, rungOf } from "./childwidget.ts";
 import type { BackgroundRow } from "./childwidget.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
+import { OpenPrsRefresher, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate, overIdleFloor } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
@@ -234,6 +235,7 @@ interface Session {
   /** Set when the permission system cannot be resolved: child launches are refused. */
   /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
   overlay: OverlayRules | null;
+  openPrs: OpenPrsRefresher | null;
   /** Child only: realpaths of the skills its role names (skilldirs.ts), resolved once. */
   skillDirs?: Promise<string[]>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
@@ -862,6 +864,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }),
       prWidget: new PrWidget({ views: () => s.prDots.views(), shared: () => s.prBot.read(), current: () => s.prDots.currentRepo() }),
       live: null,
+      openPrs: null,
       pressureSampler: null,
       pressureQ: null,
     };
@@ -882,7 +885,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? [...x.prDots.dots().map((d) => ({ n: d.n, state: d.state, label: d.label ?? `#${d.n}`, src: "pr" as const })), ...x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const }))] : []; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? [...x.prDots.dots().map((d) => ({ n: d.n, state: d.state, label: d.label ?? `#${d.n}`, src: "pr" as const, ...(d.url ? { url: d.url } : {}) })), ...x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const }))] : []; });
+      s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd) });
+      s.openPrs.start();
       const live = s.live;
       waits.onChange(id, () => {
         live?.touch();
@@ -1331,6 +1336,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sweepScratch(s);
     closeChildAsks(s);
     s.live?.stop();
+    s.openPrs?.stop();
     s.pressureSampler?.stop();
     s.widget.dispose();
     usageFooter.drop(s.id);

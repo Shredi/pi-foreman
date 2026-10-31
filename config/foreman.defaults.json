@@ -81,7 +81,7 @@
     ]
   },
   "sync": { "repos": [], "runRetro": true },
-  "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8 },
+  "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": false, "refreshSeconds": 900, "mine": true, "authors": [], "scope": [] } },
   "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent", "remote-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },

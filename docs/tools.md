@@ -408,6 +408,11 @@ sources {notifications: ok|fallback|off, events: ok|off}, review [{host, repo, n
 100 touched. Readers check the mtime, accept at most 128 KB, apply a strict shape check and the URL rule, and treat an
 unparseable file as absent. No token, login or credential is written to either file.
 
+A third file, `<agentDir>/pi-foreman/state/open-prs.json`, is the cache of the optional Open PRs search (`radar.openPrs`, off by
+default; see [herdr](herdr.md#open-prs)). It is written through a temporary file under an exclusive lock by whichever session
+refreshes first, at most every `radar.openPrs.refreshSeconds`; `foreman radar --json` only reads it. It holds PR titles, URLs,
+authors and check states, no credential.
+
 Failure: a rate limit (rate-limit text, 403, 429, a GraphQL `RATE_LIMITED`) or three failures in a row double that source's
 interval up to 30 minutes and set `degraded`. A missing host CLI or login (`pr_host_missing`, `pr_auth_missing`) halts the
 leader and releases the lease (`stopped`).

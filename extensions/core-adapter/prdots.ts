@@ -20,6 +20,8 @@ export interface PrDot {
   state: DotState;
   /** `owner/name#n` cut to 20 characters; only for a PR of another repository (the sidebar shows `#n` otherwise). */
   label?: string;
+  /** The https PR page URL, when the host answer carried one for this repository. */
+  url?: string;
 }
 
 export const MIN_INTERVAL_S = 30;
@@ -466,6 +468,7 @@ export class PrDots {
       if (!s) return [];
       const d: PrDot = { n: k.n, state: this.halted ? "none" : s.state };
       if (this.isForeign(k)) d.label = this.labelOf(k).slice(0, MAX_LABEL);
+      if (s.view?.url) d.url = s.view.url;
       return [d];
     });
   }

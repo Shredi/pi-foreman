@@ -51,6 +51,11 @@ strings and fix any hit.
 - Prefer recoverable deletes (trash) over `rm`.
 - Probe destructive commands with `echo`, never with test inputs.
 
+## Verifying changes
+
+- When a change cannot be checked directly (UI, terminal output, sidebar, dialogs), the foreman verifies it live in a fresh Pi window it drives remotely (a Herdr pane or an herdr-app terminal). If the harness lacks support for that, build the support; do not work around it.
+- A bug found in the PR tracker or another harness tool gets its own fix session at once (`foreman session open`), not a workaround inside the current task.
+
 ## Working notes
 
 Notes and ledgers live in `.workflow/` (gitignored).

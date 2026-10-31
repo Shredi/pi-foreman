@@ -16,6 +16,8 @@ const WRITE_GAP_MS = 1000;
 const MAX_RUNS = 20;
 const MAX_WAITS = 20;
 const MAX_DOTS = 14;
+/** An https URL of URL characters only: no whitespace, control characters or `" ' < > ^ | & \` and backtick. */
+const SAFE_DOT_URL = /^https:\/\/[A-Za-z0-9][A-Za-z0-9\-._~:/?#[\]@!$()*+,;=%]*$/;
 
 export type LiveMode = "tui" | "rpc" | "json" | "print";
 export type LiveStateName = "working" | "blocked" | "waiting" | "idle" | "done";
@@ -45,6 +47,8 @@ export interface LiveDot {
   state: "fail" | "run" | "ok" | "none";
   label: string;
   src: "pr" | "ext";
+  /** The https PR page URL of a `pr` dot; omitted when unknown or not https. */
+  url?: string;
 }
 
 export interface LiveRun {
@@ -272,7 +276,7 @@ export class LiveState {
   private dotList(): LiveDot[] {
     try {
       const states = ["fail", "run", "ok", "none"];
-      return (this.dotsOf?.() ?? []).filter((d) => states.includes(d.state)).slice(0, MAX_DOTS).map((d) => ({ n: d.src === "pr" && Number.isInteger(d.n) ? d.n : null, state: d.state, label: short(String(d.label), 20), src: d.src === "pr" ? "pr" : "ext" }));
+      return (this.dotsOf?.() ?? []).filter((d) => states.includes(d.state)).slice(0, MAX_DOTS).map((d) => ({ n: d.src === "pr" && Number.isInteger(d.n) ? d.n : null, state: d.state, label: short(String(d.label), 20), src: d.src === "pr" ? "pr" : "ext", ...(d.src === "pr" && typeof d.url === "string" && d.url.length <= 2048 && SAFE_DOT_URL.test(d.url) ? { url: d.url } : {}) }));
     } catch {
       return []; // dots are best effort
     }
