@@ -64,10 +64,12 @@ sends pi-intercom's `send --to <uuid>@<machine>`. Parent SSH calls share one con
 herdr-core (`sessions.backend`, user or overlay config only): a local `open` picks `herdr` (above) when HERDR_PANE_ID is set,
 else `hc` when HC_TERMINAL_ID is set and `hc` (PATH or HC_BIN) is found, else prints the command. `sessions.backend` can be
 `auto` (default), `herdr`, `hc` or `terminal`; a forced backend that cannot run is refused [backend_unavailable]. The hc backend
-runs `hc run --json --bg --no-notify --cwd D --name fm-<slug>-<hex> [--outlive-parent] -- env -u HERDR_ENV -u HERDR_PANE_ID
+runs `hc run --json --bg --no-notify --keep --cwd D --name fm-<slug>-<hex> [--outlive-parent] [--label herdr.space=S
+--label herdr.tab=tb<hex>] -- env -u HERDR_ENV -u HERDR_PANE_ID
 PATH=<opener PATH> K=V... pi ...` (argv, no shell; PowerShell on Windows). --no-notify is not configurable: hc would otherwise type
 the child's notes into the parent's terminal. `sessions.hc.outliveParent` (default true) keeps the child alive when its
-parent terminal ends. --focus is ignored under hc; `--machine` keeps the SSH path.
+parent terminal ends. --keep is always passed (no key): the terminal survives core loss and reboot. When the opener's terminal
+(`hc get`) carries a `herdr.space` label the child gets that space and a fresh tab id, so it shows in its own tab. --focus is ignored under hc; `--machine` keeps the SSH path.
 
 Exit codes: 0 ok, 1 usage or refused, 2 Herdr or hc failure.
 """
@@ -90,11 +92,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\Z")
 # Ids and model names (argv values that end up in the pane command).
 VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,200}\Z")
+HC_SPACE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 # Paths in the pane command: no quotes (also typographic ones, which PowerShell treats as quotes), no shell or
 # PowerShell metacharacters, no control chars.
 PATH_BAD = re.compile(r"[\x00-\x1f\x7f\u2018-\u201e'\"`$;|&<>(){}\[\]*?!#%^,]")
@@ -458,10 +462,30 @@ def hc_child_argv(env, model, prompt, first, platform, path):
             + (["--model", model] if model else []) + list(first) + [prompt])
 
 
-def hc_run_args(name, cwd, child_argv, outlive):
-    """Arguments of `hc run`. --no-notify always: hc would otherwise type the child's notes into the parent's terminal."""
-    return (["run", "--json", "--bg", "--no-notify", "--cwd", str(cwd), "--name", name] + (["--outlive-parent"] if outlive else [])
-            + ["--"] + list(child_argv))
+def hc_run_args(name, cwd, child_argv, outlive, space=None, tab=None):
+    """Arguments of `hc run`. --no-notify always: hc would otherwise type the child's notes into the parent's terminal.
+    --keep always: the terminal survives core loss and reboot. With a space and tab the herdr labels give it its own tab."""
+    labels = ["--label", "herdr.space=" + space, "--label", "herdr.tab=" + tab] if space and tab else []
+    return (["run", "--json", "--bg", "--no-notify", "--keep", "--cwd", str(cwd), "--name", name]
+            + (["--outlive-parent"] if outlive else []) + labels + ["--"] + list(child_argv))
+
+
+def hc_parent_space(binary, terminal):
+    """The `herdr.space` label of the opener's hc terminal, else None (no terminal, hc failure, missing or odd label)."""
+    if not isinstance(terminal, str) or not VALUE_RE.match(terminal):
+        return None
+    try:
+        labels = hc(binary, ["get", terminal, "--json"]).get("labels")
+    except HcError:
+        return None
+    space = labels.get("herdr.space") if isinstance(labels, dict) else None
+    return space if isinstance(space, str) and HC_SPACE_RE.match(space) else None
+
+
+def hc_placement(binary, terminal):
+    """(space, tab) for a child's own tab in the opener's space; (None, None) when the opener carries no space."""
+    space = hc_parent_space(binary, terminal)
+    return (space, "tb" + uuid.uuid4().hex) if space else (None, None)
 
 
 def hc(binary, args, timeout=HC_TIMEOUT):
@@ -484,10 +508,11 @@ def hc(binary, args, timeout=HC_TIMEOUT):
     return data
 
 
-def open_in_hc(binary, name, cwd, child_argv, outlive):
-    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive))
+def open_in_hc(binary, name, cwd, child_argv, outlive, space=None, tab=None):
+    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive, space, tab))
     parent = reply.get("parent")
-    return {"address": reply["address"], "parent": parent if isinstance(parent, str) and VALUE_RE.match(parent) else None}
+    return {"address": reply["address"], "parent": parent if isinstance(parent, str) and VALUE_RE.match(parent) else None,
+            "space": space, "tab": tab}
 
 
 def dig(data, *keys):
@@ -780,6 +805,7 @@ def open_session(p, remote=None):
         backend, binary = backend_of(scfg, os.environ)
     child_argv = hc_child_argv(env, model, prompt, first, host_platform(), os.environ.get("PATH", "")) if backend == "hc" else None
     outlive = hc_outlive_parent(scfg)
+    space, tab = hc_placement(binary, os.environ.get("HC_TERMINAL_ID")) if backend == "hc" else (None, None)
     say("handoff: %s" % handoff)
     say("child intercom id: %s" % child)
     if model:
@@ -789,7 +815,7 @@ def open_session(p, remote=None):
     info = {"handoff": str(handoff), "child": child}
     if p["dry_run"]:  # writes nothing: no handoff dir, brief, parent, child or registry entry
         if backend == "hc":
-            say("dry run: would run under herdr-core:\n  %s" % json.dumps([binary] + hc_run_args(hc_name(child), cwd, child_argv, outlive)))
+            say("dry run: would run under herdr-core:\n  %s" % json.dumps([binary] + hc_run_args(hc_name(child), cwd, child_argv, outlive, space, tab)))
         elif backend == "herdr":
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
@@ -822,7 +848,7 @@ def open_session(p, remote=None):
     code = 0
     if backend == "hc":
         try:
-            made = open_in_hc(binary, hc_name(child), cwd, child_argv, outlive)
+            made = open_in_hc(binary, hc_name(child), cwd, child_argv, outlive, space, tab)
             entry.update(backend="hc", hc=made, status="open")
             say("opened under herdr-core: %s (%s)" % (made["address"], "parent %s" % made["parent"] if made["parent"]
                                                       else "not nested: no parent terminal"))
