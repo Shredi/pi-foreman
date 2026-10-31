@@ -14,7 +14,9 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 type Entry = { type: "custom"; customType: string; data: unknown };
 
 export const PLAN = "# Widget\n\n## Goal\nShip it.\n";
-const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PARENT_INTERCOM", "HERDR_PANE_ID", "HERDR_ENV", "PI_FOREMAN_PLAN_PHASE"];
+// The session variables are the shared list (session-env.json); PI_FOREMAN_PYTHON is added here, the preload keeps it.
+const SESSION = JSON.parse(fs.readFileSync(new URL("./session-env.json", import.meta.url), "utf8")) as { keys: string[] };
+export const KEYS = [...SESSION.keys, "PI_FOREMAN_PYTHON"];
 export const tick = (ms = 25) => new Promise((r) => setTimeout(r, ms));
 let n = 0;
 

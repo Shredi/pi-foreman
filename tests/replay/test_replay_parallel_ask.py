@@ -29,20 +29,55 @@ def is_stop(e):
     return e["event"] == "guard" and e.get("toolFamily") == "Stop"
 
 
-def stop_after_child_scratch(golden):
-    """The golden foreman list with the one post-reply Stop guard moved to directly after the child_scratch that follows it."""
-    reply = next(i for i, e in enumerate(golden) if e["event"] == "supervisor_request" and e.get("decision") == "replied")
-    stop = next(i for i in range(reply, len(golden)) if is_stop(golden[i]))
-    scratch = next(i for i in range(stop, len(golden)) if golden[i]["event"] == "child_scratch")
-    assert not any(is_stop(e) or e["event"] == "child_scratch" for e in golden[reply:stop]), "unexpected golden shape"
-    return golden[:stop] + golden[stop + 1:scratch + 1] + [golden[stop]] + golden[scratch + 1:]
+def relocate_post_reply_stop(events):
+    """The one Stop guard after the supervisor reply, placed directly before the first child_scratch after it. The reply
+    wakes the child and ends the foreman's turn at the same moment, so the Stop is written concurrently with the
+    children's records and may land after that child_scratch, between the two results, or after both."""
+    reply = next((i for i, e in enumerate(events) if e["event"] == "supervisor_request" and e.get("decision") == "replied"), None)
+    if reply is None:
+        return events
+    stop = next((i for i in range(reply, len(events)) if is_stop(events[i])), None)
+    scratch = next((i for i in range(reply, len(events)) if events[i]["event"] == "child_scratch"), None)
+    if stop is None or scratch is None or stop < scratch:
+        return events
+    return events[:scratch] + [events[stop]] + events[scratch:stop] + events[stop + 1:]
 
 
-def allowed_foreman_orders(golden):
-    """The two orderings the foreman trace may have. The supervisor reply wakes the child and ends the foreman's turn
-    at the same moment, so the foreman's Stop guard and the child's child_scratch are written concurrently; both
-    orders are correct behaviour: (a) the golden as is, (b) the Stop guard right after the child_scratch."""
-    return [golden, stop_after_child_scratch(golden)]
+def split_streams(events):
+    """(foreman's own records, child_scratch/role_result records). The two streams are written by different processes
+    and the product promises no order between them; only each stream's own order and the causal checks are compared."""
+    own = settle_between_results(relocate_post_reply_stop(events))
+    child = {"child_scratch", "role_result"}
+    return [e for e in own if e["event"] not in child], [e for e in own if e["event"] in child]
+
+
+def causal_problems(events):
+    """Order guarantees that really hold between the streams: open < replied < first child_scratch, and a Stop after the last role_result."""
+    names = [(e["event"], e.get("decision")) for e in events]
+    problems = []
+    opened = names.index(("supervisor_request", "open")) if ("supervisor_request", "open") in names else None
+    replied = names.index(("supervisor_request", "replied")) if ("supervisor_request", "replied") in names else None
+    scratch = next((i for i, n in enumerate(names) if n[0] == "child_scratch"), None)
+    results = [i for i, n in enumerate(names) if n[0] == "role_result"]
+    if opened is None or replied is None or opened > replied:
+        problems.append("supervisor open does not precede replied")
+    if replied is not None and scratch is not None and scratch < replied:
+        problems.append("child_scratch before the supervisor reply")
+    if not results or not any(is_stop(e) for e in events[results[-1] + 1:]):
+        problems.append("no Stop after the last role_result")
+    return problems
+
+
+def stream_problems(events, golden):
+    """Everything wrong with a foreman trace against the golden: causal violations and per-stream differences."""
+    problems = causal_problems(events)
+    own, child = split_streams(events)
+    want_own, want_child = split_streams(golden)
+    if own != want_own:
+        problems.append("foreman's own records differ from the golden")
+    if child != want_child:
+        problems.append("child_scratch/role_result records differ from the golden")
+    return problems
 
 
 def finished(traces, foreman_key):
@@ -96,15 +131,15 @@ class TestParallelAsk(ReplayCase):
         # ledger item 26: both role launches are allowed by the gate default `default-role-launch`, with no review call (the golden has no review records)
         rules = [r.get("rule") for r in raw if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]
         self.assertEqual(rules, ["default-role-launch", "default-role-launch"], rules)
-        foreman = settle_between_results(shape(raw))
+        foreman = shape(raw)
         children = sorted((shape(v) for v in t.values() if v and v[0].get("role") == "child"), key=repr)
         self.assertEqual(len(children), 2, "adapter did not load in both children")
         sup = [r["decision"] for r in foreman if r["event"] == "supervisor_request"]
         self.assertEqual(sup, ["open", "replied"])
         if os.environ.get("FOREMAN_REPLAY_UPDATE_GOLDEN") == "1":
-            self.golden("parallel_ask", {"foreman": foreman, "children": children})
+            self.golden("parallel_ask", {"foreman": settle_between_results(relocate_post_reply_stop(foreman)), "children": children})
         want = json.loads((Path(__file__).resolve().parent / "golden" / "parallel_ask.json").read_text("utf-8"))
-        self.assertIn(foreman, allowed_foreman_orders(want["foreman"]))
+        self.assertEqual(stream_problems(foreman, want["foreman"]), [])
         self.assertEqual(children, want["children"])
 
 
@@ -118,23 +153,48 @@ class TestAllowedOrders(unittest.TestCase):
     RR = {"event": "role_result"}
     GOLDEN = [TURN, S, OPEN, REPLIED, LLM, TURN, S, CS, RR, CS, RR, TURN, S]
 
-    def test_variant_moves_only_the_post_reply_stop(self):
-        want = [self.TURN, self.S, self.OPEN, self.REPLIED, self.LLM, self.TURN, self.CS, self.S, self.RR, self.CS, self.RR, self.TURN, self.S]
-        self.assertEqual(stop_after_child_scratch(self.GOLDEN), want)
+    def problems(self, trace):
+        return stream_problems(trace, self.GOLDEN)
 
-    def test_golden_matches_first_ordering(self):
-        self.assertEqual(allowed_foreman_orders(self.GOLDEN)[0], self.GOLDEN)
+    def test_golden_matches_itself(self):
+        self.assertEqual(self.problems(self.GOLDEN), [])
 
-    def test_stop_moved_across_turn_llm_or_request_matches_neither(self):
-        S, T, L, O, R = self.S, self.TURN, self.LLM, self.OPEN, self.REPLIED
+    def test_post_reply_stop_after_child_scratch_or_between_results_or_after_both_is_accepted(self):
+        T, S, O, R, L, CS, RR = self.TURN, self.S, self.OPEN, self.REPLIED, self.LLM, self.CS, self.RR
+        orders = {
+            "after child_scratch": [T, S, O, R, L, T, CS, S, RR, CS, RR, T, S],
+            "between results (observed on CI)": [T, S, O, R, L, T, CS, RR, S, CS, RR, T, S],
+            "after both results": [T, S, O, R, L, T, CS, RR, CS, RR, S, T, S],
+            "wake between results": [T, S, O, R, L, T, CS, RR, S, L, T, S, CS, RR, T, S],
+        }
+        for name, trace in orders.items():
+            with self.subTest(order=name):
+                self.assertEqual(self.problems(trace), [])
+
+    def test_stop_moved_across_turn_llm_or_request_still_fails(self):
+        S, T, L, O, R, CS, RR = self.S, self.TURN, self.LLM, self.OPEN, self.REPLIED, self.CS, self.RR
         moved = {
-            "turn": [T, S, O, R, L, S, T, self.CS, self.RR, self.CS, self.RR, T, S],
-            "llm": [T, S, O, R, S, L, T, self.CS, self.RR, self.CS, self.RR, T, S],
-            "supervisor_request": [T, S, O, S, R, L, T, self.CS, self.RR, self.CS, self.RR, T, S],
+            "turn": [T, S, O, R, L, S, T, CS, RR, CS, RR, T, S],
+            "llm": [T, S, O, R, S, L, T, CS, RR, CS, RR, T, S],
+            "supervisor_request": [T, S, O, S, R, L, T, CS, RR, CS, RR, T, S],
         }
         for name, trace in moved.items():
             with self.subTest(moved_across=name):
-                self.assertNotIn(trace, allowed_foreman_orders(self.GOLDEN))
+                self.assertNotEqual(self.problems(trace), [])
+
+    def test_replied_after_a_child_scratch_fails(self):
+        T, S, O, R, L, CS, RR = self.TURN, self.S, self.OPEN, self.REPLIED, self.LLM, self.CS, self.RR
+        self.assertIn("child_scratch before the supervisor reply",
+                      self.problems([T, S, O, CS, R, L, T, S, RR, CS, RR, T, S]))
+
+    def test_missing_stop_after_the_last_result_fails(self):
+        T, S, O, R, L, CS, RR = self.TURN, self.S, self.OPEN, self.REPLIED, self.LLM, self.CS, self.RR
+        self.assertIn("no Stop after the last role_result",
+                      self.problems([T, S, O, R, L, T, S, CS, RR, CS, RR, T]))
+
+    def test_missing_child_records_fail(self):
+        T, S, O, R, L, CS, RR = self.TURN, self.S, self.OPEN, self.REPLIED, self.LLM, self.CS, self.RR
+        self.assertNotEqual(self.problems([T, S, O, R, L, T, S, CS, RR, T, S]), [])
 
 
 if __name__ == "__main__":
