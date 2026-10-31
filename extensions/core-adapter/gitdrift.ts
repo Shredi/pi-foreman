@@ -414,7 +414,7 @@ const BRANCH_TRACKING = /^branch\..+\.(remote|merge)$/;
 
 /**
  * An added or changed branch.<b>.merge / branch.<b>.remote key that `worktree add -b`, `push -u` or
- * `checkout -b` write: merge only as refs/heads/<b> (<b> = the section name); remote only as a name
+ * `checkout -b` write: merge only as refs/heads/<any name> while branch.<b>.remote names a safe remote; remote only as a name
  * whose remote.<name>.url is present in both snapshots with an unchanged hash (a URL or path value
  * has no such key). Raw values come from the `after` snapshot, in memory only.
  */
@@ -423,10 +423,22 @@ function routineTracking(key: string, a: FileSnap, b: FileSnap): boolean {
   const vals = b.raw?.get(key);
   if (!m || !vals || vals.length !== 1) return false;
   const v = vals[0];
-  if (m[2] === "merge") return v === `refs/heads/${m[1]}`;
-  const url = `remote.${v}.url`;
+  // any branch name: `worktree add -b X origin/main` writes branch.X.merge = refs/heads/main (owner ruling 2026-10-29)
+  if (m[2] === "merge") return v === `refs/heads/${m[1]}` || (/^refs\/heads\/\S+$/.test(v) && routineRemote(m[1], a, b));
+  return remoteUnchanged(v, a, b);
+}
+
+/** The remote name has a remote.<name>.url in both snapshots with an unchanged hash (a URL or path value has no such key). */
+function remoteUnchanged(name: string, a: FileSnap, b: FileSnap): boolean {
+  const url = `remote.${name}.url`;
   const [ua, ub] = [a.keys?.get(url), b.keys?.get(url)];
   return ua !== undefined && ua === ub;
+}
+
+/** branch.<b>.remote of the `after` snapshot names such a remote. */
+function routineRemote(branch: string, a: FileSnap, b: FileSnap): boolean {
+  const r = b.raw?.get(`branch.${branch}.remote`);
+  return !!r && r.length === 1 && remoteUnchanged(r[0], a, b);
 }
 
 /** What changed between two snapshots, as short lines naming files, keys and hooks (never values). Empty = no drift. */

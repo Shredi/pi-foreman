@@ -23,6 +23,8 @@ export interface GateRoots {
   roundFlow: string[];
   /** The session's own handoff dirs: `plan.md` and `result.md` may be written, the dir read. */
   handoffs: string[];
+  /** Handoff dirs of sessions this session opened (its id is in the dir's `parent` file): `ruling*.md` and `brief*.md` may be written there. */
+  openedHandoffs?: string[];
   child: boolean;
   role: string;
   /** `gate.tmpAccess` (default true): writes (and for the owner reads) under the OS temp dirs. */
@@ -70,6 +72,9 @@ export function resolveWord(platform: string, cwd: string, w: unknown): string |
 
 type Dir = "read" | "write";
 
+/** The parent's notes to a session it opened: `ruling*.md`, `brief*.md` (a plain file name, no separator). */
+const HANDOFF_NOTE = /^(?:ruling|brief)[A-Za-z0-9._-]*\.md$/;
+
 /** The class of root `abs` lies in for `dir`, or null. The real spelling must stay inside the same root (no symlink out). */
 function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string | null {
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
@@ -95,6 +100,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
     const sameDir = (h: string, d: string): boolean => under(platform, d, h, r.worktree) && under(platform, h, d, r.worktree);
     const dirs = win ? [px(platform).dirname(abs), px(platform).dirname(ra)] : [px(platform).dirname(abs)];
     if (r.handoffs.some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h)) && (base === "plan.md" || base === "result.md")) return "handoff";
+    if (!r.child && HANDOFF_NOTE.test(base) && (r.openedHandoffs ?? []).some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h))) return "handoff-ruling";
   }
   if (r.child) return null;
   if (r.tmpAccess && r.tmp.some(inside) && !(r.scratchBase && inside(r.scratchBase))) return "tmp";

@@ -72,6 +72,18 @@ export function ownHandoffDirs(root: string | undefined, id: string | null | und
   return out;
 }
 
+/** The handoff dirs under `root` whose `parent` file names session `id`: the dirs of sessions `id` opened. */
+export function openedHandoffDirs(root: string | undefined, id: string | null | undefined): string[] {
+  if (!root || !id) return [];
+  return ownHandoffDirs(root, id).filter((dir) => {
+    try {
+      return fs.readFileSync(path.join(dir, "parent"), "utf8").split(/\r?\n/)[0].trim() === id;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * The handoff dirs under `root` whose `child` file names session `id`: the dirs where this session is the opened
  * (child) side. Dirs where it is the parent never count: the ask state and the parent-ruling gate read only these.

@@ -156,7 +156,8 @@ test("branch tracking keys are routine: added or removed they are no drift, a ch
   fs.writeFileSync(cfg, base);
   assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), [], "removal");
   fs.writeFileSync(cfg, base + trackCfg(BR).replace("refs/heads/main", "refs/heads/evil"));
-  assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), ["git:config: changed branch.main.merge"]);
+  // item 5: a changed refs/heads/<name> value is routine while branch.main.remote names a remote with an unchanged url
+  assert.deepEqual(diffGitSnapshots(withKeys, takeGitSnapshot(dir, HOME)), []);
 });
 
 function trackingDiff(t: { after(fn: () => void): void }, extra: string, mutate?: (base: string) => string, start = ""): string[] {

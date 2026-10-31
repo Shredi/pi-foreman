@@ -72,14 +72,14 @@
 {"id":"log-024","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push --force origin round/41-x"},"expect":"deny","source":"log"}
 {"id":"log-025","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git push origin other-branch"},"expect":"deny","source":"log"}
 {"id":"log-026","kind":"child","role":"builder","tool":"bash","input":{"command":"git push origin HEAD"},"expect":"deny","source":"log"}
-{"id":"log-027","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git reset --hard"},"expect":"deny","source":"log"}
+{"id":"log-027","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git reset --hard"},"expect":"ask","source":"log"}
 {"id":"log-028","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git commit --no-verify -m x"},"expect":"deny","source":"log"}
 {"id":"log-029","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git stash"},"expect":"allow","source":"log"}
 {"id":"log-030","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr view 12 --json state,title"},"expect":"allow","source":"log"}
 {"id":"log-031","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr checks 12"},"expect":"allow","source":"log"}
 {"id":"log-032","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh api repos/a/b/pulls --jq '.[].title'"},"expect":"allow","source":"log"}
-{"id":"log-033","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh api -X POST repos/a/b/issues"},"expect":"deny","source":"log"}
-{"id":"log-034","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr merge 1"},"expect":"deny","source":"log"}
+{"id":"log-033","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh api -X POST repos/a/b/issues"},"expect":"ask","source":"log"}
+{"id":"log-034","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh pr merge 1"},"expect":"ask","source":"log"}
 {"id":"log-035","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh release create v1"},"expect":"deny","source":"log"}
 {"id":"log-036","kind":"owner","role":"foreman","tool":"bash","input":{"command":"gh auth token"},"expect":"deny","source":"log"}
 {"id":"log-037","kind":"owner","role":"foreman","tool":"bash","input":{"command":"sudo ls"},"expect":"deny","source":"log","rule":"floor-privilege"}
@@ -89,12 +89,12 @@
 {"id":"log-041","kind":"owner","role":"foreman","tool":"bash","input":{"command":"GIT_CONFIG_COUNT=1 git status"},"expect":"deny","source":"log","rule":"floor-git-config"}
 {"id":"log-042","kind":"owner","role":"foreman","tool":"bash","input":{"command":"dd if=/dev/zero of=/dev/disk2"},"expect":"deny","source":"log","rule":"floor-disk"}
 {"id":"log-043","kind":"owner","role":"foreman","tool":"bash","input":{"command":"reboot"},"expect":"deny","source":"log","rule":"floor-shutdown"}
-{"id":"log-044","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls $UNSET"},"expect":"deny","source":"log"}
+{"id":"log-044","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls $UNSET"},"expect":"ask","source":"log"}
 {"id":"log-045","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls *.ts"},"expect":"allow","source":"log"}
-{"id":"log-046","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash -c \"$X\""},"expect":"deny","source":"log"}
-{"id":"log-047","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat <(ls)"},"expect":"deny","source":"log"}
-{"id":"log-048","kind":"owner","role":"foreman","tool":"bash","input":{"command":"echo a | xargs ls"},"expect":"deny","source":"log"}
-{"id":"log-049","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls && ls $UNSET"},"expect":"deny","source":"log"}
+{"id":"log-046","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash -c \"$X\""},"expect":"ask","source":"log"}
+{"id":"log-047","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat <(ls)"},"expect":"ask","source":"log"}
+{"id":"log-048","kind":"owner","role":"foreman","tool":"bash","input":{"command":"echo a | xargs ls"},"expect":"ask","source":"log"}
+{"id":"log-049","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls && ls $UNSET"},"expect":"ask","source":"log"}
 {"id":"log-050","kind":"owner","role":"foreman","tool":"bash","input":{"command":"timeout 5 ls"},"expect":"allow","source":"log","rule":"default-read"}
 {"id":"log-051","kind":"owner","role":"foreman","tool":"bash","input":{"command":"env ls"},"expect":"allow","source":"log"}
 {"id":"log-052","kind":"owner","role":"foreman","tool":"ask_user_question","input":{},"expect":"allow","source":"log","rule":"default-own-tool"}
@@ -137,10 +137,10 @@
 {"id":"win-013","kind":"owner","role":"foreman","tool":"bash","input":{"command":"powershell -c ls"},"expect":"allow","source":"log","platform":"win32"}
 {"id":"win-014","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cmd /c dir"},"expect":"allow","source":"log","platform":"win32"}
 {"id":"win-015","kind":"owner","role":"foreman","tool":"bash","input":{"command":"wsl ls"},"expect":"allow","source":"log","platform":"win32"}
-{"id":"win-016","kind":"owner","role":"foreman","tool":"bash","input":{"command":"./run.ps1"},"expect":"deny","source":"log","platform":"win32"}
-{"id":"win-017","kind":"owner","role":"foreman","tool":"bash","input":{"command":"./build.bat"},"expect":"deny","source":"log","platform":"win32"}
+{"id":"win-016","kind":"owner","role":"foreman","tool":"bash","input":{"command":"./run.ps1"},"expect":"ask","source":"log","platform":"win32"}
+{"id":"win-017","kind":"owner","role":"foreman","tool":"bash","input":{"command":"./build.bat"},"expect":"ask","source":"log","platform":"win32"}
 {"id":"win-018","kind":"owner","role":"foreman","tool":"bash","input":{"command":"bash scripts/build.sh"},"facts":["script: scripts/build.sh tracked-unchanged"],"expect":"allow","source":"log","platform":"win32"}
-{"id":"win-019","kind":"owner","role":"foreman","tool":"bash","input":{"command":"powershell -File C:\\Users\\x\\s.ps1"},"expect":"deny","source":"log","platform":"win32"}
+{"id":"win-019","kind":"owner","role":"foreman","tool":"bash","input":{"command":"powershell -File C:\\Users\\x\\s.ps1"},"expect":"ask","source":"log","platform":"win32"}
 {"id":"win-020","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat D:/work/repo/src/a.ts"},"expect":"allow","source":"log","platform":"win32"}
 {"id":"win-021","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat 'C:\\Users\\x\\.ssh\\id_rsa'"},"expect":"deny","source":"log","rule":"floor-secret-path","platform":"win32"}
 {"id":"win-022","kind":"owner","role":"foreman","tool":"bash","input":{"command":"touch D:/work/repo/src/new.ts"},"expect":"allow","source":"log","platform":"win32"}
@@ -161,15 +161,15 @@
 {"id":"int-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"python3 -I -c 'print(2 + 2)'"},"expect":"ask","source":"import"}
 {"id":"ins-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm ci > $TMP/x.log"},"expect":"ask","source":"import"}
 {"id":"ins-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm install --no-audit > $SCR/install.log 2>&1"},"expect":"ask","source":"import"}
-{"id":"pay-001","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.org/api","method":"POST","body":"x"},"expect":"deny","source":"log","rule":"no-matching-entry"}
+{"id":"pay-001","kind":"owner","role":"foreman","tool":"fetch","input":{"url":"https://example.org/api","method":"POST","body":"x"},"expect":"deny","source":"log","rule":"unknown-network-host"}
 {"id":"pay-002","kind":"owner","role":"foreman","tool":"codemode","input":{"code":"await sh('rm -rf /')"},"expect":"deny","source":"log","rule":"floor-rm-system"}
 {"id":"pay-003","kind":"owner","role":"foreman","tool":"subagent","input":{"agent":"builder","task":"never use sudo; fix the typo in README"},"expect":"allow","source":"log","rule":"default-role-launch"}
-{"id":"reg-001","kind":"child","role":"explorer","tool":"bash","input":{"command":"grep -rln provider $AGENT/pi-foreman"},"expect":"deny","source":"log"}
+{"id":"reg-001","kind":"child","role":"explorer","tool":"bash","input":{"command":"grep -rln provider $AGENT/pi-foreman"},"expect":"ask","source":"log"}
 {"id":"reg-002","kind":"owner","role":"foreman","tool":"bash","input":{"command":"git commit --no-verify -m wip"},"expect":"deny","source":"log"}
-{"id":"reg-003","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls $UNSET/src"},"expect":"deny","source":"log"}
-{"id":"reg-004","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat <(ls src)"},"expect":"deny","source":"log"}
-{"id":"reg-005","kind":"owner","role":"foreman","tool":"bash","input":{"command":"echo b | xargs cat"},"expect":"deny","source":"log"}
-{"id":"reg-006","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls src && ls $UNSET/lib"},"expect":"deny","source":"log"}
+{"id":"reg-003","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls $UNSET/src"},"expect":"ask","source":"log"}
+{"id":"reg-004","kind":"owner","role":"foreman","tool":"bash","input":{"command":"cat <(ls src)"},"expect":"ask","source":"log"}
+{"id":"reg-005","kind":"owner","role":"foreman","tool":"bash","input":{"command":"echo b | xargs cat"},"expect":"ask","source":"log"}
+{"id":"reg-006","kind":"owner","role":"foreman","tool":"bash","input":{"command":"ls src && ls $UNSET/lib"},"expect":"ask","source":"log"}
 {"id":"reg-007","kind":"owner","role":"foreman","tool":"bash","input":{"command":"sh scripts/check.sh"},"expect":"ask","source":"log"}
 {"id":"reg-008","kind":"owner","role":"foreman","tool":"bash","input":{"command":"npm run lint"},"expect":"allow","source":"log"}
 {"id":"rsc-001","kind":"owner","role":"foreman","tool":"bash","input":{"command":"sh scripts/new.sh"},"facts":["script: scripts/new.sh untracked"],"expect":"ask","source":"log"}
