@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { r11Rig } from "./_r11rig.ts";
 import { gateLogFile } from "../gatelog.ts";
 
@@ -76,6 +77,7 @@ test("floors-only: path, quoted, escaped, nested and variable git pushes are den
 
 test("floors-only: a plain explicit own-branch push keeps its default allow", async (t) => {
   const r = await rig(t, "floors-only");
+  execFileSync("git", ["init", "-q", "-b", "feature/x"], { cwd: r.project });
   const res = await r.call("bash", { command: "git push -u origin feature/x" });
   assert.equal(res, undefined);
   assert.ok(!r.log().some((e) => e.rule === "floors-only-push"), JSON.stringify(r.log()));
