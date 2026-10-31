@@ -1,5 +1,6 @@
 // pi-foreman mod for herdr-app: an Agents view with the foreman rows built in under each agent that is a foreman session.
-// Reads only `foreman radar --json` (exec), joins on hcTerminal, never calls `hc`, never writes, never fetches.
+// Reads `foreman radar --json` and, per agent terminal, `hc get <terminal> --json` (exec, argv only; the child records of
+// pi-subagents), joins on hcTerminal, never writes, never fetches.
 // The only other exec is the platform opener on a PR chip click, after the URL passed the https rule (model.js).
 
 import { View, div, svg, image } from "gpui-kit";
@@ -7,7 +8,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, sessionRows, treeItems, openPrGroups, openPrsAge, shownNodes,
-  radarBinary, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  radarBinary, parseRecords, agentStatus, agentsText, agentLines, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -78,6 +79,8 @@ export default class ForemanAgents extends View {
     this.busy = new Set();
     const given = guard(() => props() ?? p ?? {}, {});
     this.foremanProp = given.foreman;
+    this.hcProp = given.hc;
+    this.recs = new Map(); // agent address -> {recs, tried}
     this.poll(cx);
     cx.timer.every(1000, (cx) => this.poll(cx));
   }
@@ -106,6 +109,30 @@ export default class ForemanAgents extends View {
         }
         this.radar.set(key, next);
         this.busy.delete(key);
+        cx.notify();
+      });
+    }
+    this.pollRecords(cx, now);
+  }
+
+  // One `hc get` per agent terminal per interval; a failure leaves no records.
+  pollRecords(cx, now) {
+    const list = guard(() => agents().map((a) => a?.address).filter((x) => typeof x === "string" && x), []);
+    for (const addr of this.recs.keys()) if (!list.includes(addr)) this.recs.delete(addr);
+    for (const addr of list) {
+      const rec = this.recs.get(addr);
+      const cut = addr.indexOf("/");
+      const machine = cut > 0 ? addr.slice(0, cut) : null;
+      if (this.busy.has(`hc:${addr}`) || (rec && now - rec.tried < (machine ? REMOTE_MS : LOCAL_MS))) continue;
+      this.busy.add(`hc:${addr}`);
+      cx.spawn(async (cx) => {
+        let recs = [];
+        try {
+          const r = await exec(radarBinary(this.hcProp, machine, "hc"), ["get", addr.slice(cut + 1), "--json"], { on: machine });
+          if (r.code === 0) recs = parseRecords(r.stdout);
+        } catch { /* no hc here: no records */ }
+        this.recs.set(addr, { recs, tried: Date.now() });
+        this.busy.delete(`hc:${addr}`);
         cx.notify();
       });
     }
@@ -148,8 +175,15 @@ export default class ForemanAgents extends View {
       .when(Boolean(summary), (el) => el.child(div().text_color(t.dim).child(summary)));
   }
 
-  topRows(t, node, hcStatus = null) {
-    const r = sessionRows(node, hcStatus);
+  // One short line per running async agent: small spinner (red when blocked), then the text.
+  agentRows(t, lines, indent) {
+    return lines.map((l) => h_flex().pl(indent).pr(8).h(18).flex_none().items_center().gap(5).text_size(11)
+      .child(l.glyph ? svg(SPINNER).size(9).flex_none().text_color(l.glyph === "blocked" ? t.blocked : t.working).spin(900) : div().flex_none().w(9))
+      .child(div().flex_1().truncate().text_color(l.glyph === "blocked" ? t.blocked : t.muted).child(l.text)));
+  }
+
+  topRows(t, node, hcStatus = null, recs = []) {
+    const r = sessionRows(node, hcStatus, recs);
     const line = () => h_flex().pl(33).pr(8).h(20).flex_none().items_center().gap(4).text_size(11.5);
     const rows = [line()
       .child(div().truncate().text_color(t.foreground).child(r.label))
@@ -158,6 +192,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(r.costText), (el) => el.child(div().text_color(t.muted).child(r.costText)))
       .when(r.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${r.sessions} sessions`)))];
     if (r.ask) rows.push(line().child(div().truncate().text_color(r.blocked ? t.blocked : t.muted).child(r.ask)));
+    rows.push(...this.agentRows(t, agentLines(node, recs), 41));
     if (r.prs.length) rows.push(this.prLine(t, node, r.prs, r.summary, node.key || node.name, 33));
     return rows;
   }
@@ -177,8 +212,9 @@ export default class ForemanAgents extends View {
         .when(Boolean(it.costText), (el) => el.child(div().mr(6).text_size(11).text_color(t.dim).child(it.costText)))
         .children(it.inline.map((p) => this.prChip(t, p, prUrl(it.node, p), key).mr(6)))
         .child(statusGlyph(t, it.status));
+      const agents = this.agentRows(t, it.agents, 39 + it.lines.length * 13 + 8);
       const below = it.below.length ? [this.prLine(t, it.node, it.below, "", key, 39 + it.lines.length * 13)] : [];
-      return [row, ...below];
+      return [row, ...agents, ...below];
     });
   }
 
@@ -200,7 +236,7 @@ export default class ForemanAgents extends View {
   }
 
   // One agent of the list: logo, name, machine tag, time in this status, status.
-  agentLine(t, a, now) {
+  agentLine(t, a, now, status) {
     const logo = progIcon(a.program, 16, t.foreground);
     const host = a.address.includes("/") ? a.address.slice(0, a.address.indexOf("/")) : "";
     const since = this.changed[a.address]?.at;
@@ -217,7 +253,7 @@ export default class ForemanAgents extends View {
       .child(div().flex_1().min_w(0).truncate().text_color(quiet ? t.muted : t.foreground).child(name))
       .when(host !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(host)))
       .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(now - since))))
-      .child(statusGlyph(t, a.status));
+      .child(statusGlyph(t, status));
   }
 
   // "Open PRs": PRs no agent works on, one row per repo.
@@ -272,12 +308,18 @@ export default class ForemanAgents extends View {
       if (rec && !rec.ok) out.push(div().px(8).h(18).flex_none().text_size(10.5).text_color(t.dim).child(`No foreman radar on ${machine ?? "this computer"} (set props.foreman)`));
       return out;
     };
+    const recsOf = (a) => this.recs.get(a.address)?.recs ?? [];
+    const statusOf = (a) => guard(() => agentStatus(a.status, joined.get(a.address) ?? null, recsOf(a)), a.status);
     const withRows = (a) => {
       const f = joined.get(a.address);
-      const head = this.agentLine(t, a, now);
+      const head = this.agentLine(t, a, now, statusOf(a));
       const live = childTerminals(all, a.address).map((row) => this.childLine(t, row, shown, listedStatus));
-      if (!f) return [head, ...live];
-      const foreman = [...guard(() => this.topRows(t, f, listedStatus.get(a.address) ?? null), []), ...guard(() => this.treeRows(t, f, skip), [])];
+      if (!f) {
+        const text = guard(() => agentsText(null, recsOf(a)), "");
+        const line = text ? [h_flex().pl(33).pr(8).h(20).flex_none().items_center().text_size(11.5).child(div().truncate().text_color(t.muted).child(text))] : [];
+        return [head, ...line, ...guard(() => this.agentRows(t, agentLines(null, recsOf(a)), 41), []), ...live];
+      }
+      const foreman = [...guard(() => this.topRows(t, f, listedStatus.get(a.address) ?? null, recsOf(a)), []), ...guard(() => this.treeRows(t, f, skip), [])];
       return [head, ...foreman, ...live, div().h(4).flex_none()];
     };
     const rows = groups.flatMap((g) => [...header(g), ...g.members.flatMap(withRows)]);
@@ -285,7 +327,7 @@ export default class ForemanAgents extends View {
     const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownNodes(joined)), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
-    const needs = list.filter((a) => a.status === "blocked").length;
+    const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
       .child(div().text_size(12).font_semibold().text_color(t.dim).child("Agents"));

@@ -587,7 +587,10 @@ then "N PRs · k failing · m pending" or "all green". Nested sessions (any dept
 inline PR chips (more go on a line below); workers are one tree row "role model" with a spinner. An "Open PRs" section at the
 bottom shows the `openPrs` field of radar when the installed pi-foreman provides it, else only the tracked PRs of ended sessions.
 
-The mod reads only `foreman radar --json` (every 3 s locally, 15 s per remote space) and joins a not-done node to an agent on
+The mod reads `foreman radar --json` (every 3 s locally, 15 s per remote space) and, per agent terminal, `hc get <terminal> --json`
+(prop `hc` names the binary like `foreman`, default `hc`; failures are ignored) for the `pi-subagents` child records in state working or
+blocked: they count as running agents (`N agents: titles`, hollow spinner) or as a need, also for a terminal with no radar node; radar's
+running child runs stay the source and a record with the title of a radar run is not counted twice. It joins a not-done node to an agent on
 `hcTerminal` (the `machine/` prefix for remote spaces; when both sides have a pid they must match). Without a radar it shows one
 dim line and retries every 30 s. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
 name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
@@ -597,7 +600,8 @@ an `https://` repository URL plus `/pull/<n>`); a chip opens the PR page when th
 plain where radar gives neither. Session status glyph (hc status of the joined terminal first, else radar; most urgent first):
 "Needs you" pill (ask or hc `blocked`), spinner (working), filled dot (hc `done`, not yet seen), hollow spinner (child agents run;
 `N agents: roles`), small square (background tasks; `bg: <name> <age>`), hollow muted ring (waits; `wait: <note> <age>`), hollow dot
-(idle). Ended sessions are hidden under an agent. Install:
+(idle). Ended sessions are hidden under an agent. Under a session or agent row, each running async agent gets its own line (small
+spinner, red when blocked; `explorer · Running bash` from the hc record `msg`, radar fallback `reviewer · 4m`), at most 4, then `+N more`. Install:
 
 1. Copy `integrations/herdr-app/pi-foreman/` to `~/.config/herdr-app/mods/pi-foreman/`.
 2. `herdr-app do layout.clone '{"name":"main","as":"foreman"}'`

@@ -4,7 +4,7 @@ import { parseRadarDoc, buildTree, joinAgents, openPrGroups, openPrsAge, shownNo
 
 const cost = { in: 0, out: 0, cost: 0, uncached: 0 };
 const live = {
-  key: "fm-a", kind: "session", name: "a", state: "working", glyph: "working", hcTerminal: "t1", own: cost, tot: cost,
+  key: "fm-a", kind: "session", name: "a", state: "working", sym: "working", glyph: "⏳", hcTerminal: "t1", own: cost, tot: cost,
   children: [], waits: [], repoUrl: "https://example.test/acme/widgets",
   dots: [
     { n: 5, state: "ok", label: "#5", src: "pr", url: "https://example.test/acme/widgets/pull/5" },

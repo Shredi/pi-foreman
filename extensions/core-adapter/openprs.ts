@@ -217,6 +217,8 @@ export interface RefreshOptions {
   now?: () => number;
   /** Refresh even when the file is fresh. */
   force?: boolean;
+  /** Aborted by `stop()`: a refresh in flight then writes nothing and only drops the lock it holds. */
+  signal?: AbortSignal;
 }
 export type RefreshResult = "off" | "fresh" | "locked" | "refreshed" | "failed";
 
@@ -226,6 +228,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
   try {
     const queries = o.config.enabled ? openPrsQueries(o.config) : [];
     if (queries.length === 0) return "off";
+    if (o.signal?.aborted) return "failed";
     const now = o.now ?? Date.now;
     const prev = readFile(o.file);
     const last = Date.parse(prev?.checkedAt ?? prev?.fetchedAt ?? "");
@@ -241,6 +244,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
         let failed = 0;
         let firstError = "";
         for (const q of queries) {
+          if (o.signal?.aborted) return "failed";
           try {
             for (const p of parseSearch(await o.gh(["api", "graphql", "-f", `query=${GRAPHQL}`, "-f", `q=${q}`]))) {
               if (seen.has(p.url)) continue;
@@ -251,6 +255,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
             if (failed++ === 0) firstError = clean((err as Error)?.message ?? String(err), 160);
           }
         }
+        if (o.signal?.aborted) return "failed";
         const t = stamp();
         const error = failed > 0 ? clean(`${failed} of ${queries.length} queries failed: ${firstError}`, 200) : undefined;
         if (failed === queries.length) {
@@ -287,6 +292,7 @@ export class OpenPrsRefresher {
   private handle: unknown = null;
   private stopped = true;
   private busy = false;
+  private ctl = new AbortController();
 
   private readonly deps: OpenPrsDeps;
 
@@ -297,11 +303,13 @@ export class OpenPrsRefresher {
   start(): void {
     if (!this.stopped) return;
     this.stopped = false;
+    if (this.ctl.signal.aborted) this.ctl = new AbortController();
     this.arm(FIRST_TICK_MS);
   }
 
   stop(): void {
     this.stopped = true;
+    this.ctl.abort();
     if (this.handle !== null) (this.deps.timers ?? realTimers).clear(this.handle);
     this.handle = null;
   }
@@ -312,7 +320,7 @@ export class OpenPrsRefresher {
     this.busy = true;
     try {
       if (this.deps.ghHost && !this.deps.ghHost()) return "off";
-      return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now });
+      return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal });
     } catch {
       return "failed";
     } finally {

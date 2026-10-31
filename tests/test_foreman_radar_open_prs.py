@@ -4,11 +4,17 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
-from test_foreman_radar import NOW, Fixture
-import foreman_radar as fr
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "scripts"))
+
+from test_foreman_radar import NOW, Fixture  # noqa: E402
+import foreman_radar as fr  # noqa: E402
 
 GOOD = {"repo": "acme/widgets", "number": 7, "title": "Tune", "url": "https://example.test/acme/widgets/pull/7",
         "state": "open", "author": "octo", "checks": [{"n": "ci", "state": "ok", "label": "ci"}]}

@@ -30,13 +30,13 @@ export function openerArgv(platform, url) {
 
 /** The foreman binary for a machine from the `foreman` prop: a string (local only) or an object keyed by machine name
  *  (`local` for this computer). A missing entry is plain `foreman`. */
-export function radarBinary(prop, machine) {
+export function radarBinary(prop, machine, fallback = "foreman") {
   if (typeof prop === "string" && prop.trim() && !machine) return prop.trim();
   if (isObj(prop)) {
     const v = prop[machine || "local"];
     if (typeof v === "string" && v.trim()) return v.trim();
   }
-  return "foreman";
+  return fallback;
 }
 
 // ---- parse ---------------------------------------------------------------------------------------------------
@@ -85,7 +85,7 @@ function normNode(raw, depth, budget) {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
     hcTerminal: str(raw.hcTerminal), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
-    blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
+    blockedS: int(raw.blocked_s), ageS: num(raw.age_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
   };
 }
@@ -310,24 +310,58 @@ export function prUrl(node, pr) {
 }
 
 const listOf = (x) => (Array.isArray(x) ? x : []);
-const runsWorking = (n) => listOf(n.children).some((c) => c.kind === "run" && !c.ended && c.state === "working");
+const radarRuns = (n) => listOf(n?.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").map((c) => c.role || c.name);
+
+/** The running async agents from the text of `hc get <terminal> --json`: `[{title, state}]` of the `pi-subagents` child
+ *  records in state working or blocked; [] for anything else. */
+export function parseRecords(text) {
+  let doc;
+  try { doc = JSON.parse(text); } catch { return []; }
+  if (!isObj(doc) || !Array.isArray(doc.records)) return [];
+  return doc.records
+    .filter((r) => isObj(r) && r.app === "pi-subagents" && (r.state === "working" || r.state === "blocked"))
+    .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg) }));
+}
+
+// Records radar does not show already: each working radar run cancels one record with the same title.
+function extraRecords(n, recs) {
+  const left = new Map();
+  for (const t of radarRuns(n)) left.set(t, (left.get(t) ?? 0) + 1);
+  return listOf(recs).filter((r) => {
+    const k = left.get(r.title) ?? 0;
+    if (k > 0) left.set(r.title, k - 1);
+    return k === 0;
+  });
+}
 
 /** Status for the glyph: hidden (ended session), blocked, working, done (hc: finished turn not yet seen), agents, bg, waiting
- *  or idle. `hcStatus` is the status of the joined hc terminal; without one the radar state decides. */
-export function nodeStatus(n, hcStatus = null) {
-  if (!isObj(n)) return "idle";
+ *  or idle. `hcStatus` is the status of the joined hc terminal; without one the radar state decides. `recs` are the
+ *  parseRecords of that terminal; `n` may be null for a terminal with no radar node. */
+export function nodeStatus(n, hcStatus = null, recs = []) {
+  if (!isObj(n)) {
+    if (listOf(recs).length === 0) return "idle";
+    n = {};
+  }
+  const extra = extraRecords(n, recs);
   if (n.state === "done") return "hidden";
-  if (n.sym === "needs-you" || n.state === "ask" || listOf(n.asks).length > 0 || hcStatus === "blocked") return "blocked";
+  if (n.sym === "needs-you" || n.state === "ask" || listOf(n.asks).length > 0 || hcStatus === "blocked" || extra.some((r) => r.state === "blocked")) return "blocked";
   if (hcStatus === "working") return "working";
   if (hcStatus === "done") return "done";
   if (hcStatus === null || hcStatus === undefined) {
-    if (n.glyph === "blocked") return "blocked";
-    if (n.glyph === "working" || n.glyph === "starting") return "working";
+    if (n.state === "blocked" || n.sym === "blocked") return "blocked";
+    if (n.state === "working" || n.state === "starting" || n.sym === "working" || n.sym === "starting") return "working";
   }
-  if (runsWorking(n)) return "agents";
+  if (radarRuns(n).length > 0 || extra.length > 0) return "agents";
   if (listOf(n.tasks).length > 0) return "bg";
   if (n.sym === "waiting-external" || listOf(n.waits).length > 0) return "waiting";
   return "idle";
+}
+
+/** Status of an agent row: nodeStatus over the joined node (or none) and the records; the listed status stays when that
+ *  finds nothing more than idle. */
+export function agentStatus(listed, node, recs = []) {
+  const s = nodeStatus(node, listed, recs);
+  return s === "idle" || s === "hidden" ? listed : s;
 }
 
 function askText(node) {
@@ -347,9 +381,32 @@ function waitText(node) {
   return `wait: ${w.join(" · ")}${node.waits.length > 2 ? ` +${node.waits.length - 2}` : ""}`;
 }
 
-function agentsText(node) {
-  const roles = listOf(node.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").map((c) => c.role || c.name);
+/** "N agents: titles" from radar's working runs plus the records radar does not show; "" for none. `node` may be null. */
+export function agentsText(node, recs = []) {
+  const roles = [...radarRuns(node), ...extraRecords(node, recs).map((r) => r.title || "agent")];
   return roles.length ? `${roles.length} agent${roles.length === 1 ? "" : "s"}: ${roles.join(", ")}` : "";
+}
+
+const MAX_AGENT_LINES = 4;
+
+/** One line per running async agent under a session or agent row: `[{glyph: "working"|"blocked"|"", text}]`, at most 4,
+ *  then a `+N more` item (glyph ""). Records give `title · msg`; working radar runs radar does not repeat in the records
+ *  give `role · age`. Finished records are not parsed in. `node` may be null. */
+export function agentLines(node, recs = []) {
+  const left = new Map();
+  for (const r of listOf(recs)) left.set(r.title, (left.get(r.title) ?? 0) + 1);
+  const runs = listOf(node?.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").filter((c) => {
+    const k = left.get(c.role || c.name) ?? 0;
+    if (k > 0) left.set(c.role || c.name, k - 1);
+    return k === 0;
+  });
+  const all = [
+    ...listOf(recs).map((r) => ({ glyph: r.state === "blocked" ? "blocked" : "working", text: [r.title || "agent", r.msg].filter(Boolean).join(" · ") })),
+    ...runs.map((c) => ({ glyph: "working", text: [c.role || c.name || "agent", c.ageS ? fmtAge(c.ageS) : ""].filter(Boolean).join(" · ") })),
+  ];
+  const out = all.slice(0, MAX_AGENT_LINES);
+  if (all.length > MAX_AGENT_LINES) out.push({ glyph: "", text: `+${all.length - MAX_AGENT_LINES} more` });
+  return out;
 }
 
 function bgText(node) {
@@ -358,14 +415,14 @@ function bgText(node) {
 }
 
 /** Data of the lines under a top-most session's agent row. `hcStatus` is the status of the joined hc terminal. */
-export function sessionRows(node, hcStatus = null) {
+export function sessionRows(node, hcStatus = null, recs = []) {
   if (!isObj(node)) return { label: "", tier: "", cost: 0, costText: "", sessions: 0, ask: "", blocked: false, prs: [], summary: "", status: "idle" };
   const ask = askText(node);
-  const status = nodeStatus(node, hcStatus);
+  const status = nodeStatus(node, hcStatus, recs);
   const total = totalCost(node);
   return {
     label: node.name, tier: node.tier || node.rung || "", cost: total, costText: total > 0 ? fmtCost(total) : "",
-    sessions: sessionCount(node), ask: ask || agentsText(node) || bgText(node) || waitText(node), blocked: Boolean(ask) || status === "blocked",
+    sessions: sessionCount(node), ask: ask || agentsText(node, recs) || bgText(node) || waitText(node), blocked: Boolean(ask),
     prs: sortPrs(node.prs), summary: prSummary(node.prs), status,
   };
 }
@@ -383,7 +440,7 @@ export function treeItems(node, skip = new Set(), lead = [], depth = 0) {
     const lines = [...lead, last ? "└" : "├"];
     const item = k.worker
       ? { worker: true, node: k.n, lines, label: [k.n.role || k.n.name, shortModel(k.n.model)].filter(Boolean).join(" "), running: k.n.state === "working", status: nodeStatus(k.n) }
-      : { worker: false, node: k.n, lines, label: k.n.name, costText: k.n.cost > 0 ? fmtCost(k.n.cost) : "", status: nodeStatus(k.n), ...splitPrs(k.n.prs) };
+      : { worker: false, node: k.n, lines, label: k.n.name, costText: k.n.cost > 0 ? fmtCost(k.n.cost) : "", status: nodeStatus(k.n), agents: agentLines(k.n), ...splitPrs(k.n.prs) };
     return [item, ...(k.worker ? [] : treeItems(k.n, skip, [...lead, last ? "" : "│"], depth + 1))];
   });
 }

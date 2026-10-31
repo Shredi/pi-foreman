@@ -4,10 +4,10 @@ import { parseRadar, buildTree, nodeStatus, sessionRows, treeItems, glyphSpec } 
 
 const cost = { in: 0, out: 0, cost: 0, uncached: 0 };
 const session = (key, over = {}) => ({
-  key, kind: "session", name: key, state: "idle", sym: "idle", glyph: "idle", hcTerminal: null, pid: null, own: cost, tot: cost,
+  key, kind: "session", name: key, state: "idle", sym: "waiting", glyph: "⏸", hcTerminal: null, pid: null, own: cost, tot: cost,
   children: [], waits: [], tasks: [], ...over,
 });
-const run = (name, over = {}) => ({ key: `run:${name}`, kind: "run", name, role: name, state: "working", glyph: "working", own: cost, tot: cost, ended_s: null, children: [], ...over });
+const run = (name, over = {}) => ({ key: `run:${name}`, kind: "run", name, role: name, state: "working", sym: "working", glyph: "⏳", own: cost, tot: cost, ended_s: null, children: [], ...over });
 const node = (over) => buildTree(parseRadar(JSON.stringify({ roots: [session("s", over)] })))[0];
 
 test("nodeStatus: hc root status decides", () => {
@@ -40,9 +40,9 @@ test("nodeStatus: agents, bg and waiting in that order", () => {
 });
 
 test("nodeStatus: no join falls back to the radar state", () => {
-  assert.equal(nodeStatus(node({ glyph: "working" })), "working");
-  assert.equal(nodeStatus(node({ glyph: "starting" })), "working");
-  assert.equal(nodeStatus(node({ glyph: "blocked" })), "blocked");
+  assert.equal(nodeStatus(node({ state: "working", sym: "working" })), "working");
+  assert.equal(nodeStatus(node({ state: "starting", sym: "working" })), "working");
+  assert.equal(nodeStatus(node({ state: "blocked", sym: "blocked" })), "blocked");
   assert.equal(nodeStatus(node({ state: "ask" })), "blocked");
   assert.equal(nodeStatus(node({})), "idle");
   assert.equal(nodeStatus(null), "idle");

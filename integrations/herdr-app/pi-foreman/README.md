@@ -20,8 +20,8 @@ a top-most foreman session:
 
 Status legend of a session's glyph (the hc status of its terminal first, then radar; most urgent first): **Needs you** pill
 (ask, or hc blocked) > spinner (working) > filled dot (hc done: finished turn not yet seen) > hollow spinner (child agents run;
-line `N agents: roles`) > small square (background task; `bg: <name> <age>`) > hollow muted ring (waiting on something external;
-`wait: <note> <age>`) > hollow dot (idle). Ended sessions are not drawn under an agent. Without a joined terminal the radar state decides.
+line `N agents: roles`; also the running `pi-subagents` child records of `hc get <terminal> --json`, for a terminal with no radar node too, radar's runs not counted twice; a blocked record shows as **Needs you**) > small square (background task; `bg: <name> <age>`) > hollow muted ring (waiting on something external;
+`wait: <note> <age>`) > hollow dot (idle). Ended sessions are not drawn under an agent. Each running async agent has its own indented line below its session or agent row (small spinner, red when blocked; `title · msg` from the hc record, radar fallback `role · age`; at most 4, then `+N more`). Without a joined terminal the radar state decides.
 
 A click on an agent row focuses its pane. The footer reads "N agents · k need you". An **Open PRs** section at the bottom lists
 PRs no agent works on, one chip row per repo: the `openPrs` field of radar when the installed pi-foreman provides it, else only
@@ -40,15 +40,17 @@ already shows is not repeated. See `docs/herdr.md#open-prs`.
 
 ## Props
 
+`hc`: the binary that runs `get <terminal> --json`, same forms as `foreman`; a missing entry means plain `hc`.
+
 `foreman`: the binary that runs `radar --json`. A string is used for this computer; an object is keyed by machine name, with the
 key `local` for this computer (`{ "local": "/abs/path/foreman", "alpha": "/other/path/foreman" }`). A missing entry means plain
 `foreman`, resolved the way `exec` resolves it (your real environment; over SSH, the remote one).
 
 ## Data
 
-Only `foreman radar --json`, every 3 s for this computer and every 15 s per remote space (`exec` with `on` set to the space's
-machine). If a machine has no `foreman`, exits non-zero or prints bad JSON, the space shows one dim line "No foreman radar on
-<machine> (set props.foreman)" and the mod retries every 30 s. The mod never calls `hc`, never writes a file and never fetches.
+`foreman radar --json` and, for each agent terminal, `hc get <terminal> --json` (child records of `pi-subagents`; argv only, a failure
+is ignored), every 3 s for this computer and every 15 s per remote space (`exec` with `on` set to the space's machine). If a machine has no `foreman`, exits non-zero or prints bad JSON, the space shows one dim line "No foreman radar on
+<machine> (set props.foreman)" and the mod retries every 30 s. The mod calls only `hc get`, never writes a file and never fetches.
 
 A radar node joins an agent when its `hcTerminal` equals the agent's terminal address (`machine/` prefix for a remote space),
 the node is not done, and, when both sides carry a pid, the pids match. `hc ls --json` has no pid, so the not-done filter may

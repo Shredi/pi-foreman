@@ -235,3 +235,43 @@ test("a stale takeover is not unlocked by the first session", async () => {
   assert.equal(fs.existsSync(lock), false);
   r.done();
 });
+
+function pendingRefresher() {
+  const dir = mkTestTmp("r78o-");
+  const stateDir = path.dirname(openPrsFile(dir));
+  const fake = { set: () => 0, clear: () => undefined };
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((res) => { release = res; });
+  let started: () => void = () => undefined;
+  const inCall = new Promise<void>((res) => { started = res; });
+  const gh: GhRunner = async () => (started(), await gate, answer(node(1)));
+  const rf = new OpenPrsRefresher({ agentDir: dir, config: () => on, gh, timers: fake });
+  return { dir, stateDir, rf, release, inCall };
+}
+
+test("a tick in flight when stop() runs writes no cache and leaves no lock", async () => {
+  const p = pendingRefresher();
+  p.rf.start();
+  const tick = p.rf.tick();
+  await p.inCall;
+  assert.equal(fs.existsSync(`${openPrsFile(p.dir)}.lock`), true);
+  p.rf.stop();
+  const before = fs.readdirSync(p.stateDir).filter((n) => !n.endsWith(".lock"));
+  p.release();
+  assert.equal(await tick, "failed");
+  assert.deepEqual(fs.readdirSync(p.stateDir), before);
+  assert.equal(fs.existsSync(openPrsFile(p.dir)), false);
+  rmTestTmp(p.dir);
+});
+
+test("a tick without stop() still writes the cache and drops the lock", async () => {
+  const p = pendingRefresher();
+  p.rf.start();
+  const tick = p.rf.tick();
+  await p.inCall;
+  p.release();
+  assert.equal(await tick, "refreshed");
+  assert.deepEqual(fs.readdirSync(p.stateDir), ["open-prs.json"]);
+  p.rf.stop();
+  rmTestTmp(p.dir);
+});

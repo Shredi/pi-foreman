@@ -9,11 +9,11 @@ import {
 const cost = (c) => ({ in: 0, out: 0, cost: c, uncached: 0 });
 const dot = (n, state, extra = {}) => ({ n, state, label: "ci", src: "pr", ...extra });
 const session = (key, name, over = {}) => ({
-  key, kind: "session", name, role: null, rung: null, state: "working", sym: "working", glyph: "working", paneId: null,
+  key, kind: "session", name, role: null, rung: null, state: "working", sym: "working", glyph: "⏳", paneId: null,
   hcTerminal: null, pid: null, cwd: null, age_s: 5, blocked_s: null, own: cost(0), tot: cost(0), children: [], waits: [], ...over,
 });
 const run = (name, role, model, over = {}) => ({
-  key: `run:${name}`, kind: "run", name, role, rung: null, model, state: "working", glyph: "working", own: cost(0), tot: cost(0),
+  key: `run:${name}`, kind: "run", name, role, rung: null, model, state: "working", glyph: "⏳", own: cost(0), tot: cost(0),
   ended_s: null, children: [], ...over,
 });
 
@@ -22,7 +22,7 @@ const doc = () => ({
   v: 1, roots: [
     session("fm-top", "top", {
       hcTerminal: "t1", pid: 100, own: cost(1.5), tier: "heavy",
-      asks: [{ n: 3, topic: "approve plan" }], state: "blocked", glyph: "blocked", blocked_s: 130,
+      asks: [{ n: 3, topic: "approve plan" }], state: "blocked", sym: "blocked", glyph: "✋", blocked_s: 130,
       dots: [dot(10, "ok"), dot(10, "ok"), dot(12, "fail"), dot(11, "run")],
       repoUrl: "https://example.test/acme/widgets",
       children: [
@@ -30,11 +30,11 @@ const doc = () => ({
         run("old", "reviewer", "opus", { ended_s: 3, state: "done" }),
         session("fm-mid", "mid", {
           hcTerminal: "t2", own: cost(2), dots: [dot(20, "ok"), dot(21, "run")],
-          children: [session("fm-leaf", "leaf", { own: cost(0.25), state: "idle", glyph: "idle" })],
+          children: [session("fm-leaf", "leaf", { own: cost(0.25), state: "idle", sym: "waiting", glyph: "⏸" })],
         }),
       ],
     }),
-    session("fm-gone", "gone", { hcTerminal: "t9", state: "done", glyph: "idle", dots: [dot(30, "fail")], repoUrl: "https://example.test/acme/gadgets" }),
+    session("fm-gone", "gone", { hcTerminal: "t9", state: "done", sym: "done", glyph: "✓", dots: [dot(30, "fail")], repoUrl: "https://example.test/acme/gadgets" }),
   ],
   openPrs: [
     { repo: "acme/gears", number: 7, title: "Tune gears", url: "https://example.test/acme/gears/pull/7", state: "open", checks: [{ n: 7, state: "ok", label: "ci" }] },
