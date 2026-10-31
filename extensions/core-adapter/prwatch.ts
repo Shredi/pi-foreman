@@ -153,8 +153,73 @@ export const realTimers: Timers = {
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
 
+export const PRWATCH_ENTRY = "pi-foreman-prwatch";
+
+/** One persisted watch (a custom session entry); the baseline is stored as name -> `bucket:conclusion` pairs. */
+export interface WatchRecord {
+  n: number;
+  until: WatchUntil;
+  checks: [string, string][];
+  commentIds: string[];
+  deadline: number;
+  timeoutMs: number;
+  startedAt: number;
+  cwd: string;
+}
+export interface WatchEntry {
+  v: 1;
+  piSessionId: string;
+  watches: WatchRecord[];
+}
+export type WatchRestore = { status: "none" } | { status: "other_session" } | { status: "malformed" } | { status: "ok"; watches: WatchRecord[]; bad: number };
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** One stored record, or null when it is unreadable. */
+export function parseWatchRecord(v: unknown): WatchRecord | null {
+  const r = v as Record<string, unknown> | null;
+  if (!r || typeof r !== "object") return null;
+  if (!finite(r.n) || !Number.isInteger(r.n) || r.n < 1) return null;
+  if (r.until !== "checks" && r.until !== "comment" && r.until !== "any") return null;
+  if (!finite(r.deadline) || !finite(r.timeoutMs) || !finite(r.startedAt) || typeof r.cwd !== "string") return null;
+  if (!Array.isArray(r.checks) || !r.checks.every((c) => Array.isArray(c) && c.length === 2 && typeof c[0] === "string" && typeof c[1] === "string")) return null;
+  if (!Array.isArray(r.commentIds) || !r.commentIds.every((c) => typeof c === "string")) return null;
+  return { n: r.n, until: r.until, checks: r.checks as [string, string][], commentIds: r.commentIds as string[], deadline: r.deadline, timeoutMs: r.timeoutMs, startedAt: r.startedAt, cwd: r.cwd };
+}
+
+/** What the latest `pi-foreman-prwatch` entry of the branch says for this Pi session id. Pure. */
+export function latestWatches(entries: unknown[], piSessionId: string): WatchRestore {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as { type?: unknown; customType?: unknown; data?: unknown } | null;
+    if (!e || e.type !== "custom" || e.customType !== PRWATCH_ENTRY) continue;
+    const d = e.data as Record<string, unknown> | null | undefined;
+    if (!d || typeof d !== "object" || d.v !== 1 || typeof d.piSessionId !== "string" || !d.piSessionId) return { status: "malformed" };
+    if (d.piSessionId !== piSessionId) return { status: "other_session" };
+    if (!Array.isArray(d.watches)) return { status: "malformed" };
+    const watches: WatchRecord[] = [];
+    let bad = 0;
+    for (const w of d.watches) {
+      const r = parseWatchRecord(w);
+      if (r) watches.push(r);
+      else bad += 1;
+    }
+    return { status: "ok", watches, bad };
+  }
+  return { status: "none" };
+}
+
+/** The visible notice for a watch that cannot be resumed; `n` is null for an unreadable record. The number is message text only, never traced. */
+export function lostMessage(n: number | null, reason: string): ReturnType<typeof prMessage> {
+  const content = `pi-foreman-pr: ${n === null ? "a PR" : `PR #${n}`} watch lost on restart: ${reason}`;
+  return { customType: PR_MESSAGE_TYPE, content, display: true, details: { ...(n === null ? {} : { number: n }), outcome: "lost" } };
+}
+
 export interface PrWatchesDeps {
-  poll(n: number, until: WatchUntil): Promise<Snapshot | { error: string }>;
+  poll(n: number, until: WatchUntil, cwd?: string): Promise<Snapshot | { error: string }>;
+  /** The working directory a new watch polls in (stored so a restored watch polls there). */
+  cwd?(): string;
+  /** The watch set changed by a start or an end (never by clear()): write the session entry. */
+  persist?(watches: WatchRecord[]): void;
   send(msg: ReturnType<typeof prMessage>, idle: boolean): void;
   idle(): boolean;
   trace(rec: Record<string, unknown>): void;
@@ -178,6 +243,7 @@ interface Watch {
   lastError: string;
   ended: boolean;
   started: number;
+  cwd: string;
   last: { at: number; checks: ChecksAnswer } | null;
 }
 
@@ -222,12 +288,64 @@ export class PrWatches {
   }
 
   start(n: number, until: WatchUntil, baseline: Baseline, timeoutMs: number): void {
-    const w: Watch = { n, until, baseline, timeoutMs, started: this.deps.now(), deadline: this.deps.now() + timeoutMs, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false, last: null };
+    const w = this.register(n, until, baseline, timeoutMs, this.deps.now(), this.deps.now() + timeoutMs, this.deps.cwd?.() ?? "");
+    this.arm(w);
+    this.persist();
+    this.deps.changed?.();
+  }
+
+  private register(n: number, until: WatchUntil, baseline: Baseline, timeoutMs: number, started: number, deadline: number, cwd: string): Watch {
+    const w: Watch = { n, until, baseline, timeoutMs, started, deadline, cwd, poller: null, stopper: null, busy: false, errors: 0, lastError: "", ended: false, last: null };
     this.reserved.delete(n);
     this.watches.set(n, w);
-    w.stopper = this.timers.set(() => this.end(w, { outcome: "timeout", detail: String(Math.round(timeoutMs / 1000)) }), timeoutMs);
-    this.arm(w);
+    w.stopper = this.timers.set(() => this.end(w, { outcome: "timeout", detail: String(Math.round(timeoutMs / 1000)) }), Math.max(0, deadline - this.deps.now()));
+    return w;
+  }
+
+  /** The active watches as session-entry records. */
+  records(): WatchRecord[] {
+    return [...this.watches.values()].map((w) => ({ n: w.n, until: w.until, checks: [...w.baseline.checks], commentIds: [...w.baseline.commentIds], deadline: w.deadline, timeoutMs: w.timeoutMs, startedAt: w.started, cwd: w.cwd }));
+  }
+
+  private persist(): void {
+    try {
+      this.deps.persist?.(this.records());
+    } catch {
+      // the session file is not writable now: the next change tries again
+    }
+  }
+
+  /**
+   * session_start of the same Pi session id: resume the stored watches with their remaining time and poll each at once (a delta that
+   * happened while the session was down fires against the stored baseline); a watch whose deadline passed, and an unreadable record or
+   * entry, give one visible "lost" notice. The corrected set is persisted afterwards.
+   */
+  restore(r: WatchRestore): void {
+    if (r.status === "none" || r.status === "other_session") return;
+    const lost: [number | null, string][] = [];
+    const live: Watch[] = [];
+    if (r.status === "malformed") lost.push([null, "the stored watch state is unreadable; start the watch again with pr_watch"]);
+    else {
+      for (let i = 0; i < r.bad; i++) lost.push([null, "a stored watch is unreadable; start the watch again with pr_watch"]);
+      for (const x of r.watches) {
+        if (this.has(x.n)) continue;
+        if (x.deadline <= this.deps.now()) lost.push([x.n, "deadline passed while the session was down; check the PR with pr_checks"]);
+        else live.push(this.register(x.n, x.until, { checks: new Map(x.checks), commentIds: new Set(x.commentIds) }, x.timeoutMs, x.startedAt, x.deadline, x.cwd));
+      }
+    }
+    this.persist();
     this.deps.changed?.();
+    for (const [n, reason] of lost) {
+      let idle = true;
+      try {
+        idle = this.deps.idle();
+      } catch {
+        // a stale context counts as idle
+      }
+      this.deps.send(lostMessage(n, reason), idle);
+      this.deps.trace({ event: "pr_watch", outcome: "lost" });
+    }
+    for (const w of live) void this.tick(w);
   }
 
   clear(): void {
@@ -251,7 +369,7 @@ export class PrWatches {
     w.busy = true;
     let r: Snapshot | { error: string };
     try {
-      r = await this.deps.poll(w.n, w.until);
+      r = await this.deps.poll(w.n, w.until, w.cwd || undefined);
     } catch (err) {
       r = { error: (err as Error).message };
     }
@@ -277,6 +395,7 @@ export class PrWatches {
     this.timers.clear(w.poller);
     this.timers.clear(w.stopper);
     if (this.watches.get(w.n) === w) this.watches.delete(w.n);
+    this.persist();
     this.deps.changed?.();
     let idle = true;
     try {
