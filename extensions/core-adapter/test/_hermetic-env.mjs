@@ -2,4 +2,4 @@
 delete process.env.PI_FOREMAN_HANDOFF_DIR;
 delete process.env.PI_FOREMAN_PARENT_INTERCOM;
 // A runner inside a Herdr pane must not hand its pane to the adapters under test: their presence files would name it.
-for (const k of Object.keys(process.env)) if (k.startsWith("HERDR_")) delete process.env[k];
+for (const k of Object.keys(process.env)) if (k.startsWith("HERDR_") || k.startsWith("HC_")) delete process.env[k];

@@ -66,3 +66,8 @@ test("gating: HERDR_ENV=1, a pane id, tui mode and herdr.groupTag", async () => 
   await handlers.get("session_shutdown")!({}, ctx("tui"));
   assert.deepEqual(calls[1], clearArgv("w1:p1"));
 });
+
+test("an herdr-core terminal alone (HC_TERMINAL_ID, no HERDR_* variable) leaves the group tag off", () => {
+  const hc = { HC_TERMINAL_ID: "t1", HC_SCOPE: "scope-1", HC_TERMINAL_SOCKET: "/nowhere/hc.sock" };
+  assert.equal(metaGate(hc, "tui", true), false);
+});

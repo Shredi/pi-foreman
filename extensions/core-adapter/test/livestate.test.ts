@@ -32,7 +32,7 @@ test("file shape, atomic write (no temp left), state transitions and done on sto
   const l = LiveState.start({ agentDir: d, sessionId: "sess1", cwd: "/w", mode: "rpc", env, pid: 42 }, () => [run]);
   assert.ok(l);
   const a = read(d, "sess1");
-  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "heartbeatAt", "lastEventAt", "state", "runs", "waits", "tokensIn", "tokensOut", "cost", "blockedSince", "presence"]);
+  assert.deepEqual(Object.keys(a), ["v", "sessionId", "intercomId", "parentIntercom", "handoff", "label", "cwd", "pid", "mode", "startedAt", "paneId", "hcTerminal", "heartbeatAt", "lastEventAt", "state", "runs", "waits", "tokensIn", "tokensOut", "cost", "blockedSince", "presence"]);
   assert.equal(a.v, 1);
   assert.equal(a.parentIntercom, "par");
   assert.equal(a.label, "job");
@@ -155,4 +155,18 @@ test("run end time is ISO; onChange fires on events; flush writes at once", () =
   l.touch();
   assert.equal(n, 1);
   l.stop();
+});
+
+test("hcTerminal from HC_TERMINAL_ID only while HERDR_PANE_ID is unset", () => {
+  const d = tmp();
+  const start = (id: string, env: Record<string, string>) => LiveState.start({ agentDir: d, sessionId: id, cwd: "/w", mode: "rpc", env }, () => [])!;
+  const a = start("h1", { HC_TERMINAL_ID: " t3 " });
+  assert.equal(read(d, "h1").hcTerminal, "t3");
+  assert.equal(read(d, "h1").paneId, null);
+  const b = start("h2", { HC_TERMINAL_ID: "t3", HERDR_PANE_ID: "w1:p2" });
+  assert.equal(read(d, "h2").hcTerminal, null);
+  assert.equal(read(d, "h2").paneId, "w1:p2");
+  const c = start("h3", {});
+  assert.equal(read(d, "h3").hcTerminal, null);
+  for (const l of [a, b, c]) l.stop();
 });

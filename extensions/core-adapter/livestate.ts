@@ -86,6 +86,8 @@ export interface LiveFile {
   dots?: LiveDot[];
   /** env HERDR_PANE_ID, else null. */
   paneId: string | null;
+  /** env HC_TERMINAL_ID (the herdr-core terminal) when HERDR_PANE_ID is unset, else null: a herdr TUI inside an herdr-app pane would stamp every Pi with one terminal. */
+  hcTerminal: string | null;
   /** The session's own usage as the footer shows it: in = input + cache read + cache write, out = output; cost = list price. */
   tokensIn: number;
   tokensOut: number;
@@ -203,6 +205,7 @@ export class LiveState {
       mode,
       startedAt: new Date(this.startedMs).toISOString(),
       paneId: (init.env.HERDR_PANE_ID ?? "").trim() || null,
+      hcTerminal: (init.env.HERDR_PANE_ID ?? "").trim() ? null : (init.env.HC_TERMINAL_ID ?? "").trim() || null,
     };
   }
 

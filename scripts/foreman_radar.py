@@ -401,7 +401,7 @@ def new_node(kind, key, name):
     # own/tot: [in, out, cost, uncached]; uncached None = unknown (no usage file with the cache split)
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
             "own": [0, 0, 0.0, 0], "children": [], "tot": [0, 0, 0.0, 0], "parent": None, "path": "",
-            "role": None, "rung": None, "model": None, "waits": [], "tasks": [], "pane": None, "pid": None, "cwd": None, "blockedSince": None, "pressure": None,
+            "role": None, "rung": None, "model": None, "waits": [], "tasks": [], "pane": None, "hcTerminal": None, "pid": None, "cwd": None, "blockedSince": None, "pressure": None,
             "sid": None, "ended": None, "unc_self": 0}
 
 
@@ -478,6 +478,7 @@ def build(data, now):
         n["started"] = parse_ts(d.get("startedAt"))
         n["path"] = next((d[k] for k in ("sessionFile", "cwd", "handoff") if isinstance(d.get(k), str) and d[k]), "")
         n["pane"] = d["paneId"] if isinstance(d.get("paneId"), str) and d["paneId"] else None
+        n["hcTerminal"] = d["hcTerminal"] if isinstance(d.get("hcTerminal"), str) and d["hcTerminal"] else None
         n["pid"] = d["pid"] if isinstance(d.get("pid"), int) and not isinstance(d.get("pid"), bool) else None
         n["cwd"] = d["cwd"] if isinstance(d.get("cwd"), str) and d["cwd"] else None
         n["blockedSince"] = parse_ts(d.get("blockedSince"))
@@ -879,7 +880,7 @@ def to_json_node(n, now, symbols):
     cost = lambda t: {"in": int(t[0]), "out": int(t[1]), "cost": round(float(t[2]), 4),  # noqa: E731
                       "uncached": None if t[3] is None else int(t[3])}
     out = {"key": n["key"], "kind": n["kind"], "name": n["name"], "role": n["role"], "rung": n["rung"],
-            "state": n["state"], "sym": key, "glyph": symbols[key], "paneId": n["pane"], "pid": n["pid"],
+            "state": n["state"], "sym": key, "glyph": symbols[key], "paneId": n["pane"], "hcTerminal": n.get("hcTerminal"), "pid": n["pid"],
             "cwd": n["cwd"], "age_s": age, "blocked_s": blocked, "own": cost(n["own"]), "tot": cost(n["tot"]),
             "done_children": sum(1 for c in n["children"] if c["state"] == "done"), "children": kids}
     if n["kind"] == "session":

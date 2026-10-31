@@ -445,6 +445,15 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "backend": { "type": "string", "enum": ["auto", "herdr", "hc", "terminal"], "description": "Where a local `foreman session open` runs the child (default `auto`): `herdr` when HERDR_PANE_ID is set and herdr is found, else herdr-core (`hc run`) when HC_TERMINAL_ID is set and hc is found, else the printed command. `herdr`, `hc` and `terminal` force one; a forced backend that cannot run is refused. Experimental for hc. User or overlay config only." },
+        "hc": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "herdr-core settings of `foreman session open`. User or overlay config only.",
+          "properties": {
+            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." }
+          }
+        },
         "machines": {
           "type": "object",
           "description": "Machines `foreman session open --machine` may open a child on, keyed by the Herdr saved-machine name (A-Z a-z 0-9 . _ -, at most 64 characters, starting with a letter or digit). User or overlay config only.",
