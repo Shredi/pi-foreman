@@ -70,7 +70,8 @@ class TrustTest(unittest.TestCase):
         out = io.StringIO()
         env = {"PI_CODING_AGENT_DIR": str(self.agent)}
         with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            os.environ.pop("HERDR_PANE_ID", None)
+            for k in ("HERDR_PANE_ID", "HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN"):
+                os.environ.pop(k, None)
             code = fsn.main(["open", "t", str(self.brief), "--cwd", str(cwd), "--parent-id", "p-1", "--agent-dir",
                              str(self.agent)] + list(extra))
         return code, out.getvalue()

@@ -172,6 +172,12 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.
 - **`foreman_bg` and `foreman_wait {kind: pid}`.** `foreman_bg` returns the wait id; an explicit `foreman_wait` on the same pid
   returns that id (no second wait).
+- **A restart loses the waits.** `foreman_wait` and `foreman_bg` waits live in the process, so a restart (`pi --continue`,
+  `--session <id>`, `/reload`) ends them without a wake. The active set is stored in the session file (`pi-foreman-waits`
+  entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
+  `foreman_wait lost on restart: …` listing the lost ids, kinds and notes, and starts again what it still needs (trace `wait`
+  decision `lost`). Nothing is reattached; a pid is not reattached because the process may be gone or reused. `pr_watch`
+  watches do resume (see [tools](tools.md#watch)).
 
 Worked example:
 
@@ -242,6 +248,11 @@ git top level of `--cwd` (else creates it), creates a tab named after the label 
 the command in its pane. Without Herdr, or if it fails, it prints the command, for a POSIX shell
 `env PI_FOREMAN_HANDOFF_DIR=… pi [--model ID] 'Read the handoff brief at …'` or, on Windows, the PowerShell form
 `$env:PI_FOREMAN_HANDOFF_DIR='…'; pi …`, and the session stays `pending`.
+
+`sessions.backend` (`auto` by default, `herdr`, `hc` or `terminal`; user or overlay config only) chooses between these for a
+local open. `auto` tries Herdr first, then herdr-core (`hc run`, when `HC_TERMINAL_ID` is set) and then the printed
+command. A forced backend that cannot run is refused `[backend_unavailable]`. See
+[herdr-app and herdr-core](herdr.md#herdr-app-and-herdr-core) (experimental).
 
 ### Providers in opened sessions
 

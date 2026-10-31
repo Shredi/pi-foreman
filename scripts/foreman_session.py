@@ -61,7 +61,15 @@ reports back with `remote notice`: in pull mode (the default, `sessions.machines
 sends pi-intercom's `send --to <uuid>@<machine>`. Parent SSH calls share one connection on POSIX
 (`sessions.ssh.controlMaster`).
 
-Exit codes: 0 ok, 1 usage or refused, 2 Herdr failure.
+herdr-core (`sessions.backend`, user or overlay config only): a local `open` picks `herdr` (above) when HERDR_PANE_ID is set,
+else `hc` when HC_TERMINAL_ID is set and `hc` (PATH or HC_BIN) is found, else prints the command. `sessions.backend` can be
+`auto` (default), `herdr`, `hc` or `terminal`; a forced backend that cannot run is refused [backend_unavailable]. The hc backend
+runs `hc run --json --bg --no-notify --cwd D --name fm-<slug>-<hex> [--outlive-parent] -- env -u HERDR_ENV -u HERDR_PANE_ID
+PATH=<opener PATH> K=V... pi ...` (argv, no shell; PowerShell on Windows). --no-notify is not configurable: hc would otherwise type
+the child's notes into the parent's terminal. `sessions.hc.outliveParent` (default true) keeps the child alive when its
+parent terminal ends. --focus is ignored under hc; `--machine` keeps the SSH path.
+
+Exit codes: 0 ok, 1 usage or refused, 2 Herdr or hc failure.
 """
 from __future__ import annotations
 
@@ -91,6 +99,8 @@ VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,200}\Z")
 # PowerShell metacharacters, no control chars.
 PATH_BAD = re.compile(r"[\x00-\x1f\x7f\u2018-\u201e'\"`$;|&<>(){}\[\]*?!#%^,]")
 HERDR_TIMEOUT = 30
+HC_TIMEOUT = 30
+BACKENDS = ("auto", "herdr", "hc", "terminal")
 ENV_HANDOFF = "PI_FOREMAN_HANDOFF_DIR"
 ENV_PARENT = "PI_FOREMAN_PARENT_INTERCOM"
 ENV_STABLE = "PI_INTERCOM_STABLE_ID"
@@ -163,6 +173,10 @@ def host_platform():
 
 
 class HerdrError(Exception):
+    pass
+
+
+class HcError(Exception):
     pass
 
 
@@ -373,6 +387,18 @@ def herdr(binary, args, timeout=HERDR_TIMEOUT):
         raise HerdrError("herdr %s: output is not JSON" % " ".join(args[:2]))
 
 
+def hc_bin():
+    given = os.environ.get("HC_BIN")
+    if given:
+        return given if Path(given).is_file() else None
+    return shutil.which("hc")
+
+
+def hc_name(child):
+    """The `hc run --name` for a child id `fm-<slug>-<6 hex>`: the slug cut to 22 keeps the name within 32 characters."""
+    return "fm-%s-%s" % (child[3:-7][:22].strip("-") or "session", child[-6:])
+
+
 def herdr_server_up(binary):
     """True when a Herdr server answers a read-only call within DISCOVERY_TIMEOUT seconds."""
     try:
@@ -380,6 +406,90 @@ def herdr_server_up(binary):
         return True
     except HerdrError:
         return False
+
+
+def sessions_config(adir):
+    """The `sessions` section of the user/overlay config ({} when unreadable: a config problem never blocks the open)."""
+    try:
+        import foreman_config
+        cfg = foreman_config.load_config(agent_dir=str(adir))["config"]
+    except Exception:  # noqa: BLE001
+        return {}
+    section = cfg.get("sessions") if isinstance(cfg, dict) else None
+    return section if isinstance(section, dict) else {}
+
+
+def backend_of(cfg, environ):
+    """(backend, binary) for a local open from the `sessions` config: herdr | hc | terminal. `auto` tries herdr first (the TUI
+    keeps its behaviour inside an herdr-app pane), then herdr-core, then the printed command. A forced backend that
+    cannot run is refused [backend_unavailable]."""
+    want = cfg.get("backend") if isinstance(cfg, dict) else None
+    want = want if want in BACKENDS else "auto"
+    if want == "terminal":
+        return "terminal", None
+    if want == "herdr":
+        found = herdr_bin()
+        if not found or not herdr_server_up(found):
+            raise Refused("sessions.backend is herdr but no Herdr server answers", "backend_unavailable")
+        return "herdr", found
+    if want == "hc":
+        found = hc_bin()
+        if not found:
+            raise Refused("sessions.backend is hc but `hc` was not found (PATH or HC_BIN)", "backend_unavailable")
+        return "hc", found
+    found = herdr_bin() if environ.get("HERDR_PANE_ID") else None
+    if found:
+        return "herdr", found
+    found = hc_bin() if environ.get("HC_TERMINAL_ID") else None
+    return ("hc", found) if found else ("terminal", None)
+
+
+def hc_outlive_parent(cfg):
+    hc_cfg = cfg.get("hc") if isinstance(cfg, dict) else None
+    value = hc_cfg.get("outliveParent") if isinstance(hc_cfg, dict) else None
+    return value if isinstance(value, bool) else True
+
+
+def hc_child_argv(env, model, prompt, first, platform, path):
+    """The child's argv after `--` (no shell, unquoted): the TUI pane identity is dropped, the caller's PATH passed."""
+    if platform == "win32":
+        head = "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID -ErrorAction SilentlyContinue; $env:PATH = %s; " % ps_quote(path)
+        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first)]
+    pi = shutil.which("pi") or "pi"
+    return (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
+            + (["--model", model] if model else []) + list(first) + [prompt])
+
+
+def hc_run_args(name, cwd, child_argv, outlive):
+    """Arguments of `hc run`. --no-notify always: hc would otherwise type the child's notes into the parent's terminal."""
+    return (["run", "--json", "--bg", "--no-notify", "--cwd", str(cwd), "--name", name] + (["--outlive-parent"] if outlive else [])
+            + ["--"] + list(child_argv))
+
+
+def hc(binary, args, timeout=HC_TIMEOUT):
+    """Run hc (argv list, no shell); the JSON object it prints."""
+    try:
+        r = subprocess.run([binary] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise HcError("hc %s: %s" % (args[0] if args else "", e))
+    out = r.stdout.decode("utf-8", "replace").strip()
+    if r.returncode != 0:
+        err = r.stderr.decode("utf-8", "replace").strip() or out
+        raise HcError("hc %s exited %d: %s" % (args[0] if args else "", r.returncode, err[:300]))
+    try:
+        data = json.loads(out)
+    except ValueError:
+        raise HcError("hc %s: output is not JSON" % (args[0] if args else ""))
+    if not isinstance(data, dict) or not isinstance(data.get("address"), str) or not VALUE_RE.match(data["address"]):
+        raise HcError("hc %s: reply has no usable address" % (args[0] if args else ""))
+    return data
+
+
+def open_in_hc(binary, name, cwd, child_argv, outlive):
+    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive))
+    parent = reply.get("parent")
+    return {"address": reply["address"], "parent": parent if isinstance(parent, str) and VALUE_RE.match(parent) else None}
 
 
 def dig(data, *keys):
@@ -689,11 +799,16 @@ def open_session(p, remote=None):
     prompt = prompt_text(handoff)
     first = p.get("first") or []
     command = posix_command(env, model, prompt, first)
+    scfg = {}
     if remote:
         found = herdr_bin()
         binary = found if found and herdr_server_up(found) else None
+        backend = "herdr" if binary else "terminal"
     else:
-        binary = herdr_bin() if os.environ.get("HERDR_PANE_ID") else None
+        scfg = sessions_config(adir)
+        backend, binary = backend_of(scfg, os.environ)
+    child_argv = hc_child_argv(env, model, prompt, first, host_platform(), os.environ.get("PATH", "")) if backend == "hc" else None
+    outlive = hc_outlive_parent(scfg)
     say("handoff: %s" % handoff)
     say("child intercom id: %s" % child)
     if model:
@@ -702,7 +817,9 @@ def open_session(p, remote=None):
             say("rank check skipped: own model unknown")
     info = {"handoff": str(handoff), "child": child}
     if p["dry_run"]:  # writes nothing: no handoff dir, brief, parent, child or registry entry
-        if binary:
+        if backend == "hc":
+            say("dry run: would run under herdr-core:\n  %s" % json.dumps([binary] + hc_run_args(hc_name(child), cwd, child_argv, outlive)))
+        elif backend == "herdr":
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
             say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
@@ -719,7 +836,7 @@ def open_session(p, remote=None):
     if remote and remote.get("mode") == "pull":  # no file means push
         (handoff / RETURN_PATH_FILE).write_text("pull\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if binary or host_platform() != "win32" else powershell_command(env, model, prompt, first)
+    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, model, prompt, first)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
@@ -732,7 +849,18 @@ def open_session(p, remote=None):
         if foreman_trust.grant(adir, cwd):
             entry["trusted"] = os.path.realpath(str(cwd))
     code = 0
-    if binary:
+    if backend == "hc":
+        try:
+            made = open_in_hc(binary, hc_name(child), cwd, child_argv, outlive)
+            entry.update(backend="hc", hc=made, status="open")
+            say("opened under herdr-core: %s (%s)" % (made["address"], "parent %s" % made["parent"] if made["parent"]
+                                                      else "not nested: no parent terminal"))
+        except HcError as e:
+            entry["status"] = "failed"
+            warn(str(e))
+            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            code = 2
+    elif backend == "herdr":
         try:
             entry.update(open_in_herdr(binary, label, cwd, ws_label, command, p["focus"]))
             entry["status"] = "open"
@@ -1788,8 +1916,10 @@ def cmd_list(a):
     for s in rows:
         last = s.get("last") if isinstance(s.get("last"), dict) else None
         tail = " last: %s %s" % (last.get("kind"), last.get("path") or "") if last else ""
-        print("  %s  %s  %s  %s  %s%s" % (s.get("label"), s.get("model") or "-", s.get("status"), s.get("handoff"),
-                                       s.get("child"), tail))
+        hc_at = s.get("hc") if isinstance(s.get("hc"), dict) else None
+        where = " hc:%s" % hc_at.get("address") if hc_at and hc_at.get("address") else ""
+        print("  %s  %s  %s  %s  %s%s%s" % (s.get("label"), s.get("model") or "-", s.get("status"), s.get("handoff"),
+                                         s.get("child"), where, tail))
     return 0
 
 

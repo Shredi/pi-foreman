@@ -85,6 +85,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. `bridge.promptCacheTtl` sets Claude Code's prompt-cache TTL for bridge turns: 1h for the foreman, 5m for subagents. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
+| [herdr-core](#herdr-core) | sessions |  | on | Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent. `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only. | on by default | [herdr](herdr.md#herdr-app-and-herdr-core) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
 | [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -632,6 +633,15 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 No config key.
 
+### herdr-core
+
+**herdr-app and herdr-core sessions (experimental).** Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent. `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only.
+
+| Key | Default | Layer |
+|---|---|---|
+| `sessions.backend` | `"auto"` | not in project/session (where a local session opens comes from the user or overlay config) |
+| `sessions.hc.outliveParent` | `true` | not in project/session (the herdr-core session options come from the user or overlay config) |
+
 ### remote-sessions
 
 **Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only.
@@ -914,6 +924,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `sessions.machines` | the machines a session may open on over SSH come from the user or overlay config |
 | `sessions.pull` | the remote pull poll periods come from the user or overlay config |
 | `sessions.ssh` | the SSH multiplexing switch comes from the user or overlay config |
+| `sessions.backend` | where a local session opens comes from the user or overlay config |
+| `sessions.hc` | the herdr-core session options come from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |

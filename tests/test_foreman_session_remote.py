@@ -72,6 +72,8 @@ os.environ.pop("FAKE_HERDR_DOWN", None)
 if os.environ.get("FAKE_REMOTE_HERDR_DOWN"):
     os.environ["FAKE_HERDR_DOWN"] = "1"
 os.environ.pop("HERDR_PANE_ID", None)
+for _k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN"):
+    os.environ.pop(_k, None)
 if os.environ.get("FAKE_REMOTE_PATH"):
     os.environ["PATH"] = os.environ["FAKE_REMOTE_PATH"]
 sys.path.insert(0, os.environ["FAKE_SCRIPTS"])
@@ -154,7 +156,8 @@ class RemoteBase(unittest.TestCase):
                     "FAKE_REMOTE_AGENT": str(self.radir), "FAKE_HERDR_MACHINES": json.dumps(PARENT_MACHINES),
                     "FAKE_REMOTE_HERDR_MACHINES": json.dumps(REMOTE_MACHINES),
                     "FAKE_REMOTE_HERDR_AGENTS": json.dumps(REMOTE_AGENTS)}
-        for k in ("HERDR_BIN", "HERDR_BIN_PATH", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR",
+        for k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN",
+                  "HERDR_BIN", "HERDR_BIN_PATH", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR",
                   "PI_FOREMAN_REMOTE_PARENT", "PI_FOREMAN_SESSION_MODEL", "FAKE_SSH_MODE", "FAKE_REMOTE_PATH",
                   "FAKE_NO_INTERCOM", "FAKE_SSH_PROTOCOL", "FAKE_HERDR_DOWN", "FAKE_REMOTE_HERDR_DOWN", "FAKE_NODE_EXIT"):
             self.env[k] = ""
@@ -265,7 +268,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_defaults(self):
         sessions = self.load()["config"]["sessions"]
-        self.assertEqual(sessions, {"machines": {}, "remoteInlineMaxBytes": 32768, "pull": {"intervalSeconds": 20, "fastSeconds": 5},
+        self.assertEqual(sessions, {"backend": "auto", "hc": {"outliveParent": True}, "machines": {}, "remoteInlineMaxBytes": 32768, "pull": {"intervalSeconds": 20, "fastSeconds": 5},
                                     "ssh": {"controlMaster": True}})
 
     def test_machines_from_the_project_layer_are_ignored(self):

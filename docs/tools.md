@@ -74,7 +74,7 @@ ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role
 | Event | Fields | Meaning |
 |---|---|---|
 | `tool_pack` | `pack` (`git`), `op` | one pack call while the pack is on; `op` is `status`, `log`, `diff_stat`, `branch_state`, `move`, `copy` or `worktree_remove`, or a PR tool name (`pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`). A call the drift preflight blocked is not counted. |
-| `pr_watch` | `outcome` (`started`, `checks`, `comment`, `timeout` or `error`) | a watch started or ended; the PR number is never traced |
+| `pr_watch` | `outcome` (`started`, `checks`, `comment`, `timeout`, `error` or `lost`) | a watch started or ended (`lost`: it could not be resumed after a restart); the PR number is never traced |
 | `pr_track` | `path` (`push`, `search`, `interact`, `events`, `create`, `url`, `tool`, `watch`, `branch` or `untrack`), `dup`, `skipped`, `foreign`, `count` | a PR was registered (see [Registration paths](#registration-paths)); never the number, branch, host, repo, author or login |
 | `pr_shared` | `outcome`, `source`, `count` | the shared PR watch did something (see [Shared PR watch](#shared-pr-watch)); never a PR number, repo, author or login |
 
@@ -206,7 +206,7 @@ seconds, after taking a baseline. It ends at the first change (checks finished o
 `timeoutSeconds`, or after three polls in a row that failed. Each end sends exactly one `pi-foreman-pr` message with
 the summary, up to 10 failed checks and up to 10 new comments (cut to 4 KB), and clears the watch. It starts a turn
 when the foreman is idle and follows up when it is busy; the message is data, not an instruction. One watch per PR and
-session (`duplicate` otherwise). Watches are cleared at session shutdown. The Herdr sidebar's PR dots poll at the same
+session (`duplicate` otherwise). Active watches are stored in the session file (the `pi-foreman-prwatch` entry: PR number, `until`, baseline, deadline, working directory) and survive a restart of the same Pi session (`pi --continue`, `--session <id>`, `/reload`). At session start a watch with time left resumes with the remaining time and polls once at once, so a change that happened while the session was down (a failed check, a new comment) sends its message right away. A watch whose deadline passed, or whose stored record is unreadable, sends one `pi-foreman-pr` message `watch lost on restart: <reason>` (trace outcome `lost`); check the PR with `pr_checks`. A fork or a copied session file has another session id and starts with no watches. The Herdr sidebar's PR dots poll at the same
 interval, `tools.prWatchSeconds` (floor 30 s; see [herdr](herdr.md#dots)).
 
 ### Identity and labels
