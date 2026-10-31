@@ -254,6 +254,7 @@ export function createRemotePull(deps: PullDeps): RemotePull {
       if (r.closed) out.closed = true;
       if (!r.more || r.closed) break;
     }
+    if (out.error === "stopped") return out; // aborted by stop(): write no state and no trace
     const prev = state.get(child);
     const failures = out.ok ? 0 : (prev?.failures ?? 0) + 1;
     const e = newest(readRegistry(h.agentDir), child);

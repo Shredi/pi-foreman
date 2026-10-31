@@ -181,8 +181,9 @@ def main(argv=None):
             print("foreman_pressure: %s" % exc, file=sys.stderr)
             return 2
         rec = classify(host, limits)
-        if hasattr(signal, "SIGTERM"):
+        if sys.platform != "win32":
             # A stop kills the sampler: unwind through write_state so its temp file is unlinked.
+            # Not on Windows: Node's kill terminates the process outright, so a handler is useless there.
             signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
         write_state(args.state, rec)
     else:
