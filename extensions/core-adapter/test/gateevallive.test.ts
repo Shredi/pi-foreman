@@ -78,7 +78,7 @@ test("a valid reply is recorded per case; tokens, calls and percentiles add up",
   const { answers, stats } = await liveEval(cases, fake(deny, calls), "fake/m", pkgRoot);
   const ids = Object.keys(answers);
   assert.ok(ids.length > 5);
-  for (const id of ids) assert.deepEqual(answers[id], { verdict: "deny", entry: "no-matching-entry" });
+  for (const id of ids) assert.deepEqual(answers[id], { verdict: "ask", entry: "no-matching-entry" }); // a no-match answer is an ask whichever way it is filed
   assert.equal(stats.modelCalls, calls.n);
   assert.equal(stats.modelCalls, ids.length);
   assert.equal(stats.inputTokens, 100 * calls.n);
