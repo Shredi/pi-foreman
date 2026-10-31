@@ -1,0 +1,21 @@
+{
+  "_comment": "Running-session variables that every test entry point clears: the node preload (_hermetic-env.mjs), the core-adapter rig (_r46world.ts) and tests/_isolation.py. Keep PI_FOREMAN_PYTHON out: CI's Windows job sets it from outside. PI_CODING_AGENT_DIR is cleared too; the tests that need it set it themselves.",
+  "keys": [
+    "PI_FOREMAN_STATE_DIR",
+    "PI_CODING_AGENT_DIR",
+    "PI_SUBAGENT_CHILD",
+    "PI_SUBAGENT_PARENT_SESSION",
+    "PI_SUBAGENT_EXTENSION_BINDINGS",
+    "PI_FOREMAN_PRESSURE_FIXTURE",
+    "PI_FOREMAN_HANDOFF_DIR",
+    "PI_FOREMAN_PARENT_INTERCOM",
+    "PI_FOREMAN_PARENT_LABEL",
+    "PI_FOREMAN_SESSION_MODEL",
+    "PI_FOREMAN_PLAN_PHASE",
+    "PI_INTERCOM_SESSION_ID",
+    "PI_INTERCOM_STABLE_ID",
+    "HERDR_PANE_ID",
+    "HERDR_ENV"
+  ],
+  "prefixes": ["PI_FOREMAN_PARENT_", "PI_INTERCOM_", "HERDR_", "HC_"]
+}
