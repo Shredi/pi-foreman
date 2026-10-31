@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseRadar, buildTree, nodeStatus, sessionRows, treeItems, glyphSpec } from "./model.js";
+import { parseRadar, buildTree, nodeStatus, sessionRows, sessionTree, glyphSpec } from "./model.js";
 
 const cost = { in: 0, out: 0, cost: 0, uncached: 0 };
 const session = (key, over = {}) => ({
@@ -65,11 +65,11 @@ test("sessionRows: text priority ask > agents > bg > wait", () => {
   assert.equal(sessionRows(node(base), "working").status, "working");
 });
 
-test("treeItems: ended sessions are hidden, other states are drawn", () => {
+test("sessionTree: ended sessions are hidden, other states are drawn", () => {
   const top = buildTree(parseRadar(JSON.stringify({ roots: [session("top", { children: [
     session("gone", { state: "done" }), session("live", { tasks: [{ label: "x", ageSeconds: 1 }] }),
   ] })] })))[0];
-  const items = treeItems(top);
+  const items = sessionTree(top).children;
   assert.deepEqual(items.map((i) => i.label), ["live"]);
   assert.equal(items[0].status, "bg");
 });

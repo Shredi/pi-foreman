@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTree, joinAgents, joinChildren, treeItems, agentLines, parseRecords, agentStatus, sessionRows } from "./model.js";
+import { buildTree, joinAgents, joinChildren, sessionTree, agentLines, parseRecords, agentStatus, sessionRows } from "./model.js";
 
 const sess = (name, hcTerminal, extra = {}) => ({
   key: name, kind: "session", name, hcTerminal, state: "working", sym: "", pid: null, machine: "", parent: "",
@@ -40,8 +40,8 @@ test("no double drawing: skipping the joined node removes its nested row under t
   const joined = joinAgents([{ address: "t1" }], tree);
   const cj = joinChildren([kid("t12")], tree, null, new Set(joined.values()));
   assert.equal(cj.size, 1);
-  assert.deepEqual(treeItems(top, new Set([...joined.values(), ...cj.values()])), []);
-  assert.equal(treeItems(top, new Set()).length, 1);
+  assert.deepEqual(sessionTree(top, { skip: new Set([...joined.values(), ...cj.values()]) }).children, []);
+  assert.equal(sessionTree(top).children.length, 1);
 });
 
 test("detail rows of a child: wait text, records, PR chips", () => {
@@ -66,7 +66,7 @@ test("nested sessions of a joined child are tree items", () => {
   const inner = sess("inner", "", { parent: "outer" });
   const [outer] = buildTree([sess("outer", "t12", { children: [inner] })]);
   const cj = joinChildren([kid("t12")], [outer]);
-  const items = treeItems(cj.get("t12"), new Set(cj.values()));
+  const items = sessionTree(cj.get("t12"), { skip: new Set(cj.values()) }).children;
   assert.equal(items.length, 1);
   assert.equal(items[0].label, "inner");
 });
