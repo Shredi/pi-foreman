@@ -563,7 +563,7 @@
       "id": "herdr-core",
       "area": "sessions",
       "title": "herdr-app and herdr-core sessions (experimental)",
-      "purpose": "Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent. `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only.",
+      "purpose": "Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent, and `--keep` is always passed, so the child survives core loss and reboot (in its own tab when the opener's terminal carries `herdr.space`). `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only.",
       "doc": "docs/herdr.md#herdr-app-and-herdr-core",
       "keys": ["sessions.backend", "sessions.hc.outliveParent"],
       "commands": ["foreman session open"],
