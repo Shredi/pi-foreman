@@ -1,6 +1,7 @@
 // R1 (ledger item 67): a ledger bound through the adapter's own handlers is the ledger that
 // `ledger status` sees from a shell tool, whose env is only PI_SESSION_ID plus what the adapter
 // put into process.env. The adapter never exports TMPDIR into process.env.
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
