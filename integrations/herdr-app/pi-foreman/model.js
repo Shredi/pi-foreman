@@ -193,6 +193,20 @@ export function joinAgents(agents, tree, machine = null) {
   return out;
 }
 
+/** Map pane-less child terminal address -> session node. `kids` are terminal records (`hc ls`), joined like agents on
+ *  `hcTerminal` == the address (`machine/` prefix: pass that machine). Nodes in `taken` (already shown under a paned agent) are
+ *  not used; a node joins one terminal only. */
+export function joinChildren(kids, tree, machine = null, taken = new Set()) {
+  const out = new Map();
+  const used = new Set(taken);
+  for (const [addr, n] of joinAgents(kids, tree, machine)) {
+    if (used.has(n)) continue;
+    used.add(n);
+    out.set(addr, n);
+  }
+  return out;
+}
+
 // ---- rows ----------------------------------------------------------------------------------------------------
 
 /** Cost as the TUI sidebar prints it. */
@@ -257,6 +271,11 @@ export function childTerminals(all, address) {
   };
   walk(address, []);
   return out;
+}
+
+/** Colour role of a PR check dot: green ok, red fail, amber (warning) pending, dim otherwise. */
+export function checkTone(state) {
+  return state === "ok" ? "ok" : state === "fail" ? "fail" : state === "pending" ? "warning" : "dim";
 }
 
 export function shortModel(m) {

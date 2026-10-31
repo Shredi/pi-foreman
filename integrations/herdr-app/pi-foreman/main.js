@@ -7,8 +7,8 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, sessionRows, treeItems, openPrGroups, openPrsAge, shownNodes,
-  radarBinary, parseRecords, agentStatus, agentsText, agentLines, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, sessionRows, treeItems, openPrGroups, openPrsAge, shownNodes,
+  radarBinary, parseRecords, agentStatus, agentsText, agentLines, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals, checkTone,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -47,7 +47,9 @@ function glyph(t, spec) {
 const statusGlyph = (t, status) => glyph(t, glyphSpec(status));
 
 function checkDot(t, state) {
-  const color = state === "ok" ? (t.done ?? t.working) : state === "fail" ? t.blocked : t.dim;
+  // The theme has no warning token; amber is the ANSI yellow.
+  const tones = { ok: t.done ?? t.working, fail: t.blocked, warning: t.ansi3 ?? t.ansi11 ?? t.working, dim: t.dim };
+  const color = tones[checkTone(state)];
   return div().size(7).mx(1).flex_none().rounded(4)
     .when(state === "pending", (el) => el.border(1.5).border_color(color))
     .when(state !== "pending", (el) => el.bg(color));
@@ -81,6 +83,7 @@ export default class ForemanAgents extends View {
     this.foremanProp = given.foreman;
     this.hcProp = given.hc;
     this.recs = new Map(); // agent address -> {recs, tried}
+    this.childPi = new Set(); // pane-less pi child terminals (set by render), polled for records too
     this.poll(cx);
     cx.timer.every(1000, (cx) => this.poll(cx));
   }
@@ -118,7 +121,8 @@ export default class ForemanAgents extends View {
   // One `hc get` per agent terminal per interval; a failure leaves no records.
   pollRecords(cx, now) {
     // Only pi terminals (listing field `app`) can have pi-subagents records.
-    const list = guard(() => agents().filter((a) => a?.app === "pi").map((a) => a.address).filter((x) => typeof x === "string" && x), []);
+    const paned = guard(() => agents().filter((a) => a?.app === "pi").map((a) => a.address).filter((x) => typeof x === "string" && x), []);
+    const list = [...new Set([...paned, ...this.childPi])];
     for (const addr of this.recs.keys()) if (!list.includes(addr)) this.recs.delete(addr);
     for (const addr of list) {
       const rec = this.recs.get(addr);
@@ -133,7 +137,7 @@ export default class ForemanAgents extends View {
           if (r.code === 0) recs = parseRecords(r.stdout);
         } catch { /* no hc here: no records */ }
         this.busy.delete(`hc:${addr}`);
-        if (guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, tried: Date.now() });
+        if (this.childPi.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, tried: Date.now() });
         cx.notify();
       });
     }
@@ -183,43 +187,44 @@ export default class ForemanAgents extends View {
       .child(div().flex_1().truncate().text_color(l.glyph === "blocked" ? t.blocked : t.muted).child(l.text)));
   }
 
-  topRows(t, node, hcStatus = null, recs = [], skip = new Set()) {
+  // `ind` shifts the rows right (rows under a child line); `head` false leaves out the name line (the child line has it).
+  topRows(t, node, hcStatus = null, recs = [], skip = new Set(), ind = 0, head = true) {
     const r = sessionRows(node, hcStatus, recs);
-    const line = () => h_flex().pl(33).pr(8).h(20).flex_none().items_center().gap(4).text_size(11.5);
-    const rows = [line()
+    const line = () => h_flex().pl(33 + ind).pr(8).h(20).flex_none().items_center().gap(4).text_size(11.5);
+    const rows = head ? [line()
       .child(div().truncate().text_color(t.foreground).child(r.label))
       .when(Boolean(r.tier), (el) => el.child(div().ml(4).text_size(10.5).text_color(t.dim).child(r.tier)))
       .child(div().flex_1())
       .when(Boolean(r.costText), (el) => el.child(div().text_color(t.muted).child(r.costText)))
-      .when(r.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${r.sessions} sessions`)))];
+      .when(r.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${r.sessions} sessions`)))] : [];
     if (r.ask) rows.push(line().child(div().truncate().text_color(r.blocked ? t.blocked : t.muted).child(r.ask)));
-    rows.push(...this.agentRows(t, agentLines(node, recs, skip), 41));
-    if (r.prs.length) rows.push(this.prLine(t, node, r.prs, r.summary, node.key || node.name, 33));
+    rows.push(...this.agentRows(t, agentLines(node, recs, skip), 41 + ind));
+    if (r.prs.length) rows.push(this.prLine(t, node, r.prs, r.summary, node.key || node.name, 33 + ind));
     return rows;
   }
 
-  treeRows(t, node, skip) {
+  treeRows(t, node, skip, ind = 0) {
     return treeItems(node, skip).flatMap((it, i) => {
       if (it.worker) {
-        return [h_flex().pl(39).pr(8).h(24).flex_none().items_center().text_size(12)
+        return [h_flex().pl(39 + ind).pr(8).h(24).flex_none().items_center().text_size(12)
           .children(guideCells(t, it.lines))
           .child(div().flex_1().truncate().text_color(t.muted).child(it.label))
           .child(it.running ? svg(SPINNER).size(10).mx(2).flex_none().text_color(t.working).spin(900) : statusGlyph(t, it.status))];
       }
       const key = `${it.node.key || it.node.name}-${i}`;
-      const row = h_flex().pl(39).pr(8).h(26).flex_none().items_center().text_size(12.5)
+      const row = h_flex().pl(39 + ind).pr(8).h(26).flex_none().items_center().text_size(12.5)
         .children(guideCells(t, it.lines))
         .child(div().flex_1().truncate().text_color(t.foreground).child(it.label))
         .when(Boolean(it.costText), (el) => el.child(div().mr(6).text_size(11).text_color(t.dim).child(it.costText)))
         .children(it.inline.map((p) => this.prChip(t, p, prUrl(it.node, p), key).mr(6)))
         .child(statusGlyph(t, it.status));
-      const below = it.below.length ? [this.prLine(t, it.node, it.below, "", key, 39 + it.lines.length * 13)] : [];
+      const below = it.below.length ? [this.prLine(t, it.node, it.below, "", key, 39 + ind + it.lines.length * 13)] : [];
       return [row, ...below];
     });
   }
 
   // One live hc child terminal: guides, optional logo, name, status.
-  childLine(t, row, shown, listed) {
+  childLine(t, row, shown, status) {
     const k = row.term;
     const active = k.address === shown;
     const logo = progIcon(k.program, 14, t.foreground);
@@ -232,7 +237,27 @@ export default class ForemanAgents extends View {
       .children(guideCells(t, childMarks(row.last)))
       .when(logo !== null, (el) => el.child(div().mr(7).child(logo)))
       .child(div().flex_1().truncate().text_color(active ? t.foreground : t.muted).child(label))
-      .child(statusGlyph(t, workerStatus(k.status, listed.get(k.address))));
+      .child(statusGlyph(t, status));
+  }
+
+  // A child line plus, when it has a radar node or hc records, the rows of a paned agent below it.
+  childRows(t, row, shown, listed, childJoined, skip) {
+    const addr = row.term.address;
+    const node = childJoined.get(addr) ?? null;
+    const recs = this.recs.get(addr)?.recs ?? [];
+    const own = workerStatus(row.term.status, listed.get(addr));
+    const status = guard(() => agentStatus(own, node, recs), own);
+    const line = this.childLine(t, row, shown, status);
+    const ind = 13 * row.depth;
+    if (node) return [line, ...guard(() => this.topRows(t, node, own, recs, skip, ind, false), []), ...guard(() => this.treeRows(t, node, skip, ind), [])];
+    return [line, ...this.bareRows(t, recs, ind)];
+  }
+
+  // Rows of an agent or child without a radar node: the `N agents` text and the agent lines from its records.
+  bareRows(t, recs, ind) {
+    const text = guard(() => agentsText(null, recs), "");
+    const textRow = text ? [h_flex().pl(33 + ind).pr(8).h(20).flex_none().items_center().text_size(11.5).child(div().truncate().text_color(t.muted).child(text))] : [];
+    return [...textRow, ...guard(() => this.agentRows(t, agentLines(null, recs), 41 + ind), [])];
   }
 
   // One agent of the list: logo, name, machine tag, time in this status, status.
@@ -291,7 +316,17 @@ export default class ForemanAgents extends View {
       tops.push(...rec.tree);
       for (const [addr, n] of joinAgents(withPid, rec.tree, key === "local" ? null : key)) joined.set(addr, n);
     }
-    const skip = new Set(joined.values());
+    // Pane-less child terminals (`hc run` sessions) join radar nodes the same way; such a node is drawn under its child line only.
+    // Only the child terminals that get drawn (those under a listed agent) can join.
+    const drawn = new Map(list.map((a) => [a.address, childTerminals(all, a.address)]));
+    const kids = [...new Map([...drawn.values()].flat().map((r) => [r.term.address, r.term])).values()]
+      .filter((x) => typeof x.address === "string" && !listedStatus.has(x.address));
+    const childJoined = new Map();
+    for (const [key, rec] of this.radar) {
+      if (rec.ok) for (const [addr, n] of joinChildren(kids, rec.tree, key === "local" ? null : key, new Set([...joined.values(), ...childJoined.values()]))) childJoined.set(addr, n);
+    }
+    this.childPi = new Set(kids.filter((x) => x.app === "pi" || childJoined.has(x.address)).map((x) => x.address));
+    const skip = new Set([...joined.values(), ...childJoined.values()]);
     const groups = [];
     for (const a of list) {
       const id = `sp-${a.space}`;
@@ -313,18 +348,14 @@ export default class ForemanAgents extends View {
     const withRows = (a) => {
       const f = joined.get(a.address);
       const head = this.agentLine(t, a, now, statusOf(a));
-      const live = childTerminals(all, a.address).map((row) => this.childLine(t, row, shown, listedStatus));
-      if (!f) {
-        const text = guard(() => agentsText(null, recsOf(a)), "");
-        const line = text ? [h_flex().pl(33).pr(8).h(20).flex_none().items_center().text_size(11.5).child(div().truncate().text_color(t.muted).child(text))] : [];
-        return [head, ...line, ...guard(() => this.agentRows(t, agentLines(null, recsOf(a)), 41), []), ...live];
-      }
+      const live = drawn.get(a.address).flatMap((row) => guard(() => this.childRows(t, row, shown, listedStatus, childJoined, skip), []));
+      if (!f) return [head, ...this.bareRows(t, recsOf(a), 0), ...live];
       const foreman = [...guard(() => this.topRows(t, f, listedStatus.get(a.address) ?? null, recsOf(a), skip), []), ...guard(() => this.treeRows(t, f, skip), [])];
       return [head, ...foreman, ...live, div().h(4).flex_none()];
     };
     const rows = groups.flatMap((g) => [...header(g), ...g.members.flatMap(withRows)]);
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
-    const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownNodes(joined)), []);
+    const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownNodes(new Map([...joined, ...childJoined]))), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
     const needs = list.filter((a) => statusOf(a) === "blocked").length;

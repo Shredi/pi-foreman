@@ -592,7 +592,7 @@ The mod reads `foreman radar --json` (every 3 s locally, 15 s per remote space) 
 blocked: they count as running agents (`N agents: titles`, hollow spinner) or as a need, also for a terminal with no radar node; radar's
 running child runs stay the source and a record with the title of a radar run is not counted twice. It joins a not-done node to an agent on
 `hcTerminal` (the `machine/` prefix for remote spaces; when both sides have a pid they must match). Without a radar it shows one
-dim line and retries every 30 s. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
+dim line and retries every 30 s. A pane-less child terminal (a session started with `hc run`) whose `hcTerminal` matches a node shows the same detail rows under its child line, once, with records polled for it too; without `hcTerminal` it stays a bare line. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
 name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
 `rundll32 url.dll,FileProtocolHandler`; never a shell) on an `https://` URL made of URL characters only (no whitespace, no
 `& | ^ < > " '`). The URL comes from radar (the `url` of the PR dot, which the installed pi-foreman reports for a tracked PR, else

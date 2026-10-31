@@ -12,11 +12,11 @@ a top-most foreman session:
 - line 1: label · tier · cost of the session plus every nested session (`$x.xx`, as the TUI sidebar prints it), and "N sessions" when N > 1;
 - line 2: the open ask (red while the session is blocked), else the waits;
 - a PR line: one chip per PR (number and its check dots), failing first, then pending, then green, newest first; a red
-  border marks a failing check; the chips wrap, followed by "N PRs · k failing · m pending" or "N PRs · all green";
+  border marks a failing check; check dots: green passed, red failing, amber hollow ring pending (the theme's ANSI yellow, like the terminal footer's `◉`), dim unknown; the chips wrap, followed by "N PRs · k failing · m pending" or "N PRs · all green";
 - nested foreman sessions (any depth) as tree rows: label, own cost, up to two PR chips inline, status glyph; more than two PRs
   go on a wrapping line under the row;
 - workers (builder, reviewer, explorer …) as one tree row "role model", with a spinner while they run;
-- live `hc` children of the agent keep their tree rows below (click: `terminal.peek`).
+- live `hc` children of the agent keep their tree rows below (click: `terminal.peek`); a pane-less child (`hc run` session) whose `hcTerminal` matches gets the same detail rows under its line (wait/ask, `N agents`, agent lines from its `hc get` records, PR chips, nested sessions), drawn once; a child without a radar node stays a bare line.
 
 Status legend of a session's glyph (the hc status of its terminal first, then radar; most urgent first): **Needs you** pill
 (ask, or hc blocked) > spinner (working) > filled dot (hc done: finished turn not yet seen) > hollow spinner (child agents run;
