@@ -356,15 +356,7 @@ The foreman's footer in a TUI session is two lines (`footer.style`: `"foreman"`,
 
 The cache bar has 10 cells that drain with the share of the time to cold still ahead (green above 50%, yellow above 20%, red at or below; cold is 0.95 x the TTL after the last cache touch), then the time to cold (`mm:ss`, `h:mm:ss` above an hour, counting every second), `♨ N` for the keep-alive warms still to come (`♨ last` for one; a dim `budget` or `away` follows when that, not the window, ends them) and `↓ <id>` for the idle rung the next notice turn runs on once the cache is cold. States: *cold* shows empty red cells and `❄ cold`; a *running turn* shows cells and time without warms; *downshifted* shows the idle model's own bar without the `↓` step; a model change starts the bar cold until the first request on the new model ends. With `ttl_long` or keep-alive disabled the bar counts down and goes cold without warms. It is hidden when the provider has no cache entry or an unknown TTL, bills per request, no model is selected, or `footer.cacheBar` is false. On a narrow terminal line 1 drops the branch, then shrinks both bars to 5 cells, then cuts the cache bar to cells and time (the step and the warm count go together), then cuts the line with `…`. The glyphs come from `ui.symbols`. The countdown only repaints the footer once a second; it sends no request.
 
-The usage footer (tokens, list-price cost, child launches, and `waiting <note>` while a `foreman_wait` is pending) is on by default (`footer.usage`). Below the editor, the children
-widget (`widget.children`, on by default, TUI only) lists this session's subagent runs as `role · rung · state · ↑in ↓out · $cost`
-(state `working`, or `ask` while a forwarded permission ask of that role waits) and its opened sessions as
-`label · status · age`; runs that finished during the batch fold into one `<n> done` line. The foreman adds its background rows
-after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · until · age`
-and a running `foreman_bg` command as `bg · note · age`. These rows show with or without child runs and leave when they end; the widget
-hides only when every row is empty. While any run or background row is active the
-widget keeps its height (it may grow when a row starts, padded rather than shrunk, at most 8 rows, one screen row each; a ninth
-and later row folds into one `+<n> more` row) and updates in place, so the view does not shift; the run rows go when the last active run ends. It costs no model tokens. Outside Pi,
+The usage footer (tokens and list-price cost) is on by default (`footer.usage`). It shows no run, wait or PR parts, and Pi draws no widget for subagent runs, background tasks, waits or PRs: the herdr-app mod is the only run and PR display (see [herdr](herdr.md#open-prs)), and pi-subagents has its own async display. Outside Pi,
 the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman findings list|dismiss|export` and `foreman retro models` ([review](review.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
@@ -560,7 +552,7 @@ On Windows the command runs under `cmd.exe` while the guards read it as bash; se
 or the session scratch dir. A path outside those, or one that is not a string, is refused and no wait is registered. The log is named in the wake line.
 
 `/foreman waits` lists the session's pending waits: id, kind, note, age, time left and the last 5 lines of the log. The note is also what
-the footer (`waiting <note>`), the presence file (`waits[].note`) and the Herdr sidebar line 2 show.
+the presence file (`waits[].note`) and the Herdr sidebar line 2 show.
 
 With the optional [background-tasks add-on](herdr.md#optional-add-on-background-tasks) installed, `foreman_bg` refuses and points at that
 add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and `bg_run` passes the same guards as bash.
@@ -580,6 +572,5 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | `close.autoClean`, `close.worktreeDir` | Cleanup at close and the worktree convention directory (see [close](close.md)). `autoClean` can only be turned off by a project or session; `worktreeDir` is user or overlay config only. |
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
-| `ui.symbols` | Glyph set for radar, the children widget and the Herdr sidebar plugin: `unicode` (default, broadest support), `emoji`, `nerd` (Nerd Font) or `ascii`; an unknown value reads as `unicode`; any layer may set it. |
-| `ui.spinner` | Animate the working glyph (dense braille frames, 250 ms steps; the sidebar also ticks while a session waits on something) in the children widget and the Herdr sidebar (default `true`); `false` shows static glyphs everywhere; any layer may set it. |
-| `widget.children` | Children widget below the editor in the TUI (default `true`); any layer may set it. |
+| `ui.symbols` | Glyph set for radar and the Herdr sidebar plugin: `unicode` (default, broadest support), `emoji`, `nerd` (Nerd Font) or `ascii`; an unknown value reads as `unicode`; any layer may set it. |
+| `ui.spinner` | Animate the working glyph (dense braille frames, 250 ms steps; the sidebar also ticks while a session waits on something) in the Herdr sidebar (default `true`); `false` shows static glyphs everywhere; any layer may set it. |

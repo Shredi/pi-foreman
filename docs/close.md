@@ -89,12 +89,10 @@ A removed entry is marked `removed: <ts>` in the manifest, so a second run of th
 `/foreman close` also starts a check for branches this session pushed. For each pushed branch, in this order:
 
 1. The base branch is skipped.
-2. A PR of that head branch tracked in this session (open, or since merged or closed) ends the check.
-3. One `pr_find {head, state: all}` in the push directory: a PR of any state ends the check (an open one is tracked).
-4. `foreman_close.py merged` asks whether the branch is already in the base branch; if so the check ends.
+2. One `pr_find {head, state: all}` in the push directory: a PR of any state ends the check.
+3. `foreman_close.py merged` asks whether the branch is already in the base branch; if so the check ends.
 
-Otherwise the session gets one warning, `pi-foreman: pushed branch <name> has no tracked PR (open one, or pr_track <number>
-once it exists)`. The notice is display only, through the UI, and never a message the model sees. The check is
+Otherwise the session gets one warning, `pi-foreman: pushed branch <name> has no pull request (open one)`. The notice is display only, through the UI, and never a message the model sees. The check is
 fire-and-forget: it never delays the close and the notice appears when the check ends. One check runs at a time. Each branch
 gets the notice once; a branch whose check failed (for example the host did not answer) is checked again after 10 minutes.
 The finish gate starts the same check when a triaged session finishes, so a session that was never triaged gets the notice

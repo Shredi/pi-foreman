@@ -77,7 +77,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-critic](#review-critic) | review |  | on | Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
-| [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
+| [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
 | [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -86,7 +86,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [bridge-isolation](#bridge-isolation) | safety |  | on | With the Claude bridge, points `CLAUDE_CONFIG_DIR` at an empty folder so the host's Claude Code settings, hooks and plugins do not load into bridge turns. `bridge.promptCacheTtl` sets Claude Code's prompt-cache TTL for bridge turns: 1h for the foreman, 5m for subagents. | on by default | [safety](safety.md#bridge-isolation) |
 | [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
 | [herdr-core](#herdr-core) | sessions |  | on | Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent. `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only. | on by default | [herdr](herdr.md#herdr-app-and-herdr-core) |
-| [open-prs](#open-prs) | sessions |  | off | When enabled, the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 900) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk. `foreman radar --json` reports them as `openPrs` for the Open PRs section of the herdr-app mod; radar polls never call the network. Off by default. User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
+| [open-prs](#open-prs) | sessions |  | on | The only PR and run data source: the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 120, one refresher per machine) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk with title, branch, a redacted description excerpt, mergeability and up to 20 check names. `foreman radar --json` reports them as `openPrs` for the herdr-app mod, which draws one dot per PR; radar polls never call the network. On by default; GitHub only (GitLab users get no PR display). User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
 | [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -95,7 +95,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [repo-backlog](#repo-backlog) | retro |  | opt-in | Moves the central retro backlog elsewhere or sends a workspace's findings into its own `.workflow/retro-backlog.md`, optionally committed by `/sync`. | `{"retro": {"repoBacklog": [{"path": "<absolute path or glob>", "commit": false}]}}` | [retro](retro.md#the-store) |
 | [close](#close) | sessions |  | on | Records what a session creates, prints a CLOSE report and removes its own worktrees and scratch only when every precondition passes. | on by default | [close](close.md#config) |
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
-| [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
+| [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens and list-price cost in the footer, and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
 | [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
 | [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
@@ -132,7 +132,7 @@ Toggleable features (`on` and `off` write these leaves into the user config; `*`
 | [remote-intercom](#remote-intercom) | sessions | `intercom.allowRemote` = `true` | `intercom.allowRemote` = `false` | off | yes |
 | [retro](#retro) | retro | `retro.enabled` = `null` | `retro.enabled` = `false` | on | no |
 | [trace](#trace) | ops | `trace.enabled` = `null` | `trace.enabled` = `false` | on | no |
-| [footer-ui](#footer-ui) | ui | `footer.usage` = `true`, `widget.children` = `true` | `footer.usage` = `false`, `widget.children` = `false` | on | no |
+| [footer-ui](#footer-ui) | ui | `footer.usage` = `true` | `footer.usage` = `false` | on | no |
 | [herdr](#herdr) | ui | `herdr.blockedShim` = `true`, `herdr.groupTag` = `true` | `herdr.blockedShim` = `false`, `herdr.groupTag` = `false` | on | no |
 | [idle-cache](#idle-cache) | models | `providers.*.cache.keepalive.enabled` = `true` | `providers.*.cache.keepalive.enabled` = `false` | on | no |
 
@@ -544,23 +544,15 @@ Switch: `tools.git` is true.
 
 ### pr-ops
 
-**PR tools.** Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs.
+**PR tools.** Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pi shows no PR list; the herdr-app mod is the only PR display.
 
 Switch: `tools.pr` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `widget.prs` | `true` | any layer |
-| `widget.prLinks` | `true` | any layer |
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
-| `tools.prDots` | `true` | any layer |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
-| `tools.prInteractions` | `[]` | not in project/session (the PR interaction patterns come from the user or overlay config) |
-| `tools.prShared.enabled` | `false` | not in project/session (the shared PR watch comes from the user or overlay config) |
-| `tools.prShared.authors` | `[]` | not in project/session (the shared PR watch comes from the user or overlay config) |
-| `tools.prShared.seconds` | `180` | not in project/session (the shared PR watch comes from the user or overlay config) |
-| `tools.prShared.events` | `true` | not in project/session (the shared PR watch comes from the user or overlay config) |
 
 ### sidebar-status
 
@@ -647,14 +639,14 @@ No config key.
 
 ### open-prs
 
-**Open PRs in radar and the herdr-app mod.** When enabled, the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 900) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk. `foreman radar --json` reports them as `openPrs` for the Open PRs section of the herdr-app mod; radar polls never call the network. Off by default. User or overlay config only.
+**Open PRs in radar and the herdr-app mod.** The only PR and run data source: the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 120, one refresher per machine) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk with title, branch, a redacted description excerpt, mergeability and up to 20 check names. `foreman radar --json` reports them as `openPrs` for the herdr-app mod, which draws one dot per PR; radar polls never call the network. On by default; GitHub only (GitLab users get no PR display). User or overlay config only.
 
 Switch: `radar.openPrs.enabled` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `radar.openPrs.enabled` | `false` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
-| `radar.openPrs.refreshSeconds` | `900` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
+| `radar.openPrs.enabled` | `true` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
+| `radar.openPrs.refreshSeconds` | `120` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
 | `radar.openPrs.mine` | `true` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
 | `radar.openPrs.authors` | `[]` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
 | `radar.openPrs.scope` | `[]` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
@@ -748,7 +740,7 @@ Switch: `retro.repoBacklog` is non-empty.
 
 ### footer-ui
 
-**Usage footer and children widget.** Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary.
+**Usage footer.** Shows tokens and list-price cost in the footer, and the glyph set, with `/foreman cost` for a summary.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -757,7 +749,6 @@ Switch: `retro.repoBacklog` is non-empty.
 | `footer.style` | `"foreman"` | any layer |
 | `ui.symbols` | `"unicode"` | any layer |
 | `ui.spinner` | `true` | any layer |
-| `widget.children` | `true` | any layer |
 
 ### dialogs-cli
 
@@ -862,7 +853,6 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [ceremony-tiers](#ceremony-tiers) | `/ceremony`, `/foreman plan` |
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
-| [pr-ops](#pr-ops) | `/foreman prs` |
 | [bridge-isolation](#bridge-isolation) | `/foreman trust`, `/foreman trust bridge` |
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [herdr-core](#herdr-core) | `foreman session open` |
@@ -927,8 +917,6 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
-| `tools.prShared` | the shared PR watch comes from the user or overlay config |
-| `tools.prInteractions` | the PR interaction patterns come from the user or overlay config |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
 | `radar.openPrs` | the open PRs source (a GitHub search through gh) comes from the user or overlay config |
