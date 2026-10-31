@@ -40,9 +40,17 @@ test("cap at 4 lines, then +N more", () => {
   assert.equal(agentLines(null, recs(...["a", "b", "c", "d"].map((t) => [t, "working", "x"]))).length, 4);
 });
 
-test("nested session items carry no radar lines", () => {
+test("nested session items carry no agent lines (field absent)", () => {
   const top = { ...node(), sessions: [node(run("reviewer", 70))], workers: [] };
-  assert.deepEqual(treeItems(top)[0].agents, []);
+  assert.equal("agents" in treeItems(top)[0], false);
+});
+
+test("a worker of a nested session with its own agent row does not cancel a record on the top terminal", () => {
+  const nested = node(run("reviewer", 70));
+  const top = { ...node(), sessions: [nested], workers: [] };
+  const r = recs(["reviewer", "working", "x"]);
+  assert.equal(agentLines(top, r).length, 0);
+  assert.equal(agentLines(top, r, new Set([nested])).length, 1);
 });
 
 test("every running agent appears exactly once: worker rows plus record lines", () => {

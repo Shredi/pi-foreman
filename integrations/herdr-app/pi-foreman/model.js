@@ -85,7 +85,7 @@ function normNode(raw, depth, budget) {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
     hcTerminal: str(raw.hcTerminal), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
-    blockedS: int(raw.blocked_s), ageS: num(raw.age_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
+    blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
   };
 }
@@ -393,13 +393,14 @@ const MAX_AGENT_LINES = 4;
 
 /** One line per running async agent under a session or agent row: `[{glyph: "working"|"blocked"|"", text}]`, at most 4,
  *  then a `+N more` item (glyph ""). Only records without a live worker row (matched by title/role, with counts) get a
- *  line, `title · msg`; radar runs are drawn as worker rows already. Finished records are not parsed in. `node` may be null. */
-export function agentLines(node, recs = []) {
+ *  line, `title · msg`; radar runs are drawn as worker rows already (the workers `treeItems` draws under this row: sessions in
+ *  `skip` and hidden ones are left out). Finished records are not parsed in. `node` may be null. */
+export function agentLines(node, recs = [], skip = new Set()) {
   const left = new Map();
   const count = (n, depth) => {
     if (!isObj(n) || depth > MAX_DEPTH) return;
     for (const w of listOf(n.workers)) if (!w.ended) left.set(w.role || w.name, (left.get(w.role || w.name) ?? 0) + 1);
-    for (const s of listOf(n.sessions)) count(s, depth + 1);
+    for (const s of listOf(n.sessions)) if (!skip.has(s) && nodeStatus(s) !== "hidden") count(s, depth + 1);
   };
   count(node, 0);
   const all = listOf(recs).filter((r) => {
@@ -443,7 +444,7 @@ export function treeItems(node, skip = new Set(), lead = [], depth = 0) {
     const lines = [...lead, last ? "└" : "├"];
     const item = k.worker
       ? { worker: true, node: k.n, lines, label: [k.n.role || k.n.name, shortModel(k.n.model)].filter(Boolean).join(" "), running: k.n.state === "working", status: nodeStatus(k.n) }
-      : { worker: false, node: k.n, lines, label: k.n.name, costText: k.n.cost > 0 ? fmtCost(k.n.cost) : "", status: nodeStatus(k.n), agents: agentLines(k.n), ...splitPrs(k.n.prs) };
+      : { worker: false, node: k.n, lines, label: k.n.name, costText: k.n.cost > 0 ? fmtCost(k.n.cost) : "", status: nodeStatus(k.n), ...splitPrs(k.n.prs) };
     return [item, ...(k.worker ? [] : treeItems(k.n, skip, [...lead, last ? "" : "│"], depth + 1))];
   });
 }

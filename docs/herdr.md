@@ -601,7 +601,7 @@ plain where radar gives neither. Session status glyph (hc status of the joined t
 "Needs you" pill (ask or hc `blocked`), spinner (working), filled dot (hc `done`, not yet seen), hollow spinner (child agents run;
 `N agents: roles`), small square (background tasks; `bg: <name> <age>`), hollow muted ring (waits; `wait: <note> <age>`), hollow dot
 (idle). Ended sessions are hidden under an agent. Under a session or agent row, each running async agent gets its own line (small
-spinner, red when blocked; `explorer · Running bash` from the hc record `msg`, radar fallback `reviewer · 4m`), at most 4, then `+N more`. Install:
+spinner, red when blocked; `explorer · Running bash` from the hc record `msg`; only for agents radar does not already show as a worker row), at most 4, then `+N more`. Install:
 
 1. Copy `integrations/herdr-app/pi-foreman/` to `~/.config/herdr-app/mods/pi-foreman/`.
 2. `herdr-app do layout.clone '{"name":"main","as":"foreman"}'`

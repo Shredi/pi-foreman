@@ -183,7 +183,7 @@ export default class ForemanAgents extends View {
       .child(div().flex_1().truncate().text_color(l.glyph === "blocked" ? t.blocked : t.muted).child(l.text)));
   }
 
-  topRows(t, node, hcStatus = null, recs = []) {
+  topRows(t, node, hcStatus = null, recs = [], skip = new Set()) {
     const r = sessionRows(node, hcStatus, recs);
     const line = () => h_flex().pl(33).pr(8).h(20).flex_none().items_center().gap(4).text_size(11.5);
     const rows = [line()
@@ -193,7 +193,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(r.costText), (el) => el.child(div().text_color(t.muted).child(r.costText)))
       .when(r.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${r.sessions} sessions`)))];
     if (r.ask) rows.push(line().child(div().truncate().text_color(r.blocked ? t.blocked : t.muted).child(r.ask)));
-    rows.push(...this.agentRows(t, agentLines(node, recs), 41));
+    rows.push(...this.agentRows(t, agentLines(node, recs, skip), 41));
     if (r.prs.length) rows.push(this.prLine(t, node, r.prs, r.summary, node.key || node.name, 33));
     return rows;
   }
@@ -213,9 +213,8 @@ export default class ForemanAgents extends View {
         .when(Boolean(it.costText), (el) => el.child(div().mr(6).text_size(11).text_color(t.dim).child(it.costText)))
         .children(it.inline.map((p) => this.prChip(t, p, prUrl(it.node, p), key).mr(6)))
         .child(statusGlyph(t, it.status));
-      const agents = this.agentRows(t, it.agents, 39 + it.lines.length * 13 + 8);
       const below = it.below.length ? [this.prLine(t, it.node, it.below, "", key, 39 + it.lines.length * 13)] : [];
-      return [row, ...agents, ...below];
+      return [row, ...below];
     });
   }
 
@@ -320,7 +319,7 @@ export default class ForemanAgents extends View {
         const line = text ? [h_flex().pl(33).pr(8).h(20).flex_none().items_center().text_size(11.5).child(div().truncate().text_color(t.muted).child(text))] : [];
         return [head, ...line, ...guard(() => this.agentRows(t, agentLines(null, recsOf(a)), 41), []), ...live];
       }
-      const foreman = [...guard(() => this.topRows(t, f, listedStatus.get(a.address) ?? null, recsOf(a)), []), ...guard(() => this.treeRows(t, f, skip), [])];
+      const foreman = [...guard(() => this.topRows(t, f, listedStatus.get(a.address) ?? null, recsOf(a), skip), []), ...guard(() => this.treeRows(t, f, skip), [])];
       return [head, ...foreman, ...live, div().h(4).flex_none()];
     };
     const rows = groups.flatMap((g) => [...header(g), ...g.members.flatMap(withRows)]);
