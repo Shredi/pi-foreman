@@ -1,5 +1,7 @@
 // Shared rig of the R11 P2 fixtures (r11-review-cap, r11-read-budget): the real adapter hooks (index.ts) with a fake
 // pi, a temp agent dir, and handoff dirs under `<agentDir>/pi-foreman/handoffs` keyed by this session's intercom id.
+// First import: the running-session variables are cleared before the adapter loads, so bare `node --test` (no preload) stays hermetic.
+import "./_hermetic-env.mjs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
