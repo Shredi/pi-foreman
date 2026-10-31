@@ -32,7 +32,7 @@
   },
   "scripts": {
     "test": "node scripts/foreman_test_run.mjs --exec -- python -m unittest discover -s tests -v",
-    "test:node": "node scripts/foreman_test_run.mjs --import ./extensions/core-adapter/test/_hermetic-env.mjs \"extensions/core-adapter/test/*.test.ts\" \"extensions/core-adapter/test/retired/*.test.ts\"",
+    "test:node": "node scripts/foreman_test_run.mjs --import ./extensions/core-adapter/test/_hermetic-env.mjs \"extensions/core-adapter/test/*.test.ts\" \"extensions/core-adapter/test/retired/*.test.ts\" \"integrations/herdr-app/pi-foreman/*.test.mjs\"",
     "test:installer": "node --test \"tests/installer/*.test.mjs\"",
     "test:ci": "node scripts/foreman_ci.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"

@@ -374,8 +374,17 @@ class JsonTests(Fixture):
         self.assertEqual((ask["sym"], ask["blocked_s"], ask["paneId"]), ("asking", 12, None))
         api = top["children"][3]["children"][1]
         self.assertEqual((api["blocked_s"], api["tot"]), (12, {"in": 600, "out": 20, "cost": 0.25, "uncached": 300}))
-        self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "pid",
+        self.assertEqual(set(api), {"key", "kind", "name", "role", "rung", "state", "sym", "glyph", "paneId", "hcTerminal", "pid",
                                     "cwd", "age_s", "blocked_s", "own", "tot", "done_children", "children", "sid", "waits", "started"})
+
+    def test_json_passes_hc_terminal_through(self):
+        with_hc = live("s-hc", "hcdemo", "fm-hc")
+        with_hc["hcTerminal"] = "t4"
+        self.put_live(with_hc)
+        self.put_live(live("s-plain", "plain", "fm-plain"))
+        d = json.loads(self.cli("--json"))
+        got = {r["key"]: r["hcTerminal"] for r in d["roots"]}
+        self.assertEqual(got, {"fm-hc": "t4", "fm-plain": None})
 
     def test_models_and_waits_in_json(self):
         top = live("s-w", "waiter", "fm-w", state="waiting", hb=0, runs=[

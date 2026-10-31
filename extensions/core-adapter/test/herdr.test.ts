@@ -149,3 +149,11 @@ test("onChange fires on the same transitions as herdr:blocked", () => {
   r2();
   assert.deepEqual(seen, [true, false]);
 });
+
+test("an herdr-core terminal alone (HC_TERMINAL_ID, no HERDR_ENV) emits no herdr:blocked", async () => {
+  const { fire, events, sent } = install({ env: { HC_TERMINAL_ID: "t1", HC_SCOPE: "scope-1" }, agentDir: ON.agentDir });
+  await fire("ui_prompt_start", { kind: "select" });
+  await withBlocked(events, "own", async () => 1);
+  await fire("ui_prompt_end", {});
+  assert.deepEqual(sent, []);
+});

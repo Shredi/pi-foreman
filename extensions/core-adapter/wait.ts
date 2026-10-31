@@ -29,6 +29,7 @@ import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
 import { pressureOutcome } from "./pressure.ts";
 import { WAKE_MESSAGE_TYPE } from "./usage.ts";
+import { WAITS_ENTRY, latestWaits, lostWaitsMessage, waitsEntry } from "./waitstate.ts";
 
 export const WAIT_TOOL = "foreman_wait";
 export const WAIT_KINDS = ["timer", "file", "pid", "ci", "child", "pressure"] as const;
@@ -631,7 +632,7 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }> } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; restore: (ctx: ExtensionContext) => Promise<void> } {
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
   const listeners = new Map<string, Set<() => void>>();
   const handle = {
@@ -645,6 +646,8 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
     cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
     startPressure: async (_ctx: ExtensionContext, _spec: Extract<ValidSpec, { kind: "pressure" }>): Promise<{ id: string } | { error: string }> => ({ error: "pressure waits are for the foreman only" }),
+    /** session_start of the foreman: report the waits a restart of this Pi session lost (called from the adapter's own handler). */
+    restore: async (_ctx: ExtensionContext): Promise<void> => undefined,
   };
   pi.on("session_shutdown", async (_event, ctx) => {
     const id = ctx.sessionManager.getSessionId();
@@ -653,6 +656,27 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     listeners.delete(id);
   });
   if (process.env.PI_SUBAGENT_CHILD === "1") return handle;
+  // A restart of the same Pi session lost its waits (waitstate.ts): one visible notice, then the stored set is emptied.
+  handle.restore = async (ctx) => {
+    const s = await deps.session(ctx);
+    if (s.isChild) return;
+    const r = latestWaits((ctx.sessionManager.getBranch?.() ?? []) as unknown[], ctx.sessionManager.getSessionId());
+    const msg = lostWaitsMessage(r);
+    if (!msg) return;
+    try {
+      pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, []));
+    } catch {
+      // the session file is not writable now
+    }
+    s.trace({ event: "wait", decision: "lost" });
+    let idle = true;
+    try {
+      idle = ctx.isIdle();
+    } catch {
+      // a stale context: treat as idle
+    }
+    pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+  };
   const limitsOf = (s: WaitSession) => () => waitLimits((k) => get(s.config(), `wait.${k}`));
   /** The session's runtime, created with its first wait; foreman_wait and foreman_bg share it. */
   const ensureRuntime = (s: WaitSession, ctx: ExtensionContext): WaitRuntime => {
@@ -678,6 +702,12 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       idle: s.idle,
       changed: () => {
         for (const cb of [...(listeners.get(s.id) ?? [])]) cb();
+        // dispose() silences changed(): a shutdown keeps the last stored set, which is what the resumed session reports as lost
+        try {
+          pi.appendEntry(WAITS_ENTRY, waitsEntry(s.id, holder.rt.list()));
+        } catch {
+          // the session file is not writable now
+        }
       },
       wake: (outcomes) => {
         let idle = true;
