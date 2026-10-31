@@ -28,6 +28,8 @@ export interface OpenPr {
   checks: OpenPrCheck[];
   /** The head branch name; absent when GitHub gave none. */
   headRefName?: string;
+  /** The base branch name (what a conflict is against); absent when GitHub gave none. */
+  baseRefName?: string;
   /** The description, secret-shaped tokens redacted, cut to 500 characters; absent when empty. */
   bodyText?: string;
   mergeable?: OpenPrMergeable;
@@ -71,7 +73,7 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$/;
 
 export const openPrsFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "open-prs.json");
 
-const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName bodyText mergeable repository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}}";
+const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName baseRefName bodyText mergeable repository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}}";
 
 const clean = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, max) : "");
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -150,11 +152,13 @@ export function parseSearch(text: string): OpenPr[] {
     const commits = isObj(x.commits) && Array.isArray(x.commits.nodes) ? x.commits.nodes : [];
     const commit = isObj(commits[0]) && isObj(commits[0].commit) ? commits[0].commit : null;
     const head = clean(x.headRefName, 255);
+    const base = clean(x.baseRefName, 255);
     const body = typeof x.bodyText === "string" ? clean(redactCommand(x.bodyText).replace(/\s+/g, " ").trim(), MAX_BODY) : "";
     out.push({
       repo, number: x.number as number, title: clean(x.title, 200), url: x.url, state: x.isDraft === true ? "draft" : "open",
       author: isObj(x.author) ? clean(x.author.login, 60) : "", checks: checksOf(commit?.statusCheckRollup),
       ...(head ? { headRefName: head } : {}),
+      ...(base ? { baseRefName: base } : {}),
       ...(body ? { bodyText: body } : {}),
       ...(x.mergeable === "MERGEABLE" || x.mergeable === "CONFLICTING" || x.mergeable === "UNKNOWN" ? { mergeable: x.mergeable } : {}),
     });

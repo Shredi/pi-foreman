@@ -118,7 +118,7 @@ whose role has bash get the three read tools. Unknown keys give
 | `pr_comments` | `number`, `repo`, `host`, `since` (ISO 8601 timestamp with zone; keeps newer comments) | `comments [{id, kind, author, createdAt, body, bodyCut?, path?, line?, resolved?, state?}]`, `truncated`, `total`; `kind` is `issue`, `review` (inline) or `review_summary` |
 | `pr_watch` | `number`, `until` (`checks`, `comment` or `any`, default `any`), `timeoutSeconds` (1..3600, default 3600) | `watching`, `number`, `until`, `timeoutSeconds`, `intervalSeconds`; see [Watch](#watch) |
 
-`repo` and `host` select a PR of another repository or host (see [Identity](#identity-and-labels)). `title` and every check name
+`repo` and `host` select a PR of another repository or host (see [Identity](#identity)). `title` and every check name
 are stripped of control and format characters in Python and cut to 200 characters. `host` is accepted only when it is the current
 repository's host or the host of a remote of the checkout; any other host is refused with
 `[pr_refused:pr_host_refused]` before the op runs (see [safety](safety.md#git-guard-and-pr-gate)). `repo` is accepted for any

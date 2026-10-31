@@ -1199,7 +1199,6 @@ test("--profile orchestration writes toggles, profile key, backup and diff; the 
   assert.equal(cfg.herdr.blockedShim, false);
   assert.equal(cfg.herdr.groupTag, false);
   assert.equal(cfg.footer.usage, false);
-  assert.equal(cfg.widget.children, false);
   assert.equal(cfg.ladder.idleDownshift.enabled, false);
   assert.equal(cfg.retro.enabled, false);
   assert.equal(cfg.trace.enabled, false);

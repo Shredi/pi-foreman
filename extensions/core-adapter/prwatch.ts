@@ -276,7 +276,7 @@ export class PrWatches {
     return this.watches.size;
   }
 
-  /** The active watches (children widget rows): PR number, `until` and the start time (ms). */
+  /** The active watches (shown as one wait entry in the live file): PR number, `until` and the start time (ms). */
   list(): { n: number; until: WatchUntil; startedAt: number }[] {
     return [...this.watches.values()].map((w) => ({ n: w.n, until: w.until, startedAt: w.started }));
   }

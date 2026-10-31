@@ -634,7 +634,7 @@ A Pi session (not a child) refreshes `<agent dir>/pi-foreman/state/open-prs.json
 `refreshSeconds` across all sessions on the machine: one refresher per machine (an exclusive lock file with a stale timeout, then an atomic rename). One
 `gh api graphql` search runs per query: `author:@me`, `review-requested:@me`, and one per author and scope entry. `foreman
 radar --json` reads the file and never calls the network, so its 3 s polls cost nothing. It adds `openPrs` (`repo`, `number`,
-`title`, `url` (https only), `state`, `author`, `headRefName`, `bodyText` (the description with secret-shaped tokens redacted, cut to 500 characters), `mergeable` (`MERGEABLE`, `CONFLICTING` or `UNKNOWN`), `checks` as `{n, state, label}` with the states `fail`, `run`, `ok`, `none`, at most 20 check names) and
+`title`, `url` (https only), `state`, `author`, `headRefName`, `baseRefName` (what a conflict is against), `bodyText` (the description with secret-shaped tokens redacted, cut to 500 characters), `mergeable` (`MERGEABLE`, `CONFLICTING` or `UNKNOWN`), `checks` as `{n, state, label}` with the states `fail`, `run`, `ok`, `none`, at most 20 check names) and
 `openPrsAt`, the time of the last refresh in which a search succeeded (absent, so the mod shows no list, until one did); the mod shows its age on the section header. When `gh` is missing, not
 logged in or rate limited, the last file stays and carries `error` and `errorAt` (when only some queries fail, the others' PRs are kept and `error` counts the failed ones); radar and the sessions go on. Only `tools.prHost`
 `auto` or `gh` is searched. Remote spaces: the radar on that machine reads its own file.

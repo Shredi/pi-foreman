@@ -535,7 +535,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let bridgeTtlS: number | null = null;
   const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter(loadPrices(PKG_ROOT), (model) => piRuntimePoint(model));
-  /** Priced run cost per usage file, cached by size and mtime (the widget keeps only 64 rows and loses its total on restart). */
+  /** Priced run cost per usage file, cached by size and mtime (the run list keeps only 64 rows and loses its total on restart). */
   const runsCostCache = new Map<string, { sig: string; runs: number }>();
   /** The summed estimate (lane 3b): the foreman's own list-price cost plus every run's priced cost, read from the session's usage file. */
   function summedCost(s: Session): { foreman: number; runs: number; total: number } {

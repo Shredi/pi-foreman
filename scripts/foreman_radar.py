@@ -235,6 +235,9 @@ def read_open_prs(adir):
         head, body, mergeable = p.get("headRefName"), p.get("bodyText"), p.get("mergeable")
         if isinstance(head, str) and head:
             out[-1]["headRefName"] = head[:255]
+        base = p.get("baseRefName")
+        if isinstance(base, str) and base:
+            out[-1]["baseRefName"] = base[:255]
         if isinstance(body, str) and body:
             out[-1]["bodyText"] = body[:500]
         if mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
@@ -536,6 +539,8 @@ def build(data, now):
         n["hcTerminal"] = d["hcTerminal"] if isinstance(d.get("hcTerminal"), str) and d["hcTerminal"] else None
         n["pid"] = d["pid"] if isinstance(d.get("pid"), int) and not isinstance(d.get("pid"), bool) else None
         n["cwd"] = d["cwd"] if isinstance(d.get("cwd"), str) and d["cwd"] else None
+        n["repo"] = d["repo"][:200] if isinstance(d.get("repo"), str) and d["repo"] else None  # owner/name of origin
+        n["branch"] = d["branch"][:200] if isinstance(d.get("branch"), str) and d["branch"] else None
         n["blockedSince"] = parse_ts(d.get("blockedSince"))
         pr = d.get("pressure")
         n["pressure"] = ({"level": pr["level"], "reasons": [r for r in (pr.get("reasons") or []) if isinstance(r, str)]}
@@ -954,6 +959,10 @@ def to_json_node(n, now, symbols):
             out["asks"] = n["asks"]
         if n.get("dots"):
             out["dots"] = n["dots"]
+        if n.get("repo"):  # the mod joins a feed PR to this session by repo and head branch
+            out["repo"] = n["repo"]
+        if n.get("branch"):
+            out["branch"] = n["branch"]
         if n.get("pressure"):
             out["pressure"] = n["pressure"]
     else:

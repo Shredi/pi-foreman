@@ -44,10 +44,10 @@ export function radarBinary(prop, machine, fallback = "foreman") {
 const CHECK = { fail: "fail", run: "pending", ok: "ok", none: "none" };
 const MERGEABLE = ["MERGEABLE", "CONFLICTING", "UNKNOWN"];
 
-// Fields a PR may carry beyond its checks (radar `openPrs` entries, and dots once the core adds them).
+// Fields a PR may carry beyond its checks: the radar `openPrs` entry has them; `baseRefName` is read from that entry only.
 const prExtras = (p) => ({
   title: str(p.title), bodyText: str(p.bodyText), branch: str(p.headRefName),
-  baseRef: str(p.baseRefName) || str(p.baseRef), mergeable: MERGEABLE.includes(p.mergeable) ? p.mergeable : "",
+  baseRef: str(p.baseRefName), mergeable: MERGEABLE.includes(p.mergeable) ? p.mergeable : "",
 });
 
 function cleanRepoUrl(v) {
@@ -95,6 +95,7 @@ function normNode(raw, depth, budget) {
     hcTerminal: str(raw.hcTerminal), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
+    repo: nameOf(raw.repo), branch: str(raw.branch),
   };
 }
 
@@ -123,6 +124,23 @@ function normOpenPrs(raw) {
   return out;
 }
 
+/** Puts each open feed PR on the sessions with the same repository and head branch (`node.repo`, `node.branch` from the live
+ *  file); a PR already on the node (same number) is not added twice. Mutates the nodes `parseRadarDoc` just built. */
+export function matchPrs(nodes, feed, depth = 0) {
+  if (depth > MAX_DEPTH) return;
+  for (const n of listOf(nodes)) {
+    if (!isObj(n)) continue;
+    if (n.kind === "session" && n.repo && n.branch) {
+      const repo = n.repo.toLowerCase();
+      for (const p of listOf(feed)) {
+        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.repo).toLowerCase() !== repo) continue;
+        if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
+      }
+    }
+    matchPrs(n.children, feed, depth + 1);
+  }
+}
+
 /** `{nodes, openPrs}` from the text of `foreman radar --json`, or null when the text is not a radar document. */
 export function parseRadarDoc(text) {
   let doc;
@@ -131,7 +149,9 @@ export function parseRadarDoc(text) {
   const budget = { left: MAX_NODES };
   const nodes = doc.roots.map((r) => normNode(r, 0, budget)).filter(Boolean);
   const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
-  return { nodes, openPrs: normOpenPrs(doc.openPrs), ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
+  const openPrs = normOpenPrs(doc.openPrs);
+  matchPrs(nodes, openPrs);
+  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
