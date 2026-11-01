@@ -337,7 +337,7 @@ export function totalCost(node) {
 }
 
 export function sessionCount(node) {
-  return allSessions([node]).length;
+  return allSessions([node]).filter((s) => s.state !== "closed").length;
 }
 
 const urgency = (pr) => {
@@ -557,6 +557,7 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
   for (const s of sessions) {
     if (isShown(s)) continue;
     for (const own of s.prs) {
+      if (/^(merged|closed)$/.test(twinOf(own, feed, s.repoUrl)?.state ?? "")) continue;
       const pr = enrichPrs([own], feed, s.repoUrl)[0];
       add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr), idOf(s, own));
     }
@@ -584,6 +585,12 @@ export function shownNodes(joined) {
   };
   for (const n of joined.values()) add(n, 0);
   return out;
+}
+
+/** What counts as shown for `openPrGroups`: the joined nodes and the keys of every radar node in the rows actually drawn.
+ *  A session dropped from the tree (closed) is not in it, so its open PRs go back to the Open PRs section. */
+export function shownSet(joinedNodes, drawnItems) {
+  return new Set([...joinedNodes, ...shownKeys(drawnItems)]);
 }
 
 /** Keys of the radar nodes drawn in the given tree items (from `sessionTree` / `hcChildItems`) and below them. */
@@ -775,18 +782,24 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
  *  at most CARD_CAP names per group then `more`. */
 export function prCard(pr) {
   const jobs = (listOf(pr?.jobs).length ? pr.jobs : listOf(pr?.checks)).map(jobOf).filter(Boolean);
+  // A PR known only from its session dot (jobs without names, no feed twin) has no job list to show: no invented "job N".
+  const dotOnly = jobs.length > 0 && listOf(pr?.jobs).length > 0 && !str(pr?.title) && jobs.every((j) => !j.name);
+  const dot = prDotState(pr);
+  const status = !dotOnly ? "" : dot.fill === "red" ? "checks failed" : dot.ring ? "checks running" : dot.fill === "green" ? "checks passed" : "";
   const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state }));
   const group = (key, label, state) => {
     const names = named.filter((j) => j.state === state).map((j) => j.name);
     return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
   };
   const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), group("passed", "passed", "ok")];
-  const text = str(pr?.bodyText).replace(/\s+/g, " ").trim();
+  const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[2].count },
-    groups: groups.filter((g) => g.count > 0),
+    groups: dotOnly ? [] : groups.filter((g) => g.count > 0),
+    status,
+    note: dotOnly ? "details after the next feed refresh" : "",
   };
 }

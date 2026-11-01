@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, prDotState, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownNodes, shownKeys,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, prDotState, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
 } from "./model.js";
 
@@ -209,7 +209,9 @@ export default class ForemanAgents extends View {
           .child(div().flex_none().size(6).rounded(3).bg(tone[g.key])).child(`${g.label} (${g.count})`))
         .children(g.names.map((n) => div().pl(11).truncate().child(n)))
         .when(g.more > 0, (el) => el.child(div().pl(11).text_color(t.dim).child(`+${g.more} more`)))))
-      .when(c.groups.length === 0, (el) => el.child(div().text_color(t.dim).child("no job data")));
+      .when(Boolean(c.status), (el) => el.child(div().text_color(t.foreground).child(c.status)))
+      .when(Boolean(c.note), (el) => el.child(div().text_color(t.dim).child(c.note)))
+      .when(c.groups.length === 0 && !c.status && !c.note, (el) => el.child(div().text_color(t.dim).child("no job data")));
     return shell.child(title).when(Boolean(c.excerpt), (el) => el.child(excerpt))
       .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs);
   }
@@ -296,7 +298,7 @@ export default class ForemanAgents extends View {
         .child(glyphRight);
     }
     const active = item.address !== undefined && item.address === this.shown;
-    const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
+    const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
     return row
       .when(active, (el) => el.bg(t.raised).rounded(6))
       .child(item.address === undefined ? name : name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }))))
@@ -447,7 +449,7 @@ export default class ForemanAgents extends View {
     };
     const rows = groups.flatMap((g) => [...header(g), ...g.members.flatMap(withRows)]);
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
-    const orphanGroups = guard(() => openPrGroups(openPrs, tops, new Set([...shownNodes(new Map([...joined, ...childJoined])), ...shownKeys(drawnItems)]))
+    const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values(), ...childJoined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
