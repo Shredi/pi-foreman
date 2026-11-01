@@ -380,7 +380,7 @@ the `✓n` count. Tokens: `fm_meta` counts uncached input (see its row above); r
 Opened sessions: a registry entry (`sessions.json`) whose handoff dir matches a live session is merged into that node, so
 a working child shows once under its parent, never as a second `✗ lost` row. An `open` entry with a `result.md` and no
 live file shows as idle. The opener id is `--parent-id`, `PI_INTERCOM_SESSION_ID`, `PI_INTERCOM_STABLE_ID`, then the
-config `stableId`; a child that closes marks its own entry `closed`. A remote child (`--machine`, see [remote child sessions](sessions.md#remote-child-sessions)) is shown as `label@machine · state · age` with its pull age; its state comes from the pull, not from a local live file, so it is `lost` when no pull has succeeded in the window.
+config `stableId`; a child that closes marks its own entry `closed`. A remote child (`--machine`, see [remote child sessions](sessions.md#remote-child-sessions)) is shown as `label@machine · state · age`; its state is the bare registry status (or `ask` when an ask is set), not a local live file; only the radar marks a remote entry `lost` after its starting window (the return path lands in PR 4).
 
 Ask signal: when a session opened by `foreman session open` writes `ask.md` (first line `# Ask <n>: <topic>`) in its own
 handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so Herdr shows `blocked` with the label
@@ -390,8 +390,8 @@ dir, or shutdown, releases it; a ruling wait that ends as `superseded by brief <
 
 ## Remote clients and Pi pane status
 
-Herdr holds one `agent_status` per pane. A remote client (a phone or web app installed as a Herdr plugin, or `herdr --remote`
-over SSH) shows that status for each pane. It does not read pi-foreman's state directly.
+Herdr holds one `agent_status` per pane. A remote client (a phone or web app installed as a Herdr plugin, or `herdr --remote`)
+shows that status for each pane. It does not read pi-foreman's state directly.
 
 - Herdr learns working and idle for a Pi pane from its Pi integration. That is a setting on the machine that runs Herdr:
   `herdr integration install pi` (check with `herdr integration status`). Nothing is installed or configured on the phone
@@ -562,9 +562,9 @@ machine stays on the radar node, as before: an address is relative to its viewer
 | `hc` | `hc run`; refused `[backend_unavailable]` without `hc`; without `HC_TERMINAL_ID` it runs parentless and the receipt says `not nested: no parent terminal` |
 | `terminal` | the printed command |
 
-The remote `open --machine` path keeps its SSH rule. `sessions.hc.outliveParent` (default `true`) passes `--outlive-parent`,
+The remote `open --machine` path runs over `hc exec --on`; the remote then runs `hc run` locally on that machine (see [sessions](sessions.md#remote-child-sessions)). `sessions.hc.outliveParent` (default `true`) passes `--outlive-parent`,
 so a parent crash never kills a child with uncommitted work; set `false` to let hc end the child with its parent. A child
-nests under the terminal that opened it; `--focus` is ignored (a child has no pane of its own) and `foreman close` still asks
+nests under the terminal that opened it; `--focus` is ignored for a local child (it has no pane of its own; a remote child's `--focus` runs `herdr-app do agent.focus` here) and `foreman close` still asks
 the child over intercom. The child runs as `hc run --json --bg --no-notify --keep --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent]
 [--label herdr.space=<space> --label herdr.tab=tb<hex>] -- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
 `powershell -NoProfile -Command "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID …; $env:PATH = '…'; <the usual PowerShell line>"`.
@@ -668,7 +668,7 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 | Radar prune via `herdr pane list` | `foreman_radar.py` `provably_closed` | never answers, so done files are not pruned (as in plain terminals today) | no | `hc ls --json` as a second witness |
 | Pane joins (`paneId`, `pane.agent_detected`) | `sidebar.py`, `livestate.ts` | replaced by `hcTerminal` | no | TUI support dropped |
 | `herdr pane open` backend | `foreman_session.py` `open_in_herdr` | replaced by `hc run` | no | TUI support dropped |
-| Remote sessions over SSH | `remotesession.ts`, `cmd_open_remote` | `hc run --on` could replace it | no | backlog round |
+| Remote sessions | `remotesession.ts`, `cmd_open_remote` | replaced by `hc exec --on` and a local `hc run` on the remote | no | done |
 
 ## Known limits
 

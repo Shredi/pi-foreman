@@ -1,6 +1,7 @@
 """tests/fakes/hc.py: the fake `hc` of the test rig, on POSIX and Windows."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -44,9 +45,18 @@ class FakeHc(unittest.TestCase):
         self.assertEqual(lines, [["machine", "ls", "--json"], ["get", "m/t9"]])
 
     def test_machine_ls(self):
-        env = dict(self.env, FAKE_HC_MACHINES=json.dumps([{"name": "alpha"}]))
-        self.assertEqual(json.loads(self.hc("machine", "ls", "--json", env=env).stdout), [{"name": "alpha"}])
-        self.assertEqual(json.loads(self.hc("machine", "ls", "--json").stdout), [])
+        env = dict(self.env, FAKE_HC_MACHINES=json.dumps(["alpha", {"name": "beta", "state": "down"}]))
+        rows = json.loads(self.hc("machine", "ls", "--json", env=env).stdout)["machines"]
+        self.assertEqual([r["name"] for r in rows], ["alpha", "beta"])
+        self.assertEqual(sorted(rows[0]), ["host", "id", "name", "session", "state", "target", "temporary", "version", "via"])
+        self.assertEqual(rows[1], {"name": "beta", "state": "down"})
+        self.assertEqual(json.loads(self.hc("machine", "ls", "--json").stdout), {"machines": []})
+
+    def test_server_status(self):
+        r = self.hc("server", "status", "--json")
+        self.assertEqual((r.returncode, json.loads(r.stdout)["state"]), (0, "up"))
+        r = self.hc("server", "status", "--json", env=dict(self.env, FAKE_HC_CORE_DOWN="1"))
+        self.assertEqual(r.returncode, 1)
 
     def exec_env(self):
         agent = self.tmp / "agent"
@@ -60,10 +70,11 @@ class FakeHc(unittest.TestCase):
                     stdin="{}", env=self.exec_env())
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
-        self.assertEqual(out["machine"], "alpha")
-        self.assertEqual(out["exit"], 1)
-        self.assertEqual(json.loads(out["stdout"]),
+        self.assertEqual(sorted(out), ["code", "ms", "signal", "stderr", "stdout", "timed_out", "truncated"])
+        self.assertEqual((out["code"], out["timed_out"], out["truncated"], out["signal"]), (1, False, False, None))
+        self.assertEqual(json.loads(base64.b64decode(out["stdout"])),
                          {"ok": False, "code": "bad_request", "error": "missing field: parentName"})
+        self.assertEqual(base64.b64decode(out["stderr"]), b"")
 
     def test_exec_exit_code_and_stdout_without_json(self):
         r = self.hc("exec", "--on", "alpha", "--", "/x/bin/foreman", "session", "remote", "probe", "--json",
@@ -71,14 +82,39 @@ class FakeHc(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertEqual(json.loads(r.stdout)["code"], "bad_request")
 
+    def test_exec_failure_modes(self):
+        argv = ["foreman", "session", "remote", "probe", "--json"]
+        r = self.hc("exec", "--on", "alpha", "--json", "--", *argv, stdin="{}",
+                    env=dict(self.exec_env(), FAKE_HC_EXEC_MODE="timed_out"))
+        self.assertEqual((r.returncode, json.loads(r.stdout)["timed_out"]), (0, True))
+        r = self.hc("exec", "--on", "alpha", "--json", "--", *argv, stdin="{}",
+                    env=dict(self.exec_env(), FAKE_HC_EXEC_MODE="spawn_failed"))
+        self.assertEqual((r.returncode, r.stdout), (1, ""))
+        self.assertEqual(json.loads(r.stderr)["error"]["kind"], "spawn_failed")
+        r = self.hc("exec", "--on", "alpha", "--json", "--", *argv, stdin="{}",
+                    env=dict(self.exec_env(), FAKE_HC_EXEC_MODE="cp850"))
+        self.assertEqual(base64.b64decode(json.loads(r.stdout)["stderr"]).decode("cp850"), "caf\u00e9 failed")
+
+    def test_exec_log_and_remote_protocol_stub(self):
+        log = self.tmp / "exec.log"
+        argv = ["foreman", "session", "remote", "probe", "--json"]
+        env = dict(self.exec_env(), FAKE_HC_EXEC_LOG=str(log), FAKE_SSH_PROTOCOL="7")
+        payload = json.dumps({"parentName": "beta", "parentAddress": "11111111-2222-3333-4444-555555555555@beta"})
+        r = self.hc("exec", "--on", "alpha", "--json", "--", *argv, stdin=payload, env=env)
+        out = json.loads(base64.b64decode(json.loads(r.stdout)["stdout"]).decode("utf-8").splitlines()[-1])
+        self.assertEqual(out["protocol"], 7)
+        (line,) = [json.loads(x) for x in log.read_text("utf-8").splitlines()]
+        self.assertEqual((line["argv"], line["stdin"]), (argv, payload))
+
     def test_exec_refuses_argv_without_remote_verb(self):
         r = self.hc("exec", "--on", "alpha", "--", sys.executable, "-c", "print(1)", stdin="", env=self.exec_env())
         self.assertEqual(r.returncode, 2)
         self.assertEqual(r.stdout, "")
 
     def test_run_label_events_get_wait(self):
-        r = self.hc("run", "--on", "alpha", "--json", "--name", "fm-x", "--label", "fm.child=c1", "--", "sleep", "9")
-        self.assertEqual(json.loads(r.stdout), {"address": "alpha/t1", "name": "fm-x"})
+        r = self.hc("run", "--on", "alpha", "--json", "--name", "fm-x", "--label", "fm.child=c1", "--cwd", "/w", "--", "sleep", "9")
+        self.assertEqual(json.loads(r.stdout), {"address": "alpha/t1", "agent": None, "cwd": "/w", "name": "fm-x",
+                                                "parent": None, "state": "working", "turn": 0})
         digest = "a" * 64
         self.hc("label", "alpha/t1", f"fm.notice=1:plan:{digest}:12345")
         events = [json.loads(x) for x in self.hc("events", "--json").stdout.splitlines()]
@@ -90,6 +126,12 @@ class FakeHc(unittest.TestCase):
             rec = json.loads(self.hc(*args).stdout)
             self.assertEqual(rec["labels"]["fm.child"], "c1")
             self.assertEqual(rec["labels"]["fm.notice"], f"1:plan:{digest}:12345")
+
+    def test_run_without_on_is_local(self):
+        r = self.hc("run", "--json", "--bg", "--no-parent", "--name", "fm-y", "--", "sleep", "9")
+        out = json.loads(r.stdout)
+        self.assertEqual((out["address"], out["name"]), ("t1", "fm-y"))
+        self.assertEqual(sorted(out), ["address", "agent", "cwd", "name", "parent", "state", "turn"])
 
     def test_kill_and_rm(self):
         self.hc("run", "--on", "alpha", "--", "sleep", "9")
@@ -106,6 +148,12 @@ class FakeHc(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
         self.assertEqual(hashlib.sha256(r.stdout).hexdigest(), hashlib.sha256(data).hexdigest())
         self.assertEqual(r.stdout, data)
+
+    def test_file_read_json(self):
+        self.state.mkdir(parents=True)
+        (self.state / "plan.md").write_bytes("one\ntwo \u2713\n".encode("utf-8"))
+        r = self.hc("file", "read", "--on", "alpha", "plan.md", "--json")
+        self.assertEqual(json.loads(r.stdout), {"first": 1, "last": 2, "lines": 2, "text": "one\ntwo \u2713\n"})
 
     def test_file_read_refuses_outside_state(self):
         self.state.mkdir(parents=True)

@@ -87,7 +87,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [sessions](#sessions) | sessions |  | on | `/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model) and never on a higher rank. | on by default | [sessions](sessions.md#session-commands) |
 | [herdr-core](#herdr-core) | sessions |  | on | Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent, and `--keep` is always passed, so the child survives core loss and reboot (in its own tab when the opener's terminal carries `herdr.space`). `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only. | on by default | [herdr](herdr.md#herdr-app-and-herdr-core) |
 | [open-prs](#open-prs) | sessions |  | off | When enabled, the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 900) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk. `foreman radar --json` reports them as `openPrs` for the Open PRs section of the herdr-app mod; radar polls never call the network. Off by default. User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
-| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
+| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The return path lands in PR 4. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
 | [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
@@ -663,19 +663,15 @@ Switch: `radar.openPrs.enabled` is true.
 
 ### remote-sessions
 
-**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only.
+**Remote child sessions over herdr-core.** `foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The return path lands in PR 4. User or overlay config only.
 
 Switch: `sessions.machines` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
-| `sessions.machines.<x>.returnPath` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
-| `sessions.machines.<x>.foremanCommand` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
-| `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
-| `sessions.remoteInlineMaxBytes` | `32768` | tighten-only (lower only, minimum 1024) |
-| `sessions.pull.intervalSeconds` | `20` | not in project/session (the remote pull poll periods come from the user or overlay config) |
-| `sessions.pull.fastSeconds` | `5` | not in project/session (the remote pull poll periods come from the user or overlay config) |
-| `sessions.ssh.controlMaster` | `true` | not in project/session (the SSH multiplexing switch comes from the user or overlay config) |
+| `sessions.machines.<x>.foremanArgv` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
+| `sessions.machines.<x>.space` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
+| `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
 
 ### round-state
 
@@ -877,7 +873,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [sessions](#sessions) | `/foreman session`, `foreman session` |
 | [herdr-core](#herdr-core) | `foreman session open` |
 | [open-prs](#open-prs) | `foreman radar --json` |
-| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session pull`, `foreman session close-remote` |
+| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session close-remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
@@ -951,9 +947,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `retro.panelThreshold` | the panel threshold comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
-| `sessions.machines` | the machines a session may open on over SSH come from the user or overlay config |
-| `sessions.pull` | the remote pull poll periods come from the user or overlay config |
-| `sessions.ssh` | the SSH multiplexing switch comes from the user or overlay config |
+| `sessions.machines` | the machines a session may open on over hc come from the user or overlay config |
 | `sessions.backend` | where a local session opens comes from the user or overlay config |
 | `sessions.hc` | the herdr-core session options come from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |

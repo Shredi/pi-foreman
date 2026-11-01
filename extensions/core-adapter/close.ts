@@ -120,7 +120,7 @@ export const CLOSE_ORDER_MAX_AGE_MS = 15 * 60_000;
 
 /**
  * A close request in a remote child's inbound message. The authority is `<handoff>/close.json`, written by the remote
- * `close` verb (the parent's order over SSH), never the sender: it must parse, name PI_FOREMAN_PARENT_INTERCOM as its
+ * `close` verb (the parent's order over hc exec), never the sender: it must parse, name PI_FOREMAN_PARENT_INTERCOM as its
  * `parent` and be at most 15 minutes old. It is consumed once (renamed `close.json.seen`); the result path comes from
  * the file only. A cross-machine message never closes. null = ordinary message.
  */

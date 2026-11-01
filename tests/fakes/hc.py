@@ -6,28 +6,32 @@ JSON line to $FAKE_HC_LOG. State lives in the $FAKE_HC_STATE dir as JSON files (
 
 Environment:
   FAKE_HC_LOG                 argv log file (optional)
-  FAKE_HC_STATE               state dir (required except for `machine ls`)
-  FAKE_HC_MACHINES            JSON for `machine ls --json` (default: `[]`)
+  FAKE_HC_STATE               state dir (required except for `machine ls`, `server status` and `exec`)
+  FAKE_HC_MACHINES            JSON list for `machine ls --json`: each item a machine name or a full row (default: `[]`)
+  FAKE_HC_CORE_DOWN           any non-empty value: `server status` exits 1 (no core answering)
+  FAKE_HC_EXEC_MODE           exec failure modes: `timed_out` (hc's own timeout: the reply says timed_out), `spawn_failed`
+                              (exit 1, JSON error on stderr), `garbage` (the verb's stdout is not JSON), `cp850` (the reply's
+                              stderr is cp850 bytes)
+  FAKE_HC_EXEC_LOG            file: every exec appends {"argv", "stdin"} as a JSON line
   FAKE_REMOTE_AGENT           the "remote" agent dir; FAKE_SCRIPTS the scripts dir holding foreman_session.py;
-  FAKE_REMOTE_HERDR_MACHINES/_AGENTS/_DOWN, FAKE_REMOTE_PATH, FAKE_NO_INTERCOM, FAKE_CLI as for FAKE_SSH in
-  tests/test_foreman_session_remote.py
+  FAKE_REMOTE_PATH, FAKE_CLI, FAKE_SSH_PROTOCOL (the remote's
+  REMOTE_PROTOCOL) and FAKE_REMOTE_HC_DOWN (the remote's `server status` fails) configure the remote side of `exec`
   FAKE_HC_FAIL                any non-empty value: every call exits 3 with `boom` on stderr
 
 Subcommands:
-  machine ls --json
+  machine ls --json            prints {"machines": [{host, id, name, session, state, target, temporary, version, via}]}
+  server status --json         prints {"state": "up", "version": "0.0.0-fake"}; exits 1 when FAKE_HC_CORE_DOWN
   exec --on M [-i] [--timeout S] [--json] -- ARGV...   never runs ARGV: finds `session remote <verb>` in it and runs
-      that verb in-process against the remote agent dir (like FAKE_SSH), so a Windows-style argv works on POSIX.
-      stdin is the envelope; --json reports {machine, exit, stdout, stderr}.
-      PLACEHOLDER names. Settled by the P1 run (Windows remote, hc 0.1.16): the real reply is
-      {code, ms, signal, stderr, stdout, timed_out, truncated}, stdout and stderr base64 (bytes in the remote's
-      console code page, not always UTF-8), code the exit code. The fake keeps its names until PR 2 swaps them.
-      A non-JSON failure prints {"error": {"hint", "kind", "message"}} on stderr (kind e.g. spawn_failed).
-  run --on M [--name N] [--label K=V]... [flags] -- ARGV...   prints {"address": "M/tN", "name": N}
+      that verb in-process against the remote agent dir, so a Windows-style argv works on POSIX. stdin is the request.
+      --json prints the real reply {code, ms, signal, stderr, stdout, timed_out, truncated}: stdout and stderr base64,
+      code the verb's exit code. A failure of hc itself prints {"error": {"hint", "kind", "message"}} on stderr (exit 1).
+  run [--on M] [--name N] [--label K=V]... [flags] -- ARGV...   prints {address, agent, cwd, name, parent, state, turn};
+      the address is `tN` (`M/tN` with --on)
   get T [--json]                prints the terminal record
   label T K=V...                sets labels, appends one event per label
   events [--json] [--label K=V] prints the recorded label changes as JSON lines, then exits
   wait T [--json] [--timeout S] returns at once with the current record
-  file read --on M PATH [--json] bytes of PATH (relative to, and confined to, $FAKE_HC_STATE)
+  file read --on M PATH [--json] PATH relative to, and confined to, $FAKE_HC_STATE; --json prints {first, last, lines, text}
   kill T / rm T
 """
 from __future__ import annotations
@@ -38,6 +42,7 @@ import io
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 
@@ -92,10 +97,25 @@ def opt(args, name):
     return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
 
 
+def machine_row(item):
+    if isinstance(item, dict):
+        return item
+    return {"host": item + ".example.invalid", "id": "m-" + item, "name": item, "session": "s1", "state": "up",
+            "target": item, "temporary": False, "version": "0.0.0-fake", "via": "ssh"}
+
+
 def cmd_machine(args):
     if args[:1] != ["ls"]:
         die("unsupported: machine " + " ".join(args), 2)
-    print(os.environ.get("FAKE_HC_MACHINES", "[]"))
+    emit({"machines": [machine_row(i) for i in json.loads(os.environ.get("FAKE_HC_MACHINES", "[]"))]})
+
+
+def cmd_server(args):
+    if args[:1] != ["status"]:
+        die("unsupported: server " + " ".join(args), 2)
+    if os.environ.get("FAKE_HC_CORE_DOWN"):
+        die("no herdr-core answering", 1)
+    emit({"state": "up", "version": "0.0.0-fake"})
 
 
 def cmd_exec(args):
@@ -103,17 +123,47 @@ def cmd_exec(args):
     machine = opt(head, "--on")
     if not machine or not argv:
         die("usage: exec --on M [-i] [--timeout S] [--json] -- ARGV...", 2)
-    try:
-        verb = argv[argv.index("remote", argv.index("session")) + 1]
-    except (ValueError, IndexError):
-        die("exec: no `session remote <verb>` in argv: " + " ".join(argv), 2)
     data = sys.stdin.buffer.read()
+    if os.environ.get("FAKE_HC_EXEC_LOG"):
+        with open(os.environ["FAKE_HC_EXEC_LOG"], "ab") as f:
+            f.write((json.dumps({"argv": argv, "stdin": data.decode("utf-8", "replace")}) + "\n").encode("utf-8"))
+    mode = os.environ.get("FAKE_HC_EXEC_MODE", "")
+    if mode == "spawn_failed":
+        sys.stderr.write(json.dumps({"error": {"hint": "check the path", "kind": "spawn_failed",
+                                               "message": "cannot start %s on %s" % (argv[0], machine)}}) + "\n")
+        sys.exit(1)
+    started = time.time()
+    if mode == "timed_out":
+        out, err, code, timed_out = b"", b"", None, True
+    else:
+        try:
+            verb = argv[argv.index("remote", argv.index("session")) + 1]
+        except (ValueError, IndexError):
+            die("exec: no `session remote <verb>` in argv: " + " ".join(argv), 2)
+        out, err, code = run_verb(verb, data)
+        timed_out = False
+        if mode == "garbage":
+            out = b"not json at all\n"
+        if mode == "cp850":
+            err = "caf\u00e9 failed".encode("cp850")
+    reply = {"code": code, "ms": int((time.time() - started) * 1000), "signal": None,
+             "stderr": base64.b64encode(err).decode("ascii"), "stdout": base64.b64encode(out).decode("ascii"),
+             "timed_out": timed_out, "truncated": False}
+    if "--json" in head:
+        emit(reply)
+        return
+    sys.stdout.buffer.write(out)
+    sys.stderr.buffer.write(err)
+    sys.stdout.flush()
+    sys.exit(code or 0)
+
+
+def run_verb(verb, data):
+    """Run `session remote <verb> --json` in-process against the remote agent dir; (stdout, stderr, exit code)."""
     os.environ["PI_CODING_AGENT_DIR"] = os.environ["FAKE_REMOTE_AGENT"]
-    os.environ["FAKE_HERDR_MACHINES"] = os.environ.get("FAKE_REMOTE_HERDR_MACHINES", "[]")
-    os.environ["FAKE_HERDR_AGENTS"] = os.environ.get("FAKE_REMOTE_HERDR_AGENTS", "[]")
-    os.environ.pop("FAKE_HERDR_DOWN", None)
-    if os.environ.get("FAKE_REMOTE_HERDR_DOWN"):
-        os.environ["FAKE_HERDR_DOWN"] = "1"
+    os.environ.pop("FAKE_HC_CORE_DOWN", None)
+    if os.environ.get("FAKE_REMOTE_HC_DOWN"):
+        os.environ["FAKE_HC_CORE_DOWN"] = "1"
     os.environ.pop("HERDR_PANE_ID", None)
     for k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN"):
         os.environ.pop(k, None)
@@ -121,10 +171,10 @@ def cmd_exec(args):
         os.environ["PATH"] = os.environ["FAKE_REMOTE_PATH"]
     sys.path.insert(0, os.environ["FAKE_SCRIPTS"])
     import foreman_session as fsn
-    if os.environ.get("FAKE_NO_INTERCOM"):
-        fsn.intercom_cli = lambda: None
-    elif os.environ.get("FAKE_CLI"):
+    if os.environ.get("FAKE_CLI"):
         fsn.intercom_cli = lambda: Path(os.environ["FAKE_CLI"])
+    if os.environ.get("FAKE_SSH_PROTOCOL"):
+        fsn.REMOTE_PROTOCOL = int(os.environ["FAKE_SSH_PROTOCOL"])
     sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8")
     buf, errbuf = io.StringIO(), io.StringIO()
     try:
@@ -132,26 +182,17 @@ def cmd_exec(args):
             code = fsn.main(["remote", verb, "--json"])
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
-    code = code or 0
-    out, err = buf.getvalue().encode("utf-8"), errbuf.getvalue().encode("utf-8")
-    if "--json" in head:
-        emit({"machine": machine, "exit": code, "stdout": out.decode("utf-8", "replace"),
-              "stderr": err.decode("utf-8", "replace")})
-        return
-    sys.stdout.buffer.write(out)
-    sys.stderr.buffer.write(err)
-    sys.stdout.flush()
-    sys.exit(code)
+    return buf.getvalue().encode("utf-8"), errbuf.getvalue().encode("utf-8"), code or 0
 
 
 def cmd_run(args):
     head, argv = split_dashdash(args)
     machine = opt(head, "--on")
-    if not machine:
-        die("usage: run --on M ... -- ARGV...", 2)
     sd = state_dir()
     terminals = load_terminals(sd)
-    address = f"{machine}/t{len(terminals) + 1}"
+    address = f"t{len(terminals) + 1}"
+    if machine:
+        address = f"{machine}/{address}"
     name = opt(head, "--name") or address
     labels = {}
     for i, a in enumerate(head):
@@ -161,7 +202,8 @@ def cmd_run(args):
     terminals[address] = {"address": address, "name": name, "machine": machine, "argv": argv,
                           "labels": labels, "status": "working"}
     save_terminals(sd, terminals)
-    emit({"address": address, "name": name})
+    emit({"address": address, "agent": None, "cwd": opt(head, "--cwd"), "name": name, "parent": None,
+          "state": "working", "turn": 0})
 
 
 def find(terminals, address):
@@ -225,9 +267,9 @@ def cmd_file(args):
         die("no such file: " + positional[0], 4)
     data = p.read_bytes()
     if "--json" in rest:
-        # PLACEHOLDER shape; the P5 run only read the raw bytes (exact, CRLF kept), `--json` is probed on the rerun.
-        emit({"machine": machine, "path": positional[0], "size": len(data),
-              "base64": base64.b64encode(data).decode("ascii")})
+        text = data.decode("utf-8", "replace")
+        n = len(text.splitlines())
+        emit({"first": 1 if n else 0, "last": n, "lines": n, "text": text})
         return
     sys.stdout.buffer.write(data)
     sys.stdout.flush()
@@ -248,8 +290,8 @@ def cmd_rm(args):
     save_terminals(sd, terminals)
 
 
-COMMANDS = {"machine": cmd_machine, "exec": cmd_exec, "run": cmd_run, "get": cmd_get, "label": cmd_label,
-            "events": cmd_events, "wait": cmd_wait, "file": cmd_file, "kill": cmd_kill, "rm": cmd_rm}
+COMMANDS = {"machine": cmd_machine, "server": cmd_server, "exec": cmd_exec, "run": cmd_run, "get": cmd_get,
+            "label": cmd_label, "events": cmd_events, "wait": cmd_wait, "file": cmd_file, "kill": cmd_kill, "rm": cmd_rm}
 
 
 def main(argv):
