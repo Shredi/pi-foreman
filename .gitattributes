@@ -1,3 +1,4 @@
 core/** -text
 banner.svg -text
 bench/review-samples/** -text
+tests/installer/screens/*.snap.txt -text

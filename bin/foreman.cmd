@@ -59,6 +59,8 @@ if errorlevel 1 (echo foreman dialogs needs Node ^>= 22.6 ^(--experimental-strip
 node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\dialogs-cli.ts" "%~2"
 exit /b %ERRORLEVEL%
 :setup
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" >nul 2>nul
+if errorlevel 1 (echo foreman setup needs Node ^>= 22.19 1>&2 & exit /b 1)
 shift
 set "PF_ARGS="
 :collects

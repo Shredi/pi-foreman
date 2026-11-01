@@ -8,7 +8,7 @@
     "pi-package"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19"
   },
   "pi": {
     "extensions": [
@@ -40,6 +40,7 @@
   },
   "type": "module",
   "dependencies": {
+    "@earendil-works/pi-tui": "1.4.0",
     "@inquirer/prompts": "8.7.4",
     "@juicesharp/rpiv-ask-user-question": "2.15.0",
     "pi-intercom": "0.17.0",

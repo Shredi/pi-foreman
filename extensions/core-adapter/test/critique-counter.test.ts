@@ -18,7 +18,7 @@ test("CritiqueCounter: raised counts now + later lines with the round's diff lin
 test("CritiqueCounter: a later review replaces unsent now lines; CRITIQUE: none raises 0 and applies nothing", () => {
   const c = new CritiqueCounter();
   c.onReview(REVIEW, "reviewer", "run1");
-  assert.deepEqual(c.onReview("VERDICT: PASS\nCRITIQUE: none", "senior-reviewer", "run2"), { event: "critique", kind: "raised", role: "senior-reviewer", runId: "run2", count: 0 });
+  assert.deepEqual(c.onReview("VERDICT: PASS\nCRITIQUE: none", "reviewer", "run2"), { event: "critique", kind: "raised", role: "reviewer", runId: "run2", count: 0 });
   assert.equal(c.onBuilder(), null);
 });
 

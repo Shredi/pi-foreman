@@ -37,7 +37,7 @@ export async function reviewWarnLines(agentDir) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (!args.some((a) => a === "--help" || a === "-h" || a === "--remove")) {
+  if (!args.some((a) => a === "--help" || a === "-h" || a === "--remove" || a === "--preview" || a.startsWith("--preview="))) {
     for (const line of await reviewWarnLines(agentDirOf(args))) console.log(line);
   }
 }

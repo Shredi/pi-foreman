@@ -12,7 +12,7 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 test("roleModelsOf: single, tasks, chain and parallel entries; first per role", () => {
   assert.deepEqual([...roleModelsOf({ agent: "builder", model: "p/b" })], [["builder", "p/b"]]);
-  assert.deepEqual([...roleModelsOf({ chain: [{ agent: "planner", model: "p/p" }, { parallel: [{ agent: "reviewer", model: "p/r" }, { agent: "reviewer", model: "p/x" }] }] })], [["planner", "p/p"], ["reviewer", "p/r"]]);
+  assert.deepEqual([...roleModelsOf({ chain: [{ agent: "explorer", model: "p/p" }, { parallel: [{ agent: "reviewer", model: "p/r" }, { agent: "reviewer", model: "p/x" }] }] })], [["explorer", "p/p"], ["reviewer", "p/r"]]);
   assert.deepEqual([...roleModelsOf({ agent: "builder" })], []);
 });
 
@@ -36,7 +36,7 @@ test("a launch traces role_launch and role_launched with the mapped model and th
   fs.mkdirSync(agentDir, { recursive: true });
   process.env.PI_CODING_AGENT_DIR = agentDir;
   delete process.env.PI_SUBAGENT_CHILD;
-  const roles = Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }]));
+  const roles = Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }]));
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles } }, trace: { enabled: true }, ceremony: { launchWait: "detach" } }));
   const handlers = new Map<string, Handler>();
   const pi = {

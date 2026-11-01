@@ -23,7 +23,7 @@ Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`; 
 | `providers.<p>.cache.keepalive.budgetShare` | 0.5 | Warm budget per idle: the warms may cost at most this share (0..1) of one cold re-cache of the prompt. |
 | `providers.<p>.cache.keepalive.awayTicks` | 0 | Warms allowed per idle while the owner is away (0..20). |
 | `providers.<p>.cache.keepalive.whileWaiting` | true | Child runs, waits and launch waits no longer stop the warms. |
-| `providers.<p>.cache.keepalive.beyondPiCap` | true | pi-foreman sends the warms itself where Pi stops (TTL above about 33 minutes); needs `keepalive.enabled`. |
+| `providers.<p>.cache.keepalive.beyondPiCap` | true | pi-foreman sends the warms itself for every token-billed cache Pi could not warm twice before its 30-minute cap (TTL above about 17 minutes, `ttlSeconds` >= 1001); needs `keepalive.enabled`. |
 | `providers.<p>.cache.keepalive.selfWarmWindowMinutes` | `max(45, 3 x TTL minutes)` | Minutes of idleness after which the self-sent warms stop (1..1440). |
 | `providers.<p>.cache.keepalive.compactMinTokens` | 100000 | Smallest context (tokens) at which a warm compaction runs; 0 = no minimum. |
 | `providers.<p>.cache.warmCompact` | true | Warm the cache after a compaction. |
@@ -38,7 +38,7 @@ The keep-alive interval and the on/off default follow the TTL of the matched row
 | family | TTL | billing | keep-alive |
 |---|---|---|---|
 | Anthropic direct | none built in (`no_entry`; 300 s is the provider's own TTL) | none until set | off until you set `cache.ttlSeconds` and `cache.billing` |
-| Claude through `claude-bridge`, foreman and session foremen | derived from `bridge.promptCacheTtl.main`: 3600 s (`1h`, default), 300 s (`5m`, `inherit`, or `FORCE_PROMPT_CACHING_5M`) | token | pi-foreman's self-warm at 3600 s (Pi stops at 30 minutes), Pi's warmer at 300 s |
+| Claude through `claude-bridge`, foreman and session foremen | derived from `bridge.promptCacheTtl.main`: 3600 s (`1h`, default), 300 s (`5m`, `inherit`, or `FORCE_PROMPT_CACHING_5M`) | token | pi-foreman's self-warm at 3600 s (Pi's first tick is past its 30-minute cap), Pi's warmer at 300 s |
 | Claude through `claude-bridge`, subagents | derived from `bridge.promptCacheTtl.subagent`: 300 s (`5m`, default) | token | Pi's warmer |
 | `github-copilot`, Claude-type model (`claude-*`) | 300 s (built-in row) | request | never |
 | `github-copilot`, OpenAI-type model (`gpt-*`, `o1*`, `o3*`, `o4*`) | 1800 s (built-in row) | request | never |
@@ -86,7 +86,7 @@ Pi's native cache warmer does the work: while a session is idle it sends a hidde
 - **Priced providers.** On a token provider with real prices, Pi's own economics may warm while a child runs. Those entries are synced and tagged `keepalive` too.
 - **Pi prerequisites.** `cacheWarming: "idle"` in Pi's settings and a `promptCache` entry for the model. Without them Pi never warms; `foreman doctor` reports that as WARN. `foreman setup` and `foreman config apply-preset` never write either. The `promptCache` entry goes in `<agent dir>/models.json` (the file `foreman doctor` names): `{"providers": {"<provider>": {"modelOverrides": {"<modelId>": {"promptCache": {"short": 300}}}}}}`.
 - **Glyph.** With `footer.style: "pi"`, while a window is open the status line shows a keep-alive glyph (see [sessions](sessions.md)). A cold cache and the idle-model downshift have their own glyphs there.
-- **Footer bar.** The foreman footer shows a cache-timer bar instead (`footer.cacheBar`): the time to cold (0.95 x the TTL after the last touch), the warms still to come with `budget` or `away` when that limits them, and the idle rung that follows. It is computed from the same budget, presence and window state the warms use, costs nothing (no request, only a repaint each second), and a model change starts it cold.
+- **Footer bar.** The foreman footer shows a cache-timer bar instead (`footer.cacheBar`): the time to cold (0.95 x the TTL after the last touch), the warms still to come with `budget` or `away` when that limits them, and the idle rung that follows (while downshifted: the idle model's own TTL, so it needs a `cache` entry for the idle model's provider, see [ladder](ladder.md#idle-rung-foreman-downshift)). It is computed from the same budget, presence and window state the warms use, costs nothing (no request, only a repaint each second), and a model change starts it cold.
 - **While waiting.** With `keepalive.whileWaiting` (default true) active child runs, waits and launch waits no longer count as busy for warming: a long child run no longer lets the foreman's cache expire. A running foreman turn or a queued message still does.
 
 ## Warm budget
@@ -116,7 +116,7 @@ Warms for an owner who has left are wasted. The presence gate asks the operating
 
 ## Self-warm beyond Pi's cap
 
-Pi stops idle warming 30 minutes after the last real request (the constant `MAX_IDLE_WARMING_AGE_MS` in Pi's cache warmer, not configurable) and ticks at 0.9 x TTL. For a 1-hour cache the first tick (54 minutes) is already past the cap, so Pi never warms it. pi-foreman therefore sends the warm itself when `keepalive.beyondPiCap` (default true) and `keepalive.enabled` are on, the provider bills by token and the TTL is above about 33 minutes (`ttlSeconds` >= 2001); the hook then answers `stop` to Pi.
+Pi stops idle warming 30 minutes after the last real request (the constant `MAX_IDLE_WARMING_AGE_MS` in Pi's cache warmer, not configurable) and ticks at 0.9 x TTL. For a 1-hour cache the first tick (54 minutes) is already past the cap, so Pi never warms it; for a 30-minute cache Pi sends one warm (at 27 minutes) and stops before the second. pi-foreman therefore sends the warms itself when `keepalive.beyondPiCap` (default true) and `keepalive.enabled` are on, the provider bills by token and Pi could not warm the cache twice before its cap, that is the TTL is above about 17 minutes (`ttlSeconds` >= 1001) and the model can be replayed; while no turn runs the hook then answers `stop` to Pi. A turn that is running keeps Pi's own warmer (the hook gives no answer).
 
 - **How.** The adapter keeps the messages of the last real request (the `context_with_system` capture) and replays them through `ctx.modelRegistry.streamSimple` with the same system prompt, tools, session id, reasoning level and cache retention and `maxTokens: 1`. Nothing is sent that the last real request did not send; handlers that change the messages after the adapter's still can alter the payload, which the miss check covers. Never in a child, never while a turn runs or a message is queued. A model that Pi itself would not replay (budget-thinking `anthropic-messages` without adaptive thinking) is skipped with `keepalive skipped not_replayable`.
 - **Schedule.** 0.9 x TTL after the last cache touch (the last real request end or the last completed warm of either source), with Pi's late-timer rule. New activity, a model change, a compaction and shutdown abort a warm in flight; an aborted or failed call is not recorded.

@@ -58,7 +58,7 @@ BRIDGE = "pi-claude-bridge@0.9.2"
 # the platform package (claude-agent-sdk-linux-<arch>) from the SDK's optional dependencies.
 AGENT_SDK = "@anthropic-ai/claude-agent-sdk@0.3.293"
 FAKE_PROVIDERS = ("foreman-fake", "foreman-fake-b")
-ROLES = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+ROLES = ["foreman", "explorer", "builder", "reviewer"]
 
 R_REPO = "/opt/pi-foreman"
 R_NPM = "/opt/pf-npm"

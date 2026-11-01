@@ -154,16 +154,16 @@ class WarmPolicyMirrorTest(unittest.TestCase):
         self.assertEqual((p["selfWarm"], p["selfWarmWindowMinutes"]), (True, 180))
         self.assertFalse(fc.warm_policy(self.cfg(3600), P)["selfWarm"])
         self.assertFalse(fc.warm_policy(self.cfg(3600, enabled=True, beyondPiCap=False), P)["selfWarm"])
-        self.assertFalse(fc.warm_policy(self.cfg(2000, enabled=True), P)["selfWarm"])
-        self.assertTrue(fc.warm_policy(self.cfg(2001, enabled=True), P)["selfWarm"])
+        self.assertFalse(fc.warm_policy(self.cfg(1000, enabled=True), P)["selfWarm"])
+        self.assertTrue(fc.warm_policy(self.cfg(1001, enabled=True), P)["selfWarm"])
         self.assertEqual(fc.warm_policy(self.cfg(3600, enabled=True, selfWarmWindowMinutes=99999), P)["selfWarmWindowMinutes"], 1440)
         p = fc.warm_policy(self.cfg(3600, enabled=True, budgetShare=0.2, awayTicks=2, whileWaiting=False), P)
         self.assertEqual((p["budgetShare"], p["awayTicks"], p["whileWaiting"]), (0.2, 2, False))
 
     def test_constants_match_cachepolicy_ts(self):
         src = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text()
-        self.assertIn("Math.floor((PI_IDLE_CAP_MINUTES * 60) / 0.9) + 1", src)
-        self.assertEqual(int(30 * 60 / 0.9) + 1, fc.SELF_WARM_MIN_TTL_SECONDS)
+        self.assertIn("Math.floor((PI_IDLE_CAP_MINUTES * 60) / (2 * 0.9)) + 1", src)
+        self.assertEqual(1001, fc.SELF_WARM_MIN_TTL_SECONDS)
         self.assertIsNotNone(re.search(r"budgetShare: clamp\(ka\.budgetShare, 0, 1, 0\.5\)", src))
 
 

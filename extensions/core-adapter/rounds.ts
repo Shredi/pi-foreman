@@ -5,15 +5,14 @@
 // sendCompletion), before the run that message triggers. Its first line is
 // `Background task <status>: **<agent>**` (grouped: `Background tasks completed (n): **a**, **b**`),
 // followed by the child's output preview. The verdict is read from that text: the reviewer's
-// `Overall verdict: PASS|FAIL` and the senior reviewer's `Verdict: APPROVE|BLOCK`
-// (agents/*.md output contracts). FAIL/BLOCK opens a round, PASS/APPROVE does not; with no
+// `Overall verdict: PASS|FAIL` (agents/reviewer.md output contract). FAIL opens a round, PASS does not; with no
 // verdict in the text (preview cut, contract not followed) the order alone counts.
 //
 // A builder run started while a review of built work is open is a revision round. Limit per
 // tier: `ceremony.revisionRounds` (trivial 0). Every launch call is walked step by step
-// (`launchSteps`): in a `chain`, each builder entry after a reviewer/senior-reviewer step counts
+// (`launchSteps`): in a `chain`, each builder entry after a reviewer step counts
 // as one round, and a call whose rounds would exceed the limit is refused as a whole. A review
-// of built work counts as open from its launch until a PASS/APPROVE completion closes it, so a
+// of built work counts as open from its launch until a PASS completion closes it, so a
 // builder launched while that review is still running is a revision round too. A `resume` of a
 // builder run counts like a builder launch (index.ts). Rounds reset on a user prompt and on a
 // tier change by the user (`/ceremony`), not on a raise by the foreman, a ledger or a signal.
@@ -38,7 +37,7 @@ import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 const REVISION_LINE = /^revision-round:[ \t]*\+1[ \t]*$/m;
 
 export const NOTIFY_TYPE = "subagent-notify";
-export const REVIEW_ROLES = ["reviewer", "senior-reviewer"];
+export const REVIEW_ROLES = ["reviewer"];
 const DEFAULT_LIMITS: Record<Tier, number> = { trivial: 0, standard: 1, heavy: 2 };
 
 export interface RoundState {
@@ -52,6 +51,8 @@ export interface RoundState {
   secOpen?: boolean;
   /** Security-exempt revision rounds launched since the last reset. Absent = 0. */
   exempt?: number;
+  /** A revision builder answered the open FAIL (counted or exempt); cleared by the next verdict. Absent = false. */
+  revisionAnswered?: boolean;
 }
 
 export type Verdict = "pass" | "fail";
@@ -175,7 +176,7 @@ export function completedAgents(content: string): string[] {
   return [...grouped[1].matchAll(/\*\*(.+?)\*\*/g)].map((m) => m[1]);
 }
 
-// The reviewer's CRITIQUE block (agents/reviewer.md, agents/senior-reviewer.md): a `CRITIQUE:` line (`CRITIQUE: none`
+// The reviewer's CRITIQUE block (agents/reviewer.md): a `CRITIQUE:` line (`CRITIQUE: none`
 // when empty), then `- [now] <text>` / `- [later] <text>` lines. It is advice and never part of a verdict.
 const CRITIQUE_HEAD = /^\s*(?:[-*]\s+|\d+[.)]\s+)?\**CRITIQUE\**\s*:/i;
 const CRITIQUE_LINE = /^\s*[-*]\s+\[(now|later)\]/i;
@@ -266,7 +267,8 @@ export function isOwnerPrompt(source: unknown, text: unknown): boolean {
 export function onReviewDone(s: RoundState, verdict: Verdict | null, security = false): RoundState {
   if (!s.built) return s;
   const secOpen = verdict === "fail" && security;
-  return { ...s, reviewOpen: verdict !== "pass", ...(secOpen || s.secOpen ? { secOpen } : {}) };
+  const { revisionAnswered: _answered, ...rest } = s;
+  return { ...rest, reviewOpen: verdict !== "pass", ...(secOpen || s.secOpen ? { secOpen } : {}) };
 }
 
 export function revisionLimit(configured: unknown, tier: Tier): number {
@@ -329,7 +331,7 @@ export function checkLaunch(s: RoundState, steps: string[][], tier: Tier, config
   }
   const revisions = counted + exempt;
   const usedExempt = (s.exempt ?? 0) + exempt;
-  const next: RoundState = { built, reviewOpen, used: s.used + counted, ...(secOpen ? { secOpen } : {}), ...(usedExempt > 0 ? { exempt: usedExempt } : {}) };
+  const next: RoundState = { built, reviewOpen, used: s.used + counted, ...(secOpen ? { secOpen } : {}), ...(usedExempt > 0 ? { exempt: usedExempt } : {}), ...(revisions > 0 || s.revisionAnswered ? { revisionAnswered: true } : {}) };
   const out = (block?: string): LaunchRounds => ({ revisions, ...(exempt > 0 ? { exempt } : {}), next, ...(block ? { block } : {}) });
   if (revisions === 0) return out();
   const limit = revisionLimit(configured, tier);

@@ -36,9 +36,9 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   process.env.PI_CODING_AGENT_DIR = agentDir;
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   const l2 = {
-    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}`, ...(r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
+    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}`, ...(r === "builder" ? { strong: { model: "fake/strong" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
   };

@@ -21,7 +21,7 @@
     },
     "roles": {
       "type": "object",
-      "description": "Per-role settings keyed by neutral role id (planner, explorer, builder, reviewer, senior-reviewer, finalizer, foreman, or an overlay role). `session-foreman` is not a launchable role: providers.<p>.roles.session-foreman.model is the model of sessions opened by `foreman session open` (default: the opening session's own model; `--model` overrides).",
+      "description": "Per-role settings keyed by neutral role id (explorer, builder, reviewer, foreman, or an overlay role). `session-foreman` is not a launchable role: providers.<p>.roles.session-foreman.model is the model of sessions opened by `foreman session open` (default: the opening session's own model; `--model` overrides).",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -155,7 +155,7 @@
                   "budgetShare": { "type": "number", "minimum": 0, "maximum": 1, "description": "Warm budget per idle: the warms may cost at most this share of one cold re-cache of the prompt (default 0.5). A project or session can only lower it (at most 0.5)." },
                   "awayTicks": { "type": "integer", "minimum": 0, "maximum": 20, "description": "Warms allowed per idle while the owner is away (presence.awayAfterMinutes); default 0. A project or session can only lower it (at most 0)." },
                   "whileWaiting": { "type": "boolean", "description": "Child runs, waits and launch waits do not stop the warms (default true). A project or session can only set false." },
-                  "beyondPiCap": { "type": "boolean", "description": "pi-foreman sends the warms itself past Pi's 30-minute idle cap for long TTLs (default true; needs keepalive.enabled). A project or session can only set false." },
+                  "beyondPiCap": { "type": "boolean", "description": "pi-foreman sends the warms itself for every token-billed cache Pi could not warm twice before its 30-minute idle cap, TTL of 1001 s or more (default true; needs keepalive.enabled). A project or session can only set false." },
                   "selfWarmWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes of idleness after which the self-sent warms stop (default max(45, 3 x TTL minutes)). A project or session can only shorten it (at most 180)." },
                   "compactMinTokens": { "type": "integer", "minimum": 0, "description": "Smallest context (tokens) at which a warm compaction (budget, away or window trigger) runs; below it the session goes cold instead. Default 100000; 0 = no minimum. A project or session can only raise it (at least 100000)." }
                 }
@@ -279,11 +279,11 @@
         "required": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Steps a session at this tier completes before the foreman may finish: planner (a planner run that completed), builder (a builder run that completed), reviewer (see reviewGate), finalizer (a finalizer run that completed). A project or session can only add steps.",
+          "description": "Steps a session at this tier completes before the foreman may finish: builder (a builder run that completed), reviewer (see reviewGate). A project or session can only add steps.",
           "properties": {
-            "trivial": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] }, "description": "Naming builder turns on the trivial builder path: a trivial task keeps its ledger and one builder on the default model makes the change; at finish a diff check (one source file within trivialBound, no exported signature or schema change, no test file touched, a test present) escalates to standard otherwise. Applies once a ledger is bound; builder is dropped in bounded mode. [] restores the earlier trivial tier (no builder)." },
-            "standard": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } },
-            "heavy": { "type": "array", "items": { "type": "string", "enum": ["planner", "builder", "reviewer", "finalizer"] } }
+            "trivial": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer"] }, "description": "Naming builder turns on the trivial builder path: a trivial task keeps its ledger and one builder on the default model makes the change; at finish a diff check (one source file within trivialBound, no exported signature or schema change, no test file touched, a test present) escalates to standard otherwise. Applies once a ledger is bound; builder is dropped in bounded mode. [] restores the earlier trivial tier (no builder)." },
+            "standard": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer"] } },
+            "heavy": { "type": "array", "items": { "type": "string", "enum": ["builder", "reviewer"] } }
           }
         },
         "foremanEdits": { "type": "string", "enum": ["readonly", "scratchpad", "bounded"], "description": "What the foreman may change itself: readonly = only .workflow/; scratchpad = .workflow/ and ceremony.scratchDir; bounded = workspace files at tier trivial within ceremony.trivialBound. A refused edit raises a trivial tier to standard. A project or session can only tighten it (readonly < scratchpad < bounded)." },
@@ -313,11 +313,11 @@
         "recheckBudget": { "type": "integer", "minimum": 0, "description": "Read-class calls the foreman may make after a reviewer PASS before it is told to finish. A project or session can only lower it." },
         "launchWait": { "type": "string", "enum": ["detach", "block"], "description": "block = a launch's tool result waits for the child to end; detach = it returns at once. A project or session can only move to block." },
         "dedupeNotify": { "type": "boolean", "description": "Replace a subagent-notify message whose result was already delivered with a one-line stub. A project or session can only set true." },
-        "reviewGate": { "type": "string", "enum": ["pass", "verdict"], "description": "When the required reviewer step holds. pass = the latest reviewer or senior-reviewer verdict is PASS (APPROVE) and no builder launch or foreman project-file edit came after it; a FAIL (BLOCK), a review without a verdict or such a revision re-opens it. verdict = any verdict, PASS or FAIL. A project or session can only move to pass." },
+        "reviewGate": { "type": "string", "enum": ["pass", "verdict"], "description": "When the required reviewer step holds. pass = the latest reviewer verdict is PASS and no builder launch or foreman project-file edit came after it; a FAIL, a review without a verdict or such a revision re-opens it. verdict = any verdict, PASS or FAIL. A project or session can only move to pass." },
         "orientation": { "type": "object", "additionalProperties": false, "description": "Orientation packet appended to the foreman's system prompt once per session (tracked-file tree to depth 2, head of AGENTS.md or README.md, detected build/test commands, explorer hint). Not a tool call, so it does not count against the read budget. enabled false = nothing injected.", "properties": { "enabled": { "type": "boolean" }, "maxLines": { "type": "integer", "minimum": 1 } } },
-        "ledgerHelper": { "type": "string", "enum": ["tool", "bash", "off"], "description": "How the foreman manages its ledger. tool = the foreman_ledger tool (batched marks, returns ledger status, not counted against recheckBudget; closes V only after a reviewer PASS with no revision since, with --verifier) and reviewer / senior-reviewer children get foreman_ledger for marking V only; bash = the shell command ledger, a pure-ledger command is not counted against recheckBudget, ledger defer is allowlisted; off = as before (every ledger shell call counts). A project or session can only move toward off (off < bash < tool)." },
-        "reviewPerRevision": { "type": "boolean", "description": "true = a reviewer or senior-reviewer launch is refused while the last review passed and nothing was revised since, unless the task carries [second-opinion]; false = no refusal (as before). A project or session can only set true." },
-        "reviewRuns": { "type": "integer", "minimum": 1, "description": "Review runs (reviewer, senior-reviewer; not panel shadows) the foreman may launch per user prompt; the next launch is refused [review_cap]. A re-review after a FAIL gets the line `[re-review items: N, M]` and must list those items. A project or session can only lower it." },
+        "ledgerHelper": { "type": "string", "enum": ["tool", "bash", "off"], "description": "How the foreman manages its ledger. tool = the foreman_ledger tool (batched marks, returns ledger status, not counted against recheckBudget; closes V only after a reviewer PASS with no revision since, with --verifier) and reviewer children get foreman_ledger for marking V only; bash = the shell command ledger, a pure-ledger command is not counted against recheckBudget, ledger defer is allowlisted; off = as before (every ledger shell call counts). A project or session can only move toward off (off < bash < tool)." },
+        "reviewPerRevision": { "type": "boolean", "description": "true = a reviewer launch is refused while the last review passed and nothing was revised since, unless the task carries [second-opinion]; false = no refusal (as before). A project or session can only set true." },
+        "reviewRuns": { "type": "integer", "minimum": 1, "description": "Review runs (reviewer; not panel shadows) the foreman may launch per user prompt; the next launch is refused [review_cap]. A re-review after a FAIL gets the line `[re-review items: N, M]` and must list those items. A project or session can only lower it." },
         "budgetUsd": { "type": ["number", "null"], "minimum": 0.01, "description": "Cap in USD on the summed cost estimate of the session (the foreman plus all its runs, list prices): a launch over it is refused [budget_exceeded], a warning comes at 80 %. null = no cap. A project or session can only lower it." },
         "reviewModel": { "type": ["string", "null"], "description": "Reviewer model used when a reviewer launch resolves to the foreman's own model and neither roles.reviewer nor its strong rung differs, <provider>/<model>[:<level>]. null = none. User or overlay config only." },
         "reviewByOccasion": { "type": "object", "additionalProperties": false, "description": "Per-occasion reviewer overrides (docs/review.md): thinking level and/or model of a reviewer launch for that occasion, applied after the role map and before the different-model rule. User or overlay config only.", "properties": {
@@ -333,9 +333,8 @@
           "properties": { "trivial": { "type": "boolean" }, "standard": { "type": "boolean" }, "heavy": { "type": "boolean" } }
         },
         "checkpoint": { "type": "string", "enum": ["parent", "human"], "description": "Who answers foreman_checkpoint. parent: the verdict comes from the parent-written ruling-plan.md in the session's handoff dir (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit); no dialog. human: the dialog, only when attended. Unset: parent for a session opened with a parent (handoff dir and parent intercom id set), else human. User or overlay config only." },
-        "planReviewRounds": { "type": "integer", "minimum": 1, "description": "Plan-review rounds per plan before the checkpoint opens with the open findings visible (a FAIL below the cap goes back to the planner; a FAIL at the cap opens the checkpoint). Counted per plan version: an appended ruling, decision log or addendum is not a new version. Default 2. Free per layer." },
-        "planner": { "type": "string", "enum": ["self", "role"], "description": "Who writes the heavy plan. self (default) = the foreman writes .workflow/scratch/plan-<topic>.md itself and its approved checkpoint satisfies the planner step; role = a planner launch is required, but a planner whose rank tier is <= the foreman's (unranked counts as not below) switches the session to self at the launch attempt. [plan-review] stays mandatory at heavy on both paths. Free per layer." },
-        "childTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Per-tool-call timeout of planner, builder, reviewer, senior-reviewer and finalizer runs (pi-subagents toolTimeoutMs); a run deadline timeoutMs below it is raised to it. Default 1800. A project or session can only lower it." },
+        "planReviewRounds": { "type": "integer", "minimum": 1, "description": "Plan-review rounds per plan before the checkpoint opens with the open findings visible (a FAIL below the cap goes back for a revision; a FAIL at the cap opens the checkpoint). Counted per plan version: an appended ruling, decision log or addendum is not a new version. Default 2. Free per layer." },
+        "childTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Per-tool-call timeout of builder and reviewer runs (pi-subagents toolTimeoutMs); a run deadline timeoutMs below it is raised to it. Default 1800. A project or session can only lower it." },
         "launchTimeoutCapMinutes": { "type": "integer", "minimum": 1, "description": "The only hard ceiling on a child run deadline, in minutes: the role timeoutMinutes is the default and a launch timeoutMs wins, but no written deadline exceeds this. Default 120. A project or session can only lower it." },
         "longCommands": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Regular expressions matched against the first command of a child's bash call (after cd and env assignments). A 'Subagent needs attention' notice for a bash call that matches is not shown: a test runner is expected to run long. Default: the common test runners. Free per layer." },
         "childBashTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Default timeout in seconds of a child's bash call that names no timeout. Capped at childBashTimeoutMaxSeconds. Default 600. Free per layer." },
@@ -347,7 +346,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "critic": { "type": "array", "items": { "type": "string" }, "description": "Questions rendered into every reviewer and senior-reviewer task; the review answers each once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`. The harness does not parse the lines. Empty list = no block. Default: the four owner questions." }
+        "critic": { "type": "array", "items": { "type": "string" }, "description": "Questions rendered into every reviewer task; the review answers each once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`. The harness does not parse the lines. Empty list = no block. Default: the four owner questions." }
       }
     },
     "knowledge": {
@@ -497,6 +496,14 @@
           "properties": {
             "intervalSeconds": { "type": "integer", "minimum": 5, "maximum": 300, "description": "Seconds between two polls of an open pull session (default 20)." },
             "fastSeconds": { "type": "integer", "minimum": 2, "maximum": 60, "description": "Seconds between two polls while an ask is open, the session is closing, or shortly after an open or a brief (default 5)." }
+          }
+        },
+        "worktree": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Settings of `foreman session open --worktree`. User or overlay config only.",
+          "properties": {
+            "branchPrefix": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$", "description": "Branch prefix of the worktree a session open creates: the branch is `<prefix>/<label>` (default `round`)." }
           }
         },
         "ssh": {

@@ -429,8 +429,8 @@ test("resolveWarmPolicy: defaults, self-warm switch and window default", () => {
   assert.equal(resolveWarmPolicy(cfg({ enabled: true, beyondPiCap: false }), "claude-bridge").selfWarm, false);
   assert.equal(resolveWarmPolicy(cfg({ enabled: false }), "claude-bridge").selfWarm, false);
   assert.equal(resolveWarmPolicy(cfg({ enabled: true }, { billing: "request" }), "claude-bridge").selfWarm, false);
-  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 2000, keepalive: { enabled: true } } } } }, "claude-bridge").selfWarm, false, "0.9 x 2000 s is inside Pi's cap");
-  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 2001, keepalive: { enabled: true } } } } }, "claude-bridge").selfWarm, true);
+  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 1000, keepalive: { enabled: true } } } } }, "claude-bridge").selfWarm, false, "Pi warms 1000 s twice before its cap");
+  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 1001, keepalive: { enabled: true } } } } }, "claude-bridge").selfWarm, true);
   const set = resolveWarmPolicy(cfg({ enabled: true, budgetShare: 0.2, awayTicks: 2, whileWaiting: false, selfWarmWindowMinutes: 90 }), "claude-bridge");
   assert.deepEqual([set.budgetShare, set.awayTicks, set.whileWaiting, set.selfWarmWindowMinutes], [0.2, 2, false, 90]);
   assert.equal(resolveWarmPolicy(cfg({ enabled: true, selfWarmWindowMinutes: 99999 }), "claude-bridge").selfWarmWindowMinutes, 1440);
@@ -536,4 +536,11 @@ test("Pi cacheWarming not idle: no ownership, no stream call, skipped pi_mode_no
   assert.equal(sw.owns(), true);
   sw.start();
   assert.equal(sw.state(), "watching");
+});
+
+test("owns() agrees with start(): a model Pi would not replay is not owned at 1001 s", () => {
+  const policy = resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 1001, billing: "token", keepalive: { enabled: true } } } } }, "p");
+  assert.equal(policy.selfWarm, true);
+  assert.equal(make({ policy, replayable: false }).sw.owns(), false);
+  assert.equal(make({ policy, replayable: true }).sw.owns(), true);
 });

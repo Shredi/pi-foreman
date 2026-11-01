@@ -212,7 +212,7 @@ export function launchTimeoutCapMs(v: unknown): number {
 }
 
 /** Roles whose runs get `ceremony.childTimeoutSeconds` as their tool-call timeout. */
-export const CHILD_TIMEOUT_ROLES: readonly string[] = ["planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+export const CHILD_TIMEOUT_ROLES: readonly string[] = ["builder", "reviewer"];
 
 /** `ceremony.childTimeoutSeconds` (default 1800): a positive integer, else the default. */
 export function childTimeoutSeconds(v: unknown): number {
@@ -220,7 +220,7 @@ export function childTimeoutSeconds(v: unknown): number {
 }
 
 /**
- * `ceremony.childTimeoutSeconds`: a launch of a planner, builder, reviewer, senior-reviewer or finalizer gets
+ * `ceremony.childTimeoutSeconds`: a launch of a builder or reviewer gets
  * `toolTimeoutMs` (pi-subagents' per-tool-call limit) unless the foreman set one, and a run deadline
  * `timeoutMs` that is set is raised to at least the same value, up to the cap.
  */

@@ -53,13 +53,13 @@ test("a bound escalation is automatic and foreman_triage still cannot lower it",
 test("required steps: list per tier, counted from run-end events; failed or timed-out builders do not count", () => {
   const req = { standard: ["builder", "reviewer"], heavy: ["builder", "reviewer", "finalizer", "bogus"] };
   assert.deepEqual(requiredSteps(req, "trivial"), []);
-  assert.deepEqual(requiredSteps(req, "heavy"), ["builder", "reviewer", "finalizer"]);
+  assert.deepEqual(requiredSteps(req, "heavy"), ["builder", "reviewer"], "a removed role name is dropped like any unknown step");
   assert.deepEqual(stepsOfRunEnd({ runId: "r", agent: "builder", success: true }), ["builder"]);
   assert.deepEqual(stepsOfRunEnd({ runId: "r", agent: "builder", success: false, timedOut: true }), []);
   assert.deepEqual(stepsOfRunEnd({ runId: "r", results: [{ agent: "builder", status: "failed", success: false, error: "Subagent timed out." }] }), []);
   assert.deepEqual(
-    stepsOfRunEnd({ runId: "r", results: [{ agent: "builder", status: "completed", success: true }, { agent: "senior-reviewer", status: "completed", success: true, output: "Verdict: APPROVE" }, { agent: "finalizer", status: "completed" }] }),
-    ["builder", "reviewer", "finalizer"],
+    stepsOfRunEnd({ runId: "r", results: [{ agent: "builder", status: "completed", success: true }, { agent: "reviewer", status: "completed", success: true, output: "Verdict: APPROVE" }, { agent: "finalizer", status: "completed" }] }),
+    ["builder", "reviewer"],
   );
   assert.deepEqual(stepsOfRunEnd({ runId: "r", agent: "reviewer", success: true, summary: "looked at it" }), [], "a review without a verdict does not count");
   const counts = emptySteps();
@@ -70,12 +70,12 @@ test("required steps: list per tier, counted from run-end events; failed or time
 
 test("launch recording covers chain and tasks launches and resumes", () => {
   const m = new Map<string, string[]>();
-  recordLaunchRoles(m, { chain: [{ agent: "builder", task: "x" }, { parallel: [{ agent: "reviewer" }, { agent: "senior-reviewer" }] }] }, { runId: "c1" }, false);
-  recordLaunchRoles(m, { tasks: [{ agent: "finalizer", task: "y" }] }, { asyncId: "t1" }, false);
+  recordLaunchRoles(m, { chain: [{ agent: "builder", task: "x" }, { parallel: [{ agent: "reviewer" }, { agent: "explorer" }] }] }, { runId: "c1" }, false);
+  recordLaunchRoles(m, { tasks: [{ agent: "reviewer", task: "y" }] }, { asyncId: "t1" }, false);
   recordLaunchRoles(m, { agent: "builder", task: "z" }, { runId: "s1" }, true);
   recordLaunchRoles(m, { action: "resume", runId: "c1" }, { runId: "c2" }, false);
   recordLaunchRoles(m, { action: "status", runId: "c1" }, { runId: "c3" }, false);
-  assert.deepEqual([...m.entries()], [["c1", ["builder", "reviewer", "senior-reviewer"]], ["t1", ["finalizer"]], ["c2", ["builder", "reviewer", "senior-reviewer"]]]);
+  assert.deepEqual([...m.entries()], [["c1", ["builder", "reviewer", "explorer"]], ["t1", ["reviewer"]], ["c2", ["builder", "reviewer", "explorer"]]]);
 });
 
 test("reviewGate pass: only a current PASS (or APPROVE) satisfies the reviewer step", () => {
@@ -91,15 +91,15 @@ test("reviewGate pass: only a current PASS (or APPROVE) satisfies the reviewer s
   assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL)");
   const pass = after("reviewer", "VERDICT: PASS");
   assert.deepEqual(open(pass), [], "PASS satisfies");
-  assert.deepEqual(open(after("senior-reviewer", "Verdict: APPROVE")), [], "senior APPROVE satisfies");
+  assert.deepEqual(open(after("reviewer", "Verdict: APPROVE")), [], "a tolerated APPROVE satisfies");
   assert.deepEqual(open(after("reviewer", "looked at it", pass)), ["reviewer"], "no verdict clears an earlier PASS");
-  assert.deepEqual(open(after("senior-reviewer", "Verdict: BLOCK", pass)), ["reviewer"], "BLOCK clears an earlier PASS");
+  assert.deepEqual(open(after("reviewer", "Verdict: BLOCK", pass)), ["reviewer"], "BLOCK clears an earlier PASS");
   assert.deepEqual(open(after("reviewer", "VERDICT: PASS", fail)), [], "a re-review PASS satisfies again");
 });
 
-test("reviewGate pass: a builder launch or a foreman project edit after the verdict re-opens it; a finalizer does not", () => {
-  const req = requiredSteps({ heavy: ["builder", "reviewer", "finalizer"] }, "heavy");
-  const counts = { ...emptySteps(), builder: 1, finalizer: 1 };
+test("reviewGate pass: a builder launch or a foreman project edit after the verdict re-opens it; a scratchpad edit does not", () => {
+  const req = requiredSteps({ heavy: ["builder", "reviewer"] }, "heavy");
+  const counts = { ...emptySteps(), builder: 1 };
   const pass = onReviewVerdicts(initialReviewGate(), ["pass"]);
   // index.ts calls onRevision for a builder launch (tool result with a run id) and for a projectChange edit.
   const revised = onRevision(pass);
@@ -108,9 +108,9 @@ test("reviewGate pass: a builder launch or a foreman project edit after the verd
   assert.equal(reviewHint(revised), "(re-review needed: revised after the last PASS)");
   assert.equal(reopened(onRevision(onReviewVerdicts(initialReviewGate(), ["fail"]))), "fail");
   assert.equal(onRevision(initialReviewGate()).revised, false, "no verdict yet: nothing to re-open");
-  // A finalizer run end or a scratchpad edit calls no onRevision: the PASS holds.
-  const finalized = onReviewVerdicts(pass, reviewVerdictsOfRunEnd({ runId: "f", agent: "finalizer", success: true, output: "Verdict: FAIL" }));
-  assert.deepEqual(openSteps(counts, req, "pass", finalized), []);
+  // A scratchpad edit calls no onRevision, and a non-review run end carries no verdict: the PASS holds.
+  const held = onReviewVerdicts(pass, reviewVerdictsOfRunEnd({ runId: "f", agent: "explorer", success: true, output: "Verdict: FAIL" }));
+  assert.deepEqual(openSteps(counts, req, "pass", held), []);
   assert.equal(reopened(pass), null);
   assert.deepEqual(openSteps(counts, req, "pass", onReviewVerdicts(revised, ["pass"])), [], "a fresh PASS after the revision");
 });
@@ -131,7 +131,6 @@ test("dupReview: refuses a reviewer after an unrevised PASS unless it asks for a
   const { dupReview } = await import("../bound.ts");
   const pass = { last: "pass" as const, revised: false };
   assert.equal(dupReview(pass, ["reviewer"], { agent: "reviewer", task: "x" }), "refuse");
-  assert.equal(dupReview(pass, ["senior-reviewer"], { agent: "senior-reviewer", task: "x" }), "refuse");
   assert.equal(dupReview(pass, ["reviewer"], { agent: "reviewer", reason: "second-opinion" }), "second-opinion");
   assert.equal(dupReview(pass, ["reviewer"], { agent: "reviewer", task: "[second-opinion] auth change" }), "second-opinion");
   assert.equal(dupReview({ last: "pass", revised: true }, ["reviewer"], {}), null);

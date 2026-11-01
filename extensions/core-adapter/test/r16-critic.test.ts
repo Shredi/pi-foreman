@@ -1,4 +1,4 @@
-// R16 item 6 (P3): review.critic is rendered into every reviewer and senior-reviewer task, not into builder or explorer tasks;
+// R16 item 6 (P3): review.critic is rendered into every reviewer task, not into builder or explorer tasks;
 // an override replaces the list, an empty list renders nothing. The harness does not parse the CRITIC lines (ruling D4).
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -21,9 +21,9 @@ test("r16 critic: the default is the four owner questions and the schema knows t
   assert.equal(SCHEMA.properties.review.properties.critic.type, "array");
 });
 
-test("r16 critic: reviewer and senior-reviewer tasks get the block after the ledger items, builder and explorer none", () => {
+test("r16 critic: reviewer tasks, cited or not, get the block after the ledger items, builder and explorer none", () => {
   const rev = { agent: "reviewer", task: "review item 1" };
-  const sen = { agent: "senior-reviewer", task: "plan review" };
+  const sen = { agent: "reviewer", task: "plan review" };
   const bld = { agent: "builder", task: "item 2" };
   const exp = { agent: "explorer", task: "look at item 1" };
   applyLedgerItems({ tasks: [rev, sen, bld, exp] }, LEDGER, new Set(), null, CRITIC);

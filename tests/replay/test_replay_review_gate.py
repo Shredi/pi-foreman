@@ -1,7 +1,7 @@
 """Replay: reviewer finish step under ceremony.reviewGate "pass" (default) on the fake provider.
 
 A reviewer FAIL leaves the step open: the finish is refused naming reviewer, a re-review PASS lets
-it pass. A builder launch after a FAIL re-opens it until a fresh PASS. A finalizer launch and a
+it pass. A builder launch after a FAIL re-opens it until a fresh PASS. An explorer launch and a
 scratchpad write after a PASS keep it; a builder launch after a PASS re-opens it. Each reviewer
 launch while the step is re-opened is traced as `rereview` {role, after}. After two refusals per
 user prompt the finish passes with trace `ceremony_incomplete`. "verdict" keeps the old rule.
@@ -58,13 +58,13 @@ class TestReviewGate(ReplayCase):
         self.assertEqual(events(rig, sid, "ceremony_incomplete"), [])
         self.assertEqual(rereviews(rig, sid), [("reviewer", "fail")])
 
-    def test_pass_finalizer_ok_then_builder_reopens_and_escape_hatch(self):
+    def test_pass_explorer_ok_then_builder_reopens_and_escape_hatch(self):
         rig = self.rig("rg-pass", load_fixture("review_gate"))
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:p1]] build it", timeout=60)
         recs += notifies(pi, 3)
-        self.assertEqual(gate_messages(recs), [], "a finalizer and a scratchpad write after the PASS keep the step")
+        self.assertEqual(gate_messages(recs), [], "an explorer and a scratchpad write after the PASS keep the step")
         self.assertEqual(events(rig, sid, "finish_refused"), [])
         self.assertEqual(rereviews(rig, sid), [])
 
