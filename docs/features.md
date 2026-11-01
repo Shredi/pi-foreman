@@ -428,6 +428,7 @@ No config key.
 | `fanout.max` | `3` | any layer |
 | `ceremony.launchWait` | `"detach"` | tighten-only (toward block; tightest first: block, detach) |
 | `ceremony.dedupeNotify` | `true` | tighten-only (only true is accepted) |
+| `ceremony.longCommands` | `["npm test", "npm run test", "npx vitest", "npx jest", "node --test", "pytest", "python -m unittest", "python -m pytest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "make test", "pnpm test", "yarn test"]` | any layer |
 
 ### waits
 
