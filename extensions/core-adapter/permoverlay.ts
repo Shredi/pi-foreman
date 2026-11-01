@@ -83,6 +83,7 @@ import { gitProtectedRead, gitReadWrites } from "./effects.ts";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
+import { globSegMatch, wildMatch } from "./glob.ts";
 
 export interface PathRule {
   pattern: string;
@@ -929,6 +930,13 @@ function pathMatches(pattern: string, value: string, ctx: MatchCtx): boolean {
   const win = ctx.platform === "win32";
   const pat = pattern.includes("{cwd}") ? pattern.replace(/\{cwd\}/g, ctx.cwd.split(/[\\/]/).join("/").replace(/\/+$/, "")) : pattern;
   return wildcardRegExp(pat, { home: ctx.home, ignoreCase: foldsCase(ctx.platform), foldSeparators: win }).test(win ? winSegments(value) : value);
+}
+
+/** `pathMatches` for a pattern that is a command word (never compiled: item 18); separators fold, as `wildcardRegExp` lets `/` match either. */
+function wordMatches(word: string, value: string, ctx: MatchCtx): boolean {
+  const win = ctx.platform === "win32";
+  const pat = (word.includes("{cwd}") ? word.replace(/\{cwd\}/g, ctx.cwd.split(/[\\/]/).join("/").replace(/\/+$/, "")) : word).replace(/\\/g, "/");
+  return wildMatch(expandHomePattern(pat, ctx.home), (win ? winSegments(value) : value).replace(/\\/g, "/"), foldsCase(ctx.platform));
 }
 
 const SHORT_NAME = /^[^~\\/]{1,6}~[0-9]+(\.[^\\/]{0,3})?$/i;
@@ -2427,36 +2435,6 @@ function expandWord(w: string, ctx: MatchCtx): string {
   return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, (m, n: string) => (bound.has(n.toUpperCase()) ? m : ctx.home));
 }
 
-/** Bash glob of one path segment: `*`, `?`, `[...]` / `[!...]`; an unclosed `[` is literal. */
-function globRegExp(segmentWord: string): RegExp {
-  const segment = segmentWord.replace(/\*{2,}/g, "*"); // a run of stars is one star: `.*` repeated would backtrack polynomially (item 18)
-  let body = "";
-  for (let i = 0; i < segment.length; i++) {
-    const c = segment[i];
-    if (c === "*") body += ".*";
-    else if (c === "?") body += ".";
-    else if (c === "[") {
-      let j = i + 1;
-      if (segment[j] === "!" || segment[j] === "^") j++;
-      if (segment[j] === "]") j++;
-      while (j < segment.length && segment[j] !== "]") j++;
-      if (j >= segment.length) {
-        body += "\\[";
-        continue;
-      }
-      let cls = segment.slice(i + 1, j).replace(/\\/g, "\\\\");
-      if (cls.startsWith("!")) cls = `^${cls.slice(1)}`;
-      body += `[${cls}]`;
-      i = j;
-    } else body += c.replace(/[.+^${}()|\\\]]/g, "\\$&");
-  }
-  try {
-    return new RegExp(`^${body}$`, "s");
-  } catch {
-    return /^$/;
-  }
-}
-
 const MAX_GLOB = 200;
 
 /** Every existing path a glob (in any segment, `~/.s*\/id_x`, `.ss[h]/x`) expands to, at most MAX_GLOB. */
@@ -2471,12 +2449,11 @@ function expandGlob(abs: string, p: path.PlatformPath, fsx: ReturnType<typeof de
       cur = cur.map((d) => p.join(d, seg));
       continue;
     }
-    const re = globRegExp(seg);
     const next: string[] = [];
     for (const d of cur) {
       for (const name of fsx.list(d)) {
         const dotOk = bash && !ctx.dotGlob ? !name.startsWith(".") || seg.startsWith(".") : name.startsWith(".") || !seg.startsWith(".");
-        if (re.test(name) && dotOk) next.push(p.join(d, name));
+        if (dotOk && globSegMatch(seg, name)) next.push(p.join(d, name));
       }
       if (next.length >= MAX_GLOB) break;
     }
@@ -3000,7 +2977,7 @@ function floorMatcher(rules: OverlayRules, ctx: MatchCtx): { word: (w: string, c
           // a glob matches the floored set lexically; a glob a spelling like `s/=.*//` yields inside pathCandidates is not trusted as a path
           const anchored = /^[/~$]/.test(v);
           const lexical = GLOB.test(v) && !anchored ? [pp.resolve(cw, v)] : [];
-          return [...pathCandidates(v, { ...ctx, cwd: cw }), ...lexical].some((c) => (exact.has(norm(c)) && !(cdTarget && norm(c) === agent)) || pats.some((p) => pathMatches(p, c, ctx)) || (GLOB.test(c) && (anchored || lexical.includes(c)) && members.some((m) => pathMatches(c, m, ctx))));
+          return [...pathCandidates(v, { ...ctx, cwd: cw }), ...lexical].some((c) => (exact.has(norm(c)) && !(cdTarget && norm(c) === agent)) || pats.some((p) => pathMatches(p, c, ctx)) || (GLOB.test(c) && (anchored || lexical.includes(c)) && members.some((m) => wordMatches(c, m, ctx))));
         }),
       ),
     ancestor: (w, cwd, unknown) => variants(w).some((v) => cwdsOf(cwd, unknown).some((cw) => pathCandidates(v, { ...ctx, cwd: cw }).some((c) => ancestors.has(norm(c))))),

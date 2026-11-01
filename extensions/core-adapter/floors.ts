@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
 import { lexUnder, normPath, sameOrUnder, type Resolver } from "./pathnorm.ts";
+import { globMatch } from "./glob.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -807,79 +808,6 @@ function protectedEntries(env: FloorEnv): Protected[] {
 
 /** A `permissions.json` directly below a `.workflow` or `.pi` dir, wherever that is (the main checkout's file is reached from a worktree too). */
 const PERMS_BASENAME = /(?:^|\/)\.(?:workflow|pi)\/permissions\.json$/i;
-
-/** One element of a glob segment: a literal char, `?`, a bracket class or `*`. */
-type GlobTok = { t: "lit"; c: string } | { t: "any" } | { t: "star" } | { t: "cls"; neg: boolean; set: string };
-
-function globToks(seg: string): GlobTok[] {
-  const out: GlobTok[] = [];
-  for (let i = 0; i < seg.length; i++) {
-    const c = seg[i];
-    if (c === "*") {
-      if (out[out.length - 1]?.t !== "star") out.push({ t: "star" }); // a run of stars is one star
-    } else if (c === "?") out.push({ t: "any" });
-    else if (c === "[") {
-      let j = i + 1;
-      const neg = seg[j] === "!" || seg[j] === "^";
-      if (neg) j++;
-      const from = j;
-      if (seg[j] === "]") j++;
-      while (j < seg.length && seg[j] !== "]") j++;
-      if (j >= seg.length) out.push({ t: "lit", c });
-      else {
-        out.push({ t: "cls", neg, set: seg.slice(from, j) });
-        i = j;
-      }
-    } else out.push({ t: "lit", c });
-  }
-  return out;
-}
-
-function inClass(set: string, ch: string): boolean {
-  for (let i = 0; i < set.length; i++) {
-    if (set[i + 1] === "-" && i + 2 < set.length) {
-      if (ch >= set[i] && ch <= set[i + 2]) return true;
-      i += 2;
-    } else if (set[i] === ch) return true;
-  }
-  return false;
-}
-
-const tokMatch = (k: GlobTok, ch: string): boolean => (k.t === "lit" ? k.c === ch : k.t === "any" ? true : k.t === "cls" ? inClass(k.set, ch) !== k.neg : true);
-
-/** One path segment against a glob segment: the two-pointer wildcard walk (stars collapsed first), O(n*m), never a RegExp. */
-function globSegMatch(toks: GlobTok[], s: string): boolean {
-  let ti = 0;
-  let si = 0;
-  let star = -1;
-  let mark = 0;
-  while (si < s.length) {
-    const k = toks[ti];
-    if (k !== undefined && k.t === "star") {
-      star = ti++;
-      mark = si;
-    } else if (k !== undefined && tokMatch(k, s[si])) {
-      ti++;
-      si++;
-    } else if (star >= 0) {
-      ti = star + 1;
-      si = ++mark;
-    } else return false;
-  }
-  while (toks[ti]?.t === "star") ti++;
-  return ti === toks.length;
-}
-
-/**
- * A word glob against a path, by hand (item 18: a command word is never compiled into a RegExp, so no pattern can stall the gate). `*` and `?` stay
- * inside one path segment, a closed `[..]` is a bracket class, an unclosed `[` is a literal. Folded on request.
- */
-function globMatch(glob: string, text: string, fold: boolean): boolean {
-  const g = glob.split("/");
-  const t = text.split("/");
-  if (g.length !== t.length) return false;
-  return g.every((seg, i) => globSegMatch(globToks(fold ? seg.toLowerCase() : seg), fold ? t[i].toLowerCase() : t[i]));
-}
 
 /** The protected entry a word names (a glob word is matched against the entries), or null. */
 function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
