@@ -1,11 +1,13 @@
 ---
 name: skill-authoring
-description: Writes, restructures and debugs agent skills (a folder with a SKILL.md). Use when asked to "write a skill", "create a new skill", "convert this prompt to a skill", "my skill doesn't trigger", "skill triggers too often", or "give a role a skill". Covers folder rules, name and description wording, progressive disclosure, patterns, trigger and behaviour tests, and how a Pi role gets a skill. Not for writing one-off prompts, project docs or tool extensions.
+description: Writes, restructures and debugs agent skills (a folder with a SKILL.md) in any skill dir, whether this repo's skills, another project's .agents/skills, or the user's skill dir. Use when asked to "write a skill", "create a new skill", "convert this prompt to a skill", "review this skill", "my skill doesn't trigger", "skill triggers too often", or "give a role a skill". Covers folder rules, naming, description wording, progressive disclosure, degrees of freedom, scripts, evals, trigger tests, and how a Pi role gets a skill. Not for writing one-off prompts, project docs or tool extensions.
 ---
 
 # Skill authoring
 
 A skill is a folder the agent reads on demand. Only a one-line catalog entry (name, description, location) is always in context; the body is read when the task matches; references are read when the body points at them.
+
+Beyond this page: for the fuller Anthropic guidance and its three checklists (core quality, scripts, testing), read `references/skills-best-practices.md`. When the skill is mostly prose guidance or the question is how to word a pointer, prune a body or phrase rules, read `references/writing-for-agents.md`. For the full source text in the foreman session only: when `foreman knowledge check` has run, read `<agentDir>/pi-foreman/knowledge/<id>.md` (ids `skills-best-practices`, `writing-for-agents`).
 
 ## Folder rules
 
@@ -30,7 +32,44 @@ The description is the only text the agent sees before deciding to load the skil
 2. Body: the workflow the agent follows. Aim for under 200 lines.
 3. References: detail needed only in some cases (API tables, long examples, edge cases). Link them from the body with the condition: "For the field list, read `references/fields.md`." Keep links one level deep.
 
-Move text out of the body when only some runs need it. Never repeat the description in the body.
+Move text out of the body when only some runs need it. Never repeat the description in the body. A reference over 100 lines starts with a table of contents, so a partial read still shows its scope.
+
+## Writing the content
+
+### Keep only what the model lacks
+
+Assume the model is already smart. For each paragraph ask: does it need this, would it do this by default, does the paragraph earn its tokens? Delete a sentence the model obeys without being told (the no-op test); delete the whole sentence, not a word. If you cannot tell, run the skill with and without the line and compare.
+
+### Degrees of freedom
+
+Match how exact the instruction is to how fragile the task is.
+
+- High: prose guidance. Several routes are valid and context decides (code review, research).
+- Medium: a preferred pattern, a parameterised script or pseudocode. Some variation is fine.
+- Low: an exact script, few or no parameters. The task is fragile or must be consistent (a migration, a format conversion).
+
+### Words and names
+
+- Prefer gerund names (`processing-pdfs`, `testing-code`) and one pattern across a collection. Avoid `helper`, `utils`, `tools`, and reserved words.
+- One term per concept, everywhere: not field, box and control for one thing.
+- Keep dated claims out. Put superseded approaches in a short "old patterns" section.
+- State rules as the behaviour wanted ("write one-line comments"), not as prohibitions: a banned behaviour named in context becomes more likely. Keep a prohibition only for a hard guardrail, and pair it with the target.
+
+### Pointers and load
+
+- The wording of a pointer (a description, or a line that names a doc) decides when its target is reached. If a must-read file is missed, sharpen the pointer first; inline the file only if that fails.
+- Lead with the distinctive word, give one trigger per distinct case, drop identity the body already carries.
+- A line in the always-loaded context (a description, an `AGENTS.md` line) costs tokens every turn. Prune it harder than a body.
+- The environment is a source of truth (config files, `--help`, directory layout, `package.json` scripts). A doc that restates it is a cache that goes stale. Write down what looking cannot find: the unwritten convention, the reason for a choice, the gotcha.
+
+### Scripts and checks
+
+- A script solves problems, with its own error handling; it does not fail and leave the agent to cope.
+- No unexplained constants: if you cannot say why a value is right, the agent cannot either. Document each parameter.
+- Say whether to run the script or read it; run is the default. List packages it needs and how to check them.
+- Feedback loop: run the validator, fix what it reports, repeat. A style guide to compare against also works as the validator.
+- For batch or destructive work, make the intermediate output verifiable: write a plan to a structured file, validate it with a script that names the problem and the valid options, then execute and verify.
+- Paths use forward slashes always. Name MCP tools fully qualified (`Server:tool` in the API form, `mcp__server__tool` in this harness).
 
 ## Patterns
 
@@ -50,13 +89,26 @@ Behaviour tests: run one realistic task with the skill loaded, in a fresh sessio
 
 Retest triggers after every description edit.
 
+Evals first, before long documentation:
+
+1. Run representative tasks without the skill; note where the agent fails.
+2. Write three scenarios that expose those gaps.
+3. Record the baseline without the skill.
+4. Write the minimum instructions that close the gaps.
+5. Rerun against the baseline and iterate.
+
+Watch how the agent moves through the skill, then fix from what you see: an odd reading order means the structure is unclear; a missed reference means the link is vague; a section read every time belongs in the body; a file never opened is dead weight or badly signposted. Where cost matters, try the skill on each model size you will use.
+
 ## Checklist
 
 - [ ] Directory name is lowercase `[a-z0-9-]` and equals `name`.
 - [ ] Description: third person, what and when, quoted trigger phrases, a "not for" boundary, under 1024 characters.
 - [ ] Body under about 200 lines; long detail lives in `references/`, linked with a condition.
 - [ ] Steps are imperative, one action each.
-- [ ] Scripts have a documented call and are run, not retyped.
+- [ ] Scripts have a documented call and are run, not retyped; no unexplained constants.
+- [ ] Every line passes the no-op test; one term per concept; no dated claims outside an old-patterns section.
+- [ ] Paths use forward slashes; MCP tool names are fully qualified.
+- [ ] Three evals and a baseline exist for anything non-trivial.
 - [ ] Should-trigger and should-not-trigger prompts were run; results recorded.
 - [ ] One behaviour run followed the steps.
 - [ ] No secrets, personal paths or machine names in the skill.

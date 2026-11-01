@@ -1102,7 +1102,7 @@ class RemoteOptionTest(RemoteBase):
                                      "--plan-mode", "--dry-run")
         self.assertEqual(rc, 0, err)
         # the dry-run line is PowerShell on win32, where every message is single-quoted
-        self.assertIn("pi '/plan' " if sys.platform == "win32" else "pi /plan ", out)
+        self.assertIn("pi '/plan Read the handoff", out)
         self.assertEqual(lines_of(self.logs["ssh"]), [])
 
 

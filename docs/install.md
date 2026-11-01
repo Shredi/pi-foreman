@@ -347,4 +347,4 @@ claude setup-token                                                 # then export
   provider, and reports permission-config drift and the bridge folder state. Its last lines include
   `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
-  Outside Pi: `bin/foreman update-check` (see [sessions](sessions.md)).
+  Outside Pi: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).

@@ -54,7 +54,7 @@ export interface Declared {
   risk: Risk[] | null;
 }
 
-const FIX = "Fix: size: {files: [\"path\", ...], largestFileLines?: n, modules?: n} and risk: [guard|permission|parser|concurrency|security|design] (a subset).";
+export const FIX = "Fix: size: {files: [\"path\", ...], largestFileLines?: n, modules?: n} and risk: [guard|permission|parser|concurrency|security|design] (a subset).";
 const invalid = (why: string): string => `pi-foreman: launch refused [sizing_invalid]: ${why}. ${FIX}`;
 
 function count(v: unknown): boolean {
@@ -77,6 +77,54 @@ function parseOne(size: unknown, risk: unknown): { declared: Declared; error?: s
     declared.risk = risk as Risk[];
   }
   return { declared };
+}
+
+/** The sentence the model sees (tool description, error hint): where `size` and `risk` go. */
+export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}` and `risk: [...]` are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
+
+/** The foreman's `subagent` tool description with the placement sentence added; null when sizing is off, the tool is not declared or the sentence is already there. */
+export function subagentDescription(declared: readonly { name: string; description?: string }[], enabled: boolean): string | null {
+  if (!enabled) return null;
+  const sub = declared.find((t) => t.name === "subagent");
+  if (!sub || typeof sub.description !== "string" || sub.description.includes(TOP_LEVEL_NOTE)) return null;
+  return `${sub.description}\n\nBuilder launches (pi-foreman): ${TOP_LEVEL_NOTE}`;
+}
+
+/** The text appended to a pi-subagents refusal caused by a misplaced `size`/`risk`; null for any other error text. */
+export function misplacedHint(errorText: string): string | null {
+  if (!/unknown options key '(?:size|risk)'|args requires workflow/.test(errorText)) return null;
+  return `pi-foreman: size and risk are top-level keys of the subagent call, not options or args. ${FIX}`;
+}
+
+/**
+ * Move a misplaced `size`/`risk` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
+ * a value already at the top level wins and the misplaced one is dropped. Covers the call and every tasks/chain/parallel entry.
+ * `from` lists where values were found and moved; `left` is true when one stays where pi-subagents reads it (args with a workflow).
+ */
+export function liftSizing(input: Json): { from: ("options" | "args")[]; left: boolean } {
+  const from: ("options" | "args")[] = [];
+  let left = false;
+  for (const e of launchEntries(input)) {
+    for (const key of ["options", "args"] as const) {
+      const box = e[key];
+      if (!isObj(box)) continue;
+      if (key === "args" && e.workflow !== undefined) {
+        if (box.size !== undefined || box.risk !== undefined) left = true;
+        continue;
+      }
+      let moved = false;
+      for (const f of ["size", "risk"] as const) {
+        if (box[f] === undefined) continue;
+        if (e[f] === undefined) e[f] = box[f];
+        delete box[f];
+        moved = true;
+        if (!from.includes(key)) from.push(key);
+      }
+      // pi-subagents refuses any `args` without a `workflow` ("args requires workflow"), so an emptied box goes too
+      if (moved && Object.keys(box).length === 0) delete e[key];
+    }
+  }
+  return { from, left };
 }
 
 /**

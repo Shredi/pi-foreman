@@ -1,4 +1,4 @@
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]` for PowerShell.
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms|knowledge [args]` for PowerShell.
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
 if ($sub -eq 'setup') {
@@ -15,6 +15,10 @@ if ($sub -eq 'features') {
 }
 if ($sub -eq 'perms') {
     & node (Join-Path $PSScriptRoot '..\scripts\foreman_perms.mjs') @rest
+    exit $LASTEXITCODE
+}
+if ($sub -eq 'knowledge') {
+    & node (Join-Path $PSScriptRoot '..\scripts\foreman_knowledge.mjs') @rest
     exit $LASTEXITCODE
 }
 if ($sub -eq 'dialogs') {
@@ -35,7 +39,7 @@ switch ($sub) {
     'findings' { $name = 'foreman_findings.py' }
     'close' { $name = 'foreman_close.py' }
     'worktree' { $name = 'foreman_worktree.py' }
-    default { [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]'); exit 2 }
+    default { [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms|knowledge [args]'); exit 2 }
 }
 $script = Join-Path $PSScriptRoot "..\scripts\$name"
 $py = $env:PI_FOREMAN_PYTHON
@@ -55,4 +59,9 @@ if (-not $py) {
     }
 }
 & $py @pre -E -s $script @rest
-exit $LASTEXITCODE
+$rc = $LASTEXITCODE
+if ($sub -eq 'update-check') {
+    # update-check keeps its exit code; the knowledge nudge goes to stderr so --json stays clean (best effort)
+    try { & node (Join-Path $PSScriptRoot '..\scripts\foreman_knowledge.mjs') nudge 2>$null | ForEach-Object { [Console]::Error.WriteLine($_) } } catch { }
+}
+exit $rc

@@ -215,8 +215,8 @@ class HcSessionTest(unittest.TestCase):
             "env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + CALLER_PATH,
             "PI_FOREMAN_HANDOFF_DIR=" + handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
             "PI_INTERCOM_STABLE_ID=" + entry["child"], "PI_FOREMAN_PARENT_LABEL=" + fsn.opener_slug(Path.cwd(), fsn.git_top(Path.cwd())),
-            "PI_FOREMAN_SESSION_MODEL=prov/model-1", FAKE_PI, "--model", "prov/model-1", "/plan",
-            "Read the handoff brief at %s and proceed." % (Path(handoff) / "brief.md").as_posix()])
+            "PI_FOREMAN_SESSION_MODEL=prov/model-1", FAKE_PI, "--model", "prov/model-1",
+            "/plan Read the handoff brief at %s and proceed." % (Path(handoff) / "brief.md").as_posix()])
         launch = (Path(handoff) / "launch.txt").read_text("utf-8")
         self.assertTrue(launch.startswith("env PI_FOREMAN_HANDOFF_DIR="), launch)
 

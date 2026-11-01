@@ -16,7 +16,8 @@
 // Subagent children refuse every subcommand. The functions below take plain deps; the `foreman_session_open` tool
 // (registerSessionOpenTool) runs the same sessionOpen; children never get it.
 // open --first-command /cmd (repeatable) and --plan-mode (= --first-command /plan) are Pi extension commands the new
-// session runs before the brief prompt; --plan-mode needs a `plan` command in the opener's pi.getCommands()
+// session runs before the brief prompt; --plan-mode runs the brief prompt as the single word `/plan <brief prompt>`
+// (a bare `/plan` would open the plan-mode menu and the brief would never start); --plan-mode needs a `plan` command in the opener's pi.getCommands()
 // (else `session open refused [plan_mode_unavailable]`).
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -611,7 +612,7 @@ const OPEN_PARAMS = {
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>; the rank rule applies." },
     planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks questions via ask_user_question until the plan is decision-complete." },
-    planMode: { type: "boolean", description: "Open the session in plan mode (first command /plan); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
+    planMode: { type: "boolean", description: "Open the session in plan mode (the brief prompt runs as `/plan <brief prompt>`); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },
     dryRun: { type: "boolean", description: "Print the handoff dir, child id and command; open nothing." },

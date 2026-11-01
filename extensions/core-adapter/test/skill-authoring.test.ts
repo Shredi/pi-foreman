@@ -40,4 +40,7 @@ test("the skills/ dir loads skill-authoring through Pi's loadSkills with zero di
   const skill = result.skills.find((s) => s.name === "skill-authoring");
   assert.ok(skill, JSON.stringify(result.skills.map((s) => s.name)));
   assert.ok(skill.description.length > 0 && skill.description.length <= 1024);
+  const guides = result.skills.find((s) => s.name === "prompting-guides");
+  assert.ok(guides, JSON.stringify(result.skills.map((s) => s.name)));
+  assert.ok(guides.description.length > 0 && guides.description.length <= 1024);
 });

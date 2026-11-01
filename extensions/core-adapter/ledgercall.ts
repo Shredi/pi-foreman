@@ -183,8 +183,9 @@ export function planLedgerCall(params: Record<string, unknown>, opts: { child: b
     }
     case "note":
     case "defer": {
-      const id = one();
-      if (!id || !text) return { error: `${LEDGER_TOOL}: ${action} needs exactly one item and text.` };
+      const single = params.item === undefined || params.item === null ? null : itemId(params.item);
+      const id = single ? (items.length === 0 || (items.length === 1 && items[0] === single) ? single : null) : params.item === undefined || params.item === null ? one() : null;
+      if (!id || !text) return { error: `${LEDGER_TOOL}: ${action} needs exactly one item (\`item\` or \`items: [n]\`) and text.` };
       if (action === "defer" && id === "V") return { error: `${LEDGER_TOOL}: V cannot be deferred; ${V_REFUSAL}.` };
       return { calls: [[action, id, text]], items: id, attested: false };
     }
