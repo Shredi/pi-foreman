@@ -6,8 +6,8 @@ test("childTimeoutSeconds: positive integer, else 1800", () => {
   assert.deepEqual([childTimeoutSeconds(undefined), childTimeoutSeconds(0), childTimeoutSeconds("9"), childTimeoutSeconds(600)], [1800, 1800, 1800, 600]);
 });
 
-test("toolTimeoutMs is set for the five child roles", () => {
-  for (const agent of ["planner", "builder", "reviewer", "senior-reviewer", "finalizer"]) {
+test("toolTimeoutMs is set for the builder and reviewer roles", () => {
+  for (const agent of ["builder", "reviewer"]) {
     const input: Record<string, unknown> = { agent, task: "t" };
     applyLaunchTimeouts(input, {}, 1800);
     assert.equal(input.toolTimeoutMs, 1_800_000, agent);

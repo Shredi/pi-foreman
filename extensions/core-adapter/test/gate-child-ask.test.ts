@@ -14,7 +14,7 @@ import { SteerWatch } from "../steerwatch.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 
 type T = Parameters<typeof r11Rig>[0];
-const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ROLES = ["explorer", "builder", "reviewer"];
 const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: `because ${entry}` });
 const ASK = V("ask", "package-install");
 const CMD = { command: "pip install requests" };

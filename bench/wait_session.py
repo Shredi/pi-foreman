@@ -110,7 +110,7 @@ def note_refusal(status, text):
         status.update({"status": "infra_error", "infra_error": "provider_refusal", "error": text[:200]})
 
 
-ROLE_IDS = ("senior-reviewer", "finalizer", "explorer", "planner", "builder", "reviewer", "foreman")
+ROLE_IDS = ("explorer", "builder", "reviewer", "foreman")
 FAKE_REVIEW_MODEL = "review-allow"  # the gate reviews the foreman's own subagent launch; the fake review model allows (as tests/replay/driver.py)
 
 

@@ -7,7 +7,7 @@
 // the count restarts at each started launch. The foreman's own reads are never refused: at `warn` the
 // result carries a reminder to delegate, and again after every `every` further reads. Knob 2: after a reviewer PASS the foreman gets
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
-// Finalization (R11 item 5): after a reviewer PASS or a completed finalizer, until the next started launch, the
+// Finalization (R11 item 5): after a reviewer PASS, until the next started launch, the
 // read budget never refuses and a plain git commit/add/status/log is exempt from both budgets while no child run
 // is active (index.ts readBudgetCheck).
 
@@ -67,14 +67,9 @@ export class ReadBudget {
   /** The latest review verdict (index.ts sets it from the review gate before each check); undefined keeps the default "the reviewer passed" text. */
   verdict?: "pass" | "fail" | "none" | null;
 
-  /** Finalization: a reviewer PASS or a completed finalizer since the last started launch (index.ts adds: no child run active). */
+  /** Finalization: a reviewer PASS since the last started launch (index.ts adds: no child run active). */
   get finalized(): boolean {
     return this.final;
-  }
-
-  /** A finalizer run completed: finalization starts (ends with the next started launch, a FAIL, an edit or a user prompt). */
-  onFinalizer(): void {
-    this.final = true;
   }
 
   get count(): number {

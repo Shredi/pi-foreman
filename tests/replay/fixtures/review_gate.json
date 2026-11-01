@@ -38,10 +38,10 @@
   "p2": [{"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-p3]] review item 1"}}]}, {"text": "Reviewer launched."}],
   "p3": [
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/notes.md", "content": "reviewed\n"}}]},
-   {"tools": [{"name": "subagent", "arguments": {"agent": "finalizer", "task": "[[replay:z-p4]] close item 1"}}]},
-   {"text": "Finalizer launched."}
+   {"tools": [{"name": "subagent", "arguments": {"agent": "explorer", "task": "[[replay:z-p4]] look at item 1"}}]},
+   {"text": "Explorer launched."}
   ],
-  "p4": [{"text": "Finalized; done."}],
+  "p4": [{"text": "Looked; done."}],
   "p5": [{"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-p6]] one more change"}}]}, {"text": "Builder launched."}],
   "p6": [
    {"text": "Done."},
@@ -60,7 +60,7 @@
   "r-f5": [{"text": "[[replay:f5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
   "b-p2": [{"text": "[[replay:p2]] built"}],
   "r-p3": [{"text": "[[replay:p3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
-  "z-p4": [{"text": "[[replay:p4]] finalized"}],
+  "z-p4": [{"text": "looked"}],
   "b-p6": [{"text": "[[replay:p6]] changed"}],
   "r-p7": [{"text": "[[replay:p7]] VERDICT: FAIL\n1. FAIL a.txt:1\nOverall verdict: FAIL"}]
  }

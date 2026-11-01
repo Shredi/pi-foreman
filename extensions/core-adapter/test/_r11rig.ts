@@ -40,7 +40,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   delete process.env.HERDR_PANE_ID; // the presence file would name the runner's pane
   delete process.env.HERDR_ENV;
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   const l2 = {
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },
     trace: { enabled: true },
@@ -191,6 +191,6 @@ export function reviewAllowOpts(): { ctx: Record<string, unknown>; config: Recor
         complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }),
       },
     },
-    config: { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } } },
+    config: { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } } },
   };
 }

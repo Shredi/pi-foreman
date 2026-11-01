@@ -193,18 +193,6 @@
       "enable": "{\"ceremony\": {\"reviewByOccasion\": {\"pre-pr\": {\"thinking\": \"high\"}}}}"
     },
     {
-      "id": "self-planning",
-      "area": "ceremony",
-      "title": "Self-planning at heavy",
-      "purpose": "`ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's.",
-      "doc": "docs/ceremony.md#triage-and-delegation",
-      "keys": ["ceremony.planner"],
-      "commands": [],
-      "switch": null,
-      "state": "on",
-      "enable": ""
-    },
-    {
       "id": "checkpoint-verdict",
       "area": "ceremony",
       "title": "Plan checkpoint verdict by parent file",
@@ -426,7 +414,7 @@
       "id": "review-critic",
       "area": "review",
       "title": "Review critic questions",
-      "purpose": "Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.",
+      "purpose": "Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.",
       "doc": "docs/roles.md#review-critic",
       "keys": ["review.critic"],
       "commands": [],
@@ -831,7 +819,7 @@
     "Public-repo rule: pi-foreman is generic and public. Hosts, names, private paths and model-map details of one installation belong in that installation's overlay, never in this repository.",
     "Tighten-only safety: the project and session layers may only make `safety.*` and the keys marked tighten-only stricter, so a cloned repository cannot loosen your guards.",
     "Project trust: the project layer `.pi/foreman.json` is read only after Pi's project trust is resolved; project packages also load only after trust.",
-    "Role ids stay neutral (`foreman`, `planner`, `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`); display names come only from config.",
+    "Role ids stay neutral (`foreman`, `explorer`, `builder`, `reviewer`); display names come only from config.",
     "Setup owns the `subagents` block in `settings.json`: put your rules into `foreman.json` and your policy file, a hand edit of the generated block is overwritten.",
     "Children never open PRs and reach the foreman through `contact_supervisor`, never through pi-intercom."
   ]

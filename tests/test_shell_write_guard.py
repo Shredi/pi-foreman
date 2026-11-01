@@ -238,37 +238,30 @@ class ShellWriteGuardTest(unittest.TestCase):
         for d in (repo, os.path.join(repo, "node_modules"), os.path.join(owned, "b")):
             os.makedirs(d)
         cmd = "git worktree add -b hf ../repo.worktrees/b origin/main; cp -R node_modules ../repo.worktrees/b/node_modules"
-        elsewhere = "cp -R node_modules ../repo.other/b/node_modules"
-        # confined (a planner child): a write outside the workspace counts, unless an owned dir covers it
-        refused = swg.decide(cmd, repo, repo, "bash", None, True)
-        self.assertIsNotNone(refused)
-        self.assertIsNone(swg.decide(cmd, repo, repo, "bash", None, True, None, [owned]))
-        self.assertIsNotNone(swg.decide(elsewhere, repo, repo, "bash", None, True, None, [owned]))
-        self.assertIsNotNone(swg.decide("cp -R node_modules ../repo.worktrees", repo, repo, "bash", None, True, None, [owned]), "the owned dir itself")
-        # relative and root entries are ignored
-        for bad in (["repo.worktrees"], ["/"], [""]):
-            with self.subTest(dirs=bad):
-                self.assertIsNotNone(swg.decide(cmd, repo, repo, "bash", None, True, None, bad))
+        self.assertIsNone(swg.decide(cmd, repo, repo, "bash", None, None, [owned]))
         # inside the workspace an owned dir lifts the project-write refusal too
         os.makedirs(os.path.join(repo, "out"))
         self.assertIsNotNone(swg.decide("echo x > out/f", repo, repo))
-        self.assertIsNone(swg.decide("echo x > out/f", repo, repo, "bash", None, False, None, [os.path.join(repo, "out")]))
+        self.assertIsNone(swg.decide("echo x > out/f", repo, repo, "bash", None, None, [os.path.join(repo, "out")]))
+        # relative and root entries are ignored: they never lift the refusal
+        for bad in (["out"], ["/"], [""]):
+            with self.subTest(allow_dirs=bad):
+                self.assertIsNotNone(swg.decide("echo x > out/f", repo, repo, "bash", None, None, bad))
 
     def test_allow_dir_argv_option_and_the_raw_operand_message(self):
         base = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-argv-"))
         self.addCleanup(shutil.rmtree, base, True)
         repo = os.path.join(base, "repo")
-        owned = os.path.join(base, "repo.worktrees")
-        os.makedirs(repo)
+        owned = os.path.join(repo, "out")
         os.makedirs(owned)
-        payload = json.dumps({"tool_input": {"command": "cp -R node_modules ../repo.worktrees/b/node_modules"}, "cwd": repo, "workspace": repo, "confine": True})
+        payload = json.dumps({"tool_input": {"command": "cp -R node_modules out/b/node_modules"}, "cwd": repo, "workspace": repo})
         def run(*args):
             return subprocess.run([sys.executable, "-E", "-s", str(SCRIPT), *args], input=payload, capture_output=True, text=True)
         self.assertIn("deny", run().stdout)
         self.assertEqual(run("--allow-dir", owned).stdout, "")
         self.assertEqual(run("--allow-dir", os.path.join(base, "x"), "--allow-dir", owned).stdout, "", "repeatable")
         # an unresolvable target shows its operand text and says so, instead of a bare <unresolved>
-        bad = json.dumps({"tool_input": {"command": "cp a $UNKNOWN/b"}, "cwd": repo, "workspace": repo, "confine": True})
+        bad = json.dumps({"tool_input": {"command": "cp a $UNKNOWN/b"}, "cwd": repo, "workspace": repo})
         out = subprocess.run([sys.executable, "-E", "-s", str(SCRIPT)], input=bad, capture_output=True, text=True).stdout
         self.assertIn("/b (unresolved)", out)
         self.assertNotIn("<unresolved>", out)
@@ -291,33 +284,6 @@ class ShellWriteGuardTest(unittest.TestCase):
         except (OSError, NotImplementedError):
             return
         self.assertEqual(swg.decide("echo x > notes/l/f", self.ws, self.ws, "bash", dirs)[0], "redirect")
-
-    def test_confine_refuses_writes_outside_the_workspace(self):
-        # planner child: outside the workspace counts too (absolute, `..`, `~`); allowed dirs and /dev/null stay open
-        out = tempfile.mkdtemp(prefix="pf-swg-out-")
-        self.addCleanup(shutil.rmtree, out, True)
-        out = out.replace("\\", "/")  # a Windows temp path goes unquoted into the bash command below
-        for cmd, kind in (("echo x > %s/f" % out, "redirect"), ("echo x > ../f", "redirect"), ("echo x | tee ~/f", "tee")):
-            with self.subTest(command=cmd):
-                self.assertIsNone(swg.decide(cmd, self.ws, self.ws))
-                hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], True)
-                self.assertEqual(hit[0] if hit else None, kind, hit)
-        self.assertIsNone(swg.decide("echo x > .workflow/n.md; echo y > /dev/null", self.ws, self.ws, "bash", [".workflow"], True))
-
-    @POSIX_VARS_ONLY
-    def test_confine_allows_writes_inside_the_child_scratch_dir_only(self):
-        # planner child with a scratch dir (childscratch.ts): inside it, also via $FOREMAN_SCRATCH, writes pass
-        root = tempfile.mkdtemp(prefix="pf-swg-scratch-")
-        self.addCleanup(shutil.rmtree, root, True)
-        scratch = os.path.join(os.path.realpath(root), "L1")
-        os.mkdir(scratch)
-        sc = scratch.replace("\\", "/")
-        for cmd, kind in (("echo x > %s/f" % sc, None), ("cp -r . $FOREMAN_SCRATCH/copy && rm -rf ${FOREMAN_SCRATCH}/copy", None),
-                          ("echo x > '$FOREMAN_SCRATCH/f'", "redirect"), ("rm -rf %s" % sc, "delete"),
-                          ("echo x > %s/../f" % sc, "redirect"), ("echo x > src/f", "redirect")):
-            with self.subTest(command=cmd):
-                hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], True, scratch)
-                self.assertEqual(hit[0] if hit else None, kind, hit)
 
     def test_symlinked_allowed_dir_is_not_writable(self):
         # `.workflow/scratch` -> `../src`: the allowed dir is lexical, the target real, so nothing lands in it
@@ -402,7 +368,7 @@ class ShellVarsTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.ws, True)
 
     def kind(self, cmd, scratch=None):
-        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, scratch, [self.hand])
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], scratch, [self.hand])
         return hit[0] if hit else None
 
     @POSIX_VARS_ONLY
@@ -462,7 +428,7 @@ class ShellVarsSecurityTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.ws, True)
 
     def kind(self, cmd):
-        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, None, [self.hand])
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], None, [self.hand])
         return hit[0] if hit else None
 
     def test_append_assignment_is_refused(self):
@@ -502,7 +468,7 @@ class ShellVarsReviewTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.ws, True)
 
     def kind(self, cmd):
-        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, None, [self.hand])
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], None, [self.hand])
         return hit[0] if hit else None
 
     def test_later_assignment_in_any_other_form_poisons(self):
@@ -537,7 +503,7 @@ class ShellVarsCaseNewlineTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.ws, True)
 
     def kind(self, cmd):
-        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], False, None, [self.hand])
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], None, [self.hand])
         return hit[0] if hit else None
 
     def test_case_arm_assignment_is_refused(self):
@@ -579,7 +545,7 @@ class ShellVarsGrammarTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.ws, True)
 
     def kind(self, cmd):
-        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], True, self.scratch, [self.hand])
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], self.scratch, [self.hand])
         return hit[0] if hit else None
 
     def test_fixture_matches_the_constants(self):

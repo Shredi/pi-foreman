@@ -258,10 +258,10 @@ export function outputPathBlock(input: Json): string | undefined {
   return "pi-foreman: subagent launch refused [launch_refused:output_path]: `output` and `outputMode` make the runner write the child's reply to a file with no write check. Omit both (or set output:false); a child that must write a file uses its own tools.";
 }
 
-/** With allowWorkflow on, an unchecked workflow/schedule launch at tier heavy (neither the builder gate nor the planner rule sees inside it). */
+/** With allowWorkflow on, an unchecked workflow/schedule launch at tier heavy (the builder gate does not see inside it). */
 export function uncheckedHeavyBlock(unchecked: string | undefined, tier: string): string | undefined {
   if (!unchecked || tier !== "heavy") return undefined;
-  return `pi-foreman: subagent launch refused [launch_refused:unchecked_heavy]: '${unchecked}' launches are not checked against the plan checkpoint or the planner rule, so they are refused at tier heavy. Launch roles directly with subagent({agent, task}).`;
+  return `pi-foreman: subagent launch refused [launch_refused:unchecked_heavy]: '${unchecked}' launches are not checked against the plan checkpoint, so they are refused at tier heavy. Launch roles directly with subagent({agent, task}).`;
 }
 
 function resumeCheck(input: Json, c: ActionContext): ActionDecision {

@@ -12,7 +12,7 @@ import type { HookDecision } from "../translate.ts";
 const UPSTREAM = ["list", "get", "models", "children.list", "guide", "validate", "create", "update", "delete", "eject", "disable", "enable", "reset", "mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close", "worktree.discard", "worktree.cleanup", "lane.status", "lane.recordMerge", "lane.recordSupersession", "refine", "refine.show", "refine.rollback", "inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close", "status", "debug.run", "grant-spawn-budget", "interrupt", "resume", "steer", "stop", "command.status", "command.yield", "command.cancel", "dismiss", "doctor", "watchdog.status", "watchdog.check", "watchdog.configure", "watchdog.recommend-model", "schedule.create", "schedule.list", "schedule.show", "schedule.history", "schedule.pause", "schedule.resume", "schedule.run", "schedule.run-due", "schedule.delete"];
 
 const ROLES = { explorer: { model: "p1/small", thinking: "low", tools: ["read", "ls", "grep", "find", "bash", "codemode"] }, builder: { model: "p1/big", tools: ["read", "bash", "edit", "write"] } };
-const ALLOWED = ["explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ALLOWED = ["explorer", "builder", "reviewer"];
 
 function ctx(runs: RunRegistry, over: Partial<ActionContext> = {}): ActionContext {
   return { allowWorkflow: false, runs, allowed: ALLOWED, resolution: { provider: "p1", roles: ROLES, source: "cli" }, maxThinking: "high", ...over };

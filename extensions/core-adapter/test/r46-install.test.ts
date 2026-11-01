@@ -57,8 +57,8 @@ test("install: false or absent keeps the label function unchanged (the gate is t
   assert.equal(npmCiWorktreeLabel("npm ci", { cwd: round, home, platform: process.platform, role: "child", roundRoots: [round] }), "npm-ci-worktree");
 });
 
-// builder and finalizer launches carry install in the binding; the child reads it back
-for (const role of ["builder", "finalizer"]) {
+// builder launches carry install in the binding; the child reads it back
+for (const role of ["builder"]) {
   test(`${role} launch binding carries install and the child reads it`, () => {
     const reg = new Map();
     const b = recordUsageLaunch(reg, { foremanSession: "s", workspace: "/w", role, model: null });

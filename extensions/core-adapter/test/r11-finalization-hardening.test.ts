@@ -1,6 +1,6 @@
 // R11 P2 fix round 1 (S2, m): a finalization command is a plain git commit/add/status/log; any background operator,
-// redirection or process substitution refuses the exemption. A finalization started by a completed finalizer (no
-// PASS) ends on a project edit, like one started by a PASS.
+// redirection or process substitution refuses the exemption. A finalization started by a reviewer PASS
+// ends on a project edit.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -24,13 +24,14 @@ test("finalization_command_redirect_or_procsub_refused", () => {
   assert.equal(fin('git commit -m "a > b < c"'), true, "quoted angle brackets are message text");
 });
 
-test("read_budget_finalizer_phase_ends_on_edit", async (t) => {
+test("read_budget_reviewer_pass_phase_ends_on_edit", async (t) => {
   const a = await r11Rig(t, {}, reviewAllowOpts());
-  const finalizer = { agent: "finalizer", task: "write the changelog and result" };
-  const l = await a.launch(finalizer);
+  const review = { agent: "reviewer", task: "review the diff" };
+  const l = await a.launch(review);
   assert.equal(l.res, undefined);
-  await a.started(l.id, finalizer, "run-fin");
-  a.end({ runId: "run-fin", agent: "finalizer", status: "completed", success: true, summary: "done" });
+  await a.started(l.id, review, "run-fin");
+  a.end({ runId: "run-fin", agent: "reviewer", status: "completed", success: true, summary: "VERDICT: PASS" });
+  await a.notice("Background task completed: **reviewer**\nOverall verdict: PASS");
   for (let i = 0; i < WARN + 2; i++) assert.ok(!readDenied(await a.call("bash", { command: `ls -la f${i}` })), "finalization: no read budget");
   assert.deepEqual(a.events("read_budget"), [], "finalization: no reminder");
   // a project edit ends the finalization

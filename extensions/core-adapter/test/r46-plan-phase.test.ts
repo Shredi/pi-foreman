@@ -1,5 +1,5 @@
 // R46 item 7: the harness-native plan phase. Entered by PI_FOREMAN_PLAN_PHASE=1 (`foreman session open --plan-first`) or
-// `/foreman plan`; while on: foreman changes only under .workflow/ (any edit mode), builders and finalizers refused
+// `/foreman plan`; while on: foreman changes only under .workflow/ (any edit mode), builders refused
 // (launch_refused:plan_phase), explorers launch without a ledger (the core spawn gate is not called), no read reminder.
 // Exit: a foreman_checkpoint approval or `/foreman plan off`. The phase persists in the ceremony-state entry.
 import { test } from "node:test";
@@ -13,12 +13,11 @@ import { bashPath } from "./_bashpath.ts";
 const planPhase = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_phase\]/.test(r.reason ?? "");
 const READS = { foremanReads: { before: { warn: 1, every: 1 }, after: { warn: 1, every: 1 } } };
 
-test("builder and finalizer are refused in the plan phase (env entry); explorer and [plan-review] reviewer are allowed", async (t) => {
+test("builder is refused in the plan phase (env entry); explorer and [plan-review] reviewer are allowed", async (t) => {
   const w = world(t);
   process.env.PI_FOREMAN_PLAN_PHASE = "1";
   const a = await w.adapter("startup");
   assert.ok(planPhase(await a.launch("builder")), "builder");
-  assert.ok(planPhase(await a.launch("finalizer")), "finalizer");
   assert.equal((await a.reviewLaunch()).blocked, null, "a [plan-review] reviewer");
   assert.equal((w.ceremonyEntries().at(-1)!.data as { planPhase: boolean }).planPhase, true, "the env entry is recorded at once");
   const trace = await w.traceEvents();

@@ -91,7 +91,7 @@ AUX_FALLBACK = {"review": "◎", "agent": "◆", "task": "⚙", "wait": "◷", "
                 "pr-fail": "●", "pr-run": "◉", "pr-ok": "○", "pr-none": "◌"}
 # The static state glyphs that, with the spinner frames, set the width of the header's state slot.
 STATE_KEYS = ("working", "waiting", "blocked", "done", "lost", "waiting-owner", "waiting-external", "idle", "needs-you")
-REVIEW_ROLES = ("reviewer", "senior-reviewer")
+REVIEW_ROLES = ("reviewer",)
 SPINNER_FALLBACK = ("⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷")
 SYMBOL_SETS = ("unicode", "emoji", "nerd", "ascii")
 # Herdr trims token values at both ends, so a leading blank indent uses
