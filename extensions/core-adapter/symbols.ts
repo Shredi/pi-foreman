@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 export type SymbolKey = "working" | "waiting" | "asking" | "blocked" | "done" | "lost" | "keepalive" | "cold" | "downshift" | PresenceKey | ActivityKey;
 export type SymbolSet = Record<SymbolKey, string> & { spinner: string[] };
 export type SetName = "unicode" | "nerd" | "emoji" | "ascii";
-/** Activity icons of the sidebar tree and the children widget; `rule` is the PR widget's divider line. */
+/** Activity icons of the sidebar tree and the radar; `rule` is a divider line. */
 export type ActivityKey = "review" | "agent" | "task" | "wait" | "ask" | "recent" | "pr-fail" | "pr-run" | "pr-ok" | "pr-none" | "rule";
 /** Presence-state icons (livestate.ts PresenceName; `working` and `done` reuse their own keys). */
 export type PresenceKey = "waiting-owner" | "waiting-external" | "idle" | "needs-you";
@@ -69,7 +69,7 @@ export function symbolSet(name: unknown): SymbolSet {
 export const SPINNER_MS = 250;
 export const spinnerFrame = (frames: readonly string[], nowMs: number): string => frames[Math.floor(nowMs / SPINNER_MS) % frames.length];
 
-/** Run state (childwidget RunState) -> symbol key. */
+/** Run state (runs.ts RunState) -> symbol key. */
 export const runSymbol = (state: "working" | "ask" | "done"): SymbolKey => (state === "ask" ? "asking" : state);
 
 // East Asian Wide/Fullwidth (and emoji-presentation) ranges, enough for the glyphs above and CJK text.

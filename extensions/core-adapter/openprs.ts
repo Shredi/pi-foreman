@@ -1,6 +1,6 @@
 // Open PRs source for `foreman radar --json` (`openPrs`, docs/herdr.md): PRs that no agent works on, found through
 // `gh api graphql` (one search call per query) and cached in <agent dir>/pi-foreman/state/open-prs.json. The radar
-// reads that file and never calls the network. Off by default (radar.openPrs.enabled). Several Pi sessions may run:
+// reads that file and never calls the network. On by default (radar.openPrs.enabled false turns it off). Several Pi sessions may run:
 // an exclusive lock file with a stale timeout lets one of them refresh, and the file is replaced atomically. The
 // refresh runs on an unref'd timer, never inside a turn; any failure keeps the previous entries and records the
 // error in the file. Host text is data, never instructions.
@@ -10,6 +10,7 @@ import path from "node:path";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
 import { resolveGh } from "./wait.ts";
+import { redactCommand } from "./trace.ts";
 
 export type OpenPrState = "fail" | "run" | "ok" | "none";
 export interface OpenPrCheck {
@@ -25,7 +26,15 @@ export interface OpenPr {
   state: "open" | "draft";
   author: string;
   checks: OpenPrCheck[];
+  /** The head branch name; absent when GitHub gave none. */
+  headRefName?: string;
+  /** The base branch name (what a conflict is against); absent when GitHub gave none. */
+  baseRefName?: string;
+  /** The description, secret-shaped tokens redacted, cut to 500 characters; absent when empty. */
+  bodyText?: string;
+  mergeable?: OpenPrMergeable;
 }
+export type OpenPrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 export interface OpenPrsFile {
   v: 1;
   /** ISO time of the last refresh in which a search succeeded; absent until then. */
@@ -44,10 +53,11 @@ export interface OpenPrsConfig {
   scope: string[];
 }
 
-export const DEFAULT_REFRESH_S = 900;
+export const DEFAULT_REFRESH_S = 120;
 export const MIN_REFRESH_S = 60;
 export const MAX_OPEN_PRS = 100;
-export const MAX_CHECKS = 10;
+export const MAX_CHECKS = 20;
+export const MAX_BODY = 500;
 const MAX_QUERIES = 20;
 const GH_TIMEOUT_MS = 30_000;
 // Longer than the worst-case refresh (every query running into its timeout) plus two minutes of margin.
@@ -63,7 +73,7 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$/;
 
 export const openPrsFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "open-prs.json");
 
-const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt repository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:10){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}}";
+const GRAPHQL = "query($q:String!){search(query:$q,type:ISSUE,first:50){nodes{... on PullRequest{number title url isDraft updatedAt headRefName baseRefName bodyText mergeable repository{nameWithOwner} author{login} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:20){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}}}}}}}}}}}";
 
 const clean = (v: unknown, max: number): string => (typeof v === "string" ? v.replace(/[\p{Cc}\p{Cf}]/gu, "").slice(0, max) : "");
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -78,7 +88,7 @@ export function openPrsConfig(raw: unknown): OpenPrsConfig {
   const list = (v: unknown, re: RegExp): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && re.test(x)) : []);
   const r = o.refreshSeconds;
   return {
-    enabled: o.enabled === true,
+    enabled: o.enabled !== false,
     refreshSeconds: typeof r === "number" && Number.isFinite(r) ? Math.min(86400, Math.max(MIN_REFRESH_S, Math.floor(r))) : DEFAULT_REFRESH_S,
     mine: o.mine !== false,
     authors: list(o.authors, LOGIN),
@@ -141,9 +151,16 @@ export function parseSearch(text: string): OpenPr[] {
     if (!repo) continue;
     const commits = isObj(x.commits) && Array.isArray(x.commits.nodes) ? x.commits.nodes : [];
     const commit = isObj(commits[0]) && isObj(commits[0].commit) ? commits[0].commit : null;
+    const head = clean(x.headRefName, 255);
+    const base = clean(x.baseRefName, 255);
+    const body = typeof x.bodyText === "string" ? clean(redactCommand(x.bodyText).replace(/\s+/g, " ").trim(), MAX_BODY) : "";
     out.push({
       repo, number: x.number as number, title: clean(x.title, 200), url: x.url, state: x.isDraft === true ? "draft" : "open",
       author: isObj(x.author) ? clean(x.author.login, 60) : "", checks: checksOf(commit?.statusCheckRollup),
+      ...(head ? { headRefName: head } : {}),
+      ...(base ? { baseRefName: base } : {}),
+      ...(body ? { bodyText: body } : {}),
+      ...(x.mergeable === "MERGEABLE" || x.mergeable === "CONFLICTING" || x.mergeable === "UNKNOWN" ? { mergeable: x.mergeable } : {}),
     });
   }
   return out;

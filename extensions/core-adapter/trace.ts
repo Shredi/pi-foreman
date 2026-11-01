@@ -31,7 +31,7 @@ const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits afte
 
 /**
  * A denied command with secret-shaped tokens removed (before the 200-char cut):
- * auth headers, `token=` / `key=` / `password=` / `secret=` values, URL userinfo, `AKIA…` / `ghp_` / `sk-` style keys,
+ * auth headers, `token=` / `key=` / `password=` / `secret=` values, URL userinfo, `AKIA…` / `AIza…` / `ghp_` / `npm_` / `glpat-` / `sk-` style keys,
  * and base64 / hex runs of 24+ characters; the home directory becomes `~`.
  */
 export function redactCommand(cmd: string): string {
@@ -44,7 +44,8 @@ export function redactCommand(cmd: string): string {
     .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s'"&;]+)/gi, `$1${R}`)
     .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
-    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)
+    .replace(/\b(?:gh[pousr]_|github_pat_|npm_|glpat-|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)
+    .replace(/\bAIza[A-Za-z0-9_-]{6,}/g, R)
     .replace(/\b[0-9a-fA-F]{24,}\b/g, keyish);
   const home = os.homedir();
   if (home && home.length > 1) out = out.split(home).join("~");

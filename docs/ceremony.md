@@ -96,7 +96,7 @@ Child reads per launch: `ceremony.childReads.<role>.perFile` (builder 5, reviewe
 
 ## Pushed branches at finish
 
-When a triaged session finishes with no child run active (and is not waiting for its parent), the finish gate starts a background check of the branches the session pushed. A branch with no tracked PR of any state, not the base branch and not already merged into it, gets one display-only warning, `pi-foreman: pushed branch <name> has no tracked PR (open one, or pr_track <number> once it exists)`. The check runs after the gate's early returns, never blocks the finish, never reaches the model, and re-runs a branch at most every 10 minutes until it has an answer. A session that was never triaged passes the gate's first early return and gets the notice only from `/foreman close`. The evaluation order and the `merged` subcommand of `foreman_close.py` are in [close](close.md#pushed-branches-without-a-pr).
+When a triaged session finishes with no child run active (and is not waiting for its parent), the finish gate starts a background check of the branches the session pushed. A branch with no PR of any state (one `pr_find`), not the base branch and not already merged into it, gets one display-only warning, `pi-foreman: pushed branch <name> has no pull request (open one)`. The check runs after the gate's early returns, never blocks the finish, never reaches the model, and re-runs a branch at most every 10 minutes until it has an answer. A session that was never triaged passes the gate's first early return and gets the notice only from `/foreman close`. The evaluation order and the `merged` subcommand of `foreman_close.py` are in [close](close.md#pushed-branches-without-a-pr).
 
 ## Round flow
 

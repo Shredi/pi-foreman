@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { agentLines, parseRecords, treeItems } from "./model.js";
+import { agentLines, parseRecords, sessionTree } from "./model.js";
 
 const run = (role, ageS, extra = {}) => ({ kind: "run", name: role, role, state: "working", ended: false, ageS, children: [], ...extra });
 const node = (...runs) => ({ name: "s", children: runs, workers: runs, sessions: [], waits: [], tasks: [], asks: [], prs: [] });
@@ -42,7 +42,7 @@ test("cap at 4 lines, then +N more", () => {
 
 test("nested session items carry no agent lines (field absent)", () => {
   const top = { ...node(), sessions: [node(run("reviewer", 70))], workers: [] };
-  assert.equal("agents" in treeItems(top)[0], false);
+  assert.equal("agents" in sessionTree(top).children[0], false);
 });
 
 test("a worker of a nested session with its own agent row does not cancel a record on the top terminal", () => {
@@ -56,7 +56,7 @@ test("a worker of a nested session with its own agent row does not cancel a reco
 test("every running agent appears exactly once: worker rows plus record lines", () => {
   const top = node(run("reviewer", 250), run("builder", 30));
   const sample = parseRecords(readFileSync(new URL("./hc-get-sample.json", import.meta.url), "utf8")); // explorer, builder, reviewer(blocked)
-  const rows = treeItems(top).filter((i) => i.worker).map((i) => i.label);
+  const rows = sessionTree(top).children.filter((i) => i.type === "agent").map((i) => i.label);
   const lines = agentLines(top, sample).map((l) => l.text);
   assert.deepEqual(rows, ["reviewer", "builder"]);
   assert.deepEqual(lines, ["explorer · Running bash"]);

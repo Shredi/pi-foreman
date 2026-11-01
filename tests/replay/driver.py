@@ -213,8 +213,8 @@ class Rig:
             "safety": {"requiredChildExtensions": [str(FAKE_PROVIDER)]},
             # Scenarios written for detached launches keep them; launch-wait scenarios set "block".
             "ceremony": {"launchWait": "detach"},
-            # the PR-dots poller never runs in a rig: its fake-gh calls would race the goldens and the pr_gate marker
-            "tools": {"prDots": False},
+            # the open-PRs refresher never runs in a rig: its fake-gh calls would race the goldens and the pr_gate marker
+            "radar": {"openPrs": {"enabled": False}},
         }
         if config:
             l2 = deep_merge(l2, config)

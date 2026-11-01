@@ -3,7 +3,7 @@
 // sessionId is the Pi session id, the stem of state/usage/<foremanSession>.jsonl for the same session.
 import fs from "node:fs";
 import path from "node:path";
-import type { Rung, RunState, RunView } from "./childwidget.ts";
+import type { Rung, RunState, RunView } from "./runs.ts";
 import { openerIntercomId } from "./session.ts";
 import { parseAskHeader, ASK_FILE } from "./askcontract.ts";
 import { readOwnAddonTasks } from "./bg.ts";
@@ -88,6 +88,9 @@ export interface LiveFile {
   asks?: LiveAsk[];
   /** Sidebar dots (PR states, external status items), at most 14; present only when there are any. */
   dots?: LiveDot[];
+  /** `owner/name` of the origin remote and the checked-out branch; each present only when known. The radar and the herdr-app mod join a feed PR to this session by equal repo and head branch. */
+  repo?: string;
+  branch?: string;
   /** env HERDR_PANE_ID, else null. */
   paneId: string | null;
   /** env HC_TERMINAL_ID (the herdr-core terminal) when HERDR_PANE_ID is unset, else null: a herdr TUI inside an herdr-app pane would stamp every Pi with one terminal. */
@@ -185,6 +188,8 @@ export class LiveState {
   private readonly waits: (() => LiveWait[]) | undefined;
   private readonly pressure: (() => { level: string; reasons: string[] } | null) | undefined;
   private readonly dotsOf: (() => LiveDot[]) | undefined;
+  /** Cached repo and branch of the checkout (where.ts); set by the adapter after start. */
+  where: (() => { repo: string | null; branch: string | null }) | null = null;
   private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null, dots?: () => LiveDot[]) {
     this.runs = runs;
     this.dotsOf = dots;
@@ -371,7 +376,13 @@ export class LiveState {
     const asks = this.askList();
     const tasks = this.taskList();
     const dots = this.dotList();
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
+    let where: { repo: string | null; branch: string | null } = { repo: null, branch: null };
+    try {
+      where = this.where?.() ?? where;
+    } catch {
+      // repo and branch are best effort
+    }
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
   }
 
   private schedule(): void {

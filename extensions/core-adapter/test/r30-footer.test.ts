@@ -91,7 +91,7 @@ test("the mounted footer appends foreign statuses, never repeats the foreman's o
   let repaints = 0;
   const ctx = { mode: "tui", model: { id: "m", reasoning: false, contextWindow: 200_000 }, getContextUsage: () => ({ percent: 10, contextWindow: 200_000 }), ui: { setStatus: (k: string, v: string | undefined) => void setStatus.push(`${k}=${v}`) } };
   const mount = f.mount("s", ctx, { requestRender: () => void repaints++ }, theme, data, () => "high");
-  f.update("s", ctx, MSG, { enabled: true, isChild: false, children: 0 });
+  f.update("s", ctx, MSG, { enabled: true, isChild: false });
   assert.equal(repaints, 1);
   assert.deepEqual(setStatus, []);
   const line2 = plain(mount.render(200)[1]);
@@ -105,8 +105,8 @@ test("a render that throws falls back to the plain status text", () => {
   const ctx = { mode: "tui", model: { id: "m" }, getContextUsage: () => { throw new Error("stale"); }, ui: { setStatus: () => undefined } };
   const data = { getGitBranch: () => null, getExtensionStatuses: () => new Map<string, string>() };
   const mount = f.mount("s", ctx, { requestRender: () => undefined }, theme, data, () => "off");
-  f.update("s", ctx, MSG, { enabled: true, isChild: false, children: 0 });
-  assert.deepEqual(mount.render(80), ["↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30) · children 0"]);
+  f.update("s", ctx, MSG, { enabled: true, isChild: false });
+  assert.deepEqual(mount.render(80), ["↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30)"]);
 });
 
 const usageCtx = (calls: string[], extra: Record<string, unknown> = {}) => ({

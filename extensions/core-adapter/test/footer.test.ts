@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { abbrev, footerText, UsageFooter, waitNote, zeroTotals, addMessage } from "../footer.ts";
+import { abbrev, footerText, UsageFooter, zeroTotals, addMessage } from "../footer.ts";
 
 const MSG = { role: "assistant", usage: { input: 10000, output: 2300, cacheRead: 1_000_000, cacheWrite: 200_000, cost: { input: 0.05, output: 0.1, cacheRead: 0.5, cacheWrite: 0.25, total: 0.9 } } };
 
@@ -10,11 +10,10 @@ test("abbreviations", () => {
   assert.equal(abbrev(1_234_567), "1.2M");
 });
 
-test("foreman text has warm/cold split and children; child text has no children", () => {
+test("foreman text has the warm/cold split and no children part", () => {
   const t = zeroTotals();
   addMessage(t, MSG);
-  assert.equal(footerText(t, 3), "↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30) · children 3");
-  assert.equal(footerText(t, null), "↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30)");
+  assert.equal(footerText(t), "↑1.2M ↓2.3k tok · $0.90 list (warm $0.50 / cold $0.30)");
 });
 
 test("zero reported cost is priced from the registry (bridge -> anthropic); no price shows n/a", () => {
@@ -24,46 +23,40 @@ test("zero reported cost is priced from the registry (bridge -> anthropic); no p
   const t = zeroTotals();
   addMessage(t, bridge, registry);
   assert.deepEqual(asked, ["anthropic/claude-x"]);
-  assert.equal(footerText(t, null), "↑4.0M ↓1.0M tok · $22.35 list (warm $0.60 / cold $6.75)");
+  assert.equal(footerText(t), "↑4.0M ↓1.0M tok · $22.35 list (warm $0.60 / cold $6.75)");
   const n = zeroTotals();
   addMessage(n, bridge, { find: () => undefined });
-  assert.equal(footerText(n, null), "↑4.0M ↓1.0M tok · n/a list (warm n/a / cold n/a)");
+  assert.equal(footerText(n), "↑4.0M ↓1.0M tok · n/a list (warm n/a / cold n/a)");
   addMessage(n, MSG);
-  assert.match(footerText(n, null), /\$0\.90 \+ n\/a list/);
+  assert.match(footerText(n), /\$0\.90 \+ n\/a list/);
 });
 
 test("update sets status in tui/rpc, no-op in print/json or when disabled, never throws", () => {
   const calls: string[] = [];
   const mk = (mode: string) => ({ mode, ui: { setStatus: (k: string, v: string | undefined) => calls.push(`${k}=${v}`) } });
   const f = new UsageFooter();
-  f.update("s", mk("print"), MSG, { enabled: true, isChild: false, children: 0 });
-  f.update("s", mk("json"), MSG, { enabled: true, isChild: false, children: 0 });
-  f.update("s", mk("tui"), MSG, { enabled: false, isChild: false, children: 0 });
+  f.update("s", mk("print"), MSG, { enabled: true, isChild: false });
+  f.update("s", mk("json"), MSG, { enabled: true, isChild: false });
+  f.update("s", mk("tui"), MSG, { enabled: false, isChild: false });
   assert.deepEqual(calls, []);
-  f.update("s", mk("rpc"), MSG, { enabled: true, isChild: false, children: 2 });
+  f.update("s", mk("rpc"), MSG, { enabled: true, isChild: false });
   assert.equal(calls.length, 1);
-  assert.match(calls[0], /^foreman-usage=↑\d.* list .* · children 2$/);
-  assert.doesNotThrow(() => f.update("s", { mode: "tui", ui: { setStatus: () => { throw new Error("x"); } } }, MSG, { enabled: true, isChild: true, children: 0 }));
+  assert.match(calls[0], /^foreman-usage=↑\d.* list .*\)$/);
+  assert.doesNotThrow(() => f.update("s", { mode: "tui", ui: { setStatus: () => { throw new Error("x"); } } }, MSG, { enabled: true, isChild: true }));
 });
 
 test("totals accumulate across messages even while the footer is off", () => {
   const calls: string[] = [];
   const f = new UsageFooter();
   const ctx = { mode: "tui", ui: { setStatus: (_k: string, v: string | undefined) => calls.push(String(v)) } };
-  f.update("s", ctx, MSG, { enabled: false, isChild: true, children: 0 });
-  f.update("s", ctx, MSG, { enabled: true, isChild: true, children: 0 });
+  f.update("s", ctx, MSG, { enabled: false, isChild: true });
+  f.update("s", ctx, MSG, { enabled: true, isChild: true });
   assert.match(calls[0], /\$1\.80 list/);
 });
 
-test("an active wait adds `waiting <note>` to the foreman text, never to a child's", () => {
-  const t = zeroTotals();
-  assert.equal(waitNote([]), null);
-  assert.equal(waitNote([{ kind: "pid", note: "suites" }]), "suites");
-  assert.equal(waitNote([{ kind: "timer", note: " " }, { kind: "pid", note: "x" }]), "timer +1");
-  assert.match(footerText(t, 0, "suites"), / · children 0 · waiting suites$/);
-  assert.match(footerText(t, null, "suites"), /\(warm \$0\.00 \/ cold \$0\.00\) · waiting suites$/);
+test("the foreman text carries no children or waiting part", () => {
   const calls: string[] = [];
   const ctx = { mode: "tui", ui: { setStatus: (_k: string, v: string | undefined) => calls.push(String(v)) } };
-  new UsageFooter().update("s", ctx, { role: "assistant" }, { enabled: true, isChild: true, children: 0, wait: "suites" });
-  assert.ok(!calls[0].includes("waiting"));
+  new UsageFooter().update("s", ctx, { role: "assistant" }, { enabled: true, isChild: false });
+  assert.ok(!calls[0].includes("waiting") && !calls[0].includes("children"));
 });

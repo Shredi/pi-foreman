@@ -22,7 +22,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ageText } from "./childwidget.ts";
+import { ageText } from "./runs.ts";
 import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";

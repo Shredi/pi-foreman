@@ -295,13 +295,8 @@ def trace_metrics(records):
     causes = collections.Counter()
     pack = collections.Counter()
     prpack = collections.Counter()
-    prtrack = collections.Counter()
     for r in records:
         ev, dec = r.get("event"), r.get("decision")
-        if ev == "pr_track" and r.get("path") in PR_TRACK_PATHS and not r.get("dup") and not r.get("skipped"):
-            prtrack[r["path"]] += 1
-            if r.get("foreign"):
-                prtrack["foreign"] += 1
         if ev == "tool_pack" and r.get("pack") == "git":
             op = str(r.get("op") or "?")
             (prpack if op.startswith("pr_") else pack)[op] += 1
@@ -345,7 +340,6 @@ def trace_metrics(records):
     m["precondition_hit_rate"] = round(bad / (ran + bad), 3) if ran + bad else None
     m["git_pack"] = dict(pack)
     m["pr_pack"] = dict(prpack)
-    m["pr_track"] = dict(prtrack)
     return m
 
 
@@ -694,19 +688,6 @@ def pr_pack_line(rep):
     return "pr: %d calls (%s)" % (n, ", ".join("%s %d" % (o[3:] if o.startswith("pr_") else o, pack[o]) for o in ops))
 
 
-PR_TRACK_PATHS = ("push", "search", "interact", "events", "create", "url", "tool", "watch", "branch")
-
-
-def pr_track_line(rep):
-    """`pr: tracked N (push a, ...; foreign j)`, or None without a registration."""
-    tr = (rep.get("trace") or {}).get("pr_track") or {}
-    n = sum(tr.get(p, 0) for p in PR_TRACK_PATHS)
-    if not n:
-        return None
-    return "pr: tracked %d (%s; foreign %d)" % (n, ", ".join("%s %d" % (p, tr[p]) for p in PR_TRACK_PATHS if tr.get(p)),
-                                              tr.get("foreign", 0))
-
-
 def render_text(rep, proposals_path=None):
     L = ["pi-foreman retro" + (" (session %s)" % rep["session"] if rep["session"] else "")]
     r = rep["review"]
@@ -725,9 +706,6 @@ def render_text(rep, proposals_path=None):
         if gl:
             L.append(gl)
         pl = pr_pack_line(rep)
-        if pl:
-            L.append(pl)
-        pl = pr_track_line(rep)
         if pl:
             L.append(pl)
     else:
@@ -750,9 +728,6 @@ def render_text(rep, proposals_path=None):
         if gl:
             L.append(gl)
         pl = pr_pack_line(rep)
-        if pl:
-            L.append(pl)
-        pl = pr_track_line(rep)
         if pl:
             L.append(pl)
     if rep.get("explorer"):
