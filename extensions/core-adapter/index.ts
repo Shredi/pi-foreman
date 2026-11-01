@@ -2179,6 +2179,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     try {
       if (gateStopped.has(gs.id)) return denied("user-stop", "dialog", STOP_TEXT);
       const base = { kind, role, tool: event.toolName, input: event.input, payload, segments: out.segments, roots, allowed, denied };
+      // the foreman's shell-write refusal is deterministic: it comes before any dialog or classifier, so an owner is never asked about a write that is refused anyway
+      if (((r && "ask" in r) || out.danger) && (event.toolName === "bash" || event.toolName === "powershell" || event.toolName === FOREMAN_BG_TOOL || event.toolName === ADDON_BG_TOOL)) {
+        const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
+        if (shellWrite) return shellWrite;
+      }
       // an ask-kind floor, a self-modification rule and an ask rule go to the owner before the mode step (never to the classifier, never run under mode allow)
       if (r && "ask" in r) {
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule: r.rule, role });
