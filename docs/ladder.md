@@ -56,8 +56,7 @@ climb, and the usual two-refusal valve applies: two counted refusals, then `cere
 ## Reviewer climb
 
 `ladder.reviewerClimb` gives the reviewer its own climb. It is off in the generic defaults; both `claude-bridge`
-presets turn it on. It applies only to `reviewer` launches the foreman passed no model for (`senior-reviewer` never
-climbs here), and only user or overlay config can set it.
+presets turn it on. It applies only to `reviewer` launches the foreman passed no model for, and only user or overlay config can set it.
 
 | Key | Default | Meaning |
 |---|---|---|

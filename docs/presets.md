@@ -39,9 +39,8 @@ positions among the distinct tiers you ranked (0 = best), so gaps in your number
 | role | tier |
 |---|---|
 | `foreman`, `session-foreman` | 1 (with `--foreman`: that model's own tier) |
-| `reviewer`, `senior-reviewer` | same model as the foreman |
-| `planner` | none: `ceremony.planner: self`, the foreman writes the plan; plan review for heavy stays on |
-| `builder`, `explorer`, `finalizer` | 2 (one below the foreman) |
+| `reviewer` | same model as the foreman |
+| `builder`, `explorer` | 2 (one below the foreman) |
 | permission auto-review (`providers.<p>.review.model`) | the lowest tier |
 
 A tier needs a model id: a `ranks` row with a literal `match` (no `*`/`?`) or a model already named in the provider's

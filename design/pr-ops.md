@@ -46,7 +46,7 @@
 
 ```python
 PR_READ_TOOLS = ("pr_status", "pr_checks", "pr_comments")
-PR_ROLE_TOOLS = {"reviewer": ("pr_status", "pr_comments"), "senior-reviewer": ("pr_status", "pr_comments")}
+PR_ROLE_TOOLS = {"reviewer": ("pr_status", "pr_comments")}
 def with_pr_pack(cfg, role, tools):
     if (cfg.get("tools") or {}).get("pr") is True and "bash" in tools:
         tools.extend(t for t in PR_ROLE_TOOLS.get(role, PR_READ_TOOLS) if t not in tools)
@@ -54,9 +54,9 @@ def with_pr_pack(cfg, role, tools):
 ```
 
   `resolve_role` (for non-foreman roles) and `generate_subagents` wrap the git-pack result: `with_pr_pack(cfg, role, with_git_pack(...))`.
-  - explorer, builder and finalizer get the read set.
-  - reviewer and senior-reviewer get `pr_status` and `pr_comments`.
-  - The planner has no bash and gets nothing.
+  - explorer and builder get the read set.
+  - reviewer gets `pr_status` and `pr_comments`.
+  - A role without bash gets nothing.
   - An overlay role with bash gets the read set.
 
 **`config/permissions.baseline.json`.**
@@ -437,7 +437,7 @@ export class PrWatches {
 |---|---|
 | `tests/test_safe_ops_pr.py` (new; git repo via `tempfile.mkdtemp`, branch name read, never `main`) | gh: status, checks (exit 8 + JSON, `no checks reported`), comments (3 sources, since, body cut + `ghp_` redacted), create (argv has `--body-file`, body file gone afterwards, number from URL); glab: status, checks (allow_failure), comments (DiffNote, system skipped), create (JSON input); auto order (gh before glab; glab alone); a gh planted in the workspace is skipped; `pr_host_missing` hint; `pr_auth_missing` (gh exit 4, glab 401) with the login hint; `pr_not_found`; caps (250 comments gives 200 + `truncated`; 16 KB); injection: title `--repo=x`, base `-x`, number `"1"`/`True`, `--` give `bad_request` and no host call; `unpushed` (no upstream, upstream behind), `base_is_head`, `detached_head`; templates: drop-pair, `{draft}`, `{repo}` from https and scp URLs, exit 3/4 mapping, bad output; `.cmd` value refusal (simulated by program name) |
 | `tests/test_config_layers.py` | project `tools.pr: true` over user false is dropped; `false` is kept; project `tools.prHost` (string and object) is dropped with the reason text |
-| `tests/test_foreman_config.py` | role sets per role, the planner none, `pr_create`/`pr_watch` never in a child list, off gives none; `semantic_issues` on prHost; `render_prompt` dotted tag + knobs |
+| `tests/test_foreman_config.py` | role sets per role, a role without bash none, `pr_create`/`pr_watch` never in a child list, off gives none; `semantic_issues` on prHost; `render_prompt` dotted tag + knobs |
 | `tests/test_permissions_gen.py` | Removed in r41 with the permission package; the gate's tests cover it |
 | `tests/test_foreman_sync.py` | existing redact tests stay green through the aliases (no new test) |
 | `extensions/core-adapter/test/prpack.test.ts` (new) | 5 tools `defaultActive: false`; a child registers 3; env tokens `git,pr` / `pr` / removal; child removal when off; `pr_off`; preflight block means no `tool_pack`; pr_create order (gate `no_review` traced, push refusal, upstream stale, ran text); `config.prHost` passed through |
