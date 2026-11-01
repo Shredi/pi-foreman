@@ -4,6 +4,10 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
     shift
+    if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)' 2>/dev/null; then
+        echo "foreman setup needs Node >= 22.19" >&2
+        exit 1
+    fi
     rc=0
     node "$here/../setup.mjs" "$@" || rc=$?
     # the no-review-model warning (item 26); best effort, needs Node >= 22.6
