@@ -27,6 +27,7 @@ import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
 import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, writeChildAsk } from "./childask.ts";
 import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
 import { askOwner, DEFAULT_ASK_TIMEOUT_MS, STOP_TEXT } from "./gatedialog.ts";
+import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
@@ -2301,7 +2302,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "away") return done("parent-away", false, OWNER_AWAY_TEXT);
         if (w.answer === "timeout") return done("parent-timeout", false, `pi-foreman: denied: the parent did not answer within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this line to the foreman and continue with what you can.`);
-        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
+        return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}${tool === "bash" ? (n2 => (n2 ? ` ${n2}` : ""))(childNpmNote(String((input as Record<string, unknown> | undefined)?.command ?? ""), launchBinding?.install === true)) : ""}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
       } catch (e) {
         return done("parent-deny", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this line to the foreman.`);
       } finally {
