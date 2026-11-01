@@ -1,0 +1,30 @@
+ pi-foreman setup  Plan                                                                2/7
+> · Update pi-foreman                      │ Update pi-foreman
+    0.9.2 → 0.9.3  git:github.com/Shredi/… │ Package: pi-foreman
+  · Update pi-intercom                     │ Version: 0.9.2 → 0.9.3
+    0.16.2 → 0.17.0  npm:pi-intercom       │ Source:  git:github.com/Shredi/pi-foreman
+  · Install add-on pi-polish               │ Status:  pending
+    0.1.2  npm:pi-polish                   │
+  · Write Pi settings                      │
+                                           │
+  · Permissions for the foreman session    │
+                                           │
+  · Check the installation                 │
+    foreman doctor                         │
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1-7 screens, Tab/arrow navigate, q quit

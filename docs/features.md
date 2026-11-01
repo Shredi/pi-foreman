@@ -11,7 +11,7 @@
 Verbatim from [install](install.md#install):
 
 ```text
-Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+.
+Needs Node 22.19+, Pi 1.4.x on `PATH` and Python 3.13+.
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
 pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/settings.json)
 /foreman setup --dry-run   # inside Pi: show the planned changes, write nothing

@@ -1,0 +1,24 @@
+ pi-foreman setup  Config                                          4/7
+> ● Pi settings.json  changed
+  ● foreman.json  changed
+  ● permissions.json  changed
+  ○ herdr config.toml  unchanged
+  ○ herdr-app layout  unchanged
+────────────────────────────────────────────────────────────────────────────────
+~/.pi/agent/settings.json
+--- a/settings.json
++++ b/settings.json
+@@ -2,7 +2,8 @@
+   "packages": [
+-    "git:github.com/Shredi/pi-foreman"
++    "git:github.com/Shredi/pi-foreman",
++    "npm:pi-polish@0.1.2"
+   ],
+-  "forceTopLevelAsync": false
++  "forceTopLevelAsync": true
+
+
+
+
+
+1-7 screens, Tab/arrow navigate, q quit

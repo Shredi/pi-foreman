@@ -1,0 +1,30 @@
+ pi-foreman setup  Config                                                              4/7
+  ● Pi settings.json  changed      │ ~/.pi/agent/permissions.json
+  ● foreman.json  changed          │ --- a/permissions.json
+> ● permissions.json  changed      │ +++ b/permissions.json
+  ○ herdr config.toml  unchanged   │ @@ -1,3 +1,8 @@
+  ○ herdr-app layout  unchanged    │  {
+                                   │ +  "workFolders": [
+                                   │ +    { "path": "~/git", "mode": "auto" },
+                                   │ +    { "path": "~/notes", "mode": "ask" }
+                                   │ +  ],
+                                   │    "mode": "ask"
+                                   │  }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1-7 screens, Tab/arrow navigate, q quit
