@@ -99,6 +99,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
 | [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
+| [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
@@ -428,6 +429,7 @@ No config key.
 | `fanout.max` | `3` | any layer |
 | `ceremony.launchWait` | `"detach"` | tighten-only (toward block; tightest first: block, detach) |
 | `ceremony.dedupeNotify` | `true` | tighten-only (only true is accepted) |
+| `ceremony.longCommands` | `["npm test", "npm run test", "npx vitest", "npx jest", "node --test", "pytest", "python -m unittest", "python -m pytest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "make test", "pnpm test", "yarn test"]` | any layer |
 
 ### waits
 
@@ -773,6 +775,14 @@ No config key.
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.logMaxBytes` | `20971520` | any layer |
 
+### knowledge
+
+**Knowledge sources.** `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`.
+
+| Key | Default | Layer |
+|---|---|---|
+| `knowledge.nudgeDays` | `30` | any layer |
+
 ### herdr
 
 **Herdr pane state.** In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes.
@@ -864,6 +874,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
 | [auto-review-overlay](#auto-review-overlay) | `/foreman perms`, `foreman perms` |
+| [knowledge](#knowledge) | `foreman knowledge` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
 

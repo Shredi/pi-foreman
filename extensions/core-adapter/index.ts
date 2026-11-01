@@ -47,6 +47,7 @@ import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from 
 import { dormantDoctorLine } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { adoptPerms } from "./permsadopt.ts";
+import { withNudge } from "./knowledge.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
 import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
@@ -103,7 +104,8 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
-import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, hideStaleNotice, staleNoticeRunIds } from "./notices.ts";
+import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, trimNoticeMessage } from "./notices.ts";
+import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
@@ -185,7 +187,7 @@ import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyS
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewCapLine, planReviewMax, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { chainsOf, restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
-import { planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
+import { liftSizing, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
@@ -559,6 +561,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const compactionGate = new CompactionGate();
   /** R39: per launch call, the roles that stayed on the bottom rung although a strong climb was asked or wanted, with the reason the receipt shows. */
   const bottomNotes = new Map<string, Map<string, string>>();
+  /** Tool call ids of `subagent` launches that carried size/risk outside the top level (sizing.ts liftSizing); read at their tool_result. */
+  const misplacedSizing = new Set<string>();
   herdrEvents = pi.events as EventBus | undefined;
   // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
   const blockedShim = installBlockedShim(pi, { enabled: () => [...sessions.values()].every((x) => get(x.config.config, "herdr.blockedShim") !== false) });
@@ -2458,6 +2462,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         stripBinding(input);
         rawLaunch = JSON.parse(JSON.stringify(input)) as Record<string, unknown>; // the arguments as the model gave them, for a deferred or queued launch
         // R39 launch sizing (sizing.ts): `size` and `risk` leave every launch here (after the copy, so a relaunch is sized again); malformed ones refuse only the foreman's own launches.
+        const lifted = liftSizing(input);
+        if (lifted.from.length > 0 || lifted.left) misplacedSizing.add(event.toolCallId);
+        for (const from of lifted.from) s.trace?.emit({ event: "sizing_lifted", from });
         sized = takeSizing(input);
         if (sized.error && !s.isChild && actionOf(input) === null && sizingConfig(s.config.config).enabled) {
           s.trace?.emit({ event: "launch_refused", reason: "sizing_invalid", tier: s.ceremony.tier, ...launchDeny(input) });
@@ -2899,6 +2906,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (res && ms) ms.mutating.delete(event.toolCallId);
     // R30 item 8: traced only once the guards let the child's bash call through
     if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
+    // The launching session reads the open command to tell a test run from an unknown command (opencommand.ts).
+    if (!res && ms?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) {
+      const command = (event.input as { command?: unknown }).command;
+      if (typeof command === "string") writeOpenCommand(process.env[SCRATCH_ENV]!, { toolCallId: event.toolCallId, command, startedAt: Date.now() });
+    }
     return res;
   });
 
@@ -2911,6 +2923,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
       if (hidden) return { message: hidden };
+      // Open-command notices: a known long command (test runner) is hidden; a child without a command controller loses the `command.*` lines.
+      const ev = s && !s.isChild ? noticeEvent(event.message) : null;
+      if (s && ev && ev.reason === "tool_open_threshold" && typeof ev.runId === "string") {
+        const runId = ev.runId;
+        const roles = s.launchedRoles.get(runId) ?? [];
+        const hasCommandController = roles.length > 0 && roles.every((r) => roleToolsFrom(s.config.roles, get(s.config.config, "roles"), r)?.includes("subagent_command") === true);
+        const dir = s.scratch.dirOfRun(runId);
+        const open = ev.currentTool === "bash" && typeof ev.toolCallId === "string" && dir ? readOpenCommand(dir) : null;
+        const cfg = get(s.config.config, "ceremony.longCommands");
+        const patterns = Array.isArray(cfg) ? cfg.filter((x): x is string => typeof x === "string") : DEFAULT_LONG_COMMANDS;
+        const pattern = open && open.toolCallId === ev.toolCallId ? isLongCommand(open.command, patterns) : null;
+        const trimmed = trimNoticeMessage(event.message, { hasCommandController });
+        if (pattern && open) {
+          s.attention.suppress(runId, String(ev.toolCallId));
+          s.trace?.emit({ event: "attention_suppressed", reason: "long_command", rule: pattern, ms: Date.now() - open.startedAt, runId });
+          return { message: { ...((trimmed ?? event.message) as object), display: false } as typeof event.message };
+        }
+        if (trimmed) return { message: trimmed };
+      }
     }
     if (m.role !== "assistant") return undefined;
     const s = sessionFor(ctx);
@@ -2998,7 +3029,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         idleCause = causeOfCustom(msg.customType) ?? idleCause;
       }
       // R26 item 2: a wake that carries only needs-attention notices for runs already ended starts no turn
-      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns) : null;
+      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns, s.attention.suppressed) : null;
       if (stale) {
         for (const runId of stale) s.trace?.emit({ event: "notify_deduped", reason: "run_ended", runId });
         return { action: "handled" as const };
@@ -3490,6 +3521,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (typeof command === "string") void owner.pushNotice.onBash(command, text, typeof code === "number" ? code === 0 : !event.isError, ctx.cwd).catch(() => undefined);
     }
     owner?.mutating.delete(event.toolCallId);
+    if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
     const pending = owner?.pendingChanges.get(event.toolCallId);
@@ -3586,7 +3618,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const trim = (held && !held.plain) || detached !== null ? dropAsyncGuidance(event.content) : null;
       if (s && trim && trim.trimmed > 0) s.trimmedLines.set(launchId(event.input, event.details, event.isError) ?? "", trim.trimmed);
       const tail = held ? held.text : detached;
-      if (notices || tail !== null) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(tail !== null ? [{ type: "text" as const, text: tail }] : [])] };
+      // Sizing belt: a pi-subagents refusal caused by a size/risk that the call carried outside its top level gets the fix text.
+      const misplacedHere = misplacedSizing.delete(event.toolCallId);
+      const sizingHint = misplacedHere && event.isError ? misplacedHint(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n")) : null;
+      if (sizingHint) s?.trace?.emit({ event: "sizing_hint" });
+      if (notices || tail !== null || sizingHint) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(tail !== null ? [{ type: "text" as const, text: tail }] : []), ...(sizingHint ? [{ type: "text" as const, text: sizingHint }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -3692,8 +3728,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s || s.isChild || !dedupeOn(get(s.config.config, "ceremony.dedupeNotify"))) return undefined;
     const calls = dedupeToolCallNotices(event.messages);
     const ended = dropEndedRunNotices(calls?.messages ?? event.messages, s.attention.endedRuns);
-    const r = dedupeNotices(ended?.messages ?? calls?.messages ?? event.messages);
-    const base = ended ?? calls;
+    const hiddenLong = dropSuppressedNotices(ended?.messages ?? calls?.messages ?? event.messages, s.attention.suppressed);
+    const r = dedupeNotices(hiddenLong?.messages ?? ended?.messages ?? calls?.messages ?? event.messages);
+    const base = hiddenLong ?? ended ?? calls;
     if (!r) return base ? { messages: base.messages } : undefined;
     for (const runId of r.deduped) {
       if (s.dedupeTraced.has(runId)) continue;
@@ -3962,6 +3999,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.registerTool({
       name: TRIAGE_TOOL,
       label: "Record the tier",
+      // Bug fix (sizing): the `subagent` schema is upstream, so the foreman's tool description gets the sentence that places size/risk.
+      prepareLoadout: (loadout: { declared: readonly { name: string; description?: string }[] }) => {
+        const description = subagentDescription(loadout.declared, [...sessions.values()].every((x) => sizingConfig(x.config.config).enabled));
+        return description ? { descriptions: { subagent: description } } : undefined;
+      },
       description: "Record the ceremony tier of the current task (trivial, standard or heavy) with a one-line reason, before acting. Required before you change workspace files yourself: only a trivial tier allows that; at standard or heavy a builder makes the changes. Never lowers a tier that is already recorded or escalated.",
       parameters: { type: "object", properties: { tier: { type: "string", enum: ["trivial", "standard", "heavy"] }, reason: { type: "string", minLength: 1, description: "Why this tier, in one line." } }, required: ["tier", "reason"], additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
@@ -4029,8 +4071,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     label: "Ledger",
     defaultActive: false,
     executionMode: "sequential",
-    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer (one item, text). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert: the item to rewrite; omit to append a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -4424,7 +4466,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const words = args.trim().split(/\s+/).filter(Boolean);
       const extra = words.filter((w) => w === "--dry-run");
       if (extra.length < words.length) ctx.ui.notify(`pi-foreman: /sync ignores ${words.filter((w) => w !== "--dry-run").join(" ")} (only --dry-run is accepted).`, "warning");
-      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx, extra.slice(0, 1)), notify: (t, l) => ctx.ui.notify(t, l) });
+      await syncCommand({ activeRuns: s.activeRuns.size, run: async () => { const r = await runSync(s, ctx, extra.slice(0, 1)); return { ...r, text: withNudge(r.text, s.agentDir, get(s.config.config, "knowledge.nudgeDays")) }; }, notify: (t, l) => ctx.ui.notify(t, l) });
     },
   });
 
@@ -4511,8 +4553,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub === "update-check") {
-        const r = await runScript(await ensureSession(ctx), "foreman_update_check.py", []);
-        ctx.ui.notify(r.text, r.ok ? "info" : "error");
+        const s = await ensureSession(ctx);
+        const r = await runScript(s, "foreman_update_check.py", []);
+        ctx.ui.notify(withNudge(r.text, s.agentDir, get(s.config.config, "knowledge.nudgeDays")), r.ok ? "info" : "error");
         return;
       }
       if (sub === "status") {
