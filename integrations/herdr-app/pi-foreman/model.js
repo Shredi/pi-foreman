@@ -623,12 +623,13 @@ export function detailLine(node) {
  *  children. Item `{id, type: "session"|"agent"|"more", label, status, urgent, children, ...}`; `urgent` is the most urgent
  *  status of the item and everything below it. Siblings are sorted by `urgent`. Sessions in `skip` and ended ones are left out.
  *  null for a non-node. */
-export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set(), extra = [], top = true, id: rootId = "" } = {}) {
+export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set(), skipKeys = new Set(), extra = [], top = true, id: rootId = "" } = {}) {
   if (!isObj(node)) return null;
   const build = (n, status, id, depth, root) => {
     const kids = [];
+    const closed = !root && n.state === "closed";
     listOf(n.workers).forEach((w, i) => {
-      if (w.ended) return;
+      if (w.ended || closed) return;
       const st = nodeStatus(w);
       kids.push({ id: `${id}/a${i}`, type: "agent", label: [w.role || w.name, shortModel(w.model)].filter(Boolean).join(" "), status: st, urgent: st, children: [] });
     });
@@ -639,16 +640,20 @@ export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set()
     if (depth < MAX_DEPTH) {
       listOf(n.sessions).forEach((s, i) => {
         const st = nodeStatus(s);
-        if (!skip.has(s) && st !== "hidden") kids.push(build(s, st, `${id}/s${i}`, depth + 1, false));
+        if (skip.has(s) || skipKeys.has(s.key) || st === "hidden") return;
+        const child = build(s, st, `${id}/s${i}`, depth + 1, false);
+        if (child) kids.push(child);
       });
     }
+    if (closed && kids.length === 0) return null;
     const children = sortItems(kids);
     const isTop = root && top;
     const total = isTop ? totalCost(n) : num(n.cost);
     const prs = sortPrs(n.prs);
     return {
-      id, type: "session", node: n, label: n.name, tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
-      sessions: isTop ? sessionCount(n) : 0, status, urgent: urgentStatus([status, ...children.map((c) => c.urgent)]), children,
+      id, type: "session", node: n, label: n.name, dim: closed, elsewhere: !isTop && (n.machine || !n.hcTerminal) ? n.machine || "elsewhere" : "", tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
+      sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
+      urgent: urgentStatus([closed ? "idle" : status, ...children.map((c) => c.urgent)]), children,
       prs, summary: prSummary(prs), ...splitPrs(prs),
     };
   };
@@ -676,7 +681,7 @@ function recItems(n, recs, skip, id) {
  *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
  *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
  *  `program` for the click and the logo. */
-export function hcChildItems(all, address, resolve, { skip = new Set() } = {}) {
+export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set() } = {}) {
   if (!Array.isArray(all)) return [];
   const seen = new Set([address]);
   const walk = (parent, depth) => {
@@ -687,24 +692,41 @@ export function hcChildItems(all, address, resolve, { skip = new Set() } = {}) {
       const r = resolve(term) ?? {};
       const below = walk(term.address, depth + 1);
       const id = `hc:${term.address}`;
-      const label = (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
+      const label = (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
       const status = r.status ?? "idle";
       let item;
       if (isObj(r.node)) {
-        item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], skip, extra: below, top: false, id });
+        item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], skip, skipKeys, extra: below, top: false, id });
         item.status = status;
         item.urgent = urgentStatus([status, ...item.children.map((c) => c.urgent)]);
       } else {
         const children = sortItems([...recItems(null, r.recs ?? [], skip, id), ...below]);
         item = {
-          id, type: "session", node: null, label, tier: "", costText: "", top: false, sessions: 0, status,
+          id, type: "session", node: null, label, dim: false, elsewhere: "", tier: "", costText: "", top: false, sessions: 0, status,
           urgent: urgentStatus([status, ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]),
         };
       }
-      return { ...item, address: term.address, program: term.program ?? null };
+      return { ...item, elsewhere: "", address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) };
     });
   };
   return walk(address, 0);
+}
+
+/** Addresses of the listed agents that are hc children (by `parent`, through any chain of terminals) of another listed agent:
+ *  those are drawn once, nested under that parent by `hcChildItems`, not as top-level rows. */
+export function nestedAgents(list, all) {
+  const out = new Set();
+  if (!Array.isArray(list) || !Array.isArray(all)) return out;
+  const listed = new Set(list.map((a) => a?.address).filter((x) => typeof x === "string"));
+  const parentOf = new Map(all.filter((k) => isObj(k) && typeof k.address === "string" && k.state === "live" && typeof k.parent === "string").map((k) => [k.address, k.parent]));
+  for (const addr of listed) {
+    const seen = new Set([addr]);
+    for (let p = parentOf.get(addr); p !== undefined && !seen.has(p) && seen.size <= MAX_DEPTH + 1; p = parentOf.get(p)) {
+      if (listed.has(p)) { out.add(addr); break; }
+      seen.add(p);
+    }
+  }
+  return out;
 }
 
 /** The children of a paned agent that has no radar node: its record agents and hc child items, as siblings. */

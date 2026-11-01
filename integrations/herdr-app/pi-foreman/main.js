@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, prDotState, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownNodes, shownKeys,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, prDotState, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownNodes, shownKeys,
   radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
 } from "./model.js";
 
@@ -229,9 +229,9 @@ export default class ForemanAgents extends View {
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
   // pane-less hc terminals) and theirs, all through sessionTree. `f` is the joined radar node or null; `live` the
   // hc child items of the agent.
-  agentItems(f, hcStatus, recs, skip, live) {
+  agentItems(f, hcStatus, recs, skip, live, skipKeys) {
     if (!f) return { root: null, items: bareChildren(recs, live) };
-    const root = sessionTree(f, { hcStatus, recs, skip, extra: live });
+    const root = sessionTree(f, { hcStatus, recs, skip, skipKeys, extra: live });
     return { root, items: root ? root.children : [] };
   }
 
@@ -299,7 +299,8 @@ export default class ForemanAgents extends View {
     const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
     return row
       .when(active, (el) => el.bg(t.raised).rounded(6))
-      .child(item.address === undefined ? name : name.cursor_pointer().on_click(() => run("terminal.peek", { terminal: item.address })))
+      .child(item.address === undefined ? name : name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }))))
+      .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))
@@ -401,8 +402,13 @@ export default class ForemanAgents extends View {
     }
     this.childPi = new Set(kids.filter((x) => x.app === "pi" || childJoined.has(x.address)).map((x) => x.address));
     const skip = new Set([...joined.values(), ...childJoined.values()]);
+    // Item 25: a session drawn as a joined row anywhere is not drawn again as a radar child (matched by key).
+    const skipKeys = new Set([...skip].map((n) => n.key).filter(Boolean));
+    // A listed agent that is an hc child of another one is drawn once, nested under its parent (see withRows), not as a top-level row.
+    const nested = guard(() => nestedAgents(list, all), new Set());
+    const listedBy = new Map(list.map((a) => [a.address, a]));
     const groups = [];
-    for (const a of list) {
+    for (const a of list.filter((x) => !nested.has(x.address))) {
       const id = `sp-${a.space}`;
       const tail = groups[groups.length - 1];
       if (tail && tail.id === id) tail.members.push(a);
@@ -423,13 +429,18 @@ export default class ForemanAgents extends View {
     const withRows = (a) => {
       const f = joined.get(a.address);
       const resolve = (term) => {
+        const tabbed = listedBy.get(term.address);
+        if (tabbed) {
+          const tab = typeof tabbed.tab_name === "string" && !/^\d+$/.test(tabbed.tab_name) ? tabbed.tab_name : "";
+          return { node: joined.get(tabbed.address) ?? null, recs: recsOf(tabbed), own: tabbed.status, status: statusOf(tabbed), pane: tabbed.pane, label: stripPi(tab || tabbed.title) };
+        }
         const node = childJoined.get(term.address) ?? null;
         const recs = this.recs.get(term.address)?.recs ?? [];
         const own = workerStatus(term.status, listedStatus.get(term.address));
         return { node, recs, own, status: guard(() => agentStatus(own, node, recs), own) };
       };
-      const live = guard(() => hcChildItems(all, a.address, resolve, { skip }), []);
-      const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live), { root: null, items: [] });
+      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys }), []);
+      const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys), { root: null, items: [] });
       drawnItems.push(...(root ? [root] : []), ...items);
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);
       return f ? [block, div().h(4).flex_none()] : [block];
