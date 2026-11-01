@@ -52,6 +52,10 @@ def usage(rig, sid):
     return [json.loads(x) for x in f.read_text("utf-8").splitlines() if x.strip()] if f.is_file() else []
 
 
+# Decisions of the per-launch ladder `revision` event (after the rung is chosen); the round events are the others.
+LADDER_DECISIONS = ("climb", "unchanged", "no_strong", "keyword")
+
+
 def events(rig, sid, name):
     safe = "".join(c for c in sid if c.isalnum() or c in "-_")
     return [r for r in rig.traces().get("trace-" + safe, []) if r.get("event") == name]
@@ -122,7 +126,7 @@ class TestRevisionRounds(ReplayCase):
         self.assertEqual((rig.project / "a.txt").read_text("utf-8"), "alpha\n", "the reviewer's edit must not land")
         transcripts = [p.read_text("utf-8", "replace") for p in rig.agent.rglob("*_reviewer_transcript.jsonl")]
         self.assertTrue(any("Tool edit not found" in t for t in transcripts), "the reviewer has no edit tool (H4)")
-        rev = [(r["decision"], r["tier"]) for r in events(rig, sid, "revision")]
+        rev = [(r["decision"], r["tier"]) for r in events(rig, sid, "revision") if r["decision"] not in LADDER_DECISIONS]
         self.assertEqual(rev, [("revision", "standard"), ("blocked", "standard")])
         done = [(r["role"], r["decision"]) for r in events(rig, sid, "review_done")]
         self.assertEqual(done, [("reviewer", "fail"), ("reviewer", "fail")])
@@ -130,7 +134,7 @@ class TestRevisionRounds(ReplayCase):
     def test_heavy_third_revision_refused(self):
         rig, pi, sid = self.chain("rounds-heavy", "h1", {"ceremony": NO_PLAN_REVIEW}, "revision limit for heavy reached (2)")
         pi.close()
-        rev = [r["decision"] for r in events(rig, sid, "revision")]
+        rev = [r["decision"] for r in events(rig, sid, "revision") if r["decision"] not in LADDER_DECISIONS]
         self.assertEqual(rev, ["revision", "revision", "blocked"])
 
     def test_strong_on_revision(self):
