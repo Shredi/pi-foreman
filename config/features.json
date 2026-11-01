@@ -572,6 +572,18 @@
       "enable": ""
     },
     {
+      "id": "session-worktree",
+      "area": "sessions",
+      "title": "Round worktree for a session open",
+      "purpose": "`foreman session open <label> <brief> --worktree [--base REF]` (and `foreman_session_open` with `worktree: true`) creates the session's own linked worktree at `<close.worktreeDir>/<label>` on the branch `<prefix>/<label>` from the fetched default branch, installs dependencies with `npm ci` only when a lockfile is declared, and opens the session there. `sessions.worktree.branchPrefix` (default `round`) sets the prefix. User or overlay config only.",
+      "doc": "docs/sessions.md#worktree-for-a-new-session",
+      "keys": ["sessions.worktree.branchPrefix"],
+      "commands": ["foreman session open"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "open-prs",
       "area": "sessions",
       "title": "Open PRs in radar and the herdr-app mod",

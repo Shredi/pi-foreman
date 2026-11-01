@@ -5,6 +5,7 @@
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
                                       [--first-command CMD]... [--plan-mode]
                                       [--parent-id ID] [--own-model ID] [--agent-dir D]
+    python scripts/foreman_session.py open <label> <brief-file> --worktree [--base REF] [--cwd DIR] [...]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
     python scripts/foreman_session.py remote probe|open|deliver|outbox|close --json   (the remote side; JSON on stdin)
@@ -43,9 +44,11 @@ names and values checked, a failing one is skipped with a note) is passed to the
 child id and command; no Herdr call, no registry entry.
 
 `--first-command CMD` (repeatable, at most 4, each starting with `/`, one line, 200 characters at most) runs Pi's
-extension commands before the brief prompt: each is a positional message (`pi "/plan" "<brief prompt>"`), and Pi
+extension commands before the brief prompt: each is a positional message (`pi "/x" "<brief prompt>"`), and Pi
 runs a `/` message to completion, awaited, before the next one. `--plan-mode` is `--first-command /plan`, placed first
-and never repeated. The child's Pi must provide the command (a plan-mode package); this CLI cannot check that.
+and never repeated; a bare `/plan` would open the plan-mode menu and never reach the brief, so the brief prompt rides
+on it as the last word, `pi "/x" "/plan <brief prompt>"` (`/plan start` or other `/plan ...` text stays a separate
+word). The child's Pi must provide the command (a plan-mode package); this CLI cannot check that.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
 PI_INTERCOM_SESSION_ID (the id pi-intercom publishes), else PI_INTERCOM_STABLE_ID, else `stableId` of
@@ -459,7 +462,7 @@ def hc_child_argv(env, model, prompt, first, platform, path):
         return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first)]
     pi = shutil.which("pi") or "pi"
     return (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
-            + (["--model", model] if model else []) + list(first) + [prompt])
+            + (["--model", model] if model else []) + launch_messages(first, prompt))
 
 
 def hc_run_args(name, cwd, child_argv, outlive, space=None, tab=None):
@@ -666,6 +669,13 @@ def first_commands(cmds, plan_mode):
     return out
 
 
+def launch_messages(first, prompt):
+    """The positional Pi messages of the launch line: the first commands, then the brief prompt. A bare /plan would open
+    the plan-mode menu and never reach the brief, so it is dropped and the last word becomes `/plan <prompt>`."""
+    out = [c for c in first if c != PLAN_COMMAND]
+    return out + ([PLAN_COMMAND + " " + prompt] if PLAN_COMMAND in first else [prompt])
+
+
 def check_first_commands(cmds):
     if len(cmds) > FIRST_MAX:
         raise Refused("at most %d first commands (--plan-mode counts as %s)" % (FIRST_MAX, PLAN_COMMAND))
@@ -684,7 +694,7 @@ def posix_command(env, model, prompt, first=()):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
     if model:
         parts += ["--model", shlex.quote(model)]
-    return " ".join(parts + [shlex.quote(c) for c in first] + [shlex.quote(prompt)])
+    return " ".join(parts + [shlex.quote(m) for m in launch_messages(first, prompt)])
 
 
 # ASCII apostrophe and the typographic single quotes U+2018-U+201B, which PowerShell also reads as quotes
@@ -697,7 +707,7 @@ def ps_quote(v):
 
 def powershell_command(env, model, prompt, first=()):
     sets = ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
-    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(c) for c in first] + [ps_quote(prompt)]
+    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 
@@ -727,7 +737,114 @@ def open_in_herdr(binary, label, cwd, workspace_label, command, focus):
     return {"workspace": ws, "tab": tab, "pane": pane}
 
 
+DEFAULT_BRANCH_PREFIX = "round"
+WORKTREE_MARK = "session worktree: "
+GIT_TIMEOUT = 120
+
+
+def git_out(repo, args):
+    """(exit code, stdout text) of `git -C repo ...`; a missing git or a timeout is (1, "")."""
+    try:
+        r = subprocess.run(["git", "-C", str(repo)] + list(args), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           timeout=GIT_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        return 1, ""
+    return r.returncode, r.stdout.decode("utf-8", "replace").strip()
+
+
+def worktree_target(root, label, mod=os.path):
+    """Where the round worktree of `label` lives: `<managed root>/<label>` (`mod` is os.path, ntpath or posixpath)."""
+    return mod.join(root, label)
+
+
+def branch_prefix(adir):
+    v = (sessions_config(adir).get("worktree") or {}).get("branchPrefix")
+    v = DEFAULT_BRANCH_PREFIX if v is None else v
+    if not isinstance(v, str) or not LABEL_RE.match(v):
+        raise Refused("sessions.worktree.branchPrefix must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
+    return v
+
+
+def default_base(repo):
+    """`origin/<default branch>`: origin/HEAD, else the remote's HEAD symref; None when neither answers."""
+    code, ref = git_out(repo, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+    if code == 0 and ref.startswith("refs/remotes/"):
+        return ref[len("refs/remotes/"):]
+    code, out = git_out(repo, ["ls-remote", "--symref", "origin", "HEAD"])
+    m = re.match(r"ref: refs/heads/(\S+)\s+HEAD", out) if code == 0 else None
+    return "origin/" + m.group(1) if m else None
+
+
+def plan_worktree(cwd, label, adir, base_arg, fetch=True):
+    """The round worktree {repo, path, branch, base} for `foreman session open --worktree`; Refused before any
+    change (a fetch only updates remote-tracking refs, and is skipped with fetch=False for a dry run)."""
+    code, common = git_out(cwd, ["rev-parse", "--git-common-dir"])
+    if code != 0 or not common:
+        raise Refused("--worktree needs --cwd inside a git checkout: %s" % cwd)
+    repo = os.path.dirname(os.path.realpath(os.path.join(str(cwd), common)))
+    if git_out(repo, ["remote", "get-url", "origin"])[0] != 0:
+        raise Refused("--worktree needs a remote named origin in %s" % repo)
+    import foreman_config
+    import foreman_worktree
+    cfg = foreman_config.load_config(agent_dir=str(adir))["config"]
+    path = worktree_target(foreman_worktree.convention_dirs(repo, cfg)[0], label)
+    branch = "%s/%s" % (branch_prefix(adir), label)
+    check_path_text(path, "the worktree path")
+    if os.path.lexists(path):
+        raise Refused("the worktree path exists: %s" % path)
+    if git_out(repo, ["check-ref-format", "refs/heads/" + branch])[0] != 0:
+        raise Refused("not a valid branch name: %s" % branch)
+    if git_out(repo, ["rev-parse", "--verify", "--quiet", "refs/heads/" + branch])[0] == 0:
+        raise Refused("the branch exists: %s" % branch)
+    if base_arg is not None and (not base_arg or base_arg.startswith("-")):
+        raise Refused("--base must be a branch, tag or commit and not start with -: %r" % base_arg)
+    if fetch and git_out(repo, ["fetch", "origin"])[0] != 0:
+        raise Refused("git fetch origin failed in %s" % repo)
+    base = base_arg or default_base(repo)
+    if not base:
+        raise Refused("cannot find the default branch of origin: pass --base REF")
+    if git_out(repo, ["rev-parse", "--verify", "--quiet", base + "^{commit}"])[0] != 0:
+        raise Refused("--base is not a commit: %s" % base)
+    return {"repo": repo, "path": path, "branch": branch, "base": base}
+
+
+def run_npm_ci(path):
+    """Run `npm ci` in `path`; the exit code (127 without npm, 124 on a timeout)."""
+    import foreman_worktree_setup as setup
+    npm = shutil.which("npm.cmd" if host_platform() == "win32" else "npm")
+    if not npm:
+        return 127
+    try:
+        return subprocess.run([npm, "ci"], cwd=str(path), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=setup.NPM_TIMEOUT).returncode
+    except (OSError, subprocess.TimeoutExpired):
+        return 124
+
+
+def has_lockfile(path):
+    import foreman_worktree_setup as setup
+    return any(os.path.isfile(os.path.join(str(path), n)) for n in setup.LOCKFILES)
+
+
+def create_worktree(plan):
+    """`git worktree add`, then `npm ci` when a lockfile came with it; the info dict {path, branch, base, install}.
+    A failed install removes nothing."""
+    code, _ = git_out(plan["repo"], ["worktree", "add", plan["path"], "-b", plan["branch"], plan["base"]])
+    if code != 0:
+        raise Refused("git worktree add failed for %s" % plan["path"])
+    install = "none"
+    if has_lockfile(plan["path"]):
+        rc = run_npm_ci(plan["path"])
+        install = "npm ci" if rc == 0 else "failed:%d" % rc
+    return {"path": plan["path"], "branch": plan["branch"], "base": plan["base"], "install": install}
+
+
 def cmd_open(a):
+    wt = getattr(a, "worktree", False)
+    if getattr(a, "base", None) is not None and not wt:
+        raise Refused("--base needs --worktree")
+    if wt and getattr(a, "machine", None):
+        raise Refused("--worktree is not supported with --machine in this version (the worktree would be on the remote machine)")
     if getattr(a, "machine", None):
         if a.print_all:
             raise Refused("--print-all is not supported with --machine in this version", "remote_option")
@@ -765,9 +882,24 @@ def cmd_open(a):
         text = brief.read_text("utf-8")
     except (OSError, UnicodeDecodeError) as e:
         raise Refused("cannot read the brief: %s" % e)
+    wtree = None
+    if wt:
+        plan = plan_worktree(cwd, a.label, adir, a.base, fetch=not a.dry_run)
+        if a.dry_run:
+            print("dry run: would add the worktree %s on branch %s from %s, then run npm ci there when it holds a lockfile"
+                  % (plan["path"], plan["branch"], plan["base"]))
+            wtree = {"path": plan["path"], "branch": plan["branch"], "base": plan["base"], "install": "npm ci if a lockfile"}
+        else:
+            wtree = create_worktree(plan)
+            print("worktree: %s (branch %s from %s, install: %s)" % (wtree["path"], wtree["branch"], wtree["base"], wtree["install"]))
+            print(WORKTREE_MARK + json.dumps(wtree))
+            if wtree["install"].startswith("failed:"):
+                sys.stderr.write("pi-foreman session: npm ci failed in %s (%s); the session opens anyway, rerun npm ci there\n"
+                                 % (wtree["path"], wtree["install"]))
+        cwd = Path(wtree["path"])
     params = {"adir": adir, "label": a.label, "text": text, "cwd": cwd, "model": a.model, "own_model": own_model,
               "plan_first": a.plan_first, "parent": parent, "focus": a.focus, "dry_run": a.dry_run,
-              "print_all": a.print_all, "first": first}
+              "print_all": a.print_all, "first": first, "worktree": wtree}
     return open_session(params)[0]
 
 
@@ -813,6 +945,8 @@ def open_session(p, remote=None):
         if not p["own_model"]:
             say("rank check skipped: own model unknown")
     info = {"handoff": str(handoff), "child": child}
+    if p.get("worktree"):
+        info["worktree"] = p["worktree"]
     if p["dry_run"]:  # writes nothing: no handoff dir, brief, parent, child or registry entry
         if backend == "hc":
             say("dry run: would run under herdr-core:\n  %s" % json.dumps([binary] + hc_run_args(hc_name(child), cwd, child_argv, outlive, space, tab)))
@@ -2025,6 +2159,8 @@ def main(argv=None):
     o.add_argument("--print-all", action="store_true")
     o.add_argument("--machine")
     o.add_argument("--trust", action="store_true")
+    o.add_argument("--worktree", action="store_true")
+    o.add_argument("--base")
     o.add_argument("--agent-dir", dest="agent_dir_sub")
     b = sub.add_parser("brief")
     b.add_argument("target")

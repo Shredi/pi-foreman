@@ -215,7 +215,7 @@ class ForwardingTest(rt.RemoteBase):
         entry = self.remote_registry()[0]
         self.assertEqual(entry["firstCommands"], ["/plan", "/review"])
         launch = (Path(self.parent_registry()[0]["remoteHandoff"]) / "launch.txt").read_text("utf-8")
-        self.assertIn("/plan", launch)
+        self.assertIn("/plan Read the handoff", launch)
         self.assertIn("/review", launch)
         self.assertTrue(any(l[:2] == ["tab", "focus"] for l in lines_of(self.logs["herdr"])))
 
