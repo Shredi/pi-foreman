@@ -50,7 +50,7 @@ from driver import PiRpc  # noqa: E402
 ACTIVE_STATES = ("queued", "running")
 DIALOGS = ("select", "confirm", "input", "editor")
 REVIEW_DEFERS = ("review_defer_child", "review_defer_headless")
-GATE_DIALOG_DENIES = ("deny", "deny with reason", "dismissed", "no-ui")
+GATE_DIALOG_DENIES = ("deny", "deny with reason", "dismissed", "no-ui", "no-parent")
 USAGE_LIMIT = re.compile(r"usage limit|limit reached|hit your (?:usage |session |weekly )?limit|quota exceeded", re.I)
 
 # A provider refusal (safety classifier) is an infrastructure error too, but it does not stop the run.

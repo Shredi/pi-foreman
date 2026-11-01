@@ -1,13 +1,15 @@
-// web-read (ledger item 25): the gate's own, deterministic checks (a) to (d) of a plain download, as facts for the review (never the model's call).
-// A call is a web-read candidate when it is a `curl` or `wget` segment of a bash line, or a `fetch` tool call. The review then checks (e), that the
-// URL smuggles no data. A failed check is a fact naming the condition; it never makes the call routine.
+// web-read (ledger items 25, r79 15): the gate's own, deterministic checks (a) to (d) of a plain download. `webReadAllow` is the built-in allow of
+// the rules-first gate: a candidate that passes is a silent read, a candidate that fails is `danger-net-write` (defaults.ts). The old facts for
+// the review are gone, and so is check (e) (the model's look at the URL).
+// A call is a web-read candidate when it is a `curl` or `wget` segment of a bash line, or a `fetch` tool call. Loopback hosts (127.0.0.1, ::1,
+// localhost, any port) are plain URLs here: a GET or HEAD to them passes like any other.
 //   (a) GET/HEAD only: no body, no upload, no other method
 //   (b) no auth or cookie material, no userinfo in the URL
 //   (c) nothing runs the download: no pipe into a shell or interpreter, no substitution of it into a shell, no config file
 //   (d) the output goes into the scratch dir, or to stdout read only by a non-executing reader
 import * as path from "node:path";
 import { insideRoot } from "./floors.ts";
-import { sameOrUnder } from "./pathnorm.ts";
+import { sameOrUnder, tildeWord } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 
@@ -20,7 +22,6 @@ export interface WebReadCtx {
 
 type Check = { ok: true; method: string; url: string } | { ok: false; why: string };
 
-const MAX_FACTS = 5;
 const MAX_URL = 500;
 const READERS = new Set(["head", "tail", "grep", "egrep", "fgrep", "rg", "jq", "wc", "less", "more", "cat", "sort", "uniq", "cut", "tr", "nl"]);
 const EXEC_PROGRAMS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash", "fish", "csh", "tcsh", "python", "python2", "python3", "node", "nodejs", "bun", "deno", "perl", "ruby", "php", "lua", "pwsh", "powershell", "eval", "source", ".", "env", "sudo", "xargs"]);
@@ -66,9 +67,9 @@ function inRoot(abs: string, root: string, cwd: string, ctx: WebReadCtx): boolea
   return (ctx.platform ?? process.platform) === "win32" ? sameOrUnder("win32", root, abs, cwd) : insideRoot(abs, root, ctx.platform);
 }
 
-/** A target path inside one of the scratch dirs (literal words only; a variable, `~` or glob is not). */
+/** A target path inside one of the scratch dirs (literal words only; a variable, a tilde expansion or glob is not; an 8.3 `RUNNER~1` is literal). */
 function inScratch(word: string, cwd: string, ctx: WebReadCtx): boolean {
-  if (!word || /[$`*?[\]{}~]/.test(word)) return false;
+  if (!word || /[$`*?[\]{}]/.test(word) || tildeWord(word)) return false;
   const abs = path.resolve(cwd, word);
   return ctx.scratch.some((s) => inRoot(abs, s, cwd, ctx));
 }
@@ -126,6 +127,7 @@ function curlCheck(seg: ShellSegment, ctx: WebReadCtx, piped: boolean, otherRead
       } else if (name === "--head") method = "HEAD";
       else if (name === "--header") {
         if (AUTH_HEADER.test(val ?? "")) return fail("(b) auth header");
+        if ((val ?? "").startsWith("@")) return fail("(b) header file"); // `-H @file` reads header lines (maybe Authorization) from a file
       } else if (name === "--config") return fail("(c) config file");
       else if (name === "--output") outputs.push(val ?? "");
       else if (name === "--output-dir") outDir = val ?? "";
@@ -145,10 +147,12 @@ function curlCheck(seg: ShellSegment, ctx: WebReadCtx, piped: boolean, otherRead
             if (r) return r;
           } else if (c === "H") {
             if (AUTH_HEADER.test(val)) return fail("(b) auth header");
+            if (val.startsWith("@")) return fail("(b) header file");
           } else if (c === "K") return fail("(c) config file");
           else if (c === "o") outputs.push(val);
           break;
         }
+        if (c === "n") return fail("(b) auth or cookie option"); // -n = --netrc: credentials from ~/.netrc
         if (c === "I") method = "HEAD";
         else if (c === "O") remoteName = true;
       }
@@ -160,7 +164,9 @@ function curlCheck(seg: ShellSegment, ctx: WebReadCtx, piped: boolean, otherRead
   if (urls.length > 1) return fail("(a) more than one URL");
   const u = urlCheck(urls[0]);
   if ("why" in u) return fail(u.why);
-  const out = outputCheck(seg, ctx, cwd, outputs, remoteName ? (outDir ? path.resolve(cwd, outDir) : cwd) : null, piped, otherReaders);
+  // curl joins --output-dir and every -o name with a `/` (an absolute name too), so the check judges the joined spelling
+  const joined = outputs.map((f) => (f === "-" || outDir === null ? f : `${outDir}/${f}`));
+  const out = outputCheck(seg, ctx, cwd, joined, remoteName ? (outDir ? path.resolve(cwd, outDir) : cwd) : null, piped, otherReaders);
   return out ?? { ok: true, method, url: u.url };
 }
 
@@ -233,8 +239,6 @@ function wgetCheck(seg: ShellSegment, ctx: WebReadCtx, piped: boolean, otherRead
   return outputCheck(seg, ctx, cwd, files, remoteDir, piped, otherReaders) ?? { ok: true, method, url: u.url };
 }
 
-const factOf = (c: Check): string => ("why" in c ? `web-read: failed ${c.why}` : `web-read: ${c.method} ${c.url} checks a-d passed`);
-
 /** The checks for a `fetch` tool call: GET/HEAD, no body, no auth headers or fields. */
 function fetchCheck(input: Record<string, unknown>): Check {
   const method = input.method === undefined ? "GET" : typeof input.method === "string" ? input.method.toUpperCase() : "";
@@ -252,13 +256,10 @@ function fetchCheck(input: Record<string, unknown>): Check {
   return { ok: true, method, url: u.url };
 }
 
-/**
- * The web-read facts of a call: one per `curl` / `wget` segment of a bash line, one for a `fetch` call; none for anything else. A failed
- * check yields `web-read: failed (<letter>) <what>`, a pass `web-read: <method> <url> checks a-d passed`.
- */
-export function webReadFacts(tool: string, input: unknown, ctx: WebReadCtx): string[] {
+/** The checks of a call: one per `curl` / `wget` segment of a bash line, one for a `fetch` call; empty for anything else (not a candidate). */
+function webChecks(tool: string, input: unknown, ctx: WebReadCtx): Check[] {
   const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  if (tool === "fetch") return [factOf(fetchCheck(inp))];
+  if (tool === "fetch") return [fetchCheck(inp)];
   const cmd = inp.command ?? inp.cmd;
   if (typeof cmd !== "string" || !/\b(?:curl|wget)\b/.test(cmd)) return [];
   const segs = parseShell(cmd, { cwd: ctx.cwd, platform: ctx.platform, ...(ctx.scratch[0] ? { env: { FOREMAN_SCRATCH: ctx.scratch[0] } } : {}) });
@@ -269,14 +270,35 @@ export function webReadFacts(tool: string, input: unknown, ctx: WebReadCtx): str
   // (c) a shell or interpreter fed by pipe or substitution runs what was downloaded
   const runs = others.some((s) => EXEC_PROGRAMS.has(baseName(s.program)) && s.opaque !== null && s.opaque !== "unresolved_var");
   const otherReaders = others.every((s) => READERS.has(baseName(s.program)));
-  const facts: string[] = [];
+  const checks: Check[] = [];
   for (const s of web) {
     let c: Check;
     if (s.opaque !== null) c = fail(`(${s.opaque === "unresolved_var" || s.opaque === "glob_target" ? "d" : "c"}) ${s.opaque.replace(/_/g, " ")} in the download`);
     else if (s.wrappers.some((x) => x === "$(" || x === "`" || x === "<(")) c = fail("(c) download inside a command substitution");
     else if (runs) c = fail("(c) pipe or substitution into a shell or interpreter");
     else c = baseName(s.program) === "curl" ? curlCheck(s, ctx, piped, otherReaders) : wgetCheck(s, ctx, piped, otherReaders);
-    facts.push(factOf(c));
+    checks.push(c);
   }
-  return facts.slice(0, MAX_FACTS);
+  return checks;
+}
+
+export interface WebReadVerdict {
+  /** The call is a web-read candidate: a `fetch` call or a bash line with a `curl` / `wget` segment. */
+  candidate: boolean;
+  /** Every candidate segment passed checks (a) to (d). Only meaningful when `candidate`. */
+  ok: boolean;
+  /** The first failed condition, `(<letter>) <what>`, or null. */
+  why: string | null;
+}
+
+/**
+ * The built-in allow for plain downloads (r79 items 15, plan Addendum S5): a GET or HEAD without body, auth or cookie material (`-u`, `-b`, `-n`,
+ * `--netrc*`, an auth header or `-H @file`), whose output stays in the scratch dir (`-o` joined with `--output-dir`) or goes to a plain reader.
+ * A candidate that does not pass is `danger-net-write`.
+ */
+export function webReadAllow(tool: string, input: unknown, ctx: WebReadCtx): WebReadVerdict {
+  const checks = webChecks(tool, input, ctx);
+  if (checks.length === 0) return { candidate: false, ok: false, why: null };
+  for (const c of checks) if ("why" in c) return { candidate: true, ok: false, why: c.why };
+  return { candidate: true, ok: true, why: null };
 }

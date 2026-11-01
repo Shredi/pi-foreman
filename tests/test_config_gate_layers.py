@@ -1,5 +1,6 @@
-"""gate.* keys, the review model, safety.policy.files and safety.preBash are tighten-only (or user-layer only) for
-the project and session layers (plan Addendum B, Addendum 5)."""
+"""gate.* keys, the review model, permissions.profile and safety.preBash are tighten-only (or user-layer only) for
+the project and session layers (plan Addendum B, Addendum 5). r79 items 8, 9: gate.policy.userFile and safety.policy.files
+are gone (permissions.json holds the rules); permissions.profile is a user, organisation and default layer key."""
 import json
 import os
 import sys
@@ -75,14 +76,32 @@ class GateLayerTest(unittest.TestCase):
         self.assertEqual(res["config"]["gate"]["childAsk"], "parent")
         self.assertEqual(res["errors"], [])
 
-    def test_policy_user_file_and_log_size_are_user_layer_only(self):
-        res = self.load(l2={"gate": {"policy": {"userFile": "mine.md"}}},
-                        proj={"gate": {"policy": {"userFile": "/tmp/evil.md"}, "logMaxBytes": 2048}})
-        self.assertEqual(res["config"]["gate"]["policy"]["userFile"], "mine.md")
-        self.assertEqual(res["config"]["gate"]["logMaxBytes"], 20971520)
-        self.warned(res, "project gate.policy ignored")
+    def test_log_size_is_user_layer_only(self):
+        res = self.load(l2={"gate": {"logMaxBytes": 4096}}, proj={"gate": {"logMaxBytes": 2048}})
+        self.assertEqual(res["config"]["gate"]["logMaxBytes"], 4096)
         self.warned(res, "project gate.logMaxBytes ignored")
         self.assertEqual(res["errors"], [])
+
+    def test_removed_policy_keys_are_unknown_keys_now(self):
+        # r79 item 9: a leftover gate.policy.userFile or safety.policy.files is reported as an unknown key (doctor FAILs on it)
+        for section, l2 in ("gate", {"gate": {"policy": {"userFile": "mine.md"}}}), ("safety", {"safety": {"policy": {"files": ["a.md"]}}}):
+            res = self.load(l2=l2)
+            self.warned(res, "unknown key %s.policy" % section)
+
+    def test_permissions_profile_is_honoured_in_the_user_layer_only(self):
+        res = self.load(l2={"permissions": {"profile": "steward"}}, proj={"permissions": {"profile": "mine"}})
+        self.assertEqual(res["config"]["permissions"]["profile"], "steward")
+        self.warned(res, "project permissions.profile ignored")
+        self.assertEqual(res["errors"], [])
+        self.assertNotIn("unknown key permissions", "\n".join(res["warnings"]))
+        res = self.load(l2={"permissions": {"profile": "steward"}}, session={"permissions": {"profile": "mine"}})
+        self.assertEqual(res["config"]["permissions"]["profile"], "steward")
+        self.warned(res, "session permissions.profile ignored")
+
+    def test_permissions_profile_alone_in_a_project_leaves_none(self):
+        res = self.load(proj={"permissions": {"profile": "steward"}})
+        self.assertIsNone((res["config"].get("permissions") or {}).get("profile"))
+        self.warned(res, "project permissions.profile ignored")
 
     def test_unknown_project_gate_key_ignored_with_a_warning(self):
         res = self.load(proj={"gate": {"mode": "off"}})
@@ -92,10 +111,10 @@ class GateLayerTest(unittest.TestCase):
 
     def test_session_layer_follows_the_same_rules(self):
         res = self.load(l2={"gate": {"childAsk": "deny", "tmpAccess": False}},
-                        session={"gate": {"childAsk": "parent", "tmpAccess": True, "policy": {"userFile": "x"}}})
+                        session={"gate": {"childAsk": "parent", "tmpAccess": True, "logMaxBytes": 2048}})
         self.assertEqual(res["config"]["gate"]["childAsk"], "deny")
         self.assertIs(res["config"]["gate"]["tmpAccess"], False)
-        self.assertIsNone(res["config"]["gate"].get("policy", {}).get("userFile"))
+        self.assertEqual(res["config"]["gate"]["logMaxBytes"], 20971520)
 
     def test_review_model_is_user_layer_only(self):
         l2 = {"providers": {"p": {"roles": {"review": {"model": "good-model"}}}}}
@@ -107,14 +126,12 @@ class GateLayerTest(unittest.TestCase):
         self.assertNotIn("review", res["config"].get("roles", {}))
         self.warned(res, "project providers.p.roles.review ignored")
 
-    def test_policy_files_and_pre_bash_are_user_layer_only(self):
-        l2 = {"safety": {"policy": {"files": ["a.md"]}, "preBash": {"hooks": ["h.mjs"], "strict": True}}}
-        proj = {"safety": {"policy": {"files": []}, "preBash": {"hooks": [], "strict": False}}}
+    def test_pre_bash_is_user_layer_only(self):
+        l2 = {"safety": {"preBash": {"hooks": ["h.mjs"], "strict": True}}}
+        proj = {"safety": {"preBash": {"hooks": [], "strict": False}}}
         res = self.load(l2=l2, proj=proj)
         safety = res["config"]["safety"]
-        self.assertEqual(safety["policy"]["files"], ["a.md"])
         self.assertEqual(safety["preBash"], {"hooks": ["h.mjs"], "strict": True})
-        self.warned(res, "project safety.policy.files ignored")
         self.warned(res, "project safety.preBash.strict ignored")
 
     def test_project_cannot_remove_user_deny_entries(self):

@@ -41,7 +41,7 @@ positions among the distinct tiers you ranked (0 = best), so gaps in your number
 | `foreman`, `session-foreman` | 1 (with `--foreman`: that model's own tier) |
 | `reviewer` | same model as the foreman |
 | `builder`, `explorer` | 2 (one below the foreman) |
-| permission auto-review (`providers.<p>.review.model`) | the lowest tier |
+| permission classifier (`providers.<p>.roles.review.model`) | the lowest tier |
 
 A tier needs a model id: a `ranks` row with a literal `match` (no `*`/`?`) or a model already named in the provider's
 `roles`/`review`. The active provider is the only one with ranks, or the provider in `--foreman`.

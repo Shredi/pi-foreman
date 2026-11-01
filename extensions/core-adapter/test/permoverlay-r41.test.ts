@@ -12,8 +12,8 @@ const agentDir = "/pf41/agent";
 const pkg = "/pf41/pkg";
 const home = "/Users/pf41home";
 const cwd = `${home}/code/proj`;
-const custom = "/pf41/custom-policy.md";
-const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, pkg, undefined, false, undefined, [custom]);
+// r79 items 4, 9, 11: policy.md and safety.policy.files are gone; permissions.json of every layer is the floored file
+const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, pkg, undefined, false, undefined);
 const plain = { ...rules, floors: undefined };
 const ctx = (role: "main" | "child" = "main"): MatchCtx => ({ cwd, home, platform: process.platform, role });
 const bash = (command: string, role: "main" | "child" = "main", r = rules): Decision | null => checkToolCall(r, "bash", { command }, ctx(role));
@@ -77,10 +77,9 @@ test("r41: a scan of an allowed root is not a scan deny", () => {
 });
 
 const FLOORED = [
-  `${pkg}/config/permissions.policy.md`,
-  `${agentDir}/pi-foreman/policy.md`,
-  custom,
-  `${cwd}/.workflow/policy.md`,
+  `${agentDir}/pi-foreman/permissions.json`,
+  `${cwd}/.workflow/permissions.json`,
+  `${cwd}/.pi/permissions.json`,
   `${agentDir}/pi-foreman/managed.json`,
   `${agentDir}/pi-foreman/state/round-parents.json`,
   `${agentDir}/pi-foreman/state/bridge-trust.json`,
@@ -189,7 +188,7 @@ test("r41: a read of a floored file is no floor deny", () => {
 
 test("r41: floor is not lifted by an owned root with a policy-relative path", () => {
   const owned = { readWrite: [`${agentDir}/pi-foreman`], readOnly: [], childScratchRoot: "/tmp/pi-foreman-scratch" };
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, pkg, undefined, false, owned, [custom]);
+  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, pkg, undefined, false, owned);
   assert.equal(checkToolCall(r, "bash", { command: `echo x > ${agentDir}/pi-foreman/managed.json` }, { ...ctx(), owned })?.rule, "floor");
   assert.equal(checkToolCall(r, "write", { path: `${agentDir}/pi-foreman/state/approvals/x`, content: "x" }, { ...ctx(), owned })?.rule, "floor");
 });
@@ -304,18 +303,17 @@ test("r41 rev3: archivers, patch, transfers and cwd changes aimed at a floored f
     `find ${PF} -delete`,
     `find ${PF} -name x -exec rm {} +`,
     `chmod 000 ${PF}/managed.json`,
-    `chattr +i ${PF}/policy.md`,
+    `chattr +i ${PF}/permissions.json`,
     `truncate -s 0 ${PF}/managed.json`,
     `rename s/a/b/ ${PF}/managed.json`,
     `frobnicate ${PF}`,
     `frobnicate --out=${PF}/managed.json`,
     `frobnicate -o${PF}/managed.json`,
-    `frobnicate ${custom}`,
-    `frobnicate ${pkg}/config/permissions.policy.md`,
+    `frobnicate ${cwd}/.workflow/permissions.json`,
     `frobnicate ${agentDir}`,
     `cd ${PF}/state/gate && frobnicate x`,
     `cd ${PF} && rm managed.json`,
-    `cd ${PF} && sed -i s/a/b/ policy.md`,
+    `cd ${PF} && sed -i s/a/b/ permissions.json`,
     `git -C ${PF} clean -fdx`,
     `tar -xf a.tar -C ${agentDir}`,
     `python3 -c "import shutil; shutil.rmtree('${PF}')"`,
@@ -346,7 +344,7 @@ test("r41 rev3: plain reads, copies out and git status of floored paths are no f
     `ls ${PF}`,
     `ls -la ${PF}/state`,
     `cat ${PF}/managed.json`,
-    `head -3 ${PF}/policy.md`,
+    `head -3 ${PF}/permissions.json`,
     `grep x ${PF}/state/gate/log.jsonl`,
     `stat ${PF}/managed.json`,
     `wc -l ${PF}/managed.json`,
@@ -364,7 +362,7 @@ test("r41 rev3: plain reads, copies out and git status of floored paths are no f
     `git diff`,
     `cd ${PF} && ls`,
     `cd ${PF} && cat managed.json`,
-    `cat ${PF}/managed.json < ${PF}/policy.md`,
+    `cat ${PF}/managed.json < ${PF}/permissions.json`,
     `grep -rn x ${cwd}/src`,
   ];
   for (const role of ["main", "child"] as const) {
@@ -399,7 +397,7 @@ test("r41 narrowing 1: the folder of a workspace policy file is no floor deny, t
       [proj, `frobnicate ${proj}/.workflow`],
       [proj, "frobnicate .workflow"],
     ] as const) assert.notEqual(bashIn(dir, cmd, role)?.rule, "floor", `${role} ${dir} ${cmd}`);
-    for (const cmd of ["echo x > .workflow/policy.md", "rm .workflow/policy.md", "mv .workflow/policy.md y", `cp y ${pkg}/config/permissions.policy.md`, `frobnicate ${custom}`]) {
+    for (const cmd of ["echo x > .workflow/permissions.json", "rm .workflow/permissions.json", "mv .workflow/permissions.json y", `cp y ${proj}/.pi/permissions.json`, `frobnicate ${proj}/.workflow/permissions.json`]) {
       assert.equal(bashIn(proj, cmd, role)?.rule, "floor", `${role} ${cmd}`);
     }
   }
@@ -447,7 +445,7 @@ test("r41 rev4 gap 1: lines of plain reads naming a floored word stay allowed", 
 
 // the agent dir under the home directory, as installed
 const agentH = `${home}/.pi/agent`;
-const rulesH = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentH, pkg, undefined, false, undefined, [custom]);
+const rulesH = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentH, pkg, undefined, false, undefined);
 const bashH = (command: string, role: "main" | "child" = "main"): Decision | null => bash(command, role, rulesH);
 
 test("r41 rev4 gap 2: an ancestor of the agent dir is a floored removal, rename or bulk-write destination", () => {
@@ -482,7 +480,7 @@ test("r41 rev4 gap 3: inline interpreter text and ANSI-C quoting naming a floore
     `node -e "require('fs').rmSync('${PF}',{recursive:true})"`,
     `node -e "require('fs').writeFileSync('${PF}/managed.json','{}')"`,
     `python3 -c "import shutil; shutil.rmtree('${PF}')"`,
-    `perl -e 'unlink "${PF}/policy.md"'`,
+    `perl -e 'unlink "${PF}/permissions.json"'`,
     `ruby -e "File.delete('${PF}/managed.json')"`,
     `php -r "unlink('${PF}/managed.json');"`,
     `osascript -e 'do shell script "rm ${PF}/managed.json"'`,

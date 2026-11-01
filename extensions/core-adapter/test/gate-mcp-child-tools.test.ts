@@ -1,11 +1,11 @@
 // r72 MCP child tools (registered through Pi's MCP extension, named mcp__<server>__<tool>) go through the whole gate:
-// floors, review on the mcp surface, and an unreachable review denies.
+// floors, the classifier on the mcp surface (danger-mcp-act, r79 item 3), and an unreachable classifier denies.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { r11Rig } from "./_r11rig.ts";
+import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 
 const V = (verdict: string, entry: string): string => JSON.stringify({ verdict, entry, reason: `because ${entry}` });
-const config = { providers: { fake: { review: { model: "m" }, roles: {} } } };
+const config = { providers: { fake: { roles: { review: { model: "m" } } } } };
 
 function fakeRegistry(reply: string) {
   const calls: { text: string }[] = [];
@@ -20,11 +20,12 @@ function fakeRegistry(reply: string) {
   return { registry, calls };
 }
 
-test("an mcp__ tool call reaches the review with its JSON payload", async (t) => {
-  const reg = fakeRegistry(V("deny", "unknown-network-host"));
-  const r = await r11Rig(t, {}, { ctx: { modelRegistry: reg.registry }, config });
+test("an mcp__ tool call reaches the classifier with its JSON payload; a cited deny entry denies", async (t) => {
+  const reg = fakeRegistry(V("deny", "D1"));
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: reg.registry, [RIG_PERMISSIONS]: { classifier: { deny: ["Never send anything to example.org."] } } }, config });
   const res = await r.call("mcp__srv__do_thing", { target: "https://example.org/x" });
   assert.ok(res && res.block);
+  assert.match(String(res.reason), /denied by whitelist rule D1/);
   assert.equal(reg.calls.length, 1);
   assert.match(reg.calls[0].text, /tool: mcp__srv__do_thing/);
   assert.match(reg.calls[0].text, /"target":"https:\/\/example.org\/x"/);

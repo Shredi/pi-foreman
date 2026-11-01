@@ -193,7 +193,7 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "cd . && for i in 1 2 3; do ledger mark $i; done; ledger status"
+       "command": "cd . && ledger mark 1 && ledger mark 2 && ledger mark 3; ledger status"
       }
      }
     ]

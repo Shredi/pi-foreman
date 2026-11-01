@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { buildOverlayRules, checkToolCall, ownStateRead, readBaseline, type MatchCtx } from "../permoverlay.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, "/pf41/agent", "/pf41/pkg", undefined, false, undefined, []);
+const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, "/pf41/agent", "/pf41/pkg", undefined, false, undefined);
 const ctx: MatchCtx = { cwd: "D:\\work\\proj", home: "D:\\Users\\pf41", platform: "win32", role: "main" };
 const bash = (command: string) => checkToolCall(rules, "bash", { command }, ctx);
 

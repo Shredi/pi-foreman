@@ -11,7 +11,8 @@
 // after that user message, so the script is stateless across processes and turns.
 //
 // Reviewer models (`<provider>/review-<kind>`) ignore the script and answer every request with
-// a fixed verdict, for the model-review link: allow, deny, ask, invalid, unreachable,
+// a fixed verdict, for the classifier (a rig that wants a model call writes a whitelist with one allow and one deny sentence:
+// the verdicts cite A1 and D1): allow, deny, ask (escalate), invalid (cites no entry), unreachable,
 // error (the provider throws) and hang (never answers until aborted).
 //
 // Usage is fixed per answer: input 10, output 5, cacheRead 4, cacheWrite 2 (cost 0), so replay can
@@ -43,14 +44,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
-// R41 gate models: allow, deny, ask, invalid (closed JSON verdicts of the shipped policy), unreachable (throws like review-error).
+// Classifier models: allow, deny, ask (escalate), invalid (closed JSON verdicts against the whitelist ids A1 / D1), unreachable (throws like review-error).
 export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "child-unreachable", "child-ask", "error", "hang"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
-  "review-allow": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow"}',
-  "review-deny": '{"verdict":"deny","entry":"secret-access","reason":"scripted deny"}',
-  "review-ask": '{"verdict":"ask","entry":"package-install","reason":"scripted ask"}',
-  "review-child-ask": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow (owner)"}',
-  "review-child-unreachable": '{"verdict":"allow","entry":"read-only-inspection","reason":"scripted allow (owner)"}',
+  "review-allow": '{"verdict":"allow","entry":"A1","reason":"scripted allow"}',
+  "review-deny": '{"verdict":"deny","entry":"D1","reason":"scripted deny"}',
+  "review-ask": '{"verdict":"escalate","entry":null,"reason":"scripted ask"}',
+  "review-child-ask": '{"verdict":"allow","entry":"A1","reason":"scripted allow (owner)"}',
+  "review-child-unreachable": '{"verdict":"allow","entry":"A1","reason":"scripted allow (owner)"}',
   "review-invalid": '{"verdict":"allow","entry":"not-an-entry"}',
 };
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;

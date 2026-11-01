@@ -8,6 +8,14 @@
   "properties": {
     "version": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Config format version." },
     "profile": { "type": ["string", "null"], "description": "The setup profile recorded by `foreman setup` (orchestration, standard or full); null = none chosen yet. User or overlay config only." },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The rules-first permission system.",
+      "properties": {
+        "profile": { "type": ["string", "null"], "description": "The permission profile. Honoured in the user, organisation and default layers only." }
+      }
+    },
     "rankTiers": { "type": "object", "description": "Preset template only (config/presets/inexpensive.json): roles named by rank tier, resolved to models by `foreman config apply-preset` and removed from the written file. The runtime never reads it." },
     "displayNames": {
       "type": ["string", "object"],
@@ -564,17 +572,10 @@
       "properties": {
         "mode": { "type": "string", "enum": ["full", "floors-only"], "description": "Temporary, until the permission redesign. full (default): the whole gate. floors-only: only the floors decide (plus the unclear-push deny); every other tool call runs without review, dialog or ask. User config or overlay only; a project value is dropped." },
         "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
-        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a round session waits for the owner's ruling-<n>.md before the call is denied, in ms (default 900000)." },
+        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a child waits for its parent's ruling-<n>.md before the call is denied, in ms (default 900000). The value only bounds a child's ask wait; a session opened by another session asks in its own pane and has no timeout while the owner is present." },
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "tmpAccess": { "type": "boolean", "description": "Writes (and for the owner reads) under the OS temp dirs are allowed (default true)." },
-        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." },
-        "policy": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "userFile": { "type": ["string", "null"], "description": "The user's own policy file (absolute, ~/... or relative to the agent dir); null = none." }
-          }
-        }
+        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." }
       }
     },
     "safety": {
@@ -582,14 +583,6 @@
       "description": "Safety policy. An invalid value in a layer is dropped from that layer with a warning; the other layers still apply. The project layer can only tighten it.",
       "additionalProperties": false,
       "properties": {
-        "policy": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Tool gate policy files.",
-          "properties": {
-            "files": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Extra policy files of the owner's overlay, merged after the shipped and the user policy: absolute, ~/... or relative to the agent dir." }
-          }
-        },
         "requiredChildExtensions": { "type": "array", "items": { "type": "string" }, "description": "Extension paths every child must load. A project can add entries, not remove them." },
         "children": {
           "type": "object",

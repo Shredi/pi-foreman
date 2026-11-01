@@ -2,12 +2,15 @@
 // (reviewer for the scratch, selfMod human dialog for the rest) is gone; the gate's rules decide, and what they leave goes to the review
 // (stubbed here: an allowing stub for the scratch lines, an asking stub for the rest, so the owner gets one gate dialog). Modelled on
 // r16-auto-review.test.ts (real adapter via _r11rig).
+// r79 item 11: the selfmod rule asks the owner (no classifier call); a target the parser cannot resolve is the dangerous class (an ask, the classifier
+// has no model here); a plain scratch write is no rule and not dangerous, so mode auto runs it.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { gateOutcome, r11Rig, reviewAllowOpts } from "./_r11rig.ts";
+import { SHELL_WRITE_REFUSAL } from "../shellwriteguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 type Case = { name: string; line: string };
@@ -21,18 +24,18 @@ let calls = 0;
 const base = reviewAllowOpts();
 const modelRegistry = { ...(base.ctx.modelRegistry as object), complete: async () => (calls++, { content: [{ type: "text", text: answer }], stopReason: "stop" }) };
 let dialogs = 0;
-const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with reason"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
+const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with comment"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
 const rig = await r11Rig({ after }, {}, { ctx: { modelRegistry, ui }, config: base.config });
 const H = rig.handoff("own", "child");
 fs.mkdirSync(path.join(rig.project, ".pi", "scratch"), { recursive: true });
 
-async function run(tool: string, input: Record<string, unknown>, stub: "allow" | "ask"): Promise<{ outcome: string; dialogs: number; calls: number }> {
+async function run(tool: string, input: Record<string, unknown>, stub: "allow" | "ask"): Promise<{ outcome: string; dialogs: number; calls: number; reason?: string }> {
   answer = stub === "allow" ? reply("allow", "scratch-writes") : reply("ask", "tool-config-edit");
   const d0 = dialogs;
   const c0 = calls;
   const n0 = rig.trace().length;
-  await rig.call(tool, input);
-  return { outcome: gateOutcome(rig.trace().slice(n0)), dialogs: dialogs - d0, calls: calls - c0 };
+  const res = await rig.call(tool, input);
+  return { outcome: gateOutcome(rig.trace().slice(n0)), dialogs: dialogs - d0, calls: calls - c0, reason: res?.block ? res.reason : undefined };
 }
 const fill = (s: string): string => s.replace(/\{H\}/g, inBash(H));
 const bash = (line: string, stub: "allow" | "ask") => run("bash", { command: fill(line) }, stub);
@@ -44,12 +47,13 @@ for (const c of FX.reviewable) {
   });
 }
 
-// a target the parser cannot resolve (variable, glob, command substitution) is no selfmod rule hit: the review judges it (it asks here)
-const UNRESOLVED = /^scratch_(var|braced_var|glob|subst)_dotdot$/;
+// ruling-10: every selfMod line is a foreman shell write into project files, which the edit mode refuses; the refusal comes before the selfmod rule's
+// dialog and before the review (an unresolvable target included), so there is no dialog and no model call
 for (const c of FX.selfMod) {
-  test(`r17 selfMod ${c.name}: ${UNRESOLVED.test(c.name) ? "the review asks, one dialog" : "the selfmod rule asks, one dialog, no model call"}`, async () => {
+  test(`r17 selfMod ${c.name}: the shell write refusal, no dialog, no model call`, async () => {
     const r = await bash(c.line, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], UNRESOLVED.test(c.name) ? ["dialog:ask:deny with reason", 1, 1] : ["dialog:selfmod:deny with reason", 1, 0]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["pass", 0, 0]);
+    assert.ok(r.reason?.includes(SHELL_WRITE_REFUSAL), String(r.reason));
   });
 }
 
@@ -63,6 +67,6 @@ for (const c of FX.reviewableTool) {
 for (const c of FX.selfModTool) {
   test(`r17 selfMod tool ${c.name}: the selfmod rule asks, one dialog, no model call`, async () => {
     const r = await run(c.tool, c.input, "ask");
-    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:selfmod:deny with reason", 1, 0]);
+    assert.deepEqual([r.outcome, r.dialogs, r.calls], ["dialog:selfmod:comment", 1, 0]);
   });
 }

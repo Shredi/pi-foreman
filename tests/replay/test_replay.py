@@ -57,6 +57,13 @@ class ReplayCase(unittest.TestCase):
         self.addCleanup(r.close)  # runs after errors and failures too
         return r
 
+    def user_permissions(self, rig, body):
+        """Write the user permissions file (`<agent>/pi-foreman/permissions.json`) before the rig starts: pattern rules (`allow`, `ask`, `deny`)
+        and the classifier whitelist (`classifier.allow` / `classifier.deny`). Without a whitelist the classifier makes no model call."""
+        d = rig.agent / "pi-foreman"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "permissions.json").write_text(json.dumps(body), "utf-8")
+
     def assert_default_role_launch(self, records):
         """Ledger item 26: a gate record names `default-role-launch` for the owner's role launch (no review call stands in for it)."""
         rules = [r.get("rule") for r in records if r.get("event") == "guard" and r.get("guard") == "gate" and r.get("toolFamily") == "subagent"]

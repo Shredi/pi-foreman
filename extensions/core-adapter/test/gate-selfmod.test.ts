@@ -85,5 +85,5 @@ test("a child's read of other sessions' state is denied; its own handoff dir and
 
 test("the ask never carries a model: the result is a plain ask record (the gate calls no reviewer)", () => {
   const r = g("write", { path: ".pi/settings.json", content: "x" });
-  assert.deepEqual(Object.keys(r as object).sort(), ["ask", "reason", "rule"]);
+  assert.deepEqual(Object.keys(r as object).sort(), ["ask", "cause", "reason", "rule"]); // r79 item 5: the record carries its cause
 });

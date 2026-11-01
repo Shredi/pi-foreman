@@ -34,6 +34,8 @@ for (const line of LINES) {
     const res = await rig.call("bash", { command: line.replace(/\{up\}/g, inBash(up)).replace(/\{own\}/g, inBash(own)).replace(/\{S\}/g, inBash(S)) });
     const recs = rig.trace().slice(n0);
     assert.equal(res?.block, true, JSON.stringify(recs));
+    // ruling-10: the mv into the project is a foreman shell write the edit mode refuses before the gate, so it never reaches the self_ruling guard
+    if (line.startsWith("mv ")) return assert.ok(recs.some((x) => x.event === "shell_write_refused" && x.kind === "mv"), JSON.stringify(recs));
     assert.ok(recs.some((x) => x.event === "guard" && (x.guard === "self_ruling" || (x.guard === "gate" && x.decision === "blocked"))), JSON.stringify(recs));
   });
 }

@@ -1,9 +1,12 @@
-// Ledger item 26: the session's own single role launch is a deterministic gate allow (`default-role-launch`), with no review model.
+// Ledger item 26: the session's own single role launch is a deterministic gate allow (`default-role-launch`), with no classifier model.
+// r79 item 11: an unmatched call that is not of the dangerous class runs in mode auto, so an unknown agent is no longer asked about.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
 import { toolDefault } from "../defaults.ts";
-import { noReviewModelText } from "../reviewwarn.ts";
+import { NO_MODEL_NOTICE } from "../classifier.ts";
 
 const ROLES = ["explorer", "builder", "reviewer"];
 let completes = 0;
@@ -41,23 +44,22 @@ test("no review model: each role launch is allowed with no dialog and no review 
   }
 });
 
-test("an unknown agent still asks the owner and is denied headless", async (t) => {
-  const owner = await rig(t);
-  const o = await owner.launch({ agent: "scout", task: "x" });
-  assert.equal(o.res?.block, true);
-  assert.equal(selects, 1, "the owner dialog");
-  const headless = await rig(t, { hasUI: false, mode: "print" });
-  const h = await headless.launch({ agent: "scout", task: "x" });
-  assert.equal(h.res?.block, true);
-  assert.equal(selects, 0);
-  assert.match(String(h.res?.reason), /the permission review is unreachable/);
+test("an unknown agent is no default allow but is no gate ask either: mode auto runs it, with no dialog and no classifier call", async (t) => {
+  for (const ctx of [{}, { hasUI: false, mode: "print" }]) {
+    const r = await rig(t, ctx);
+    const o = await r.launch({ agent: "scout", task: "x" });
+    // the adapter's own role check refuses a non-role agent; the gate itself neither asks nor calls a model
+    assert.match(String(o.res?.reason), /is not a pi-foreman role/);
+    assert.equal(selects, 0);
+    assert.equal(completes, 0);
+    assert.ok(!gateRecs(r.trace()).some((x) => x.rule === "default-role-launch"));
+  }
 });
 
-test("a management action, a workflow and a group with a non-role agent are not covered", async (t) => {
+test("a management action, a workflow and a group with a non-role agent are not the role-launch default", async (t) => {
   for (const input of [{ action: "create", config: { name: "x" } }, { action: "schedule.create" }, { chain: [{ agent: "scout", task: "x" }] }, { tasks: [{ agent: "scout", task: "x" }] }]) {
     const r = await rig(t, { hasUI: false, mode: "print" });
-    const { res } = await r.launch(input);
-    assert.equal(res?.block, true, JSON.stringify(input));
+    await r.launch(input);
     assert.ok(!gateRecs(r.trace()).some((x) => x.rule === "default-role-launch"), JSON.stringify(input));
   }
 });
@@ -69,18 +71,13 @@ test("a launch the adapter's gates refuse stays refused (the default does not by
   assert.ok(gateRecs(r.trace()).some((x) => x.rule === "default-role-launch"), "the gate allowed it first");
 });
 
-test("the first gate review that finds no model shows one notice naming the key; once per session", async (t) => {
+test("the first classifier call that finds no model shows one notice naming the key; once per session", async (t) => {
   const r = await rig(t, { hasUI: false, mode: "print" });
-  await r.call("bash", { command: "terraform plan" });
-  await r.call("bash", { command: "terraform apply" });
+  fs.mkdirSync(path.join(r.agentDir, "pi-foreman"), { recursive: true });
+  fs.writeFileSync(path.join(r.agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ classifier: { allow: ["Apply terraform changes"] } }));
+  await r.call("bash", { command: "terraform apply -auto-approve" });
+  await r.call("bash", { command: "terraform destroy -auto-approve" });
   const n = notes.filter((m) => m.includes("providers.<p>.roles.review.model"));
   assert.equal(n.length, 1, JSON.stringify(notes));
-  assert.ok(n[0].includes(noReviewModelText("fake")));
-});
-
-test("the warning text names the key and the role launches", () => {
-  const w = noReviewModelText("p");
-  assert.match(w, /^no review model for provider p: /);
-  assert.match(w, /providers\.<p>\.roles\.review\.model/);
-  assert.match(w, /Role launches/);
+  assert.equal(n[0], NO_MODEL_NOTICE);
 });
