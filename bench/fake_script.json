@@ -297,13 +297,13 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "uname -s"
+       "command": "pip install requests"
       }
      }
     ]
    },
    {
-    "text": "[[replay:rp_b2]] built (the platform check was not allowed)"
+    "text": "[[replay:rp_b2]] built (the install was not allowed)"
    }
   ],
   "rp_r2": [
