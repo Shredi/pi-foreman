@@ -11,7 +11,7 @@
 Verbatim from [install](install.md#install):
 
 ```text
-Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+.
+Needs Node 22.19+, Pi 1.4.x on `PATH` and Python 3.13+.
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
 pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/settings.json)
 /foreman setup --dry-run   # inside Pi: show the planned changes, write nothing
@@ -55,7 +55,6 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-panel](#review-panel) | review |  | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
 | [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
-| [self-planning](#self-planning) | ceremony |  | on | `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
@@ -74,7 +73,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
 | [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
-| [review-critic](#review-critic) | review |  | on | Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
+| [review-critic](#review-critic) | review |  | on | Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track, pr_untrack): the foreman opens a PR after a reviewer PASS and a watch wakes it when checks finish or a comment lands. Pushed, searched, acted-on and touched PRs are tracked by host, owner, repo and number, shown in a PR widget above the editor and, with the shared watch, with review requests and failing bot PRs. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
@@ -195,12 +194,12 @@ Switch: `providers` is non-empty.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `planner`: `["read", "ls", "grep", "find", "write", "edit"]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
-| `roles.<x>.denyTools` | `planner`: `["mcp__*"]`, `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]`, `senior-reviewer`: `["mcp__*"]` | any layer |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
+| `roles.<x>.denyTools` | `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
-| `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `planner`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `[]`, `senior-reviewer`: `[]`, `finalizer`: `[]` | not in project/session (the skills a role gets come from the user or overlay config) |
-| `roles.<x>.launch` | `planner`: `"detached"`, `explorer`: `"detached"`, `builder`: `"detached"`, `reviewer`: `"detached"`, `senior-reviewer`: `"detached"`, `finalizer`: `"detached"` | not in project/session (the launch mode comes from the user or overlay config) |
-| `roles.<x>.timeoutMinutes` | `planner`: `20`, `explorer`: `20`, `builder`: `60`, `reviewer`: `30`, `senior-reviewer`: `45`, `finalizer`: `30` | tighten-only (lower only, minimum 1) |
+| `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `["security-review"]` | not in project/session (the skills a role gets come from the user or overlay config) |
+| `roles.<x>.launch` | `explorer`: `"detached"`, `builder`: `"detached"`, `reviewer`: `"detached"` | not in project/session (the launch mode comes from the user or overlay config) |
+| `roles.<x>.timeoutMinutes` | `explorer`: `20`, `builder`: `60`, `reviewer`: `30` | tighten-only (lower only, minimum 1) |
 | `ceremony.childTimeoutSeconds` | `1800` | tighten-only (lower only, minimum 1) |
 | `ceremony.launchTimeoutCapMinutes` | `120` | tighten-only (lower only, minimum 1, at most 120 without an earlier value) |
 | `mcp.directProviders` | unset | not in project/session (the providers that get MCP tools declared up front come from the user or overlay config) |
@@ -212,7 +211,7 @@ Switch: `providers` is non-empty.
 | Key | Default | Layer |
 |---|---|---|
 | `displayNames` | `"classic"` | any layer |
-| `displayPresets.<x>` | `classic`: `{"foreman": "Picard", "planner": "Hannibal", "explorer": "Dora", "builder": "Bob", "reviewer": "Watson", "senior-reviewer": "Sherlock", "finalizer": "Gandalf"}`, ... (see `config/foreman.defaults.json`) | any layer |
+| `displayPresets.<x>` | `classic`: `{"foreman": "Picard", "explorer": "Dora", "builder": "Bob", "reviewer": "Watson"}`, `plain`: `{"foreman": "foreman", "explorer": "explorer", "builder": "builder", "reviewer": "reviewer"}` | any layer |
 
 ### codemode
 
@@ -222,7 +221,7 @@ Switch: `roles.foreman.codemode` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `roles.<x>.codemode` | `foreman`: `true`, `session-foreman`: `false`, `planner`: `false`, `explorer`: `true`, `builder`: `false`, `reviewer`: `false`, `senior-reviewer`: `false`, `finalizer`: `false` | tighten-only (only false is accepted) |
+| `roles.<x>.codemode` | `foreman`: `true`, `session-foreman`: `false`, `explorer`: `true`, `builder`: `false`, `reviewer`: `false` | tighten-only (only false is accepted) |
 | `providers.<x>.roles.<x>.codemode` | unset | tighten-only (only false is accepted) |
 
 ### ladder
@@ -325,14 +324,6 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 | `ceremony.reviewByOccasion.second-opinion.thinking` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
 | `ceremony.reviewByOccasion.second-opinion.model` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
 
-### self-planning
-
-**Self-planning at heavy.** `ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's.
-
-| Key | Default | Layer |
-|---|---|---|
-| `ceremony.planner` | `"self"` | any layer |
-
 ### checkpoint-verdict
 
 **Plan checkpoint verdict by parent file.** A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session.
@@ -393,7 +384,7 @@ No config key.
 | `ceremony.trivialBound.newFiles` | `0` | tighten-only (lower only) |
 | `ceremony.required.trivial` | `["builder"]` | tighten-only (entries are added, never removed) |
 | `ceremony.required.standard` | `["builder", "reviewer"]` | tighten-only (entries are added, never removed) |
-| `ceremony.required.heavy` | `["planner", "builder", "reviewer", "finalizer"]` | tighten-only (entries are added, never removed) |
+| `ceremony.required.heavy` | `["builder", "reviewer"]` | tighten-only (entries are added, never removed) |
 | `ceremony.foremanEdits` | `"scratchpad"` | tighten-only (toward readonly; tightest first: readonly, scratchpad, bounded) |
 | `ceremony.scratchDir` | `".workflow/scratch"` | tighten-only (narrow only: a subfolder of the earlier value) |
 | `ceremony.reviewGate` | `"pass"` | tighten-only (toward pass; tightest first: pass, verdict) |
@@ -516,7 +507,7 @@ No config key.
 
 ### review-critic
 
-**Review critic questions.** Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.
+**Review critic questions.** Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -917,7 +908,7 @@ An overlay or a setup agent must not break these:
 - Public-repo rule: pi-foreman is generic and public. Hosts, names, private paths and model-map details of one installation belong in that installation's overlay, never in this repository.
 - Tighten-only safety: the project and session layers may only make `safety.*` and the keys marked tighten-only stricter, so a cloned repository cannot loosen your guards.
 - Project trust: the project layer `.pi/foreman.json` is read only after Pi's project trust is resolved; project packages also load only after trust.
-- Role ids stay neutral (`foreman`, `planner`, `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`); display names come only from config.
+- Role ids stay neutral (`foreman`, `explorer`, `builder`, `reviewer`); display names come only from config.
 - Setup owns the `subagents` block in `settings.json`: put your rules into `foreman.json` and your policy file, a hand edit of the generated block is overwritten.
 - Children never open PRs and reach the foreman through `contact_supervisor`, never through pi-intercom.
 

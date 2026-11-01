@@ -1,0 +1,30 @@
+ pi-foreman setup  Apply                                                               7/7
+✓ Update pi-foreman  0.9.2 → 0.9.3
+⠋ Update pi-intercom  0.16.2 → 0.17.0
+· Install add-on pi-polish  0.1.2
+
+1 of 3 steps done
+Log
+pi update git:github.com/Shredi/pi-foreman
+pi-foreman 0.9.2 -> 0.9.3
+pi install npm:pi-intercom@0.17.0
+resolving npm:pi-intercom@0.17.0
+fetching registry metadata
+extracting package
+linking into ~/.pi/agent/packages
+Esc back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1-7 screens, Tab/arrow navigate, q quit

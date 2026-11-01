@@ -49,9 +49,9 @@ test("revision rounds: limits per tier, PASS opens none, a review before any bui
 });
 
 test("MAJOR-1: every builder entry after a review step in a chain is a round; the whole call is refused over the limit", () => {
-  const chain = { chain: [{ agent: "builder", task: "a" }, { agent: "reviewer" }, { agent: "builder", task: "fix {previous}" }, { parallel: [{ agent: "reviewer" }, { agent: "senior-reviewer" }] }, { agent: "builder" }] };
+  const chain = { chain: [{ agent: "builder", task: "a" }, { agent: "reviewer" }, { agent: "builder", task: "fix {previous}" }, { parallel: [{ agent: "reviewer" }, { agent: "explorer" }] }, { agent: "builder" }] };
   const steps = launchSteps(chain);
-  assert.deepEqual(steps, [["builder"], ["reviewer"], ["builder"], ["reviewer", "senior-reviewer"], ["builder"]]);
+  assert.deepEqual(steps, [["builder"], ["reviewer"], ["builder"], ["reviewer", "explorer"], ["builder"]]);
   const heavy = checkLaunch(initialRounds(), steps, "heavy", undefined);
   assert.deepEqual([heavy.revisions, heavy.block, heavy.next.used], [2, undefined, 2]);
   assert.match(checkLaunch(initialRounds(), steps, "standard", undefined).block ?? "", /revision limit for standard reached \(1\).*rounds to 2/);
@@ -180,21 +180,21 @@ test("MINOR-6: foreman_copy/foreman_move destinations count toward heavyFileCoun
 
 test("model map checks: registry gaps, auth gaps and the reviewer family warning", () => {
   assert.deepEqual(["anthropic/claude-sonnet-4-5:high", "openai/gpt-5", "o3-mini", "gemini-2.5-pro", "vendor/acme-large"].map(modelFamily), ["claude", "gpt", "gpt", "gemini", "acme"]);
-  const config = { providers: { p: { fallback: { provider: "q" }, roles: { builder: { model: "p/claude-a", strong: { model: "p/claude-b" } }, reviewer: { model: "p/claude-c" } } }, q: { roles: { finalizer: { model: "q/x" } } } } };
+  const config = { providers: { p: { fallback: { provider: "q" }, roles: { builder: { model: "p/claude-a", strong: { model: "p/claude-b" } }, reviewer: { model: "p/claude-c" } } }, q: { roles: { explorer: { model: "q/x" } } } } };
   const known = new Set(["p/claude-a", "p/claude-c"]);
   const registry = { find: (p: string, id: string) => (known.has(`${p}/${id}`) ? {} : undefined), getProviderAuthStatus: (p: string) => ({ configured: p === "p" }), getAvailable: () => [{ provider: "p", id: "claude-a" }, { provider: "p", id: "gpt-5" }, { provider: "z", id: "gemini" }] };
   const gaps = modelGaps(config, "p", registry);
-  assert.deepEqual(gaps, ["model p/claude-b (providers.p.roles.builder.strong) is not in the model registry", "model q/x (providers.q.roles.finalizer) is not in the model registry", "no auth for provider q, which the map for p uses"]);
-  const roles = { builder: { model: "p/claude-a", strong: { model: "p/claude-b" } }, reviewer: { model: "p/claude-c" }, "senior-reviewer": { model: "p/gpt-5" } };
+  assert.deepEqual(gaps, ["model p/claude-b (providers.p.roles.builder.strong) is not in the model registry", "model q/x (providers.q.roles.explorer) is not in the model registry", "no auth for provider q, which the map for p uses"]);
+  const roles = { builder: { model: "p/claude-a", strong: { model: "p/claude-b" } }, reviewer: { model: "p/claude-c" } };
   const w = familyWarnings(roles, "p", registry);
   assert.equal(w.length, 1);
   assert.match(w[0], /the reviewer \(p\/claude-c\) and the builder share the model family claude on p.*for example p\/gpt-5/);
   assert.deepEqual(familyWarnings(roles, "p", { ...registry, getAvailable: () => [{ provider: "p", id: "claude-z" }] }), [], "no other family on offer: no warning");
 });
 
-test("H4 pin: the reviewer roles are read-only with a shell", () => {
+test("H4 pin: the reviewer role is read-only with a shell", () => {
   const base = ["read", "ls", "grep", "find", "bash"];
-  const wants: Record<string, string[]> = { reviewer: base, "senior-reviewer": base };
+  const wants: Record<string, string[]> = { reviewer: base };
   const defaults = JSON.parse(fs.readFileSync(path.join(PKG, "config", "foreman.defaults.json"), "utf8"));
   for (const [role, want] of Object.entries(wants)) {
     assert.deepEqual(defaults.roles[role].tools, want, role);

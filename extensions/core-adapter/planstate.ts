@@ -49,7 +49,7 @@ export interface CeremonyStateEntry {
   /** The effective tier and the source of its last change (null in an entry from before they were recorded). */
   tier: Tier | null;
   tierSource: TierSource | null;
-  /** The plan phase is on (index.ts): .workflow-only writes, no builder or finalizer launch. */
+  /** The plan phase is on (index.ts): .workflow-only writes, no builder launch. */
   planPhase: boolean;
 }
 

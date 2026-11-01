@@ -40,9 +40,9 @@ test("ledgerblock: reviewers get the cited items, else the whole ledger; cwd = a
   const wt = fs.mkdtempSync(path.join(os.tmpdir(), "fm-wt-"));
   try {
     const cited = { agent: "reviewer", task: "review item 1", cwd: wt };
-    const whole = { agent: "senior-reviewer", task: "review the diff", cwd: wt };
+    const whole = { agent: "reviewer", task: "review the diff", cwd: wt };
     const recs = applyLedgerItems({ tasks: [cited, whole] }, LEDGER);
-    assert.deepEqual(recs.map((r) => r.role), ["reviewer", "senior-reviewer"]);
+    assert.deepEqual(recs.map((r) => r.role), ["reviewer", "reviewer"]);
     assert.match(cited.task, /^\[pi-foreman ledger items\][\s\S]*1\. add the parser[\s\S]*\nreview item 1$/);
     assert.doesNotMatch(cited.task, /wire the flag/);
     assert.match(whole.task, /^\[pi-foreman ledger\][\s\S]*# L\n\nTier: standard\n\n- \[ \] 1\. add the parser\n- \[x\] 2\. wire the flag[\s\S]*\[end of ledger\]\nreview the diff$/);

@@ -1,6 +1,6 @@
-"""Replay: self-planning at heavy (`ceremony.planner: self`, the default) on the fake provider.
+"""Replay: the foreman-written plan at heavy on the fake provider.
 
-The foreman writes `.workflow/scratch/plan-<topic>.md` itself and launches no planner. One `[plan-review]`
+The foreman writes `.workflow/scratch/plan-<topic>.md` itself. One `[plan-review]`
 reviewer run opens the checkpoint; an appended `## Ruling` section is outside the plan version, so it triggers no
 second review, the approval stands and the builder launch is allowed (trace `plan_version`: the body hash stays,
 the bytes hash moves). With the review cap of 2, two FAILs on two plan versions open the checkpoint with the
@@ -28,9 +28,9 @@ def plan_shape(rig, sid):
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
-class TestPlanSelf(ReplayCase):
+class TestPlanForeman(ReplayCase):
     def test_foreman_plan_one_review_ruling_append_builder_allowed(self):
-        rig = self.rig("ps-self", load_fixture("plan_self"), config=CONFIG)
+        rig = self.rig("ps-self", load_fixture("plan_foreman"), config=CONFIG)
         pi = rig.start()
         sid = pi.session_id()
         res = tool_results(pi.prompt("[[replay:s1]] build it", timeout=60))
@@ -43,7 +43,7 @@ class TestPlanSelf(ReplayCase):
         self.assertIn("already approved by the owner", res[2][2], "the ruling append neither re-triggers review nor resets the approval")
         pi.wait_child_notify(timeout=180)
         pi.close()
-        self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["reviewer", "builder"], "one plan-review launch, no planner")
+        self.assertEqual([r["role"] for r in events(rig, sid, "role_launch")], ["reviewer", "builder"], "one plan-review launch")
         self.assertEqual([(r["decision"], r.get("reason")) for r in events(rig, sid, "checkpoint")], [("refused", "plan_review_required"), ("approve", None), ("approve", None)])
         self.assertEqual(events(rig, sid, "launch_refused"), [])
         self.assertEqual(len(events(rig, sid, "plan_review")), 1)
@@ -51,10 +51,10 @@ class TestPlanSelf(ReplayCase):
         self.assertEqual(len(versions), 3)
         self.assertEqual(versions[0]["to"], versions[2]["to"], "same plan version before and after the ruling")
         self.assertNotEqual(versions[0]["from"], versions[2]["from"], "the bytes hash moved with the appended ruling")
-        self.golden("plan_self", {"foreman": plan_shape(rig, sid)})
+        self.golden("plan_foreman", {"foreman": plan_shape(rig, sid)})
 
     def test_review_cap_of_two_honoured_per_plan_version(self):
-        rig = self.rig("ps-cap", load_fixture("plan_self"), config=CONFIG)
+        rig = self.rig("ps-cap", load_fixture("plan_foreman"), config=CONFIG)
         pi = rig.start()
         sid = pi.session_id()
         pi.prompt("[[replay:k1]] build it", timeout=60)
