@@ -57,6 +57,7 @@
     "recheckBudget": 3,
     "launchWait": "detach", "childBashTimeoutSeconds": 600, "childBashTimeoutMaxSeconds": 1800,
     "dedupeNotify": true,
+    "longCommands": ["npm test", "npm run test", "npx vitest", "npx jest", "node --test", "pytest", "python -m unittest", "python -m pytest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "make test", "pnpm test", "yarn test"],
     "reviewGate": "pass",
     "orientation": { "enabled": true, "maxLines": 120 },
     "ledgerHelper": "tool",

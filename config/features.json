@@ -295,7 +295,7 @@
       "title": "Launch wait and fan-out",
       "purpose": "Returns a foreman launch at once with its receipt (the completion notice starts the next turn; \"block\" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children.",
       "doc": "docs/ceremony.md#triage-and-delegation",
-      "keys": ["ceremony.launchWait", "ceremony.dedupeNotify", "fanout.max"],
+      "keys": ["ceremony.launchWait", "ceremony.dedupeNotify", "ceremony.longCommands", "fanout.max"],
       "commands": [],
       "switch": null,
       "state": "on",
