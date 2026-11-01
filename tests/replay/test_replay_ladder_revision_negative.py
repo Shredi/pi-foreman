@@ -50,8 +50,10 @@ class TestLadderRevisionNegative(ReplayCase):
         builders, revs, rungs = self.run_case("ladder_two_builders_phase", 4)
         self.assertEqual(revs, [("climb", "review_fail")])  # only the first builder is a revision
         self.assertEqual([r["event"] for r in rungs], ["rung_up"])
-        self.assertEqual(builders[:2], [("first", "builder"), ("strong-relaunch", "finalizer")])
-        self.assertEqual(builders[2][1], "builder")  # the P2 builder stays on the bottom rung
+        # builders run in parallel and usage lines are written at run end: order varies
+        self.assertIn(("first", "builder"), builders)
+        self.assertIn(("strong-relaunch", "finalizer"), builders)
+        self.assertEqual(sorted(m for _, m in builders), ["builder", "builder", "finalizer"])  # the P2 builder stays on the bottom rung
 
     def test_explicit_keyword_after_fail_traces_keyword_and_does_not_climb(self):
         builders, revs, rungs = self.run_case("ladder_builder_keyword", 4)
