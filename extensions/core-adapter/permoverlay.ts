@@ -80,6 +80,8 @@ import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead, gitReadWrites } from "./effects.ts";
+import { forEachChild, parse } from "unbash";
+import type { SyntaxNode } from "unbash";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
@@ -2629,48 +2631,24 @@ function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
   return scratchOnlyWriter(command, ctx) ? null : deny;
 }
 
-const HEREDOC_OPEN = /<<(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([^\s|;&<>()'"]+))/y;
-
-/**
- * The command with the body lines of its heredocs removed (the `<<WORD` line and the delimiter line stay), or null when it cannot be read with
- * certainty (fail closed): a `<<` inside quotes or a comment, a delimiter that is not a plain word, a heredoc that is never closed.
- */
-function withoutHeredocBodies(command: string): string | null {
-  const out: string[] = [];
-  const pending: { word: string; dash: boolean }[] = [];
-  let quote = "";
-  for (const line of command.split("\n")) {
-    if (pending.length) {
-      const p = pending[0];
-      if ((p.dash ? line.replace(/^\t+/, "") : line) === p.word) pending.shift();
-      continue;
-    }
-    out.push(line);
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (quote && c === "<" && line[i + 1] === "<") return null;
-      if (quote === "'") {
-        if (c === "'") quote = "";
-      } else if (c === "\\") i++;
-      else if (quote === '"') {
-        if (c === '"') quote = "";
-      } else if (c === "'" || c === '"') quote = c;
-      else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
-        if (line.includes("<<", i)) return null;
-        break;
-      } else if (c === "<" && line[i + 1] === "<") {
-        if (line[i + 2] === "<") i += 2;
-        else {
-          HEREDOC_OPEN.lastIndex = i;
-          const m = HEREDOC_OPEN.exec(line);
-          if (!m) return null;
-          pending.push({ word: m[2] ?? m[3] ?? m[4], dash: m[1] === "-" });
-          i += m[0].length - 1;
-        }
-      }
-    }
+/** The number of heredoc and here-string operators unbash finds in the script; null when it does not parse or a heredoc is never closed. */
+function heredocOperators(command: string): number | null {
+  let script: ReturnType<typeof parse>;
+  try {
+    script = parse(command);
+  } catch {
+    return null;
   }
-  return pending.length ? null : out.join("\n");
+  if (script.errors?.length) return null;
+  let open = false;
+  const walk = (n: SyntaxNode): number => {
+    let k = n.type === "HereDoc" || n.type === "HereString" ? 1 : 0;
+    if (n.type === "HereDoc" && !(n as { closing?: unknown }).closing) open = true;
+    forEachChild(n, (c) => { k += walk(c); });
+    return k;
+  };
+  const k = walk(script as unknown as SyntaxNode);
+  return open ? null : k;
 }
 
 /**
@@ -2694,30 +2672,23 @@ function scratchHeredocWrite(command: string, ctx: MatchCtx): boolean {
     try { if (fs.lstatSync(abs).isSymbolicLink()) return false; } catch { /* absent: a new file */ }
     return abs !== scratch && insideDir(scratch, abs, ctx) && realOf(abs) !== realScratch && insideDir(realScratch, realOf(abs), ctx);
   };
-  const bodiless = withoutHeredocBodies(command);
-  if (bodiless === null) return false;
-  const units: string[][] = [[]];
-  for (const m of bodiless.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "").matchAll(SHELL_WORD)) {
-    if (/^[|;&\n]/.test(m[0])) units.push([]);
-    else units[units.length - 1].push(m[0]);
-  }
+  // the targets come from the parser's segments; whatever it flags as opaque or cannot parse (an unterminated quote, `$((a<<b))`, `$'\''`)
+  // keeps the deny, and so does a heredoc operator that the segments do not account for
+  const segs = parseAst(command, { cwd, platform: ctx.platform, env: { FOREMAN_SCRATCH: scratch } });
+  const operators = heredocOperators(command);
+  if (operators === null || segs.length === 0 || operators !== segs.filter((sg) => sg.heredoc).length) return false;
   let targets = 0;
-  for (const u of units) {
-    const words = u.map(unquote);
-    const k = words.findIndex((w) => w === "cat" || w === "tee");
-    if (k < 0) continue;
-    const rest = u.slice(k + 1);
-    for (let j = 0; j < rest.length; j++) {
-      const m = /^(?:\d*|&)>>?(.*)$/.exec(rest[j]);
-      if (m) {
-        const t = m[1] || rest[++j];
-        if (t === undefined || !strictlyIn(unquote(t))) return false;
-        targets++;
-      } else if (rest[j].includes(">")) return false;
-      else if (words[k] === "tee" && !rest[j].startsWith("-") && !rest[j].startsWith("<")) {
-        if (!strictlyIn(unquote(rest[j]))) return false;
-        targets++;
-      }
+  for (const sg of segs) {
+    // the variable grammar stops at a heredoc line, so a plain `$FOREMAN_SCRATCH/x` word is unresolved there; any other `$` or backtick is not
+    const plain = (w: string): boolean => !/[$`]/.test(w) || /^"?\$FOREMAN_SCRATCH\/[^\s$`\\"']*"?$/.test(w);
+    const tolerated = sg.opaque === "unresolved_var" ? [...sg.argv, ...sg.redirects.map((r) => r.target)].every(plain) : sg.opaque === "writing_wrapper" && sg.program === "tee";
+    if (sg.opaque && !tolerated) return false;
+    if (sg.program !== "cat" && sg.program !== "tee") continue;
+    const files = sg.redirects.filter((r) => r.op !== "<" && r.op !== "dup" && r.target !== "/dev/null").map((r) => r.target);
+    if (sg.program === "tee") files.push(...sg.argv.filter((w) => !w.startsWith("-")));
+    for (const f of files.map(unquote)) {
+      if (!strictlyIn(f)) return false;
+      targets++;
     }
   }
   return targets > 0;

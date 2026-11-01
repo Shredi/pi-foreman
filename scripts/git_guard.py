@@ -2297,20 +2297,28 @@ def foreman_checkout_root(ctx):
 def foreman_checkout_rule(sub, ctx, call, rest=()):
     """A worktree child's git write (`git -C <root> ...`, `cd <root>; git ...`, `--git-dir` / `--work-tree` at the root, the target of
     `git clone`) never lands in the foreman's checkout; its `.workflow/scratch/` and the child's own worktree (also when nested below
-    the checkout) are exempt."""
+    the checkout) are exempt. Where a mutating git command runs (cwd, `-C`, `--git-dir`, `--work-tree`) has no scratch exemption: a commit
+    run from `.workflow/scratch` still writes the foreman's repository; only a file target (clone destination, `--output`) may be scratch."""
     root = foreman_checkout_root(ctx)
-    if root is None or sub.lower() not in FOREMAN_FENCE_SUBS:
+    if root is None:
+        return OK
+    words = [w.text for w in rest]
+    outs = [w.split("=", 1)[1] for w in words if w.startswith("--output=")] + \
+        [words[i + 1] for i, w in enumerate(words[:-1]) if w == "--output"]
+    if sub.lower() not in FOREMAN_FENCE_SUBS and not outs:
         return OK
     under = lambda p, r: os.path.normcase(p) == os.path.normcase(r) or os.path.normcase(p).startswith(os.path.normcase(r) + os.sep)
     own = os.path.realpath(ctx.start_cwd)
     while not os.path.lexists(os.path.join(own, ".git")) and os.path.dirname(own) != own:
         own = os.path.dirname(own)
-    places = [call.cwd] + [p.split("=", 1)[1] for p in call.passthrough if p.startswith(("--git-dir=", "--work-tree="))]
+    run = [call.cwd] + [p.split("=", 1)[1] for p in call.passthrough if p.startswith(("--git-dir=", "--work-tree="))]
+    files = [os.path.join(call.cwd, o) for o in outs]
     if sub.lower() == "clone":
-        places += [os.path.join(call.cwd, w.text) for w in rest if not w.text.startswith("-")]
-    for place in places:
+        files += [os.path.join(call.cwd, w.text) for w in rest if not w.text.startswith("-")]
+    scratch = os.path.join(root, ".workflow", "scratch")
+    for place, is_file in [(p, False) for p in (run if sub.lower() in FOREMAN_FENCE_SUBS else [])] + [(p, True) for p in files]:
         real = os.path.realpath(place)
-        if under(real, root) and not under(real, os.path.join(root, ".workflow", "scratch")) and not under(real, own):
+        if under(real, root) and not (is_file and under(real, scratch)) and not under(real, own):
             return deny("write to %s denied: this child runs in its own worktree %s; the foreman's checkout %s is read-only for it "
                         "(read its .workflow/ ledger and plan there; only .workflow/scratch/ is writable). Use paths relative to your worktree; commit on your worktree's branch."
                         % (place, ctx.start_cwd, root))
