@@ -34,7 +34,7 @@ export interface PersistedRounds {
   /** The plan-review lineage of that plan, or null. */
   planReview: PersistedReview | null;
   chain: string;
-  chains: Record<string, { revisions: number; exempt: number; built: boolean; reviewOpen: boolean }>;
+  chains: Record<string, { revisions: number; exempt: number; built: boolean; reviewOpen: boolean; revisionAnswered?: boolean }>;
   reviewCount: number;
   planReviewCount: number;
   /** Watermark of the last caps reset by a parent ruling/brief (index.ts capsReset); absent = none. */
@@ -49,7 +49,7 @@ export function roundStateDir(env: NodeJS.ProcessEnv): string | null {
 
 /** The persisted form of the chains: revision counters and the open-review state, no security flag. */
 export function chainsOf(all: Map<string, RoundState>): PersistedRounds["chains"] {
-  return Object.fromEntries([...all].map(([k, s]) => [k, { revisions: s.used, exempt: s.exempt ?? 0, built: s.built, reviewOpen: s.reviewOpen }]));
+  return Object.fromEntries([...all].map(([k, s]) => [k, { revisions: s.used, exempt: s.exempt ?? 0, built: s.built, reviewOpen: s.reviewOpen, ...(s.revisionAnswered ? { revisionAnswered: true } : {}) }]));
 }
 
 /** Write the file (temp file + rename); a failure leaves the old file and is not fatal. */
@@ -113,7 +113,7 @@ export function restoreRoundState(dir: string, currentPlan: (topic: string) => {
     const used = count(c.revisions);
     const exempt = count(c.exempt);
     if (used === null || exempt === null) continue;
-    chains.set(k, { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, used, ...(exempt > 0 ? { exempt } : {}) });
+    chains.set(k, { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, used, ...(exempt > 0 ? { exempt } : {}), ...(c.revisionAnswered === true ? { revisionAnswered: true } : {}) });
   }
   const chain = typeof raw.chain === "string" && CHAIN_KEY.test(raw.chain) ? raw.chain : "main";
   return { chain, chains, reviewCount: count(raw.reviewCount) ?? 0, planReviewCount: count(raw.planReviewCount) ?? 0, capsResetAt: count(raw.capsResetAt) ?? 0, approval: plan ? approvalOf(dir, plan, raw.planReview, self) : null };

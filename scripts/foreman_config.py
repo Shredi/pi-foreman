@@ -118,6 +118,7 @@ Keys outside safety that the project and session layers cannot loosen either
     sessions.machines                ignored (the machines a session may open on over SSH: user or overlay config only)
     sessions.pull, sessions.ssh      ignored (the pull poll periods and SSH multiplexing: user or overlay config only)
     sessions.backend, sessions.hc    ignored (where a local session opens and the herdr-core options: user or overlay config only)
+    sessions.worktree                ignored (the branch prefix of `session open --worktree`: user or overlay config only)
     sessions.remoteInlineMaxBytes    lower only, minimum 1024 (a higher cap sends more of a remote result inline)
     compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
                                      the session layer is ignored with a warning (setup applies it)
@@ -245,6 +246,7 @@ IGNORED_KEYS = [
     (("sessions", "ssh"), "the SSH multiplexing switch comes from the user or overlay config"),
     (("sessions", "backend"), "where a local session opens comes from the user or overlay config"),
     (("sessions", "hc"), "the herdr-core session options come from the user or overlay config"),
+    (("sessions", "worktree"), "the branch prefix of a session's own worktree comes from the user or overlay config"),
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),

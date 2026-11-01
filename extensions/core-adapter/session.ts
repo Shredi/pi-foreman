@@ -26,6 +26,7 @@ import { ageText } from "./childwidget.ts";
 import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
+import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { INTERCOM_MESSAGE_TYPE, intercomConfigPath, lastIntercomDetails } from "./intercomguard.ts";
 import type { PullNow, RunRemote } from "./remotepull.ts";
@@ -36,14 +37,18 @@ import type { Spawner } from "./spawn.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const SESSION_USAGE =
-  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session pull [label] | /foreman session list";
+  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session pull [label] | /foreman session list";
 export const CHILD_REFUSAL = "/foreman session is for a top-level foreman session only; refused in subagent children.";
 /** Seconds an outbox send waits for pi-intercom's result (a confirmation dialog may be open). */
 export const SEND_WAIT_MS = 15_000;
 const OPEN_TIMEOUT_MS = 180_000;
+/** A `--worktree` open also fetches and runs `npm ci` (up to 540 s in foreman_worktree_setup.py). */
+const OPEN_WORKTREE_TIMEOUT_MS = 660_000;
+/** The line `foreman session open --worktree` prints with the worktree's JSON (foreman_session.py WORKTREE_MARK). */
+export const WORKTREE_MARK = "session worktree: ";
 
 export type SessionCommand =
-  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean }
+  | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean; worktree?: boolean; base?: string }
   | { sub: "brief"; target: string; body: string }
   | { sub: "close"; target: string; path?: string }
   | { sub: "pull"; target?: string }
@@ -74,11 +79,13 @@ export function parseSessionArgs(args: string): SessionCommand {
     else if (a === "--dry-run") out.dryRun = true;
     else if (a === "--trust") out.trust = true;
     else if (a === "--plan-mode") out.planMode = true;
-    else if (a === "--cwd" || a === "--model" || a === "--machine" || a === "--first-command") {
+    else if (a === "--worktree") out.worktree = true;
+    else if (a === "--cwd" || a === "--model" || a === "--machine" || a === "--first-command" || a === "--base") {
       const v = rest[++i];
       if (!v || v.startsWith("--")) return { error: `${a} needs a value. ${SESSION_USAGE}` };
       if (a === "--cwd") out.cwd = v;
       else if (a === "--machine") out.machine = v;
+      else if (a === "--base") out.base = v;
       else if (a === "--first-command") (out.firstCommands ??= []).push(v);
       else out.model = v;
     } else if (a.startsWith("--")) return { error: `unknown option ${a}. ${SESSION_USAGE}` };
@@ -86,6 +93,8 @@ export function parseSessionArgs(args: string): SessionCommand {
   }
   if (pos.length !== 2) return { error: SESSION_USAGE };
   [out.label, out.brief] = pos;
+  if (out.base !== undefined && !out.worktree) return { error: `--base needs --worktree. ${SESSION_USAGE}` };
+  if (out.worktree && out.machine) return { error: `--worktree cannot be combined with --machine. ${SESSION_USAGE}` };
   return out;
 }
 
@@ -280,6 +289,10 @@ export interface SessionDeps {
   config?: Json;
   /** Names of this session's slash commands (pi.getCommands()); planMode needs `plan` among them. */
   commands?: string[];
+  /** Trace event emitter of this session (a `--worktree` open emits `session_worktree`). */
+  trace?: (rec: Record<string, unknown>) => void;
+  /** Record a worktree this open created in the opener's manifest. */
+  recordWorktree?: (entry: ManifestEntry) => Promise<void>;
   /** Poll a remote child's outbox now (remotepull.ts); absent where no pull module runs. */
   pullNow?: PullNow;
   /** Run a `foreman_session.py` verb through the pull queue (remotepull.ts). */
@@ -355,10 +368,32 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   for (const f of c.firstCommands ?? []) argv.push("--first-command", f);
   if (c.focus) argv.push("--focus");
   if (c.dryRun) argv.push("--dry-run");
-  const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
+  if (c.worktree) argv.push("--worktree");
+  if (c.base !== undefined) argv.push("--base", c.base);
+  const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
   const out = r.stdout.trim();
+  if (c.worktree && !c.dryRun && !r.error && !r.timedOut && r.code === 0) await noteWorktree(d, c.label, out);
   const text = [model && !/^session model: /m.test(out) ? `session model: ${model}` : "", out, r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
   return { text, ok: !r.error && !r.timedOut && r.code === 0 };
+}
+
+/** After a successful `--worktree` open: record the worktree in the opener's manifest and trace `session_worktree`. */
+async function noteWorktree(d: SessionDeps, label: string, out: string): Promise<void> {
+  const line = out.split(/\r?\n/).find((l) => l.startsWith(WORKTREE_MARK));
+  if (!line) return;
+  let w: Json;
+  try {
+    w = JSON.parse(line.slice(WORKTREE_MARK.length)) as Json;
+  } catch {
+    return;
+  }
+  if (typeof w.path !== "string" || typeof w.branch !== "string") return;
+  try {
+    await d.recordWorktree?.({ kind: "worktree", path: w.path, branch: w.branch });
+  } catch {
+    // best effort: the sweep still finds the worktree by convention
+  }
+  d.trace?.({ event: "session_worktree", label, path: w.path, branch: w.branch, base: w.base, install: w.install });
 }
 
 /** One send; a missing target is retried once with the intercom id in the registry entry's handoff `live.json` when it differs. */
@@ -491,6 +526,12 @@ export async function runSessionOpenTool(d: SessionDeps, params: Record<string, 
   if (model) c.model = model;
   const machine = str("machine");
   if (machine) c.machine = machine;
+  if (params.worktree !== undefined && typeof params.worktree !== "boolean") return { text: `${SESSION_OPEN_TOOL}: worktree must be a boolean.`, ok: false };
+  if (params.worktree === true) c.worktree = true;
+  const base = str("base");
+  if (base) c.base = base;
+  if (c.base !== undefined && !c.worktree) return { text: `${SESSION_OPEN_TOOL}: base needs worktree: true.`, ok: false };
+  if (c.worktree && c.machine) return { text: `${SESSION_OPEN_TOOL}: worktree cannot be combined with machine.`, ok: false };
   if (params.trust === true) c.trust = true;
   if (params.planMode === true) c.planMode = true;
   if (Array.isArray(first) && first.length) c.firstCommands = first as string[];
@@ -507,6 +548,8 @@ export interface SessionHost {
   python: string | null;
   model?: string;
   config?: Json;
+  trace?: (rec: Record<string, unknown>) => void;
+  recordWorktree?: (entry: ManifestEntry) => Promise<void>;
 }
 
 const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) => c.name) ?? [];
@@ -594,6 +637,8 @@ export function registerSession(
           model: s.model,
           config: s.config,
           commands: commandNames(pi),
+          trace: s.trace,
+          recordWorktree: s.recordWorktree,
           pullNow: deps.pullNow,
           runRemote: deps.runRemote,
         },
@@ -617,6 +662,8 @@ const OPEN_PARAMS = {
     focus: { type: "boolean", description: "Focus the new Herdr tab." },
     dryRun: { type: "boolean", description: "Print the handoff dir, child id and command; open nothing." },
     machine: { type: "string", description: "Open the session on this remote machine (a sessions.machines name); needs cwd, the directory on that machine." },
+    worktree: { type: "boolean", description: "Create the session's own linked worktree (<close.worktreeDir>/<label>, branch <sessions.worktree.branchPrefix>/<label> from the fetched default branch; npm ci only when a lockfile is declared) and open the session there. Not with machine." },
+    base: { type: "string", description: "With worktree: the branch, tag or commit the new branch starts from (default: the fetched default branch of origin)." },
     trust: { type: "boolean", description: "With machine: record the trust grant for the remote folder on that machine (a stored refusal is not overridden)." },
   },
   required: ["label", "brief"],
@@ -650,6 +697,8 @@ export function registerSessionOpenTool(
           model: s.model,
           config: s.config,
           commands: commandNames(pi),
+          trace: s.trace,
+          recordWorktree: s.recordWorktree,
         },
         params,
       );

@@ -53,6 +53,8 @@ rung. On the top rung the revision is a `rung_top`, the finish gate offers no
 climb, and the usual two-refusal valve applies: two counted refusals, then `ceremony_incomplete`
 (see [ceremony](ceremony.md)).
 
+Every builder launch counted as a revision traces `revision {decision, reason}` once the ladder has chosen the rung: `climb` (the rung rose), `unchanged` (already on or above the strong rung), `no_strong` (no strong rung mapped; `revision_no_strong` is traced too) or `keyword` (the launch named a model keyword, which wins); `reason` is the climb reason (`review_fail`). A further fresh builder launched in the same user prompt while the latest verdict is still FAIL and a revision already answered it is a revision too: it takes the same climb (traced `rung_top`/`unchanged` when the first revision already moved the live rung) and adds no second round. A builder after a PASS, or one naming another phase, does not.
+
 ## Reviewer climb
 
 `ladder.reviewerClimb` gives the reviewer its own climb. It is off in the generic defaults; both `claude-bridge`

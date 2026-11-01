@@ -506,6 +506,14 @@
             "fastSeconds": { "type": "integer", "minimum": 2, "maximum": 60, "description": "Seconds between two polls while an ask is open, the session is closing, or shortly after an open or a brief (default 5)." }
           }
         },
+        "worktree": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Settings of `foreman session open --worktree`. User or overlay config only.",
+          "properties": {
+            "branchPrefix": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$", "description": "Branch prefix of the worktree a session open creates: the branch is `<prefix>/<label>` (default `round`)." }
+          }
+        },
         "ssh": {
           "type": "object",
           "additionalProperties": false,
