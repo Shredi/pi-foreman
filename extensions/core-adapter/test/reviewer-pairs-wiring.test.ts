@@ -74,6 +74,15 @@ test("reviewByOccasion models are pinned occasion; a security rung is pinned sec
   assert.deepEqual(r.events("review_model").map((e) => [e.reason, e.pin ?? null]), [["paired_skipped", "occasion"], ["paired", null]]);
 });
 
+test("an occasion model with the mapped reviewer's base is still pinned occasion", async (t) => {
+  const r = await rig(t, { "pa/big": "pb/mid" }, { provider: "pa", id: "big" }, { reviewByOccasion: { "pre-pr": { model: "pa/reviewer-m:high" } } });
+  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "branch [pre-pr]" }] };
+  const res = await r.launch(input);
+  assert.equal(res.res?.block, undefined, String(res.res?.reason));
+  assert.deepEqual(models(input), ["pa/reviewer-m"]);
+  assert.deepEqual(r.events("review_model").map((e) => [e.reason, e.pin ?? null]), [["paired_skipped", "occasion"]]);
+});
+
 test("a missing live model does not throw and launches", async (t) => {
   const r = await rig(t, { "pa/big": "pb/mid" }, undefined);
   const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "items 1" }] };

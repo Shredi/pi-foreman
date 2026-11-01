@@ -24,7 +24,7 @@ test("effectiveReviewer: reasons table", () => {
   assert.deepEqual(effectiveReviewer("a/mid", ROLES, map, "a/mid"), { model: "a/big:high", reason: "same_as_foreman" });
   assert.deepEqual(effectiveReviewer("a/big", ROLES, cfg("c/fb"), "a/big"), { model: "c/fb", reason: "same_as_foreman" });
   assert.deepEqual(effectiveReviewer("a/big", { reviewer: { model: "a/big" } }, cfg({}), "a/big"), { model: "a/big", reason: "no_alternative" });
-  assert.deepEqual(effectiveReviewer("a/mid", ROLES, cfg({ "b/y": "a/mid" }), "b/y"), { model: "a/mid", reason: "distinct" }); // pair to the entry's own base: nothing to change
+  assert.deepEqual(effectiveReviewer("a/mid", ROLES, cfg({ "b/y": "a/mid" }), "b/y"), { model: "a/mid", reason: "paired" }); // pair to the entry's own base: still paired (fix 2 of the revision)
 });
 
 test("the string form is unchanged: an entry that is the foreman's moves, others stay", () => {
@@ -63,6 +63,13 @@ test("pair map: an occasion thinking override replaces the pair's level; policy_
   const t = applyReviewModelRule(e, ROLES, opts(cfg({ "b/y": "a/big:high" }), "b/y", { thinking, refused: () => true }));
   assert.equal(e.model, "a/big:low");
   assert.equal(t[0].policy_override, true);
+});
+
+test("pair map: a pair on the entry's own base still applies its level", () => {
+  const one: Record<string, unknown> = { tasks: [{ agent: "reviewer", model: "a/mid" }] };
+  const t = applyReviewModelRule(one, ROLES, opts(cfg({ "b/y": "a/mid:high" }), "b/y"));
+  assert.deepEqual(t.map(sanitizeTrace), [{ event: "review_model", role: "reviewer", from: "a/mid", to: "a/mid", reason: "paired" }]);
+  assert.equal((one.tasks as Record<string, unknown>[])[0].model, "a/mid:high");
 });
 
 test("pair map: a pinned entry keeps its model; paired_skipped carries the pin; one pin of each kind", () => {

@@ -422,6 +422,12 @@ class LayerRulesTest(unittest.TestCase):
             self.assertIn("ceremony.reviewModel[%s] ignored" % key, warnings)
         self.assertEqual([w for w in res["warnings"] if "a/x" in w], [])
 
+    def test_project_review_model_pair_map_warns_once(self):
+        res = self.load(proj={"ceremony": {"reviewModel": {"a/x": "b/y", "noslash": 3}}}, session={})
+        self.assertEqual([w for w in res["warnings"] if "reviewModel" in w],
+                         [w for w in res["warnings"] if "project ceremony.reviewModel ignored" in w])
+        self.assertEqual(len([w for w in res["warnings"] if "reviewModel" in w]), 1)
+
     def test_fact_critical_rung_user_only(self):
         res = self.load(proj={"ladder": {"research": {"factCriticalRung": "p/x"}}}, session={})
         self.assertIsNone(res["config"]["ladder"]["research"]["factCriticalRung"])

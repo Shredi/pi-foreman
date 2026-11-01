@@ -237,11 +237,12 @@ export interface OccasionOverrideInput {
  * capped by maxThinking and childMaxThinking. Returns `review_occasion {occasion, thinking,
  * model_overridden}` records and the applied level per entry (for the different-model rule).
  */
-export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasion>, climbs: ReviewerClimb[], o: OccasionOverrideInput): { traces: Record<string, unknown>[]; thinking: Map<Json, Thinking> } {
+export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasion>, climbs: ReviewerClimb[], o: OccasionOverrideInput): { traces: Record<string, unknown>[]; thinking: Map<Json, Thinking>; overrode: Set<Json> } {
   const table = reviewByOccasion(o.config);
   const traces: Record<string, unknown>[] = [];
   const thinking = new Map<Json, Thinking>();
-  if (table.size === 0) return { traces, thinking };
+  const overrode = new Set<Json>();
+  if (table.size === 0) return { traces, thinking, overrode };
   for (const e of launchEntries(input)) {
     const occ = e.agent === "reviewer" ? occasions.get(e) : undefined;
     const ov = occ ? table.get(occ) : undefined;
@@ -249,6 +250,7 @@ export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasio
     const climb = climbs.find((c) => c.entry === e);
     const overridden = ov.model !== null && !climb;
     if (overridden) {
+      overrode.add(e);
       const own = typeof e.model === "string" ? splitLevel(e.model).level : null;
       const m = splitLevel(ov.model as string);
       // the override's own level, else the mapped rung's
@@ -263,7 +265,7 @@ export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasio
     }
     traces.push({ event: "review_occasion", role: "reviewer", occasion: occ, thinking: level, model_overridden: overridden });
   }
-  return { traces, thinking };
+  return { traces, thinking, overrode };
 }
 
 export interface ReviewModelInput {
@@ -299,7 +301,7 @@ export type ReviewerReason = "paired" | "distinct" | "same_as_foreman" | "no_alt
 /**
  * The reviewer model for one entry given the foreman's live model (`<provider>/<id>[:<level>]`), the single code path of
  * the different-model rule. A pair in the ceremony.reviewModel map keyed by the foreman's base id wins (`paired`; a
- * `pinned` entry keeps its model, `paired_skipped`; a pair to the entry's own base changes nothing, `distinct`). Else an
+ * `pinned` entry keeps its model, `paired_skipped`; the pair replaces the entry model with its level, even on the same base). Else an
  * entry whose base differs from the foreman's stays (`distinct`); else the next differing rung of
  * [roles.reviewer, roles.reviewer.strong], else the string ceremony.reviewModel (`same_as_foreman`), else
  * `no_alternative` (model unchanged). The model is returned as configured, levels not capped.
@@ -308,7 +310,7 @@ export function effectiveReviewer(entryModel: string, roles: Record<string, Json
   const foreman = baseOf(foremanModel);
   const from = baseOf(entryModel);
   const pair = reviewPairs(config).get(foreman);
-  if (pair && baseOf(pair) !== from) return pinned ? { model: entryModel, reason: "paired_skipped" } : { model: pair, reason: "paired" };
+  if (pair) return pinned ? { model: entryModel, reason: "paired_skipped" } : { model: pair, reason: "paired" };
   if (from !== foreman) return { model: entryModel, reason: "distinct" };
   const rungs = reviewerRungs(roles);
   const own = rungs.findIndex((m) => baseOf(m) === from);

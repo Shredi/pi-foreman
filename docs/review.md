@@ -76,7 +76,7 @@ foreman is downshifted, see [ladder](ladder.md#idle-rung-foreman-downshift)), no
 "<provider>/<model>[:<level>]"`. The harness looks the live foreman model up in the map first (the level of the
 foreman model is ignored); a hit replaces the reviewer's model with the pair (`review_model {from, to, reason:
 paired}`), whether or not the role map's model would have differed. A foreman model without a pair takes the rule above
-against the live model. A pair that names the model the launch already has changes nothing.
+against the live model. A pair always replaces the entry's model together with its level, even when the entry already has the pair's model.
 
 A pair overrides the role-mapped model and a repeat-fail climb (the climb's `rung_up` trace is then not written, so the
 trace never names a rung the launch does not use). It never overrides three pins, traced `review_model {reason:
@@ -94,7 +94,7 @@ registry. Two neutral examples:
 { "ceremony": { "reviewModel": { "provider-a/big": "provider-b/mid:high", "provider-b/mid": "provider-a/big" } } }
 ```
 
-A two-provider pair (each foreman is reviewed by the other provider's model) and, in the same map, a same-provider
+A two-provider pair (each foreman is reviewed by the other provider's model) and, as a separate map, a same-provider
 pair between two tiers:
 
 ```json

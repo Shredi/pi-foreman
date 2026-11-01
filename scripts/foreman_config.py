@@ -1105,7 +1105,8 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             return None
         warn_removed_compaction(name, data, warnings)
         fix_bridge_ttl(name, data, warnings)
-        drop_invalid_review_pairs(name, data, warnings)
+        if name != "project":  # the project layer's whole key is dropped by IGNORED_KEYS: one warning
+            drop_invalid_review_pairs(name, data, warnings)
         drop_invalid_safety(name, data, schema, warnings)
         fix_malformed_ceremony(name, data, l1, errors)
         return data
