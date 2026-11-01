@@ -11,6 +11,9 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "tools_deferred"
+  },
+  {
    "event": "chain_clear"
   },
   {
@@ -94,6 +97,9 @@
   {
    "event": "compaction_point",
    "model": "foreman-fake-b/foreman"
+  },
+  {
+   "event": "tools_deferred"
   },
   {
    "event": "chain_clear"

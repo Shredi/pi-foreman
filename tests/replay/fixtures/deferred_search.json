@@ -1,0 +1,8 @@
+{
+ "foreman": {
+  "ds1": [
+   {"tools": [{"name": "tool_search", "arguments": {"query": "copy a file or directory inside the workspace"}}]},
+   {"text": "Done."}
+  ]
+ }
+}

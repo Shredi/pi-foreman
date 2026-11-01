@@ -802,7 +802,8 @@ def models_table(records, *, usage=None, rates=None, hunks=None, since=None, sou
         for k, u in enumerate(usage(r.get("session")) or []):
             t = parse_ts(u.get("ts"))
             tag = (r.get("session"), k)
-            if (u.get("role") == "reviewer" and tag not in used and t is not None and start <= t <= end
+            # a `tool-usage` line is no model call (source of truth: foreman_retro.is_cost_line)
+            if (u.get("kind") != "tool-usage" and u.get("role") == "reviewer" and tag not in used and t is not None and start <= t <= end
                     and _bare(u.get("model")) == _bare(r.get("model"))):
                 used.add(tag)
                 row(r.get("model"), r.get("rung"))["_lines"].append(u)

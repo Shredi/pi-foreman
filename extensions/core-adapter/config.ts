@@ -62,6 +62,14 @@ export function pythonPathHint(pkgRoot: string, agentDir: string): string | null
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+/**
+ * `tools.deferred` as the trusted project file states it (undefined when absent or unreadable). The merged config already applies the
+ * union rule; this raw value lets the session warn about a project list that tries to remove names (deferred.ts).
+ */
+export function readProjectDeferred(projectDir: string): unknown {
+  return get(readJsonFile(path.join(projectDir, ".pi", "foreman.json")), "tools.deferred");
+}
+
 export interface LoadInput {
   python: string | null;
   pkgRoot: string;

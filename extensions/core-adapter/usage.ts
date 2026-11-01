@@ -79,8 +79,8 @@ export interface UsageLine {
   provider: string | null;
   model: string | null;
   launchId: string | null;
-  /** `keepalive`: a Pi cache-warming refresh (keepalive.ts), not a model turn. */
-  kind: LaunchKind | "keepalive";
+  /** `keepalive`: a Pi cache-warming refresh (keepalive.ts), not a model turn. `tool-usage`: a ToolUsageLine, not a model call (isCostLine). */
+  kind: LaunchKind | "keepalive" | "tool-usage";
   stopReason: string | null;
   input: number;
   cacheRead: number;
@@ -95,6 +95,31 @@ export interface UsageLine {
   entryId?: string;
   /** Keep-alive lines only: who sent the warm, Pi's CacheWarmer or pi-foreman's self-warm (selfwarm.ts). */
   source?: "pi" | "foreman";
+}
+
+/** What a session declared, hid, listed, used, found and read (toolusage.ts); names only. Lives in the usage file next to the cost lines. */
+export interface ToolUsageLine {
+  ts: string;
+  kind: "tool-usage";
+  /** The writer's own Pi session id (a child has its own); the retro counts sessions by it. */
+  session: string;
+  workspace?: string;
+  foremanSession?: string;
+  role: string;
+  declared: string[];
+  hidden: string[];
+  used: string[];
+  found: string[];
+  skillsListed: string[];
+  skillsHidden: string[];
+  skillsRead: string[];
+  /** Tool name -> package it comes from ("unknown" when Pi's source info names none). */
+  sources: Record<string, string>;
+}
+
+/** False for a `tool-usage` line, true for every line a cost reader counts (a keep-alive refresh is summed apart). */
+export function isCostLine(l: { kind?: unknown } | null | undefined): boolean {
+  return l?.kind !== "tool-usage";
 }
 
 export function usageDir(agentDir: string): string {
@@ -254,7 +279,7 @@ export function pricedLine(line: UsageLine, table: PriceTable | null | undefined
 }
 
 /** Append one line (one write call; the directory is created on demand). Never throws; false on error. */
-export function appendUsage(file: string, line: UsageLine): boolean {
+export function appendUsage(file: string, line: UsageLine | ToolUsageLine): boolean {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.appendFileSync(file, JSON.stringify(line) + "\n", "utf8");
@@ -358,6 +383,7 @@ export function aggregate(lines: UsageLine[], prices?: PriceTable | null): Usage
   const bySource = { pi: 0, foreman: 0 };
   let sourced = false;
   for (const l of lines) {
+    if (!isCostLine(l)) continue;
     if (l.kind === "keepalive") {
       add(keepalive, l, prices);
       if (l.source === "foreman") sourced = true;
@@ -371,7 +397,7 @@ export function aggregate(lines: UsageLine[], prices?: PriceTable | null): Usage
       map.set(key, t);
     }
     add(total, l, prices);
-    const kind: LaunchKind = l.kind;
+    const kind = l.kind as LaunchKind;
     const k = byKind.get(kind) ?? { launches: 0, calls: 0 };
     k.calls += 1;
     byKind.set(kind, k);

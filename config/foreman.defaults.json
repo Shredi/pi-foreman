@@ -21,7 +21,7 @@
     "foreman": { "tools": [], "skills": [], "codemode": true },
     "session-foreman": { "tools": [], "skills": [], "codemode": false },
     "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": [], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20, "strongAbove": 200000 },
-    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
+    "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write"], "searchable": ["foreman_move", "foreman_copy"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
     "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": ["security-review"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
   },
   "providers": {},
@@ -112,6 +112,7 @@
   "bridge": { "isolateClaudeConfig": "auto", "promptCacheTtl": { "main": "1h", "subagent": "5m" } },
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
-  "tools": { "git": false, "pr": true, "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },
+  "skills": { "visible": [], "hidden": ["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"] },
+  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "pr_track", "pr_untrack", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },
   "sidebar": { "statusSeconds": 60 }
 }

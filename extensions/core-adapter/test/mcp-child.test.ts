@@ -125,7 +125,7 @@ test("an fx/echo entry leaves mcp__fx__shout hidden", async () => {
 });
 
 test("a launch mcp list narrows the ceiling: [] starts no server and leaves tool_search inactive", async () => {
-  await withChild({ roles: { builder: { mcp: ["fx"] } }, launchMcp: [] }, async ({ api, startMarker }) => {
+  await withChild({ roles: { builder: { mcp: ["fx"], searchable: [] } }, launchMcp: [] }, async ({ api, startMarker }) => {
     await quiet();
     assert.equal(fs.existsSync(startMarker), false, "the server started");
     assert.deepEqual(mcpTools(api), []);
@@ -134,7 +134,8 @@ test("a launch mcp list narrows the ceiling: [] starts no server and leaves tool
 });
 
 test("a role without mcp starts no server and has tool_search registered but inactive", async () => {
-  await withChild({}, async ({ api, startMarker }) => {
+  // the builder default has searchable names, which keep tool_search on: this case needs none
+  await withChild({ roles: { builder: { searchable: [] } } }, async ({ api, startMarker }) => {
     await quiet();
     assert.equal(fs.existsSync(startMarker), false, "the server started");
     assert.deepEqual(mcpTools(api), []);

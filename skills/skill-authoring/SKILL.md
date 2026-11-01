@@ -125,6 +125,22 @@ How the Pi harness (and the pi-foreman package on top of it) loads a skill.
 - Run `foreman setup` after changing `skills`: it renders the read permissions for the named skill dirs. Shell reads are scoped per role; the `read` tool sees the union of all named skills.
 - Residual: a skill shipped by a package under `{agentDir}/npm/node_modules`, or from a path in settings `skills`, still asks when a child reads its body.
 
+### Always on or searchable
+
+With pi-foreman a skill is either listed in every prompt (always on) or left out of the list and found with `tool_search` (searchable). Searchable saves the catalog line in every turn; the cost is that the agent must think to search.
+
+- Always on: a skill a session needs before it knows to search, such as a routing or safety skill, or one used in most sessions.
+- Searchable: a domain skill used in a minority of sessions. The retro says which skills were read rarely.
+
+Mark a skill searchable in its own frontmatter:
+
+```yaml
+metadata:
+  visibility: search
+```
+
+Anything else, or no `metadata`, keeps the skill always on. The config keys `skills.visible` and `skills.hidden` (globs of skill names) override the frontmatter; a non-empty `skills.visible` makes every other skill searchable. A searchable skill keeps its `/skill:<name>` command.
+
 ### Placement and precedence
 
 Highest first:
@@ -137,7 +153,7 @@ When two skills share a name, the earlier one wins. Pi's loader takes the frontm
 
 ### Frontmatter the loader honours
 
-`name`, `description`, `disable-model-invocation` (hides the skill from the catalog; it is then used only when named explicitly). Other keys (`metadata`, `compatibility`, `allowed-tools`, `context`, `agent`) are ignored silently. A YAML error drops the skill and logs a warning, so check the warning when a skill is missing. A description over 1024 characters warns.
+`name`, `description`, `disable-model-invocation` (hides the skill from the catalog; it is then used only when named explicitly). `metadata` is ignored by Pi; pi-foreman reads `metadata.visibility` (see above). Other keys (`compatibility`, `allowed-tools`, `context`, `agent`) are ignored silently. A YAML error drops the skill and logs a warning, so check the warning when a skill is missing. A description over 1024 characters warns.
 
 ### Trigger-test recipe
 

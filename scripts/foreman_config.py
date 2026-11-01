@@ -62,6 +62,10 @@ Keys outside safety that the project and session layers cannot loosen either
     ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
     tools.git                        only false is accepted (true adds tools)
     tools.pr                         only false is accepted (true adds tools)
+    tools.deferred                   union only (a project can defer more tools, not fewer)
+    skills.hidden                    union only (a project can hide more skills, not fewer)
+    skills.visible                   ignored (it hides every other skill: user or overlay config only)
+    roles.*.searchable               intersect only, and a name dropped from roles.*.tools cannot come back through it
     tools.prHost                     ignored (it picks the program the PR tools run)
     tools.prShared                   ignored (it starts a machine-wide poller of the PR host: user or overlay only)
     tools.prInteractions             ignored (patterns that register PRs from commands: user or overlay only)
@@ -225,6 +229,7 @@ IGNORED_KEYS = [
     (("roles", "*", "skills"), "the skills a role gets come from the user or overlay config"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
+    (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("tools", "prShared"), "the shared PR watch comes from the user or overlay config"),
     (("tools", "prInteractions"), "the PR interaction patterns come from the user or overlay config"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
@@ -323,6 +328,8 @@ LAYER_TIGHTEN = [
     (("childMaxThinking",), ("ordered", tuple(THINKING))),
     (("tools", "git"), "false_only"),
     (("tools", "pr"), "false_only"),
+    (("tools", "deferred"), "union"),
+    (("skills", "hidden"), "union"),
     (("gate", "tmpAccess"), "false_only"),
     (("gate", "askTimeoutMs"), "lower_only"),
     (("gate", "reviewTimeoutMs"), "lower_only"),
@@ -362,7 +369,7 @@ REQUIRED_STEPS = ["builder", "reviewer"]
 CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
 # "ignore" drops role ids not present after L1 -> L3 -> L2.
-ROLE_RULES = {"tools": "intersect"}
+ROLE_RULES = {"tools": "intersect", "searchable": "intersect"}
 NEW_ROLE_IDS = "ignore"
 # trace.dir from the project or session layer must resolve inside the workspace.
 TRACE_DIR_IN_WORKSPACE = True
@@ -685,6 +692,13 @@ def restrict_layer(base, proj, who, warnings, project_dir):
                 if dropped:
                     warnings.append("%s roles.%s.%s: entries not extended: %s" % (who, rid, key, ", ".join(map(str, dropped))))
                 entry[key] = [x for x in have if x in want]
+            # a tool the layer dropped from roles.<id>.tools cannot come back through searchable
+            base_entry = base_roles.get(rid) or {}
+            if isinstance(entry, dict) and isinstance(entry.get("tools"), list) and isinstance(base_entry.get("tools"), list):
+                dropped = [x for x in base_entry["tools"] if x not in entry["tools"]]
+                source = entry.get("searchable", base_entry.get("searchable"))
+                if dropped and isinstance(source, list) and any(x in dropped for x in source):
+                    entry["searchable"] = [x for x in source if x not in dropped]
     def codemode_off_only(entry, label):
         if CODEMODE_FALSE_ONLY and isinstance(entry, dict) and "codemode" in entry and entry["codemode"] is not False:
             del entry["codemode"]
@@ -1215,6 +1229,78 @@ def with_pr_pack(cfg, role, tools):
     return tools
 
 
+def role_allowlist(cfg, role):
+    """`roles.<id>.tools` plus `roles.<id>.searchable` (found on demand through tool_search), child-denied tools removed."""
+    entry = (cfg.get("roles") or {}).get(role, {})
+    out = []
+    for name in list(entry.get("tools", [])) + list(entry.get("searchable", [])):
+        if name not in CHILD_DENIED_TOOLS and name not in out:
+            out.append(name)
+    return out
+
+
+def _glob_match(pattern, name):
+    return re.fullmatch(".*".join(re.escape(p) for p in pattern.split("*")), name) is not None
+
+
+def skill_visibility(path):
+    """`metadata.visibility` from a SKILL.md frontmatter (top-level keys and one nested `metadata:` map), or None."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").lstrip("\ufeff").splitlines()
+    except OSError:
+        return None
+    if not lines or lines[0].strip() != "---":
+        return None
+    block = None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        m = re.match(r"^(\s*)([A-Za-z0-9_-]+)\s*:\s*(.*)$", line)
+        if not m or line.strip().startswith("#"):
+            continue
+        indent, key, raw = m.groups()
+        if indent:
+            if block == "metadata" and key == "visibility":
+                return raw.strip().strip("\"'")
+            continue
+        block = key if not raw.strip() else None
+    return None
+
+
+def skill_is_hidden(cfg, name, file=None):
+    """Is the skill searchable? Config `skills.visible` (non-empty: all others hidden), then `skills.hidden`, then the frontmatter `metadata.visibility: search`."""
+    rules = cfg.get("skills") or {}
+    visible, hidden = rules.get("visible") or [], rules.get("hidden") or []
+    if visible:
+        return not any(_glob_match(p, name) for p in visible)
+    if any(_glob_match(p, name) for p in hidden):
+        return True
+    return bool(file) and (skill_visibility(file) or "").strip().lower() == "search"
+
+
+def find_skill_file(name, agent_dir=None, project_dir=None):
+    """The SKILL.md of a skill by directory name: the repo copy wins over user copies, then the package's own skills."""
+    roots = []
+    if project_dir:
+        roots.append(Path(project_dir) / ".agents" / "skills")
+    if agent_dir:
+        roots.append(Path(agent_dir) / "skills")
+    roots += [Path.home() / ".agents" / "skills", ROOT / "skills"]
+    for root in roots:
+        f = root / name / "SKILL.md"
+        if f.is_file():
+            return f
+    return None
+
+
+def split_role_skills(cfg, role, agent_dir=None, project_dir=None):
+    """(visible, hidden) names of `roles.<id>.skills`; a skill whose file is not found follows the config rules only."""
+    visible, hidden = [], []
+    for name in (cfg.get("roles") or {}).get(role, {}).get("skills") or []:
+        (hidden if skill_is_hidden(cfg, name, find_skill_file(name, agent_dir, project_dir)) else visible).append(name)
+    return visible, hidden
+
+
 def with_tool_search(tools):
     """Add `tool_search` to a child role's tools, at the index of `codemode` (else appended).
 
@@ -1249,7 +1335,7 @@ def resolve_role(cfg, role, provider):
     codemode = effective_codemode(cfg, provider, role)
     tools = list((cfg.get("roles") or {}).get(role, {}).get("tools", []))
     if role != "foreman":
-        tools = with_tool_search(with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in tools if t not in CHILD_DENIED_TOOLS]))))
+        tools = with_tool_search(with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, role_allowlist(cfg, role)))))
     if codemode and "codemode" not in tools:
         tools.append("codemode")
     out = {"model": model, "thinking": cap_thinking(thinking, cfg.get("maxThinking")),
@@ -1288,7 +1374,7 @@ def resolve_all(cfg, provider):
     return out
 
 
-def generate_subagents(cfg):
+def generate_subagents(cfg, agent_dir=None, project_dir=None):
     """pi-subagents settings block for the child roles.
 
     pi-subagents parses agentOverridesByProvider entries with the same parser as
@@ -1299,13 +1385,14 @@ def generate_subagents(cfg):
     """
     by_provider, overrides, errors = {}, {}, []
     for role in CHILD_ROLES:
-        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, [t for t in (cfg.get("roles") or {}).get(role, {}).get("tools", []) if t not in CHILD_DENIED_TOOLS])))
+        tools = with_pr_pack(cfg, role, with_git_pack(cfg, role, with_ledger_tool(cfg, role, role_allowlist(cfg, role))))
         if cfg.get("roles", {}).get(role, {}).get("codemode") and "codemode" not in tools:
             tools.append("codemode")
         overrides[role] = {"tools": with_tool_search(tools)}
-        skills = cfg.get("roles", {}).get(role, {}).get("skills")
+        # only the visible skills are written into the agent file; the child finds the hidden ones through tool_search (index.ts initSkills)
+        skills, _hidden = split_role_skills(cfg, role, agent_dir, project_dir)
         if skills:
-            overrides[role]["skills"] = list(skills)
+            overrides[role]["skills"] = skills
     for provider in sorted(cfg.get("providers") or {}):
         entries = {}
         for role in CHILD_ROLES:
@@ -1593,7 +1680,7 @@ def main(argv=None):
             out["model"], out["thinking"], out["codemode"], ",".join(out["tools"])))
         return 0
     if args.cmd == "generate-subagents":
-        out = generate_subagents(cfg)
+        out = generate_subagents(cfg, args.agent_dir, args.project_dir)
         out["warnings"] = res["warnings"]
         print(json.dumps(out, indent=2))
         return 3 if out["errors"] else 0

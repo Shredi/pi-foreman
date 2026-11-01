@@ -157,6 +157,16 @@ The footer bar and the idle floor show and use the point Pi really uses (window 
 
 Retro trade-off: Pi's own compaction cannot carry custom instructions, so a summary from a threshold compaction has no `## Retro` section; the retro entry notes that. The Retro section rides only on the idle warm compaction. A manual `/compact` never carried it either.
 
+## Deferred tools
+
+The hidden set of `tools.deferred` and the skill filter (`skills.*`) are fixed at session start and never change on their
+own, so they do not move the cached prefix. A `tool_search` hit does not change the declarations while codemode is
+active (the tool is called through codemode), so the cache survives every search. Without codemode a hit un-hides the
+found tool: its declaration enters the next request, and because Pi projects the whole transcript again when the
+declarations change, that request is one cold prefix, not only a longer system prompt. The un-hidden tool then stays
+declared for the session and across resume (the `deferred-loaded` session entry), so the cost is paid once per tool.
+The keep-alive replay captures the request as sent and warms the current loadout. See [tools](tools.md#deferred-tools-and-searchable-skills).
+
 ## Cost and privacy
 
 The list-price table is `config/prices.json` (also read by the bench): the status line, presence `runs[].cost` and `/foreman cost` price a usage record with it when the provider logged `cost.total: 0`, as the claude-bridge does.

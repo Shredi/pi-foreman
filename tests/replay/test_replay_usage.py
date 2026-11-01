@@ -34,6 +34,7 @@ class TestUsage(ReplayCase):
 
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         lines = [json.loads(x) for x in (rig.state_dir / "usage" / (safe + ".jsonl")).read_text("utf-8").splitlines() if x.strip()]
+        lines = [x for x in lines if x.get("kind") != "tool-usage"]  # same predicate as foreman_retro.is_cost_line
         foreman = [x for x in lines if x["role"] == "foreman"]
         child = [x for x in lines if x["role"] == "builder"]
         self.assertEqual(len(foreman), 3, lines)

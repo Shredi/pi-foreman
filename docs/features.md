@@ -97,7 +97,9 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
 | [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
-| [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
+| [deferred-tools](#deferred-tools) | tools |  | on | Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered. | on by default | [tools](tools.md) |
+| [skill-visibility](#skill-visibility) | tools |  | on | Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way. | on by default | [tools](tools.md) |
+| [ask-user-question](#ask-user-question) | ui |  | on | The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
 | [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
@@ -194,7 +196,7 @@ Switch: `providers` is non-empty.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write"]`, `reviewer`: `["read", "ls", "grep", "find", "bash"]` | tighten-only (can only narrow the list) |
 | `roles.<x>.denyTools` | `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
 | `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `["security-review"]` | not in project/session (the skills a role gets come from the user or overlay config) |
@@ -767,9 +769,27 @@ Switch: `retro.repoBacklog` is non-empty.
 
 No config key.
 
+### deferred-tools
+
+**Deferred tool declarations and tool_search.** Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered.
+
+| Key | Default | Layer |
+|---|---|---|
+| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "pr_track", "pr_untrack", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
+
+### skill-visibility
+
+**Searchable skills.** Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way.
+
+| Key | Default | Layer |
+|---|---|---|
+| `roles.<x>.searchable` | `builder`: `["foreman_move", "foreman_copy"]` | tighten-only (can only narrow the list) |
+| `skills.visible` | `[]` | not in project/session (it hides every other skill: user or overlay config only) |
+| `skills.hidden` | `["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"]` | tighten-only (entries are added, never removed) |
+
 ### ask-user-question
 
-**Structured in-pane question.** The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`.
+**Structured in-pane question.** The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer.
 
 No config key.
 
@@ -939,6 +959,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
+| `skills.visible` | it hides every other skill: user or overlay config only |
 | `tools.prShared` | the shared PR watch comes from the user or overlay config |
 | `tools.prInteractions` | the PR interaction patterns come from the user or overlay config |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |

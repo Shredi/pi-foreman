@@ -68,6 +68,32 @@ Besides the approval and trace lines, the report carries these lines when there 
   not cold. When the idle model downshift ran, the line ends with `, downshifted turns K` (`foreman_model` trace events with reason `idle_cold`; the JSON key `downshiftedTurns` exists only then). Without a TTL the count is 0. The line shows when a cache policy applies or any count is above 0; the JSON
   report has `cache` (`keepalives`, `keepaliveCost`, `warmCompactions`, `coldResumes`, `ttlSeconds`).
 
+- `tools: declared never used: X, Y (0 of N sessions); found: Z (M of N)` and `skills: listed never read: ...; found: ...`:
+  usage over the last 60 days. The harness writes one `tool-usage` line (names only: declared, hidden, used, found,
+  skills listed, hidden and read, and each tool's package) into the session's usage file on the first turn and again
+  at the end of a turn whenever `used`, `found` or `skillsRead` changed; a child writes its own into the foreman's
+  file with its role. The retro reads every file in `state/usage` (it needs `--agent-dir`), takes the last line per
+  session and counts. Cost readers (`/foreman cost`, the footer, `usage_metrics`) skip these lines. A tool used only
+  through codemode is not seen as used. With fewer than 20 sessions the lines show counts and no suggestion. The JSON
+  report has `tool_usage`.
+
+### Always on or searchable
+
+With at least 20 sessions (and at least 20 in the role being judged) the retro prints suggestions after those lines;
+it applies nothing and files no backlog entry:
+
+- A tool or skill declared (listed) but used (read) in under 10% of the sessions that declared it: make it searchable
+  (`tools.deferred` add, `roles.<x>.searchable` add for a child role, `skills.hidden` add).
+- Searchable but found in 25% or more of the sessions that hid it: make it always on again (remove it from
+  `tools.deferred`, `roles.<x>.searchable` or `skills.hidden`).
+- A tool never used is printed with its package: `never used (foreman, 24 sessions): doc_to_md (example-package) ->
+  pi remove npm:example-package` when none of the package's tools was used, `PI_BG_FEATURES=process` for the
+  add-on's optional tools (`fusion_*`, `bg_delegate`, `bg_run_pi_attested`), else `tools.deferred`. A
+  skill never read points to `skills.hidden` or removing the skill directory. Packages the harness ships or bundles
+  are never suggested for removal.
+
+The lessons brief ends with the same rule as one line.
+
 ## Critique counter
 
 A round is one counted review run (primary `reviewer` on an `item` or `pre-pr` occasion; plan
