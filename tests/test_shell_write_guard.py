@@ -243,6 +243,10 @@ class ShellWriteGuardTest(unittest.TestCase):
         os.makedirs(os.path.join(repo, "out"))
         self.assertIsNotNone(swg.decide("echo x > out/f", repo, repo))
         self.assertIsNone(swg.decide("echo x > out/f", repo, repo, "bash", None, None, [os.path.join(repo, "out")]))
+        # relative and root entries are ignored: they never lift the refusal
+        for bad in (["out"], ["/"], [""]):
+            with self.subTest(allow_dirs=bad):
+                self.assertIsNotNone(swg.decide("echo x > out/f", repo, repo, "bash", None, None, bad))
 
     def test_allow_dir_argv_option_and_the_raw_operand_message(self):
         base = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-argv-"))
