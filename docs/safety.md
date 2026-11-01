@@ -107,6 +107,10 @@ outside it:
 - The harness removes the dir at run end only after a realpath check that it is a real directory below the
   `pi-foreman-scratch` root and neither inside nor around the repository.
 
+## Worktree children and the foreman's checkout
+
+A single `subagent` launch with `worktree: true` records the flag in the child's launch binding, and the child gets `FOREMAN_CHECKOUT=<the foreman's checkout>` in its environment. Floor `foreman-checkout` (no review, policy entry or dialog lifts it) and the child git guard then treat that checkout as read-only: edit, write, `foreman_move` and `foreman_copy` targets below it, shell redirects and the operands of `cp`, `mv`, `tee`, `rm`, `sed -i` and the like, `cd`/`pushd` into it, `git -C`, `--git-dir` and `--work-tree` at it, and opaque lines such as `bash -c "... > <root>/f"` are denied with a message that names the child's worktree. Its `.workflow/` stays readable (the plan and ledger), `.workflow/scratch/` keeps the child scratch rules, and the child's own worktree is exempt even when it sits below the checkout (`PI_SUBAGENTS_WORKTREE_DIR`). The builder brief of a worktree launch says so. Only single launches carry a binding today: a `tasks` or `chain` launch gets the brief line but not the fence (a per-entry binding is follow-up work).
+
 ## Child shell time limit
 
 A child's `bash` call with no `timeout` gets `ceremony.childBashTimeoutSeconds` (600 s); an explicit `timeout` above `ceremony.childBashTimeoutMaxSeconds` (1800 s) is capped to it. The default is clamped to the cap too. The effective ceiling is the lower of `childBashTimeoutMaxSeconds` and `ceremony.childTimeoutSeconds` (1800 s), because pi-subagents stops any child tool call past that per-call limit. The limit bounds a hung command, not a permission: the overlay and guards decide the same way with or without it. The foreman's own shell calls are not limited by these keys (trace `bash_timeout {action: applied|capped, requested}`).

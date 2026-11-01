@@ -21,6 +21,8 @@ import type { PriceTable, Rate } from "./cost.ts";
 
 export const BINDING_NS = "pi-foreman/1";
 export const BINDINGS_ENV = "PI_SUBAGENT_EXTENSION_BINDINGS";
+/** Env of a worktree child: the foreman's checkout (the launch binding's workspace); the floors and the child git guard fence it read-only. */
+export const CHECKOUT_ENV = "FOREMAN_CHECKOUT";
 export const PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 
 export const LAUNCH_KINDS = ["foreman", "first", "revision", "strong-relaunch", "fallback"] as const;
@@ -51,6 +53,8 @@ export interface LaunchBinding {
   reads?: number;
   /** R46: launch `install: true`; the child's `npm ci`/`npm install` in its owned dirs runs unasked. */
   install?: true;
+  /** ceremony-fixes-2: a single launch with `worktree: true` (tasks/chain launches carry no binding yet); the child exports FOREMAN_CHECKOUT=<workspace>. */
+  worktree?: true;
   /** The parent-owned ask dir (childask.ts) where the child's gate writes `ask.md` for a policy ask; absent = the child cannot ask. */
   askDir?: string;
   /** r79: the parent's resolved permissions mode, its session override (`/foreman perms mode`) and the profile name; the child re-reads the permission files per decision. `childDeny` marks the child deny set (gate.ts childDenied): a child's write outside its worktree and own scratch and its PR creation are denied before any allow rule, built-in allow or classifier verdict, whatever the mode. */
@@ -213,7 +217,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     const pm = isObj(b.perms) && str(b.perms.mode) ? b.perms : null;
     const perms = pm ? { mode: str(pm.mode) as string, ...(str(pm.override) ? { override: str(pm.override) as string } : {}), ...(str(pm.profile) ? { profile: str(pm.profile) as string } : {}), ...(pm.childDeny === true ? { childDeny: true as const } : {}) } : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}) };
   } catch {
     return null;
   }

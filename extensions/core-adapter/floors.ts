@@ -44,6 +44,8 @@ export interface FloorEnv {
   remoteHead?: (cwd: string) => string | null;
   /** A subagent child session: it never pushes (the foreman pushes). */
   child?: boolean;
+  /** A child launched into an isolation worktree (`FOREMAN_CHECKOUT`): the foreman's checkout, read-only for it below everything but its `.workflow/`. */
+  foremanRoot?: string;
   /** realpath of an existing path for the long-name forms (tests stub it; default: the native realpath). */
   resolver?: Resolver;
 }
@@ -474,6 +476,8 @@ function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): 
   if (git) return git;
   const inj = injectFloor(seg, prog);
   if (inj) return inj;
+  const fence = foremanCheckout(seg, prog, env);
+  if (fence) return fence;
   const pw = protectedWrite(seg, prog, env, line);
   if (pw) return pw;
   if (PRIVILEGE.has(prog)) return hit("privilege", `\`${prog}\` escalates privileges. Run the command as the current user; ask the user when root is needed.`);
@@ -707,6 +711,8 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   if (profile) return hit(profile.name, profile.reason);
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
+    const fenced = opaqueForemanCheckout(text, env);
+    if (fenced) return fenced;
     const o = opaqueTextFloors(scan, env) ?? opaqueProtected(text, env);
     if (o?.kind === "deny") return o;
     pending = o;
@@ -727,7 +733,82 @@ export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?:
       if (h) return h;
     }
   }
-  return tool !== undefined && WRITE_TOOLS.has(tool) ? protectedToolWrite(tool, input, env) : null;
+  if (tool === undefined || !WRITE_TOOLS.has(tool)) return null;
+  return foremanToolWrite(tool, input, env) ?? protectedToolWrite(tool, input, env);
+}
+
+// ------------------------------------------------------------------ the foreman's checkout is read-only for a worktree child
+
+const FENCE_WRITERS = new Set(["cp", "mv", "tee", "rm", "rmdir", "mkdir", "touch", "install", "rsync", "truncate", "chmod", "chown", "unlink", "dd", "patch", "shred"]);
+/** An opaque line that names the foreman's checkout is denied when it also writes, changes directory or runs a mutating git subcommand. */
+const FENCE_WRITEISH = /(?:^|[^=!<>-])>(?!=)|\b(?:tee|cp|mv|rm|rmdir|mkdir|touch|install|rsync|truncate|chmod|chown|unlink|dd|patch|cd|pushd|write\w*|sed\s+-i|git\s+(?:-\S+\s+\S+\s+)*(?:add|commit|checkout|reset|apply|am|rm|mv|stash|merge|rebase|cherry-pick|revert|restore|clean|switch|tag|branch|push|pull))\b/;
+
+const foremanFence = (env: FloorEnv): string | null => (env.child && env.foremanRoot ? env.foremanRoot : null);
+
+/** The deny for a word that names a path below the foreman's checkout; its `.workflow/` and the child's own worktree (also when nested below the checkout) are exempt. */
+function fenceWord(word: string, cwd: string, env: FloorEnv): FloorHit | null {
+  const root = foremanFence(env);
+  if (root === null) return null;
+  if (protectedWord(word, cwd, env, [{ p: root, tree: true }]) === null) return null;
+  const abs = resolveWord(word.replace(/^[^=/\\]*=/, ""), cwd, env);
+  if (abs !== null) {
+    const exempt = [path.join(root, ".workflow"), repoRoots(env.cwd)[0]].flatMap((r) => formsOf(r, env));
+    if (formsOf(abs, env).every((f) => exempt.some((r) => f === r || f.startsWith(`${r}/`)))) return null;
+  }
+  const shown = word.replace(/^(['"])(.*)\1$/, "$2").slice(0, 120);
+  return { rule: "floor-foreman-checkout", kind: "deny", reason: `pi-foreman: write to ${shown} denied: this child runs in its own worktree ${env.cwd}; the foreman's checkout ${root} is read-only for it (read its .workflow/ ledger and plan there). Use paths relative to your worktree; commit on your worktree's branch.` };
+}
+
+/** Floor `foreman-checkout`, one shell segment: a redirect, a `cd`/`pushd`, a `git -C` / `--git-dir` / `--work-tree` or the operand of a writer that reaches the foreman's checkout. */
+function foremanCheckout(seg: ShellSegment, prog: string, env: FloorEnv): FloorHit | null {
+  if (foremanFence(env) === null) return null;
+  const cwd = seg.cwd ?? env.cwd;
+  const a = seg.argv;
+  for (const r of seg.redirects) {
+    if (r.op === "<" || r.op === "dup") continue;
+    const h = fenceWord(r.target, cwd, env);
+    if (h) return h;
+  }
+  const words: string[] = [];
+  if (prog === "cd" || prog === "pushd") words.push(...a.filter((w) => !w.startsWith("-")).slice(0, 1));
+  else if (prog === "git") {
+    a.forEach((w, i) => {
+      if (w === "-C" || w === "--git-dir" || w === "--work-tree") words.push(a[i + 1] ?? "");
+      else if (/^--(?:git-dir|work-tree)=/.test(w)) words.push(w.slice(w.indexOf("=") + 1));
+      else if (/^-C.+/.test(w)) words.push(w.slice(2));
+    });
+  } else if (FENCE_WRITERS.has(prog) || (prog === "sed" && a.some((w) => /^-[A-Za-z]*i|^--in-place/.test(w)))) {
+    const src = copySourceWords(seg, prog);
+    words.push(...a.filter((w) => !src.has(w)));
+  }
+  for (const w of words) {
+    const h = w ? fenceWord(w, cwd, env) : null;
+    if (h) return h;
+  }
+  return null;
+}
+
+/** Floor `foreman-checkout`, an opaque line (`bash -c "... > <root>/f"`): a word below the checkout beside a write, a `cd` or a mutating git subcommand. */
+function opaqueForemanCheckout(text: string, env: FloorEnv): FloorHit | null {
+  if (foremanFence(env) === null || !FENCE_WRITEISH.test(text)) return null;
+  const flat = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
+  for (const w of [...new Set(flat.split(/[\s;&|<>()]+/))].filter(Boolean)) {
+    const h = fenceWord(w, env.cwd, env);
+    if (h) return h;
+  }
+  return null;
+}
+
+/** Floor `foreman-checkout`, a write, edit, move or copy tool call whose written path (a move's source too) is below the foreman's checkout. */
+function foremanToolWrite(tool: string, input: Record<string, unknown>, env: FloorEnv): FloorHit | null {
+  if (foremanFence(env) === null) return null;
+  const keys = tool === "foreman_move" ? ["dst", "src"] : tool === "foreman_copy" ? ["dst"] : ["path", "file_path", "filePath"];
+  for (const k of keys) {
+    const v = input[k];
+    const h = typeof v === "string" && v ? fenceWord(v, env.cwd, env) : null;
+    if (h) return h;
+  }
+  return null;
 }
 
 // ------------------------------------------------------------------ policy files, harness state, config keys (writes)

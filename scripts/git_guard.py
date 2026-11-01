@@ -1714,6 +1714,9 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
         if d.level > ALLOW:
             return d
     if ctx.mode == "child":
+        d = foreman_checkout_rule(sub, ctx, call)
+        if d.level > ALLOW:
+            return d
         if s == "push":
             d = pr_push(rest, ctx, call, envs, seg)
             if d.level > ALLOW:
@@ -2274,6 +2277,39 @@ CHILD_F_FIX = ("write the message file in an earlier command, then commit on a l
 # R14 item 2: the only dirs a child's message file may live in (docs/sessions.md, docs/permissions.md)
 CHILD_F_DIRS = "$FOREMAN_SCRATCH or <worktree>/.workflow/scratch/"
 CHILD_SCRATCH_WORD = re.compile(r'^"?\$FOREMAN_SCRATCH(/[^\s$`\\*?\[\]{}~"\'<>|&;()]+)"?$')
+
+
+FOREMAN_FENCE_SUBS = frozenset("""add commit rm mv reset checkout switch restore merge rebase cherry-pick revert stash apply am clean
+tag branch push pull fetch update-ref commit-tree worktree config gc init symbolic-ref notes""".split())
+
+
+def foreman_checkout_root(ctx):
+    """ceremony-fixes-2 item 1: the realpath of the foreman's checkout for a child launched into an isolation worktree, from the launch
+    environment (FOREMAN_CHECKOUT in ctx.env, never the command text): an existing absolute dir without white space, else None."""
+    d = ctx.env.get("FOREMAN_CHECKOUT") or ""
+    if not os.path.isabs(d) or re.search(r"\s", d) or not os.path.isdir(d):
+        return None
+    return os.path.realpath(d)
+
+
+def foreman_checkout_rule(sub, ctx, call):
+    """A worktree child's git write (`git -C <root> ...`, `cd <root>; git ...`, `--git-dir` / `--work-tree` at the root) never lands in the
+    foreman's checkout; its `.workflow/` and the child's own worktree (also when nested below the checkout) are exempt."""
+    root = foreman_checkout_root(ctx)
+    if root is None or sub.lower() not in FOREMAN_FENCE_SUBS:
+        return OK
+    under = lambda p, r: os.path.normcase(p) == os.path.normcase(r) or os.path.normcase(p).startswith(os.path.normcase(r) + os.sep)
+    own = os.path.realpath(ctx.start_cwd)
+    while not os.path.lexists(os.path.join(own, ".git")) and os.path.dirname(own) != own:
+        own = os.path.dirname(own)
+    places = [call.cwd] + [p.split("=", 1)[1] for p in call.passthrough if p.startswith(("--git-dir=", "--work-tree="))]
+    for place in places:
+        real = os.path.realpath(place)
+        if under(real, root) and not under(real, os.path.join(root, ".workflow")) and not under(real, own):
+            return deny("write to %s denied: this child runs in its own worktree %s; the foreman's checkout %s is read-only for it "
+                        "(read its .workflow/ ledger and plan there). Use paths relative to your worktree; commit on your worktree's branch."
+                        % (place, ctx.start_cwd, root))
+    return OK
 
 
 def child_scratch_root(ctx):
