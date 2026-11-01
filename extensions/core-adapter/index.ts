@@ -4009,7 +4009,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
-    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config };
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
+      const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
+      await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
+    } };
   };
   const sessionCmd = registerSession(pi, {
     spawner,
