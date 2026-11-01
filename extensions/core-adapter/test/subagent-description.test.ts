@@ -24,13 +24,13 @@ async function tools(t: Parameters<typeof r11Rig>[0], opts: { child?: boolean; c
 }
 
 test("adapter: foreman_triage amends the subagent description", async (t) => {
-  const triage = (await tools(t, {})).find((x) => x.prepareLoadout);
+  const triage = (await tools(t, {})).find((x) => x.name === "foreman_triage");
   const out = triage?.prepareLoadout?.({ declared });
   assert.ok(out?.descriptions?.subagent?.includes(TOP_LEVEL_NOTE));
 });
 
 test("adapter: a child registers no triage tool, sizing off leaves the description", async (t) => {
-  assert.equal((await tools(t, { child: true })).find((x) => x.prepareLoadout), undefined);
-  const off = (await tools(t, { config: { ladder: { sizing: { enabled: false } } } })).find((x) => x.prepareLoadout);
+  assert.equal((await tools(t, { child: true })).find((x) => x.name === "foreman_triage"), undefined);
+  const off = (await tools(t, { config: { ladder: { sizing: { enabled: false } } } })).find((x) => x.name === "foreman_triage");
   assert.equal(off?.prepareLoadout?.({ declared }), undefined);
 });
