@@ -128,12 +128,18 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
 `herdr agent prompt`. The parent polls the handoff dir for `*.md` and `.ask`; the child waits with
 `foreman_wait({action: "start", kind: "file", path: "<handoff dir>/ruling-<n>.md"})`.
 
-- **`ask_user_question` (foreman only).** When a human is at the pane, the foreman can also raise a structured question:
-  `ask_user_question({questions: [{question, options, allowFreeText?}]})` takes 1 to 4 questions with 2 to 4 options each
-  (plus an "Other" free-text entry unless `allowFreeText` is false) and blocks the turn until each is answered. The
-  `ask.md` file path above stays unchanged. When a handoff dir where this session is the child holds an open `ask.md` (never a dir it opened as parent), the answer is also written to
-  `ruling-<n>.md` (n from its `# Ask <n>:` line; an existing ruling is not overwritten). With no UI (print/rpc mode,
-  nobody at the pane) or a dismissed dialog the result tells the agent to use the `ask.md` file path instead.
+- **`ask_user_question` (foreman only).** When a human is at the pane, the foreman can also raise a structured question.
+  The tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (exact pin in `package.json`; `foreman setup`
+  installs it, `foreman doctor` fails when it is missing): `ask_user_question({questions: [{question, header, options:
+  [{label, description}], multiSelect?}]})` takes 1 to 4 questions with 2 to 4 options each, a `header` chip per question
+  and a type-your-own row, and blocks the turn until answered. `n` adds a note to a question or a global note on the Submit
+  tab; they come back as `user notes: ...` / `global note: ...` in the answer, and Esc cancels. The harness registers no
+  such tool itself; it keeps two hooks keyed on the tool name: `tool_call` counts the dialog (`foreman_dialogs` family
+  `ask_user_question`), and `tool_result` writes the answer text, notes included, to `ruling-<n>.md` when a handoff dir
+  where this session is the child holds an open `ask.md` (never a dir it opened as parent; n from its `# Ask <n>:`
+  line; an existing ruling is not overwritten; nothing on Esc, no UI or an error). The package's `details` are never
+  rewritten. Without a human at the pane the package does not register the tool; ask by file (`ask.md`, the file path
+  above, unchanged) then.
 - **`.seen` by the harness.** When a file wait on `ruling-<n>.md` (or `ruling.md`) in an own handoff dir wakes, pi-foreman
   writes `.seen` (the ruling file name) itself; no tool call or dialog. A `.seen` the child writes by hand is harmless
   (idempotent), also one made by `bash`.

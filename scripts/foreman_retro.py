@@ -353,6 +353,11 @@ def num(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
 
 
+def is_cost_line(r):
+    """False for a `tool-usage` line (names only, no model call); every reader of cost lines skips those."""
+    return not (isinstance(r, dict) and r.get("kind") == "tool-usage")
+
+
 def usage_metrics(records, sid, rates=None):
     """rates: {"provider/model": {input, output, cacheRead, cacheWrite}} in USD per million tokens; used for a
     record whose logged cost total is 0 (the Claude bridge reports none)."""
@@ -360,7 +365,7 @@ def usage_metrics(records, sid, rates=None):
     for r in records:
         if sid and r.get("foremanSession") not in (None, sid):
             continue
-        if r.get("kind") == "keepalive":  # cache keep-alive spend has its own line (cache_metrics)
+        if r.get("kind") == "keepalive" or not is_cost_line(r):  # cache keep-alive spend has its own line (cache_metrics)
             continue
         row = roles.setdefault(str(r.get("role", "?")), {"children": set(), "launches": collections.Counter(),
                                                          "in": 0, "out": 0, "cacheRead": 0, "cacheWrite": 0, "cost": 0.0})
@@ -379,6 +384,185 @@ def usage_metrics(records, sid, rates=None):
     return {k: {"children": len(v["children"]), "launches": dict(v["launches"]), "tokensIn": v["in"],
                 "tokensOut": v["out"], "cacheRead": v["cacheRead"], "cacheWrite": v["cacheWrite"],
                 "cost": round(v["cost"], 4)} for k, v in sorted(roles.items())}
+
+
+# ------------------------------------------------------------------ tool usage (token-diet)
+
+TOOL_USAGE_DAYS = 60
+TOOL_USAGE_MIN_SESSIONS = 20  # a rule fires only with this many sessions (per group)
+FLIP_SEARCHABLE_BELOW = 0.10  # declared but used in under 10% of the sessions that declared it
+FLIP_ALWAYS_ON_AT = 0.25  # hidden but found in 25% or more of the sessions that hid it
+# tools that stay declared whatever the config says (extensions/core-adapter/deferred.ts DEFERRED_FLOOR); never suggested
+TOOL_FLOOR = ("tool_search", "codemode", "read", "bash", "edit", "write", "subagent", "foreman_ledger", "foreman_triage",
+              "contact_supervisor", "subagent_supervisor", "ask_user_question")
+# the add-on's optional tools: disabled at the source (PI_BG_FEATURES=process) they cost nothing
+BG_FEATURE_TOOLS = ("fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result")
+# packages the harness ships or bundles, and the pseudo-sources: never a `pi remove` suggestion
+NO_REMOVE_SOURCES = ("pi-foreman", "pi-subagents", "pi-intercom", "@juicesharp/rpiv-ask-user-question", "builtin", "unknown")
+
+
+def tool_usage_sessions(agent_dir, now=None):
+    """The last `tool-usage` line per session over the last TOOL_USAGE_DAYS days, read from every file in
+    <agentDir>/pi-foreman/state/usage like the harness's readUsage in workspace mode. [] without any."""
+    d = Path(fc.resolve_agent_dir(agent_dir)) / "pi-foreman" / "state" / "usage"
+    cutoff = (now if now is not None else datetime.datetime.now(datetime.timezone.utc).timestamp()) - TOOL_USAGE_DAYS * 86400
+    last = {}
+    try:
+        files = sorted(d.glob("*.jsonl"))
+    except OSError:
+        return []
+    for f in files:
+        for r in read_jsonl(str(f)) or []:
+            if not isinstance(r, dict) or r.get("kind") != "tool-usage":
+                continue
+            t = _ts(r)
+            if t is None or t < cutoff:
+                continue
+            key = (f.name, str(r.get("session") or r.get("role") or "?"))
+            if key not in last or t >= last[key][0]:
+                last[key] = (t, r)
+    return [v[1] for v in sorted(last.values(), key=lambda x: x[0])]
+
+
+def _names(r, key):
+    v = r.get(key)
+    return {x for x in v if isinstance(x, str)} if isinstance(v, list) else set()
+
+
+def _bg_feature(name):
+    return any(name == p or (p.endswith("*") and name.startswith(p[:-1])) for p in BG_FEATURE_TOOLS)
+
+
+def _group_suggestions(role, sessions):
+    """Suggestions for one role's sessions (at least TOOL_USAGE_MIN_SESSIONS of them)."""
+    out = {"role": role, "sessions": len(sessions), "searchable": [], "always_on": [], "never_used": [],
+           "skills_hide": [], "skills_always_on": [], "skills_never_read": []}
+    declared, hidden, used, found = (collections.Counter() for _ in range(4))
+    listed, shidden, sread, sfound = (collections.Counter() for _ in range(4))
+    for r in sessions:
+        dec, hid = _names(r, "declared"), _names(r, "hidden")
+        use, fnd = _names(r, "used"), _names(r, "found")
+        declared.update(dec)
+        used.update(dec & use)
+        hidden.update(hid)
+        found.update(hid & fnd)
+        lst, sh = _names(r, "skillsListed"), _names(r, "skillsHidden")
+        rd = _names(r, "skillsRead")
+        listed.update(lst)
+        sread.update(lst & rd)
+        shidden.update(sh)
+        sfound.update(sh & (fnd | rd))
+    n = TOOL_USAGE_MIN_SESSIONS
+    for name, c in sorted(declared.items()):
+        if c >= n and name not in TOOL_FLOOR:
+            if used[name] == 0:
+                out["never_used"].append(name)
+            if used[name] / c < FLIP_SEARCHABLE_BELOW:
+                out["searchable"].append(name)
+    for name, c in sorted(hidden.items()):
+        if c >= n and found[name] / c >= FLIP_ALWAYS_ON_AT:
+            out["always_on"].append(name)
+    for name, c in sorted(listed.items()):
+        if c >= n:
+            if sread[name] == 0:
+                out["skills_never_read"].append(name)
+            if sread[name] / c < FLIP_SEARCHABLE_BELOW:
+                out["skills_hide"].append(name)
+    for name, c in sorted(shidden.items()):
+        if c >= n and sfound[name] / c >= FLIP_ALWAYS_ON_AT:
+            out["skills_always_on"].append(name)
+    return out
+
+
+def tool_usage_metrics(agent_dir, now=None):
+    """Counts over the last tool-usage line per session, plus suggestions when there are at least
+    TOOL_USAGE_MIN_SESSIONS sessions. None without any line. Suggestions only: nothing is applied."""
+    sessions = tool_usage_sessions(agent_dir, now)
+    if not sessions:
+        return None
+    declared, used, found, listed, read, sfound = (set() for _ in range(6))
+    sources, found_n, sfound_n = {}, 0, 0
+    for r in sessions:
+        declared |= _names(r, "declared")
+        used |= _names(r, "used")
+        listed |= _names(r, "skillsListed")
+        read |= _names(r, "skillsRead")
+        hid, shid = _names(r, "hidden"), _names(r, "skillsHidden")
+        fnd = _names(r, "found")
+        found |= fnd & hid
+        sfound |= fnd & shid
+        found_n += bool(fnd & hid)
+        sfound_n += bool(fnd & shid)
+        if isinstance(r.get("sources"), dict):
+            sources.update({k: v for k, v in r["sources"].items() if isinstance(k, str) and isinstance(v, str)})
+    rep = {"sessions": len(sessions), "days": TOOL_USAGE_DAYS, "min_sessions": TOOL_USAGE_MIN_SESSIONS,
+           "tools_never_used": sorted(declared - used), "tools_found": sorted(found), "tools_found_sessions": found_n,
+           "skills_never_read": sorted(listed - read), "skills_found": sorted(sfound), "skills_found_sessions": sfound_n,
+           "suggestions": None}
+    if len(sessions) >= TOOL_USAGE_MIN_SESSIONS:
+        by_role = collections.defaultdict(list)
+        for r in sessions:
+            by_role[str(r.get("role") or "?")].append(r)
+        groups = [_group_suggestions(role, rs) for role, rs in sorted(by_role.items())
+                  if len(rs) >= TOOL_USAGE_MIN_SESSIONS]
+        # a tool is unused for the package rule when no session of any role used it
+        pkg_tools = collections.defaultdict(set)
+        for name in declared:
+            pkg_tools[sources.get(name, "unknown")].add(name)
+        removable = sorted(p for p, ts in pkg_tools.items() if p not in NO_REMOVE_SOURCES and not (ts & used))
+        rep["suggestions"] = {"groups": groups, "sources": {k: sources.get(k, "unknown") for g in groups for k in g["never_used"]},
+                              "remove_packages": removable}
+    return rep
+
+
+def _list(names, limit=12):
+    names = list(names)
+    return ", ".join(names[:limit]) + (" (+%d more)" % (len(names) - limit) if len(names) > limit else "") if names else "none"
+
+
+def render_tool_usage(t):
+    """The `tools:` and `skills:` lines, then the suggestions (only with enough sessions). [] without data."""
+    if not t:
+        return []
+    n = t["sessions"]
+    L = ["tools: declared never used: %s (0 of %d sessions); found: %s (%d of %d)"
+         % (_list(t["tools_never_used"]), n, _list(t["tools_found"]), t["tools_found_sessions"], n),
+         "skills: listed never read: %s; found: %s (%d of %d)"
+         % (_list(t["skills_never_read"]), _list(t["skills_found"]), t["skills_found_sessions"], n)]
+    s = t["suggestions"]
+    if s is None:
+        L.append("tool usage: %d session(s) in %d days, fewer than %d: no suggestion" % (n, t["days"], t["min_sessions"]))
+        return L
+    L.append("tool usage suggestions (%d sessions in %d days; nothing is applied):" % (n, t["days"]))
+    srcs = s["sources"]
+    removable = set(s["remove_packages"])
+    for g in s["groups"]:
+        who = "%s, %d sessions" % (g["role"], g["sessions"])
+        if g["never_used"]:
+            by_rem = collections.OrderedDict()
+            for name in g["never_used"]:
+                pkg = srcs.get(name, "unknown")
+                rem = ("pi remove npm:%s" % pkg if pkg in removable else "PI_BG_FEATURES=process" if _bg_feature(name)
+                       else "tools.deferred")
+                by_rem.setdefault((pkg, rem), []).append(name)
+            for (pkg, rem), names in by_rem.items():
+                L.append("  never used (%s): %s (%s) -> %s" % (who, ", ".join(names), pkg, rem))
+        if g["searchable"]:
+            if g["role"] == "foreman":
+                L.append('  used in under 10%% (%s): tools.deferred: add %s' % (who, ", ".join('"%s"' % x for x in g["searchable"])))
+            else:
+                L.append('  used in under 10%% (%s): roles.%s.searchable: add %s' % (who, g["role"], ", ".join('"%s"' % x for x in g["searchable"])))
+        if g["always_on"]:
+            where = "tools.deferred" if g["role"] == "foreman" else "roles.%s.searchable" % g["role"]
+            L.append("  found in 25%% or more (%s): always on, remove from %s: %s" % (who, where, ", ".join(g["always_on"])))
+        if g["skills_never_read"]:
+            L.append("  skills never read (%s): %s -> skills.hidden or remove the skill directory" % (who, ", ".join(g["skills_never_read"])))
+        hide = [x for x in g["skills_hide"] if x not in g["skills_never_read"]]
+        if hide:
+            L.append('  skills read in under 10%% (%s): skills.hidden: add %s' % (who, ", ".join('"%s"' % x for x in hide)))
+        if g["skills_always_on"]:
+            L.append("  skills found in 25%% or more (%s): always on, remove from skills.hidden: %s" % (who, ", ".join(g["skills_always_on"])))
+    return L
 
 
 def _ts(r):
@@ -420,7 +604,7 @@ def cache_metrics(trace, usage, sid, config=None):
         return None
     # The retro process's own env; a bare config (no merged `bridge` section) derives nothing.
     bridge_ttl = fc.derived_bridge_ttl(config, False, os.environ) if isinstance(config, dict) and "bridge" in config else None
-    lines = [r for r in usage or [] if isinstance(r, dict) and not (sid and r.get("foremanSession") not in (None, sid))]
+    lines = [r for r in usage or [] if isinstance(r, dict) and is_cost_line(r) and not (sid and r.get("foremanSession") not in (None, sid))]
     ka = [r for r in lines if r.get("kind") == "keepalive"]
     warm = sum(1 for e in trace or [] if isinstance(e, dict) and e.get("event") == "compaction"
                and e.get("reason") == "warm_idle")
@@ -499,7 +683,7 @@ def explorer_metrics(trace, usage, sid, ranks=None):
     by_model = collections.Counter()
     seen = set()
     for r in usage or []:
-        if r.get("role") != "explorer" or (sid and r.get("foremanSession") not in (None, sid)):
+        if r.get("role") != "explorer" or not is_cost_line(r) or (sid and r.get("foremanSession") not in (None, sid)):
             continue
         lid = r.get("launchId")
         if lid:
@@ -651,6 +835,7 @@ def build(session, trace, usage, review, min_reviews, agent_dir, rates=None):
         "trace": trace_metrics(trace) if trace is not None else None,
         "usage": usage_metrics(usage, sid, rates) if usage is not None else None,
         "explorer": explorer_metrics(trace, usage, sid, ranks),
+        "tool_usage": tool_usage_metrics(agent_dir) if agent_dir else None,
         "cache": cache_metrics(trace, usage, sid, config),
         "sizing": sizing_metrics(trace),
         "session_tools": session_metrics(session) if session is not None else None,
@@ -772,6 +957,7 @@ def render_text(rep, proposals_path=None):
                         v["cacheWrite"], v["cost"]))
     if rep.get("cache"):
         L.append(cache_line(rep["cache"]))
+    tool_usage_lines = render_tool_usage(rep.get("tool_usage"))
     s = rep["session_tools"]
     if s is None:
         L.append("session tools: no data")
@@ -788,7 +974,7 @@ def render_text(rep, proposals_path=None):
         L.append("proposals: %d candidate(s)%s" % (len(p), " -> " + str(proposals_path) if proposals_path else ""))
         for c in p[:5]:
             L.append("  %s (approvals=%d, sessions=%d)" % (c["pattern"], c["approvals"], c["sessions"]))
-    return "\n".join(L[:30])
+    return "\n".join(L[:30] + tool_usage_lines)
 
 
 def write_proposals(path, proposals, min_reviews, source):

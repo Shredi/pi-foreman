@@ -1,5 +1,5 @@
 // MCP in a child (round 68): core-adapter loads Pi's own MCP extension in every child with a filtered server list and
-// registers Pi's `tool_search`, so a child loads an MCP tool on demand and only within its role's scope (mcpscope.ts).
+// registers the harness `tool_search` (toolsearch.ts), so a child loads an MCP tool on demand and only within its role's scope (mcpscope.ts).
 // The binding is captured at factory time and the allowed set is computed from it in `start` (the child's
 // session_start), never from env later. A child without a binding allows nothing (fail closed).
 import * as fs from "node:fs";
@@ -91,15 +91,10 @@ export async function configuredServers(cwd: string, trusted: boolean, env: Env 
   }
 }
 
-/** Register Pi's `tool_search` (inactive until activated); it must exist in every child before the allowlist is checked. */
-export function registerChildToolSearch(pi: Pick<ExtensionAPI, "registerTool">, factory: unknown = (sdk as Record<string, unknown>).createToolSearchExtension): boolean {
-  if (typeof factory !== "function") return false;
-  try {
-    (factory as () => (api: unknown) => void)()(pi);
-    return true;
-  } catch {
-    return false;
-  }
+/** Tool names `roles.<role>.searchable` lets a child find through `tool_search` (none when unset). */
+export function searchableOf(configRoles: unknown, role: string | undefined): string[] {
+  const list = role && configRoles && typeof configRoles === "object" ? ((configRoles as Record<string, { searchable?: unknown } | undefined>)[role]?.searchable) : undefined;
+  return Array.isArray(list) ? list.filter((n): n is string => typeof n === "string") : [];
 }
 
 export interface McpChildOpts {
@@ -113,6 +108,8 @@ export interface McpChildOpts {
   createMcp?: unknown;
   /** Injectable for tests: how long `preload` waits for the allowed servers' tools (default 10 s, Pi's own startup wait). */
   preloadWaitMs?: number;
+  /** How many skills are hidden from this child's prompt and findable through `tool_search` (default none). */
+  hiddenSkills?: () => number;
 }
 
 const PRELOAD_WAIT_MS = 10_000;
@@ -236,7 +233,9 @@ export class McpChild {
         trace({ event: "mcp_child_unsupported", role: binding?.role ?? null, reason: why });
       }
     }
-    if (mcpEmpty(this.allowed) || this.unsupported) {
+    // The search stays on when the child has something besides MCP to find: searchable tools or hidden skills.
+    const findable = searchableOf(configRoles, binding?.role).length > 0 || (this.opts.hiddenSkills?.() ?? 0) > 0;
+    if ((mcpEmpty(this.allowed) || this.unsupported) && !findable) {
       try {
         const active = this.pi.getActiveTools();
         if (active.includes(TOOL_SEARCH)) this.pi.setActiveTools(active.filter((name) => name !== TOOL_SEARCH));

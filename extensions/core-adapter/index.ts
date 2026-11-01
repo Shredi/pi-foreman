@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { afterSpawn, beforeSpawn, changedFileOf, escalate, gateThreshold, initialCeremony, isTier, ledgerTier, onFileChanged, onStrongLaunch, promptSignals, tierLine, TIERS, userOverride } from "./ceremony.ts";
 import { checkTrivial, effectiveRequired, escalationNote, trivialBuilderPath } from "./trivial.ts";
 import type { CeremonyState } from "./ceremony.ts";
-import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint } from "./config.ts";
+import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
@@ -56,10 +56,14 @@ import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
-import { McpChild, configuredServers, registerChildToolSearch } from "./mcpchild.ts";
+import { McpChild, configuredServers } from "./mcpchild.ts";
+import { DEFERRED_ENTRY, DEFERRED_SECTION, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
+import { createToolSearchTool } from "./toolsearch.ts";
+import { ToolUsageTracker, packageOf } from "./toolusage.ts";
+import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
 import type { McpChildOpts } from "./mcpchild.ts";
 import { PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
-import { childSkillDirs } from "./skilldirs.ts";
+import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
@@ -111,12 +115,12 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
-import { ASK_USER_TOOL, askUserQuestion } from "./askuser.ts";
+import { ASK_USER_TOOL, writeAskRuling } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildWidget, rungOf } from "./childwidget.ts";
@@ -438,8 +442,33 @@ export interface AdapterDeps {
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
-  // r68: Pi's tool_search exists in every child before the installInert return below, so a child allowlisting it never fails at agent_start.
-  if (process.env.PI_SUBAGENT_CHILD === "1") registerChildToolSearch(pi);
+  // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
+  const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
+  // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
+  const skillState = { rules: { visible: [], hidden: [] } as SkillRules, hidden: [] as SkillRef[], split: false, hint: "" };
+  const toolUsage = new ToolUsageTracker();
+  const persistDeferred = (): void => {
+    try {
+      pi.appendEntry(DEFERRED_ENTRY, { names: [...deferred.loaded], planMode: deferred.planMode });
+    } catch {
+      // the session file is not writable now: the state stays in memory
+    }
+  };
+  // r68: the tool_search exists in every session before the installInert return below, so a child allowlisting it never fails at agent_start.
+  pi.registerTool(createToolSearchTool({
+    host: pi as never,
+    hidden: () => deferred.hidden,
+    skills: () => skillState.hidden,
+    unhide: (names) => {
+      for (const n of names) deferred.loaded.add(n);
+      deferred.hidden = deferred.hidden.filter((n) => !deferred.loaded.has(n));
+      persistDeferred();
+    },
+    found: (hit) => {
+      toolUsage.noteFound(hit.name);
+      deferred.trace({ event: "tool_found", ...hit });
+    },
+  }) as never);
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
   pi.on("session_shutdown", async () => {
@@ -613,7 +642,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
   // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
-  const mcpChild = process.env.PI_SUBAGENT_CHILD === "1" ? new McpChild(pi, { binding: launchBinding ? { role: launchBinding.role, ...(launchBinding.mcp ? { mcp: launchBinding.mcp } : {}) } : null, ...(deps.mcpChild ?? {}) }) : null;
+  const mcpChild = process.env.PI_SUBAGENT_CHILD === "1" ? new McpChild(pi, { binding: launchBinding ? { role: launchBinding.role, ...(launchBinding.mcp ? { mcp: launchBinding.mcp } : {}) } : null, hiddenSkills: () => skillState.hidden.length, ...(deps.mcpChild ?? {}) }) : null;
 
   const pyPath = (s: Session): string | null => (s.python.ok ? s.python.info.executable : null);
 
@@ -1258,7 +1287,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
     recordIdentity(s, ctx, event.reason, restored);
+    await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
+    initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1") {
@@ -1310,6 +1341,70 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
   // After core-adapter's own session_start handler: Pi runs handlers in registration order, so the allowed set is known when Pi's MCP extension loads its config.
   mcpChild?.install();
+
+  /** The first tool-usage snapshot (toolusage.ts): declared (active minus hidden), hidden, the listed and hidden skills, each tool's package. */
+  function startToolUsage(s: Session, listed: SkillRef[]): void {
+    let active: string[] = [];
+    const sources: Record<string, string> = {};
+    try {
+      active = pi.getActiveTools();
+      for (const t of pi.getAllTools()) sources[t.name] = packageOf(t.sourceInfo);
+    } catch {
+      // a host without the tool api records empty sets
+    }
+    const hidden = new Set(deferred.hidden);
+    const skillFiles: Record<string, string> = {};
+    for (const k of [...listed, ...skillState.hidden]) if (k.filePath) skillFiles[k.name] = k.filePath;
+    toolUsage.start({ declared: active.filter((n) => !hidden.has(n)), hidden: [...hidden], skillsListed: listed.map((k) => k.name), skillsHidden: skillState.hidden.map((k) => k.name), skillFiles, sources });
+  }
+
+  /** Write the tool-usage line when it is the first or `used`, `found` or `skillsRead` changed. */
+  function flushToolUsage(s: Session): void {
+    const line = toolUsage.take({ session: s.id, role: s.usage.line.role, workspace: s.usage.line.workspace, foremanSession: s.usage.line.foremanSession });
+    if (line) appendUsage(s.usage.file, line);
+  }
+
+  /** Skill visibility at session start: the rules from the merged config; a child splits the skills its role names now (its prompt is made from the agent file), the foreman splits its listed skills at the first turn. */
+  async function initSkills(s: Session): Promise<void> {
+    skillState.rules = skillRulesOf(s.config.config);
+    skillState.hidden = [];
+    skillState.split = false;
+    skillState.hint = "";
+    if (!s.isChild) return;
+    const refs = await childSkillRefs(get(s.config.config, "roles"), s.usage.line.role, s.cwd);
+    skillState.hidden = splitSkills(refs, skillState.rules).hidden;
+    skillState.split = true;
+  }
+
+  /** The hidden set, once per session start from the merged config, the recorded un-hidden names and the plan-mode decision. */
+  function initDeferred(s: Session, ctx: ExtensionContext): void {
+    const branch = (ctx.sessionManager.getBranch?.() ?? []) as unknown[];
+    const recorded = latestDeferredLoaded(branch);
+    const base = get(s.config.config, "tools.deferred");
+    const merged = mergeDeferredLayers(base, safeTrusted(ctx) ? [{ who: "project", value: readProjectDeferred(s.cwd) }] : []);
+    for (const w of merged.warnings) notifyOnce(s, ctx, `deferred:${w}`, `pi-foreman: ${w}`, "warning");
+    deferred.patterns = merged.list;
+    deferred.loaded = new Set(recorded?.names ?? []);
+    deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
+    deferred.trace = (r) => s.trace?.emit(r);
+    let declared: string[] = [];
+    try {
+      declared = pi.getActiveTools();
+    } catch {
+      // a host without the tool api hides nothing
+    }
+    // The hook runs only for an active tool_search, so without one nothing is hidden.
+    deferred.hidden = declared.includes("tool_search") ? hiddenSet({ patterns: deferred.patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
+    if (!recorded || recorded.planMode !== deferred.planMode) persistDeferred();
+    if (deferred.hidden.length) {
+      s.trace?.emit({ event: "tools_deferred", count: deferred.hidden.length, names: deferred.hidden.join(",") });
+      try {
+        pi.setActiveTools(pi.getActiveTools()); // re-run the loadout hooks with the set in place
+      } catch {
+        // the next change of the active set applies it
+      }
+    }
+  }
 
   pi.on("session_shutdown", async (_event, ctx) => {
     const s = sessionFor(ctx);
@@ -1476,6 +1571,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.clear();
     if (s && !s.isChild) s.idleCache.noteTurnStart(typeof event.timestamp === "number" ? event.timestamp : Date.now());
   });
+  pi.on("turn_end", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s) return;
+    toolUsage.noteMessage(event.message);
+    flushToolUsage(s);
+  });
   pi.on("agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
@@ -1491,6 +1592,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("before_agent_start", async (event, ctx) => {
     const s = await ensureSession(ctx);
     s.stopContinued = false;
+    if (deferred.hidden.length) {
+      let codemode = false;
+      try {
+        codemode = pi.getActiveTools().includes("codemode");
+      } catch {
+        // no tool api: the plain wording
+      }
+      deferred.hint = deferredHint(deferred.hidden, codemode);
+      event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
+    }
+    if (!s.isChild) {
+      const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
+      if (Array.isArray(listed)) {
+        if (!skillState.split) {
+          skillState.hidden = splitSkills(listed.filter((k) => !k.disableModelInvocation), skillState.rules).hidden.map((k) => ({ name: k.name, description: k.description, filePath: k.filePath }));
+          skillState.split = true;
+        }
+        const gone = new Set(skillState.hidden.map((k) => k.name));
+        if (gone.size) listed.splice(0, listed.length, ...listed.filter((k) => !gone.has(k.name)));
+      }
+    }
+    if (skillState.hidden.length) {
+      skillState.hint = skillsHint(skillState.hidden);
+      event.systemPromptOptions.sections[SKILLS_SECTION] = skillState.hint;
+    }
+    if (!toolUsage.started) startToolUsage(s, (event.systemPromptOptions as { skills?: SkillRef[] }).skills ?? []);
+    flushToolUsage(s);
     if (!s.isChild) {
       // Idle downshift: a custom message has not passed message_end yet, so its cause is read here; a user message carries the input handler's.
       idleBind = { s, ctx };
@@ -1605,7 +1733,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("context_with_system", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return undefined;
-    const messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
+    let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
+    // after a compaction the stored head lacks the stable hint sections too: put them back the same way
+    for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
     s.selfWarm.capture(messages ?? event.messages);
     return messages ? { messages } : undefined;
   });
@@ -2380,6 +2510,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ms && !ms.isChild) {
       capsReset(ms, event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
+      // ask_user_question comes from the bundled @juicesharp/rpiv-ask-user-question; the harness only counts the dialog
+      if (event.toolName === ASK_USER_TOOL) ms.trace?.emit({ event: "dialog", surface: "ask_user" });
     }
     let bashTimeout = null as ChildBashTimeout | null;
     const res = await (async () => {
@@ -3501,7 +3633,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.selfWarm.onActivity();
     }
     s?.mutating.delete(event.toolCallId);
-    if (s && !s.isChild && !event.isError && ownerAnswered(event.toolName, (event.result as { details?: unknown } | undefined)?.details)) {
+    if (s && !s.isChild && !event.isError && ownerAnswered(event.toolName, (event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       idleBind = { s, ctx };
       await idleModel.onAnswer(); // the owner is back: the answer's next request runs on the base model
     }
@@ -3521,6 +3653,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
       await recordEntries(created, { ...o, stateDir: manifestCtx(owner, ctx.cwd).stateDir }, (args) => runScript(owner, "foreman_close.py", args, 15_000));
     }
+    // an answer to an open ask.md is also written to ruling-<n>.md; details stay the package's (ownerAnswered reads them)
+    if (owner && !owner.isChild && event.toolName === ASK_USER_TOOL) writeAskRuling(childDirsOf(owner), event.content, event.details, event.isError);
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
@@ -4079,23 +4213,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } as never);
   }
 
-  // R16 item 5: a structured in-pane question for a human at the pane (askuser.ts); foreman only.
-  if (process.env.PI_SUBAGENT_CHILD !== "1") {
-    pi.registerTool({
-      name: ASK_USER_TOOL,
-      label: "Ask the user",
-      description: "Ask the human at the pane 1 to 4 structured questions (2 to 4 options each, plus free text unless allowFreeText is false); blocks until answered. Without a human at the pane it says so: ask by file (ask.md) instead. With an open ask.md the answer is also written to ruling-<n>.md.",
-      parameters: { type: "object", properties: { questions: { type: "array", minItems: 1, maxItems: 4, items: { type: "object", properties: { question: { type: "string", minLength: 1 }, options: { type: "array", minItems: 2, maxItems: 4, items: { type: "string", minLength: 1 } }, allowFreeText: { type: "boolean" } }, required: ["question", "options"], additionalProperties: false } } }, required: ["questions"], additionalProperties: false } as never,
-      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-        const s = await ensureSession(ctx);
-        if (s.isChild) return { content: [{ type: "text" as const, text: `${ASK_USER_TOOL} is for the foreman only.` }], details: { decision: "refused" }, isError: true };
-        const r = await askUserQuestion(params, { hasUI: ctx.hasUI, ui: ctx.ui, ownDirs: () => childDirsOf(s) });
-        if (r.decision === "answered" || r.decision === "dismissed") s.trace?.emit({ event: "dialog", surface: "ask_user" });
-        return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.decision }, ...(r.decision === "refused" ? { isError: true } : {}) };
-      },
-    } as never);
-  }
-
   // Ledger helper (ledgercall.ts, ceremony.ledgerHelper): registered inactive; the foreman activates
   // it at session start unless the knob is off, reviewer children get it through their tool list.
   pi.registerTool({
@@ -4450,7 +4567,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // The bridge logs cost 0: pass registry rates of the logged models (a file, not the command line).
     try {
       const rates: Record<string, unknown> = {};
-      for (const l of readUsage(s.agentDir, { session: s.id })) {
+      for (const l of readUsage(s.agentDir, { session: s.id }).filter(isCostLine)) {
         const rate = lookupRate(ctx.modelRegistry as never, l.provider, l.model);
         if (rate) rates[`${l.provider}/${l.model}`] = rate;
       }
@@ -4606,7 +4723,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (sub === "status") {
         const s = await ensureSession(ctx);
         const open = s.isChild ? 0 : waits.active(s.id).length;
-        ctx.ui.notify([pressureStatusLine(pressureOf(s), pressureNow()), `open waits: ${open}`, `tier: ${s.ceremony.tier}`].join("\n"), "info");
+        ctx.ui.notify([pressureStatusLine(pressureOf(s), pressureNow()), `open waits: ${open}`, `tier: ${s.ceremony.tier}`, `deferred tools: ${deferred.hidden.length}`].join("\n"), "info");
         return;
       }
       if (sub === "waits") {
@@ -4800,6 +4917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const addonOn = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd });
     out.push(`INFO background-tasks: ${addonOn ? "present" : "absent"}`);
     out.push(...bgFeaturesDoctor(addonOn, s.agentDir, process.env));
+    if (!s.isChild) out.push(...deferredDoctorLines(deferred.patterns, pi.getAllTools().map((t) => t.name)));
     const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));

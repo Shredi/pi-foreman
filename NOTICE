@@ -35,5 +35,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+The bundled dependency @juicesharp/rpiv-ask-user-question (the structured ask_user_question tool),
+Copyright (c) 2026 juicesharp, is released under the MIT License (its LICENSE ships in node_modules).
+
 The ledger and gate rules in instructions/foreman.md are partly derived from the
 instruction text of that core, and are released under the same MIT License.

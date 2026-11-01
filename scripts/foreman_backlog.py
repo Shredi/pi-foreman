@@ -655,7 +655,9 @@ def cmd_brief(ctx, args):
           "2. Group complementary findings and fix each group with one change.",
           "3. Implement in the harness repository or in a user-level skill directory; where the output lives is"
           " this session's decision.",
-          "4. Run `foreman backlog mark <id> done --workspace %s` for every finished entry." % key, ""]
+          "4. Run `foreman backlog mark <id> done --workspace %s` for every finished entry." % key,
+          "5. Tools and skills: declared but used in under 10% of at least 20 sessions -> searchable; searchable but"
+          " found in 25% or more -> always on (`foreman retro` prints the counts).", ""]
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(L))

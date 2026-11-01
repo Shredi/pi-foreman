@@ -1,0 +1,54 @@
+{
+  "provenance": {
+    "package": "@juicesharp/rpiv-ask-user-question@2.15.0",
+    "captured": "by running buildQuestionnaireResponse (tool/response-envelope.ts:19-46) of the installed package on three QuestionnaireResult inputs (node 22, a copy of its tool/ dir, since node refuses to strip types under node_modules); noUi is the literal of ask-user-question.ts:71 and :88",
+    "fields": {
+      "content[0].text 'user notes: <text>'": "tool/response-envelope.ts:60 (buildAnswerSegment)",
+      "content[0].text 'global note: <text>.'": "tool/response-envelope.ts:43",
+      "details.answers[].notes": "tool/types.ts:113 (QuestionAnswer.notes)",
+      "details.globalNote": "tool/types.ts:149 (QuestionnaireResult.globalNote), tool/response-envelope.ts:26 and :44",
+      "details.cancelled": "tool/types.ts:138 (QuestionnaireResult.cancelled), tool/response-envelope.ts:25 and :38",
+      "details.error": "tool/types.ts:156 (QuestionnaireResult.error), ask-user-question.ts:71 (no_ui)",
+      "decline text": "tool/response-envelope.ts:4 (DECLINE_MESSAGE)"
+    }
+  },
+  "answeredWithNotes": {
+    "content": [
+      {
+        "type": "text",
+        "text": "User has answered your questions: \"Which database?\"=\"pg\". user notes: keep it boring. \"Which cache?\"=\"none\". global note: ship it Monday. You can now continue with the user's answers in mind."
+      }
+    ],
+    "details": {
+      "answers": [
+        { "questionIndex": 0, "question": "Which database?", "kind": "option", "answer": "pg", "notes": "keep it boring" },
+        { "questionIndex": 1, "question": "Which cache?", "kind": "option", "answer": "none" }
+      ],
+      "cancelled": false,
+      "globalNote": "ship it Monday"
+    }
+  },
+  "answeredPlain": {
+    "content": [
+      {
+        "type": "text",
+        "text": "User has answered your questions: \"Which database?\"=\"pg\". \"Which cache?\"=\"none\". You can now continue with the user's answers in mind."
+      }
+    ],
+    "details": {
+      "answers": [
+        { "questionIndex": 0, "question": "Which database?", "kind": "option", "answer": "pg" },
+        { "questionIndex": 1, "question": "Which cache?", "kind": "option", "answer": "none" }
+      ],
+      "cancelled": false
+    }
+  },
+  "cancelled": {
+    "content": [{ "type": "text", "text": "User declined to answer questions" }],
+    "details": { "answers": [], "cancelled": true }
+  },
+  "noUi": {
+    "content": [{ "type": "text", "text": "Error: UI not available (running in non-interactive mode)" }],
+    "details": { "answers": [], "cancelled": true, "error": "no_ui" }
+  }
+}

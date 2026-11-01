@@ -80,17 +80,29 @@ test("/foreman setup switches the picker off in the child, even when the parent 
 
 test("missingBundled names the bundled packages without a package.json under node_modules", () => {
   const root = path.join(tmp, "bundle");
-  assert.deepEqual(missingBundled(root), ["pi-subagents", "pi-intercom"]);
+  assert.deepEqual(missingBundled(root), ["pi-subagents", "pi-intercom", "@juicesharp/rpiv-ask-user-question"]);
   for (const name of ["pi-subagents"]) {
     fs.mkdirSync(path.join(root, "node_modules", ...name.split("/")), { recursive: true });
     fs.writeFileSync(path.join(root, "node_modules", ...name.split("/"), "package.json"), "{}");
   }
-  assert.deepEqual(missingBundled(root), ["pi-intercom"]);
+  assert.deepEqual(missingBundled(root), ["pi-intercom", "@juicesharp/rpiv-ask-user-question"]);
+});
+
+test("missingBundled fails when only the ask package is missing (doctor FAIL source, presence only)", () => {
+  const root = path.join(tmp, "ask-missing");
+  for (const name of ["pi-subagents", "pi-intercom"]) {
+    fs.mkdirSync(path.join(root, "node_modules", ...name.split("/")), { recursive: true });
+    fs.writeFileSync(path.join(root, "node_modules", ...name.split("/"), "package.json"), "{}");
+  }
+  assert.deepEqual(missingBundled(root), ["@juicesharp/rpiv-ask-user-question"]);
+  fs.mkdirSync(path.join(root, "node_modules", "@juicesharp", "rpiv-ask-user-question"), { recursive: true });
+  fs.writeFileSync(path.join(root, "node_modules", "@juicesharp", "rpiv-ask-user-question", "package.json"), "{}");
+  assert.deepEqual(missingBundled(root), []);
 });
 
 test("missingBundled also checks every ./node_modules manifest entry", () => {
   const root = path.join(tmp, "manifest");
-  for (const name of ["pi-subagents", "pi-intercom"]) {
+  for (const name of ["pi-subagents", "pi-intercom", "@juicesharp/rpiv-ask-user-question"]) {
     fs.mkdirSync(path.join(root, "node_modules", ...name.split("/")), { recursive: true });
     fs.writeFileSync(path.join(root, "node_modules", ...name.split("/"), "package.json"), "{}");
   }

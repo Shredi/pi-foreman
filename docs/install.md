@@ -17,8 +17,8 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 
 `npm:pi-foreman` is planned once v0.1.0 is published. Pi clones the repository to
 `<agentDir>/git/github.com/Shredi/pi-foreman` (`<agentDir>` is `$PI_CODING_AGENT_DIR`, default `~/.pi/agent`) and runs
-`npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents` and
-`pi-intercom`, pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
+`npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-intercom` and
+`@juicesharp/rpiv-ask-user-question` (the `ask_user_question` tool with notes), pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
 meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
 `skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
@@ -30,6 +30,10 @@ Then run setup once:
 /foreman setup             # inside Pi: apply
 bin/foreman setup          # from a checkout (or: node setup.mjs)
 ```
+
+Setup removes a user-level `npm:` copy of any bundled package (also `@juicesharp/rpiv-ask-user-question`), so one copy
+remains; a git or path install of the same package is not detected and would register the tool twice (known gap, remove
+it by hand).
 
 Upgrading from a setup that installed `pi-subagents` or `pi-intercom` as top-level `npm:`
 packages: Pi stops at start with a tool conflict until setup has removed them, so `/foreman setup` cannot run yet. Run

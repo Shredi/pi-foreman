@@ -19,13 +19,25 @@ export function roleSkillNames(configRoles: unknown, role: string | null | undef
   return list.filter((x): x is string => typeof x === "string" && NAME.test(x));
 }
 
-type ResolveSkills = (names: string[], cwd: string) => { resolved: { path: string }[] };
+type ResolveSkills = (names: string[], cwd: string) => { resolved: { path: string; name?: string; description?: string }[] };
 
 /** pi-subagents' resolveSkills: the exports map hides the deep path, so import it by file URL from the package root. */
 async function loadResolveSkills(): Promise<ResolveSkills> {
   const root = path.dirname(createRequire(import.meta.url).resolve("pi-subagents"));
   const mod = (await import(pathToFileURL(path.join(root, "src", "agents", "skills.js")).href)) as { resolveSkills: ResolveSkills };
   return mod.resolveSkills;
+}
+
+/** The skills a role names (`config.roles.<role>.skills`) as `{name, description, filePath}`; empty on any error (fail-open: the skill then stays in the agent file). */
+export async function childSkillRefs(configRoles: unknown, role: string | null | undefined, cwd: string, resolveSkills?: ResolveSkills): Promise<{ name: string; description: string; filePath: string }[]> {
+  try {
+    const names = roleSkillNames(configRoles, role);
+    if (!names.length) return [];
+    const resolve = resolveSkills ?? (await loadResolveSkills());
+    return resolve(names, cwd).resolved.map((s) => ({ name: s.name ?? path.basename(path.dirname(s.path)), description: s.description ?? "", filePath: s.path }));
+  } catch {
+    return [];
+  }
 }
 
 /** True when `dir` is `p` or an ancestor of it. */

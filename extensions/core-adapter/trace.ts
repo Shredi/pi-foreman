@@ -17,8 +17,10 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // R46 `allowance` (the child's read deny for its launch in `child_read_budget`).
 // R62 `remote_pull` keys `machine`, `label`, `entries` and `error` (`skipped` and `ms` are pinned fields already).
 // R72 `mcp_child_direct` keys `provider` and `servers` (`count` is a pinned field already).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers"]);
+// Token diet `tools_deferred` (`names`, comma-joined tool names) and `tool_found` (`name`, `unhidden`; `kind` is a pinned field already).
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden"]);
 const MAX_STRING = 120;
+const MAX_NAMES = 600; // the deferred tool names of one session
 const MAX_COMMAND = 200; // a denied command (lane 3h)
 /** `command` is kept only on a deny trace: a refused launch, a read/recheck budget deny, an overlay deny. */
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
@@ -149,7 +151,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
         continue;
       }
       const s = UNSCRUBBED.has(k) ? v : k === "reason" && isDeny(rec) ? scrubReason(v) : scrubPaths(redactCommand(v));
-      out[k] = s.slice(0, k === "command" ? MAX_COMMAND : k === "reason" && isDeny(rec) ? MAX_REASON : MAX_STRING);
+      out[k] = s.slice(0, k === "command" ? MAX_COMMAND : k === "reason" && isDeny(rec) ? MAX_REASON : k === "names" ? MAX_NAMES : MAX_STRING);
     }
   }
   return out as TraceRecord;

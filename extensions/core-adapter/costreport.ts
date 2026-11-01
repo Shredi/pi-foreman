@@ -5,7 +5,7 @@
  */
 import { priceRecord, tableRate } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
-import type { UsageLine } from "./usage.ts";
+import { isCostLine, type UsageLine } from "./usage.ts";
 
 export interface CostRow {
   role?: string;
@@ -54,6 +54,7 @@ export function costReport(lines: UsageLine[], prices: PriceTable | null, scope 
     return a;
   };
   for (const l of lines) {
+    if (!isCostLine(l)) continue;
     const p = priceRecord(l, prices);
     if (l.kind === "keepalive") {
       ka.calls += 1;

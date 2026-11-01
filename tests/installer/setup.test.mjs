@@ -163,6 +163,19 @@ test("leftover top-level bundled packages and a legacy local pi-foreman entry ar
   assert.equal(installs(env).filter((a) => a[0] === "remove").length, 3);
 });
 
+test("a user-level npm: copy of the bundled ask package is removed (pinned or not); git and path installs of it stay", () => {
+  const env = fresh();
+  const git = "git:github.com/juicesharp/rpiv-mono";
+  seed(env, { packages: ["npm:@juicesharp/rpiv-ask-user-question@2.14.0", "npm:@juicesharp/rpiv-ask-user-question", git, "npm:@juicesharp/other-pkg@1.0.0", FOREMAN] });
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /would run: pi remove npm:@juicesharp\/rpiv-ask-user-question@2\.14\.0/);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readSettings(env).packages, [git, "npm:@juicesharp/other-pkg@1.0.0", FOREMAN]);
+  assert.equal(installs(env).filter((a) => a[0] === "remove").length, 2);
+});
+
 test("without a pi-foreman package entry setup prints the install line and fails", () => {
   const env = fresh();
   seed(env, { packages: ["npm:some-provider@1.2.3"] });
