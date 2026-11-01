@@ -36,14 +36,14 @@ test("each key is mapped or removed with one line", () => {
   assert.deepEqual(cfg, {
     review: { critic: ["q"] },
     providers: { anthropic: { roles: { review: { model: "anthropic/claude-haiku-5-5" } } } },
-    gate: { reviewTimeoutMs: 9000, policy: { userFile: "rules.md" }, childAsk: "parent" },
+    gate: { reviewTimeoutMs: 9000, childAsk: "parent" }, // r79 item 9: the rulesFile is removed, no longer moved to gate.policy.userFile
     safety: { keep: 1 },
   });
   const text = r.lines.join("\n");
   assert.match(text, /providers\.anthropic\.review\.model: moved to providers\.anthropic\.roles\.review\.model/);
   assert.match(text, /providers\.anthropic\.review\.timeoutMs: moved to gate\.reviewTimeoutMs/);
   assert.match(text, /providers\.anthropic\.review\.extra: removed/);
-  assert.match(text, /safety\.permissions\.autoReview\.rulesFile: moved to gate\.policy\.userFile/);
+  assert.match(text, /safety\.permissions\.autoReview\.rulesFile: removed/);
   assert.match(text, /review\.childDefer: moved to gate\.childAsk "parent"/);
   for (const k of ["review.headless", "review.fallback", "safety.permissions.autoReview.enabled", "safety.permissions.tools.a"]) {
     assert.match(text, new RegExp(`${k.replace(/\./g, "\\.")}: removed`));
@@ -115,10 +115,28 @@ test("a config without old keys and no rendered file is untouched", () => {
 });
 
 test("an existing gate target is not overwritten", () => {
-  const e = fresh({ gate: { policy: { userFile: "mine.md" } }, safety: { permissions: { autoReview: { rulesFile: "old.md" } } } });
+  const e = fresh({ gate: { childAsk: "deny" }, review: { childDefer: "owner" }, safety: { permissions: { autoReview: { rulesFile: "old.md" } } } });
   const r = migrateGateConfig({ agentDir: e.agentDir, configPath: e.configPath });
-  assert.deepEqual(read(e.configPath), { gate: { policy: { userFile: "mine.md" } } });
+  assert.deepEqual(read(e.configPath), { gate: { childAsk: "deny" } });
   assert.match(r.lines.join("\n"), /safety\.permissions\.autoReview\.rulesFile: removed/);
+  assert.match(r.lines.join("\n"), /review\.childDefer: removed \(gate\.childAsk is already set\)/);
+});
+
+// r79 item 9: one line per removed policy key, and a leftover user policy.md is named once
+test("gate.policy.userFile and safety.policy.files are removed with one line each; policy.md is named", () => {
+  const e = fresh({ gate: { policy: { userFile: "mine.md" }, tmpAccess: true }, safety: { policy: { files: ["a.md"] }, keep: 1 } });
+  fs.mkdirSync(path.join(e.agentDir, "pi-foreman"), { recursive: true });
+  const policy = path.join(e.agentDir, "pi-foreman", "policy.md");
+  fs.writeFileSync(policy, "x\n");
+  const left = gateLeftovers({ agentDir: e.agentDir, config: read(e.configPath) });
+  assert.ok(left.some((l) => l.startsWith("gate.policy.userFile: removed (policy files are no longer read; rules and the whitelist live in permissions.json)")));
+  assert.ok(left.some((l) => l.startsWith("safety.policy.files: removed (policy files are no longer read")));
+  assert.ok(left.some((l) => l.includes(policy) && l.includes("policy.md is no longer read; move its entries into permissions.json classifier.allow/deny")));
+  const r = migrateGateConfig({ agentDir: e.agentDir, configPath: e.configPath });
+  assert.deepEqual(read(e.configPath), { gate: { tmpAccess: true }, safety: { keep: 1 } });
+  for (const key of ["gate.policy.userFile", "safety.policy.files"]) assert.equal(r.lines.filter((l) => l.includes(`${key}: removed`)).length, 1, key);
+  assert.equal(r.lines.filter((l) => l.includes("policy.md is no longer read")).length, 1);
+  assert.ok(fs.existsSync(policy), "the policy file is named, never deleted");
 });
 
 test("gateLeftovers uses the setup texts and ignores providers.*.review", () => {

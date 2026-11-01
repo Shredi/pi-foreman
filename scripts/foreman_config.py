@@ -40,6 +40,7 @@ Keys outside safety that the project and session layers cannot loosen either
     key                              project / session value
     -------------------------------  -----------------------------------------
     paths.hubWorkflow                ignored (it loosens: dirs outside the worktree become readable)
+    permissions.profile              ignored (it picks the permissions profile: L1/L3/L2 only)
     bridge.isolateClaudeConfig       ignored (switching it off loosens the host config isolation)
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
@@ -97,7 +98,6 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.planReviewRounds        free per layer (no tighten rule)
-    ceremony.planner                 free per layer (self | role; no tighten rule)
     ceremony.reviewRuns              lower only, minimum 1 (a higher cap allows more review runs per user prompt)
     ceremony.budgetUsd               lower only, minimum 0.01 (a higher cap, or none, lets a session spend more); unset = no cap
     ceremony.childTimeoutSeconds     lower only, minimum 1 (a higher limit lets a child tool call run longer)
@@ -177,7 +177,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULTS_PATH = ROOT / "config" / "foreman.defaults.json"
 SCHEMA_PATH = ROOT / "config" / "foreman.schema.json"
-CHILD_ROLES = ["planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+CHILD_ROLES = ["explorer", "builder", "reviewer"]
 # Role whose mapped model is the model of sessions opened by `foreman session open`; never a launchable child.
 SESSION_FOREMAN = "session-foreman"
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
@@ -204,6 +204,7 @@ LOOSEN_ONLY = [("subagents", "allowWorkflow")]
 # One row per rule so a rule can be reverted on its own.
 IGNORED_KEYS = [
     (("profile",), "the setup profile is recorded in the user or overlay config"),
+    (("permissions", "profile"), "it picks the permissions profile (r79 item 8): user or overlay config only"),
     (("paths", "hubWorkflow"), "it loosens: it makes dirs outside the worktree readable; user or overlay config only"),
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
     (("bridge", "promptCacheTtl"), "the bridge cache TTL comes from the user or overlay config"),
@@ -346,8 +347,8 @@ BUILTIN_CACHE = {
     "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
     "github-copilot": {"ttlSeconds": None, "billing": "request"},
 }
-# Smallest TTL whose 0.9 x tick lies beyond Pi's 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
-SELF_WARM_MIN_TTL_SECONDS = 2001
+# Smallest TTL Pi could not warm twice before its 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
+SELF_WARM_MIN_TTL_SECONDS = int(30 * 60 / (2 * 0.9)) + 1
 # Built-in per-model TTLs (mirrors BUILTIN_BY_MODEL in cachepolicy.ts); the first matching row wins.
 BUILTIN_BY_MODEL = {
     "github-copilot": [("claude-*", 300), ("gpt-*", 1800), ("o1*", 1800), ("o3*", 1800), ("o4*", 1800)],
@@ -358,7 +359,7 @@ BRIDGE_TTL_DEFAULTS = {"main": "1h", "subagent": "5m"}
 BRIDGE_TTL_SECONDS = {"1h": 3600, "5m": 300}
 TIERS = ["trivial", "standard", "heavy"]
 # Steps ceremony.required.<tier> may name (the adapter counts each per session).
-REQUIRED_STEPS = ["planner", "builder", "reviewer", "finalizer"]
+REQUIRED_STEPS = ["builder", "reviewer"]
 # codemode adds a tool, so the project and session layers may only switch it off.
 CODEMODE_FALSE_ONLY = True
 # roles.<id> in the project and session layers: "intersect" = narrow only. NEW_ROLE_IDS
@@ -1185,7 +1186,7 @@ def cap_thinking(level, ceiling):
 
 # ceremony.ledgerHelper "tool": reviewer roles get foreman_ledger, which lets them only mark V.
 LEDGER_TOOL = "foreman_ledger"
-LEDGER_TOOL_ROLES = ("reviewer", "senior-reviewer")
+LEDGER_TOOL_ROLES = ("reviewer",)
 
 
 def with_ledger_tool(cfg, role, tools):
@@ -1207,7 +1208,7 @@ def with_git_pack(cfg, role, tools):
 
 # tools.pr (default on): roles whose tool list has bash get the PR read tools (docs/tools.md).
 PR_READ_TOOLS = ("pr_status", "pr_checks", "pr_comments")
-PR_ROLE_TOOLS = {"reviewer": ("pr_status", "pr_comments"), "senior-reviewer": ("pr_status", "pr_comments")}
+PR_ROLE_TOOLS = {"reviewer": ("pr_status", "pr_comments")}
 
 
 def with_pr_pack(cfg, role, tools):

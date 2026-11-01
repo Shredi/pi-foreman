@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { builderLaunchRefusal, changedPlans, currentPlanHash, isPlanPath, launchRefusalText, planSnapshot, planSummary, readPlan, sha256 } from "../checkpoint.ts";
+import { builderLaunchRefusal, currentPlanHash, isPlanPath, launchRefusalText, planSummary, readPlan, sha256 } from "../checkpoint.ts";
 import type { PlanRecord } from "../checkpoint.ts";
 
 const PLAN = "# Add the widget\n\n## Goal\nShip the widget.\nKeep it small.\n\n## Approach\nx\n\n## Risks\ny\n";
@@ -113,21 +113,14 @@ test("checkpoint: summary has title, goal lines, headings, path and hash prefix,
   assert.doesNotMatch(planSummary("# a\x07b\n", "p", "h"), /[\x00-\x09\x0b-\x1f\x7f]/);
 });
 
-test("checkpoint: plan paths and snapshots for plan_written", (t) => {
-  const { scratch, opts } = workspace(t);
+test("checkpoint: plan paths", (t) => {
+  const { opts } = workspace(t);
   assert.equal(isPlanPath(".workflow/scratch/plan-new.md", opts), true);
   assert.equal(isPlanPath(".workflow/scratch/notes.md", opts), false);
   assert.equal(isPlanPath("src/plan-x.md", opts), false);
-  const before = planSnapshot(opts);
-  assert.deepEqual([...before.keys()], ["plan-widget.md"]);
-  fs.writeFileSync(path.join(scratch, "plan-new.md"), "n");
-  fs.writeFileSync(path.join(scratch, "notes.md"), "n");
-  fs.appendFileSync(path.join(scratch, "plan-widget.md"), "x");
-  assert.deepEqual(changedPlans(before, planSnapshot(opts)).sort(), ["plan-new.md", "plan-widget.md"]);
-  assert.deepEqual(changedPlans(planSnapshot(opts), planSnapshot(opts)), []);
 });
 
-test("checkpoint tool: sequential; a plan changed during the dialog is not approved; refused while a planner run is active", async (t) => {
+test("checkpoint tool: sequential; a plan changed during the dialog is not approved", async (t) => {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   t.after(() => {
@@ -171,11 +164,4 @@ test("checkpoint tool: sequential; a plan changed during the dialog is not appro
   assert.match(changed.content[0].text, /changed while the owner was reviewing it/);
   onSelect = () => undefined;
   assert.equal((await call()).details.decision, "approve");
-  // a planner run of this session still in flight: refused, the record stays as it was
-  await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: "l1", input: { agent: "planner", task: "t" }, details: { runId: "run-p" }, content: [], isError: false }, ctx);
-  const busy = await call();
-  assert.equal(busy.details.decision, "refused");
-  assert.match(busy.content[0].text, /a planner run of this session is still active/);
-  channels.get("subagent:async-complete")!({ runId: "run-p", agent: "planner", success: true });
-  assert.equal((await call()).details.decision, "approve", "still approved: the refusal changed no record");
 });

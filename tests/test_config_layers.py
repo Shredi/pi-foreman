@@ -504,16 +504,17 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("must not pass through a symlink", "\n".join(res["errors"]))
 
     def test_required_steps_add_only(self):
-        res = self.load(proj={"ceremony": {"required": {"standard": ["reviewer", "finalizer"], "heavy": ["deployer"]}}},
+        res = self.load(proj={"ceremony": {"required": {"trivial": ["reviewer"], "standard": ["reviewer"], "heavy": ["deployer"]}}},
                         session={"ceremony": {"required": {"standard": []}}})
         self.assertEqual(res["errors"], [])
         req = res["config"]["ceremony"]["required"]
-        self.assertEqual(req["standard"], ["builder", "reviewer", "finalizer"])
-        self.assertEqual(req["heavy"], ["planner", "builder", "reviewer", "finalizer"])
+        self.assertEqual(req["trivial"], ["builder", "reviewer"])
+        self.assertEqual(req["standard"], ["builder", "reviewer"])
+        self.assertEqual(req["heavy"], ["builder", "reviewer"])
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.required.standard: entries not removed: builder", joined)
         self.assertIn("project ceremony.required.heavy: unknown steps dropped: deployer", joined)
-        self.assertIn("session ceremony.required.standard: entries not removed: builder, reviewer, finalizer", joined)
+        self.assertIn("session ceremony.required.standard: entries not removed: builder, reviewer", joined)
         res = self.load(l2={"ceremony": {"required": {"standard": []}}}, proj={"ceremony": {"required": None}}, session={})
         self.assertEqual(res["config"]["ceremony"]["required"]["standard"], [])
         self.assertIn("project ceremony.required ignored: not an object", "\n".join(res["warnings"]))

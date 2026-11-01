@@ -69,7 +69,7 @@ and `foreman:ready`. There is no second handshake.
 | Providers and models | A `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`); [presets](presets.md) resolve role models from its `ranks`; `providers.<p>.models` gives context windows and price tiers for models Pi's registry lacks (see [Models Pi does not list](#models-pi-does-not-list)) |
 | Display names | `displayNames` preset or per-id map |
 | Skills | `skills/` in the overlay package (Pi skills format) |
-| Gate policy | `safety.policy.files[]` adds policy files to the gate's review (see [Gate policy file](#gate-policy-file)); `gate.policy.userFile` names the user's own policy file; an overlay can only tighten the gate's other keys |
+| Gate rules | None: an overlay has no policy files. Permission rules and the classifier whitelist live in the user's `permissions.json` (see [permissions](permissions.md)); `permissions.profile` may be set from an overlay. An overlay can only tighten the gate's other keys |
 | Guards and child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
@@ -102,9 +102,9 @@ provider's published limits: setup does not guess them. See [install](install.md
 
 A provider an extension registers at runtime (no registry file) can name another provider as its base with `providers.<p>.modelDataFrom` (user or overlay config only; `claude-bridge` uses `anthropic` built in, and both claude-bridge presets set it). Price tiers then come from the base's registry entry and the context window from Pi's live model list (`pi --list-models`); a declared `models` entry still wins.
 
-### Gate policy file
+### Gate rules
 
-The gate's review model judges every call no floor or default decided by prose policy entries (`- id: <kebab-id>` under `## allow`, `## deny`, `## ask`, `## context`). The shipped `config/permissions.policy.md`, the user's own file and the overlay's files are merged in that order; ids are unique across them. `gate.policy.userFile` (absolute, `~/...` or relative to the agent dir) names the user's own file instead of `<agentDir>/pi-foreman/policy.md`; it is read from the user, organisation and default layers only, and a project or session value is ignored with a warning. `safety.policy.files[]` (absolute paths) adds the overlay's files after the user's. An overlay can only tighten: the review model, the floors and every other `gate.*` key stay under the gate, and a project file can add `deny` and `ask` entries (`<cwd>/.workflow/policy.md`), never an allow. Policy files are write-protected for every tool and shell write. Floors and asks that touch protected configuration never reach the model. See [permissions](permissions.md#the-review-call).
+The gate no longer reads policy files. `gate.policy.userFile` and `safety.policy.files` are removed keys (`foreman setup` prints one line per key it finds and names a leftover `<agentDir>/pi-foreman/policy.md`; the doctor fails on them). Rules and the classifier whitelist sentences live in `permissions.json` (see [permissions](permissions.md)). An overlay can only tighten: the classifier model, the floors and every other `gate.*` key stay under the gate. `permissions.profile` is read from the user, organisation and default layers only; a project or session value is ignored with a warning.
 
 ### Own host CLI
 

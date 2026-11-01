@@ -52,8 +52,6 @@ test("takeLaunchFlags strips reads and install, keeps them for the roles that us
   assert.equal(t.error, undefined);
   assert.equal("reads" in input || "install" in input, false);
   assert.deepEqual(t.entries.get(input), { reads: 60, install: true });
-  const fin: Record<string, unknown> = { agent: "finalizer", task: "t", install: true };
-  assert.deepEqual(takeLaunchFlags(fin).entries.get(fin), { install: true });
 });
 
 test("takeLaunchFlags drops a flag the role does not use, with a note", () => {

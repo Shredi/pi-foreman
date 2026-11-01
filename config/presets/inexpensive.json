@@ -1,18 +1,16 @@
 {
   "version": 1,
   "childMaxThinking": "medium",
-  "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below", "senior-reviewer": "at-or-below", "builder": "below" } },
-  "ceremony": { "planner": "self", "planReview": { "heavy": true } },
+  "ladder": { "childPolicy": "below", "rolePolicy": { "reviewer": "at-or-below", "builder": "below" } },
+  "ceremony": { "planReview": { "heavy": true } },
   "retro": { "enabled": false },
   "compaction": { "maxTokens": 100000 },
   "rankTiers": {
     "foreman": { "tier": 1, "thinking": "high" },
     "session-foreman": { "tier": 1, "thinking": "high" },
     "reviewer": { "sameAs": "foreman", "thinking": "medium" },
-    "senior-reviewer": { "sameAs": "foreman", "thinking": "high" },
     "explorer": { "tier": 2, "thinking": "medium" },
     "builder": { "tier": 2, "thinking": "medium" },
-    "finalizer": { "tier": 2, "thinking": "low" },
     "auto-review": { "tier": "lowest" }
   }
 }

@@ -1,4 +1,4 @@
-// R11 item 5 (P2): finalization (a reviewer PASS or a completed finalizer, no child run active) is exempt from
+// R11 item 5 (P2): finalization (a reviewer PASS, no child run active) is exempt from
 // read_budget_exceeded and a plain git commit is not refused; a ruling line never changes the read budget, but a
 // parent-written ruling-<n>.md or brief-<x>.md resets it (R18 item 1, r18-caps-reset.test.ts); with a launch pending
 // the budget still refuses.
@@ -6,11 +6,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { DEFAULT_READ_LIMITS, finalizationCommand, ReadBudget } from "../budget.ts";
-import { r11Rig, reviewAllowOpts, writeAt } from "./_r11rig.ts";
+import { r11Rig, reviewAllowOpts, writeAt, type Block } from "./_r11rig.ts";
 
 const WARN = DEFAULT_READ_LIMITS.before.warn; // 8, the same for both phases
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
-const finalizer = { agent: "finalizer", task: "write the changelog and result" };
+const reviewerLaunch = () => ({ agent: "reviewer", task: "review the diff" }); // fresh: a launch rewrites its task
 const explorer = { agent: "explorer", task: "look around" };
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
@@ -21,12 +21,14 @@ async function reads(a: Rig, n: number): Promise<({ block?: boolean; reason?: st
   return out;
 }
 
-/** A finalizer launch that started and completed: finalization begins. */
+/** A reviewer launch that started and passed: finalization begins. */
 async function finalize(a: Rig, runId: string): Promise<void> {
-  const l = await a.launch(finalizer);
+  const review = reviewerLaunch();
+  const l = await a.launch(review);
   assert.equal(l.res, undefined);
-  await a.started(l.id, finalizer, runId);
-  a.end({ runId, agent: "finalizer", status: "completed", success: true, summary: "done" });
+  await a.started(l.id, review, runId);
+  a.end({ runId, agent: "reviewer", status: "completed", success: true, summary: "VERDICT: PASS" });
+  await a.notice("Background task completed: **reviewer**\nOverall verdict: PASS");
 }
 
 test("read_budget_finalization_git_commit_allowed", async (t) => {
@@ -62,10 +64,10 @@ test("read_budget_finalization_git_commit_allowed: a reviewer PASS (post-PASS) e
   // a started launch, a FAIL/edit (resetPost) or a user prompt ends finalization
   b.onLaunch();
   assert.equal(b.finalized, false);
-  b.onFinalizer();
+  b.enterPost();
   b.resetPost();
   assert.equal(b.finalized, false);
-  b.onFinalizer();
+  b.enterPost();
   b.resetAll();
   assert.equal(b.finalized, false);
 });
@@ -94,18 +96,26 @@ test("ruling_read_budget_line_has_no_effect_but_ruling_file_resets", async (t) =
 
 test("read_budget_still_reminds_with_launch_pending", async (t) => {
   const a = await r11Rig(t, {}, reviewAllowOpts());
-  // an explorer run still active while the finalizer completes: no finalization exemption
+  // an explorer run still active while the reviewer passes: no finalization exemption
+  const review = reviewerLaunch();
+  const l = await a.launch(review);
+  assert.equal(l.res, undefined);
+  await a.started(l.id, review, "run-fin");
   const e = await a.launch(explorer);
+  assert.equal(e.res, undefined);
   await a.started(e.id, explorer, "run-exp");
-  await finalize(a, "run-fin");
+  a.end({ runId: "run-fin", agent: "reviewer", status: "completed", success: true, summary: "VERDICT: PASS" });
+  await a.notice("Background task completed: **reviewer**\nOverall verdict: PASS");
   const out = await reads(a, WARN + 1);
   assert.ok(!out.some(readDenied), "never denied");
-  assert.equal(reminds(a), 1, "counted with a launch pending");
+  const recheckDenied = (r: Block): boolean => r?.block === true && /\[recheck_budget_exceeded\]/.test(r.reason ?? "");
+  assert.ok(out.some(recheckDenied), "the spent recheck budget applies with a run active");
+  assert.ok(recheckDenied(await a.call("bash", { command: "git commit -m done" })), "no finalization exemption while the explorer runs");
   // the explorer ends: finalization holds now; a later started launch ends it again
   a.end({ runId: "run-exp", agent: "explorer", status: "completed", success: true, summary: "done" });
-  assert.ok(!readDenied(await a.call("bash", { command: "git commit -m done" })), "finalization once nothing is pending");
+  assert.ok(!recheckDenied(await a.call("bash", { command: "git commit -m done" })), "finalization once nothing is pending");
   const b = await a.launch({ agent: "builder", task: "touch up" });
   await a.started(b.id, { agent: "builder", task: "touch up" }, "run-b");
   await reads(a, WARN);
-  assert.equal(reminds(a), 2, "a started launch ends finalization: reads count again");
+  assert.equal(reminds(a), 1, "a started launch ends finalization: reads count again");
 });

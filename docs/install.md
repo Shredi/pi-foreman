@@ -8,7 +8,7 @@
 
 Setting up with an agent: point it at [features.md](features.md).
 
-Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22.19+, Pi 1.4.x on `PATH` and Python 3.13+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -57,6 +57,7 @@ Setup has a feature axis next to the model-map presets ([presets](presets.md)): 
   On Windows repeat the flag instead of using a comma list, because `cmd` splits arguments on commas.
 - `--addon <id>`: install an add-on (repeatable). This flag is the consent; nothing is installed without it or a picker "yes".
 - `--pick`: open the picker again.
+- `--preview [screen]`: draw one setup screen (`home`, `plan`, `updates`, `config`, `models`, `workfolders`, `apply`; default `home`) from built-in sample data. On a terminal it opens the full-screen view (`1`-`7` or Tab switch screens, arrows move, `q` quits; the footer shows other keys, but they are inactive); without a terminal it prints one 100x30 frame. It reads and writes nothing of yours, exits 2 for an unknown screen, and cannot be combined with any other flag. Needs Node 22.19+.
 
 Setup exits 2 and prints the valid ids or the rule for: an unknown profile, feature or add-on id; a feature that is not
 toggleable (the message names the doc link and the enable snippet); the same id in `--enable` and `--disable`; `--remove`
@@ -152,7 +153,7 @@ permission config: the tool gate decides from the shipped policy and your own po
 `<agent dir>/pi-foreman/state/migration/`, and removes the rendered file. It never edits the package entry in
 `settings.json`: run `node scripts/foreman_migrate_gate.mjs settings --dry-run`, then `node scripts/foreman_migrate_gate.mjs settings`
 yourself (the doctor prints a `FAIL` line until you do). The way back is the previous pi-foreman release plus those
-backups ([migration](permissions.md#migration-from-the-permission-package)). Setup writes the generated `subagents` block into `settings.json` (backup
+backups ([migration](permissions.md#from-the-permission-package)). Setup writes the generated `subagents` block into `settings.json` (backup
 `settings.json.bak-<timestamp>` first), and creates `<agent dir>/foreman.json` only if absent. Unless
 `--no-intercom`, it writes `<agent dir>/intercom/config.json`
 (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent; an existing file that sets

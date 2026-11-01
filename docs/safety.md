@@ -1,6 +1,6 @@
 # Safety and permissions
 
-> Covers the shell-write guard, git guard, PR gate, the tool gate with its model review, child environment stripping, bridge isolation and the known `/sync` limit.
+> Covers the shell-write guard, git guard, PR gate, the tool gate with its rules and classifier, child environment stripping, bridge isolation and the known `/sync` limit.
 > Read it when a command is refused or asked about, or before you loosen a rule.
 > A project file can only tighten these rules; the scanners work on command strings and are not a sandbox.
 
@@ -12,7 +12,7 @@ The foreman may move its checkout by branch only (r29): `git switch <b>` and `gi
 
 ## Git guard and PR gate
 
-`scripts/git_guard.py` lints commits and pushes (own lexer for bash, PowerShell and cmd): the foreman's commit lint, push lint (no force, mirror, delete or `+refspec` on protected branches) and the limits for children, who never open PRs and may not push unless `safety.children.mayPush` allows it. A PR (`gh pr create`, `glab mr create`, `hub pull-request`, `tea pr create`, a push with merge-request options or to `refs/for/*`) is refused unless a reviewer PASS was recorded for the current head (an `item` or `[pre-pr]` review; `[plan-review]`, `[second-opinion]` and panel shadow reviews never count, see [review](review.md#review-occasions)), which is the checkout the reviewer ran in (`ceremony.reviewBeforePr`; a project or session cannot turn it off). A later commit, a finalizer's included, makes the review stale, so for heavy tasks the order is builder, finalizer, reviewer, PR, or review twice. The PASS sha is accepted when it is the commit of the branch the PR opens from, of its `origin/<branch>` remote-tracking ref, of its upstream, or of HEAD in the checkout, so a push from another branch that leaves the local branch ref behind does not refuse a reviewed head. Outside a repository the head is unknown and no PR goes through. Children never open PRs.
+`scripts/git_guard.py` lints commits and pushes (own lexer for bash, PowerShell and cmd): the foreman's commit lint, push lint (no force, mirror, delete or `+refspec` on protected branches) and the limits for children, who never open PRs and may not push unless `safety.children.mayPush` allows it. A PR (`gh pr create`, `glab mr create`, `hub pull-request`, `tea pr create`, a push with merge-request options or to `refs/for/*`) is refused unless a reviewer PASS was recorded for the current head (an `item` or `[pre-pr]` review; `[plan-review]`, `[second-opinion]` and panel shadow reviews never count, see [review](review.md#review-occasions)), which is the checkout the reviewer ran in (`ceremony.reviewBeforePr`; a project or session cannot turn it off). A later commit makes the review stale, so the order is builder, reviewer, commit, PR with the reviewer run on the committed head, or review twice. The PASS sha is accepted when it is the commit of the branch the PR opens from, of its `origin/<branch>` remote-tracking ref, of its upstream, or of HEAD in the checkout, so a push from another branch that leaves the local branch ref behind does not refuse a reviewed head. Outside a repository the head is unknown and no PR goes through. Children never open PRs.
 
 Safety line for children: no recursive deletes, no discards outside the child's own diff. A child may undo its own
 change to a test file: `git restore [--worktree|-W] [--staged|-S] [--] <paths>` or `git checkout -- <paths>` is
@@ -34,9 +34,9 @@ Git config drift (a changed `.git/config`, hooks, includes) asks before the fore
 
 ## The tool gate
 
-Every tool call is decided by pi-foreman's own gate (`extensions/core-adapter/gate.ts`), the first `tool_call` handler: parse the shell line, floors (always on, no config switch), named defaults, one review-model call against the policy files, a dialog on `ask` or an unreachable review, and a decision log. The whole pipeline, the session kinds, the child-ask flow, the config keys and the migration from the old permission package are in [permissions](permissions.md). The policy is `config/permissions.policy.md`, plus the user's `<agentDir>/pi-foreman/policy.md` (or `gate.policy.userFile`) and an overlay's `safety.policy.files[]`; a project can add `deny` and `ask` entries in `<cwd>/.workflow/policy.md`, never an allow. Nothing is generated or rendered: there is no permission file to edit.
+Every tool call is decided by pi-foreman's own gate (`extensions/core-adapter/gate.ts`), the first `tool_call` handler: parse the shell line, floors (always on, no config switch), self-modification rules, `deny`, `ask` and `allow` pattern rules, built-in allows, then the dangerous class (deploys, forge writes, publishing, installs, network writes, destructive git, process control, writes outside the worktree). A call that no rule decides and that is not dangerous runs under the default mode `auto`. A dangerous call goes to a cheap classifier that may only clear it by citing one of your prose whitelist sentences; everything else opens a dialog. The whole pipeline, the file locations, rule syntax, the four modes, the session kinds, the child-ask flow, the config keys and the migration from the review-model gate are in [permissions](permissions.md). The policy is `<agentDir>/pi-foreman/permissions.json`, plus a project `.workflow/permissions.json` (widening keys only when untracked and git-ignored) and a tracked `.pi/permissions.json` that can only tighten.
 
-The foreman session's own single launch of a role (`explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`) is a named default allow (`default-role-launch`), so a fresh install with no review model can still delegate. It replaces only the review: floors and denies run before it, and the adapter's role, ceremony and spawn gates run after it and still refuse. Management actions that write, workflow scripts, unknown agents, `tasks`/`chain` forms and a child's own launches are not covered. Without a review model, `foreman doctor`, `/foreman setup` and the first gate review of a session warn and name the key to set (`providers.<p>.roles.review.model`); every other non-default tool still asks.
+The foreman session's own single launch of a role (`explorer`, `builder`, `reviewer`) is a named default allow (`default-role-launch`), so a fresh install with no classifier model can still delegate. Floors and denies run before it, and the adapter's role, ceremony and spawn gates run after it and still refuse. Management actions that write, workflow scripts, unknown agents, `tasks`/`chain` forms and a child's own launches are not covered. Without a classifier model, `foreman doctor`, `/foreman setup` and the first dangerous call of a session warn and name the key to set (`providers.<p>.roles.review.model`); every dangerous call then asks.
 
 The write protection (`protect`: `.git`, agent and harness configuration) checks the path arguments of a shell
 command, reads included: operands, option values and redirect targets. It skips the pattern and script operands of
@@ -57,12 +57,12 @@ grep, and a strict allowlist of read-only git subcommands) with no env prefix, w
 
 Who sees an ask:
 
-- The owner pane gets one gate dialog (full command, entry or cause, reason). A review that cannot answer (timeout, provider error, no model, invalid verdict) opens the same dialog and names the cause.
-- A round session files `ask.md` to its parent and waits `gate.askTimeoutMs`, then denies.
-- A child's plain ask goes to its parent's pane through an ask dir the parent adapter owns (`gate.childAsk`, `parent` by default, `deny` keeps a plain deny); a timeout denies. A child can never write that dir.
-- A headless session denies an ask.
+- The owner pane gets one gate dialog (full command, cause, the classifier's reason). A classifier that cannot clear the call (timeout, provider error, no model, invalid verdict, no citing sentence) opens the same dialog.
+- A session opened by another session asks in its own pane.
+- A child's ask goes to its parent's pane through an ask dir the parent adapter owns (`gate.childAsk`, `parent` by default, `deny` keeps a plain deny); `gate.askTimeoutMs` bounds the child's wait and a timeout denies. A child can never write that dir.
+- A headless session, or an owner who is away, denies an ask at once.
 - A child's `rm` / `rm -f` of an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) is denied with reason `editor_backup`; the child reports the file instead.
-- Every decision is a line in `<agentDir>/pi-foreman/state/gate/log.jsonl`; review model calls are logged to the usage log with role `autoreview`.
+- Every decision is a line in `<agentDir>/pi-foreman/state/gate/log.jsonl`; classifier calls are logged to the usage log with role `classifier`.
 
 Child traces: with the foreman's retro on, a bound child writes `trace-<launchId>.jsonl` and each record carries `role`
 and `runId` (the launch id); see [retro](retro.md). `tasks` and `chain` launches are not covered.
@@ -79,7 +79,7 @@ worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `g
 The git guard also denies a bash line whose quoted, escaped or `"a"+"b"` pieces spell a guarded path component (`.git`) that no single piece spells (`split literal reassembles a guarded token`; see [permissions](permissions.md#split-literals)).
 
 There is no `git fetch` allow row (`--upload-pack=<cmd>` runs code): it asks for every role; `npm ci` and `npm install`
-are allowed for the foreman only. A child's `npm ci` or `npm install` asks unless its launch sets `install: true` (builder, finalizer); the ask text names the flag. The foreman's rows are unchanged.
+are allowed for the foreman only. A child's `npm ci` or `npm install` asks unless its launch sets `install: true` (builder); the ask text names the flag. The foreman's rows are unchanged.
 
 The `live.json` file in each handoff dir (`handoffs/*/live.json`, written by the adapter at session start) is write-ask next to `parent` and `child`, so neither the session's model nor a child can forge it.
 
@@ -102,8 +102,6 @@ outside it:
 
 - Overlay: a child may `cd` into its own scratch dir (literal or `$FOREMAN_SCRATCH`); every other rule applies there too.
 - Overlay: a child with a bound scratch dir is denied, not asked, any write below `/tmp` or the resolved OS temp dir outside that scratch dir and its own workspace: a write or edit tool path, a shell redirect (`> /tmp/out.txt`), and the targets of `tee`, `touch`, `mkdir`, `mv`, `cp` (last operand), `install` and `ln`. The reason names the path and the scratch dir (`write to /tmp/out.txt denied for a child: use FOREMAN_SCRATCH (<scratch dir>)`). Reads from `/tmp` and the foreman's own `/tmp` rules are unchanged.
-- Shell-write guard: a planner child, which may write nowhere outside its allowed dirs, may also write inside its own
-  scratch dir.
 - Gate (default `default-write-in`): `cp`, `mkdir`, `rm` and `cd` with every destination or operand inside a live scratch dir of the asking role, and path-tool writes inside such a dir, are allowed without the model. POSIX shell forms only.
 - The destructive guard still refuses `rm -r` with a variable operand: use the literal path.
 - The harness removes the dir at run end only after a realpath check that it is a real directory below the
@@ -131,7 +129,7 @@ Login steps are in [install](install.md). Rationale: `design/architecture.md`
 A project `.pi/claude-bridge.json` that sets an executable path, `AskClaude` or `strictMcpConfig: false` raises an error notice at session start and a
 doctor FAIL. The owner can trust the file as it is with the slash command `/foreman trust bridge`: a confirm dialog shows the risky keys and the
 file's sha256, and a yes writes the record `<agentDir>/pi-foreman/state/bridge-trust.json` (user layer). While the hash of the file matches, the notice
-and the FAIL stay silent; any edit of the file is untrusted again. The dialog is the owner's alone (no model answer, no auto review), there is no CLI
+and the FAIL stay silent; any edit of the file is untrusted again. The dialog is the owner's alone (no model answer), there is no CLI
 subcommand, and the file is a policy floor: a tool or shell write to it is refused.
 
 ## Pre-bash hooks
@@ -154,7 +152,7 @@ Protected files (the baseline's `protect.writeAsk` paths, such as `config/forema
 
 ## Known limit: network reads (R31c)
 
-The gate's web-read rule ([permissions](permissions.md#web-read)) takes any host, by owner decision. Residuals:
+The gate's web-read rule ([permissions](permissions.md#web-reads)) takes any host, by owner decision. Residuals:
 
 - A GET to any host can carry data in its URL (path or query). The allow checks the command shape, not where the data goes.
 - `curl -L` follows redirects and the resolver may point a name anywhere; the allow sees the first URL only.
@@ -204,7 +202,7 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 
 | Key | Meaning and layer rule |
 |---|---|
-| `gate.*`, `safety.policy.files` | The tool gate's keys and policy files; the project layer may only tighten them. See [permissions](permissions.md#config-keys). |
+| `gate.*`, `permissions.profile` | The tool gate's keys (`safety.policy.files` and `gate.policy.userFile` are removed); the project layer may only tighten them. See [permissions](permissions.md#config-keys). |
 | `safety.permissions.paths.deny`, `safety.permissions.paths.ask` | Path patterns tools and shell commands may never touch / need approval, on top of the baseline secret paths; a project can add entries only. |
 | `safety.review.required` | Require a review before close-out; a project can only set true. |
 | `safety.git.protectedBranches` | Branch patterns that never receive a force push, mirror push or delete from the foreman; a project can add entries only. |

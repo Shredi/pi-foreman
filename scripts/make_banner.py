@@ -15,7 +15,7 @@ ACCENT, OK = "#4fb3a6", "#8bd17c"
 FONT = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
 
-CREW = ["explorer", "builder", "reviewer", "finalizer"]
+CREW = ["explorer", "builder", "reviewer"]
 LEDGER = ["scope agreed", "change built", "review passed", "checks green"]
 
 
@@ -25,7 +25,7 @@ def build_svg() -> str:
     a('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 300" width="1100" height="300" '
       'role="img" aria-labelledby="t d">')
     a('<title id="t">pi-foreman</title>')
-    a('<desc id="d">A foreman node connected to explorer, builder, reviewer and finalizer nodes, '
+    a('<desc id="d">A foreman node connected to explorer, builder and reviewer nodes, '
       'next to a checklist with ticks.</desc>')
     a(f'<rect width="1100" height="300" rx="16" fill="{BG}"/>')
     a(f'<text x="48" y="130" font-family="{FONT}" font-size="64" font-weight="700" fill="{INK}">'
@@ -37,7 +37,7 @@ def build_svg() -> str:
     # flow diagram: foreman node, lines fanning out to the crew column
     fx, fw, fh, fcy = 440, 110, 44, 150
     nx, nw, nh = 620, 120, 40
-    cys = [48 + i * 68 for i in range(len(CREW))]
+    cys = [round(fcy + (i - (len(CREW) - 1) / 2) * 68) for i in range(len(CREW))]
     for cy in cys:
         a(f'<line x1="{fx + fw}" y1="{fcy}" x2="{nx}" y2="{cy}" stroke="{MUTED}" '
           f'stroke-width="2" stroke-linecap="round"/>')

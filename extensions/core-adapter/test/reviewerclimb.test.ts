@@ -32,7 +32,7 @@ test("ReviewerFails: an item counts once per reviewer run; the second run's FAIL
   assert.equal(f.repeated(), "2");
   f.onRun("r3", ["2. FAIL y"], "other ledger");
   assert.equal(f.repeated(), null);
-  const end = { results: [{ agent: "reviewer", status: "completed", success: true, output: "1. FAIL" }, { agent: "senior-reviewer", status: "completed", success: true, output: "1. FAIL" }] };
+  const end = { results: [{ agent: "reviewer", status: "completed", success: true, output: "1. FAIL" }, { agent: "builder", status: "completed", success: true, output: "1. FAIL" }] };
   assert.deepEqual(reviewerTextsOfRunEnd(end), ["1. FAIL"]);
 });
 

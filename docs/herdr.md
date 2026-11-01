@@ -226,7 +226,7 @@ Reason of a session, first match wins:
 | Reason | Icon (`unicode`) | When |
 |---|---|---|
 | `ask` | ? | a child run is in state `ask` (a forwarded child prompt waits for you; the header shows `needs-you`) |
-| `review` | ◎ (the agents line shows the run with `◆`) | a live run with role `reviewer` or `senior-reviewer` |
+| `review` | ◎ (the agents line shows the run with `◆`) | a live run with role `reviewer` |
 | `agent` | ◆ | any other live run, or a live child session without a pane row (see Activity lines) |
 | `task` | ⚙ | a PR or CI wait, a wait flagged `bg`, or a background task |
 | `wait` | ◷ | any other wait: timer, file, child, pid |

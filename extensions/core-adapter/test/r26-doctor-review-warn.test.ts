@@ -1,11 +1,11 @@
-// Ledger item 26: /foreman doctor warns when no review model is configured (the text of reviewwarn.ts), and prints the model line when one is.
+// Ledger item 26, r79 item 11: /foreman doctor warns when no classifier model is configured (the text of reviewwarn.ts), and prints the model line when one is.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
-import { noReviewModelText } from "../reviewwarn.ts";
+import { noClassifierModelText } from "../reviewwarn.ts";
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -61,14 +61,14 @@ async function doctor(t: { after(fn: () => void | Promise<void>): void }, config
   return notes.pop()!;
 }
 
-test("doctor warns with the reviewwarn text and names the config key when no review model is configured", async (t) => {
+test("doctor warns with the reviewwarn text and names the config key when no classifier model is configured", async (t) => {
   const text = await doctor(t, { providers: { fake: { roles: {} } } });
-  assert.ok(text.includes(`WARN ${noReviewModelText("fake")}`), text);
+  assert.ok(text.includes(`WARN ${noClassifierModelText("fake")}`), text);
   assert.match(text, /providers\.<p>\.roles\.review\.model/);
 });
 
-test("doctor prints the model line and no warning when a review model is configured", async (t) => {
+test("doctor prints the classifier model line and no warning when a model is configured", async (t) => {
   const text = await doctor(t, { providers: { fake: { roles: { review: { model: "fake/m" } } } } });
-  assert.match(text, /model review: fake\/m /);
-  assert.doesNotMatch(text, /no review model for provider/);
+  assert.match(text, /classifier model: fake\/m /);
+  assert.doesNotMatch(text, /no classifier model for provider/);
 });

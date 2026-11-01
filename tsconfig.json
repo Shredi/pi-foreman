@@ -6,8 +6,9 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "strict": false,
+    "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["extensions/**/*.ts"]
+  "include": ["extensions/**/*.ts", "setup/**/*.ts"]
 }

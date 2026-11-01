@@ -20,7 +20,7 @@ const PLAN = "# Widget\n\n## Goal\nShip it.\n";
 const tick = () => new Promise((r) => setTimeout(r, 25)); // ctime steps apart
 let n = 0;
 
-/** The dirs of one round session: project with a plan, agent dir, and the handoff dir where this session is the child. */
+/** The dirs of one session opened by another session: project with a plan, agent dir, and the handoff dir where this session is the child. */
 function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
   for (const k of KEYS) delete process.env[k]; // a Pi session's own variables (parent intercom, herdr pane) must not reach the fixture
@@ -39,7 +39,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const agentDir = path.join(root, "agent");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
   const sessionId = `r14-rs-${++n}`;
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");

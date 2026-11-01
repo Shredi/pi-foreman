@@ -69,7 +69,7 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "for i in $(seq 180); do grep -q '\\[x\\] V\\.' .workflow/LEDGER-subtract.md && break; sleep 1; done; ledger mark 1 && ledger mark 2 && ledger mark 3 && ledger status"
+       "command": "until grep -q '\\[x\\] V\\.' .workflow/LEDGER-subtract.md; do sleep 1; done; ledger mark 1 && ledger mark 2 && ledger mark 3 && ledger status"
       }
      }
     ]
@@ -117,7 +117,7 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "for i in $(seq 120); do grep -q subtract /app/test_calc.py && break; sleep 1; done; ledger mark 1 && ledger mark 2 && ledger mark 3 && ledger mark V --verifier && ledger status"
+       "command": "until grep -q subtract /app/test_calc.py; do sleep 1; done; ledger mark 1 && ledger mark 2 && ledger mark 3 && ledger mark V --verifier && ledger status"
       }
      }
     ]
@@ -280,7 +280,7 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "cd /app && for i in $(seq 120); do grep -q subtract /app/test_calc.py && break; sleep 1; done; python3 -m unittest -q && ledger -f /app/.workflow/LEDGER-subtract.md mark V --verifier"
+       "command": "cd /app && until grep -q subtract /app/test_calc.py; do sleep 1; done; python3 -m unittest -q && ledger -f /app/.workflow/LEDGER-subtract.md mark V --verifier"
       }
      }
     ]
@@ -297,13 +297,13 @@
      {
       "name": "bash",
       "arguments": {
-       "command": "uname -s"
+       "command": "pip install requests"
       }
      }
     ]
    },
    {
-    "text": "[[replay:rp_b2]] built (the platform check was not allowed)"
+    "text": "[[replay:rp_b2]] built (the install was not allowed)"
    }
   ],
   "rp_r2": [

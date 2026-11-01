@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { pressurePath } from "../pressure.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
-const ROLE_IDS = ["explorer", "planner", "reviewer", "senior-reviewer", "finalizer"];
+const ROLE_IDS = ["explorer", "reviewer"];
 const BIG = "x\n".repeat(1700);
 const RANKS = [{ match: "foreman*", tier: 0 }, { match: "huge", tier: 1 }, { match: "strong", tier: 2 }, { match: "*", tier: 3 }];
 

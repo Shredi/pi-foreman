@@ -35,7 +35,7 @@ test("a FAIL after the last PASS still blocks; parallel reviewers on one tree: a
   const fail = onReviewVerdicts(pass, ["fail"], 2);
   assert.deepEqual(open(fail), ["reviewer"]);
   assert.equal(reviewHint(fail), "(re-review needed: last verdict FAIL)");
-  const both = reviewVerdictsOfRunEnd(end(child("reviewer", "VERDICT: PASS"), child("senior-reviewer", "VERDICT: FAIL")));
+  const both = reviewVerdictsOfRunEnd(end(child("reviewer", "VERDICT: PASS"), child("reviewer", "VERDICT: FAIL")));
   assert.deepEqual(both, ["pass", "fail"]);
   assert.deepEqual(open(onReviewVerdicts(initialReviewGate(), both, 1)), ["reviewer"]);
 });

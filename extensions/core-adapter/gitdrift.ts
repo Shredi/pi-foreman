@@ -410,7 +410,7 @@ function worktreeLabel(lbl: string): { n: string; what: string; quiet: string[] 
   return f[1] === "git-file" ? { n: f[2], what: ".git file", quiet: ["new", "removed"] } : { n: f[2], what: "link", quiet: ["removed"] };
 }
 
-const BRANCH_TRACKING = /^branch\..+\.(remote|merge)$/;
+const BRANCH_TRACKING = /^branch\..+\.(remote|merge|rebase)$/;
 
 /**
  * An added or changed branch.<b>.merge / branch.<b>.remote key that `worktree add -b`, `push -u` or
@@ -419,10 +419,12 @@ const BRANCH_TRACKING = /^branch\..+\.(remote|merge)$/;
  * has no such key). Raw values come from the `after` snapshot, in memory only.
  */
 function routineTracking(key: string, a: FileSnap, b: FileSnap): boolean {
-  const m = /^branch\.(.+)\.(remote|merge)$/.exec(key);
+  const m = /^branch\.(.+)\.(remote|merge|rebase)$/.exec(key);
   const vals = b.raw?.get(key);
   if (!m || !vals || vals.length !== 1) return false;
   const v = vals[0];
+  // r79 item 17: `branch.<b>.rebase` is written with the tracking pair (pull.rebase set up by `checkout -b` / `push -u`); only its plain values are routine
+  if (m[2] === "rebase") return /^(?:true|false|merges)$/i.test(v);
   // any branch name: `worktree add -b X origin/main` writes branch.X.merge = refs/heads/main (owner ruling 2026-10-29)
   if (m[2] === "merge") return v === `refs/heads/${m[1]}` || (/^refs\/heads\/\S+$/.test(v) && routineRemote(m[1], a, b));
   return remoteUnchanged(v, a, b);
