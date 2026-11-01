@@ -82,6 +82,14 @@ export function lexUnder(platform: string, root: string, p: string): boolean {
   return c === r || c.startsWith(r.endsWith("/") ? r : `${r}/`);
 }
 
+/**
+ * A word the shell would tilde-expand: `~` at its start or after `=` / `:` (an assignment-like word). A `~` inside a name (the 8.3 short
+ * name `C:/Users/RUNNER~1/x`) is a plain character, so such a path is still a literal word.
+ */
+export function tildeWord(w: string): boolean {
+  return /^~|[=:]~/.test(w);
+}
+
 /** `p` is `root` or below it, both normalised with `normPath`. */
 export function sameOrUnder(platform: string, root: string, p: string, base: string, real: Resolver = nativeResolver): boolean {
   const r = normPath(platform, root, base, real);

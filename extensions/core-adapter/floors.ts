@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
-import { lexUnder, normPath, sameOrUnder, type Resolver } from "./pathnorm.ts";
+import { lexUnder, normPath, sameOrUnder, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch } from "./glob.ts";
 
 interface FloorKeys {
@@ -63,7 +63,7 @@ const hit = (name: string, reason: string): FloorHit => ({ rule: `floor-${name}`
 const askHit = (name: string, reason: string): FloorHit => ({ rule: `floor-${name}`, kind: "ask", reason: `${reason} (the line is not plain enough for the parser, so the owner decides)` });
 
 const base = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCase().replace(/\.exe$/, "");
-const isWord = (w: string): boolean => !/[$`*?[\]{}~]/.test(w);
+const isWord = (w: string): boolean => !/[$`*?[\]{}]/.test(w) && !tildeWord(w);
 
 // ------------------------------------------------------------------ git
 
@@ -362,7 +362,7 @@ export function insideRoot(p: string, root: string, platform: string = process.p
 }
 
 function resolveWord(word: string, cwd: string | null, env: FloorEnv): string | null {
-  const win = env.platform === "win32";
+  const win = (env.platform ?? process.platform) === "win32";
   const v = expandWord(word, env, win);
   if (v === null) return null;
   if (px_(win).isAbsolute(v)) return px_(win).normalize(v);

@@ -9,7 +9,7 @@
 //   (d) the output goes into the scratch dir, or to stdout read only by a non-executing reader
 import * as path from "node:path";
 import { insideRoot } from "./floors.ts";
-import { sameOrUnder } from "./pathnorm.ts";
+import { sameOrUnder, tildeWord } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 
@@ -67,9 +67,9 @@ function inRoot(abs: string, root: string, cwd: string, ctx: WebReadCtx): boolea
   return (ctx.platform ?? process.platform) === "win32" ? sameOrUnder("win32", root, abs, cwd) : insideRoot(abs, root, ctx.platform);
 }
 
-/** A target path inside one of the scratch dirs (literal words only; a variable, `~` or glob is not). */
+/** A target path inside one of the scratch dirs (literal words only; a variable, a tilde expansion or glob is not; an 8.3 `RUNNER~1` is literal). */
 function inScratch(word: string, cwd: string, ctx: WebReadCtx): boolean {
-  if (!word || /[$`*?[\]{}~]/.test(word)) return false;
+  if (!word || /[$`*?[\]{}]/.test(word) || tildeWord(word)) return false;
   const abs = path.resolve(cwd, word);
   return ctx.scratch.some((s) => inRoot(abs, s, cwd, ctx));
 }

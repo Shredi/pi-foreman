@@ -442,7 +442,8 @@ test("real git: an ignored untracked project file is trusted, a tracked or not i
   fs.writeFileSync(path.join(main, ".workflow", "permissions.json"), JSON.stringify({ allow: ["Bash(p *)"] }));
   const store = (): PermStore => new PermStore({ agentDir, cwd: wt, home: base });
   let s = store();
-  assert.equal(fs.realpathSync(s.main()), fs.realpathSync(main));
+  // git prints the long (canonical) spelling; the native realpath expands a win32 8.3 short tmpdir name the same way
+  assert.equal(fs.realpathSync.native(s.main()), fs.realpathSync.native(main));
   assert.equal(s.resolve().projectTrusted, false, "not ignored yet");
   assert.deepEqual(texts(s.resolve()).allow, []);
   fs.mkdirSync(path.join(main, ".git", "info"), { recursive: true });

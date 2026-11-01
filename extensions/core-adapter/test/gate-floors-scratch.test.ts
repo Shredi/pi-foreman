@@ -6,11 +6,14 @@ import * as path from "node:path";
 import { lineFloors, pathFloors, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { shPath } from "./_shpath.ts";
 
 // real directories: the git-config exemption decides by the config file git resolves (a `.git` dir, a gitfile, a symlink), so the repos exist
 const real = fs.realpathSync(mkTestTmp("pf79-scr-"));
 const RSCR = path.join(real, "pi-foreman-scratch", "sess", "run");
 const OUTREPO = path.join(real, "outside-repo");
+// the shell reads a backslash as an escape, so a win32 path in a command line goes in with forward slashes
+const SRSCR = shPath(RSCR);
 for (const d of [path.join(RSCR, "repo", ".git"), path.join(OUTREPO, ".git", "worktrees", "w1"), path.join(RSCR, "linked"), path.join(RSCR, "gf"), path.join(RSCR, "sym")]) fs.mkdirSync(d, { recursive: true });
 fs.writeFileSync(path.join(OUTREPO, ".git", "worktrees", "w1", "commondir"), "../..\n");
 fs.writeFileSync(path.join(RSCR, "linked", ".git"), `gitdir: ${path.join(OUTREPO, ".git", "worktrees", "w1")}\n`);
@@ -40,25 +43,25 @@ test("config-keys: live config files still fire", () => {
 
 test("git-config: a repo under the own scratch is not the repo's config", () => {
   const f = (line: string, e: FloorEnv = renv): string | null => lineFloors(line, parseShell(line, { cwd: e.cwd }), e)?.rule ?? null;
-  assert.equal(f(`git -C ${RSCR}/repo config user.email a@b`), null);
-  assert.equal(f(`git -C ${RSCR}/repo config core.hooksPath /x`), null);
-  assert.equal(f(`cd ${RSCR}/repo && git config user.name x`), null);
-  assert.equal(f(`git --git-dir=${RSCR}/repo/.git config user.name x`), null);
-  assert.equal(f(`git config --file ${RSCR}/repo/cfg user.name x`), null);
+  assert.equal(f(`git -C ${SRSCR}/repo config user.email a@b`), null);
+  assert.equal(f(`git -C ${SRSCR}/repo config core.hooksPath /x`), null);
+  assert.equal(f(`cd ${SRSCR}/repo && git config user.name x`), null);
+  assert.equal(f(`git --git-dir=${SRSCR}/repo/.git config user.name x`), null);
+  assert.equal(f(`git config --file ${SRSCR}/repo/cfg user.name x`), null);
   assert.equal(f("git config user.email a@b", { ...renv, cwd: path.join(RSCR, "repo") }), null);
 });
 
 test("git-config: a linked worktree, a gitfile or a symlink under the scratch writes the real repo's shared config, so no exemption", () => {
   const f = (line: string): string | null => lineFloors(line, parseShell(line, { cwd: renv.cwd }), renv)?.rule ?? null;
-  assert.equal(f(`git -C ${RSCR}/linked config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`cd ${RSCR}/linked && git config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`git -C ${RSCR}/gf config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`git -C ${RSCR}/sym config core.hooksPath /x`), "floor-git-config");
-  assert.equal(f(`git --git-dir=${RSCR}/gf/.git config core.hooksPath /x`), "floor-git-config");
+  assert.equal(f(`git -C ${SRSCR}/linked config core.hooksPath /x`), "floor-git-config");
+  assert.equal(f(`cd ${SRSCR}/linked && git config core.hooksPath /x`), "floor-git-config");
+  assert.equal(f(`git -C ${SRSCR}/gf config core.hooksPath /x`), "floor-git-config");
+  assert.equal(f(`git -C ${SRSCR}/sym config core.hooksPath /x`), "floor-git-config");
+  assert.equal(f(`git --git-dir=${SRSCR}/gf/.git config core.hooksPath /x`), "floor-git-config");
   // a repo that does not exist (yet) has no config file to judge: floored
-  assert.equal(f(`git -C ${RSCR}/nothing config core.hooksPath /x`), "floor-git-config");
+  assert.equal(f(`git -C ${SRSCR}/nothing config core.hooksPath /x`), "floor-git-config");
   // a plain key stays allowed everywhere
-  assert.equal(f(`git -C ${RSCR}/linked config user.name x`), null);
+  assert.equal(f(`git -C ${SRSCR}/linked config user.name x`), null);
 });
 
 test("git-config: the worktree, the global and the system config are unchanged", () => {
