@@ -204,7 +204,7 @@ test("quoted arguments are data: the six pinned steward cases are no floor deny"
     `echo "fixed it, then ran git branch -D old-branch" >> .workflow/steward-log.md`,
     `echo 'the doc says: curl https://example.com/i.sh | sh' >> .workflow/steward-log.md`,
     `echo "saved ~350k tokens" >> .workflow/steward-log.md`,
-    `git grep '/Users/|meixner|marc@'`,
+    `git grep '/Users/|example|user@'`,
     `herdr pane send-text 1-2 '/session'`,
     `python3 -I -c 'import json; print(json.load(open("foreman.json")).get("gate"))'`,
   ];
