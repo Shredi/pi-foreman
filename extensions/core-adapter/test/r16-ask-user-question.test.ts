@@ -34,11 +34,12 @@ test("parseQuestions: 1..4 questions, 2..4 options each", () => {
   assert.ok("questions" in parseQuestions(Q));
 });
 
-test("no UI: tells the agent to use ask.md and never calls ui", async () => {
+test("no UI: the owner-absent text (r79 item 5, no ask.md reference) and never calls ui", async () => {
   const s = stub([]);
   const r = await askUserQuestion(Q, { hasUI: false, ui: s.ui, ownDirs: () => [] });
   assert.equal(r.decision, "no_ui");
-  assert.match(r.text, /ask\.md/);
+  assert.equal(r.text, "no human at this pane; the owner is absent. Decide with the information you have or report what needs an answer.");
+  assert.doesNotMatch(r.text, /ask\.md/);
   assert.equal(s.calls.length, 0);
 });
 
@@ -63,5 +64,7 @@ test("UI without an open ask.md: no ruling file; a dismissed dialog falls back t
   assert.equal(fs.existsSync(path.join(dir, "ruling-3.md")), false);
   const b = await askUserQuestion(Q, { hasUI: true, ui: stub([undefined]).ui, ownDirs: () => [dir] });
   assert.equal(b.decision, "dismissed");
-  assert.match(b.text, /ask\.md/);
+  // r79 item 5: a dismissed question reads as the owner being absent
+  assert.match(b.text, /the owner is absent/);
+  assert.doesNotMatch(b.text, /ask\.md/);
 });

@@ -1,5 +1,5 @@
-// Review model helpers of the gate (gatereview.ts): which model reviews for the active provider, the
-// reviewer's error classification, the usage estimate for a bridge call, and the user-prompt read of a
+// Classifier model helpers of the gate (classifier.ts; config keys keep the name `review`): which model classifies for the active
+// provider, the classifier's error classification, the usage estimate for a bridge call, and the user-prompt read of a
 // before_agent_start event.
 import type { Json } from "./config.ts";
 import { get } from "./config.ts";
@@ -8,7 +8,7 @@ import { isSubagentWakeText } from "./idlecustom.ts";
 export const DEFAULT_REVIEW_TIMEOUT_MS = 15_000;
 
 /**
- * Why a review call failed, short enough for the log and the trace: `auth`, `aborted`, or
+ * Why a classifier call failed, short enough for the log and the trace: `auth`, `aborted`, or
  * `provider_error:<first 60 chars of the provider's message>` (`no_model` and `internal` are set
  * by the caller). The reviewed value is cut out of the message first, so a provider that echoes
  * its input cannot put the command into the log.
@@ -79,7 +79,7 @@ export function autoReviewTarget(config: Json | undefined, provider: string | un
   return { provider: best.provider, modelId: best.modelId, timeoutMs: typeof t === "number" && Number.isFinite(t) && t > 0 ? t : DEFAULT_REVIEW_TIMEOUT_MS, auto: true };
 }
 
-/** The slice of Pi's ModelRegistry the review uses. */
+/** The slice of Pi's ModelRegistry the classifier uses. */
 export interface RegistryLike {
   find(provider: string, modelId: string): unknown;
   /** Pi's ModelRegistry has it; a registry without it counts every found model as usable. */

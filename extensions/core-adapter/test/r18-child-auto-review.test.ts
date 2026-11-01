@@ -1,3 +1,4 @@
+// r79 item 11: the review is the classifier; a child (headless, no ask dir) is denied at once when the classifier escalates, with the no-pane text.
 // R18 item 1: a child's overlay ask (kind ask, no selfMod, no self-ruling) goes to the auto reviewer too, headless (mode json, no UI).
 // The child rig is r12-child-repeat-refusal.test.ts' (PI_SUBAGENT_CHILD=1 and the launch binding before the adapter loads); the stubbed
 // reviewer and the probe line are r16's (test/fixtures/r16-auto-review.json `reviewable[0]`, rule toolchain-probe).
@@ -46,7 +47,9 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }, repl
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   process.env.PI_SUBAGENT_CHILD = "1";
   process.env[BINDINGS_ENV] = JSON.stringify({ [BINDING_NS]: { foremanSession: "r18-foreman", workspace: project, role: ROLE, launchId: "r18-launch", kind: "first" } });
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ trace: { enabled: true }, providers: { fake: { review: { model: "fake/small", timeoutMs: 2000 } } } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ trace: { enabled: true }, gate: { reviewTimeoutMs: 2000 }, presence: { enabled: false }, providers: { fake: { roles: { review: { model: "fake/small" } } } } }));
+  fs.mkdirSync(path.join(agentDir, "pi-foreman"), { recursive: true });
+  fs.writeFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ classifier: { allow: ["Read-only inspection"], deny: ["Never read secrets"] } }));
   const handlers = new Map<string, Handler>();
   const pi = {
     events: { on: () => undefined, emit: () => undefined },
@@ -111,14 +114,14 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }, repl
   };
 }
 
-const V = (verdict: string, entry: string, reason = "stub"): string => JSON.stringify({ verdict, entry, reason });
+const V = (verdict: string, entry: string | null, reason = "stub"): string => JSON.stringify({ verdict, entry, reason });
 const gate = (c: { events: (n: string) => Record<string, unknown>[] }): string[] => c.events("guard").filter((x) => x.guard === "gate").map((x) => `${x.decision}:${x.rule}`);
 
-test("r18 child: a toolchain-probe line goes to the gate's review; allow -> a gate allow record with the child role and session kind child", async (t) => {
-  const c = await childRig(t, V("allow", "read-only-inspection"));
+test("r18 child: a toolchain-probe line goes to the classifier; allow -> a gate allow record with the child role and session kind child", async (t) => {
+  const c = await childRig(t, V("allow", "A1"));
   const r = await c.bash(PROBE);
   assert.equal(r, undefined, JSON.stringify(r));
-  assert.deepEqual(gate(c), ["allowed:review:read-only-inspection"]);
+  assert.deepEqual(gate(c), ["allowed:classifier:A1"]);
   assert.equal(c.events("auto_review_allow").length + c.events("overlay").length, 0);
   assert.equal(c.sent.length, 1);
   assert.ok(c.sent[0].includes(`role: ${ROLE}`), c.sent[0]);
@@ -135,34 +138,33 @@ test("r18 child: a read of another session's state dir is denied by the selfmod-
   assert.deepEqual(gate(c), ["blocked:selfmod-state-read"]);
 });
 
-test("r18 child: an asking reviewer is a child deny that names the entry and tells the child to report it (no dialog)", async (t) => {
-  const c = await childRig(t, V("ask", "tool-config-edit", "unsure"));
+test("r18 child: an escalating classifier is a child deny with the no-pane text (no ask dir, no owner dialog)", async (t) => {
+  const c = await childRig(t, V("escalate", null, "unsure"));
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
-  assert.match(r?.reason ?? "", /policy ask tool-config-edit: unsure. Children cannot answer asks; report this line to the foreman/);
+  assert.match(r?.reason ?? "", /nobody is at this session \(no pane\)/);
   assert.equal(c.sent.length, 1);
-  const d = c.events("dialog");
-  assert.equal(d.length, 0);
 });
 
-test("r18 child: a review deny is final and blocks with the policy entry and the reviewer's reason", async (t) => {
-  const c = await childRig(t, V("deny", "secret-access", "no way"));
+test("r18 child: a classifier deny is final and blocks naming the whitelist rule", async (t) => {
+  const c = await childRig(t, V("deny", "D1", "no way"));
   const r = await c.bash(PROBE);
-  assert.deepEqual(r, { block: true, reason: "pi-foreman: policy secret-access: no way" });
+  assert.equal(r?.block, true);
+  assert.match(r?.reason ?? "", /^pi-foreman: denied by whitelist rule D1: Never read secrets/);
   assert.equal(c.sent.length, 1);
-  assert.deepEqual(gate(c), ["blocked:review:secret-access"]);
+  assert.deepEqual(gate(c), ["blocked:prose:D1"]);
 });
 
-test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict: unreachable, a child deny with code policy_invalid_verdict (Addendum 3 F1)", async (t) => {
+test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict: it escalates, and a child with no pane is denied", async (t) => {
   const c = await childRig(t, '{"verdict":"defer"}');
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
-  assert.match(r?.reason ?? "", /policy_invalid_verdict/);
-  assert.deepEqual(gate(c), []);
+  assert.match(r?.reason ?? "", /nobody is at this session/);
+  assert.equal(c.sent.length, 1);
 });
 
-test("r18 child: its self-ruling ask never reaches the reviewer", async (t) => {
-  const c = await childRig(t, V("allow", "read-only-inspection"));
+test("r18 child: its self-ruling ask never reaches the classifier", async (t) => {
+  const c = await childRig(t, V("allow", "A1"));
   const dir = c.handoff("r18-own");
   const r = await c.bash(`echo "handoffs/${path.basename(dir)} ruling" > notes.txt`);
   assert.equal(r?.block, true, JSON.stringify(r));

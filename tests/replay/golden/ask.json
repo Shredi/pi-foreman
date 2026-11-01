@@ -21,10 +21,6 @@
    "model": "foreman-fake/foreman"
   },
   {
-   "event": "review",
-   "decision": "allow"
-  },
-  {
    "event": "guard",
    "role": "foreman",
    "toolFamily": "bash",
@@ -62,10 +58,6 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
-  },
-  {
-   "event": "review",
-   "decision": "allow"
   },
   {
    "event": "guard",
@@ -123,10 +115,6 @@
     "model": "foreman-fake/foreman"
    },
    {
-    "event": "review",
-    "decision": "allow"
-   },
-   {
     "event": "guard",
     "role": "foreman",
     "toolFamily": "bash",
@@ -179,10 +167,6 @@
    {
     "event": "llm",
     "model": "foreman-fake/foreman"
-   },
-   {
-    "event": "review",
-    "decision": "allow"
    },
    {
     "event": "guard",

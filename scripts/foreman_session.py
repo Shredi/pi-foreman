@@ -4,7 +4,7 @@
     python scripts/foreman_session.py open <label> <brief-file> [--cwd DIR] [--model ID]
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
                                       [--first-command CMD]... [--plan-mode]
-                                      [--parent-id ID] [--own-model ID] [--agent-dir D]
+                                      [--parent-id ID] [--own-model ID] [--profile NAME] [--agent-dir D]
     python scripts/foreman_session.py open <label> <brief-file> --worktree [--base REF] [--cwd DIR] [...]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
@@ -114,6 +114,8 @@ ENV_STABLE = "PI_INTERCOM_STABLE_ID"
 ENV_PARENT_LABEL = "PI_FOREMAN_PARENT_LABEL"
 ENV_MODEL = "PI_FOREMAN_SESSION_MODEL"
 ENV_PLAN_PHASE = "PI_FOREMAN_PLAN_PHASE"  # --plan-first: the child's adapter starts in the plan phase (.workflow-only writes, no builders)
+ENV_PERMS_PROFILE = "PI_FOREMAN_PERMS_PROFILE"  # --profile (r79 item 8): the child's permissions profile; owner CLI only, never a tool parameter
+BUILTIN_PROFILES = ("steward",)
 ENV_PUBLISHED = "PI_INTERCOM_SESSION_ID"
 ENV_BG_PREFIX = "PI_BG_"
 ENV_BG_FEATURES = "PI_BG_FEATURES"
@@ -560,10 +562,32 @@ def addon_env(environ=None):
     return sorted(out, key=lambda kv: (kv[0] != ENV_BG_FEATURES, kv[0]))
 
 
-def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False):
+def profile_names(adir):
+    """The built-in permissions profiles plus the `profiles` keys of <agentDir>/pi-foreman/permissions.json (an unreadable file adds none)."""
+    names = list(BUILTIN_PROFILES)
+    try:
+        data = json.loads((adir / "pi-foreman" / "permissions.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return names
+    profiles = data.get("profiles") if isinstance(data, dict) else None
+    if isinstance(profiles, dict):
+        names += [k for k in profiles if isinstance(k, str) and k not in names]
+    return names
+
+
+def check_profile(adir, name):
+    """Refuse a profile name that is neither built in nor a key of the user's permissions.json profiles."""
+    known = profile_names(adir)
+    if not VALUE_RE.match(name) or name not in known:
+        raise Refused("unknown permissions profile %r; known profiles: %s" % (name, ", ".join(known)))
+
+
+def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, profile=None):
     env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
     if plan_phase:
         env.append((ENV_PLAN_PHASE, "1"))
+    if profile:
+        env.append((ENV_PERMS_PROFILE, profile))
     if remote:  # the parent is on another machine: the child reports with `remote notice`
         env.append((ENV_REMOTE_PARENT, "1"))
     # the child's Pi keeps this model instead of applying the overlay/preset foreman role model
@@ -846,6 +870,8 @@ def cmd_open(a):
     if wt and getattr(a, "machine", None):
         raise Refused("--worktree is not supported with --machine in this version (the worktree would be on the remote machine)")
     if getattr(a, "machine", None):
+        if getattr(a, "profile", None):
+            raise Refused("--profile is not supported with --machine in this version", "remote_option")
         if a.print_all:
             raise Refused("--print-all is not supported with --machine in this version", "remote_option")
         return cmd_open_remote(a)
@@ -865,6 +891,8 @@ def cmd_open(a):
     cwd = cwd.resolve()
     if a.model and not VALUE_RE.match(a.model):
         raise Refused("--model may use only A-Z a-z 0-9 . _ : / @ -")
+    if a.profile:
+        check_profile(adir, a.profile)
     own_model = a.own_model or os.environ.get(ENV_MODEL, "").strip() or None
     if own_model and not VALUE_RE.match(own_model):
         raise Refused("--own-model may use only A-Z a-z 0-9 . _ : / @ -")
@@ -899,7 +927,7 @@ def cmd_open(a):
         cwd = Path(wtree["path"])
     params = {"adir": adir, "label": a.label, "text": text, "cwd": cwd, "model": a.model, "own_model": own_model,
               "plan_first": a.plan_first, "parent": parent, "focus": a.focus, "dry_run": a.dry_run,
-              "print_all": a.print_all, "first": first, "worktree": wtree}
+              "print_all": a.print_all, "first": first, "profile": a.profile, "worktree": wtree}
     return open_session(params)[0]
 
 
@@ -923,7 +951,8 @@ def open_session(p, remote=None):
     else:
         here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
         parent_slug = opener_slug(here, git_top(here))
-    env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]))
+    env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]),
+                    profile=p.get("profile"))
     prompt = prompt_text(handoff)
     first = p.get("first") or []
     command = posix_command(env, model, prompt, first)
@@ -2152,6 +2181,7 @@ def main(argv=None):
     o.add_argument("--own-model")
     o.add_argument("--parent-id")
     o.add_argument("--plan-first", action="store_true")
+    o.add_argument("--profile")
     o.add_argument("--first-command", action="append")
     o.add_argument("--plan-mode", action="store_true")
     o.add_argument("--focus", action="store_true")

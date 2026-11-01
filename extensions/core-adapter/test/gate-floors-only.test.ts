@@ -1,14 +1,14 @@
-// gate.mode "floors-only" (r76, temporary): the floors still deny, every other gate outcome is an allow with no review call,
-// no dialog and no ask.md; "full" is unchanged for the same line.
+// r79 items 2, 3, 11: the r76 key gate.mode "floors-only" is retired and now means permissions mode `allow`: the floors (and self-modification,
+// deny and ask rules) still apply, everything else runs with no classifier call and no dialog. "full" is mode auto. Push floors read parsed
+// `git push` segments only; an unparsed line is danger-opaque, which mode allow runs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import { execFileSync } from "node:child_process";
 import { r11Rig } from "./_r11rig.ts";
 import { gateLogFile } from "../gatelog.ts";
 
-const ASK = JSON.stringify({ verdict: "ask", entry: "inline-interpreter", reason: "because inline" });
-const INLINE = `python3 -c "print(1)"`;
+const ESCALATE = JSON.stringify({ verdict: "escalate", entry: null, reason: "unsure" });
+const INSTALL = "pip install requests";
 const NOMATCH = "terraform plan";
 
 async function rig(t: Parameters<typeof r11Rig>[0], mode: "full" | "floors-only", o: { child?: boolean } = {}) {
@@ -19,11 +19,11 @@ async function rig(t: Parameters<typeof r11Rig>[0], mode: "full" | "floors-only"
     getProviderAuthStatus: () => ({ configured: false }),
     complete: async () => {
       counts.review++;
-      return { content: [{ type: "text", text: ASK }], stopReason: "stop", usage: { input: 1, output: 1 } };
+      return { content: [{ type: "text", text: ESCALATE }], stopReason: "stop", usage: { input: 1, output: 1 } };
     },
   };
   const ui = { notify: (m: string) => void notices.push(m), confirm: async () => false, select: async () => (counts.selects++, undefined), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
-  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui }, config: { gate: { mode }, providers: { fake: { review: { model: "m" }, roles: {} } } }, child: o.child });
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry, ui }, config: { presence: { enabled: false }, gate: { mode }, providers: { fake: { review: { model: "m" }, roles: {} } } }, child: o.child });
   const log = (): Record<string, unknown>[] => {
     const f = gateLogFile(r.agentDir);
     return fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>) : [];
@@ -52,55 +52,27 @@ test("floors-only: a child's push is still a floor deny", async (t) => {
   assert.match(String(res?.reason), /denied by the permission floor/);
 });
 
-test("floors-only: a bare git push is denied as floors-only-push", async (t) => {
+test("floors-only: a dangerous line and a no-rule line both run, with no classifier call and no dialog", async (t) => {
   const r = await rig(t, "floors-only");
-  for (const command of ["git push", "git push --no-verify origin HEAD", "git -C /tmp/x push"]) {
-    const res = await r.call("bash", { command });
-    assert.equal(res?.block, true, command);
-  }
-  const d = r.log().filter((e) => e.rule === "floors-only-push");
-  assert.ok(d.length >= 1, JSON.stringify(r.log()));
-  assert.deepEqual([d[0].layer, d[0].verdict], ["floor", "deny"]);
-  assert.equal(r.counts.review, 0);
-});
-
-test("floors-only: path, quoted, escaped, nested and variable git pushes are denied as floors-only-push", async (t) => {
-  const r = await rig(t, "floors-only");
-  const lines = ["/usr/bin/git push", `"git" push`, `'git' push`, `sh -c "git push"`, `bash -c 'git push'`, "\\git push", "$G push"];
-  for (const command of lines) {
-    const res = await r.call("bash", { command });
-    assert.equal(res?.block, true, command);
-  }
-  assert.equal(r.log().filter((e) => e.rule === "floors-only-push").length, lines.length, JSON.stringify(r.log()));
-  assert.equal(r.counts.review, 0);
-});
-
-test("floors-only: a plain explicit own-branch push keeps its default allow", async (t) => {
-  const r = await rig(t, "floors-only");
-  execFileSync("git", ["init", "-q", "-b", "feature/x"], { cwd: r.project });
-  const res = await r.call("bash", { command: "git push -u origin feature/x" });
-  assert.equal(res, undefined);
-  assert.ok(!r.log().some((e) => e.rule === "floors-only-push"), JSON.stringify(r.log()));
-});
-
-test("floors-only: an inline interpreter and a no-matching-entry line are allowed with no review and no dialog", async (t) => {
-  const r = await rig(t, "floors-only");
-  for (const command of [INLINE, NOMATCH]) {
-    const res = await r.call("bash", { command });
-    assert.equal(res, undefined, command);
-  }
+  for (const command of [INSTALL, NOMATCH]) assert.equal(await r.call("bash", { command }), undefined, command);
   assert.equal(r.counts.review, 0);
   assert.equal(r.counts.selects, 0);
-  const allows = r.log().filter((e) => e.rule === "floors-only");
-  assert.equal(allows.length, 2, JSON.stringify(r.log()));
-  for (const e of allows) assert.deepEqual([e.layer, e.verdict], ["default", "allow"]);
-  assert.ok(r.events("guard").some((e) => e.guard === "gate" && e.decision === "allowed" && e.rule === "floors-only"));
+  const modes = r.log().filter((e) => e.layer === "mode");
+  assert.equal(modes.length, 2, JSON.stringify(r.log()));
+  for (const e of modes) assert.equal(e.verdict, "allow");
 });
 
-test("floors-only: a child's ask is allowed too, without ask.md", async (t) => {
+// item 3: only parsed `git push` segments count; text that merely mentions a push is no push
+test("floors-only: a push that only appears inside text is not a push floor", async (t) => {
+  const r = await rig(t, "floors-only");
+  for (const command of [`echo "git push origin main"`, `grep -n 'git push' README.md`]) {
+    assert.equal(await r.call("bash", { command }), undefined, command);
+  }
+});
+
+test("floors-only: a child's ordinary line runs too", async (t) => {
   const r = await rig(t, "floors-only", { child: true });
-  const res = await r.call("bash", { command: NOMATCH });
-  assert.equal(res, undefined);
+  assert.equal(await r.call("bash", { command: NOMATCH }), undefined);
   assert.equal(r.counts.review, 0);
 });
 
@@ -108,19 +80,18 @@ test("floors-only: a deterministic default keeps its own rule", async (t) => {
   const r = await rig(t, "floors-only");
   assert.equal(await r.call("bash", { command: "git status" }), undefined);
   assert.ok(r.log().some((e) => e.rule === "default-git-read"), JSON.stringify(r.log()));
-  assert.ok(!r.log().some((e) => e.rule === "floors-only"));
 });
 
-test("floors-only: the start notice is shown", async (t) => {
+test("floors-only: the retired-key notice is shown", async (t) => {
   const r = await rig(t, "floors-only");
-  assert.ok(r.notices.some((n) => /floors-only mode \(gate\.mode\)/.test(n)), JSON.stringify(r.notices));
+  assert.ok(r.notices.some((n) => /"floors-only" is retired and now means permissions mode allow/.test(n)), JSON.stringify(r.notices));
 });
 
-test("full: the same line still goes to review, and there is no notice", async (t) => {
+test("full: a dangerous line still goes to the classifier path (an unanswered dialog denies), and there is no notice", async (t) => {
   const r = await rig(t, "full");
   assert.ok(!r.notices.some((n) => /floors-only/.test(n)));
-  const res = await r.call("bash", { command: INLINE });
+  const res = await r.call("bash", { command: INSTALL });
   assert.equal(res?.block, true);
-  assert.ok(r.counts.review >= 1 || r.counts.selects >= 1);
-  assert.ok(!r.log().some((e) => e.rule === "floors-only"));
+  assert.ok(r.counts.selects >= 1);
+  assert.equal(await r.call("bash", { command: NOMATCH }), undefined, "an unmatched, non-dangerous line runs under auto");
 });

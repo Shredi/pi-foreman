@@ -7,6 +7,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export const REMOVED_REASON = "the permission package is gone; the gate decides";
+const POLICY_REASON = "policy files are no longer read; rules and the whitelist live in permissions.json";
+export const policyFileText = (file) => `${file}: policy.md is no longer read; move its entries into permissions.json classifier.allow/deny`;
+const userPolicyPath = (agentDir) => path.join(agentDir, "pi-foreman", "policy.md");
 const HEADLESS_REASON = "a session with no pane above it denies an ask";
 const FALLBACK_REASON = "nothing reads it";
 const PKG = "@gotgenes/pi-permission-system";
@@ -88,11 +91,11 @@ function planKeys(config) {
   }
 
   if (has(config, ["safety", "permissions"])) {
-    for (const parts of leaves(config, ["safety", "permissions"])) {
-      if (parts.join(".") === "safety.permissions.autoReview.rulesFile" && !has(config, ["gate", "policy", "userFile"])) move(parts, ["gate", "policy", "userFile"]);
-      else drop(parts, REMOVED_REASON);
-    }
+    for (const parts of leaves(config, ["safety", "permissions"])) drop(parts, REMOVED_REASON);
   }
+  // r79 item 9: the policy file keys are gone
+  if (has(config, ["gate", "policy", "userFile"])) drop(["gate", "policy", "userFile"], POLICY_REASON);
+  if (has(config, ["safety", "policy", "files"])) drop(["safety", "policy", "files"], POLICY_REASON);
   return out;
 }
 
@@ -141,6 +144,7 @@ export function migrateGateConfig({ agentDir, configPath, log = () => {}, dryRun
   const rendered = renderedConfigPath(agentDir);
   const dir = migrationDir(agentDir);
 
+  if (fs.existsSync(userPolicyPath(agentDir))) say(`gate migration: ${policyFileText(userPolicyPath(agentDir))}`);
   let text = null;
   let config = null;
   try { text = fs.readFileSync(configPath, "utf8"); config = JSON.parse(text); } catch { config = null; }
@@ -177,8 +181,9 @@ export function migrateGateConfig({ agentDir, configPath, log = () => {}, dryRun
 export function gateLeftovers({ agentDir, config }) {
   const out = [];
   if (isObj(config)) {
-    for (const s of planKeys(config)) if (s.parts[0] === "safety" || s.parts[0] === "review") out.push(s.text);
+    for (const s of planKeys(config)) if (s.parts[0] === "safety" || s.parts[0] === "review" || s.parts[0] === "gate") out.push(s.text);
   }
+  if (fs.existsSync(userPolicyPath(agentDir))) out.push(policyFileText(userPolicyPath(agentDir)));
   if (fs.existsSync(renderedConfigPath(agentDir))) out.push(renderedConfigText(renderedConfigPath(agentDir)));
   if (planSettings(agentDir)) out.push(settingsEntryText(settingsPath(agentDir)));
   if (fs.existsSync(packageInstallPath(agentDir))) out.push(packageInstallText(packageInstallPath(agentDir)));

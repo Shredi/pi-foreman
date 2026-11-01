@@ -26,6 +26,9 @@ FIXTURE_SERVER = REPO / "extensions" / "core-adapter" / "test" / "fixtures" / "m
 class TestChildMcpScope(ReplayCase):
     def test_launch_narrowed_mcp_loads_on_demand(self):
         rig = self.rig("child-mcp-scope", load_fixture("child_mcp_scope"), config={"roles": {"builder": {"mcp": ["fx"]}}})
+        # `echo` is not a read name, so an MCP call of it is the dangerous class `danger-mcp-act` (asked of the parent); this case is about
+        # the scope, so a user allow rule lets the call through
+        self.user_permissions(rig, {"allow": ["mcp__fx__echo"]})
         server = {"command": "node", "args": [str(FIXTURE_SERVER), str(rig.root / "fx-started"), str(rig.root / "fx-exited")]}
         (rig.agent / "mcp.json").write_text(json.dumps({"mcpServers": {"fx": server}}), "utf-8")
         pi = rig.start()

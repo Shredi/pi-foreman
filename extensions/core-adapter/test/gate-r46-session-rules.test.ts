@@ -14,11 +14,13 @@ type Rig = Awaited<ReturnType<typeof r11Rig>>;
 async function rig(t: Parameters<typeof r11Rig>[0], o: { child?: boolean; reviewAllows?: boolean; reviewAsks?: boolean } = {}) {
   const titles: string[] = [];
   const ui = { notify: () => undefined, confirm: async () => false, select: async (title: string) => (titles.push(title), "deny with reason"), input: async () => "not now", setStatus: () => undefined, setWidget: () => undefined };
-  const base = o.reviewAllows || o.reviewAsks ? reviewAllowOpts() : { ctx: {}, config: {} };
-  if (o.reviewAsks) {
-    const reg = base.ctx.modelRegistry as { complete: () => Promise<unknown> };
-    reg.complete = async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "ask", entry: "package-install", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } });
-  }
+  // r79 item 11: the review is the classifier now; an escalating one stands for the "asking review"
+  const base: { ctx: Record<string, unknown>; config: Record<string, unknown> } = o.reviewAsks
+    ? {
+        ctx: { modelRegistry: { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "escalate", entry: null, reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }) } },
+        config: { providers: { fake: { roles: { review: { model: "m" } } } } },
+      }
+    : reviewAllowOpts();
   const r = await r11Rig(t, {}, { ctx: { ...base.ctx, ui }, config: base.config, child: o.child });
   const sessions = path.join(r.agentDir, "sessions");
   const outer = path.join(sessions, "--proj--");
@@ -86,11 +88,21 @@ for (const child of [false, true]) {
         ["foreman_move", { src: dir, dst: path.join(r.project, "elsewhere") }],
       ];
       for (const [tool, input] of calls) {
+        const dialogs = r.titles.length;
         const why = await blockedCall(r, tool, input);
         assert.ok(why, `${who}: ${tool} ${JSON.stringify(input)} was allowed`);
+        // ruling-10: the foreman's bash mv into the project is a shell write its edit mode refuses, so it gets the refusal before any dialog; a mv
+        // that stays outside the workspace and foreman_move are not refused and still ask
+        if (!child && tool === "bash" && String(input.command).includes(shPath(r.project))) {
+          assert.match(why, /shell write into project files refused/, `${who}: ${tool} ${JSON.stringify(input)}`);
+          continue;
+        }
         moves++;
         if (child) assert.match(why, /selfmod-session-dir/, `${who}: ${tool} ${JSON.stringify(input)}`);
-        else assert.match(r.titles.at(-1) ?? "", /selfmod-session-dir/, `${who}: ${tool} ${JSON.stringify(input)}`);
+        else {
+          assert.equal(r.titles.length, dialogs + 1, `${who}: ${tool} ${JSON.stringify(input)} opened one dialog`);
+          assert.match(r.titles.at(-1) ?? "", /selfmod-session-dir/, `${who}: ${tool} ${JSON.stringify(input)}`);
+        }
       }
     }
     assert.equal(r.titles.length, child ? 0 : moves, child ? "a child never gets a dialog" : "the owner pane dialog opened once per move");
@@ -123,7 +135,7 @@ for (const child of [false, true]) {
   });
 }
 
-test("a child's npm ci is not a default allow: an unreachable or asking review denies it", async (t) => {
+test("a child's npm ci is not a default allow: an unreachable or escalating classifier denies it", async (t) => {
   for (const o of [{}, { reviewAsks: true }]) {
     const r = await rig(t, { child: true, ...o });
     const res = await r.call("bash", { command: "npm ci" });

@@ -1,6 +1,6 @@
-// ask_user_question (R16 item 5): a structured in-pane question for a human at the pane (foreman only). The ask.md
-// file path (askcontract.ts) is unchanged; when a handoff dir where this session is the child holds an open ask.md, the answer is also written
-// to `ruling-<n>.md`. No UI (print/rpc/json mode, unattended): the result tells the agent to use the ask.md path.
+// ask_user_question (R16 item 5): a structured in-pane question for a human at the pane (foreman only). When a handoff dir where this
+// session is the child holds an open ask.md, the answer is also written to `ruling-<n>.md`. No UI (print/rpc/json mode, unattended) or a
+// dismissed question (r79 item 5): the result says the owner is absent.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASK_FILE, parseAskHeader } from "./askcontract.ts";
@@ -8,6 +8,7 @@ import { askOpen } from "./ruling.ts";
 
 export const ASK_USER_TOOL = "ask_user_question";
 export const OTHER_OPTION = "Other (type an answer)";
+export const OWNER_ABSENT_TEXT = "no human at this pane; the owner is absent. Decide with the information you have or report what needs an answer.";
 
 export interface AskQuestion {
   question: string;
@@ -61,13 +62,13 @@ function openAsk(dirs: string[]): { dir: string; n: number } | null {
 export async function askUserQuestion(params: unknown, d: AskUserDeps): Promise<AskUserResult> {
   const parsed = parseQuestions(params);
   if ("error" in parsed) return { text: parsed.error, decision: "refused" };
-  if (!d.hasUI) return { text: `${ASK_USER_TOOL}: no human at the pane; ask by file instead (write ask.md in the handoff dir, docs/sessions.md "Ask by file").`, decision: "no_ui" };
+  if (!d.hasUI) return { text: OWNER_ABSENT_TEXT, decision: "no_ui" };
   const lines: string[] = [];
   for (const [i, q] of parsed.questions.entries()) {
     const title = parsed.questions.length > 1 ? `(${i + 1}/${parsed.questions.length}) ${q.question}` : q.question;
     let answer = await d.ui.select(title, q.allowFreeText ? [...q.options, OTHER_OPTION] : q.options);
     if (answer === OTHER_OPTION) answer = await d.ui.input(q.question, "your answer");
-    if (answer === undefined || !answer.trim()) return { text: `${ASK_USER_TOOL}: the human dismissed question ${i + 1}; ask by file instead (ask.md).`, decision: "dismissed" };
+    if (answer === undefined || !answer.trim()) return { text: OWNER_ABSENT_TEXT, decision: "dismissed" };
     lines.push(`${i + 1}. ${q.question}\n   Answer: ${answer.trim()}`);
   }
   const body = lines.join("\n");
