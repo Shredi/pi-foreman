@@ -101,6 +101,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [skill-visibility](#skill-visibility) | tools |  | on | Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way. | on by default | [tools](tools.md) |
 | [ask-user-question](#ask-user-question) | ui |  | on | The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
+| [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
 | [compaction](#compaction) | models |  | on | Caps the context size at which Pi's own auto-compaction fires: `foreman setup` writes a per-model point (a price-tier boundary minus headroom, or this cap) as Pi's compaction.modelOverrides. The idle warm compaction and the footer context bar use the same point. | on by default | [cache](cache.md) |
@@ -430,6 +431,7 @@ No config key.
 | `fanout.max` | `3` | any layer |
 | `ceremony.launchWait` | `"detach"` | tighten-only (toward block; tightest first: block, detach) |
 | `ceremony.dedupeNotify` | `true` | tighten-only (only true is accepted) |
+| `ceremony.longCommands` | `["npm test", "npm run test", "npx vitest", "npx jest", "node --test", "pytest", "python -m unittest", "python -m pytest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "make test", "pnpm test", "yarn test"]` | any layer |
 
 ### waits
 
@@ -802,6 +804,14 @@ No config key.
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.logMaxBytes` | `20971520` | any layer |
 
+### knowledge
+
+**Knowledge sources.** `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`.
+
+| Key | Default | Layer |
+|---|---|---|
+| `knowledge.nudgeDays` | `30` | any layer |
+
 ### herdr
 
 **Herdr pane state.** In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes.
@@ -894,6 +904,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
 | [auto-review-overlay](#auto-review-overlay) | `/foreman perms`, `foreman perms` |
+| [knowledge](#knowledge) | `foreman knowledge` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
 

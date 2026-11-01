@@ -52,9 +52,9 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 
 `--first-command /CMD` (repeatable, at most 4; each starts with `/`, is one line of at most 200 characters without control characters, else `open` is refused) makes the new session run Pi extension commands before the brief prompt. `--plan-mode` is shorthand for `--first-command /plan`: it comes first and is never repeated. `--plan-first` is unchanged and independent (it changes the brief, not the launch line). Without these flags the launch line is the same as before.
 
-Mechanism: the commands are positional messages of the launch line, ahead of the brief prompt: `pi "/plan" "Read the handoff brief at … and proceed."`. Pi runs the messages in order and awaits each; a message starting with `/` runs as an extension command. The commands are quoted for POSIX and PowerShell, appear in the printed fallback, the dry run and `launch.txt`, and the registry entry gets `firstCommands` when there are any.
+Mechanism: the commands are positional messages of the launch line, ahead of the brief prompt: `pi "/x" "Read the handoff brief at … and proceed."`. `/plan` is the exception: the brief prompt becomes part of it as the last word, `pi "/x" "/plan Read the handoff brief at … and proceed."` (a bare `/plan` would open the plan-mode menu, so the brief rides on the command; `/plan start` or other `/plan …` text stays a separate word). Pi runs the messages in order and awaits each; a message starting with `/` runs as an extension command. The commands are quoted for POSIX and PowerShell, appear in the printed fallback, the dry run and `launch.txt`, and the registry entry gets `firstCommands` when there are any.
 
-Requirement and residual risk: `--plan-mode` needs a `plan` command in the new session (a plan-mode package). The CLI cannot check that; the `/foreman session open` command and the tool refuse with `session open refused [plan_mode_unavailable]` when the opening session has no `/plan` command. If a `/plan` handler starts a turn without awaiting it, the brief prompt that follows may fail to start.
+Requirement and residual risk: `--plan-mode` needs a `plan` command in the new session (a plan-mode package). The CLI cannot check that; the `/foreman session open` command and the tool refuse with `session open refused [plan_mode_unavailable]` when the opening session has no `/plan` command. A bare `/plan` message would open the plan-mode menu and wait for the user, which is why the brief rides on the command as `/plan <brief prompt>`. If another first command's handler starts a turn without awaiting it, the brief prompt that follows may fail to start.
 
 ### The foreman_session_open tool
 
@@ -372,7 +372,7 @@ and a running `foreman_bg` command as `bg · note · age`. These rows show with 
 hides only when every row is empty. While any run or background row is active the
 widget keeps its height (it may grow when a row starts, padded rather than shrunk, at most 8 rows, one screen row each; a ninth
 and later row folds into one `+<n> more` row) and updates in place, so the view does not shift; the run rows go when the last active run ends. It costs no model tokens. Outside Pi,
-the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman findings list|dismiss|export` and `foreman retro models` ([review](review.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
+the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman findings list|dismiss|export` and `foreman retro models` ([review](review.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)), `foreman bench` ([benchmark](bench.md), including `foreman bench review`) and `foreman knowledge` ([Knowledge sources](#knowledge-sources)). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
 
@@ -383,6 +383,17 @@ This status slot applies to `footer.style: "pi"`; the foreman footer carries the
 with `ui.symbols`) while the prompt cache has expired, and a downshift glyph (`↓`) while the foreman runs on its idle
 model ([ladder](ladder.md#idle-rung-foreman-downshift)). The glyphs live in `config/symbols.json` (`keepalive`, `cold`,
 `downshift`); the Herdr sidebar leaves all three out.
+
+## Knowledge sources
+
+The bundled skills and design notes digest a few outside pages: skill-authoring guidance, per-model prompting guides and an article on folding subagents. `config/knowledge.json` lists them, one entry per source: `id`, `url`, `target` (the repo file that digests it), `sha256` (of the normalised page text), `checkedOn` (the day the digest was last read against it) and, for index pages, `discover: {pattern, label}`. The digests are written in our own words; the full text is never committed.
+
+- `foreman knowledge check [--json] [--agent-dir D]` fetches each source (10 s timeout), reduces HTML to its main text (scripts, styles, navigation, header, footer, aside and comments dropped; Markdown is used as is), hashes it and compares with the manifest. Each source is `unchanged`, `changed`, `new` (no hash yet), `unreachable` or, for a discover entry, `discovered`. A discover entry also lists links that match its pattern and are not in the manifest, such as a new model page; these are reported and never added automatically. It exits 0 whatever it finds, and 2 when the manifest is unreadable.
+- The normalised text of every source is cached per user in `<agent dir>/pi-foreman/knowledge/<id>.md` (the full text for a skill to read when its digest needs a recheck), and the result of the run goes to `<agent dir>/pi-foreman/state/knowledge-check.json` (`checkedAt`, `results`).
+- `foreman knowledge accept <id>... | --all` copies the hash from the last check into the manifest and sets `checkedOn` to today. Run it after you reread the digest against the cache. An id without a usable result is refused with the reason.
+- `foreman knowledge nudge` prints one line when the last check is older than `knowledge.nudgeDays` (your `foreman.json` over the defaults, default 30) or never ran. `foreman update-check` prints it on stderr, and `/foreman update-check` and `/sync` append it to their output.
+
+The agent dir is `--agent-dir`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. A new source goes into `config/knowledge.json` and gets accepted.
 
 ## Radar
 

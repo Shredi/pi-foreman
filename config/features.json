@@ -295,7 +295,7 @@
       "title": "Launch wait and fan-out",
       "purpose": "Returns a foreman launch at once with its receipt (the completion notice starts the next turn; \"block\" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children.",
       "doc": "docs/ceremony.md#triage-and-delegation",
-      "keys": ["ceremony.launchWait", "ceremony.dedupeNotify", "fanout.max"],
+      "keys": ["ceremony.launchWait", "ceremony.dedupeNotify", "ceremony.longCommands", "fanout.max"],
       "commands": [],
       "switch": null,
       "state": "on",
@@ -751,6 +751,18 @@
       "doc": "docs/permissions.md#the-steps",
       "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes", "gate.mode"],
       "commands": ["/foreman perms", "foreman perms"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "knowledge",
+      "area": "install",
+      "title": "Knowledge sources",
+      "purpose": "`foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`.",
+      "doc": "docs/sessions.md#knowledge-sources",
+      "keys": ["knowledge.nudgeDays"],
+      "commands": ["foreman knowledge"],
       "switch": null,
       "state": "on",
       "enable": ""
