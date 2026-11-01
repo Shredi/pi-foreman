@@ -212,6 +212,12 @@ export class ChildScratch {
     return null;
   }
 
+  /** The scratch dir of a live run, else undefined. */
+  dirOfRun(runId: string): string | undefined {
+    const id = this.runs.get(runId);
+    return id ? this.launches.get(id)?.dir : undefined;
+  }
+
   take(launchId: string): { dir: string; role: string } | undefined {
     const e = this.launches.get(launchId);
     this.launches.delete(launchId);

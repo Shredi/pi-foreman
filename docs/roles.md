@@ -30,7 +30,7 @@ which relaunches it with `model: "strong"`:
 - **Foreman**: `model: "strong"` plus a `reason` passed as an extra top-level field of the `subagent` call (the
   published tool schema does not list it; the adapter reads and removes it). A strong launch with no reason and no
   trigger is refused (`strong_no_reason`); a heavy-tier builder and `strongOnRevision` count as triggers.
-  A builder launch may also carry `size` and `risk`; the adapter reads and removes them and a large or risky
+  A builder launch may also carry `size` and `risk` (top-level keys of the `subagent` call, never inside `options` or `args`); the adapter reads and removes them and a large or risky
   task goes strong without a `reason` (see [ladder](ladder.md#launch-sizing)).
 - **Review FAIL**: a builder revision launched while the latest reviewer verdict is FAIL goes to the builder's
   strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
@@ -137,7 +137,7 @@ The table above has the key rows; this section gives the behaviour.
 - User or overlay config only; a project or session value is ignored with a warning.
 - Read scope: shell reads are granted per role, only for the skill dirs that role names. The `read` tool sees the union of the skills any role names. `foreman setup` re-renders the `external_directory_read` keys, so re-run it after changing `skills` (see docs/permissions.md, "Skill reads").
 - Residual: a package skill under `{agentDir}/npm/node_modules`, or a skill from a settings `skills` path, still asks when a child reads its body. An in-repo named skill stays denied to a child's shell read (the `read` tool works).
-- The package ships one generic skill, `skills/skill-authoring`, listed in `pi.skills`; name it in a role's `skills` to give that role the authoring guide.
+- The package ships two generic skills, listed in `pi.skills`: `skills/skill-authoring` (writing and debugging skills) and `skills/prompting-guides` (writing system prompts, role files and briefs for a target model family). Name either in a role's `skills` to give that role the guide.
 
 ### `roles.<id>.mcp`
 

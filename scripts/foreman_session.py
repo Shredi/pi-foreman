@@ -43,9 +43,11 @@ names and values checked, a failing one is skipped with a note) is passed to the
 child id and command; no Herdr call, no registry entry.
 
 `--first-command CMD` (repeatable, at most 4, each starting with `/`, one line, 200 characters at most) runs Pi's
-extension commands before the brief prompt: each is a positional message (`pi "/plan" "<brief prompt>"`), and Pi
+extension commands before the brief prompt: each is a positional message (`pi "/x" "<brief prompt>"`), and Pi
 runs a `/` message to completion, awaited, before the next one. `--plan-mode` is `--first-command /plan`, placed first
-and never repeated. The child's Pi must provide the command (a plan-mode package); this CLI cannot check that.
+and never repeated; a bare `/plan` would open the plan-mode menu and never reach the brief, so the brief prompt rides
+on it as the last word, `pi "/x" "/plan <brief prompt>"` (`/plan start` or other `/plan ...` text stays a separate
+word). The child's Pi must provide the command (a plan-mode package); this CLI cannot check that.
 
 Agent dir: --agent-dir, else PI_CODING_AGENT_DIR, else ~/.pi/agent. Parent id: --parent-id, else
 PI_INTERCOM_SESSION_ID (the id pi-intercom publishes), else PI_INTERCOM_STABLE_ID, else `stableId` of
@@ -461,7 +463,7 @@ def hc_child_argv(env, model, prompt, first, platform, path):
         return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first)]
     pi = shutil.which("pi") or "pi"
     return (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
-            + (["--model", model] if model else []) + list(first) + [prompt])
+            + (["--model", model] if model else []) + launch_messages(first, prompt))
 
 
 def hc_run_args(name, cwd, child_argv, outlive, space=None, tab=None):
@@ -690,6 +692,13 @@ def first_commands(cmds, plan_mode):
     return out
 
 
+def launch_messages(first, prompt):
+    """The positional Pi messages of the launch line: the first commands, then the brief prompt. A bare /plan would open
+    the plan-mode menu and never reach the brief, so it is dropped and the last word becomes `/plan <prompt>`."""
+    out = [c for c in first if c != PLAN_COMMAND]
+    return out + ([PLAN_COMMAND + " " + prompt] if PLAN_COMMAND in first else [prompt])
+
+
 def check_first_commands(cmds):
     if len(cmds) > FIRST_MAX:
         raise Refused("at most %d first commands (--plan-mode counts as %s)" % (FIRST_MAX, PLAN_COMMAND))
@@ -708,7 +717,7 @@ def posix_command(env, model, prompt, first=()):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
     if model:
         parts += ["--model", shlex.quote(model)]
-    return " ".join(parts + [shlex.quote(c) for c in first] + [shlex.quote(prompt)])
+    return " ".join(parts + [shlex.quote(m) for m in launch_messages(first, prompt)])
 
 
 # ASCII apostrophe and the typographic single quotes U+2018-U+201B, which PowerShell also reads as quotes
@@ -721,7 +730,7 @@ def ps_quote(v):
 
 def powershell_command(env, model, prompt, first=()):
     sets = ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
-    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(c) for c in first] + [ps_quote(prompt)]
+    call = ["pi"] + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 

@@ -13,3 +13,4 @@ pi-foreman is a Pi package (extensions, agent roles, skills) with a stdlib-only 
 - [Idle prompt cache](docs/cache.md): per-provider cache policy, keep-alive, warm compaction, cost and privacy
 - [Permissions](docs/permissions.md): the tool gate: `permissions.json` rules, prose whitelist, modes, dangerous class and classifier, floors, owner dialog, profiles
 - [Overlays](docs/overlays.md): private and organisation overlays, extension points
+- [Orchestration design](docs/orchestration-design.md): when subagents earn their place, the single-loop alternative, and the open questions for roles and delegation
