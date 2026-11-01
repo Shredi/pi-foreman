@@ -17,12 +17,13 @@ const MANIFEST = path.join(here, "..", "config", "knowledge.json");
 const DEFAULTS = path.join(here, "..", "config", "foreman.defaults.json");
 const DAY_MS = 86_400_000;
 const FETCH_TIMEOUT_MS = 10_000;
-const DROP = "script|style|noscript|svg|template|nav|header|footer|aside";
-const BLOCK = "p|div|section|li|ul|ol|h[1-6]|br|tr|td|th|table|pre|blockquote|dl|dt|dd|figure|figcaption|hr|form|details|summary";
+const DROP = new Set(["script", "style", "noscript", "svg", "template", "nav", "header", "footer", "aside"]);
+const BLOCK = new Set(["p", "div", "section", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "br", "tr", "td", "th", "table", "pre", "blockquote", "dl", "dt", "dd", "figure", "figcaption", "hr", "form", "details", "summary"]);
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", mdash: "—", ndash: "–", hellip: "…", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", copy: "©" };
 const KEY_ORDER = ["id", "url", "target", "sha256", "checkedOn", "discover"];
 
-const looksHtml = (raw) => /<(?:!doctype\s+html|html|head|body|main|article)[\s>]/i.test(raw);
+/** HTML by the response content-type when there is one, else by a leading doctype or html element. */
+const looksHtml = (raw, contentType) => (contentType ? /html/i.test(contentType) : /^<(?:!doctype\s+html|html)[\s>]/i.test(raw.trim()));
 
 function decode(text) {
   return text
@@ -33,22 +34,50 @@ function decode(text) {
 const safeChar = (code, fallback) => (code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : fallback);
 
 function keepMain(html) {
+  const lower = html.toLowerCase();
   for (const tag of ["main", "article"]) {
-    const open = html.search(new RegExp(`<${tag}\\b[^>]*>`, "i"));
-    const close = html.toLowerCase().lastIndexOf(`</${tag}>`);
-    if (open >= 0 && close > open) return html.slice(open, close);
+    const open = html.search(new RegExp(`<${tag}\\b`, "i"));
+    const close = lower.lastIndexOf(`</${tag}>`);
+    if (open >= 0 && close > open && html.indexOf(">", open) >= 0) return html.slice(open, close);
   }
   return html;
 }
 
+/** One linear pass over the tags. `strip` false: drop comments and DROP elements, keep other tags verbatim. `strip` true: remove every tag, a newline for block tags, whitespace collapsed. */
+function walk(html, strip) {
+  const lower = html.toLowerCase();
+  const noClose = new Set();
+  const out = [];
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt < 0) { out.push(strip ? html.slice(i).replace(/\s+/g, " ") : html.slice(i)); break; }
+    out.push(strip ? html.slice(i, lt).replace(/\s+/g, " ") : html.slice(i, lt));
+    if (!strip && html.startsWith("<!--", lt) && !noClose.has("--")) {
+      const end = html.indexOf("-->", lt + 4);
+      if (end >= 0) { i = end + 3; continue; }
+      noClose.add("--");
+    }
+    const gt = html.indexOf(">", lt);
+    if (gt < 0) { out.push(html.slice(lt)); break; }
+    const m = /^<(\/?)([a-z][a-z0-9]*)/i.exec(html.slice(lt, Math.min(gt + 1, lt + 40)));
+    const name = m ? m[2].toLowerCase() : "";
+    if (!strip && m && !m[1] && DROP.has(name) && !noClose.has(name)) {
+      const close = lower.indexOf(`</${name}`, gt + 1);
+      const closeGt = close < 0 ? -1 : html.indexOf(">", close);
+      if (closeGt >= 0) { i = closeGt + 1; continue; }
+      noClose.add(name);
+    }
+    if (strip) { if (BLOCK.has(name)) out.push("\n"); } else out.push(html.slice(lt, gt + 1));
+    i = gt + 1;
+  }
+  return out.join("");
+}
+
 /** The comparable text of a fetched page: HTML is reduced to its main text (one line per block), Markdown is returned unchanged. */
-export function normalise(raw) {
-  if (!looksHtml(raw)) return raw;
-  let html = raw.replace(/<!--[\s\S]*?-->/g, "");
-  const dropRe = new RegExp(`<(${DROP})\\b[^>]*>[\\s\\S]*?</\\1\\s*>`, "gi");
-  for (let i = 0, prev = ""; i < 5 && prev !== html; i++) { prev = html; html = html.replace(dropRe, ""); }
-  html = keepMain(html).replace(/\s+/g, " ");
-  html = html.replace(new RegExp(`</?(?:${BLOCK})\\b[^>]*>`, "gi"), "\n").replace(/<[^>]*>/g, "");
+export function normalise(raw, contentType) {
+  if (!looksHtml(raw, contentType)) return raw;
+  const html = walk(keepMain(walk(raw, false)), true);
   const lines = decode(html).split("\n").map((l) => l.replace(/[ \t\r\u00a0]+/g, " ").trim()).filter(Boolean);
   return lines.length ? `${lines.join("\n")}\n` : "";
 }
@@ -69,10 +98,12 @@ export function discoverLinks(html, baseUrl, discover, knownUrls = []) {
   const re = new RegExp(discover.pattern);
   const known = new Set(knownUrls.map(pathKey));
   const out = new Map();
+  let origin;
+  try { origin = new URL(baseUrl).origin; } catch { return []; }
   for (const m of html.matchAll(/\bhref\s*=\s*["']([^"']+)["']/gi)) {
     let abs;
     try { abs = new URL(decode(m[1]), baseUrl); } catch { continue; }
-    if (!re.test(abs.pathname)) continue;
+    if ((abs.protocol !== "http:" && abs.protocol !== "https:") || abs.origin !== origin || !re.test(abs.pathname)) continue;
     const key = abs.pathname.replace(/\/+$/, "");
     if (known.has(key) || out.has(key)) continue;
     out.set(key, { url: abs.origin + key, label: discover.label });
@@ -120,7 +151,7 @@ async function fetchSource(entry) {
   try {
     const res = await fetch(entry.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { "user-agent": "pi-foreman-knowledge-check" }, redirect: "follow" });
     if (!res.ok) return { error: `HTTP ${res.status}` };
-    return { body: await res.text() };
+    return { body: await res.text(), contentType: res.headers.get("content-type") ?? undefined };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -137,24 +168,32 @@ function readManifest() {
   }
 }
 
+const errText = (e) => (e instanceof Error ? e.message : String(e));
+
 /** Fetches and compares every source; writes the cache and the state file under `agentDir`. */
 export async function runCheck(manifest, agentDir, now = new Date()) {
   const knownUrls = manifest.sources.map((s) => s.url);
   const cacheDir = path.join(agentDir, "pi-foreman", "knowledge");
-  fs.mkdirSync(cacheDir, { recursive: true });
+  let cacheError;
+  try { fs.mkdirSync(cacheDir, { recursive: true }); } catch (e) { cacheError = errText(e); }
   const results = await Promise.all(manifest.sources.map(async (entry) => {
     const r = { id: entry.id, url: entry.url, ...(entry.target ? { target: entry.target } : {}) };
     const got = await fetchSource(entry);
     if (got.error !== undefined) return { ...r, state: "unreachable", error: got.error };
-    const text = normalise(got.body);
-    if (entry.target) fs.writeFileSync(path.join(cacheDir, `${entry.id}.md`), text);
+    const text = normalise(got.body, got.contentType);
+    let writeError = cacheError;
+    if (entry.target && !writeError) { try { fs.writeFileSync(path.join(cacheDir, `${entry.id}.md`), text); } catch (e) { writeError = errText(e); } }
     const discovered = entry.discover ? discoverLinks(got.body, entry.url, entry.discover, knownUrls) : [];
     const cmp = entry.target || entry.sha256 ? compareSource(entry, text) : { state: "unchanged", sha256: undefined };
-    return { ...r, state: cmp.state === "unchanged" && discovered.length && !entry.target ? "discovered" : cmp.state, ...(cmp.sha256 ? { sha256: cmp.sha256 } : {}), ...(discovered.length ? { discovered } : {}) };
+    return { ...r, state: cmp.state === "unchanged" && discovered.length && !entry.target ? "discovered" : cmp.state, ...(cmp.sha256 ? { sha256: cmp.sha256 } : {}), ...(discovered.length ? { discovered } : {}), ...(entry.target && writeError ? { writeError } : {}) };
   }));
   const report = { checkedAt: now.toISOString(), results };
-  fs.mkdirSync(path.dirname(stateFile(agentDir)), { recursive: true });
-  fs.writeFileSync(stateFile(agentDir), `${JSON.stringify(report, null, 2)}\n`);
+  try {
+    fs.mkdirSync(path.dirname(stateFile(agentDir)), { recursive: true });
+    fs.writeFileSync(stateFile(agentDir), `${JSON.stringify(report, null, 2)}\n`);
+  } catch (e) {
+    report.stateError = errText(e);
+  }
   return report;
 }
 
@@ -165,7 +204,9 @@ function formatReport(report) {
     if (r.state in count) count[r.state]++;
     lines.push(`${r.state.padEnd(11)} ${r.id}${r.error ? `  (${r.error})` : ""}${r.state === "changed" && r.target ? `  -> reread ${r.target}` : ""}`);
     for (const d of r.discovered ?? []) lines.push(`  discovered ${d.url}  (${d.label})`);
+    if (r.writeError) lines.push(`  write error: cache for ${r.id} not written (${r.writeError})`);
   }
+  if (report.stateError) lines.push(`write error: state file not written (${report.stateError})`);
   const found = report.results.reduce((n, r) => n + (r.discovered?.length ?? 0), 0);
   lines.push(`knowledge: ${report.results.length} sources, ${count.changed} changed, ${count.new} new, ${count.unreachable} unreachable, ${found} newly discovered`);
   return lines.join("\n");
@@ -186,8 +227,11 @@ function parseArgs(argv, flags) {
 const agentDirOf = (o) => o["agent-dir"] || process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
 const usage = () => { console.error("usage: foreman knowledge check [--json] [--agent-dir <dir>]\n       foreman knowledge accept <id>... | --all [--agent-dir <dir>]\n       foreman knowledge nudge [--agent-dir <dir>] [--days N]"); return 2; };
 
-function defaultNudgeDays() {
-  try { const n = JSON.parse(fs.readFileSync(DEFAULTS, "utf8")).knowledge?.nudgeDays; if (Number.isFinite(n) && n >= 0) return n; } catch { /* default */ }
+/** `knowledge.nudgeDays` from the user config of `agentDir`, else from the defaults, else 30. */
+function defaultNudgeDays(agentDir) {
+  for (const file of [path.join(agentDir, "foreman.json"), DEFAULTS]) {
+    try { const n = JSON.parse(fs.readFileSync(file, "utf8")).knowledge?.nudgeDays; if (Number.isFinite(n) && n >= 0) return n; } catch { /* next */ }
+  }
   return 30;
 }
 
@@ -196,7 +240,7 @@ export async function main(argv) {
   if (sub === "nudge") {
     const o = parseArgs(args, { bool: [], value: ["--agent-dir", "--days"] });
     if (!o || o.rest.length) return usage();
-    const days = o.days !== undefined && Number.isFinite(Number(o.days)) ? Number(o.days) : defaultNudgeDays();
+    const days = o.days !== undefined && Number.isFinite(Number(o.days)) ? Number(o.days) : defaultNudgeDays(agentDirOf(o));
     const line = knowledgeNudge(agentDirOf(o), days);
     if (line) console.log(line);
     return 0;

@@ -51,8 +51,54 @@ test("discoverLinks reports matching links that are not manifest urls, once each
   const found = discoverLinks(html, base, { pattern: "/pe/prompting-claude-[a-z0-9-]+", label: "model page" }, known);
   assert.deepEqual(found, [
     { url: "https://docs.example.com/docs/en/pe/prompting-claude-b-2", label: "model page" },
-    { url: "https://elsewhere.example.org/docs/en/pe/prompting-claude-c-3", label: "model page" },
   ]);
+});
+
+test("discoverLinks keeps only http(s) links on the source origin", () => {
+  const html = `<a href="javascript:/pe/prompting-x">j</a> <a href="mailto:a@b.c">m</a> <a href="https://evil.example.org/pe/prompting-y">o</a>
+<a href="http://docs.example.com/pe/prompting-z">scheme</a> <a href="/pe/prompting-ok">ok</a>`;
+  const found = discoverLinks(html, "https://docs.example.com/pe/index", { pattern: "/pe/prompting-", label: "l" });
+  assert.deepEqual(found.map((f: { url: string }) => f.url), ["https://docs.example.com/pe/prompting-ok"]);
+});
+
+test("normalise: Markdown mentioning main or article stays untouched; html is decided by content-type or a leading doctype", () => {
+  const md = "# T\n\nUse <main> and <article> here\n";
+  assert.equal(normalise(md), md);
+  assert.equal(normalise(`\n  <!DOCTYPE html><p>a</p>`), "a\n");
+  assert.equal(normalise("<p>a</p><p>b</p>", "text/html; charset=utf-8"), "a\nb\n");
+  assert.equal(normalise("<p>a</p>", "text/markdown"), "<p>a</p>");
+});
+
+test("normalise finishes pathological input in linear time", () => {
+  const started = Date.now();
+  for (const unit of ["<p ", "<script ", "<!-- ", "<main ", "<nav>"]) normalise(`<!DOCTYPE html>${unit.repeat(Math.ceil(1_000_000 / unit.length))}`);
+  assert.ok(Date.now() - started < 3000, `took ${Date.now() - started} ms`);
+});
+
+test("check with an unwritable agent dir exits 0 and reports write errors", () => {
+  const fixtures = tmp();
+  fs.writeFileSync(path.join(fixtures, "skills-best-practices"), PAGE);
+  const blocker = path.join(tmp(), "file");
+  fs.writeFileSync(blocker, "x");
+  const env = { ...process.env, PI_FOREMAN_KNOWLEDGE_FIXTURE_DIR: fixtures };
+  const r = spawnSync(process.execPath, [SCRIPT, "check", "--agent-dir", blocker], { env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /write error: cache for skills-best-practices not written/);
+  assert.match(r.stdout, /write error: state file not written/);
+  assert.equal(JSON.parse(spawnSync(process.execPath, [SCRIPT, "check", "--json", "--agent-dir", blocker], { env, encoding: "utf8" }).stdout).stateError.length > 0, true);
+});
+
+test("CLI nudge reads knowledge.nudgeDays from the user foreman.json over the defaults", () => {
+  const agentDir = tmp();
+  const stateDir = path.join(agentDir, "pi-foreman", "state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "knowledge-check.json"), JSON.stringify({ checkedAt: new Date(Date.now() - 2 * 86_400_000).toISOString(), results: [] }));
+  const nudge = () => spawnSync(process.execPath, [SCRIPT, "nudge", "--agent-dir", agentDir], { encoding: "utf8" }).stdout;
+  assert.equal(nudge(), "", "default 30 days: fresh");
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ knowledge: { nudgeDays: 1 } }));
+  assert.match(nudge(), /last checked 2 days ago/);
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ knowledge: { nudgeDays: 30 } }));
+  assert.equal(nudge(), "");
 });
 
 test("applyAccept writes hash and date in stable key order and refuses ids without a result", () => {
