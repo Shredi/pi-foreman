@@ -3,7 +3,7 @@
 Source: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5
 Checked: 2026-11-01
 
-Own-words digest. Sonnet 5 prompts should work unchanged. For the hardest long-horizon work an Opus model is the better pick. Read `claude.md` for the shared techniques.
+Own-words digest. Prompts tuned for Sonnet 5 transfer as they are. When the job is the most demanding kind of long-horizon work, choose an Opus model instead. Read `claude.md` for the shared techniques.
 
 ## Contents
 
@@ -16,32 +16,32 @@ Own-words digest. Sonnet 5 prompts should work unchanged. For the hardest long-h
 
 ## Effort
 
-Levels are recalibrated against Sonnet 5; run a fresh sweep. Start at `high` (the API default) unless the work is agentic or latency-sensitive: agentic coding and multi-step tool use at `medium` for well-specified tasks and `high` for harder ones; chat at `medium` or `low`. At `low` it keeps thinking short and may skip verifying a change; at `low` and `medium` on long agentic tasks it is more likely to stop and check in. Leave room in the output limit for thinking and stream long outputs. Reserve `xhigh` and `max` for measured gains. Lower effort to think less; asking in the prompt is unreliable. The per-message effort change keeps the cache and needs adaptive thinking.
+The levels were recalibrated relative to Sonnet 5, so rerun your sweep instead of reusing old picks. The API default, `high`, is the starting point unless the work is agentic or latency-bound. For agentic coding and multi-step tool use, pick `medium` when the task is well specified and `high` when it is harder; for chat, `medium` or `low`. At `low` the model keeps its thinking brief and may not verify a change. On long agentic tasks at `low` or `medium` it more readily halts to check in. Size the output limit so thinking fits, and stream long outputs. Keep `xhigh` and `max` for cases with a measured benefit. Reducing effort is the way to get less thinking; requesting it in the prompt is unreliable. A per-message effort change preserves the cache and requires adaptive thinking.
 
 ## Initiative and scope
 
-- At low and medium effort it may pause to confirm a plan, ask what it could answer itself, or stop after one part. Try higher effort first, or add a system-prompt line to keep working (keep your own rules for risky actions).
-- It tends to add tests, docs and small helper files at every effort, more at higher levels. Add a paragraph that says what to do when the asked-for work is done (stop, no extras).
-- At `xhigh` and `max` it may start its own review rounds, sometimes with subagents. Run routine work at `high` or below. A system-prompt line directing the thoroughness at the task itself stopped reviewer launches and cut cost by about a third with no quality change.
-- On open-ended requests ("show me what you can do") it may start building; say you want ideas or a plan first.
+- With `low` or `medium` effort the model may stop to confirm a plan, put a question it could resolve itself, or finish after one portion. First try more effort, or add a system-prompt line telling it to continue (retain your own rules for risky actions).
+- Tests, docs and small helper files get added unasked at every effort level, and more at higher ones. Include a paragraph spelling out what happens once the requested work is complete (stop, nothing extra).
+- At `xhigh` and `max` it can launch its own review rounds, at times through subagents. Keep routine work at `high` or lower. A system-prompt line pointing the diligence at the task itself ended the reviewer launches and cut cost by about a third with the same quality.
+- Given an open-ended request ("show me what you can do"), it may begin building. Tell it you want ideas or a plan first.
 
 ## Thinking and JSON output
 
-- The lowest thinking setting, `between_tools`, is accepted at `high` or below, cannot be combined with mid-conversation effort changes, and conflicts with "don't think" instructions (internal tags can leak into output). Read responses by block type; pass thinking blocks back unchanged.
-- With structured outputs on a reasoning task the model can only work in thinking, and often skips it at low and medium. End the system prompt with a line asking it to think first, or use `xhigh`; use adaptive thinking, not `between_tools`. Treat an output-limit stop as a failure and retry. Without structured outputs, parse the last JSON value in the reply, check the fields, retry once.
+- `between_tools` is the lowest thinking setting. It works at `high` or below, cannot be mixed with mid-conversation effort changes, and clashes with any "don't think" instruction, which can leak internal tags into the output. Dispatch on block type when reading responses, and return thinking blocks as received.
+- Combined with structured outputs, a reasoning task leaves the model only its thinking to work in, and at low and medium it frequently skips that. Finish the system prompt with a line telling it to think first, or choose `xhigh`. Prefer adaptive thinking over `between_tools`. A stop on the output limit is a failure: retry. When structured outputs are not in use, take the last JSON value in the reply, validate its fields and retry once on failure.
 
 ## Progress updates
 
-Notes longer than a sentence or two arrive as progress-update thinking blocks when the display setting asks for them (beta). Give it a send-message tool for exact text mid-turn, declared in the first request. Remove "hold all findings for the final response". Say in the system prompt if you want an intent line before the first tool call and a recap. A harness reminder after several silent steps (turn-scoped, appended, left in place, stopped after two or three) helps; harness text that is too frequent looks like injection.
+When notes exceed a sentence or two, they surface as progress-update thinking blocks if the display setting requests them (beta). For exact wording mid-turn, give the model a send-message tool and declare it in the first request. Strike any "hold all findings for the final response" line. If you want an intent line ahead of the first tool call and a closing recap, say so in the system prompt. A harness reminder after several silent steps helps: scope it to the turn, append it, leave it in place, and stop after two or three. Overly frequent harness text reads as injection.
 
 ## Tool use and mid-turn messages
 
-- In chat and knowledge work it sometimes answers from training when a search would catch changed details. Remove "only use tools when strictly necessary" and add a line encouraging search for current details.
-- It resists indirect injection and may treat a genuine mid-task user message as one when that message sits inside a tool result or is a system message right after one. Never put user text in a tool result. Send mid-turn input as a text block after the last tool result in the same user message, harness notices as a separate mid-conversation system message after the user's words, and no budget countdown after each tool result.
+- In chat and knowledge work the model sometimes replies from training data where a search would surface changed facts. Delete "only use tools when strictly necessary" and add a line that encourages searching for current details.
+- Because it is built to resist indirect injection, a real user message sent mid-task can be mistaken for one when it lands inside a tool result or as a system message directly after one. Keep user text out of tool results. Deliver mid-turn input as a text block following the final tool result in the same user message, put harness notices into their own mid-conversation system message that comes after what the user wrote, and skip budget countdowns after each tool result.
 
 ## Verification, tool names, vision, refusals
 
-- At `low` it sometimes reports a change done without running a check that exercises it (for example skipping tests because dependencies are missing). A system-prompt paragraph requiring a check makes that rare, at slightly higher cost.
-- It occasionally gets the case of a tool name wrong or renames a parameter. Accept unambiguous matches, or return an error naming the expected form; it corrects next turn.
-- Complex images: crop, zoom or code on the image helps at every effort; tools beat raising effort for charts.
-- Refusal categories: cyber, bio, frontier LLM, reasoning extraction, general harms. Remove instructions that ask for reasoning in the reply and read summarised thinking.
+- At `low` the model may call a change finished with no check that actually exercises it (for example, skipping tests since dependencies are absent). A system-prompt paragraph that demands a check makes this uncommon, for slightly more cost.
+- Now and then it writes a tool name in the wrong case or renames a parameter. Match unambiguous variants, or return an error stating the expected form; it fixes itself on the following turn.
+- For complex images, cropping, zooming or running code on the image helps at every effort. For charts, tools do more than a higher effort level.
+- Refusal categories: cyber, bio, frontier LLM, reasoning extraction, general harms. Drop instructions requesting reasoning in the reply and use summarised thinking.

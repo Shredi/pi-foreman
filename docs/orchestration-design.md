@@ -34,17 +34,17 @@ The article also names verification and permission separation as strengths of su
 
 ## Divide by context, not by problem type
 
-If you do go multi-agent, start with the simplest pattern that could work (generator and verifier, orchestrator and workers). Give each subagent a piece of work that needs little from the rest and returns a compact result: independent research paths, components with clean interfaces, a black-box check. Splitting by problem type forces each handoff to carry the whole situation, and fidelity drops at every hop.
+Should you go multi-agent, pick the plainest pattern that could do the job (generator plus verifier, orchestrator plus workers). Cut the work along context lines: a subagent should depend on little outside its own task and return a short result. Fits include separate research threads, components behind clean interfaces and black-box verification. Cutting by problem type instead makes every handoff carry the full situation, like a game of telephone where fidelity decays with each hop.
 
 When a subagent stays, let the main agent call it as a tool so the main agent keeps the conversation. Hand the conversation over only when the subagent must speak to the user directly. Agree a response schema, check the subagent's conclusion against real data, and trim what goes into any final synthesis step.
 
 ## The single-loop design
 
 - One model, one context window, an open tool loop. Limits (turn and cost budgets, write gates) live in the harness.
-- Each turn the model emits a batch of tool calls; the harness runs them in parallel and returns raw results to the same model.
-- The loop ends when the model answers or a budget is hit. A goal or verifier check may follow the answer.
-- The model writes its plan into the context on the first turn and revises it as results arrive. The planner is also the executor, so it can change course mid-turn.
-- Code that rewrites the plan from a rule catalogue goes away. Ordering and domain procedure move into skills. Hard limits (validation, approval gates) and mid-conversation needs (memory lookup) move into tools. Code still loads what is cheap and almost always relevant, and does the mechanical parts inside tools.
+- On every turn the model produces several tool calls at once. The harness executes them concurrently and feeds the unprocessed results back to that same model, which picks the next step.
+- Termination comes from the model giving an answer or from a budget running out; a goal or verifier check can optionally run afterwards.
+- On turn one the model puts its plan into the context and amends it as results come in. Since the author of the plan also carries it out, it may alter course within a turn.
+- Context handling shifts to the agent. A code step that rewrites plans from a catalogue of rules becomes unnecessary. Skills take over ordering and domain procedure. Tools take over hard limits (validation, approval gates) and whatever surfaces mid-conversation (memory lookup). Code may still preload cheap, nearly always relevant items such as entity resolution, and tools handle mechanical work like building payloads or parsing streams.
 
 Why it works: shared context lets the agent connect earlier results, so output is richer than summaries handed back by a subagent. Skills and tool search disclose context progressively, so one agent can cover many tasks without one huge prompt; the article cites a system prompt cut by more than 80 percent for newer Claude models in Claude Code. And each model generation can take over more decisions that the harness used to make. A simple loop moves to the next model easily; rigid multi-agent structure often held a new model back.
 
@@ -56,18 +56,18 @@ The price is discipline: a managed system prompt, skill and tool descriptions th
 2. While an orchestrator exists, track routing accuracy. After folding, check that the agent loaded the right skill or called the right tool.
 3. Keep one shared end-to-end set owned centrally, plus a small set shipped with each skill.
 4. Record timestamps on key events so runs can be replayed as targeted evals.
-5. Fold one subagent at a time (prompt becomes a skill, API call becomes a tool), starting with the most used or those that chain on each other's output, touch the same data or are often called together. Compare with and without. Look at which tasks flipped, not just the score; run each task more than once. In the article's example, folding sped things up but broke a process that used to pass, because the main agent answered from one tool and never asked the specialist.
-6. Write an eval task for every chain of agents that runs together in production and for every rule the agent must not break.
+5. Fold one subagent at a time (prompt becomes a skill, API call becomes a tool), beginning with the busiest ones, and with specialists that feed each other, share data or tend to be invoked together. Compare runs with and without the subagent. Inspect which individual tasks changed outcome rather than only the aggregate; repeat each task. The article's example: folding cut latency yet broke a flow that used to pass, because the main agent replied from a single tool and never consulted the specialist.
+6. Add an eval task for each agent chain that runs together in production, and for each rule the agent must never violate.
 
-Principle: measure, change one thing, keep what holds up. Keep a subagent only if the folded version scores worse; repeat as models improve.
+Principle: measure, change a single thing, retain what survives. A subagent stays only when the folded variant scores worse. Repeat as models improve.
 
 ## Skills, tools and knowledge bases
 
-- **Tools** fit actions, live data and fixed-shape results. Group them by user intent rather than one per API; beyond roughly 30 to 50 definitions, choice degrades. Use deferred loading with tool search. Put hard preconditions inside the tool: if Y needs X's output, Y checks and returns an instruction the model can act on. Per-user permission checks work the same way, returning a plain refusal.
-- **Skills** fit how a team works: the steps, rules and judgment calls a specialist subagent's prompt used to hold. The team that owns the work owns the skill, with evals shipped alongside. Models can help write, test and prune skills.
-- **Knowledge bases** fit reference material needed only some of the time: behind a lookup tool or as reference files inside a skill. Avoid code that retrieves and pastes them into prompts.
+- **Tools** suit taking actions, reading live data and returning results of a fixed shape. Organise them around user intent, not one per API, because choosing among more than roughly 30 to 50 definitions gets worse. Combine tool search with deferred loading. Enforce hard preconditions inside the tool itself: when Y depends on X's output, the Y tool verifies this and replies with an instruction the model can follow. Per-user permission checks follow the same shape and end in a plain-language refusal.
+- **Skills** suit the way a team works: the steps, rules and judgment calls that used to live in a specialist subagent's prompt. Whoever owns the work owns the skill and ships evals with it. Models can help author, test and prune skills.
+- **Knowledge bases** suit reference material needed only occasionally. Put them behind a lookup tool or into reference files within a skill, and avoid code that fetches the material and pastes it into prompts.
 
-Ownership moves from agents to skills and tools; one small central team owns the system prompt and end-to-end quality and vets new skills, tools and evals.
+In this model teams hold skills and tools instead of whole agents. A single small central team is responsible for the system prompt and overall quality, and it approves each new skill, tool and eval.
 
 ## Questions for pi-foreman
 

@@ -3,41 +3,41 @@
 Source: https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5
 Checked: 2026-11-01
 
-Own-words digest. Haiku 4.5 prompts should work unchanged. Read `claude.md` for the shared techniques.
+Own-words digest. Prompts written for Haiku 4.5 carry over without edits. Read `claude.md` for the shared techniques.
 
 ## Effort and thinking
 
-Effort replaces the old thinking budget. Thinking is on by default and counts toward the output limit, so leave room.
+The effort setting takes over from the old thinking budget (`budget_tokens`). Thinking is switched on out of the box and its tokens count against `max_tokens`, so keep headroom.
 
-- `low`: cheapest and fastest; chat, short tool tasks, simple high-volume work. In long agent prompts it is more likely to skip a search, stop early or skip a check.
-- `medium`: the default; most work, including agentic coding.
-- `high`: knowledge work, longer agent tasks, strict instruction following.
-- `xhigh` and `max`: only with a measured gain; compare with Sonnet 5.5 first.
+- `low`: the cheapest, quickest tier, suited to chat, short tool tasks and simple high-volume jobs. Inside long agent prompts it skips searches, quits early or omits checks more often than the other tiers.
+- `medium`: the default. Fits most work, agentic coding included.
+- `high`: for knowledge work, longer agent runs and tight instruction following.
+- `xhigh` and `max`: adopt them only after you measure a quality gain, and benchmark Sonnet 5.5 against them first.
 
-Lower effort to think less; prose instructions did not stop thinking. Turning thinking off works at `low`, `medium` and `high` only. At `xhigh` in multi-turn chat it may write the whole answer in thinking and end with no visible text, so check for empty replies. The per-message effort change keeps the cache and needs adaptive thinking.
+To get less thinking, lower the effort; telling the model in prose not to think did nothing. `thinking: disabled` is accepted at `low`, `medium` and `high` only. At `xhigh` in a multi-turn chat the model can put its entire answer inside the thinking block and return nothing visible, so watch for empty replies. Changing effort per message (beta) leaves the cache intact, provided adaptive thinking is on.
 
 ## Search
 
-Give it today's date, in the system prompt or the search tool description, rendered once at conversation start and kept identical afterwards; on a later day put the new date in the newest turn. It sometimes needs a nudge to search, most at low effort and with long system prompts: a short text after the date raised the search rate on changed-answer questions with little extra searching. Skip the nudge with a short system prompt at medium. Avoid "search for any present-day fact": it searched on half the no-search prompts with no accuracy gain.
+Supply the current date, either in the system prompt or in the search tool description. Render it a single time when the conversation begins and repeat it unchanged on every later request; when a new day arrives, state the new date in the latest turn. The model sometimes has to be pushed to search, above all at low effort or under a long system prompt. A brief note placed after the date lifted the search rate on questions whose answers had changed, at a cost of roughly 0-3 percent more searches. With a short system prompt at medium, leave the note out. A blanket rule such as "search for any present-day fact" backfires: searches fired on half of the prompts that needed none, and answers got no better.
 
 ## JSON output with your own tools
 
-With thinking off plus structured outputs it may skip a needed tool call. Options: use adaptive thinking; drop the output format where a tool must be called; force the tool choice. If thinking must stay off, one system-prompt line improved complete, correct JSON at low and medium.
+When thinking is off and structured outputs are on, a required tool call may be skipped. Three ways out: turn on adaptive thinking, remove `output_config.format` for requests where a tool has to run, or force the call with `tool_choice`. If thinking must stay disabled, a single added system-prompt line raised the share of complete, valid JSON at low and medium.
 
 ## Early stopping and verification
 
-- With a long coding-agent system prompt at `low` it sometimes stops early and hands the task back. Add system-prompt text against early stopping. Raising effort to medium roughly halved the early stops but more than doubled output tokens.
-- At low and medium it sometimes reports a change done without running a check. A system-prompt paragraph asking for verification makes checks more frequent: more tokens, better results.
+- Under a lengthy coding-agent system prompt at `low`, the model now and then quits and returns the task unfinished. Put wording against early stopping in the system prompt. Moving to medium effort cut early stops by about half, but output tokens more than doubled.
+- At low and medium it can claim a change is finished without having run any check. A system-prompt paragraph that asks for verification makes checking more frequent, for more tokens and better outcomes.
 
 ## Mid-turn user messages
 
-It may treat a user message inside a tool result, or a system message right after one, as untrusted and ignore it. Never put user text in a tool result. Send it as a text block after the last tool result in the same user message, and harness notices as a separate mid-conversation system message, never in the same block.
+A user message embedded in a tool result, or a system message directly after one, may be judged untrusted and dropped. Keep user text out of tool results altogether. Append it as a text block following the final tool result in that same user message. Harness notices belong in their own mid-conversation system message, not in that block.
 
 ## Chatbots and reasoning text
 
-- To keep a chatbot to its system prompt when users argue or keep asking, add system-prompt text alongside your other injection protections, and use `high` effort when instruction following matters most.
-- Reasoning-like text in replies appears more with thinking off or at low effort; switch to adaptive thinking and `medium`.
+- To hold a chatbot to its system prompt when users push back or keep asking, add wording to the prompt on top of your other injection defences, and pick `high` effort if sticking to instructions matters most.
+- Replies show reasoning-style text more often with thinking disabled or at low effort. Move to adaptive thinking and `medium`.
 
 ## Refusals
 
-Categories: cyber, frontier LLM, bio, general harms. There is no server-side fallback, and resending usually refuses again.
+Refusal categories: cyber, frontier LLM, bio, general harms. No server-side fallback exists, and a retry typically gets refused again.

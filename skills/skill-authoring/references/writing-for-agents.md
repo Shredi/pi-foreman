@@ -17,7 +17,7 @@ An own-words digest of the ideas. It covers any document an agent reads: a skill
 
 ## Context pointers
 
-A context pointer is a short line in the always-loaded context that names material outside it and says when to fetch it. A skill description is one; a line in `AGENTS.md` naming a doc is another. The wording of the pointer, not the target, decides whether and when the agent goes there. If a must-read target sits behind a weak pointer, the runs vary: sharpen the wording first, and inline the material only when sharpening fails.
+Anything always loaded that points at material elsewhere, and says under which condition to go fetch it, acts as a context pointer. Skill descriptions work this way, and so does an `AGENTS.md` line that mentions a doc. What gets the agent to the target, and how reliably, is the phrasing of the pointer; the target itself has no say. When essential material hides behind a limp pointer, behaviour varies from run to run. Rework the phrasing before anything else, and copy the material into the main file only if that still fails.
 
 A pointer states what the material is and lists the distinct cases that should trigger a read.
 
@@ -60,5 +60,5 @@ Steering by prohibition keeps the banned behaviour in context and makes it more 
 
 - One meaning, one place. Duplicates cost upkeep and tokens and inflate a point's apparent rank.
 - The environment is a source of truth: scripts in `package.json`, config files, directory layout, `--help` output. A document that restates them is a cache. Cache only what cannot be found by looking: unwritten conventions, the reason behind a choice, a gotcha no config admits.
-- Check each line for relevance. Without pruning, stale layers pile up because adding feels safe and removing feels risky.
-- Hunt no-ops sentence by sentence: an instruction the model already follows by default costs load and says nothing. Judge by whether the line changes behaviour against the default, and settle disputes by running the document. Delete the whole sentence. A leading word too weak to beat the default ("be thorough") is a no-op; swap in a stronger one.
+- Re-read every line and ask whether it still matters. Left unpruned, documents gather outdated layers, since people add readily and hesitate to cut.
+- Look for no-ops one sentence at a time: if the model would behave that way anyway, the instruction burns load and changes nothing. The question is whether the line shifts behaviour compared with the default. That depends on the model, so resolve disagreements by running the document. A failing sentence goes out entirely. Weak anchor words ("be thorough") lose against the default and count as no-ops too; replace them with a stronger one.

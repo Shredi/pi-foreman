@@ -21,7 +21,7 @@ Default is `high`. Test `low`, `medium`, `xhigh` and `max` against your own eval
 
 ## Progress updates
 
-The model writes fewer user-facing updates during long tool-calling turns than Fable 5, more so at higher effort.
+Compared with Fable 5, this model says less to the user while a long tool-calling turn runs, and the gap widens as effort rises.
 
 1. Check the client actually receives progress-update thinking blocks (a display setting on the thinking parameter, behind a beta header).
 2. Audit the prompt for lines that suppress narration ("hold findings for the final reply") and remove them.
@@ -30,7 +30,7 @@ The model writes fewer user-facing updates during long tool-calling turns than F
 
 ## Finishing long tasks
 
-On complex asynchronous work the model may end a turn by describing the next step ("Next, I'll ...") or ask permission for a step the request already covered. Two system-prompt additions help together: tell it the user is not watching, so it should not ask about work already requested and should carry out stated next steps (list any confirmations your product still needs); and define the user's request as the scope of the deliverable. For compaction, tell it what a summary must retain.
+In complex asynchronous work a turn may close with a description of the coming step ("Next, I'll ..."), or with a request for approval of something the user already asked for. Combine two system-prompt additions. First, state that nobody is watching, so it must not query work that was requested and should execute the next steps it has named; add the confirmations your product genuinely still requires. Second, declare that the user's request marks the boundary of the deliverable. For compaction, spell out what a summary has to keep.
 
 ## Tool batching and history
 
@@ -52,6 +52,6 @@ On complex asynchronous work the model may end a turn by describing the next ste
 
 - At low effort it answers from memory more often. Raise effort for affected turns, or add a verification nudge: recognising a name is not knowing its current state, so search names as the user wrote them.
 - Fewer safeguard false positives than Fable 5. Known triggers: "does this compile" phrasing (ask "are there bugs"), lesser-known languages (supply docs), base64 in tool output (remove it).
-- At `xhigh` and `max` it may draft the deliverable in thinking and write it again. Run such requests at `high`, or set the output limit for thinking plus reply.
+- Under `xhigh` and `max` the model can compose the deliverable inside its thinking and then write it out a second time. Either run these requests at `high`, or size the output limit to cover thinking and reply together.
 - Subagents: a start tool that returns at once, results arriving in a later message, and a separate wait tool let the lead keep working; the model still often waits.
 - Vision work does better with tools to crop and zoom.
