@@ -118,7 +118,7 @@ export interface LaunchFlags {
 }
 
 const READS_ROLES: readonly string[] = ["builder", "reviewer"];
-const INSTALL_ROLES: readonly string[] = ["builder", "finalizer"];
+const INSTALL_ROLES: readonly string[] = ["builder"];
 
 /**
  * Remove the launch fields `reads` (a positive int: the child's read allowance) and `install` (true: the child may run `npm ci`/`npm install`
@@ -131,7 +131,7 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
   const notes: string[] = [];
   let error: string | undefined;
   const bad = (what: string): void => {
-    error ??= `pi-foreman: launch refused [launch_flag_invalid]: ${what}. Fix: reads: <positive integer> (builder, reviewer), install: true (builder, finalizer).`;
+    error ??= `pi-foreman: launch refused [launch_flag_invalid]: ${what}. Fix: reads: <positive integer> (builder, reviewer), install: true (builder).`;
   };
   const group = Array.isArray(input.tasks) || Array.isArray(input.chain);
   const list = launchEntries(input);
@@ -162,7 +162,7 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
     }
     if (eff.install === true) {
       if (INSTALL_ROLES.includes(role)) flags.install = true;
-      else notes.push(`pi-foreman: launch field install is for builder and finalizer launches; ignored for ${role}.`);
+      else notes.push(`pi-foreman: launch field install is for builder launches; ignored for ${role}.`);
     }
     entries.set(e, flags);
   }

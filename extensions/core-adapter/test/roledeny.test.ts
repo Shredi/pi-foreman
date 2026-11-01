@@ -5,12 +5,11 @@ import { denyPatterns, globMatch, roleToolDenied } from "../roledeny.ts";
 const roles = {
   explorer: { denyTools: ["mcp__*"] },
   reviewer: { denyTools: ["mcp__*"] },
-  planner: { denyTools: ["mcp__*"] },
   builder: { tools: ["read"] },
 };
 
-test("mcp__fake__probe is denied for explorer, reviewer and planner", () => {
-  for (const role of ["explorer", "reviewer", "planner"]) {
+test("mcp__fake__probe is denied for explorer and reviewer", () => {
+  for (const role of ["explorer", "reviewer"]) {
     const msg = roleToolDenied(roles, role, "mcp__fake__probe");
     assert.equal(msg, `\`mcp__fake__probe\` is denied for role ${role} (roles.${role}.denyTools)`);
   }

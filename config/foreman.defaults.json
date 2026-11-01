@@ -6,32 +6,23 @@
   "displayPresets": {
     "classic": {
       "foreman": "Picard",
-      "planner": "Hannibal",
       "explorer": "Dora",
       "builder": "Bob",
-      "reviewer": "Watson",
-      "senior-reviewer": "Sherlock",
-      "finalizer": "Gandalf"
+      "reviewer": "Watson"
     },
     "plain": {
       "foreman": "foreman",
-      "planner": "planner",
       "explorer": "explorer",
       "builder": "builder",
-      "reviewer": "reviewer",
-      "senior-reviewer": "senior-reviewer",
-      "finalizer": "finalizer"
+      "reviewer": "reviewer"
     }
   },
   "roles": {
     "foreman": { "tools": [], "skills": [], "codemode": true },
     "session-foreman": { "tools": [], "skills": [], "codemode": false },
-    "planner": { "tools": ["read", "ls", "grep", "find", "write", "edit"], "skills": [], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 20 },
     "explorer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": [], "denyTools": ["mcp__*"], "codemode": true, "launch": "detached", "timeoutMinutes": 20, "strongAbove": 200000 },
     "builder": { "tools": ["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 60 },
-    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": [], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 },
-    "senior-reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": [], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 45 },
-    "finalizer": { "tools": ["read", "ls", "grep", "find", "bash", "edit"], "skills": [], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
+    "reviewer": { "tools": ["read", "ls", "grep", "find", "bash"], "skills": ["security-review"], "denyTools": ["mcp__*"], "codemode": false, "launch": "detached", "timeoutMinutes": 30 }
   },
   "providers": {},
   "fanout": { "max": 3 },
@@ -46,7 +37,7 @@
     "revisionRounds": { "standard": 1, "heavy": 2 },
     "requireTriage": true,
     "trivialBound": { "files": 2, "lines": 40, "newFiles": 0 },
-    "required": { "trivial": ["builder"], "standard": ["builder", "reviewer"], "heavy": ["planner", "builder", "reviewer", "finalizer"] },
+    "required": { "trivial": ["builder"], "standard": ["builder", "reviewer"], "heavy": ["builder", "reviewer"] },
     "foremanEdits": "scratchpad",
     "scratchDir": ".workflow/scratch",
     "reviewBeforePr": true,
@@ -67,7 +58,6 @@
     "reviewByOccasion": {},
     "planReview": { "trivial": false, "standard": false, "heavy": true },
     "planReviewRounds": 2,
-    "planner": "self",
     "childTimeoutSeconds": 1800,
     "launchTimeoutCapMinutes": 120,
     "heavyThreshold": "strict"

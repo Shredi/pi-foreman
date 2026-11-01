@@ -4,7 +4,7 @@
 // provider's own and its fallback provider's) must be in Pi's model registry, and each provider
 // those models use must have auth. Session start checks the active provider, /foreman doctor
 // every provider in the map.
-// D2: the reviewer (and the senior reviewer: same loop, no extra cost) should not share the
+// D2: the reviewer should not share the
 // builder's model family (default or strong) when the provider offers a model of another family.
 import { splitLevel } from "./launchmodel.ts";
 
@@ -98,7 +98,7 @@ export function modelGaps(config: Json, provider: string, registry: RegistryLike
 }
 
 /**
- * Reviewer and senior reviewer vs the builder (default and strong), from the roles resolved for
+ * Reviewer vs the builder (default and strong), from the roles resolved for
  * `provider`: a warning when they share a family and the registry lists an available model of
  * another family for that provider.
  */
@@ -117,7 +117,7 @@ export function familyWarnings(roles: Record<string, Json>, provider: string, re
     available = [];
   }
   const out: string[] = [];
-  for (const role of ["reviewer", "senior-reviewer"]) {
+  for (const role of ["reviewer"]) {
     const m = modelOf(role);
     if (!m) continue;
     const fam = modelFamily(m);

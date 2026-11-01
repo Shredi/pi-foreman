@@ -120,7 +120,7 @@ const completed = (r: Json): boolean => (r.status === undefined ? r.success === 
 const childrenOf = (data: Json): Json[] => (Array.isArray(data.results) && data.results.length > 0 ? data.results.filter(isObj) : [data]);
 
 /**
- * The completed reviewer / senior-reviewer children of a run-end event with their occasion. Results
+ * The completed reviewer children of a run-end event with their occasion. Results
  * map to the launch entries by position (pi-subagents keeps launch order); a role mismatch or a run
  * without bookkeeping (a resume) reads the occasion from nothing: `item`, primary.
  */

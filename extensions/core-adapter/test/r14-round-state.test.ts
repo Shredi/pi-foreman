@@ -39,7 +39,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const agentDir = path.join(root, "agent");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
   const sessionId = `r14-rs-${++n}`;
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
