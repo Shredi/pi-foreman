@@ -556,7 +556,10 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
   // (b) sessions that are not shown, the first owner wins
   for (const s of sessions) {
     if (isShown(s)) continue;
-    for (const pr of s.prs) add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr), idOf(s, pr));
+    for (const own of s.prs) {
+      const pr = enrichPrs([own], feed, s.repoUrl)[0];
+      add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr), idOf(s, own));
+    }
   }
   // (c) the feed, under its repo
   feed.forEach((p) => {
@@ -732,14 +735,14 @@ const EXCERPT_MAX = 200;
 
 /** Copy of `prs` with the title, description, mergeable flag, base and per-job names of the feed entry (same URL, else same
  *  repository and number) filled in where the PR has none. */
-export function enrichPrs(prs, feed) {
+export function enrichPrs(prs, feed, fallbackRepo = "") {
   const open = listOf(feed);
   return listOf(prs).map((pr) => {
-    const twin = twinOf(pr, open);
+    const twin = twinOf(pr, open, fallbackRepo);
     if (!twin) return pr;
     const named = listOf(pr.jobs).some((j) => isObj(j) && j.name);
     return {
-      ...pr, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
+      ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
       baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch,
       ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks } : {}),
     };
