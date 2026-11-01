@@ -37,15 +37,24 @@ class TestPlannerScope(ReplayCase):
         self.assertFalse((rig.project / "src" / "a.txt").exists())
         self.assertFalse((rig.project.parent / "dotdot-out.txt").exists())
         self.assertFalse(abs_out.exists())
+        # r79: the two writes outside the workspace (`..`, absolute) are refused earlier, by the gate's child deny set (`child-write-outside`);
+        # only the write into the workspace outside .workflow/ reaches the planner scope guard
         refused = events(rig.traces(), "planner_write_refused")
-        self.assertEqual([r.get("kind") for r in refused], ["write"] * 3, refused)
+        self.assertEqual([r.get("kind") for r in refused], ["write"], refused)
+        gate = [r for r in events(rig.traces(), "guard") if r.get("guard") == "gate" and r.get("toolFamily") == "write" and r.get("role") == "planner"]
+        self.assertEqual([(r.get("decision"), r.get("rule")) for r in gate if r.get("decision") == "blocked"], [("blocked", "child-write-outside")] * 2, gate)
         self.assertEqual([(r.get("by"), r.get("tier")) for r in events(rig.traces(), "plan_written")], [("planner", "standard")])
 
     def test_planner_in_tasks_or_chain_is_refused(self):
         rig = self.rig("planner-single", load_fixture("planner_scope"))
         pi = rig.start()
-        res = tool_results(pi.prompt("[[replay:p2]] go", timeout=60))
+        # r79: a tasks / chain launch is the dangerous class `danger-launch-outside`: the owner is asked first (one dialog per call, allowed here),
+        # then the planner launch rule refuses it
+        recs = pi.prompt("[[replay:p2]] go", answers=[{"value": "allow once"}] * 2, timeout=60)
+        res = tool_results(recs)
         pi.close()
+        asks = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select" and "cause: danger-launch-outside" in str(r.get("title"))]
+        self.assertEqual(len(asks), 2, asks)
         self.assertEqual([(n, e) for n, e, _ in res], [("subagent", True), ("subagent", True)])
         for _, _, text in res:
             self.assertIn("planner launch refused [launch_refused:planner_single]", text)

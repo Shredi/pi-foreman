@@ -1,7 +1,11 @@
 {
  "foreman": {
   "r1": [
-   {"tools": [{"name": "bash", "arguments": {"command": "uname -s"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "pip install requests"}}]},
+   {"text": "Done."}
+  ],
+  "r2": [
+   {"tools": [{"name": "bash", "arguments": {"command": "pip install flask"}}]},
    {"text": "Done."}
   ]
  }

@@ -31,7 +31,11 @@ class TestLaunchPolicy(ReplayCase):
     def test_resume_unknown_run_and_workflow_blocked(self):
         rig = self.rig("actions", load_fixture("launch_policy"))
         pi = rig.start()
-        res = tool_results(pi.prompt("[[replay:p1]] start", timeout=60), "subagent")
+        # r79: the workflow call is the dangerous class `danger-launch-outside`: the owner is asked first (allowed here), then the launch policy refuses it
+        recs = pi.prompt("[[replay:p1]] start", answers=[{"value": "allow once"}], timeout=60)
+        asks = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select" and "cause: danger-launch-outside" in str(r.get("title"))]
+        self.assertEqual(len(asks), 1, asks)
+        res = tool_results(recs, "subagent")
         self.assertEqual([e for _, e, _ in res], [True, True])
         self.assertIn("pi-foreman: resume blocked: run 'run-from-elsewhere' was not launched by this session; launch a fresh <role> instead.", res[0][2])
         self.assertIn("pi-foreman: workflow scripts can launch any agent with any model", res[1][2])

@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
+from driver import load_fixture, tool_results  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 from test_replay_ceremony_gate import events  # noqa: E402
 
@@ -87,11 +87,10 @@ class TestLedgerHelper(ReplayCase):
         self.assertIn("- [ ] 2. b", self.ledger(rig, "lf"))
 
     def test_permission_denied_ledger_bash_traced_not_allowed(self):
-        # item 23: old: the package asked/denied the first line ("[pi-permission-system]"); new: the rig's review model denies it
-        # (review-deny), the gate text is "pi-foreman: ..."; the second line, `ledger mark 2`, is not a gate default so review-deny
-        # denies it too (old: allowed), and both are traced as not allowed; the allowed ledger bash is covered by the other tests here
-        rig = self.rig("lh-h", load_fixture("ledger_helper"), permissions="baseline",
-                       config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-deny" % PROVIDER_A}}}})
+        # r79: a ledger line is routine under mode auto and runs (the other tests here), so the denial comes from a user deny rule,
+        # `Bash(ledger *)`: the gate text is "pi-foreman: ..." and both lines are traced as not allowed
+        rig = self.rig("lh-h", load_fixture("ledger_helper"), permissions="baseline")
+        self.user_permissions(rig, {"deny": ["Bash(ledger *)"]})
         pi = rig.start()
         sid = pi.session_id()
         res = tool_results(pi.prompt("[[replay:h1]] go", timeout=60), "bash")

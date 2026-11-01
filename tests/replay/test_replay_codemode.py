@@ -35,7 +35,7 @@ class TestCodemodeInnerCalls(ReplayCase):
         pi.close()
         dialogs = [str(r.get("title", "")) for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select"]
         self.assertFalse([d for d in dialogs if "codemode" in d], dialogs)
-        self.assertFalse(dialogs, dialogs)  # item 23: the unlisted `uname -s` goes to review (review-allow in the rig), not to a dialog
+        self.assertFalse(dialogs, dialogs)  # r79: `uname -s` is routine under mode auto (`mode:no-rule`): no dialog, no classifier call
         res = ends(recs)
         outer = [x for x in res if x[0] == "codemode"]
         inner = [x for x in res if x[1]]
@@ -43,7 +43,7 @@ class TestCodemodeInnerCalls(ReplayCase):
         self.assertFalse(outer[0][2], outer[0][3])
         self.assertEqual([(n, e) for n, _, e, _ in inner], [("read", False), ("bash", True), ("bash", False), ("bash", True)], inner)
         self.assertTrue(all(p == inner[0][1] for _, p, _, _ in inner))
-        # `cat .git/config` and the .env read are refused by the gate's secret-path floor; `uname -s` goes to review
+        # `cat .git/config` and the .env read are refused by the gate's secret-path floor; `uname -s` runs as routine
         self.assertIn("floor (secret-path)", inner[1][3])
         self.assertIn(".git/config", inner[1][3])
         self.assertIn("floor (secret-path)", inner[3][3])
