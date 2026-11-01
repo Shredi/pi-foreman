@@ -231,7 +231,7 @@ Floors deny with a reason and no model call, for every session kind and every mo
 
 **Opaque-text matches ask instead of denying.** On a line the parser could not state exactly, a text match for a child push, a git config key, a remote change, a force or protected-branch push or a permissions file asks the owner (never the classifier, never run under mode `allow`). The same words on a parsed segment are a deny. The `rawFloors` list (download piped into a shell, privilege, shutdown, disk, `GIT_CONFIG_*`, `--config-env`), publish and `rm` of system dirs stay denies on the raw text.
 
-**The honest gap.** A non-opaque script or snippet that *itself* deploys (a `./deploy.sh` that calls `kubectl apply`, a Python file that posts to an API) is just a command the parser reads: the gate judges the line, not the file's contents, so under `auto` it runs unless a rule says otherwise. The same holds for a build or test command whose scripts do something dangerous. Put such scripts behind an `ask` rule (`"ask": ["Bash(./deploy.sh *)"]`) if that matters to you.
+**The honest gap.** A non-opaque script or snippet that *itself* deploys (a `./deploy.sh` that calls `kubectl apply`, a Python file that posts to an API) is just a command the parser reads: the gate judges the line, not the file's contents, so under `auto` it runs unless a rule says otherwise. The same holds for a build or test command whose scripts do something dangerous. Put such scripts behind an `ask` rule (`"ask": ["Bash(./deploy.sh *)"]`) if that matters to you. This is an owner decision, not a bug: a script the agent runs (`./x.sh`, `npm run x`, `make x`) is routine under `auto`, and the gate and the floors read only the command text, never the script body.
 
 ## The owner dialog
 
