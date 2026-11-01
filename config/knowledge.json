@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "skills-best-practices",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices",
+      "target": "skills/skill-authoring/SKILL.md",
+      "sha256": "19919dd31cbf5a51ee7d4283cef3c6a0a038be3a3c76a898a1dbf1aefc32c88b",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "writing-for-agents",
+      "url": "https://raw.githubusercontent.com/mattpocock/skills/main/skills/productivity/writing-for-agents/SKILL.md",
+      "target": "skills/skill-authoring/references/writing-for-agents.md",
+      "sha256": "551adca942227b44192edba88acd4e8db911f0121ce58ad16944ccf6a896a74a",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "fold-subagents",
+      "url": "https://claude.com/de/resources/articles/building-agents-when-to-fold-subagents-into-your-main-agent-loop",
+      "target": "docs/orchestration-design.md",
+      "sha256": "0f2b85e328ee2d749150082145482e93dc308098685e1b1ff2b542338080b022",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "claude-prompting",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices",
+      "target": "skills/prompting-guides/references/claude.md",
+      "sha256": "4334e4c1229373e3cb57b10726fa4e7472ac5113e96a9878fb4aab41673f4366",
+      "checkedOn": "2026-11-01",
+      "discover": {
+        "pattern": "/prompt-engineering/prompting-claude-[a-z0-9-]+",
+        "label": "new Claude model page"
+      }
+    },
+    {
+      "id": "claude-fable-5-1",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5-1",
+      "target": "skills/prompting-guides/references/claude-fable-5-1.md",
+      "sha256": "456c236fb7373d80c5f0b55aee21aad71dc61ba3452331068fcb761a3568d960",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "claude-opus-5-5",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5-5",
+      "target": "skills/prompting-guides/references/claude-opus-5-5.md",
+      "sha256": "f437eaa05b92320bdaad17e7b71f7694090d7235777b8be01554f9848046e4e5",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-sonnet-5-5",
+      "target": "skills/prompting-guides/references/claude-sonnet-5-5.md",
+      "sha256": "3b73f1733c6cad1fc5fe4a6153074bd92e7a0ff17f9a1c504d2a7ebf561142e0",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "claude-haiku-5-5",
+      "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-haiku-5-5",
+      "target": "skills/prompting-guides/references/claude-haiku-5-5.md",
+      "sha256": "aec3899e2dedd4452e77074367ac08cf240adf5f9e26b2cf5f8409361174c337",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "gpt-6-luna",
+      "url": "https://promptessor.com/blog/gpt-6-luna-prompting-guide",
+      "target": "skills/prompting-guides/references/openai-gpt-6.md",
+      "sha256": "2df0fe2fe9f792d3dbeb61d70623f59814d83707d1294df6e6b4f56550293bc4",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "gpt-6-1-sol",
+      "url": "https://promptessor.com/blog/gpt-6-1-sol-prompting-guide",
+      "target": "skills/prompting-guides/references/openai-gpt-6.md",
+      "sha256": "7a6f6648fe732b57984eba6805aac24ce8a5c23cbd30979182557c3b901c7f95",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "gpt-6-1-terra",
+      "url": "https://promptessor.com/blog/gpt-6-1-terra-prompting-guide",
+      "target": "skills/prompting-guides/references/openai-gpt-6.md",
+      "sha256": "dff31f8ebb8dc6984b2caff260f6bfd21479f57ad93d86f82e462cfe959dcb02",
+      "checkedOn": "2026-11-01"
+    },
+    {
+      "id": "promptessor-blog",
+      "url": "https://promptessor.com/blog",
+      "discover": {
+        "pattern": "/blog/gpt-[a-z0-9-]+-prompting-guide",
+        "label": "new OpenAI prompting guide"
+      }
+    }
+  ]
+}

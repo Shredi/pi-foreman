@@ -47,6 +47,7 @@ import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from 
 import { dormantDoctorLine } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { adoptPerms } from "./permsadopt.ts";
+import { withNudge } from "./knowledge.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
 import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
@@ -4498,7 +4499,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const words = args.trim().split(/\s+/).filter(Boolean);
       const extra = words.filter((w) => w === "--dry-run");
       if (extra.length < words.length) ctx.ui.notify(`pi-foreman: /sync ignores ${words.filter((w) => w !== "--dry-run").join(" ")} (only --dry-run is accepted).`, "warning");
-      await syncCommand({ activeRuns: s.activeRuns.size, run: () => runSync(s, ctx, extra.slice(0, 1)), notify: (t, l) => ctx.ui.notify(t, l) });
+      await syncCommand({ activeRuns: s.activeRuns.size, run: async () => { const r = await runSync(s, ctx, extra.slice(0, 1)); return { ...r, text: withNudge(r.text, s.agentDir, get(s.config.config, "knowledge.nudgeDays")) }; }, notify: (t, l) => ctx.ui.notify(t, l) });
     },
   });
 
@@ -4599,8 +4600,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return;
       }
       if (sub === "update-check") {
-        const r = await runScript(await ensureSession(ctx), "foreman_update_check.py", []);
-        ctx.ui.notify(r.text, r.ok ? "info" : "error");
+        const s = await ensureSession(ctx);
+        const r = await runScript(s, "foreman_update_check.py", []);
+        ctx.ui.notify(withNudge(r.text, s.agentDir, get(s.config.config, "knowledge.nudgeDays")), r.ok ? "info" : "error");
         return;
       }
       if (sub === "status") {
