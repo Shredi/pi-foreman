@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "s1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:scratchheredoc]] write a script aside and run it"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "scratchheredoc": [
+   {"tools": [{"name": "bash", "arguments": {"command": "cat > $FOREMAN_SCRATCH/probe.py <<'EOF'\nprint('scratch-heredoc-ran')\nEOF"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "ls $FOREMAN_SCRATCH && python3 -I $FOREMAN_SCRATCH/probe.py"}}]},
+   {"text": "child: scratch heredoc finished"}
+  ]
+ }
+}

@@ -1176,11 +1176,13 @@ def stdin_write_problem(name, args, seg, ctx):
         if any(SCRIPT_WRITE.search(t) for t in texts):
             return deny(STDIN_WRITE_REASON + ".")
         return None
+    # ceremony-fixes-2 item 4: a heredoc write whose every target lies strictly inside the child's own scratch dir is allowed
     if name == "cat" and seg.outs and (seg.heredocs or seg.herestrings):
-        return deny(STDIN_WRITE_REASON + ".")
+        if not child_scratch_targets(seg.outs, ctx):
+            return deny(STDIN_WRITE_REASON + ".")
     if name == "tee" and (seg.heredocs or seg.herestrings or (seg.pipe_in and ctx.root and "<<" in ctx.root[0])):
         files = [w for w in args if not w.text.startswith("-") and w.text != "/dev/null"]
-        if files:
+        if files and not child_scratch_targets(files + seg.outs, ctx):
             return deny(STDIN_WRITE_REASON + ".")
     return None
 
@@ -2334,6 +2336,30 @@ def child_scratch_word(w, ctx):
             re.search(r"(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])", ctx.root[0]):
         return None
     return ctx.env["FOREMAN_SCRATCH"] + m.group(1)
+
+
+def child_scratch_targets(words, ctx):
+    """ceremony-fixes-2 item 4: True when every word names a file strictly inside the child's own scratch dir: a whole
+    `$FOREMAN_SCRATCH/<rest>` word (child_scratch_word) or an absolute path, static, without `..` or a glob, whose realpath lies below
+    the scratch realpath. Anything else (a workspace path, the dir itself, a rebound name, a computed word) is False."""
+    root = child_scratch_root(ctx)
+    if root is None or not words or not ctx.root:
+        return False
+    # a link planted by the same line would redirect the write: no rule of the guard looks at `ln`, so the exception stands down here
+    if re.search(r"(?<![\w.-])(?:ln|mklink)\s|symlink|SymbolicLink|junction", ctx.root[0], re.I):
+        return False
+    for w in words:
+        if (w.raw or "").lstrip('"').startswith("$"):
+            p = child_scratch_word(w, ctx)
+        else:
+            p = None if w.dynamic or w.glob else w.text
+        if not p or not os.path.isabs(p) or ".." in re.split(r"[\\/]", p) or re.search(r"[*?\[\]{}~$`]", p):
+            return False
+        real = os.path.realpath(p)
+        if os.path.normcase(real) == os.path.normcase(root) or \
+                not os.path.normcase(real).startswith(os.path.normcase(root) + os.sep):
+            return False
+    return True
 
 
 def child_message_dir_problem(name, real, top, ctx):

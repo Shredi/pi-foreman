@@ -2617,13 +2617,80 @@ const STDIN_WRITE = /open\s*\([^)]*['"]\s*>>?|open\([^)]*,\s*(?:mode\s*=\s*)?(['
 function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
   const heredoc = /<<(?!<)/.test(command);
   const stripped = command.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "");
-  const writer = (heredoc && /\bcat\b[^|;&\n]*>|\btee\b|\bdd\b[^|;&\n]*\bof=/.test(stripped))
+  // ceremony-fixes-2 item 4: a cat/tee heredoc write whose every target lies strictly inside the child's own scratch dir is not this deny;
+  // the dd, interpreter and inline clauses still run on the whole line
+  const catTee = heredoc && /\bcat\b[^|;&\n]*>|\btee\b/.test(stripped) && !scratchHeredocWrite(command, ctx);
+  const writer = catTee || (heredoc && /\bdd\b[^|;&\n]*\bof=/.test(stripped))
     || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<</.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command));
   const deny: Decision = { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
   if (writer) return deny;
   if (INLINE_CODE.test(command) && STDIN_WRITE.test(command)) return deny;
   if (!INPLACE_EDIT.test(command)) return null;
   return scratchOnlyWriter(command, ctx) ? null : deny;
+}
+
+/** The command with the body lines of its heredocs removed (the `<<WORD` line and the delimiter line stay). */
+function withoutHeredocBodies(command: string): string {
+  const out: string[] = [];
+  let pending: { word: string; dash: boolean }[] = [];
+  for (const line of command.split("\n")) {
+    if (pending.length) {
+      const p = pending[0];
+      if ((p.dash ? line.replace(/^\t+/, "") : line) === p.word) pending.shift();
+      continue;
+    }
+    out.push(line);
+    for (const m of line.matchAll(/<<(?!<)(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([^\s|;&<>()'"]+))/g)) pending.push({ word: m[2] ?? m[3] ?? m[4], dash: m[1] === "-" });
+  }
+  return out.join("\n");
+}
+
+/**
+ * True when the command writes through `cat` / `tee` with at least one output target and every target (`>` / `>>` redirects of a cat or tee unit,
+ * the file arguments of a tee) is a literal path strictly inside the child's own scratch dir, lexically and through links (no `..`, no glob, no
+ * expansion but a leading `$FOREMAN_SCRATCH` that the line does not bind). A line that plants a link (`ln`, `mklink`, a symlink call) gets no exception.
+ */
+function scratchHeredocWrite(command: string, ctx: MatchCtx): boolean {
+  const scratch = scratchOf(ctx);
+  const cwd = ctx.cwd;
+  if (!scratch || !cwd || ctx.bound?.has("FOREMAN_SCRATCH") || /(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])/.test(command)) return false;
+  // a link planted by the same line would redirect the write: no other rule judges `ln`, so the exception stands down
+  if (/(?<![\w.-])(?:ln|mklink)\s|symlink|SymbolicLink|junction/i.test(command)) return false;
+  const fsx = defaults(ctx);
+  const realOf = (x: string): string => fsx.realpath(x) ?? (path.dirname(x) === x ? x : path.join(realOf(path.dirname(x)), path.basename(x)));
+  const realScratch = fsx.realpath(scratch) ?? scratch;
+  const strictlyIn = (w: string): boolean => {
+    if (!w || /(^|[\\/])\.\.([\\/]|$)|[*?\[\]{}~`]|\$(?!FOREMAN_SCRATCH\/)/.test(w)) return false;
+    const abs = path.resolve(cwd, expandWord(w, ctx));
+    // a dangling link realpaths to itself, yet the write would create its target
+    try { if (fs.lstatSync(abs).isSymbolicLink()) return false; } catch { /* absent: a new file */ }
+    return abs !== scratch && insideDir(scratch, abs, ctx) && realOf(abs) !== realScratch && insideDir(realScratch, realOf(abs), ctx);
+  };
+  const units: string[][] = [[]];
+  for (const m of withoutHeredocBodies(command).replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "").matchAll(SHELL_WORD)) {
+    if (/^[|;&\n]/.test(m[0])) units.push([]);
+    else units[units.length - 1].push(m[0]);
+  }
+  let targets = 0;
+  for (const u of units) {
+    const words = u.map(unquote);
+    const k = words.findIndex((w) => w === "cat" || w === "tee");
+    if (k < 0) continue;
+    const rest = u.slice(k + 1);
+    for (let j = 0; j < rest.length; j++) {
+      const m = /^(?:\d*|&)>>?(.*)$/.exec(rest[j]);
+      if (m) {
+        const t = m[1] || rest[++j];
+        if (t === undefined || !strictlyIn(unquote(t))) return false;
+        targets++;
+      } else if (rest[j].includes(">")) return false;
+      else if (words[k] === "tee" && !rest[j].startsWith("-") && !rest[j].startsWith("<")) {
+        if (!strictlyIn(unquote(rest[j]))) return false;
+        targets++;
+      }
+    }
+  }
+  return targets > 0;
 }
 
 const INPLACE_EDIT = /\b(perl|ruby)\b[^|;&\n]*(?<=\s)-(?![MIrCEFm])[A-Za-z0-9]*i[A-Za-z0-9.]*(?=\s|$)|\b\w*awk\b[^|;&\n]*\s-i\s*inplace\b/;

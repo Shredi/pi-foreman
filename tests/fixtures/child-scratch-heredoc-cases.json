@@ -1,0 +1,32 @@
+{
+  "_comment": "ceremony-fixes-2 item 4. Shared by tests/test_git_guard_child_scratch_heredoc.py (child git guard) and extensions/core-adapter/test/child-scratch-heredoc.test.ts (permission overlay). {scratch} = the child's own scratch dir (realpath), {ws} = its workspace. `guard` / `overlay` = allow | deny | null (not judged by that layer); a deny carries the heredoc reason 'never heredoc or stdin-script file writes' unless `other` is set (the overlay denies it earlier, by its rebound-name rule or its link rules). `win32` rows run in the overlay test only, on a Windows host for allow.",
+  "shell": [
+    { "name": "cat to $FOREMAN_SCRATCH", "line": "cat > $FOREMAN_SCRATCH/n.py <<'EOF'\nprint(1)\nEOF", "guard": "allow", "overlay": "allow" },
+    { "name": "cat append to $FOREMAN_SCRATCH", "line": "cat >> $FOREMAN_SCRATCH/n.txt <<EOF\nhi\nEOF", "guard": "allow", "overlay": "allow" },
+    { "name": "tee to $FOREMAN_SCRATCH", "line": "tee $FOREMAN_SCRATCH/n.txt <<EOF\nhi\nEOF", "guard": "allow", "overlay": "allow" },
+    { "name": "here-string to $FOREMAN_SCRATCH", "line": "cat > $FOREMAN_SCRATCH/n.txt <<< hi", "guard": "allow", "overlay": "allow" },
+    { "name": "quoted $FOREMAN_SCRATCH word", "line": "cat > \"$FOREMAN_SCRATCH/n.txt\" <<EOF\nhi\nEOF", "guard": "allow", "overlay": "allow" },
+    { "name": "absolute scratch path", "line": "cat > {scratch}/n.py <<'EOF'\nprint(1)\nEOF", "guard": "allow", "overlay": "allow" },
+    { "name": "tee two scratch targets", "line": "tee $FOREMAN_SCRATCH/a {scratch}/b <<EOF\nhi\nEOF", "guard": "allow", "overlay": "allow" },
+    { "name": "write then run with python3 -I", "line": "cat > $FOREMAN_SCRATCH/n.py <<'EOF'\nprint(1)\nEOF\npython3 -I $FOREMAN_SCRATCH/n.py", "guard": "allow", "overlay": "allow" },
+    { "name": "workspace target", "line": "cat > {ws}/f <<'EOF'\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "relative target", "line": "cat > f <<'EOF'\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "tee workspace target", "line": "tee {ws}/f <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "scratch and workspace target", "line": "tee $FOREMAN_SCRATCH/a {ws}/b <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "dotdot escape via $FOREMAN_SCRATCH", "line": "cat > $FOREMAN_SCRATCH/../f <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "dotdot escape via absolute path", "line": "cat > {scratch}/../f <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "the scratch dir itself", "line": "cat > {scratch} <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "glob target", "line": "cat > $FOREMAN_SCRATCH/*.txt <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "other expansion in the target", "line": "cat > $FOREMAN_SCRATCH/$X <<EOF\nhi\nEOF", "guard": "deny", "overlay": null },
+    { "name": "rebound FOREMAN_SCRATCH", "line": "FOREMAN_SCRATCH={ws}; cat > $FOREMAN_SCRATCH/x <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny", "other": true },
+    { "name": "inline rebound FOREMAN_SCRATCH", "line": "FOREMAN_SCRATCH={ws} cat > $FOREMAN_SCRATCH/x <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny", "other": true },
+    { "name": "symlink planted in the same command", "line": "ln -s {ws}/f $FOREMAN_SCRATCH/x; cat > $FOREMAN_SCRATCH/x <<EOF\nhi\nEOF", "guard": "deny", "overlay": "deny", "other": true },
+    { "name": "scratch heredoc then python3 stdin script that writes", "line": "cat > $FOREMAN_SCRATCH/n <<EOF\nhi\nEOF\npython3 - <<'EOF'\nopen('f','w').write('1')\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "scratch heredoc then python3 -c that writes", "line": "cat > $FOREMAN_SCRATCH/n <<EOF\nhi\nEOF\npython3 -c \"open('f','w').write('1')\"", "guard": "deny", "overlay": "deny" },
+    { "name": "scratch heredoc then node -e that writes", "line": "cat > $FOREMAN_SCRATCH/n <<EOF\nhi\nEOF\nnode -e \"require('fs').writeFileSync('f','1')\"", "guard": "deny", "overlay": "deny" },
+    { "name": "python3 stdin script into scratch", "line": "python3 - <<'EOF'\nopen('{scratch}/n','w').write('1')\nEOF", "guard": "deny", "overlay": "deny" },
+    { "name": "dd of= scratch", "line": "dd of=$FOREMAN_SCRATCH/n <<EOF\nhi\nEOF", "guard": null, "overlay": "deny" },
+    { "name": "windows workspace absolute form", "line": "cat > C:/work/ws/f <<EOF\nhi\nEOF", "guard": null, "overlay": "deny", "win32": true },
+    { "name": "windows dotdot escape", "line": "cat > C:\\scratch\\s1\\..\\f <<EOF\nhi\nEOF", "guard": null, "overlay": "deny", "win32": true }
+  ]
+}
