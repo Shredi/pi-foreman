@@ -2511,6 +2511,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let pendingWarn: Record<string, unknown> | null = null;
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
+      /** Set for a builder launch that is a revision (counted or same-prompt repeat); traced after the ladder chose the rung. */
+      let revisionTrace: { reason: string; keyword: boolean; noStrong: boolean } | null = null;
       let climbs: Climb[] = [];
       let rawLaunch: Record<string, unknown> = {};
       let ladderRoles: Record<string, Json> | undefined;
@@ -2700,17 +2702,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (steps.length > 0) {
           s.chains.enter(chainKey(input, s.chains.key));
           if (s.chains.applyRuling(childDirsOf(s), selfRulingsFor(s))) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "ruling_reset" });
+          const answeredBefore = s.chains.state.revisionAnswered === true;
           rounds = checkLaunch(s.chains.state, steps, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"), s.chains.key);
           if (rounds.block) {
             s.chains.refusal = { key: s.chains.key, at: Date.now() };
             s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "blocked" });
             return { block: true, reason: rounds.block };
           }
-          const revision = rounds.revisions > 0;
+          // A further fresh builder in the same prompt, after a revision already answered the open FAIL, is a revision too (no extra round).
+          const again = !resumed && rounds.revisions === 0 && answeredBefore && s.reviewGate.last === "fail" && steps.some((g) => g.includes("builder"));
+          const revision = rounds.revisions > 0 || again;
           const keyword = typeof input.model === "string" && (STRENGTHS as readonly string[]).includes(splitLevel(input.model.trim()).base);
           // ladder.ts revisionClimb: review_fail while the review gate's latest verdict is FAIL (s.reviewGate.last, not the run's own
           // verdict), else only with providers.<p>.strongOnRevision true. LadderState.plan targets max(current, strong) by rank.
           revClimb = revision && !resumed ? revisionClimb(s.config.config, resolution.provider, s.reviewGate.last === "fail") : null;
+          const noStrongAsked = revClimb !== null && !hasStrongRung(resolution.roles, "builder");
           if (revClimb !== null && !hasStrongRung(resolution.roles, "builder")) {
             s.trace?.emit({ event: "revision_no_strong", role: "builder" });
             bottomWhy.set("builder", noStrong);
@@ -2718,6 +2724,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (revClimb === "review_fail" && !hasStrongRung(resolution.roles, "builder")) revClimb = null; // no strong rung: no-op
           preferStrong = revClimb !== null && !keyword;
           kind = revision ? (preferStrong ? "strong-relaunch" : "revision") : undefined;
+          if (revision) revisionTrace = { reason: revClimb ?? "none", keyword, noStrong: noStrongAsked };
         }
         // Ladder (ladder.ts): a strong launch needs a reason or a trigger; rank policy (ranks.ts) after the models are written.
         // A panel shadow skips it: no climb, no live rung.
@@ -2940,6 +2947,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const was = s.ceremony.tier;
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));
         if (s.ceremony.tier !== was) s.trace?.emit({ event: "triage_escalated", from: was, to: s.ceremony.tier, reason: "strong" });
+      }
+      if (event.toolName === "subagent" && revisionTrace) {
+        const rose = climbs.some((c) => c.role === "builder" && !c.top && c.from !== c.to);
+        const decision = revisionTrace.noStrong ? "no_strong" : revisionTrace.keyword ? "keyword" : rose ? "climb" : "unchanged";
+        s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision, reason: revisionTrace.reason });
       }
       if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.map((c) => c.trace)]) s.trace?.emit(r);
       if (shadow.kind === "launch") {
@@ -4035,7 +4047,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
-    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config };
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
+      const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
+      await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
+    } };
   };
   const sessionCmd = registerSession(pi, {
     spawner,

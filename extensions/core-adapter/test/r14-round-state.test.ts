@@ -176,7 +176,7 @@ test("approve -> persist -> fresh adapter instance over the same handoff dir -> 
   assert.equal(await a.launch("builder"), undefined, "revision 1 of 2");
   assert.equal(await a.launch("reviewer"), undefined);
   const s = w.stored();
-  assert.deepEqual(s.chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: true } });
+  assert.deepEqual(s.chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: true, revisionAnswered: true } });
   assert.equal(s.reviewCount, 2);
   assert.equal((s.plan as { hash: string }).hash, w.hash());
   assert.equal("approved" in s || JSON.stringify(s).includes("approved"), false, "no approval is stored");
@@ -316,7 +316,7 @@ test("RoundChains.clear -> file counters cleared", async (t) => {
   const a = await w.adapter();
   assert.equal(await a.checkpoint(), "approve");
   for (const r of ["builder", "reviewer", "builder"]) assert.equal(await a.launch(r), undefined);
-  assert.deepEqual(w.stored().chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: false } });
+  assert.deepEqual(w.stored().chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: false, revisionAnswered: true } });
   assert.equal(w.stored().reviewCount, 1);
   await a.ownerPrompt();
   assert.deepEqual(w.stored().chains, { main: { revisions: 0, exempt: 0, built: false, reviewOpen: false } });
