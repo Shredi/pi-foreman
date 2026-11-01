@@ -1,0 +1,30 @@
+ pi-foreman setup  Plan                                                                2/7
+  · Update pi-foreman                      │ Permissions for the foreman session
+    0.9.2 → 0.9.3  git:github.com/Shredi/… │ Before: mode ask; edits outside the worktree ask
+  · Update pi-intercom                     │ After:  mode auto; edits inside ~/git use auto, outsid…
+    0.16.2 → 0.17.0  npm:pi-intercom       │
+  · Install add-on pi-polish               │ Reads inside ~/git are allowed without a prompt. Writes
+    0.1.2  npm:pi-polish                   │ inside ~/git follow the folder mode (auto). Deny and
+  · Write Pi settings                      │ ask rules still win; child sessions are unchanged.
+                                           │
+> · Permissions for the foreman session    │
+                                           │
+  · Check the installation                 │
+    foreman doctor                         │
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1-7 screens, Tab/arrow navigate, q quit

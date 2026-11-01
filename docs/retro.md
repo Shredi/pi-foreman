@@ -70,7 +70,7 @@ Besides the approval and trace lines, the report carries these lines when there 
 
 ## Critique counter
 
-A round is one counted review run (primary `reviewer` or `senior-reviewer` on an `item` or `pre-pr` occasion; plan
+A round is one counted review run (primary `reviewer` on an `item` or `pre-pr` occasion; plan
 reviews, second opinions and panel shadows do not count). At its run end the foreman traces `critique {kind: raised,
 role, runId, count, lines}`: `count` is the number of `- [now]` and `- [later]` lines of the report's CRITIQUE block
 (see [review](review.md#critique)), `lines` the added plus removed lines of the diff the review was launched on

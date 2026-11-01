@@ -14,7 +14,7 @@ type Tool = { name: string; execute: (...a: unknown[]) => Promise<unknown> };
 const NOW = Date.parse("2026-03-01T10:00:00Z");
 let rigs = 0;
 const iso = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
-const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ROLES = ["explorer", "builder", "reviewer"];
 
 
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
@@ -63,7 +63,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const l2 = {
-    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
+    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/reviewer-strong" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
     presence: { enabled: false }, // r79 item 11: see reviewAllowOpts in _r11rig.ts
@@ -243,7 +243,7 @@ test("high: a RUNG_UP strong relaunch keeps the strong rung like ok (pressure de
     const relaunch: Record<string, unknown> = { agent: "builder", task: "continue item 1", model: "strong" };
     await a.assistant(["b2"], () => relaunch);
     assert.equal(await a.launch("b2", relaunch), undefined, level);
-    assert.equal(relaunch.model, "fake/senior-reviewer", level);
+    assert.equal(relaunch.model, "fake/reviewer-strong", level);
     assert.equal(events(a, "rung_up").length, 1, level);
     assert.deepEqual(events(a, "climb_suppressed"), [], level);
     assert.match(String(relaunch.task), /rung-up handoff/, level);

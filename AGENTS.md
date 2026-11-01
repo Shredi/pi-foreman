@@ -24,7 +24,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
   role definitions in the package's `agents/` folder. `.claude/agents/` exists only for the
   Claude Code sessions that build this repo. Checked 2026-10-03 (Claude Code 2.1.288): Claude
   Code does not load skills from `.agents/skills/` (headless probe, skill not listed).
-- Role ids are neutral: `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`,
+- Role ids are neutral: `explorer`, `builder`, `reviewer`,
   `foreman`. Display names are a config preset, never hard-coded.
 - Generic only. pi-foreman is a harness anyone can use. Nothing specific to the owner's own
   setup goes in here: no particular hosts, machines, operating-system quirks of one
@@ -70,7 +70,7 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/presets.md`: `foreman config apply-preset`, the rank-tier `inexpensive` preset, `--dry-run`, overlay on top.
 - `docs/ladder.md`: ladder rungs, live rung, context and failure climbs, `rung_top`, reviewer climb, traces.
 - `docs/review.md`: review occasions, different-model rule, plan review, per-occasion overrides, review panel, findings store, `foreman findings`, `retro models`.
-- `docs/ceremony.md`: tiers, finish gates, planner and checkpoint, budgets, key table.
+- `docs/ceremony.md`: tiers, finish gates, plan and checkpoint, budgets, key table.
 - `docs/safety.md`: shell-write and repository guards, PR gate, the tool gate, known limits (rules and classifier in `docs/permissions.md`).
 - `docs/permissions.md`: effect classes of child bash asks, chain composition, deterministic allow labels, traces.
 - `docs/close.md`: session manifest, CLOSE report, cleanup preconditions, take/drop, `foreman worktree sweep`.

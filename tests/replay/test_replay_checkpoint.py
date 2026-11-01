@@ -1,4 +1,4 @@
-"""Replay: plan checkpoint and the heavy builder gate (planner ledger items 6-11, 21) on the fake provider.
+"""Replay: plan checkpoint and the heavy builder gate (ledger items 6-11, 21) on the fake provider.
 
 At tier heavy a builder launch is refused until the owner approved the current plan file through
 `foreman_checkpoint` (`launch_refused` plan_required / checkpoint_pending / plan_changed, also for
@@ -109,10 +109,10 @@ class TestCheckpoint(ReplayCase):
         self.assertTrue(any("plan-ck.md was rejected" in n for n in notifications(recs)), notifications(recs))
         msgs = gate_messages(recs)
         self.assertEqual(len(msgs), 2, msgs)
-        self.assertIn("finish refused: tier heavy requires planner, builder, reviewer, finalizer, plan;", msgs[0])
+        self.assertIn("finish refused: tier heavy requires builder, reviewer, plan;", msgs[0])
         self.assertIn("The owner rejected the plan", msgs[0])
-        self.assertEqual([r["missing"] for r in events(rig, "finish_refused")], ["planner,builder,reviewer,finalizer,plan"] * 2)
-        self.assertEqual([r["missing"] for r in events(rig, "ceremony_incomplete")], ["planner,builder,reviewer,finalizer,plan"])
+        self.assertEqual([r["missing"] for r in events(rig, "finish_refused")], ["builder,reviewer,plan"] * 2)
+        self.assertEqual([r["missing"] for r in events(rig, "ceremony_incomplete")], ["builder,reviewer,plan"])
         self.assertEqual([r["decision"] for r in events(rig, "checkpoint")], ["reject"])
 
     def test_plan_edited_after_approval_is_plan_changed(self):

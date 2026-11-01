@@ -45,7 +45,7 @@ const modelRegistry = {
 // the human: every dialog is counted and denied
 let dialogs = 0;
 const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with comment"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
-const config = (extra: Record<string, unknown> = {}) => ({ gate: { reviewTimeoutMs: 50 }, presence: { enabled: false }, providers: { fake: { roles: { review: { model: "m" }, ...Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } } }, ...extra });
+const config = (extra: Record<string, unknown> = {}) => ({ gate: { reviewTimeoutMs: 50 }, presence: { enabled: false }, providers: { fake: { roles: { review: { model: "m" }, ...Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } } }, ...extra });
 /** The whitelist the classifier reads: A1 allows, D1 denies. */
 const seedPerms = (r: { agentDir: string }): void => {
   fs.mkdirSync(path.join(r.agentDir, "pi-foreman"), { recursive: true });

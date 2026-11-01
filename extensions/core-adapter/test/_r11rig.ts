@@ -43,7 +43,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   delete process.env.HERDR_PANE_ID; // the presence file would name the runner's pane
   delete process.env.HERDR_ENV;
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   const l2 = {
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },
     trace: { enabled: true },
@@ -74,8 +74,12 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     getActiveTools: () => [] as string[],
     getAllTools: () => [{ name: "bash" }, { name: "subagent" }],
     setActiveTools: () => undefined,
-    setModel: async () => true,
+    setModel: async (m: unknown) => {
+      (ctx as { model: unknown }).model = m;
+      return true;
+    },
     setThinkingLevel: () => undefined,
+    getThinkingLevel: () => "high",
     sendMessage: () => undefined,
     ...opts.piExtra,
   };
@@ -154,6 +158,10 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     turnStart: () => handlers.get("turn_start")!({}, ctx),
     /** session_start again (a reload): the round-state file is restored. */
     restart: () => handlers.get("session_start")!({ reason: "reload" }, ctx),
+    /** The live model changes the way a /model pick does (ctx.model only; fire `model_select` for the event). */
+    setModel: (m: { provider: string; id: string }) => void ((ctx as { model: unknown }).model = m),
+    /** A notice turn (a child completion by default) as `before_agent_start` sees it. */
+    noticeTurn: (customType = "subagent-notify") => handlers.get("before_agent_start")!({ messageType: "custom", message: { customType }, systemPrompt: "", systemPromptOptions: { sections: {} } }, ctx),
     /** An input event of any source. */
     input: (source: string, text: string) => handlers.get("input")!({ source, text }, ctx),
     ownerPrompt: (text = "next") => handlers.get("input")!({ source: "interactive", text }, ctx),

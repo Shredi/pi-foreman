@@ -12,8 +12,8 @@ import { rmTestTmp } from "./_tmpbase.ts";
 test("reviewsOfRunEnd: completed reviewer results with a verdict and their cwd", () => {
   const ok = reviewsOfRunEnd({ agent: "reviewer", status: "completed", cwd: "/w", output: "Overall verdict: PASS" });
   assert.deepEqual(ok, [{ role: "reviewer", verdict: "pass", cwd: "/w" }]);
-  const grouped = reviewsOfRunEnd({ results: [{ agent: "senior-reviewer", status: "completed", cwd: "/a", output: "Verdict: BLOCK" }, { agent: "builder", status: "completed", output: "Verdict: PASS" }] });
-  assert.deepEqual(grouped, [{ role: "senior-reviewer", verdict: "fail", cwd: "/a" }]);
+  const grouped = reviewsOfRunEnd({ results: [{ agent: "reviewer", status: "completed", cwd: "/a", output: "Verdict: BLOCK" }, { agent: "builder", status: "completed", output: "Verdict: PASS" }] });
+  assert.deepEqual(grouped, [{ role: "reviewer", verdict: "fail", cwd: "/a" }]);
   assert.deepEqual(reviewsOfRunEnd({ agent: "reviewer", status: "failed", output: "Overall verdict: PASS" }), []);
   assert.deepEqual(reviewsOfRunEnd({ agent: "reviewer", status: "completed", output: "no verdict" }), []);
   assert.deepEqual(reviewsOfRunEnd(null), []);

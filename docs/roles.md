@@ -7,10 +7,11 @@
 ## Roles
 
 Role ids are neutral: `foreman` (the main session: triage, plan, ledger, delegate, integrate), `explorer`
-(read-only search), `planner` (heavy tasks with `ceremony.planner: role`; by default `self`, the foreman writes the plan for the owner checkpoint itself and the planner is not launched), `builder` (one scoped
-change), `reviewer` (diff review against ledger items), `senior-reviewer` (plan or security review), `finalizer`
-(verification and close-out). `session-foreman` is not a launchable role: its mapped model is the model of sessions opened by `foreman session open` (default: the opening session's own model; only the `model` of the mapping is used, the opened session keeps Pi's default thinking; `--model` overrides; `subagent({agent: "session-foreman"})` is refused). Role files are in `agents/`. Display names come only from config: the preset
-`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders and finalizers run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
+(read-only search), `builder` (one scoped
+change) and `reviewer` (diff review against ledger items, plan review; it loads the shipped `security-review` skill
+when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input). The foreman
+writes the heavy plan itself. `session-foreman` is not a launchable role: its mapped model is the model of sessions opened by `foreman session open` (default: the opening session's own model; only the `model` of the mapping is used, the opened session keeps Pi's default thinking; `--model` overrides; `subagent({agent: "session-foreman"})` is refused). Role files are in `agents/`. Display names come only from config: the preset
+`classic` shows personal names, `plain` shows the ids; no code compares a display name. Test runs: builders run targeted tests only; the reviewer runs each full suite once per change (through the npm scripts, which queue behind the machine-wide test lock, see [development](development.md#tests)), and CI covers the rest. Models are mapped per
 provider in `foreman.json` (see [install](install.md)). Design record: `design/architecture.md`
 [section 4](../design/architecture.md#4-role-model).
 
@@ -56,7 +57,7 @@ tier), `at-or-below`, or `any`; `ladder.rolePolicy.<role>` overrides it for one 
 explicit launch `model: "<provider>/<id>"` is passed through when the rank policy allows it for that role (ranks
 configured, model ranked); otherwise the role map decides. Tiers are compared across providers, so a foreman on one provider may launch
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
-no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. When the refused role is `planner`, the message adds that the role sits on the foreman's own rung: plan it yourself (write `.workflow/scratch/plan-<topic>.md`) or map the role to a lower rung (no automatic climb). With `ceremony.planner: role`, a planner whose rank tier is <= the foreman's (checked directly, whatever the policy says; unranked counts as not below) is not refused but switches the session to `self` (trace `planner_self_fallback`): the foreman plans it itself, and its approved plan satisfies the planner step.
+no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. There is no automatic climb.
 
 **Session rank policy.** A session opened by `foreman session open` never runs on a higher rank than the session that opens it: if the chosen model (`--model`, else `session-foreman`, else the own model) has a lower tier number than the opener's, the open is refused (`session open refused [session_rank]`) and nothing is spawned. With no ranks configured there is no check; once ranks exist, an unranked model on either side, or an unknown own model, is refused. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
 
@@ -65,9 +66,8 @@ no ranks anywhere the policy does nothing. A refused launch is traced `launch_re
 keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand. The rank-tier `inexpensive` preset is in [presets](presets.md):
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and
-  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; planner, finalizer and senior-reviewer
-  (high) on Sonnet 5.5; the permission classifier on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
-  `childPolicy: below` with `rolePolicy` reviewer and senior-reviewer `at-or-below`, builder `below`, so an Opus
+  reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
+  `childPolicy: below` with `rolePolicy` reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
   `rolePolicy.<role>: at-or-below`; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
   1-hour cache values ([presets](presets.md#claude-bridge-cache-values)).
@@ -77,7 +77,7 @@ keeps your other keys, backs up the old file; see [install](install.md)), or cop
   (`gemini-*-pro*` > `gemini-*-flash*`; `at-or-below`, because the strong rung is the foreman's own pro model). Ids
   are from Pi's model registry; tiers follow capability class so cross-provider comparisons hold.
 
-To keep Opus for children (for example `strong` or `senior-reviewer` under a Fable foreman), name it in that
+To keep Opus for children (for example `strong` under a Fable foreman), name it in that
 role and either set `ladder.childPolicy: "any"` (every model available) or rank the foreman above it.
 
 ## Auto review model
@@ -89,7 +89,7 @@ cheapest role-map model (by registry input price, with auth) and traces it as `b
 
 The config list `review.critic` (default: four questions: is it lean and the right layer, real repeated friction or an
 invented edge case, code or config we would not miss, does it move toward the Pi top-chair switch) is rendered as a
-`[pi-foreman critic]` block into every `reviewer` and `senior-reviewer` task, after the ledger block. The review answers
+`[pi-foreman critic]` block into every `reviewer` task, after the ledger block. The review answers
 each question once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`; an item that fails question 3 is dropped, not
 built. The harness does not parse or enforce the lines. A builder or explorer task gets no block. An overlay or preset
 replaces the list through the normal config layering; an empty list renders no block.
@@ -106,7 +106,7 @@ Design record for the ladder: `design/architecture.md`
 | `roles.<role>.tools` | Strict tool allowlist, written into the generated settings (informational for the foreman); project/session can only narrow it. |
 | `roles.<role>.mcp` | The MCP ceiling of a child role, by configured name: `server` for all its tools, `server/tool` for one. A launch can narrow it (`mcp` on `subagent`) but never widen it. The tools load on demand through `tool_search` in the child (on a `mcp.directProviders` provider the allowed deferred ones are preloaded, see below); no `mcp:` entries are written to the generated tools. Default none. User or overlay config only; a project or session value is ignored with a warning. An error where the role's `denyTools` deny the server's `mcp__` tools, and for `foreman` and `session-foreman`, which already load every enabled server in `mcp.json`. |
 | `roles.<role>.skills` | Skills a child role gets as catalog entries, by name (one plain path segment; no `/`, `\`, `.`, `..`, glob characters or `:`). A role gets only the skills it names: `inheritSkills` stays off and the system prompt is replaced, so an unnamed skill is not listed. Written to the generated `agentOverrides` only when non-empty. Default none. User or overlay config only; a project or session value is ignored with a warning. |
-| `roles.<role>.denyTools` | Tool-name globs (`*` wildcard) a child of the role never gets: the call is denied, never asked, before the permission overlay. Defaults: `mcp__*` for `planner`, `explorer`, `reviewer` and `senior-reviewer`, so MCP tools are denied for the read-only roles. Layers only add entries; none removes one. A child whose launch binding cannot be read gets `mcp__*` denied. The check runs in the `tool_call` hook, and every inner call of a codemode script runs through the hooks on its own, so the deny applies to those calls too. |
+| `roles.<role>.denyTools` | Tool-name globs (`*` wildcard) a child of the role never gets: the call is denied, never asked, before the permission overlay. Defaults: `mcp__*` for `explorer` and `reviewer`, so MCP tools are denied for the read-only roles. Layers only add entries; none removes one. A child whose launch binding cannot be read gets `mcp__*` denied. The check runs in the `tool_call` hook, and every inner call of a codemode script runs through the hooks on its own, so the deny applies to those calls too. |
 | `roles.<role>.launch` | How the role is launched; only `detached` exists (detached children forward permission asks to the parent). Not settable by project/session. |
 | `roles.<role>.timeoutMinutes` | Run-time default of one launch: written as the launch's `timeoutMs` when the launch passes none. A launch `timeoutMs` (or `maxRuntimeMs`) wins in either direction; every written deadline is capped at `ceremony.launchTimeoutCapMinutes` (default 120), the only hard ceiling. |
 | `roles.<role>.childMaxTurns` | Ladder: assistant turns after which a child of this role is steered once to stop and hand off (rung up when on its bottom rung). |
@@ -148,7 +148,7 @@ The table above has the key rows; this section gives the behaviour.
 - Servers come from Pi's `<agentDir>/mcp.json`; the project `.pi/mcp.json` counts only when the project is trusted. Tool names are `mcp__<server>__<tool>`; a character outside `[A-Za-z0-9_]` becomes `_`. Server names compare in both `-` and `_` forms.
 - Adding a server is two lines: the server in `mcp.json` and its name in `roles.<id>.mcp`. No `foreman setup` re-run is needed for MCP changes.
 - A server that is down is absent from `tool_search` results; the child reports the missing tool under Friction and you check `/mcp`.
-- The read-only roles (`planner`, `explorer`, `reviewer`, `senior-reviewer`) deny `mcp__*` through `denyTools` by default.
+- The read-only roles (`explorer`, `reviewer`) deny `mcp__*` through `denyTools` by default.
 
 Exposure in the child, per allowed server:
 

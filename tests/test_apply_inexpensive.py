@@ -52,11 +52,10 @@ class ApplyInexpensiveTest(unittest.TestCase):
         p = "claude-bridge/"
         self.assertEqual(m["foreman"], p + "claude-opus-5-5 (tier 1)")
         self.assertEqual(m["session-foreman"], m["foreman"])
-        self.assertEqual((m["reviewer"], m["senior-reviewer"]), (m["foreman"], m["foreman"]))
-        for r in ("builder", "explorer", "finalizer"):
+        self.assertEqual(m["reviewer"], m["foreman"])
+        for r in ("builder", "explorer"):
             self.assertEqual(m[r], p + "claude-sonnet-5-5 (tier 2)")
         self.assertEqual(m["auto-review"], p + "claude-haiku-5-5 (tier 3)")
-        self.assertNotIn("planner", m)
 
     def test_openai_style_ranks_with_gaps(self):
         self.fixture(OPENAI)
@@ -105,10 +104,10 @@ class ApplyInexpensiveTest(unittest.TestCase):
         got = json.loads((self.agent / "foreman.json").read_text())
         self.assertNotIn("rankTiers", got)
         self.assertEqual(got["childMaxThinking"], "medium")
-        self.assertEqual(got["ceremony"]["planner"], "self")
+        self.assertEqual(got["ceremony"], {"planReview": {"heavy": True}})
         self.assertIs(got["retro"]["enabled"], False)
         self.assertEqual(got["compaction"], {"maxTokens": 100000})
-        self.assertEqual(got["ladder"]["rolePolicy"], {"reviewer": "at-or-below", "senior-reviewer": "at-or-below", "builder": "below"})
+        self.assertEqual(got["ladder"]["rolePolicy"], {"reviewer": "at-or-below", "builder": "below"})
         prov = got["providers"]["claude-bridge"]
         self.assertEqual(prov["roles"]["builder"]["model"], "claude-bridge/claude-sonnet-5-5")
         self.assertEqual(prov["review"]["model"], "claude-bridge/claude-haiku-5-5")

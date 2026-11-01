@@ -117,8 +117,8 @@ function resolve(config: unknown, provider: string | undefined | null, model?: s
   return { policy: skip ? { ...base, active: false, skip } : { ...base, active: true }, enabled };
 }
 
-/** Smallest TTL whose 0.9 x tick lies beyond Pi's idle cap: Pi never warms it, pi-foreman may. */
-export const SELF_WARM_MIN_TTL_SECONDS = Math.floor((PI_IDLE_CAP_MINUTES * 60) / 0.9) + 1;
+/** Smallest TTL Pi could not warm twice before its idle cap (two 0.9 x TTL ticks): the self-warmer owns every such cache. */
+export const SELF_WARM_MIN_TTL_SECONDS = Math.floor((PI_IDLE_CAP_MINUTES * 60) / (2 * 0.9)) + 1;
 
 /**
  * resolveCachePolicy plus the warm-policy fields (budget, away ticks, waiting, self-warm) with their defaults.

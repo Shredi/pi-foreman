@@ -10,7 +10,7 @@ A `reviewer` launch the foreman passed no model for runs on `roles.reviewer`. `l
 config only; `enabled` defaults to `false`, both `claude-bridge` presets turn it on) adds two triggers: the second FAIL
 of one ledger item sends the next launch to `roles.reviewer.strong` (`rung_up` reason `review_fail_repeat`), and a
 security-shaped diff sends it to `ladder.reviewerClimb.securityRung` (reason `security`; see [ladder](ladder.md)).
-`senior-reviewer` never climbs. There is no climb on a finding: see [Why one reviewer](#why-one-reviewer).
+There is no climb on a finding: see [Why one reviewer](#why-one-reviewer).
 
 The gate's classifier is a separate path: one cheap model call clears a dangerous-class tool call only by citing a sentence of the owner's whitelist, in any session kind; see [permissions](permissions.md#the-classifier).
 
@@ -34,7 +34,7 @@ The reviewer diff-scan base is set at the first builder launch and resets on an 
 
 ### Scope of a review
 
-The ledger is the scope source. The adapter prepends the ledger text to every `reviewer` and `senior-reviewer` launch: the cited items when the task cites any (`item 3`, `#3`), else the whole ledger (header and items). The binding is the session marker, so a review launched with `cwd` in a worktree gets it too. The adapter does not append the owner's prompt. A diff fact is in scope when the prepended ledger block or the task text asks for it; the reviewer quotes the ledger item that asks for the change, else FAIL (BLOCK in a senior review). A foreman statement in the task never overrides a fact. Because the ledger is the only scope source, an item the foreman upserts mid-round also widens scope; a future round can snapshot the ledger at checkpoint approval.
+The ledger is the scope source. The adapter prepends the ledger text to every `reviewer` launch: the cited items when the task cites any (`item 3`, `#3`), else the whole ledger (header and items). The binding is the session marker, so a review launched with `cwd` in a worktree gets it too. The adapter does not append the owner's prompt. A diff fact is in scope when the prepended ledger block or the task text asks for it; the reviewer quotes the ledger item that asks for the change, else FAIL. A foreman statement in the task never overrides a fact. Because the ledger is the only scope source, an item the foreman upserts mid-round also widens scope; a future round can snapshot the ledger at checkpoint approval.
 
 ## Re-review after a FAIL
 
@@ -42,8 +42,7 @@ A review launched after a FAIL checks only the items that failed: the harness pr
 
 ## Critique
 
-After its verdict, a `reviewer` or `senior-reviewer` report carries a CRITIQUE block (agents/reviewer.md,
-agents/senior-reviewer.md) in a fixed format:
+After its verdict, a `reviewer` report carries a CRITIQUE block (agents/reviewer.md) in a fixed format:
 
 ```
 CRITIQUE:
@@ -53,7 +52,7 @@ CRITIQUE:
 
 or `CRITIQUE: none`. It lists overengineering, niche checks beyond the item's scope, one-caller abstractions, flags or
 options nothing sets and tests of mocks. The foreman sends the `now` lines back to the builder in the same revision and
-records the `later` lines in result.md. Critique never turns a PASS into a FAIL (APPROVE into BLOCK) on its own: the
+records the `later` lines in result.md. Critique never turns a PASS into a FAIL on its own: the
 verdict parsing (`verdictOf`, the `N. PASS` marks, the re-review items) skips the block (`withoutCritique` in rounds.ts).
 There is no extra review pass and no other reviewer model for it. Each counted review traces how many critique lines
 it raised and how many `now` lines a builder revision took, with the diff size: see
@@ -75,7 +74,7 @@ with `plan_review_required` until a `[plan-review]` reviewer run ended with a ve
 the plan version hash (sha256 of the plan body above any `## Ruling`, `## Rulings`, `## Parent ruling`,
 `## Decision log`, `## Addendum…` heading or `<!-- plan-appendix -->` line; see [ceremony](ceremony.md)). A ruling appended
 below such a heading neither needs a new review nor resets the checkpoint; a body edit is a new version. Verdicts are kept per plan path (in memory, for the session); a new plan path
-starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the planner revises
+starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the foreman revises the plan
 before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
 `ceremony.planReviewMax` (default 4) caps the `[plan-review]` runs per plan topic per session. At the cap a further launch is refused (`launch_refused:plan_review_cap`) and the checkpoint opens with the latest verdict and `Plan review cap reached (N reviews); the owner decides` (see [ceremony](ceremony.md#plan-state-tier-source-and-plan-phase)).
@@ -84,8 +83,10 @@ Trace `plan_review {model, decision}`. The foreman's instructions carry the plan
 
 ## Security findings and the revision cap
 
-A reviewer or senior-reviewer FAIL (BLOCK) whose report has a finding line starting `SECURITY:` (the agent files tell
-them to prefix security findings so) makes the builder launches that answer it exempt from `ceremony.revisionRounds`:
+The one `reviewer` is modular: `roles.reviewer.skills` names the shipped `security-review` skill (`skills/security-review/SKILL.md`), which the reviewer reads from its catalog and applies when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input. There is no separate security reviewer role.
+
+A reviewer FAIL whose report has a finding line starting `SECURITY:` (the agent file tells
+it to prefix security findings so) makes the builder launches that answer it exempt from `ceremony.revisionRounds`:
 the builder launches after that FAIL, up to the next review verdict (trace `revision_security_exempt`). Every other
 revision counts as before. A hard ceiling stays: exempt and counted revisions together never exceed 2 x
 `ceremony.revisionRounds` per prompt (heavy: 4); past it the launch is refused as usual, and the refusal text names the

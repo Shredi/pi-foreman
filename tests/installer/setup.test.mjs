@@ -101,6 +101,7 @@ test("first run backs up, writes the managed block, keeps user keys in order", (
   assert.equal(s.theme, "dark");
   assert.equal(s.subagents.agentOverrides.builder.tools.includes("edit"), true);
   assert.equal(s.subagents.forceTopLevelAsync, true);
+  assert.deepEqual(s.subagents.agentOverrides.reviewer.skills, ["security-review"]);
   assert.ok(s.packages.includes("npm:some-provider@1.2.3"));
   assert.ok(s.packages.includes(FOREMAN));
   const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
@@ -931,7 +932,7 @@ test("compaction: --dry-run prints exactly one line per key for every branch and
         roles: {
           builder: { model: "tp/a", strong: { model: "tp/gone" } },
           reviewer: { model: "tp/rm", strong: { model: "tp/bm" } },
-          planner: { model: "tp/kept" },
+          explorer: { model: "tp/kept" },
         },
       },
     },
@@ -947,7 +948,7 @@ test("compaction: --dry-run prints exactly one line per key for every branch and
         roles: {
           builder: { model: "tp/a", strong: { model: "tp/new" } },
           reviewer: { model: "tp/bm", strong: { model: "tp/kept" } },
-          planner: { model: "tp/small", strong: { model: "tp/missing" } },
+          explorer: { model: "tp/small", strong: { model: "tp/missing" } },
         },
       },
     },
@@ -1052,7 +1053,7 @@ test("compaction: a declared key on a provider without a registry file spawns no
 test("compaction: the listing's context cell is read like Pi's formatTokenCount", () => {
   const env = fresh();
   seed(env);
-  writeCfg(env, { ...CAP150, providers: { xb: { roles: { builder: { model: "xb/k-tenths", strong: { model: "xb/k-top" } }, reviewer: { model: "xb/m-int" }, planner: { model: "xb/bare", strong: { model: "xb/k-small" } } } } } });
+  writeCfg(env, { ...CAP150, providers: { xb: { roles: { builder: { model: "xb/k-tenths", strong: { model: "xb/k-top" } }, reviewer: { model: "xb/m-int" }, explorer: { model: "xb/bare", strong: { model: "xb/k-small" } } } } } });
   const rows = [["xb", "k-tenths", "262.1K"], ["xb", "k-small", "1.4K"], ["xb", "k-top", "1000.0K"], ["xb", "bare", "512"], ["xb", "m-int", "1M"]];
   const r = run(env, [], listing(env, rows));
   assert.equal(r.code, 0, r.out);

@@ -5,7 +5,7 @@
 //   security: the work diff the reviewer will see is security-shaped (diffscan.ts securityScan) ->
 //     the reviewer launch goes to ladder.reviewerClimb.securityRung; unset, the next rank above the
 //     reviewer's strong rung (providers.<p>.ranks) among the mapped models, else no extra climb.
-// Only `reviewer` launches the foreman passed no model for; `senior-reviewer` never climbs here.
+// Only `reviewer` launches the foreman passed no model for.
 // Off unless ladder.reviewerClimb.enabled is true (the generic default is false).
 // The different-model rule (applyReviewModelRule) applies to every `reviewer` launch, climb or not.
 // Per-occasion overrides (ceremony.reviewByOccasion, applyOccasionOverrides) come before the rank check.

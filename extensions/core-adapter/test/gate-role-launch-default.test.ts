@@ -8,7 +8,7 @@ import { r11Rig } from "./_r11rig.ts";
 import { toolDefault } from "../defaults.ts";
 import { NO_MODEL_NOTICE } from "../classifier.ts";
 
-const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ROLES = ["explorer", "builder", "reviewer"];
 let completes = 0;
 let selects = 0;
 let notes: string[] = [];

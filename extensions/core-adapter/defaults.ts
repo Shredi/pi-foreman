@@ -75,7 +75,7 @@ function launchInside(input: unknown, roots: GateRoots | undefined, cwd: string 
 }
 
 /** The roles the foreman launches (ledger item 26). */
-export const LAUNCH_ROLES: ReadonlySet<string> = new Set(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"]);
+export const LAUNCH_ROLES: ReadonlySet<string> = new Set(["explorer", "builder", "reviewer"]);
 
 /** A single launch of one named role: no `action` (management), no tasks / chain / workflow form. The adapter's role, ceremony and spawn gates run after the gate and can still refuse it. */
 function isRoleLaunch(input: unknown): boolean {

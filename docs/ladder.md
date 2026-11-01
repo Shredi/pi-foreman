@@ -58,8 +58,7 @@ Every builder launch counted as a revision traces `revision {decision, reason}` 
 ## Reviewer climb
 
 `ladder.reviewerClimb` gives the reviewer its own climb. It is off in the generic defaults; both `claude-bridge`
-presets turn it on. It applies only to `reviewer` launches the foreman passed no model for (`senior-reviewer` never
-climbs here), and only user or overlay config can set it.
+presets turn it on. It applies only to `reviewer` launches the foreman passed no model for, and only user or overlay config can set it.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -105,7 +104,20 @@ overlay config only (a project or session value is ignored) and unset by default
   keeps that small ([cache](cache.md)).
 - **User `/model`.** A model the owner picks while downshifted becomes the base; the downshift stays enabled for later idles.
 - **Gates use the base model.** The reviewer different-model rule (`review_model`), the rank checks of child launches
-  and the shadow checks compare against the base model, never against the idle rung. Child role models are unaffected.
+  and the shadow checks compare against the base model, never against the idle rung. The child role map stays keyed by
+  the base model's provider (children and the finalizer keep the base provider's roles), `foreman_session_open` and
+  `/foreman session open` apply the session rank rule to the base model, and `foreman doctor` judges the base model's
+  cache and the idle rung. A model the owner picks with `/model` becomes the base, so these re-key with it.
+- **Another provider.** The rung may name `<other-provider>/<model>`. After the switch the idle model's own provider
+  entry supplies TTL, billing, keep-alive and warm budget (`providers.<q>.cache`). It needs a `cache` entry with a TTL
+  and billing for that provider (without one there is no cache bar and no warms while downshifted; `foreman doctor`
+  warns), a `promptCache` entry for the idle model in Pi's `models.json`, and Pi's `cacheWarming: "idle"`. The model and
+  its provider login must exist; `foreman doctor` lists the rung with the other mapped models (label `.idle`). The
+  thinking level is capped by `maxThinking` like any rung.
+- **Switch timing.** The switch happens on the first notice turn that finds the cache cold, not at the end of the warm
+  budget: the idle model has no cache before its first request, so switching earlier would save nothing, and the
+  turn pays the cold price anyway. The warms of the base model stop being paid once its budget ends; the cold notice is
+  the trigger.
 - **Unavailable rung.** An idle rung that is not in the model registry, or a failed switch, leaves the base model in
   place and traces `foreman_model {outcome: "unavailable"}` once per session.
 - **Cost.** While downshifted the idle model has its own keep-alive, TTL (its `cache.byModel` row, else the provider's TTL, [cache](cache.md#ttl-by-family)) and warm budget.
