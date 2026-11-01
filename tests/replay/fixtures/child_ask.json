@@ -8,7 +8,7 @@
  },
  "builder": {
   "bld": [
-   {"tools": [{"name": "bash", "arguments": {"command": "uname -s"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "pip install requests"}}]},
    {"text": "builder child finished"}
   ]
  }

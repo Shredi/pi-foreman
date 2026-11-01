@@ -88,7 +88,6 @@
   "paths": { "hubWorkflow": [] },
   "gate": { "reviewTimeoutMs": 15000, "askTimeoutMs": 900000, "childAsk": "parent", "tmpAccess": true, "logMaxBytes": 20971520 },
   "safety": {
-    "policy": { "files": [] },
     "preBash": { "hooks": [], "strict": false },
     "requiredChildExtensions": [],
     "children": { "mayPush": false },

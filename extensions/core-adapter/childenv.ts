@@ -5,7 +5,8 @@
 // The guards cannot see that code, so the push credentials are taken out of the env every
 // shell command and every guard of the child inherits (Pi's bash and powershell tools build
 // their env from process.env at each command start). Consequence: children cannot fetch from
-// private remotes or use gh either; the foreman does network git.
+// private remotes; the foreman does network git. gh and glab still work for a child (their keyring auth is not
+// in the env); the gate refuses their writes.
 //
 // Limits (other layers hold there):
 // - Direct ssh with an unencrypted key: core.sshCommand=false stops git's own ssh, but code
