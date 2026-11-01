@@ -87,3 +87,27 @@ multi-family provider (ranks with a literal row per model, and a cache row so th
 
 Put the overlay's `ranks` in `foreman.json` first, then run `apply-preset inexpensive`; later edits to the roles stay
 yours. Cache rows are in [cache](cache.md).
+
+## Recipe: two-provider idle rung
+
+Run the foreman on one provider and let notice turns on a cold cache run on a cheaper model of another. Put this in
+your user or overlay `foreman.json` (ids are placeholders):
+
+```json
+{
+  "providers": {
+    "<provider-a>": {
+      "roles": { "foreman": { "idle": { "model": "<provider-b>/<cheaper-model>", "thinking": "low" } } }
+    },
+    "<provider-b>": {
+      "cache": { "ttlSeconds": 1800, "billing": "token", "keepalive": { "selfWarmWindowMinutes": 240 } }
+    }
+  }
+}
+```
+
+After the switch the idle model's provider supplies TTL, billing and warms, so `<provider-b>` needs the `cache` entry
+(a 1800 s token-billed cache is warmed by pi-foreman itself, [cache](cache.md#self-warm-beyond-pis-cap)), plus a
+`promptCache` entry for the idle model in Pi's `models.json` and `cacheWarming: "idle"` in Pi's settings. Child roles,
+`foreman_session_open` and the rank checks keep using `<provider-a>`'s map ([ladder](ladder.md#idle-rung-foreman-downshift)).
+`foreman doctor` lists the rung with the other mapped models and warns when `<provider-b>` has no cache entry.

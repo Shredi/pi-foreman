@@ -177,7 +177,7 @@ import { isPlannerChild, plannerLaunchBlock, plannerWriteBlock, PLANNER_SCOPE_NO
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
-import { familyWarnings, modelGaps } from "./modelcheck.ts";
+import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { explicitModelAllowed, launchedModels, PLANNER_OWN_RUNG_HINT, rankRefusal, rankRefusalFor, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
@@ -1199,7 +1199,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * model itself) the roles are resolved again for the new one. A failed re-resolve fails closed.
    */
   async function currentRoles(s: Session, ctx: ExtensionContext): Promise<RoleResolution> {
-    const provider = ctx.model?.provider;
+    const provider = idleModel.baseRef(ctx.model)?.provider; // the base model's map while downshifted: children and the finalizer keep it
     if (s.config.source === "cli" && provider !== s.configProvider) {
       const fresh = await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, provider, agentDir: s.agentDir, projectDir: s.cwd, trusted: safeTrusted(ctx), spawner });
       if (fresh.source !== "cli") return { provider, roles: {}, source: "defaults" };
@@ -1288,7 +1288,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const provider = ctx.model?.provider;
     if (!s.isChild && provider && get(s.config.config, `providers.${provider}`)) {
       const registry = ctx.modelRegistry as unknown as RegistryLike;
-      for (const gap of modelGaps(s.config.config, provider, registry)) notifyOnce(s, ctx, `model-gap:${gap}`, `pi-foreman: ${gap}; launches that need it fail. Fix the provider map or the login, then run /foreman doctor.`);
+      for (const gap of modelGaps(s.config.config, provider, registry)) notifyOnce(s, ctx, `model-gap:${gap}`, gap.includes(".roles.foreman.idle)") ? `pi-foreman: ${gap}; the foreman idle rung is unavailable and the downshift stays off. Fix the provider map or the login, then run /foreman doctor.` : `pi-foreman: ${gap}; launches that need it fail. Fix the provider map or the login, then run /foreman doctor.`);
       for (const w of familyWarnings(s.config.roles, provider, registry)) notifyOnce(s, ctx, `family:${w}`, w);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
@@ -1467,9 +1467,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (!s || s.isChild) return undefined;
     const policy = resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS);
-    if (policy.selfWarm && s.selfWarm.owns()) return { action: "stop" as const }; // pi-foreman sends the warms beyond Pi's idle cap itself
+    const busyNow = idleBusy(s, ctx);
+    if (policy.selfWarm && !busyNow.notIdle && s.selfWarm.owns()) return { action: "stop" as const }; // pi-foreman sends the warms Pi could not repeat before its idle cap itself; a streaming-phase warm is Pi's
     if (!policy.active) return undefined;
-    const action = s.idleCache.decide(idleBusy(s, ctx));
+    const action = s.idleCache.decide(busyNow);
     s.idleCache.noteDecision(action);
     return action ? { action } : undefined;
   });
@@ -4046,7 +4047,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
-    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
       const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
       await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
     } };
@@ -4836,23 +4837,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
     out.push(...sharedDoctorLines(s.isChild ? "pr shared watch: off" : s.prBot.describe(), s.config.warnings));
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
-    const cache = resolveCachePolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS);
+    // The cache lines judge the base model: while downshifted the live model is the idle rung, which the idle-rung line below covers.
+    const dm = idleModel.baseRef(ctx.model);
+    const dmModel = dm && ctx.model && dm.provider === ctx.model.provider && dm.id === ctx.model.id ? ctx.model : dm ? (ctx.modelRegistry.find(dm.provider, dm.id) as typeof ctx.model) : undefined;
+    const cache = resolveCachePolicy(s.config.config, dm?.provider, dm?.id, bridgeTtlS);
     if (cache.active && !s.isChild) {
       const missing: string[] = [];
       if (settings?.cacheWarming !== "idle" && !piCacheWarmingIdle()) missing.push('Pi settings.json (global): "cacheWarming": "idle"');
-      if (!ctx.model?.promptCache) missing.push(`models.json (${path.join(s.agentDir, "models.json")}) for ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "the model"}: ${reg.promptCacheSnippet(ctx.model?.provider, ctx.model?.id, cache.ttlSeconds ?? 300)}`);
-      if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${ctx.model?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${ctx.model?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
-      else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${ctx.model?.provider}`);
+      if (!dmModel?.promptCache) missing.push(`models.json (${path.join(s.agentDir, "models.json")}) for ${dm ? `${dm.provider}/${dm.id}` : "the model"}: ${reg.promptCacheSnippet(dm?.provider, dm?.id, cache.ttlSeconds ?? 300)}`);
+      if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${dm?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${dm?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
+      else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${dm?.provider}`);
     }
     if (!s.isChild) {
+      const idleSpec = get(s.config.config, `providers.${dm?.provider}.roles.foreman.idle.model`);
+      const idleRef = typeof idleSpec === "string" && idleSpec && dm ? splitSpec(idleSpec, dm.provider) : null;
       out.push(...cacheDoctorLines({
-        provider: ctx.model?.provider,
-        policy: resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS),
-        promptCache: ctx.model?.promptCache,
+        provider: dm?.provider,
+        policy: resolveWarmPolicy(s.config.config, dm?.provider, dm?.id, bridgeTtlS),
+        promptCache: dmModel?.promptCache,
         retention: process.env.PI_CACHE_RETENTION,
         cacheWarmingIdle: settings?.cacheWarming === "idle" || piCacheWarmingIdle(),
         selfWarmMissed: s.selfWarm.missed(),
-        hasIdleRung: !!get(s.config.config, `providers.${ctx.model?.provider}.roles.foreman.idle.model`),
+        hasIdleRung: !!idleSpec,
+        idleRung: idleRef ? { spec: String(idleSpec), provider: idleRef.provider, policy: resolveWarmPolicy(s.config.config, idleRef.provider, idleRef.id, bridgeTtlS) } : null,
       }));
     }
     const addonOn = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd });

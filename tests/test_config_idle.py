@@ -31,6 +31,10 @@ class ResolveIdleTest(unittest.TestCase):
         r = fc.resolve_role(cfg({"model": P + "/small", "thinking": "xhigh"}), "foreman", P)
         self.assertEqual(r["idle"]["thinking"], "high")
 
+    def test_cross_provider_idle_thinking_is_capped(self):
+        r = fc.resolve_role(cfg({"model": "other/cheap", "thinking": "xhigh"}), "foreman", P)
+        self.assertEqual(r["idle"], {"model": "other/cheap", "thinking": "high"})
+
     def test_absent_or_malformed_idle_is_not_emitted(self):
         self.assertNotIn("idle", fc.resolve_role(cfg(), "foreman", P))
         self.assertNotIn("idle", fc.resolve_role(cfg({"thinking": "low"}), "foreman", P))

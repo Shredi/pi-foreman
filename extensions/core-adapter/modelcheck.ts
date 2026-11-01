@@ -45,7 +45,7 @@ export function splitSpec(spec: string, dflt: string): { provider: string; id: s
 
 export interface Mapped {
   role: string;
-  strength: "default" | "strong";
+  strength: "default" | "strong" | "idle";
   /** Provider whose map entry names it (the provider itself or its fallback). */
   mapProvider: string;
   provider: string;
@@ -64,6 +64,7 @@ export function mappedModels(config: Json, provider: string): Mapped[] {
       if (!isObj(e)) continue;
       if (typeof e.model === "string" && e.model) out.push({ role, strength: "default", mapProvider: p, ...splitSpec(e.model, p) });
       if (isObj(e.strong) && typeof e.strong.model === "string" && e.strong.model) out.push({ role, strength: "strong", mapProvider: p, ...splitSpec(e.strong.model, p) });
+      if (role === "foreman" && isObj(e.idle) && typeof e.idle.model === "string" && e.idle.model) out.push({ role, strength: "idle", mapProvider: p, ...splitSpec(e.idle.model, p) });
     }
   }
   return out;
@@ -82,7 +83,7 @@ export function modelGaps(config: Json, provider: string, registry: RegistryLike
     } catch {
       found = false;
     }
-    if (!found) gaps.push(`model ${key} (providers.${m.mapProvider}.roles.${m.role}${m.strength === "strong" ? ".strong" : ""}) is not in the model registry`);
+    if (!found) gaps.push(`model ${key} (providers.${m.mapProvider}.roles.${m.role}${m.strength === "default" ? "" : `.${m.strength}`}) is not in the model registry`);
     seen.add(m.provider);
   }
   for (const p of seen) {

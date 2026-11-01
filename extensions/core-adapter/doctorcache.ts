@@ -15,6 +15,8 @@ export interface CacheDoctorInput {
   selfWarmMissed: boolean;
   /** providers.<p>.roles.foreman.idle is set. */
   hasIdleRung: boolean;
+  /** The configured idle rung spec and the warm policy of its own provider; absent = no rung or not resolvable. */
+  idleRung?: { spec: string; provider: string; policy: CachePolicy } | null;
 }
 
 /** WARN/INFO lines; the Pi-warm prerequisite check of the active policy stays where it was. */
@@ -29,6 +31,8 @@ export function cacheDoctorLines(i: CacheDoctorInput): string[] {
   }
   if (p.selfWarm && !p.active && !i.cacheWarmingIdle) out.push(`WARN Pi cacheWarming is not "idle": the warms for ${prov} (TTL ${p.ttlSeconds} s) are not sent — set "cacheWarming": "idle" in Pi's settings.json (docs/cache.md)`);
   if (i.selfWarmMissed) out.push(`WARN a self-warm for ${prov} did not read the cache (keepalive window_end self_warm_miss): self-warm is off for this session — check the TTL (docs/cache.md)`);
+  const r = i.idleRung;
+  if (r && (r.policy.skip === "no_entry" || r.policy.ttlSeconds === null)) out.push(`WARN idle rung ${r.spec}: provider ${r.provider} has no cache entry (ttl unknown): no cache bar and no warms while downshifted — set providers.${r.provider}.cache.ttlSeconds and billing (docs/ladder.md)`);
   if (!i.hasIdleRung) out.push(`INFO no providers.${prov}.roles.foreman.idle: the idle model downshift is off (docs/ladder.md)`);
   return out;
 }
