@@ -110,3 +110,21 @@ After the switch the idle model's provider supplies TTL, billing and warms, so `
 `promptCache` entry for the idle model in Pi's `models.json` and `cacheWarming: "idle"` in Pi's settings. Child roles,
 `foreman_session_open` and the rank checks keep using `<provider-a>`'s map ([ladder](ladder.md#idle-rung-foreman-downshift)).
 `foreman doctor` lists the rung with the other mapped models and warns when `<provider-b>` has no cache entry.
+
+While the foreman is downshifted the different-model rule compares reviewers against the idle model (the live model),
+so a reviewer on `<provider-b>` would be moved off it. Pair each foreman model with the reviewer you want in
+`ceremony.reviewModel` ([review](review.md#reviewer-pairs)):
+
+```json
+{
+  "ceremony": {
+    "reviewModel": {
+      "<provider-a>/<big-model>": "<provider-b>/<other-model>:high",
+      "<provider-b>/<cheaper-model>": "<provider-a>/<big-model>"
+    }
+  }
+}
+```
+
+The lookup uses the live model, so each side is reviewed by the other provider's model; an explicit launch model, a
+security rung and a `reviewByOccasion` model are not replaced.

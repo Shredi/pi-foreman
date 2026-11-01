@@ -410,6 +410,18 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False}}, "retro": {"panelThreshold": 5}}, proj={}, session={})
         self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"], res["config"]["retro"]["panelThreshold"]), ("p/x", False, 5))
 
+    def test_review_model_pair_map_user_only_and_invalid_entries_dropped(self):
+        res = self.load(proj={"ceremony": {"reviewModel": {"a/x": "b/y"}}}, session={})
+        self.assertIsNone(res["config"]["ceremony"]["reviewModel"])
+        self.assertIn("project ceremony.reviewModel ignored", "\n".join(res["warnings"]))
+        pairs = {"a/x": "b/y:high", "a/z": 3, "noslash": "b/y", "a/w": "  "}
+        res = self.load(l2={"ceremony": {"reviewModel": pairs}}, proj={}, session={})
+        self.assertEqual(res["config"]["ceremony"]["reviewModel"], {"a/x": "b/y:high"})
+        warnings = "\n".join(res["warnings"])
+        for key in ("a/z", "noslash", "a/w"):
+            self.assertIn("ceremony.reviewModel[%s] ignored" % key, warnings)
+        self.assertEqual([w for w in res["warnings"] if "a/x" in w], [])
+
     def test_fact_critical_rung_user_only(self):
         res = self.load(proj={"ladder": {"research": {"factCriticalRung": "p/x"}}}, session={})
         self.assertIsNone(res["config"]["ladder"]["research"]["factCriticalRung"])

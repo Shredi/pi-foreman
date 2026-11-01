@@ -172,7 +172,7 @@
       "id": "different-model-rule",
       "area": "review",
       "title": "Different-model rule for reviews",
-      "purpose": "Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`.",
+      "purpose": "Moves a reviewer launch off the foreman's live model to the next differing rung, else to `ceremony.reviewModel`, which may also be a map pairing each foreman model with a reviewer model.",
       "doc": "docs/review.md#different-model-rule",
       "keys": ["ceremony.reviewModel"],
       "commands": [],

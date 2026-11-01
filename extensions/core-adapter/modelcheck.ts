@@ -50,9 +50,11 @@ export interface Mapped {
   mapProvider: string;
   provider: string;
   id: string;
+  /** Config path shown in a gap line instead of the role entry (a ceremony.reviewModel pair value). */
+  label?: string;
 }
 
-/** Every model the map names for `provider`: its own role entries and its fallback provider's. */
+/** Every model the map names for `provider`: its own role entries and its fallback provider's, and the ceremony.reviewModel pair values. */
 export function mappedModels(config: Json, provider: string): Mapped[] {
   const providers = isObj(config.providers) ? config.providers : {};
   const own = isObj(providers[provider]) ? (providers[provider] as Json) : {};
@@ -66,6 +68,10 @@ export function mappedModels(config: Json, provider: string): Mapped[] {
       if (isObj(e.strong) && typeof e.strong.model === "string" && e.strong.model) out.push({ role, strength: "strong", mapProvider: p, ...splitSpec(e.strong.model, p) });
       if (role === "foreman" && isObj(e.idle) && typeof e.idle.model === "string" && e.idle.model) out.push({ role, strength: "idle", mapProvider: p, ...splitSpec(e.idle.model, p) });
     }
+  }
+  const pairs = isObj(config.ceremony) && isObj(config.ceremony.reviewModel) ? config.ceremony.reviewModel : {};
+  for (const [key, v] of Object.entries(pairs)) {
+    if (typeof v === "string" && v.trim()) out.push({ role: "reviewer", strength: "default", mapProvider: provider, ...splitSpec(v, provider), label: `ceremony.reviewModel[${key}]` });
   }
   return out;
 }
@@ -83,7 +89,7 @@ export function modelGaps(config: Json, provider: string, registry: RegistryLike
     } catch {
       found = false;
     }
-    if (!found) gaps.push(`model ${key} (providers.${m.mapProvider}.roles.${m.role}${m.strength === "default" ? "" : `.${m.strength}`}) is not in the model registry`);
+    if (!found) gaps.push(`model ${key} (${m.label ?? `providers.${m.mapProvider}.roles.${m.role}${m.strength === "default" ? "" : `.${m.strength}`}`}) is not in the model registry`);
     seen.add(m.provider);
   }
   for (const p of seen) {
