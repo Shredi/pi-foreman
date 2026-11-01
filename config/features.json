@@ -1,7 +1,7 @@
 {
   "version": 1,
   "install": [
-    "Needs Node 22+, Pi 1.4.x on `PATH` and Python 3.13+.",
+    "Needs Node 22.19+, Pi 1.4.x on `PATH` and Python 3.13+.",
     "pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>",
     "pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/settings.json)",
     "/foreman setup --dry-run   # inside Pi: show the planned changes, write nothing",
@@ -123,7 +123,7 @@
       "area": "models",
       "toggle": {"on": {"ladder.idleDownshift.enabled": true}, "off": {"ladder.idleDownshift.enabled": false}},
       "title": "Idle model downshift",
-      "purpose": "A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. With no idle rung mapped nothing changes.",
+      "purpose": "A notice turn (child, wake, intercom, other) that starts on a cold cache runs on the foreman's idle rung; the owner's next input restores the base model. The rung may name a model of another provider, whose own `providers.<q>.cache` entry then supplies TTL, billing and warms. With no idle rung mapped nothing changes.",
       "doc": "docs/ladder.md",
       "keys": ["ladder.idleDownshift.enabled", "ladder.idleDownshift.causes"],
       "commands": [],
@@ -191,18 +191,6 @@
       "switch": {"key": "ceremony.reviewByOccasion", "on": "nonempty"},
       "state": "opt-in",
       "enable": "{\"ceremony\": {\"reviewByOccasion\": {\"pre-pr\": {\"thinking\": \"high\"}}}}"
-    },
-    {
-      "id": "self-planning",
-      "area": "ceremony",
-      "title": "Self-planning at heavy",
-      "purpose": "`ceremony.planner: self` (default): the foreman writes the heavy plan itself and its approved checkpoint satisfies the planner step; `role` keeps the planner launch and falls back to `self` when the planner's rank is not below the foreman's.",
-      "doc": "docs/ceremony.md#triage-and-delegation",
-      "keys": ["ceremony.planner"],
-      "commands": [],
-      "switch": null,
-      "state": "on",
-      "enable": ""
     },
     {
       "id": "checkpoint-verdict",
@@ -426,7 +414,7 @@
       "id": "review-critic",
       "area": "review",
       "title": "Review critic questions",
-      "purpose": "Every reviewer and senior-reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.",
+      "purpose": "Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.",
       "doc": "docs/roles.md#review-critic",
       "keys": ["review.critic"],
       "commands": [],
@@ -809,7 +797,7 @@
       "area": "models",
       "toggle": {"on": {"providers.*.cache.keepalive.enabled": true}, "off": {"providers.*.cache.keepalive.enabled": false}, "shipped": "on"},
       "title": "Idle prompt-cache policy",
-      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs for display only; off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive.",
+      "purpose": "Per-provider prompt-cache TTL, billing and keep-alive so an idle session on a token-billed provider does not resume cold; on by default for claude-bridge through the built-in defaults (the claude-bridge TTL is derived from `bridge.promptCacheTtl`, 3600 s for the foreman and 300 s for subagents; the claude-bridge preset keeps the keep-alive on with awayTicks 2 and gives the foreman role an idle rung); github-copilot has built-in per-model TTLs for display only; off for request-billed providers; silent without an entry. A warm budget (half a cold re-cache per idle), a presence gate (warms while the owner is away are limited) and, for TTLs beyond Pi's 30-minute idle cap, warms sent by pi-foreman itself apply to the keep-alive (pi-foreman owns every token-billed cache whose TTL is 1001 s or more, which Pi could not warm twice before its cap). A downshifted session uses the cache entry of the idle model's provider.",
       "doc": "docs/cache.md#config",
       "keys": ["providers.<x>.cache", "providers.<x>.cache.ttlSeconds", "providers.<x>.cache.billing", "providers.<x>.cache.byModel", "providers.<x>.cache.keepalive.enabled", "providers.<x>.cache.keepalive.intervalSeconds", "providers.<x>.cache.keepalive.windowMinutes", "providers.<x>.cache.keepalive.budgetShare", "providers.<x>.cache.keepalive.awayTicks", "providers.<x>.cache.keepalive.whileWaiting", "providers.<x>.cache.keepalive.beyondPiCap", "providers.<x>.cache.keepalive.selfWarmWindowMinutes", "providers.<x>.cache.keepalive.compactMinTokens", "providers.<x>.cache.warmCompact", "presence.enabled", "presence.awayAfterMinutes", "presence.command", "providers.<x>.roles.<x>.idle.model", "providers.<x>.roles.<x>.idle.thinking"],
       "commands": [],
@@ -831,7 +819,7 @@
     "Public-repo rule: pi-foreman is generic and public. Hosts, names, private paths and model-map details of one installation belong in that installation's overlay, never in this repository.",
     "Tighten-only safety: the project and session layers may only make `safety.*` and the keys marked tighten-only stricter, so a cloned repository cannot loosen your guards.",
     "Project trust: the project layer `.pi/foreman.json` is read only after Pi's project trust is resolved; project packages also load only after trust.",
-    "Role ids stay neutral (`foreman`, `planner`, `explorer`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`); display names come only from config.",
+    "Role ids stay neutral (`foreman`, `explorer`, `builder`, `reviewer`); display names come only from config.",
     "Setup owns the `subagents` block in `settings.json`: put your rules into `foreman.json` and your policy file, a hand edit of the generated block is overwritten.",
     "Children never open PRs and reach the foreman through `contact_supervisor`, never through pi-intercom."
   ]

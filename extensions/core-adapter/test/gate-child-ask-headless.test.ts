@@ -8,7 +8,7 @@ import { gateLogFile } from "../gatelog.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 
 type T = Parameters<typeof r11Rig>[0];
-const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ROLES = ["explorer", "builder", "reviewer"];
 const ASK = JSON.stringify({ verdict: "ask", entry: "package-install", reason: "because package-install" });
 const ALLOW = JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "because" });
 function registry(reply: string) {

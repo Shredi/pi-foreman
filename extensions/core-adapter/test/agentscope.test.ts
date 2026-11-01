@@ -28,10 +28,10 @@ test("project agent files and agentOverrides that shadow a role are reported", (
   fs.writeFileSync(path.join(proj, ".pi", "agents", "builder.md"), "---\nname: builder\n---\nx\n");
   fs.writeFileSync(path.join(proj, ".pi", "agents", "helper.md"), "---\nname: helper\n---\nx\n");
   fs.writeFileSync(path.join(proj, ".agents", "x.md"), "---\nname: \"reviewer\"\n---\n");
-  fs.writeFileSync(path.join(proj, ".pi", "settings.json"), JSON.stringify({ subagents: { agentOverrides: { explorer: { model: "m" } }, agentOverridesByProvider: { p: { finalizer: {} } } } }));
-  fs.writeFileSync(path.join(home, ".pi", "agents", "senior-reviewer.md"), "---\nname: senior-reviewer\n---\n");
-  const got = shadowedRoles(sub, ["explorer", "builder", "reviewer", "senior-reviewer", "finalizer"], home).map((l) => l.split(":")[0]).sort();
-  assert.deepEqual(got, ["builder", "explorer", "finalizer", "reviewer"]); // the home directory is not a project
+  fs.writeFileSync(path.join(proj, ".pi", "settings.json"), JSON.stringify({ subagents: { agentOverrides: { explorer: { model: "m" } }, agentOverridesByProvider: { p: { scout: {} } } } }));
+  fs.writeFileSync(path.join(home, ".pi", "agents", "extra.md"), "---\nname: extra\n---\n");
+  const got = shadowedRoles(sub, ["explorer", "builder", "reviewer", "scout", "extra"], home).map((l) => l.split(":")[0]).sort();
+  assert.deepEqual(got, ["builder", "explorer", "reviewer", "scout"]); // the home directory is not a project
   assert.deepEqual(shadowedRoles(path.join(root, "elsewhere"), ["builder"], home), []);
   fs.rmSync(root, { recursive: true, force: true });
 });

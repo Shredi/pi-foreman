@@ -5,15 +5,15 @@ import type { McpEntryLike } from "../mcpscope.ts";
 
 const roles = {
   builder: { mcp: ["fx", "docs/search", "my-srv/ping"] },
-  finalizer: { mcp: ["fx/echo", "fx/shout", "fx"] },
+  explorer: { mcp: ["fx/echo", "fx/shout", "fx"] },
   reviewer: { mcp: ["fx"], denyTools: ["mcp__*"] },
-  senior: { mcp: ["fx", "other"], denyTools: ["mcp__other__*"] },
+  custom: { mcp: ["fx", "other"], denyTools: ["mcp__other__*"] },
   none: {},
 };
 
 test("the allowed set is the role list; a bare server entry wins over its server/tool entries", () => {
   assert.deepEqual(allowedMcp(roles, "builder"), { servers: ["fx"], tools: { docs: ["search"], "my-srv": ["ping"] } });
-  assert.deepEqual(allowedMcp(roles, "finalizer"), { servers: ["fx"], tools: {} });
+  assert.deepEqual(allowedMcp(roles, "explorer"), { servers: ["fx"], tools: {} });
   assert.deepEqual(allowedMcp({ builder: { mcp: ["fx/echo", "fx/shout", "fx/echo"] } }, "builder"), { servers: [], tools: { fx: ["echo", "shout"] } });
 });
 
@@ -24,7 +24,7 @@ test("a role without mcp, an unknown role and an unreadable role allow nothing",
 
 test("denyTools wins: a deny pattern on a server empties it, other servers stay", () => {
   assert.ok(mcpEmpty(allowedMcp(roles, "reviewer")));
-  assert.deepEqual(allowedMcp(roles, "senior"), { servers: ["fx"], tools: {} });
+  assert.deepEqual(allowedMcp(roles, "custom"), { servers: ["fx"], tools: {} });
   assert.ok(mcpEmpty(allowedMcp({ r: { mcp: ["a/b"], denyTools: ["mcp__a__b"] } }, "r")));
 });
 

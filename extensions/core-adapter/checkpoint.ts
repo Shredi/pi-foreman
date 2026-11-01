@@ -171,35 +171,6 @@ export function isPlanPath(raw: unknown, o: PlanOpts): boolean {
   return fold(o.platform)(path.dirname(real)) === fold(o.platform)(scratch) && PLAN_NAME.test(path.basename(real));
 }
 
-/** name -> sha256 of every regular `plan-*.md` directly in the real scratch dir (planner run-end comparison). */
-export function planSnapshot(o: Omit<PlanOpts, "home">): Map<string, string> {
-  const out = new Map<string, string>();
-  const scratch = scratchRoot(realDeep(path.resolve(workspaceOf(o.cwd).root)), o.scratchDir, o.platform);
-  if (!scratch) return out;
-  let names: string[];
-  try {
-    names = fs.readdirSync(scratch);
-  } catch {
-    return out;
-  }
-  for (const name of names) {
-    if (!PLAN_NAME.test(name)) continue;
-    try {
-      const p = path.join(scratch, name);
-      const st = fs.lstatSync(p);
-      if (st.isFile() && st.size <= PLAN_MAX_BYTES) out.set(name, sha256(fs.readFileSync(p)));
-    } catch {
-      // gone between readdir and read
-    }
-  }
-  return out;
-}
-
-/** Plan files new or changed between two snapshots. */
-export function changedPlans(before: Map<string, string>, after: Map<string, string>): string[] {
-  return [...after].filter(([name, hash]) => before.get(name) !== hash).map(([name]) => name);
-}
-
 /** Why a builder launch is refused at this tier, or null. `currentHash` null = file gone or no longer valid. */
 export function builderLaunchRefusal(rec: PlanRecord | null | undefined, tier: string, currentHash: string | null): LaunchRefusal | null {
   if (tier !== "heavy") return null;
@@ -397,7 +368,7 @@ export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null 
   const name = rec ? `plan-${rec.topic}.md` : "";
   if (reason === "plan_phase") return `${head} the session is in the plan phase: only explorers and [plan-review] reviewers launch. Write the plan under ${scratchDir}/ (ask the owner with ask_user_question until it is decision-complete), then call ${CHECKPOINT_TOOL}; an approval ends the phase. The owner can also end it with /foreman plan off.`;
   if (reason === "plan_required" && rec?.status === "rejected") return `${head} the owner rejected ${name}, so the heavy path is stopped. Launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`;
-  if (reason === "plan_required") return `${head} at tier heavy a builder starts only after the owner approved a plan. Write ${scratchDir}/plan-<topic>.md (or launch the planner), then call ${CHECKPOINT_TOOL} with its path and wait for the owner's answer.`;
+  if (reason === "plan_required") return `${head} at tier heavy a builder starts only after the owner approved a plan. Write ${scratchDir}/plan-<topic>.md, then call ${CHECKPOINT_TOOL} with its path and wait for the owner's answer.`;
   if (reason === "checkpoint_pending") return `${head} the checkpoint of ${name} is ${rec?.status === "revise" ? "waiting for a revised plan" : "pending (no answer from the owner yet)"}. ${rec?.status === "revise" ? `Change the plan as the owner asked, then call ${CHECKPOINT_TOOL} again.` : `Ask the owner in your reply, or call ${CHECKPOINT_TOOL} again with the same path.`}`;
   return `${head} ${name} changed or is gone since the owner approved it. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`;
 }

@@ -13,7 +13,7 @@ import { pressurePath } from "../pressure.ts";
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 const NOW = Date.parse("2026-03-01T10:00:00Z");
-const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ROLES = ["explorer", "builder", "reviewer"];
 let rigs = 0;
 
 interface Rig {

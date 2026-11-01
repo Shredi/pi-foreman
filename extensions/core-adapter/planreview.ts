@@ -4,12 +4,12 @@
 // decision-log / addendum appendix; taken when the review run ends and again when foreman_checkpoint
 // is called). A body edit is a new version, so the earlier verdict no longer counts; an appended
 // ruling is not and needs no new review.
-// `planReviewHash` (sha1 of the whole file) is kept for callers that want the byte hash. A FAIL sends the plan back to
-// the planner once (`plan_revision_required`); after the revised plan (a new hash) is reviewed again,
+// `planReviewHash` (sha1 of the whole file) is kept for callers that want the byte hash. A FAIL sends the plan back for
+// a revision once (`plan_revision_required`); after the revised plan (a new hash) is reviewed again,
 // the checkpoint opens whatever that verdict says, and the owner sees it in the dialog. The lineage
 // is the real plan path, in memory for the session: a new plan path starts a new one.
 // `ceremony.planReviewRounds` (default 2) generalises that: each recorded verdict is a round of its
-// lineage; a FAIL before the cap goes back to the planner, a FAIL at the cap opens the checkpoint
+// lineage; a FAIL before the cap goes back for a revision, a FAIL at the cap opens the checkpoint
 // with `capped: true` so the dialog lists the open findings.
 // Plan reviews never mark items or feed gates (occasion.ts countsForItems).
 import * as crypto from "node:crypto";
@@ -95,7 +95,7 @@ export class PlanReviews {
 
   /**
    * The verdict that lets the checkpoint open, or why it is refused. A FAIL below `cap` rounds goes back
-   * to the planner; a FAIL at the cap opens it with `capped` (and the round count).
+   * for a revision; a FAIL at the cap opens it with `capped` (and the round count).
    */
   gate(planPath: string, hash: string, cap: number = DEFAULT_PLAN_REVIEW_ROUNDS): { verdict: PlanVerdict; capped?: true; rounds?: number } | { refusal: PlanReviewRefusal; stale: boolean } {
     const l = this.byPath.get(planPath);
@@ -112,7 +112,7 @@ export class PlanReviews {
 export function planReviewRefusalText(reason: PlanReviewRefusal, rel: string, tier: string, stale: boolean): string {
   const head = `pi-foreman: ${CHECKPOINT_TOOL} refused [${reason}]:`;
   if (reason === "plan_revision_required") {
-    return `${head} the plan review of ${rel} failed. Send the plan back to the planner once with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, then call ${CHECKPOINT_TOOL} again; after that re-review the checkpoint opens whatever the verdict.`;
+    return `${head} the plan review of ${rel} failed. Revise the plan once with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, then call ${CHECKPOINT_TOOL} again; after that re-review the checkpoint opens whatever the verdict.`;
   }
   const why = stale ? "the plan changed since its last review, so that verdict no longer counts" : "the plan has no review yet";
   return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with "[plan-review]" in its task, naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;

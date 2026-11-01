@@ -2,6 +2,8 @@
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
 $rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
 if ($sub -eq 'setup') {
+    & node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" 2>$null
+    if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('foreman setup needs Node >= 22.19'); exit 1 }
     & node (Join-Path $PSScriptRoot '..\setup.mjs') @rest
     $rc = $LASTEXITCODE
     if ($rc -eq 0) {

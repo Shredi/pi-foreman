@@ -57,7 +57,7 @@ LOCK_STALE = 60.0
 REPO_STORE = (".workflow", "retro-backlog.md")
 GLOBAL = "global"
 FENCE = "```"
-ROLES = ("explorer", "builder", "reviewer", "senior-reviewer", "finalizer", "foreman", "planner")
+ROLES = ("explorer", "builder", "reviewer", "foreman")
 
 
 class LockTimeout(RuntimeError):

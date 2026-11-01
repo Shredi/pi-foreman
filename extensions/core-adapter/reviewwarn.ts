@@ -5,5 +5,5 @@ export const REVIEW_MODEL_KEY = "providers.<p>.roles.review.model";
 
 /** The warning body (no WARN prefix). `provider` is the active provider, if any. */
 export function noReviewModelText(provider: string | undefined): string {
-  return `no review model for provider ${provider ?? "(none)"}: model review is off, so every tool call that is not a default allow asks you (a child or headless session denies it). Role launches (explorer, planner, builder, reviewer, senior-reviewer, finalizer) still run. Set ${REVIEW_MODEL_KEY} in foreman.json`;
+  return `no review model for provider ${provider ?? "(none)"}: model review is off, so every tool call that is not a default allow asks you (a child or headless session denies it). Role launches (explorer, builder, reviewer) still run. Set ${REVIEW_MODEL_KEY} in foreman.json`;
 }

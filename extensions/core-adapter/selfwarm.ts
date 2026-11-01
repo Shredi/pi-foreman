@@ -1,7 +1,7 @@
 // Warm owner of the foreman session (docs/cache.md). Holds what both warm paths share: the last cache touch (a real
 // request end or a completed warm of either source), the warm budget counters and the away-tick counter; it is the
-// WarmGate the idle cache reads for Pi-sent warms. Beyond Pi's 30-minute idle cap (a TTL of 2001 s or more) Pi never warms,
-// so this class sends the warm itself: it replays the context captured at `context_with_system` with maxTokens 1 at
+// WarmGate the idle cache reads for Pi-sent warms. For a cache Pi could not warm twice before its 30-minute idle cap (a TTL of 1001 s or more)
+// this class sends the warms itself: it replays the context captured at `context_with_system` with maxTokens 1 at
 // 0.9 x TTL after the last touch, behind the same budget, presence and compaction gates. Never in a child; never while a
 // turn runs or a message is queued; an aborted or errored call is not recorded.
 import type { CachePolicy } from "./cachepolicy.ts";
@@ -95,7 +95,7 @@ export class SelfWarm implements WarmGate {
   // ---- WarmGate -------------------------------------------------------------------------------------------
 
   owns(): boolean {
-    return this.eligible() && this.idleMode();
+    return this.eligible() && this.idleMode() && this.deps.replayable();
   }
 
   private eligible(): boolean {

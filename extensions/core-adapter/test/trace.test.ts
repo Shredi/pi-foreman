@@ -44,7 +44,7 @@ test("trace: only an overlay deny carries its (redacted) command; the ask event 
   // plan checkpoint events keep `by`, never plan or note text
   assert.deepEqual(sanitizeTrace({ event: "checkpoint", decision: "approve", by: "rig", tier: "heavy", note: "owner words", path: "p" }), { event: "checkpoint", decision: "approve", by: "rig", tier: "heavy" });
   assert.deepEqual(sanitizeTrace({ event: "friction", role: "builder", runId: "r1", kind: "prompt", note: "brief thin", path: "p" }), { event: "friction", role: "builder", runId: "r1", kind: "prompt", note: "brief thin" });
-  assert.deepEqual(sanitizeTrace({ event: "plan_written", tier: "heavy", by: "planner", file: "plan-x.md" }), { event: "plan_written", tier: "heavy", by: "planner" });
+  assert.deepEqual(sanitizeTrace({ event: "plan_written", tier: "heavy", by: "foreman", file: "plan-x.md" }), { event: "plan_written", tier: "heavy", by: "foreman" });
 });
 
 test("trace: disabled writes nothing; enabled writes one sanitized JSONL line per event", () => {

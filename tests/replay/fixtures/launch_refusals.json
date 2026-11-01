@@ -1,0 +1,16 @@
+{
+ "foreman": {
+  "p3": [
+   {"tools": [
+    {"name": "subagent", "arguments": {"agent": "builder", "task": "a", "output": "src/auth.ts"}},
+    {"name": "subagent", "arguments": {"agent": "explorer", "task": "b", "output": "../x.md", "outputMode": "file-only"}}
+   ]},
+   {"text": "Refused."}
+  ],
+  "p4": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"action": "schedule.list"}}]},
+   {"text": "Refused."}
+  ]
+ }
+}

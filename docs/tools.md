@@ -63,8 +63,8 @@ All lists carry `truncated` (bool) and `total` (count before the cut). Caps: 200
 The foreman with `tools.git: true` exports `PI_FOREMAN_TOOL_PACKS=git`; pi-subagents passes it to children. A child keeps
 the tools only when the variable names `git` and its own merged config has `tools.git: true`, so a project `false`
 switches the pack off in children too. Children never write the variable. Roles whose tool list has `bash` (by default
-explorer, builder, reviewer, senior-reviewer and finalizer, and overlay roles likewise) get the four names in their
-list; the planner has no bash and gets none.
+explorer, builder and reviewer, and overlay roles likewise) get the four names in their
+list.
 
 Every child role also gets `tool_search`, through which MCP tools load on demand within the role's `roles.<id>.mcp`
 ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role allows no MCP server. On a `mcp.directProviders` provider the allowed deferred tools are declared before the child's first prompt instead, so they are callable there.

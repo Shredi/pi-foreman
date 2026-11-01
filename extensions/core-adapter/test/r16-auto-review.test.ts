@@ -41,7 +41,7 @@ const modelRegistry = {
 // the human: every dialog is counted and denied
 let dialogs = 0;
 const ui = { notify: () => undefined, confirm: async () => false, select: async () => (dialogs++, "deny with reason"), input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
-const config = (extra: Record<string, unknown> = {}) => ({ providers: { fake: { review: { model: "m", timeoutMs: 50 }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } }, ...extra });
+const config = (extra: Record<string, unknown> = {}) => ({ providers: { fake: { review: { model: "m", timeoutMs: 50 }, roles: Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }])) } }, ...extra });
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
 // rig: handoff and agent dir below the test base, outside every gate tmp root on every OS (the review path is exercised);
