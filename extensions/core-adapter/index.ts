@@ -71,7 +71,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -2489,6 +2489,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
+      // reviewer entries whose final model differs from their climb's (a ceremony.reviewModel pair or the same-model walk moved them): their rung_up trace and `climbed` mark are dropped
+      const climbReplaced = new Set<Json>();
       let sized: ReturnType<typeof takeSizing> | null = null;
       let sizedPlans: EntryPlan[] = [];
       let sizingRecords: Record<string, unknown>[] = [];
@@ -2723,7 +2725,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerTraces = rc.traces;
         }
         const foremanAt0 = foremanBaseModel(ctx);
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
+        const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
         if (bottomWhy.size > 0) pendingBottom = bottomWhy;
         if (sizedPlans.length > 0) {
@@ -2740,8 +2743,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
           // ceremony.reviewByOccasion (reviewerclimb.ts): over the mapped models, before the rank check and the different-model rule.
+          const reviewerEntries = launchEntries(input).filter((e) => e.agent === "reviewer" && typeof e.model === "string");
+          const pinned = new Map<Json, ReviewPin>(reviewerEntries.filter((e) => explicitReviewers.has(splitLevel(e.model as string).base)).map((e) => [e, "explicit"]));
           const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking") });
           reviewerTraces.push(...occ.traces);
+          for (const e of occ.overrode) pinned.set(e, "occasion");
           // [research] / [fact-critical] markers (research.ts): the floor is written before the rank check.
           const marked = markedEntries(input);
           const raised = applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
@@ -2761,7 +2767,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const r of entryTraces(input, marked)) s.trace?.emit(r);
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null;
-          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
+          for (const c of reviewerClimbs) if (c.reason === "security") pinned.set(c.entry, "security_rung");
+          // the rank checks keep the base model; the review rule judges the live one
+          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, pinned, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
+          for (const c of reviewerClimbs) if (c.reason === "review_fail_repeat" && typeof (c.entry as Json).model === "string" && splitLevel((c.entry as Json).model as string).base !== splitLevel(c.model).base) climbReplaced.add(c.entry);
           // Review panel (panel.ts): a gate-occasion reviewer is the primary; its shadows come after its run end.
           panel = primaryPanel(input, occasions, s.config.config, foremanModel);
         }
@@ -2847,7 +2856,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const diffText = !first || occ === "plan-review" ? null : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => `${d.diff ?? ""}\n${d.untracked}`, () => null);
           const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : filesOfDiff(diffText);
           const sh = shadow.kind === "launch" ? shadow : null;
-          const rl = reviewLaunchOf(input, occasions, new Map(sh ? [[input, sh.base]] : []), { started: Date.now(), files, panel: sh ? { gate: sh.pending.gate, primary: sh.pending.primary, shadows: [sh.base] } : panel?.panel ?? null, climbed: new Set(reviewerClimbs.map((c) => c.entry)) });
+          const rl = reviewLaunchOf(input, occasions, new Map(sh ? [[input, sh.base]] : []), { started: Date.now(), files, panel: sh ? { gate: sh.pending.gate, primary: sh.pending.primary, shadows: [sh.base] } : panel?.panel ?? null, climbed: new Set(reviewerClimbs.filter((c) => !climbReplaced.has(c.entry)).map((c) => c.entry)) });
           if (rl && panel) rl.task = panel.task;
           if (rl && sh) rl.bind = sh.pending.id;
           if (rl && diffText !== null) rl.lines = diffLinesOf(diffText);
@@ -2912,7 +2921,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const decision = revisionTrace.noStrong ? "no_strong" : revisionTrace.keyword ? "keyword" : rose ? "climb" : "unchanged";
         s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision, reason: revisionTrace.reason });
       }
-      if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.map((c) => c.trace)]) s.trace?.emit(r);
+      if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.filter((c) => !climbReplaced.has(c.entry)).map((c) => c.trace)]) s.trace?.emit(r);
       if (shadow.kind === "launch") {
         s.panels.launched(shadow.pending.id, shadow.base);
         s.trace?.emit(shadow.trace);

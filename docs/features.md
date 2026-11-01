@@ -53,7 +53,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [rank-policy](#rank-policy) | models |  | opt-in | Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing. | `{"providers": {"<provider>": {"ranks": [{"match": "*big*", "tier": 0}, {"match": "*mid*", "tier": 1}]}}, "ladder": {"childPolicy": "below"}}` | [roles](roles.md#role-ladder-rank-policy-and-presets) |
 | [reviewer-climb](#reviewer-climb) | review | toggle | off | Sends the next reviewer launch to its strong rung after a second FAIL of one ledger item, and to a security rung on a security-shaped diff. | `{"ladder": {"reviewerClimb": {"enabled": true, "securityRung": "<provider>/<model>"}}}` | [ladder](ladder.md#reviewer-climb) |
 | [review-panel](#review-panel) | review |  | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
-| [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`. | on by default | [review](review.md#different-model-rule) |
+| [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's live model to the next differing rung, else to `ceremony.reviewModel`, which may also be a map pairing each foreman model with a reviewer model. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
 | [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
@@ -301,11 +301,11 @@ Switch: `ladder.reviewPanel.shadows` is non-empty.
 
 ### different-model-rule
 
-**Different-model rule for reviews.** Moves a reviewer launch off the foreman's own model to the next differing rung, else to `ceremony.reviewModel`.
+**Different-model rule for reviews.** Moves a reviewer launch off the foreman's live model to the next differing rung, else to `ceremony.reviewModel`, which may also be a map pairing each foreman model with a reviewer model.
 
 | Key | Default | Layer |
 |---|---|---|
-| `ceremony.reviewModel` | `null` | not in project/session (the fallback reviewer model comes from the user or overlay config) |
+| `ceremony.reviewModel` | `null` | not in project/session (the fallback reviewer model and the reviewer pair map come from the user or overlay config) |
 
 ### review-overrides
 
@@ -959,7 +959,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `sessions.hc` | the herdr-core session options come from the user or overlay config |
 | `sessions.worktree` | the branch prefix of a session's own worktree comes from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
-| `ceremony.reviewModel` | the fallback reviewer model comes from the user or overlay config |
+| `ceremony.reviewModel` | the fallback reviewer model and the reviewer pair map come from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
 | `resources.sampleSeconds` | the sampling interval comes from the user or overlay config |
 | `ladder.strongAbove` | the ladder and the child rank policy come from the user or overlay config |

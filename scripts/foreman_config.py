@@ -94,7 +94,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.ledgerHelper            tighten only, off < bash < tool (may only move toward off)
     ceremony.reviewPerRevision       only true is accepted (false lifts the one-review-per-revision refusal)
     ceremony.checkpoint              ignored (who approves the plan checkpoint: L1/L3/L2 only)
-    ceremony.reviewModel             ignored (the fallback reviewer model: L1/L3/L2 only)
+    ceremony.reviewModel             ignored (the fallback reviewer model or the pair map: L1/L3/L2 only)
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.planReviewRounds        free per layer (no tighten rule)
@@ -247,7 +247,7 @@ IGNORED_KEYS = [
     (("sessions", "hc"), "the herdr-core session options come from the user or overlay config"),
     (("sessions", "worktree"), "the branch prefix of a session's own worktree comes from the user or overlay config"),
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
-    (("ceremony", "reviewModel"), "the fallback reviewer model comes from the user or overlay config"),
+    (("ceremony", "reviewModel"), "the fallback reviewer model and the reviewer pair map come from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
     (("resources", "sampleSeconds"), "the sampling interval comes from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
@@ -408,6 +408,19 @@ def fix_bridge_ttl(name, data, warnings):
             del val[kind]
             warnings.append("%s bridge.promptCacheTtl.%s ignored: use 1h, 5m or inherit; using %s"
                             % (name, kind, BRIDGE_TTL_DEFAULTS[kind]))
+
+
+def drop_invalid_review_pairs(name, data, warnings):
+    """Drop the entries of a ceremony.reviewModel pair map that are not `<provider>/<model>` -> a non-empty string, with a warning."""
+    ceremony = data.get("ceremony") if isinstance(data, dict) else None
+    pairs = ceremony.get("reviewModel") if isinstance(ceremony, dict) else None
+    if not isinstance(pairs, dict):
+        return
+    for key in list(pairs):
+        val = pairs[key]
+        if "/" not in key or not isinstance(val, str) or not val.strip():
+            del pairs[key]
+            warnings.append("%s ceremony.reviewModel[%s] ignored: expected \"<provider>/<model>\": \"<provider>/<model>[:<level>]\"" % (name, key))
 
 
 def _truthy_env(value):
@@ -1094,6 +1107,8 @@ def load_config(agent_dir=None, project_dir=None, trusted_project=False,
             return None
         warn_removed_compaction(name, data, warnings)
         fix_bridge_ttl(name, data, warnings)
+        if name != "project":  # the project layer's whole key is dropped by IGNORED_KEYS: one warning
+            drop_invalid_review_pairs(name, data, warnings)
         drop_invalid_safety(name, data, schema, warnings)
         fix_malformed_ceremony(name, data, l1, errors)
         return data
