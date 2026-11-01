@@ -8,6 +8,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
+import { SHELL_WRITE_REFUSAL } from "../shellwriteguard.ts";
 
 let calls = 0;
 let system = "";
@@ -28,13 +29,16 @@ fs.mkdirSync(srcDir, { recursive: true });
 fs.writeFileSync(path.join(srcDir, "live-ruling-2.md"), "x\n");
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 
-test("r17b live shape: cp from outside the workspace into the own relative scratch target reaches the reviewer", async () => {
+// ruling-10: the foreman (edit mode scratchpad) may not cp into `.pi/scratch` from the shell (its scratch is `.workflow/scratch`), so the call is refused
+// before any dialog or classifier call, though the line is the dangerous class
+test("r17b live shape: cp from outside the workspace into the own relative scratch target is the shell write refusal, no dialog, no classifier", async () => {
   const n0 = rig.trace().length;
-  await rig.call("bash", { command: `cp ${inBash(path.join(srcDir, "live-ruling-2.md"))} .pi/scratch/live-ruling-2.md` });
+  const res0 = await rig.call("bash", { command: `cp ${inBash(path.join(srcDir, "live-ruling-2.md"))} .pi/scratch/live-ruling-2.md` });
   const recs = rig.trace().slice(n0);
-  // R41: the gate decides (no auto_review_allow, no overlay ask); the review stub allows the line, no dialog
-  assert.equal(recs.some((x) => x.event === "auto_review_allow"), false);
-  assert.ok(recs.some((x) => x.event === "guard" && x.guard === "gate" && x.decision === "allowed"), JSON.stringify(recs));
-  assert.equal(dialogs, 0);
-  void [calls, system];
+  assert.equal(res0?.block, true);
+  assert.ok(String(res0?.reason).includes(SHELL_WRITE_REFUSAL), String(res0?.reason));
+  assert.ok(recs.some((x) => x.event === "shell_write_refused" && x.kind === "cp"), JSON.stringify(recs));
+  assert.equal(recs.some((x) => x.event === "auto_review_allow" || (x.event === "guard" && x.guard === "gate")), false, JSON.stringify(recs));
+  assert.deepEqual([dialogs, calls], [0, 0]);
+  void system;
 });
