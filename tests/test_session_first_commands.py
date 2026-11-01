@@ -31,14 +31,14 @@ class FirstCommandsTest(unittest.TestCase):
     def test_posix_and_powershell_order_and_quoting(self):
         out = self.launch_line("--first-command", "/plan", "--first-command", "/note it's x")
         posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
-        self.assertIn("pi /plan '/note it'\"'\"'s x' 'Read the handoff", posix)
+        self.assertIn("pi '/note it'\"'\"'s x' '/plan Read the handoff", posix)
         ps = [l for l in out.splitlines() if l.strip().startswith("$env:")][0]
-        self.assertIn("pi '/plan' '/note it''s x' 'Read the handoff", ps)
+        self.assertIn("pi '/note it''s x' '/plan Read the handoff", ps)
 
     def test_plan_mode_is_first_and_deduplicated(self):
         out = self.launch_line("--first-command", "/x", "--plan-mode", "--first-command", "/plan")
         posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
-        self.assertIn("pi /plan /x 'Read the handoff", posix)
+        self.assertIn("pi /x '/plan Read the handoff", posix)
         self.assertEqual(posix.count("/plan"), 1)
 
     def test_plan_first_is_independent(self):
@@ -93,7 +93,46 @@ class FirstCommandsTest(unittest.TestCase):
         entry = self.registry()[-1]
         self.assertEqual(entry["firstCommands"], ["/plan", "/a"])
         launch = (Path(entry["handoff"]) / fsn.LAUNCH_FILE).read_text("utf-8")
-        self.assertIn(" pi /plan /a 'Read the handoff", launch)
+        self.assertIn(" pi /a '/plan Read the handoff", launch)
+
+    def test_launch_messages(self):
+        self.assertEqual(fsn.launch_messages([], "P"), ["P"])
+        self.assertEqual(fsn.launch_messages(["/x"], "P"), ["/x", "P"])
+        self.assertEqual(fsn.launch_messages(["/plan"], "P"), ["/plan P"])
+        self.assertEqual(fsn.launch_messages(["/plan", "/x", "/y"], "P"), ["/x", "/y", "/plan P"])
+        self.assertEqual(fsn.launch_messages(["/plan start"], "P"), ["/plan start", "P"])
+        self.assertEqual(fsn.launch_messages(["/plan start", "/plan"], "P"), ["/plan start", "/plan P"])
+
+    def test_plan_mode_alone_is_one_merged_word(self):
+        out = self.launch_line("--plan-mode")
+        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
+        ps = [l for l in out.splitlines() if l.strip().startswith("$env:")][0]
+        self.assertIn(" pi '/plan Read the handoff brief at ", posix)
+        self.assertTrue(posix.endswith(" and proceed.'"), posix)
+        self.assertIn(" pi '/plan Read the handoff brief at ", ps)
+        self.assertEqual(posix.count("/plan"), 1)
+        self.assertEqual(ps.count("/plan"), 1)
+
+    def test_explicit_plan_command_equals_plan_mode(self):
+        a = self.launch_line("--plan-mode")
+        b = self.launch_line("--first-command", "/plan")
+        pick = lambda o: [l for l in o.splitlines() if l.strip().startswith("env ")][0].split(" pi ", 1)[1].split("'/plan ", 1)[0]
+        self.assertEqual(pick(a), pick(b))
+        self.assertIn(" pi '/plan Read the handoff", [l for l in b.splitlines() if l.strip().startswith("env ")][0])
+
+    def test_plan_start_stays_a_separate_word(self):
+        out = self.launch_line("--first-command", "/plan start")
+        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
+        self.assertIn(" pi '/plan start' 'Read the handoff", posix)
+
+    def test_argv_for_hc_ends_in_one_plan_word(self):
+        for platform in ("linux", "win32"):
+            argv = fsn.hc_child_argv([], None, "Read the handoff brief at X and proceed.", ["/plan"], platform, "/bin")
+            if platform == "win32":
+                self.assertTrue(argv[-1].endswith("pi '/plan Read the handoff brief at X and proceed.'"), argv[-1])
+            else:
+                self.assertEqual(argv[-1], "/plan Read the handoff brief at X and proceed.")
+                self.assertNotIn("/plan", argv[:-1])
 
 
 if __name__ == "__main__":
