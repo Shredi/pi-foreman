@@ -1,5 +1,5 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]` -> scripts/foreman_<name>.py (features, perms: .mjs).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms|knowledge [args]` -> scripts/foreman_<name>.py (features, perms, knowledge: .mjs).
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
@@ -32,8 +32,13 @@ if [ "$sub" = "perms" ]; then
     shift
     exec node "$here/../scripts/foreman_perms.mjs" "$@"
 fi
+if [ "$sub" = "knowledge" ]; then
+    shift
+    exec node "$here/../scripts/foreman_knowledge.mjs" "$@"
+fi
+nudge=0
 case "$sub" in
-    update-check) script="$here/../scripts/foreman_update_check.py" ;;
+    update-check) script="$here/../scripts/foreman_update_check.py"; nudge=1 ;;
     retro) script="$here/../scripts/foreman_retro.py" ;;
     sync) script="$here/../scripts/foreman_sync.py" ;;
     session) script="$here/../scripts/foreman_session.py" ;;
@@ -44,7 +49,7 @@ case "$sub" in
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
-    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]" >&2; exit 2 ;;
+    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms|knowledge [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"
@@ -59,5 +64,12 @@ if [ -z "$py" ]; then
         echo "pi-foreman needs Python 3.13+; found $found. Set PI_FOREMAN_PYTHON or install Python 3.13 (macOS: brew install python@3.13)." >&2
         exit 2
     fi
+fi
+if [ "$nudge" = 1 ]; then
+    # update-check keeps its exit code; the knowledge nudge goes to stderr so --json stays clean (best effort)
+    rc=0
+    "$py" -E -s "$script" "$@" || rc=$?
+    node "$here/../scripts/foreman_knowledge.mjs" nudge >&2 2>/dev/null || true
+    exit "$rc"
 fi
 exec "$py" -E -s "$script" "$@"

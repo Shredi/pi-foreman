@@ -76,6 +76,7 @@ This repo is public: nothing private in files, commit messages or issues. See `A
 
 `tests/test_docs.py` checks that config schema keys, registered commands and relative links appear in these pages.
 When you add a key or command, document it in the page for its area.
+A new outside source for a skill or design note goes into `config/knowledge.json` and gets accepted (`foreman knowledge accept <id>`, [sessions](sessions.md#knowledge-sources)).
 
 `docs/features.md` is generated: `python scripts/foreman_docs.py features` writes it from `config/features.json`
 (the only hand-kept part), the defaults and the layer rules in `scripts/foreman_config.py`; `--check` exits 1 on

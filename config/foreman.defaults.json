@@ -57,6 +57,7 @@
     "recheckBudget": 3,
     "launchWait": "detach", "childBashTimeoutSeconds": 600, "childBashTimeoutMaxSeconds": 1800,
     "dedupeNotify": true,
+    "longCommands": ["npm test", "npm run test", "npx vitest", "npx jest", "node --test", "pytest", "python -m unittest", "python -m pytest", "cargo test", "go test", "mvn test", "gradle test", "dotnet test", "make test", "pnpm test", "yarn test"],
     "reviewGate": "pass",
     "orientation": { "enabled": true, "maxLines": 120 },
     "ledgerHelper": "tool",
@@ -81,6 +82,7 @@
     ]
   },
   "sync": { "repos": [], "runRetro": true },
+  "knowledge": { "nudgeDays": 30 },
   "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": false, "refreshSeconds": 900, "mine": true, "authors": [], "scope": [] } },
   "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },

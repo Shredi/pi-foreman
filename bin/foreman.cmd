@@ -1,11 +1,12 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|perms|knowledge [args]` for cmd.
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
 if /i "%~1"=="dialogs" goto dialogs
 if /i "%~1"=="features" goto features
 if /i "%~1"=="perms" goto perms
+if /i "%~1"=="knowledge" goto knowledge
 set "PF_PY=%PI_FOREMAN_PYTHON%"
 set "PF_PYARGS="
 set "PF_SCRIPT="
@@ -20,7 +21,7 @@ if /i "%~1"=="backlog" set "PF_SCRIPT=foreman_backlog.py"
 if /i "%~1"=="findings" set "PF_SCRIPT=foreman_findings.py"
 if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|features^|perms [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|features^|perms^|knowledge [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS="
 :collect
@@ -95,6 +96,20 @@ goto collectp
 :runperms
 node "%PF_HERE%..\scripts\foreman_perms.mjs" %PF_ARGS%
 exit /b %ERRORLEVEL%
+:knowledge
+shift
+set "PF_ARGS="
+:collectk
+if "%~1"=="" goto runknowledge
+set PF_ARGS=%PF_ARGS% %1
+shift
+goto collectk
+:runknowledge
+node "%PF_HERE%..\scripts\foreman_knowledge.mjs" %PF_ARGS%
+exit /b %ERRORLEVEL%
 :run
 "%PF_PY%" %PF_PYARGS% -E -s "%PF_HERE%..\scripts\%PF_SCRIPT%" %PF_ARGS%
-exit /b %ERRORLEVEL%
+set "PF_RC=%ERRORLEVEL%"
+rem update-check keeps its exit code; the knowledge nudge goes to stderr so --json stays clean (best effort)
+if "%PF_SCRIPT%"=="foreman_update_check.py" node "%PF_HERE%..\scripts\foreman_knowledge.mjs" nudge 1>&2 2>nul
+exit /b %PF_RC%
