@@ -366,7 +366,7 @@ and a running `foreman_bg` command as `bg · note · age`. These rows show with 
 hides only when every row is empty. While any run or background row is active the
 widget keeps its height (it may grow when a row starts, padded rather than shrunk, at most 8 rows, one screen row each; a ninth
 and later row folds into one `+<n> more` row) and updates in place, so the view does not shift; the run rows go when the last active run ends. It costs no model tokens. Outside Pi,
-the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman findings list|dismiss|export` and `foreman retro models` ([review](review.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)) and `foreman bench` ([benchmark](bench.md), including `foreman bench review`). The keys
+the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same scripts: `foreman update-check`, `foreman retro [args]`, `foreman sync [args]`, `foreman backlog [args]` ([retro](retro.md)), `foreman findings list|dismiss|export` and `foreman retro models` ([review](review.md)), `foreman session` (below), `foreman radar` ([Radar](#radar)), `foreman bench` ([benchmark](bench.md), including `foreman bench review`) and `foreman knowledge` ([Knowledge sources](#knowledge-sources)). The keys
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
 
@@ -377,6 +377,17 @@ This status slot applies to `footer.style: "pi"`; the foreman footer carries the
 with `ui.symbols`) while the prompt cache has expired, and a downshift glyph (`↓`) while the foreman runs on its idle
 model ([ladder](ladder.md#idle-rung-foreman-downshift)). The glyphs live in `config/symbols.json` (`keepalive`, `cold`,
 `downshift`); the Herdr sidebar leaves all three out.
+
+## Knowledge sources
+
+The bundled skills and design notes digest a few outside pages: skill-authoring guidance, per-model prompting guides and an article on folding subagents. `config/knowledge.json` lists them, one entry per source: `id`, `url`, `target` (the repo file that digests it), `sha256` (of the normalised page text), `checkedOn` (the day the digest was last read against it) and, for index pages, `discover: {pattern, label}`. The digests are written in our own words; the full text is never committed.
+
+- `foreman knowledge check [--json] [--agent-dir D]` fetches each source (10 s timeout), reduces HTML to its main text (scripts, styles, navigation, header, footer, aside and comments dropped; Markdown is used as is), hashes it and compares with the manifest. Each source is `unchanged`, `changed`, `new` (no hash yet), `unreachable` or, for a discover entry, `discovered`. A discover entry also lists links that match its pattern and are not in the manifest, such as a new model page; these are reported and never added automatically. It exits 0 whatever it finds, and 2 when the manifest is unreadable.
+- The normalised text of every source is cached per user in `<agent dir>/pi-foreman/knowledge/<id>.md` (the full text for a skill to read when its digest needs a recheck), and the result of the run goes to `<agent dir>/pi-foreman/state/knowledge-check.json` (`checkedAt`, `results`).
+- `foreman knowledge accept <id>... | --all` copies the hash from the last check into the manifest and sets `checkedOn` to today. Run it after you reread the digest against the cache. An id without a usable result is refused with the reason.
+- `foreman knowledge nudge` prints one line when the last check is older than `knowledge.nudgeDays` (default 30) or never ran. `foreman update-check` prints it on stderr, and `/foreman update-check` and `/sync` append it to their output.
+
+The agent dir is `--agent-dir`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. A new source goes into `config/knowledge.json` and gets accepted.
 
 ## Radar
 
