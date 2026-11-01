@@ -158,6 +158,19 @@ class SearchableTest(unittest.TestCase):
         self.assertIsNone(fc.skill_visibility(f))
         self.assertIsNone(fc.skill_visibility(self.project / "nope" / "SKILL.md"))
 
+    def test_shared_fixture_cases_match_the_ts_implementation(self):
+        # extensions/core-adapter/test/skillvisibility.test.ts asserts the same file against skillvisibility.ts
+        fixture = json.loads((ROOT / "tests" / "fixtures" / "skill-visibility-cases.json").read_text(encoding="utf-8"))
+        hidden = []
+        for c in fixture["cases"]:
+            f = self.project / (c["name"] + ".md")
+            f.write_text(c["skillMd"], encoding="utf-8")
+            got = fc.skill_is_hidden({"skills": c["rules"]}, c["name"], f)
+            self.assertEqual(got, c["hidden"], c["name"])
+            if got:
+                hidden.append(c["name"])
+        self.assertEqual(hidden, fixture["expectedHidden"])
+
 
 if __name__ == "__main__":
     unittest.main()

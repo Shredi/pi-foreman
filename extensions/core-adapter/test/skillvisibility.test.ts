@@ -69,6 +69,24 @@ test("skillRulesOf reads the config lists and ignores junk", () => {
   assert.deepEqual(skillRulesOf({ skills: "x" }), none);
 });
 
+test("the shared fixture (also asserted by the Python skill_is_hidden) gives the same hidden list", () => {
+  const fixture = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "..", "tests", "fixtures", "skill-visibility-cases.json"), "utf8")) as { cases: { name: string; rules: { visible: string[]; hidden: string[] }; skillMd: string; hidden: boolean }[]; expectedHidden: string[] };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "skillvis-fixture-"));
+  try {
+    const hidden: string[] = [];
+    for (const c of fixture.cases) {
+      const file = path.join(dir, `${c.name}.md`);
+      fs.writeFileSync(file, c.skillMd);
+      const got = splitSkills([{ name: c.name, description: "d", filePath: file }], c.rules).hidden.length === 1;
+      assert.equal(got, c.hidden, c.name);
+      if (got) hidden.push(c.name);
+    }
+    assert.deepEqual(hidden, fixture.expectedHidden);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("childSkillRefs resolves the role's skill names to name, description and file", async () => {
   const resolve = (names: string[]) => ({ resolved: names.filter((n) => n !== "gone-skill").map((n) => ({ name: n, description: `${n} d`, path: `/s/${n}/SKILL.md` })) });
   const roles = { builder: { skills: ["example-domain-skill", "gone-skill"] } };

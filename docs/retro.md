@@ -88,7 +88,7 @@ it applies nothing and files no backlog entry:
   `tools.deferred`, `roles.<x>.searchable` or `skills.hidden`).
 - A tool never used is printed with its package: `never used (foreman, 24 sessions): doc_to_md (example-package) ->
   pi remove npm:example-package` when none of the package's tools was used, `PI_BG_FEATURES=process` for the
-  add-on's optional tools (`fusion_*`, `bg_delegate`, `bg_run_pi_attested`, `bg_result`), else `tools.deferred`. A
+  add-on's optional tools (`fusion_*`, `bg_delegate`, `bg_run_pi_attested`), else `tools.deferred`. A
   skill never read points to `skills.hidden` or removing the skill directory. Packages the harness ships or bundles
   are never suggested for removal.
 

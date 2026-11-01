@@ -393,10 +393,10 @@ TOOL_USAGE_MIN_SESSIONS = 20  # a rule fires only with this many sessions (per g
 FLIP_SEARCHABLE_BELOW = 0.10  # declared but used in under 10% of the sessions that declared it
 FLIP_ALWAYS_ON_AT = 0.25  # hidden but found in 25% or more of the sessions that hid it
 # tools that stay declared whatever the config says (extensions/core-adapter/deferred.ts DEFERRED_FLOOR); never suggested
-TOOL_FLOOR = ("tool_search", "codemode", "read", "bash", "edit", "write", "subagent", "foreman_ledger", "foreman_triage",
+TOOL_FLOOR = ("tool_search", "codemode", "read", "bash", "subagent", "foreman_ledger", "foreman_triage",
               "contact_supervisor", "subagent_supervisor", "ask_user_question")
-# the add-on's optional tools: disabled at the source (PI_BG_FEATURES=process) they cost nothing
-BG_FEATURE_TOOLS = ("fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result")
+# the add-on's optional tools (deferred.ts deferredDoctorLines): disabled at the source (PI_BG_FEATURES=process) they cost nothing
+BG_FEATURE_TOOLS = ("fusion_*", "bg_delegate", "bg_run_pi_attested")
 # packages the harness ships or bundles, and the pseudo-sources: never a `pi remove` suggestion
 NO_REMOVE_SOURCES = ("pi-foreman", "pi-subagents", "pi-intercom", "@juicesharp/rpiv-ask-user-question", "builtin", "unknown")
 
@@ -543,15 +543,17 @@ def render_tool_usage(t):
             for name in g["never_used"]:
                 pkg = srcs.get(name, "unknown")
                 rem = ("pi remove npm:%s" % pkg if pkg in removable else "PI_BG_FEATURES=process" if _bg_feature(name)
-                       else "tools.deferred")
+                       else "tools.deferred" if g["role"] == "foreman" else "roles.%s.searchable" % g["role"])
                 by_rem.setdefault((pkg, rem), []).append(name)
             for (pkg, rem), names in by_rem.items():
                 L.append("  never used (%s): %s (%s) -> %s" % (who, ", ".join(names), pkg, rem))
-        if g["searchable"]:
+        # a never-used tool already has its remedy above
+        searchable = [x for x in g["searchable"] if x not in g["never_used"]]
+        if searchable:
             if g["role"] == "foreman":
-                L.append('  used in under 10%% (%s): tools.deferred: add %s' % (who, ", ".join('"%s"' % x for x in g["searchable"])))
+                L.append('  used in under 10%% (%s): tools.deferred: add %s' % (who, ", ".join('"%s"' % x for x in searchable)))
             else:
-                L.append('  used in under 10%% (%s): roles.%s.searchable: add %s' % (who, g["role"], ", ".join('"%s"' % x for x in g["searchable"])))
+                L.append('  used in under 10%% (%s): roles.%s.searchable: add %s' % (who, g["role"], ", ".join('"%s"' % x for x in searchable)))
         if g["always_on"]:
             where = "tools.deferred" if g["role"] == "foreman" else "roles.%s.searchable" % g["role"]
             L.append("  found in 25%% or more (%s): always on, remove from %s: %s" % (who, where, ", ".join(g["always_on"])))

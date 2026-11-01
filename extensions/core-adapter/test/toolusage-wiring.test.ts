@@ -71,6 +71,19 @@ test("the first turn writes one tool-usage line; a changed used writes another; 
   assert.deepEqual(last.used, ["example_tool", "read"]);
 });
 
+test("a second session_start in one load (/new, /resume) starts a fresh tracker: its first line carries only its own sets", async (t) => {
+  const r = await rigWith(t);
+  await r.rig.fire("before_agent_start", turn());
+  await r.rig.fire("turn_end", msg("example_tool"));
+  assert.equal(r.toolLines().length, 2);
+  await r.rig.restart();
+  await r.rig.fire("before_agent_start", turn());
+  assert.equal(r.toolLines().length, 3);
+  const last = r.toolLines().at(-1)!;
+  assert.deepEqual(last.used, []);
+  assert.deepEqual(last.found, []);
+});
+
 test("a child writes its tool-usage line, with its role, into the foreman session's file", async (t) => {
   const r = await rigWith(t, { child: true });
   await r.rig.fire("before_agent_start", turn());

@@ -389,7 +389,8 @@ class ToolUsageRetroTest(unittest.TestCase):
         text = "\n".join(fr.render_tool_usage(t))
         self.assertIn("tools: declared never used: example_extra (0 of 20 sessions); found: example_hidden (6 of 20)", text)
         self.assertIn("skills: listed never read: example-unread-skill; found: example-domain-skill (6 of 20)", text)
-        self.assertIn('used in under 10% (foreman, 20 sessions): tools.deferred: add "example_extra", "example_tool"', text)
+        self.assertIn('used in under 10% (foreman, 20 sessions): tools.deferred: add "example_tool"', text)
+        self.assertEqual(text.count("example_extra"), 2)  # the counts line and the never-used line, not the searchable line
         self.assertIn("found in 25% or more", text)
         self.assertIn("always on, remove from tools.deferred: example_hidden", text)
         self.assertIn("never used (foreman, 20 sessions): example_extra (example-package) -> tools.deferred", text)
@@ -413,6 +414,24 @@ class ToolUsageRetroTest(unittest.TestCase):
         text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
         self.assertIn("fusion_reason (pi-background-tasks) -> PI_BG_FEATURES=process", text)
         self.assertNotIn("pi remove", text)
+
+    def test_a_tool_is_printed_once_package_remedy_wins(self):
+        lines = [tool_usage_line(i, used=["example_used"], declared=["example_used", "example_tool", "example_extra"]) for i in range(20)]
+        self.write_sessions(lines)
+        text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
+        self.assertIn("-> pi remove npm:example-package", text)
+        self.assertNotIn("used in under 10%", text)
+
+    def test_floor_and_bg_feature_constants_match_deferred_ts(self):
+        import re
+        ts = (Path(__file__).resolve().parent.parent / "extensions" / "core-adapter" / "deferred.ts").read_text(encoding="utf-8")
+        floor = re.search(r"DEFERRED_FLOOR[^=]*=\s*\[([^\]]*)\]", ts).group(1)
+        self.assertEqual(list(fr.TOOL_FLOOR), re.findall(r'"([^"]+)"', floor))
+        # the doctor's optional tools: fusion_ prefix and two names
+        doctor = re.search(r"const optional = registered\.filter\(([^;]*)\);", ts).group(1)
+        want = ["fusion_*"] + re.findall(r'n === "([^"]+)"', doctor)
+        self.assertIn('n.startsWith("fusion_")', doctor)
+        self.assertEqual(list(fr.BG_FEATURE_TOOLS), want)
 
     def test_five_sessions_print_counts_only(self):
         self.write_sessions(self.twenty()[:5])

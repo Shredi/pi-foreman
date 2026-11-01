@@ -93,6 +93,21 @@ test("the harness registers no ask_user_question tool", async (t) => {
   assert.ok(!registered.includes("ask_user_question"), registered.join(","));
 });
 
+test("an open ask in a dir where the session is the parent is never answered", async (t) => {
+  const { rig, dir: asChild } = await openRig(t);
+  const asParent = rig.handoff("kid", "parent");
+  fs.writeFileSync(path.join(asParent, ".ask"), "ask-2\n");
+  await result(rig, plain);
+  assert.equal(fs.existsSync(path.join(asParent, "ruling-2.md")), false);
+  assert.equal(fs.existsSync(path.join(asChild, "ruling-3.md")), true);
+  // only the parent-side dir is open: no ruling is written at all
+  fs.rmSync(path.join(asChild, "ruling-3.md"));
+  fs.rmSync(path.join(asChild, ".ask"));
+  await result(rig, plain);
+  assert.equal(fs.existsSync(path.join(asParent, "ruling-2.md")), false);
+  assert.equal(fs.existsSync(path.join(asChild, "ruling-3.md")), false);
+});
+
 test("ownerAnswered reads the package's shape next to the old decision", () => {
   assert.equal(ownerAnswered("ask_user_question", plain.details), true);
   assert.equal(ownerAnswered("ask_user_question", notes.details), true);

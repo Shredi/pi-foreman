@@ -122,6 +122,17 @@ test("a child whose role has searchable names keeps tool_search active", async (
   assert.equal(r.active().includes("tool_search"), true);
 });
 
+test("a child hides the names its role makes searchable and keeps tool_search active; the foreman does not", async (t) => {
+  const names = [...NAMES, "example_tool"];
+  const roles = { builder: { searchable: ["example_tool", "read"] } };
+  const config = { tools: { deferred: ["fusion_*"] } };
+  const child = await rigWith(t, { child: true, active: names, all: names, roles, config });
+  assert.equal(child.active().includes("tool_search"), true);
+  assert.deepEqual(hiddenOf(child.registered.get("tool_search"), child.active()), ["fusion_reason", "example_tool"]); // the floor (read) still wins
+  const foreman = await rigWith(t, { active: names, all: names, roles, config });
+  assert.equal(hiddenOf(foreman.registered.get("tool_search"), foreman.active())?.includes("example_tool"), false);
+});
+
 test("/foreman status shows the deferred count", async (t) => {
   const r = await rigWith(t);
   await r.commands.get("foreman")!.handler("status", r.rig.ctx);

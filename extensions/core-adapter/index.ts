@@ -56,7 +56,7 @@ import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.ts";
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
-import { McpChild, configuredServers } from "./mcpchild.ts";
+import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { DEFERRED_ENTRY, DEFERRED_SECTION, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
@@ -446,7 +446,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
   const skillState = { rules: { visible: [], hidden: [] } as SkillRules, hidden: [] as SkillRef[], split: false, hint: "" };
-  const toolUsage = new ToolUsageTracker();
+  let toolUsage = new ToolUsageTracker(); // replaced at every session_start: /new and /resume reuse this load
   const persistDeferred = (): void => {
     try {
       pi.appendEntry(DEFERRED_ENTRY, { names: [...deferred.loaded], planMode: deferred.planMode });
@@ -454,7 +454,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // the session file is not writable now: the state stays in memory
     }
   };
-  // r68: the tool_search exists in every session before the installInert return below, so a child allowlisting it never fails at agent_start.
+  const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
+  if ("notice" in core) return installInert(pi, core.notice);
+  // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
     hidden: () => deferred.hidden,
@@ -469,8 +471,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       deferred.trace({ event: "tool_found", ...hit });
     },
   }) as never);
-  const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
-  if ("notice" in core) return installInert(pi, core.notice);
   pi.on("session_shutdown", async () => {
     remotePull.stop();
     core.release();
@@ -1283,6 +1283,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // ------------------------------------------------------------------ events
 
   pi.on("session_start", async (event, ctx) => {
+    toolUsage = new ToolUsageTracker();
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
@@ -1394,7 +1395,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // a host without the tool api hides nothing
     }
     // The hook runs only for an active tool_search, so without one nothing is hidden.
-    deferred.hidden = declared.includes("tool_search") ? hiddenSet({ patterns: deferred.patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
+    // A child also hides the names its role makes searchable (the floor still wins).
+    const patterns = s.isChild ? [...deferred.patterns, ...searchableOf(get(s.config.config, "roles"), s.usage.line.role)] : deferred.patterns;
+    deferred.hidden = declared.includes("tool_search") ? hiddenSet({ patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
     if (!recorded || recorded.planMode !== deferred.planMode) persistDeferred();
     if (deferred.hidden.length) {
       s.trace?.emit({ event: "tools_deferred", count: deferred.hidden.length, names: deferred.hidden.join(",") });

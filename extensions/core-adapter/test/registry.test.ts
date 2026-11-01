@@ -113,3 +113,18 @@ test("missingBundled also checks every ./node_modules manifest entry", () => {
   );
   assert.deepEqual(missingBundled(root), ["./node_modules/pi-intercom/index.ts", "./node_modules/pi-subagents/skills"]);
 });
+
+test("a second copy loaded after the real one registers no tool_search", async () => {
+  const { default: coreAdapter } = await import("../index.ts");
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  const saved = g[CORE_KEY];
+  g[CORE_KEY] = { version: "0", pkgRoot: "/somewhere/else/pi-foreman", api: 1 };
+  try {
+    const tools: string[] = [];
+    coreAdapter({ on: () => undefined, registerTool: (d: { name: string }) => void tools.push(d.name), events: { on: () => undefined, emit: () => undefined } } as never);
+    assert.deepEqual(tools, []);
+  } finally {
+    if (saved === undefined) delete g[CORE_KEY];
+    else g[CORE_KEY] = saved;
+  }
+});
