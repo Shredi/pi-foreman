@@ -58,7 +58,7 @@ Requirement and residual risk: `--plan-mode` needs a `plan` command in the new s
 
 ### The foreman_session_open tool
 
-A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?, machine?, trust?})` runs the same open as the command (same validation, rank rule and opener id); `machine` (a `sessions.machines` name, with `cwd`, the directory on that machine) opens a remote child, and `trust` records the remote folder's trust grant with it. It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planFirst: true` (`planMode: true` is retired for them); a session with an approved plan opens without.
+A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?, machine?, trust?})` runs the same open as the command (same validation, rank rule and opener id); `machine` (a `sessions.machines` name, with `cwd`, the directory on that machine) opens a remote child, and `trust` records the remote folder's trust grant with it. It is refused in subagent children, which never get the tool. `foreman_session_open({model})` is the way to open a cheaper or a stronger child session: the session runs on that model, and the rank rule judges the opener's base model (while the idle model downshift is active, the model before the downshift, not the idle rung). Design or new-topic sessions open with `planFirst: true` (`planMode: true` is retired for them); a session with an approved plan opens without.
 
 ### Handoff dir and registry
 

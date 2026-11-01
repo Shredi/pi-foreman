@@ -108,6 +108,12 @@ export class IdleModel {
     return current ? spec(current) : null;
   }
 
+  /** The model the foreman's gates judge as a ref: the base while downshifted, else the current model. */
+  baseRef(current: ModelRef | null | undefined): ModelRef | null {
+    if (this.base) return { provider: this.base.provider, id: this.base.id };
+    return current ? { provider: current.provider, id: current.id } : null;
+  }
+
   /** `before_agent_start`: an owner turn restores the base; a notice turn on a cold cache may downshift. */
   async beforeTurn(cause: string | null): Promise<void> {
     if (cause === "user") {

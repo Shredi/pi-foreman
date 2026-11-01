@@ -344,8 +344,8 @@ BUILTIN_CACHE = {
     "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
     "github-copilot": {"ttlSeconds": None, "billing": "request"},
 }
-# Smallest TTL whose 0.9 x tick lies beyond Pi's 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
-SELF_WARM_MIN_TTL_SECONDS = 2001
+# Smallest TTL Pi could not warm twice before its 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
+SELF_WARM_MIN_TTL_SECONDS = int(30 * 60 / (2 * 0.9)) + 1
 # Built-in per-model TTLs (mirrors BUILTIN_BY_MODEL in cachepolicy.ts); the first matching row wins.
 BUILTIN_BY_MODEL = {
     "github-copilot": [("claude-*", 300), ("gpt-*", 1800), ("o1*", 1800), ("o3*", 1800), ("o4*", 1800)],

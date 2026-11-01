@@ -210,6 +210,34 @@ test("foremanBaseModel feeds the review rule and the rank checks while downshift
   assert.equal(r.im.baseModel(undefined), null);
 });
 
+test("cross-provider rung: the switch lands on the spec's provider, the gates keep the base, the restore returns to it", async () => {
+  const other = { provider: "q", id: "cheap" };
+  const r = rig({ rung: () => ({ model: "q/cheap", thinking: "low" }), find: (spec) => ({ provider: spec.split("/")[0], id: spec.split("/")[1] }) });
+  await r.im.beforeTurn("child");
+  assert.deepEqual(r.switched, [{ to: "q/cheap", thinking: "low" }]);
+  assert.deepEqual(r.st.cur, other);
+  assert.equal(r.im.baseModel(r.st.cur), "p/big");
+  assert.deepEqual(r.im.baseRef(r.st.cur), BASE);
+  assert.deepEqual(r.entries[0], { base: { ...BASE, thinking: "high" }, idle: other, open: true });
+  assert.deepEqual(r.traces[0], { event: "foreman_model", from: "p/big", to: "q/cheap", reason: "idle_cold", cause: "child" });
+  await r.im.beforeTurn("user");
+  assert.deepEqual(r.st.cur, BASE);
+  assert.deepEqual(r.switched[1], { to: "p/big", thinking: "high" });
+  assert.equal(r.im.downshifted(), false);
+  assert.deepEqual(r.im.baseRef(r.st.cur), BASE);
+  assert.equal(r.im.baseRef(null), null);
+});
+
+test("cross-provider session_start closes an open entry whose idle model is on another provider", async () => {
+  const other = { provider: "q", id: "cheap" };
+  const open = { type: "custom", customType: IDLE_ENTRY, data: { base: { ...BASE, thinking: "high" }, idle: other, open: true } };
+  const r = rig();
+  r.st.cur = { ...other };
+  await r.im.onSessionStart([open]);
+  assert.deepEqual(r.switched, [{ to: "p/big", thinking: "high" }]);
+  assert.equal(r.entries[0].open, false);
+});
+
 test("latestIdleEntry takes the newest valid entry", () => {
   const e = (open: boolean, id: string) => ({ type: "custom", customType: IDLE_ENTRY, data: { base: { provider: "p", id, thinking: "low" }, idle: IDLE, open } });
   assert.equal(latestIdleEntry([]), null);
