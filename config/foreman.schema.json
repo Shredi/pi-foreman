@@ -335,6 +335,7 @@
         "planReviewRounds": { "type": "integer", "minimum": 1, "description": "Plan-review rounds per plan before the checkpoint opens with the open findings visible (a FAIL below the cap goes back for a revision; a FAIL at the cap opens the checkpoint). Counted per plan version: an appended ruling, decision log or addendum is not a new version. Default 2. Free per layer." },
         "childTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Per-tool-call timeout of builder and reviewer runs (pi-subagents toolTimeoutMs); a run deadline timeoutMs below it is raised to it. Default 1800. A project or session can only lower it." },
         "launchTimeoutCapMinutes": { "type": "integer", "minimum": 1, "description": "The only hard ceiling on a child run deadline, in minutes: the role timeoutMinutes is the default and a launch timeoutMs wins, but no written deadline exceeds this. Default 120. A project or session can only lower it." },
+        "longCommands": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Regular expressions matched against the first command of a child's bash call (after cd and env assignments). A 'Subagent needs attention' notice for a bash call that matches is not shown: a test runner is expected to run long. Default: the common test runners. Free per layer." },
         "childBashTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Default timeout in seconds of a child's bash call that names no timeout. Capped at childBashTimeoutMaxSeconds. Default 600. Free per layer." },
         "childBashTimeoutMaxSeconds": { "type": "integer", "minimum": 1, "description": "Cap in seconds on the timeout a child's bash call names. The effective ceiling is the lower of this and childTimeoutSeconds (the per-tool-call limit of the child run). Default 1800. Free per layer." },
         "heavyThreshold": { "type": "string", "enum": ["strict", "eee843d"], "description": "strict = heavy is for multi-component or risky changes (prompt criteria); heavySignals keyword hits in a request are only a hint to the foreman; heavyFileCount still escalates. eee843d = the old prompt line and keyword auto-escalation. A project or session can only move toward eee843d." }
@@ -345,6 +346,13 @@
       "additionalProperties": false,
       "properties": {
         "critic": { "type": "array", "items": { "type": "string" }, "description": "Questions rendered into every reviewer task; the review answers each once per ledger item as a line `CRITIC: <item> Q<k>: <answer>`. The harness does not parse the lines. Empty list = no block. Default: the four owner questions." }
+      }
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nudgeDays": { "type": "integer", "minimum": 0, "description": "Days after which `foreman update-check` and `/sync` print a one-line reminder to run `foreman knowledge check`. Default 30." }
       }
     },
     "sync": {

@@ -128,7 +128,7 @@ Use `[research]` on an explorer launch that reads the web or PDFs; add `[fact-cr
 
 ## Launch sizing
 
-A builder launch may carry two extra top-level fields (like `reason`, per `tasks`/`chain`/`parallel` entry too; the entry wins). The adapter strips them from every launch and picks the rung from them. A launch without them runs as before (`launch_sizing` rule `undeclared`).
+A builder launch may carry two extra top-level fields (like `reason`, per `tasks`/`chain`/`parallel` entry too; the entry wins). The adapter strips them from every launch and picks the rung from them. A launch without them runs as before (`launch_sizing` rule `undeclared`). They are keys of the `subagent` call itself, never inside `options` or `args`: the `subagent` schema belongs to pi-subagents, so the adapter adds this to the foreman's tool description, moves a value found in `options` (or in `args` of a launch without `workflow`) to the top level (trace `sizing_lifted`; a top-level value wins) and, when pi-subagents still refuses the call (`unknown options key 'size'`, `args requires workflow`), appends the fix text to the refusal (trace `sizing_hint`).
 
 - `size: { files: string[], largestFileLines?: number, modules?: number }`: the files the builder will touch.
 - `risk: string[]`, from `guard, permission, parser, concurrency, security, design`.
