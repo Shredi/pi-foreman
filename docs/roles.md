@@ -137,7 +137,7 @@ The table above has the key rows; this section gives the behaviour.
 - User or overlay config only; a project or session value is ignored with a warning.
 - Read scope: shell reads are granted per role, only for the skill dirs that role names. The `read` tool sees the union of the skills any role names. `foreman setup` re-renders the `external_directory_read` keys, so re-run it after changing `skills` (see docs/permissions.md, "Skill reads").
 - Residual: a package skill under `{agentDir}/npm/node_modules`, or a skill from a settings `skills` path, still asks when a child reads its body. An in-repo named skill stays denied to a child's shell read (the `read` tool works).
-- The package ships one generic skill, `skills/skill-authoring`, listed in `pi.skills`; name it in a role's `skills` to give that role the authoring guide.
+- The package ships two generic skills, `skills/skill-authoring` and `skills/handoff`, listed in `pi.skills`; name `skill-authoring` in a role's `skills` to give that role the authoring guide. `handoff` is for the main session (session briefs and rulings); no role needs it.
 
 ### `roles.<id>.mcp`
 
