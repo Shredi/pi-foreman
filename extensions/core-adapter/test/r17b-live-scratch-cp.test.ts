@@ -38,7 +38,9 @@ test("r17b live shape: cp from outside the workspace into the own relative scrat
   assert.equal(res0?.block, true);
   assert.ok(String(res0?.reason).includes(SHELL_WRITE_REFUSAL), String(res0?.reason));
   assert.ok(recs.some((x) => x.event === "shell_write_refused" && x.kind === "cp"), JSON.stringify(recs));
-  assert.equal(recs.some((x) => x.event === "auto_review_allow" || (x.event === "guard" && x.guard === "gate")), false, JSON.stringify(recs));
+  // A routine gate allow record (`default-write-in`, when the source dir sits in the platform temp dir, as on Linux CI) may precede the refusal:
+  // the shell write guard still refuses afterwards. What ruling-10 forbids is a dialog, a classifier call, or an ask/deny gate record.
+  assert.equal(recs.some((x) => x.event === "auto_review_allow" || (x.event === "guard" && x.guard === "gate" && x.decision !== "allowed")), false, JSON.stringify(recs));
   assert.deepEqual([dialogs, calls], [0, 0]);
   void system;
 });
