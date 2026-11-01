@@ -83,3 +83,5 @@ Repo layout and test commands: `docs/development.md`. Read the page for the area
 - `docs/resources.md`: host pressure gate, `resources.*` keys, levels, launch behaviour at high and critical, surfaces, trace events, probes.
 - `docs/overlays.md`: private and organisation overlays, one-way flow, extension points.
 - `docs/development.md`: layout, tests, replay rig, CI, Windows notes, keeping docs current.
+- `docs/orchestration-design.md`: when subagents earn their place and when to fold them into one loop; read it before orchestration, role or delegation design.
+- `skills/skill-authoring` and `skills/prompting-guides` (for sessions that do not load the skill catalog): read the first `SKILL.md` before writing, restructuring or debugging any skill; read the second before writing or reviewing a system prompt, role file (`agents/*.md`), instruction, skill body or launch brief for a given model.
