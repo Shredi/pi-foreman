@@ -40,7 +40,21 @@
     { "name": "relative write", "line": "cat x > f", "floor": "allow", "guard": null },
     { "name": "nested worktree redirect", "line": "cat x > {nested}/f", "cwd": "{nested}", "floor": "allow", "guard": null },
     { "name": "nested worktree git add", "line": "cd {nested}; git add f", "cwd": "{nested}", "floor": "allow", "guard": "allow" },
-    { "name": "nested worktree cannot write the root above it", "line": "cat x > {root}/f", "cwd": "{nested}", "floor": "deny", "guard": null }
+    { "name": "nested worktree cannot write the root above it", "line": "cat x > {root}/f", "cwd": "{nested}", "floor": "deny", "guard": null },
+    { "name": "git -C scratch commit", "line": "git -C {root}/.workflow/scratch commit -m 'fix: x'", "floor": "deny", "guard": "deny" },
+    { "name": "git -C scratch add a file outside it", "line": "git -C {root}/.workflow/scratch add ../../src/a.ts", "floor": "deny", "guard": "deny" },
+    { "name": "cd scratch then git commit", "line": "cd {root}/.workflow/scratch && git commit -m 'fix: x'", "floor": "deny", "guard": "deny" },
+    { "name": "git --git-dir scratch commit", "line": "git --git-dir={root}/.workflow/scratch commit -m x", "floor": "deny", "guard": "deny" },
+    { "name": "opaque git -C scratch commit", "line": "bash -c \"git -C {root}/.workflow/scratch commit -m x\"", "floor": "deny", "guard": null },
+    { "name": "git -C scratch log is a read", "line": "git -C {root}/.workflow/scratch log -1", "floor": "allow", "guard": "allow" },
+    { "name": "sort -o into root", "line": "sort -o {root}/f x", "floor": "deny", "guard": null },
+    { "name": "sort -o glued into root", "line": "sort -o{root}/f x", "floor": "deny", "guard": null },
+    { "name": "sort --output into root", "line": "sort --output={root}/f x", "floor": "deny", "guard": null },
+    { "name": "sort -o into scratch", "line": "sort -o {root}/.workflow/scratch/f x", "floor": "allow", "guard": null },
+    { "name": "git diff --output= into root", "line": "git diff --output={root}/f", "floor": "deny", "guard": "deny" },
+    { "name": "git diff --output into root", "line": "git diff --output {root}/f", "floor": "deny", "guard": "deny" },
+    { "name": "git diff --output into scratch", "line": "git diff --output={root}/.workflow/scratch/f", "floor": "allow", "guard": "allow" },
+    { "name": "git diff --output into own worktree", "line": "git diff --output={wt}/f", "floor": "allow", "guard": "allow" }
   ],
   "tool": [
     { "name": "edit below root", "tool": "edit", "input": { "path": "{root}/src/a.ts" }, "floor": "deny" },
