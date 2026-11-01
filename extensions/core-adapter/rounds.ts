@@ -52,6 +52,8 @@ export interface RoundState {
   secOpen?: boolean;
   /** Security-exempt revision rounds launched since the last reset. Absent = 0. */
   exempt?: number;
+  /** A revision builder answered the open FAIL (counted or exempt); cleared by the next verdict. Absent = false. */
+  revisionAnswered?: boolean;
 }
 
 export type Verdict = "pass" | "fail";
@@ -266,7 +268,8 @@ export function isOwnerPrompt(source: unknown, text: unknown): boolean {
 export function onReviewDone(s: RoundState, verdict: Verdict | null, security = false): RoundState {
   if (!s.built) return s;
   const secOpen = verdict === "fail" && security;
-  return { ...s, reviewOpen: verdict !== "pass", ...(secOpen || s.secOpen ? { secOpen } : {}) };
+  const { revisionAnswered: _answered, ...rest } = s;
+  return { ...rest, reviewOpen: verdict !== "pass", ...(secOpen || s.secOpen ? { secOpen } : {}) };
 }
 
 export function revisionLimit(configured: unknown, tier: Tier): number {
@@ -329,7 +332,7 @@ export function checkLaunch(s: RoundState, steps: string[][], tier: Tier, config
   }
   const revisions = counted + exempt;
   const usedExempt = (s.exempt ?? 0) + exempt;
-  const next: RoundState = { built, reviewOpen, used: s.used + counted, ...(secOpen ? { secOpen } : {}), ...(usedExempt > 0 ? { exempt: usedExempt } : {}) };
+  const next: RoundState = { built, reviewOpen, used: s.used + counted, ...(secOpen ? { secOpen } : {}), ...(usedExempt > 0 ? { exempt: usedExempt } : {}), ...(revisions > 0 || s.revisionAnswered ? { revisionAnswered: true } : {}) };
   const out = (block?: string): LaunchRounds => ({ revisions, ...(exempt > 0 ? { exempt } : {}), next, ...(block ? { block } : {}) });
   if (revisions === 0) return out();
   const limit = revisionLimit(configured, tier);

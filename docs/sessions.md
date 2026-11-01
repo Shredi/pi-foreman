@@ -9,7 +9,7 @@
 `/foreman session` opens a second pi-foreman session on a brief, talks to it over pi-intercom and closes it
 again. All four subcommands are yours to type; a subagent child refuses every one of them.
 
-- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]]`
+- `/foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]]`
   (with `--machine`, `--print-all` is refused: `remote_option`; `--plan-mode` and `--first-command` are checked on the remote; `--focus` focuses the new tab on the remote machine)
   writes a handoff dir (below), starts `pi` in a new Herdr tab (or prints the command to run in a terminal)
   and records the session. The label is 1 to 40 characters of `A-Z a-z 0-9 . _ -`. `--plan-first` makes the
@@ -34,7 +34,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
 
 `bin/foreman session open|list` (`.cmd` and `.ps1` on Windows) runs `scripts/foreman_session.py`:
 
-- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--machine NAME [--trust]] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
+- `foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] [--print-all] [--parent-id ID] [--own-model ID] [--agent-dir DIR]`.
   `--print-all` prints both the POSIX and the PowerShell command. With `--machine`, `--print-all` is refused (`remote_option`); `--plan-mode` and `--first-command` go to the remote, which checks them; `--focus` focuses the new tab on the remote machine. The parent id is `--parent-id`, else
   `PI_INTERCOM_SESSION_ID`, else `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
@@ -58,7 +58,7 @@ Requirement and residual risk: `--plan-mode` needs a `plan` command in the new s
 
 ### The foreman_session_open tool
 
-A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?, machine?, trust?})` runs the same open as the command (same validation, rank rule and opener id); `machine` (a `sessions.machines` name, with `cwd`, the directory on that machine) opens a remote child, and `trust` records the remote folder's trust grant with it. It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planFirst: true` (`planMode: true` is retired for them); a session with an approved plan opens without.
+A foreman session can open a session without bash: `foreman_session_open({label, brief, cwd?, model?, planFirst?, planMode?, firstCommand?: string[], focus?, dryRun?, worktree?, base?, machine?, trust?})` runs the same open as the command (same validation, rank rule and opener id); `machine` (a `sessions.machines` name, with `cwd`, the directory on that machine) opens a remote child, and `trust` records the remote folder's trust grant with it. It is refused in subagent children, which never get the tool. Design or new-topic sessions open with `planFirst: true` (`planMode: true` is retired for them); a session with an approved plan opens without.
 
 ### Handoff dir and registry
 
@@ -213,6 +213,18 @@ Every orchestrator session works in its own worktree (`git worktree add …`) an
 A security revision after the final review is cap-exempt: one more Opus builder is allowed.
 Builders commit per numbered item.
 A child bundle holds at most 3 items.
+
+### Worktree for a new session
+
+`--worktree [--base REF]` (tool: `worktree: true`, `base`) makes `open` create the session's own round worktree and open the session there; `--cwd` (default the opener's cwd) only has to be inside a git checkout, a linked worktree there resolves to the main checkout.
+
+- Path: `<close.worktreeDir>/<label>` (default `../<repo>.worktrees/<label>`). Branch: `<prefix>/<label>`, the prefix from `sessions.worktree.branchPrefix` (default `round`; user or overlay config only; same characters as a label).
+- Base: `--base` (a branch, tag or commit that does not start with `-` and resolves to a commit after the fetch), else the default branch of `origin`: `git fetch origin`, then `refs/remotes/origin/HEAD`, else `git ls-remote --symref origin HEAD`. The worktree is `git worktree add <path> -b <branch> <base>`.
+- Refused before any change: the path exists, the branch exists, no remote `origin`, a bad `--base`, a `--cwd` outside a git checkout, `--base` without `--worktree`, `--worktree` with `--machine` (the worktree would be on the remote machine).
+- Install: only when the new worktree holds `package-lock.json` or `npm-shrinkwrap.json`, `npm ci` runs there (`npm.cmd` on Windows; 540 s limit). A failed install removes nothing: the exit code is reported (`install: failed:<code>`) and the session opens anyway; rerun `npm ci` in the worktree.
+- `--dry-run` prints path, branch, base and the install step and creates nothing (it skips the fetch and uses the refs already known).
+- Output: the info JSON gains `worktree: {path, branch, base, install}` (`install` is `npm ci`, `none` or `failed:<code>`). After a successful open the adapter records the worktree in the opener's manifest (as for a `git worktree add` run through the session, so it is a round worktree and its `.workflow` is readable for the opener's children) and traces `session_worktree {label, path, branch, base, install}`. The session's cwd is the worktree, so the [trust grant](#trust-dialog-for-a-fresh-worktree) applies.
+- Removal: the opener's `foreman close` and `foreman worktree sweep` remove it only under the usual preconditions (clean, merged, no stash, no live session inside), and a worktree stays while the opened session's registry entry is `pending`, `open` or `closing`; close that session first.
 
 ### Trust dialog for a fresh worktree
 
