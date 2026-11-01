@@ -318,8 +318,8 @@ class ConfigTest(unittest.TestCase):
         for role, entry in sub["agentOverrides"].items():
             self.assertIsInstance(entry["tools"], list)
             self.assertEqual("codemode" in entry["tools"], role == "explorer", role)
-        self.assertEqual(sub["agentOverrides"]["finalizer"]["tools"],
-                         ["read", "ls", "grep", "find", "bash", "edit"] + list(fc.PR_READ_TOOLS) + ["tool_search"])
+        self.assertEqual(sub["agentOverrides"]["reviewer"]["tools"],
+                         ["read", "ls", "grep", "find", "bash", "foreman_ledger"] + list(fc.PR_ROLE_TOOLS["reviewer"]) + ["tool_search"])
         json.dumps(out)
 
     def test_children_never_get_the_intercom_tool(self):
@@ -337,7 +337,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(cfg["ceremony"]["ledgerHelper"], "tool")
         sub = fc.generate_subagents(cfg)["subagents"]["agentOverrides"]
         for role in fc.CHILD_ROLES:
-            self.assertEqual("foreman_ledger" in sub[role]["tools"], role in ("reviewer", "senior-reviewer"), role)
+            self.assertEqual("foreman_ledger" in sub[role]["tools"], role == "reviewer", role)
         self.assertIn("foreman_ledger", fc.resolve_role(cfg, "reviewer", "p1")["tools"])
         cfg["ceremony"]["ledgerHelper"] = "off"
         self.assertEqual(fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["reviewer"]["tools"],
@@ -368,7 +368,7 @@ class ConfigTest(unittest.TestCase):
             self.assertEqual(got, tuple(want), role)
             self.assertEqual(tuple(t for t in fc.resolve_role(cfg, role, "p1")["tools"] if t.startswith("pr_")), tuple(want), role)
         self.assertEqual(fc.PR_ROLE_TOOLS["reviewer"], ("pr_status", "pr_comments"))
-        self.assertFalse([t for t in sub["planner"]["tools"] if t.startswith("pr_")])
+        self.assertEqual(fc.with_pr_pack(cfg, "no-bash", ["read"]), ["read"])
         cfg["roles"]["extra"] = {"tools": ["read", "bash"]}
         self.assertEqual(fc.with_pr_pack(cfg, "extra", ["bash"]), ["bash"] + list(fc.PR_READ_TOOLS))
         cfg["roles"]["builder"]["tools"] += ["pr_create", "pr_watch"]
@@ -420,7 +420,7 @@ class ConfigTest(unittest.TestCase):
     def test_display_names(self):
         cfg = self.load()["config"]
         self.assertEqual(fc.display_name(cfg, "foreman"), "Picard")
-        self.assertEqual(fc.display_name(cfg, "senior-reviewer"), "Sherlock")
+        self.assertEqual(fc.display_name(cfg, "reviewer"), "Watson")
         self.l2({"displayNames": "plain"})
         cfg = self.load()["config"]
         self.assertEqual(fc.display_name(cfg, "builder"), "builder")
@@ -626,47 +626,72 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_reads, expected)
         # round 43: the PR body carries the changelog section; PRs never edit CHANGELOG.md
         old_pr = "Children never open PRs."
-        new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): the finalizer drafts it at heavy tier, you draft it otherwise. PRs never edit CHANGELOG.md."
+        new_pr = "Children never open PRs. The PR body carries a `## Changelog` section (one to three user-facing bullets): you draft it in the scratch dir at every tier. PRs never edit CHANGELOG.md."
         self.assertIn(old_pr, expected)
+        # roles-slim: the planner, finalizer and senior-reviewer roles are gone; one (old, new) pair per changed rendered line
+        role_pairs = [
+            ("needs a `reviewer` or `senior-reviewer` PASS on the current head", "needs a `reviewer` PASS on the current head"),
+            ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
+            ("a `reviewer` (or `senior-reviewer`) PASS.", "a `reviewer` PASS."),
+            ("- heavy: ledger, then `planner` (single launch; it writes `.workflow/scratch/plan-<topic>.md`), then `foreman_checkpoint({path})`, then builder(s), `finalizer`, `reviewer`, PR. Builders may fan out up to the configured width. `finalizer` closes the task; it is also required before you may finish.",
+             "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.md`, then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
+            ("Call it only after the planner's completion notice (refused while a planner runs) and change nothing", "Change nothing"),
+            ("re-plan (relaunch `planner` or edit the plan yourself), then checkpoint again.", "revise the plan yourself, then checkpoint again."),
+            ("closed only by a fresh `reviewer` or `senior-reviewer` launch", "closed only by a fresh `reviewer` launch"),
+            ("- Launch only the roles `explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`. Other agents are refused. `planner` only as a single launch, never in `tasks`, `chain` or `resume`; it writes only under `.workflow/`.",
+             "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
+            # the SECURITY: revision-cap rule lost its removed `planner` tag, so it renders in every variant (eee843d never had it)
+            ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
+        ]
+        for old_text, _ in role_pairs:
+            self.assertIn(old_text, expected)
         # round 68: the launch `mcp` field is named in the launch rule
         old_launch = "`output` and `outputMode` are refused (`output_path`). Workflow scripts"
         new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` narrows a child's MCP tools to part of its role's ceiling (single launches only; `[]` = none). Workflow scripts"
         self.assertIn(old_launch, expected)
-        self.assertEqual(render_prompt(text, knobs), expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch))
+        want = expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch)
+        for old_text, new_text in role_pairs:
+            want = want.replace(old_text, new_text)
+        self.assertEqual(render_prompt(text, knobs), want)
 
     def test_defaults_validate(self):
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")
         self.assertEqual((res["warnings"], res["errors"]), ([], []))
 
 
-class CeremonyPlannerKeyTest(unittest.TestCase):
-    """ceremony.planner: self | role, default self, free per layer (no tighten rule)."""
+class SlimRolesTest(unittest.TestCase):
+    """Three launchable roles; the reviewer is modular (security-review skill); the rules text names no removed role."""
 
-    setUp = ConfigTest.setUp
-    _restore_env = ConfigTest._restore_env
-    l2 = ConfigTest.l2
-    proj = ConfigTest.proj
-    load = ConfigTest.load
+    def test_default_roles_are_foreman_session_foreman_explorer_builder_reviewer(self):
+        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())
+        self.assertEqual(sorted(defaults["roles"]), ["builder", "explorer", "foreman", "reviewer", "session-foreman"])
+        self.assertEqual(fc.CHILD_ROLES, ["explorer", "builder", "reviewer"])
+        self.assertEqual(defaults["ceremony"]["required"]["heavy"], ["builder", "reviewer"])
+        self.assertEqual(fc.REQUIRED_STEPS, ["builder", "reviewer"])
 
-    def test_default_is_self_and_validates(self):
-        res = self.load()
-        self.assertEqual(res["config"]["ceremony"]["planner"], "self")
+    def test_reviewer_default_skills_name_security_review(self):
+        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())
+        self.assertEqual(defaults["roles"]["reviewer"]["skills"], ["security-review"])
+        res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")
         self.assertEqual((res["warnings"], res["errors"]), ([], []))
+        self.assertEqual(res["config"]["roles"]["reviewer"]["skills"], ["security-review"])
 
-    def test_every_layer_may_set_either_value(self):
-        self.l2({"ceremony": {"planner": "role"}})
-        res = self.load()
-        self.assertEqual((res["config"]["ceremony"]["planner"], res["errors"]), ("role", []))
-        self.proj({"ceremony": {"planner": "self"}})
-        res = self.load(trusted_project=True)
-        self.assertEqual((res["config"]["ceremony"]["planner"], res["errors"]), ("self", []))
-        res = self.load(trusted_project=True, session_json='{"ceremony": {"planner": "role"}}')
-        self.assertEqual((res["config"]["ceremony"]["planner"], res["errors"]), ("role", []))
+    def test_security_review_skill_parses_with_its_name(self):
+        text = (ROOT / "skills" / "security-review" / "SKILL.md").read_text()
+        m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        self.assertIsNotNone(m)
+        front = dict(line.split(": ", 1) for line in m.group(1).splitlines())
+        self.assertEqual(front["name"], "security-review")
+        self.assertLess(len(front["description"]), 1024)
 
-    def test_unknown_value_is_a_schema_error(self):
-        self.l2({"ceremony": {"planner": "bogus"}})
-        res = self.load()
-        self.assertTrue(any("planner" in e for e in res["errors"]), res["errors"])
+    def test_default_rules_render_keeps_the_security_cap_and_names_no_removed_role(self):
+        text = (ROOT / "instructions" / "foreman.md").read_text()
+        values = {"ledgerhelper": "tool", "heavythreshold": "strict", "reviewperrevision": "on", "trivialpath": "builder", "ladder": "on",
+                  "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on", "planreview": "on", "tools.pr": "on"}
+        kept = render_prompt(text, values)
+        self.assertIn("A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit", kept)
+        for word in ("planner", "finalizer", "senior-reviewer"):
+            self.assertNotIn(word, kept)
 
 
 class SessionForemanRoleTest(unittest.TestCase):

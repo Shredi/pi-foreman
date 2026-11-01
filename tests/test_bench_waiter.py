@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "bench"))
 import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import wait_session as ws  # noqa: E402
 
-ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+ROLES = ["foreman", "explorer", "builder", "reviewer"]
 
 
 def row(**kw):

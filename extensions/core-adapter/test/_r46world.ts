@@ -48,7 +48,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   fs.mkdirSync(path.join(ps, "src"), { recursive: true });
   fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
   fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
   const sessionId = `r46-${++n}`;
   const sessionFile = path.join(agentDir, "sessions", "--project--", `2026_${sessionId}.jsonl`);

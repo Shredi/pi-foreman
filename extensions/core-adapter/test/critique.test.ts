@@ -40,15 +40,15 @@ test("withoutCritique keeps every line outside the block, so a FAIL after the bl
   assert.equal(verdictOf(text), "fail");
 });
 
-test("reviewer and senior-reviewer prompts carry the CRITIQUE block after the verdict", () => {
-  for (const name of ["reviewer.md", "senior-reviewer.md"]) {
+test("the reviewer prompt carries the CRITIQUE block after the verdict", () => {
+  for (const name of ["reviewer.md"]) {
     const text = fs.readFileSync(path.join(ROOT, "agents", name), "utf8");
     const at = text.indexOf("After the verdict, `CRITIQUE:` then one line per point, `- [now] <text>`");
     assert.ok(at > 0, name);
     assert.ok(text.indexOf("`- [later] <text>`", at) > at, name);
     assert.ok(text.includes("`CRITIQUE: none` when there is none"), name);
     assert.ok(text.includes("overengineering, niche checks beyond the item's scope, one-caller abstractions, flags or options nothing sets, tests of mocks"), name);
-    assert.match(text, /Critique never turns (PASS into FAIL|APPROVE into BLOCK) on its own/, name);
+    assert.match(text, /Critique never turns PASS into FAIL on its own/, name);
     assert.ok(text.includes("records it in result.md"), name);
   }
 });

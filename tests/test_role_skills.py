@@ -63,11 +63,11 @@ class RoleSkillsConfig(unittest.TestCase):
         return fc.load_config(agent_dir=str(self.agent), project_dir=str(self.project), trusted_project=True,
                               session_json=json.dumps(session) if session is not None else None)
 
-    def test_every_default_role_has_an_empty_skills_list(self):
+    def test_every_default_role_has_an_empty_skills_list_except_the_reviewer(self):
         roles = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())["roles"]
         self.assertTrue(roles)
         for role, entry in roles.items():
-            self.assertEqual(entry.get("skills"), [], role)
+            self.assertEqual(entry.get("skills"), ["security-review"] if role == "reviewer" else [], role)
 
     def test_project_and_session_layers_cannot_set_skills(self):
         res = self.load(proj={"roles": {"builder": {"skills": ["evil"]}}},
@@ -98,14 +98,18 @@ class RoleSkillsGenerated(unittest.TestCase):
     def test_block_has_skills_only_when_non_empty(self):
         out = fc.generate_subagents(self.cfg(["alpha"]))["subagents"]["agentOverrides"]
         self.assertEqual(out["builder"]["skills"], ["alpha"])
+        self.assertEqual(out["reviewer"]["skills"], ["security-review"])
         for role, entry in out.items():
-            if role != "builder":
+            if role not in ("builder", "reviewer"):
                 self.assertNotIn("skills", entry, role)
 
     def test_empty_skills_write_no_key(self):
         out = fc.generate_subagents(self.cfg([]))["subagents"]
         for role, entry in out["agentOverrides"].items():
-            self.assertNotIn("skills", entry, role)
+            if role == "reviewer":
+                self.assertEqual(entry["skills"], ["security-review"])
+            else:
+                self.assertNotIn("skills", entry, role)
 
     def test_never_writes_inherit_skills_or_system_prompt_mode(self):
         out = fc.generate_subagents(self.cfg(["alpha"]))["subagents"]

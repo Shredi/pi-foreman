@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// pi-foreman installer (design section 11). Plain Node >= 22 ESM, no dependencies.
+// pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependencies are @inquirer/prompts (picker) and @earendil-works/pi-tui (--preview), both loaded lazily.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
 //                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]
 // pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents
@@ -32,6 +32,7 @@ const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
 const USAGE = [
   "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]",
   "                       [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]",
+  "                       [--preview [screen]]",
   `  Install pi-foreman first: ${FOREMAN_INSTALL}  (this script is also reachable as \`foreman setup\`).`,
   "  --no-intercom  filter pi-intercom out of the pi-foreman package entry and do not write its config",
   "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
@@ -42,6 +43,7 @@ const USAGE = [
   "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
   "  --addon        install an optional Pi add-on from config/addons.json (repeatable; installed only on this consent)",
   "  --pick         open the terminal picker again (needs a terminal; PI_FOREMAN_PICKER=off disables it, =force is a test aid)",
+  "  --preview      draw a setup screen (home, plan, updates, config, models, workfolders, apply) from sample data; changes nothing and cannot be combined with other flags",
   "  --dry-run      show what would change, write nothing",
 ].join("\n");
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
@@ -74,7 +76,7 @@ const say = (s = "") => console.log(s);
 const csv = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, develop: false, profile: null, enable: [], disable: [], addon: [], pick: false };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, develop: false, profile: null, enable: [], disable: [], addon: [], pick: false, preview: null };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -96,8 +98,14 @@ function parseArgs(argv) {
     else if (flag === "--disable") o.disable.push(...csv(value()));
     else if (flag === "--addon") o.addon.push(...csv(value()));
     else if (flag === "--pick") o.pick = true;
+    else if (flag === "--preview") o.preview = inline ?? (argv[i + 1] !== undefined && !argv[i + 1].startsWith("-") ? argv[++i] : "");
     else if (flag === "--help" || flag === "-h") throw new Fatal(USAGE, 0);
     else throw new Fatal(`Unknown argument: ${argv[i]}\n${USAGE}`, 2);
+  }
+  if (o.preview !== null) {
+    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.pick && "--pick"].filter(Boolean);
+    if (others.length) throw new Fatal(`--preview cannot be combined with ${others.join(", ")}.`, 2);
+    return o;
   }
   if (o.overlay !== null && !OVERLAY_RE.test(o.overlay)) {
     throw new Fatal(`--overlay needs an exact version, e.g. npm:@scope/pkg@1.2.3 (got "${o.overlay}"). Ranges and tags are refused.`, 2);
@@ -673,7 +681,13 @@ async function main(argv) {
     if (!st.force && !st.tty) throw new Fatal("--pick needs a terminal: stdin and stdout must both be TTYs (PI_FOREMAN_PICKER=force overrides, for tests).", 2);
     if (!st.force && st.ci) throw new Fatal("--pick cannot run while CI is set (PI_FOREMAN_PICKER=force overrides, for tests).", 2);
   }
-  if (Number(process.versions.node.split(".")[0]) < 22) throw new Fatal(`Node ${process.versions.node} is too old; pi-foreman needs Node >= 22.`);
+  const [nodeMajor, nodeMinor] = process.versions.node.split(".").map(Number);
+  if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 19)) throw new Fatal(`Node ${process.versions.node} is too old; pi-foreman needs Node >= 22.19.`);
+  if (opts.preview !== null) {
+    const { runPreview } = await import("./setup/preview.ts");
+    process.exitCode = await runPreview(opts.preview || undefined, { stdout: process.stdout, isTTY: !!(process.stdin.isTTY && process.stdout.isTTY), columns: process.stdout.columns, rows: process.stdout.rows });
+    return;
+  }
   const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "packages.lock.json"), "utf8"));
   const agentDir = resolveAgentDir(opts.agentDir);
   const projectDir = process.cwd();

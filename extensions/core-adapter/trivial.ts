@@ -7,8 +7,8 @@
 // scanned (diffscan.ts, base = HEAD at the first builder launch) and escalates to standard on the
 // first failed condition, so a reviewer is required again (trace `triage_escalated`).
 //
-// The path: the ledger stays (`Tier: trivial`, the foreman marks items), explorer, planner,
-// reviewer and finalizer are skipped, one builder on its bottom rung makes the change (a `strong`
+// The path: the ledger stays (`Tier: trivial`, the foreman marks items), explorer and
+// reviewer are skipped, one builder on its bottom rung makes the change (a `strong`
 // launch without a ladder trigger escalates). It is on while `ceremony.required.trivial` names
 // `builder` (the default); `required.trivial: []` restores the earlier trivial (no builder, any
 // non-explorer launch escalates). In `bounded` mode the foreman may make the change itself,

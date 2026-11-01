@@ -55,3 +55,13 @@ test("a provider without a cache entry only reports the idle rung", () => {
   const l = cacheDoctorLines(input({ policy: resolveWarmPolicy({}, "p", "m"), hasIdleRung: false }));
   assert.deepEqual(l.map((x) => x.split(" ")[0]), ["INFO"]);
 });
+
+test("an idle rung on a provider without a cache entry or TTL warns; one with a TTL does not", () => {
+  const rung = (c: object | null) => ({ spec: "q/small", provider: "q", policy: resolveWarmPolicy(c ? { providers: { q: { cache: c } } } : {}, "q", "small") });
+  for (const c of [null, { billing: "token" }]) {
+    const l = cacheDoctorLines(input({ idleRung: rung(c) }));
+    assert.equal(l.length, 1);
+    assert.match(l[0], /^WARN idle rung q\/small: provider q has no cache entry \(ttl unknown\): no cache bar and no warms while downshifted/);
+  }
+  assert.deepEqual(cacheDoctorLines(input({ idleRung: rung({ ttlSeconds: 1800, billing: "token" }) })), []);
+});

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { BUILTIN_CACHE, PI_IDLE_CAP_MINUTES, resolveCachePolicy } from "../cachepolicy.ts";
+import { BUILTIN_CACHE, PI_IDLE_CAP_MINUTES, SELF_WARM_MIN_TTL_SECONDS, resolveCachePolicy, resolveWarmPolicy } from "../cachepolicy.ts";
 
 const withCache = (provider: string, cache: unknown) => ({ providers: { [provider]: { cache } } });
 
@@ -58,4 +58,13 @@ test("the claude-bridge preset equals the built-in entry", () => {
   assert.equal("ttlSeconds" in c, false); // it would shadow the derived bridge TTL
   assert.equal(c.keepalive.enabled, true); // round 32: self-warm keeps the 1 h cache warm
   assert.equal(resolveCachePolicy(preset, "claude-bridge", "claude-sonnet-5-5", 3600).ttlSeconds, 3600);
+});
+
+test("self-warm takeover: Pi warms 1000 s, the self-warmer owns 1001 s, 1800 s and 2001 s", () => {
+  assert.equal(SELF_WARM_MIN_TTL_SECONDS, 1001);
+  const rows: [number, boolean][] = [[1000, false], [1001, true], [1800, true], [2001, true]];
+  for (const [ttl, own] of rows) {
+    const p = resolveWarmPolicy(withCache("x", { ttlSeconds: ttl, billing: "token", keepalive: { enabled: true } }), "x");
+    assert.equal(p.selfWarm, own, `ttl ${ttl}`);
+  }
 });

@@ -1,6 +1,6 @@
 // A reviewer PASS marks its items (retro-harvest item 1). The reviewer's output contract
 // (agents/reviewer.md) has one `N. PASS|FAIL <evidence>` line per ledger item; on an overall PASS
-// of a `reviewer` run (never `senior-reviewer`, whose APPROVE/BLOCK verdict is not per item) the
+// of a `reviewer` run the
 // harness ticks each `N. PASS` item that is still open in the foreman's bound ledger, with no model
 // turn. V is never marked here: it stays with the fresh verifier. Each review run marks at most
 // once, whether its result arrives inline (launch-wait) or as a detached completion notice.

@@ -24,7 +24,7 @@ class PresetCacheTest(unittest.TestCase):
             self.assertEqual(prov["cache"]["keepalive"], {"enabled": True, "awayTicks": 2}, name)
             idle = prov["roles"]["foreman"]["idle"]
             self.assertIn("sonnet", idle["model"], name)
-            self.assertEqual(idle["model"], prov["roles"]["planner"]["model"], name)
+            self.assertEqual(idle["model"], prov["roles"]["explorer"]["model"], name)
 
     def test_policy(self):
         for name in NAMES:

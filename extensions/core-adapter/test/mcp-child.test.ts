@@ -49,7 +49,7 @@ async function withChild(setup: Setup, use: (c: { api: Api; startMarker: string;
   const exitMarker = path.join(root, "fx-exited");
   const server = setup.server ?? { command: process.execPath, args: [fixture, startMarker, exitMarker] };
   fs.writeFileSync(path.join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { fx: server } }));
-  const roleIds = ["planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roleIds = ["explorer", "builder", "reviewer"];
   const providers = { p1: { roles: Object.fromEntries(["foreman", ...roleIds].map((r) => [r, { model: `p1/m-${r}`, thinking: "low" }])) } };
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers, roles: setup.roles ?? {}, trace: { enabled: true } }));
   const role = setup.role ?? "builder";

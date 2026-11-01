@@ -43,7 +43,7 @@ test("plan review: a FAIL needs one revision; the re-review of a new hash opens 
   const r = new PlanReviews();
   r.record(P, v(A, "fail"));
   assert.deepEqual(r.gate(P, A), { refusal: "plan_revision_required", stale: false });
-  assert.match(planReviewRefusalText("plan_revision_required", "plan-x.md", "heavy", false), /\[plan_revision_required\]: .*back to the planner once/);
+  assert.match(planReviewRefusalText("plan_revision_required", "plan-x.md", "heavy", false), /\[plan_revision_required\]: .*Revise the plan once/);
   assert.deepEqual(r.gate(P, B), { refusal: "plan_review_required", stale: true }, "revised but not re-reviewed yet");
   r.record(P, v(B, "fail"));
   const g = r.gate(P, B);

@@ -39,7 +39,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const agentDir = path.join(root, "agent");
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
   const sessionId = `r14-rs-${++n}`;
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
@@ -176,7 +176,7 @@ test("approve -> persist -> fresh adapter instance over the same handoff dir -> 
   assert.equal(await a.launch("builder"), undefined, "revision 1 of 2");
   assert.equal(await a.launch("reviewer"), undefined);
   const s = w.stored();
-  assert.deepEqual(s.chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: true } });
+  assert.deepEqual(s.chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: true, revisionAnswered: true } });
   assert.equal(s.reviewCount, 2);
   assert.equal((s.plan as { hash: string }).hash, w.hash());
   assert.equal("approved" in s || JSON.stringify(s).includes("approved"), false, "no approval is stored");
@@ -316,7 +316,7 @@ test("RoundChains.clear -> file counters cleared", async (t) => {
   const a = await w.adapter();
   assert.equal(await a.checkpoint(), "approve");
   for (const r of ["builder", "reviewer", "builder"]) assert.equal(await a.launch(r), undefined);
-  assert.deepEqual(w.stored().chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: false } });
+  assert.deepEqual(w.stored().chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: false, revisionAnswered: true } });
   assert.equal(w.stored().reviewCount, 1);
   await a.ownerPrompt();
   assert.deepEqual(w.stored().chains, { main: { revisions: 0, exempt: 0, built: false, reviewOpen: false } });
