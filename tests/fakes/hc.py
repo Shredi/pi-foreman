@@ -18,8 +18,10 @@ Subcommands:
   exec --on M [-i] [--timeout S] [--json] -- ARGV...   never runs ARGV: finds `session remote <verb>` in it and runs
       that verb in-process against the remote agent dir (like FAKE_SSH), so a Windows-style argv works on POSIX.
       stdin is the envelope; --json reports {machine, exit, stdout, stderr}.
-      PLACEHOLDER: the real `hc exec --json` field names are recorded by probe P1 (design/probes/remote_hc_probe.py)
-      and replace these names in the fake when the owner's results are in.
+      PLACEHOLDER names. Settled by the P1 run (Windows remote, hc 0.1.16): the real reply is
+      {code, ms, signal, stderr, stdout, timed_out, truncated}, stdout and stderr base64 (bytes in the remote's
+      console code page, not always UTF-8), code the exit code. The fake keeps its names until PR 2 swaps them.
+      A non-JSON failure prints {"error": {"hint", "kind", "message"}} on stderr (kind e.g. spawn_failed).
   run --on M [--name N] [--label K=V]... [flags] -- ARGV...   prints {"address": "M/tN", "name": N}
   get T [--json]                prints the terminal record
   label T K=V...                sets labels, appends one event per label
@@ -223,7 +225,7 @@ def cmd_file(args):
         die("no such file: " + positional[0], 4)
     data = p.read_bytes()
     if "--json" in rest:
-        # PLACEHOLDER shape, like `exec --json`; replaced after probe P5.
+        # PLACEHOLDER shape; the P5 run only read the raw bytes (exact, CRLF kept), `--json` is probed on the rerun.
         emit({"machine": machine, "path": positional[0], "size": len(data),
               "base64": base64.b64encode(data).decode("ascii")})
         return

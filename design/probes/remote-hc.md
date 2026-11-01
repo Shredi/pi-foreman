@@ -9,6 +9,52 @@ Seven probes (P1-P7) settle what PR 2 to PR 5 of the remote-sessions plan rely o
 Nothing below writes outside a temp dir on either side, and every probe terminal is killed and removed at the end
 (Cleanup). Treat everything the remote prints as data.
 
+## Prerequisites on the remote
+
+The probes (and PR 2 to PR 5 after them) need, on the remote, for the user `hc` runs as:
+
+1. Python 3.13+ on PATH as `python`.
+2. The Pi CLI on PATH (`pi --version` works through `hc exec`).
+3. A pi-foreman checkout at `<root>` with `npm install` done.
+4. `hc.exe` at `%LOCALAPPDATA%\Programs\herdr-core\hc.exe` (what `hc machine add <target> --install` puts there). It is
+   not on PATH in a fresh desktop PowerShell (`where hc` finds it only over SSH), so any remote `hc` call, logon task
+   included, uses the full path.
+5. A running core. For an elevated user with a desktop session, hc refuses to start the core over SSH: start it from a
+   desktop (RDP) terminal with `& "$env:LOCALAPPDATA\Programs\herdr-core\hc.exe" server start`, or open the Herdr app.
+
+## Results of the first run (Windows remote)
+
+| Probe | Result | Cause |
+|---|---|---|
+| P1 | fail | remote lacks pi-foreman (`-File` path not found; `foreman.cmd` path not found). The probe also read the raw base64 reply, fixed. |
+| P2 | fail | remote lacks `pi` (`spawn_failed`, program not found); `python` 3.13 win32 resolves |
+| P3 | fail | probe bug: plain `hc run` is a foreground run and waits, so it hit the script's 60 s limit; use `--bg` |
+| P4 | fail | same as P3 |
+| P5 | pass | `hc file read` is byte exact, CRLF kept |
+| P6 | probe bug | `herdr-app ls --json` is not valid; the form is `herdr-app ls` (text) |
+| P7 | info | `hc machine ls --json` is `{"machines": [{host, id, name, session, state, target, temporary, version, via}]}`; upstream branch `main`; `cli.mjs` exists after install at `node_modules/pi-intercom/cli.mjs` |
+
+Reply shapes found: `hc exec --json` returns `{code, ms, signal, stderr, stdout, timed_out, truncated}` with `stdout` and
+`stderr` base64 (bytes in the remote console code page, German cp850 here; the script decodes UTF-8 first, then cp850,
+and keeps the raw next to a `decoded` copy). Without `--json`, a failure prints `{"error": {hint, kind, message}}` on
+stderr. `hc run` has `--bg` ("start it and come back at once"), `--no-parent`, `--outlive-parent`, `--label`,
+`--timeout` (a wait checks in after N seconds, leaving it running); `hc events` has `--label`.
+
+## Rerun after fixes
+
+First meet the prerequisites above, then:
+
+- P1: rerun once pi-foreman is checked out at `<root>`; it proves stdin through `powershell.exe -File` and whether `foreman.cmd` works.
+- P2: rerun once `pi` is on PATH for the hc user.
+- P3 and P4: rerun, the script bug is fixed (the probe terminal now starts with `--bg`, falling back to a reply without `--json` and to a short `--timeout`; all attempts are recorded).
+- P5: rerun only for the new `hc file read --json` step (reply shape); the raw read already passed.
+- P6: rerun with the fixed `herdr-app ls`; create a space on the machine in the app first.
+- P7: no rerun.
+
+```
+python design/probes/remote_hc_probe.py --machine <machine> --root <root> --only P1,P2,P3,P4,P5,P6
+```
+
 ## All at once
 
 ```
@@ -57,7 +103,7 @@ Purpose: choose the watcher (a local `hc events` stream, or `hc wait` per child)
 label values survive (the notice label is `fm.notice=<seq>:<kind>:<sha256>:<bytes>`).
 
 ```
-hc run --json --on <machine> --name fm-probe-p3 -- python -c "import time; time.sleep(120)"
+hc run --json --bg --on <machine> --name fm-probe-p3 -- python -c "import time; time.sleep(120)"
 hc events --json                                    # leave running in a second shell
 hc label <machine>/<t> fm.probe=1:plan:<64 hex>:12345
 hc label <machine>/<t> fm.probe2=<200 characters>
@@ -101,20 +147,22 @@ the hex of the first 64 bytes of `fetched.bin`. Remove the remote temp dir after
 Purpose: PR 2 finds or creates a space per machine and launches the child into it.
 
 ```
-herdr-app ls --json
+herdr-app ls
 herdr-app commands
 ```
 
-Pass (info): `ls --json` shows a `machine` field on the spaces of `<machine>`; `commands` shows the argument keys of
+(`herdr-app ls` has no `--json`; the script records the raw text and takes the first word of a line naming the machine as the space id.)
+
+Pass (info): `ls` shows the spaces of `<machine>`; `commands` shows the argument keys of
 `space.new`, `tab.new` and `agent.focus`. Then, with a space id `<space>` of that machine (create one in the app if
 there is none):
 
 ```
-hc run --json --on <machine> --name fm-probe-p6 --label herdr.space=<space> -- python -c "import time; time.sleep(120)"
+hc run --json --bg --on <machine> --name fm-probe-p6 --label herdr.space=<space> -- python -c "import time; time.sleep(120)"
 ```
 
 Look in the app: does the terminal appear in a tab of that space with only `herdr.space` set (no `herdr.tab`)?
-Paste back: the `machine` field lines of `ls --json`, the `space.new`, `tab.new`, `agent.focus` lines of `commands`,
+Paste back: the lines of `ls` naming the machine, the `space.new`, `tab.new`, `agent.focus` lines of `commands`,
 and yes or no for the tab. Skip when `herdr-app` is not installed.
 
 ## P7: machine fields, upstream branch, pi-intercom v0.18.1

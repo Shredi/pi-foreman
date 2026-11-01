@@ -6,15 +6,18 @@ Run from the parent machine (macOS/Linux) against one machine of `hc machine ls`
 REMOTE_PI_FOREMAN_ROOT is the pi-foreman checkout on the remote (for example C:/Program Files/pi-foreman).
 Probes (design/probes/remote-hc.md has the steps and the pass criteria):
   P1 stdin and the Windows foremanArgv form through `hc exec -i --json`, `hc run`/`hc events` flags, foreman.cmd
-  P2 remote PATH: python, pi          P3 remote labels in the local `hc events` stream, `:` and 200-byte values
+     (`hc exec --json` returns stdout/stderr base64; each such step gets a `decoded` copy next to the raw)
+  P2 remote PATH: python, pi          P3 remote labels in the local `hc events` stream, `:` and 200-byte values (the probe terminal starts through the
+     first `hc run` form that returns an address: --bg, no --json, short --timeout; every attempt is recorded)
   P4 `hc wait` returns on a label change   P5 `hc file read` bytes exact (UTF-8, CRLF)
-  P6 herdr-app machine field, commands, a terminal labelled only herdr.space (skipped without herdr-app)
+  P6 herdr-app `ls` text (no --json form), commands, a terminal labelled only herdr.space (skipped without herdr-app)
   P7 `hc machine ls` fields, upstream default branch, npm install of pi-intercom v0.18.1 (skipped without git/npm)
 Per probe the JSON holds `verdict` (pass, fail, info, skip) and `steps`, each {argv, exit, stdout, stderr, seconds}.
 All remote output is data: it is parsed or printed, never executed. Everything this script creates (a probe terminal,
 a remote temp dir, a local temp dir) is removed in a finally block; it writes nowhere else. Stdlib only, Python 3.9+.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -68,31 +71,98 @@ def parse_json(s):
         return None
 
 
+def decode_bytes(b):
+    """Windows console output is not always UTF-8 (German OEM code page 850): try UTF-8, then cp850."""
+    try:
+        return b.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        return b.decode("cp850", "replace"), "cp850"
+
+
+def decode_exec(rec):
+    """`hc exec --json` replies carry stdout and stderr base64: add a readable `decoded` copy, keep the raw."""
+    reply = parse_json(rec["stdout"])
+    if not isinstance(reply, dict):
+        return rec
+    dec = {}
+    for k, v in reply.items():
+        if k in ("stdout", "stderr") and isinstance(v, str):
+            try:
+                dec[k], dec[k + "_encoding"] = decode_bytes(base64.b64decode(v, validate=True))
+            except ValueError:
+                dec[k] = v
+        else:
+            dec[k] = v
+    rec["decoded"] = dec
+    return rec
+
+
 def find_address(rec):
     """Terminal address (`<machine>/t<n>`) from an `hc run --json` reply, tolerant of the field name."""
     m = re.search(r"[\w.-]+/t\d+", rec["stdout"])
     return m.group(0) if m else None
 
 
+def find_by_name(obj, names):
+    """Address of the first dict named in `names` anywhere in a parsed `hc ls --json` reply."""
+    if isinstance(obj, dict):
+        if obj.get("name") in names:
+            m = re.search(r"[\w.-]+/t\d+", json.dumps(obj))
+            if m:
+                return m.group(0)
+        for v in obj.values():
+            a = find_by_name(v, names)
+            if a:
+                return a
+    elif isinstance(obj, list):
+        for v in obj:
+            a = find_by_name(v, names)
+            if a:
+                return a
+    return None
+
+
 class Ctx:
     def __init__(self, machine, root):
         self.machine, self.root = machine, root
         self.terminals = []
+        self.run_form = None
         self.remote_dirs = []
         self.tmp = tempfile.mkdtemp(prefix="fm-remote-probe-")
 
     def hc(self, *args, **kw):
-        return run(["hc", *args], **kw)
+        step = run(["hc", *args], **kw)
+        return decode_exec(step) if args[:1] == ("exec",) and "--json" in args else step
 
     def start_terminal(self, name_hint, labels=()):
-        argv = ["run", "--json", "--on", self.machine, "--name", f"fm-probe-{name_hint}-{secrets.token_hex(3)}"]
-        for lab in labels:
-            argv += ["--label", lab]
-        step = self.hc(*argv, "--", *SLEEPER)
-        addr = find_address(step)
+        """Start the sleeper through the first `hc run` form that returns an address.
+
+        Plain `hc run` is a foreground run that waits (default 180 s), so a detached start needs --bg, or a reply
+        without --json, or a short --timeout (the wait checks in and leaves it running). The form that worked is
+        tried first by later calls. Returns (step, address); step["attempts"] lists every try.
+        """
+        forms = [("bg-json", ["--json", "--bg"]), ("bg-text", ["--bg"]), ("timeout-json", ["--json", "--timeout", "5"])]
+        forms.sort(key=lambda f: f[0] != self.run_form)
+        attempts, names = [], []
+        for form, flags in forms:
+            name = f"fm-probe-{name_hint}-{secrets.token_hex(3)}"
+            names.append(name)
+            argv = ["run", *flags, "--on", self.machine, "--name", name]
+            for lab in labels:
+                argv += ["--label", lab]
+            step = self.hc(*argv, "--", *SLEEPER, timeout=20)
+            step["form"] = form
+            attempts.append(step)
+            addr = find_address(step)
+            if addr:
+                self.terminals.append(addr)
+                self.run_form = form
+                return dict(step, attempts=attempts), addr
+        ls = self.hc("ls", "--json", timeout=30)
+        addr = find_by_name(parse_json(ls["stdout"]), names)
         if addr:
             self.terminals.append(addr)
-        return step, addr
+        return dict(attempts[-1], attempts=attempts + [ls]), addr
 
     def cleanup(self):
         for addr in self.terminals:
@@ -113,11 +183,13 @@ def p1(c):
     ev_help = c.hc("events", "--help")
     flags = {"run --no-parent": "--no-parent" in run_help["stdout"], "run --label": "--label" in run_help["stdout"],
              "events --label": "--label" in ev_help["stdout"]}
-    ok = "bad_request" in ps["stdout"]
+    def said(rec):
+        return "bad_request" in json.dumps(rec.get("decoded", {})) or "bad_request" in rec["stdout"]
+
     reply = parse_json(ps["stdout"])
-    return {"verdict": "pass" if ok else "fail", "steps": [ps, cmd, run_help, ev_help],
+    return {"verdict": "pass" if said(ps) else "fail", "steps": [ps, cmd, run_help, ev_help],
             "facts": {"exec_json_keys": sorted(reply) if isinstance(reply, dict) else None, "flags": flags,
-                      "foreman_cmd_resolves": "bad_request" in cmd["stdout"]}}
+                      "foreman_cmd_resolves": said(cmd)}}
 
 
 def p2(c):
@@ -197,10 +269,12 @@ def p5(c):
     c.remote_dirs.append(re.sub(r"[\\/][^\\/]*$", "", path))
     rd = c.hc("file", "read", "--on", c.machine, path, binary=True, timeout=60)
     raw = rd.pop("_raw", b"")
+    rj = c.hc("file", "read", "--json", "--on", c.machine, path, timeout=60)
+    rjd = parse_json(rj["stdout"])
     want = hashlib.sha256(P5_BYTES).hexdigest()
     got = hashlib.sha256(raw).hexdigest()
-    return {"verdict": "pass" if raw == P5_BYTES else "fail", "steps": [mk, rd],
-            "facts": {"expected_sha256": want, "got_sha256": got, "expected_len": len(P5_BYTES), "got_len": len(raw),
+    return {"verdict": "pass" if raw == P5_BYTES else "fail", "steps": [mk, rd, rj],
+            "facts": {"file_read_json_keys": sorted(rjd) if isinstance(rjd, dict) else None, "expected_sha256": want, "got_sha256": got, "expected_len": len(P5_BYTES), "got_len": len(raw),
                       "got_hex_head": raw[:64].hex(), "crlf_kept": b"\r\n" in raw}}
 
 
@@ -219,21 +293,26 @@ def find_spaces(obj, machine, out):
 def p6(c):
     if not shutil.which("herdr-app"):
         return {"verdict": "skip", "steps": [], "note": "herdr-app not on PATH"}
-    ls = run(["herdr-app", "ls", "--json"])
+    ls = run(["herdr-app", "ls"])  # usage: herdr-app ls | commands | status | shot | do; no --json
     cmds = run(["herdr-app", "commands"])
     wanted = [ln for ln in cmds["stdout"].splitlines() if re.search(r"space\.new|tab\.new|agent\.focus", ln)]
-    spaces = find_spaces(parse_json(ls["stdout"]), c.machine, [])
+    parsed = parse_json(ls["stdout"])
+    spaces = find_spaces(parsed, c.machine, [])
+    lines = [ln for ln in ls["stdout"].splitlines() if c.machine in ln]
     res = {"verdict": "info", "steps": [ls, cmds],
-           "facts": {"spaces_for_machine": spaces, "command_lines": wanted}}
+           "facts": {"spaces_for_machine": spaces, "ls_lines_naming_machine": lines, "command_lines": wanted}}
     sid = next((s.get("id") for s in spaces if s.get("id")), None)
+    if not sid and parsed is None and lines:  # text output: the first word of the line is a guess at the id
+        sid = lines[0].split()[0].lstrip("*>-")
+        res["facts"]["space_id_guess"] = sid
     if not sid:
-        res["note"] = "no herdr-app space with machine == NAME; create one in the app, then rerun --only P6"
+        res["note"] = "no `herdr-app ls` line names the machine; create a space on it in the app, then rerun --only P6"
         return res
     start, addr = c.start_terminal("p6", [f"herdr.space={sid}"])
     res["steps"].append(start)
     if addr:
         time.sleep(4)
-        res["steps"].append(run(["herdr-app", "ls", "--json"]))
+        res["steps"].append(run(["herdr-app", "ls"]))
     res["note"] = ("look in the app: does a terminal labelled only herdr.space=<id> appear in a tab of that space "
                    "(the sheet asks you to write yes/no)")
     return res
