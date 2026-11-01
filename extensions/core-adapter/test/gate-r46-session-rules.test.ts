@@ -90,6 +90,12 @@ for (const child of [false, true]) {
       for (const [tool, input] of calls) {
         const why = await blockedCall(r, tool, input);
         assert.ok(why, `${who}: ${tool} ${JSON.stringify(input)} was allowed`);
+        // ruling-10: the foreman's bash mv into the project is a shell write its edit mode refuses, so it gets the refusal before any dialog; a mv
+        // that stays outside the workspace and foreman_move are not refused and still ask
+        if (!child && tool === "bash" && String(input.command).includes(r.project)) {
+          assert.match(why, /shell write into project files refused/, `${who}: ${tool} ${JSON.stringify(input)}`);
+          continue;
+        }
         moves++;
         if (child) assert.match(why, /selfmod-session-dir/, `${who}: ${tool} ${JSON.stringify(input)}`);
         else assert.match(r.titles.at(-1) ?? "", /selfmod-session-dir/, `${who}: ${tool} ${JSON.stringify(input)}`);

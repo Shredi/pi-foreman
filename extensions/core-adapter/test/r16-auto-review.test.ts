@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { r11Rig } from "./_r11rig.ts";
+import { SHELL_WRITE_REFUSAL } from "../shellwriteguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 type Case = { name: string; line: string; gate?: string; note?: string };
@@ -161,16 +162,18 @@ const DANGEROUS = "terraform apply -auto-approve";
 // R41: the self-modification writes are a dialog by rule (selfmod.ts, plan 2.5): the owner gets one gate dialog and no model is called,
 // whatever the stub answers. tee into the agent extensions is no selfmod rule: the review judges it.
 const SM: Expect = ["dialog:selfmod:comment", 1, 0, true];
+// ruling-10: a self-modification the foreman's edit mode refuses anyway as a shell write into project files gets the refusal before any dialog or model call
+const REFUSED: Expect = ["pass", 0, 0, true];
 const ASKING: Record<string, Expect> = {
   agentdir_settings_write: SM,
   other_session_state_write: SM,
   probe_ask_after_protect_hit: SM,
-  redirect_into_pi_settings: SM,
+  redirect_into_pi_settings: REFUSED,
   cp_into_agent_settings: SM,
   tee_into_agent_extensions: ["dialog:danger:comment", 1, 1, true],
-  rm_pi_settings: SM,
-  read_then_write_pi_settings: SM,
-  cd_then_redirect_into_pi: SM,
+  rm_pi_settings: REFUSED,
+  read_then_write_pi_settings: REFUSED,
+  cd_then_redirect_into_pi: REFUSED,
   cd_agentdir_then_cp_settings: SM,
 };
 for (const c of [...FX.selfMod, ...FX.cdRelativeGaps.filter((x) => !(x.name in ALLOWING))]) {
@@ -179,6 +182,7 @@ for (const c of [...FX.selfMod, ...FX.cdRelativeGaps.filter((x) => !(x.name in A
     assert.ok(e, `no expectation for ${c.name}`);
     const r = await bash(c.line, { reply: ASK });
     assert.deepEqual([r.outcome, r.dialogs, r.calls, r.block?.block === true], [e[0], e[1], e[2], e[3] === true], JSON.stringify(r.block));
+    if (e === REFUSED) assert.ok(r.block?.reason?.includes(SHELL_WRITE_REFUSAL), String(r.block?.reason));
   });
 }
 
