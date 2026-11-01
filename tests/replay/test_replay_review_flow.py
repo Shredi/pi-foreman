@@ -49,7 +49,8 @@ def blocked_launch(pi, timeout=180):
 def usage(rig, sid):
     safe = "".join(c for c in sid if c.isalnum() or c in "-_")
     f = rig.state_dir / "usage" / (safe + ".jsonl")
-    return [json.loads(x) for x in f.read_text("utf-8").splitlines() if x.strip()] if f.is_file() else []
+    rows = [json.loads(x) for x in f.read_text("utf-8").splitlines() if x.strip()] if f.is_file() else []
+    return [r for r in rows if r.get("kind") != "tool-usage"]  # same predicate as foreman_retro.is_cost_line
 
 
 def events(rig, sid, name):

@@ -11,6 +11,9 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "tools_deferred"
+  },
+  {
    "event": "chain_clear"
   },
   {
