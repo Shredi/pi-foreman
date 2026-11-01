@@ -739,24 +739,23 @@ export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?:
 
 // ------------------------------------------------------------------ the foreman's checkout is read-only for a worktree child
 
-const FENCE_WRITERS = new Set(["cp", "mv", "tee", "rm", "rmdir", "mkdir", "touch", "install", "rsync", "truncate", "chmod", "chown", "unlink", "dd", "patch", "shred"]);
 /** An opaque line that names the foreman's checkout is denied when it also writes, changes directory or runs a mutating git subcommand. */
 const FENCE_WRITEISH = /(?:^|[^=!<>-])>(?!=)|\b(?:tee|cp|mv|rm|rmdir|mkdir|touch|install|rsync|truncate|chmod|chown|unlink|dd|patch|cd|pushd|write\w*|sed\s+-i|git\s+(?:-\S+\s+\S+\s+)*(?:add|commit|checkout|reset|apply|am|rm|mv|stash|merge|rebase|cherry-pick|revert|restore|clean|switch|tag|branch|push|pull))\b/;
 
 const foremanFence = (env: FloorEnv): string | null => (env.child && env.foremanRoot ? env.foremanRoot : null);
 
-/** The deny for a word that names a path below the foreman's checkout; its `.workflow/` and the child's own worktree (also when nested below the checkout) are exempt. */
-function fenceWord(word: string, cwd: string, env: FloorEnv): FloorHit | null {
+/** The deny for a word that names a path below the foreman's checkout; its `.workflow/scratch/` and the child's own worktree (also when nested below the checkout) are exempt, and with `readDir` the whole `.workflow/` (a directory a read-only command or `cd` enters). */
+function fenceWord(word: string, cwd: string, env: FloorEnv, readDir = false): FloorHit | null {
   const root = foremanFence(env);
   if (root === null) return null;
   if (protectedWord(word, cwd, env, [{ p: root, tree: true }]) === null) return null;
   const abs = resolveWord(word.replace(/^[^=/\\]*=/, ""), cwd, env);
   if (abs !== null) {
-    const exempt = [path.join(root, ".workflow"), repoRoots(env.cwd)[0]].flatMap((r) => formsOf(r, env));
+    const exempt = [path.join(root, ".workflow", readDir ? "" : "scratch"), repoRoots(env.cwd)[0]].flatMap((r) => formsOf(r, env));
     if (formsOf(abs, env).every((f) => exempt.some((r) => f === r || f.startsWith(`${r}/`)))) return null;
   }
   const shown = word.replace(/^(['"])(.*)\1$/, "$2").slice(0, 120);
-  return { rule: "floor-foreman-checkout", kind: "deny", reason: `pi-foreman: write to ${shown} denied: this child runs in its own worktree ${env.cwd}; the foreman's checkout ${root} is read-only for it (read its .workflow/ ledger and plan there). Use paths relative to your worktree; commit on your worktree's branch.` };
+  return { rule: "floor-foreman-checkout", kind: "deny", reason: `pi-foreman: write to ${shown} denied: this child runs in its own worktree ${env.cwd}; the foreman's checkout ${root} is read-only for it (read its .workflow/ ledger and plan there; only .workflow/scratch/ is writable). Use paths relative to your worktree; commit on your worktree's branch.` };
 }
 
 /** Floor `foreman-checkout`, one shell segment: a redirect, a `cd`/`pushd`, a `git -C` / `--git-dir` / `--work-tree` or the operand of a writer that reaches the foreman's checkout. */
@@ -770,20 +769,32 @@ function foremanCheckout(seg: ShellSegment, prog: string, env: FloorEnv): FloorH
     if (h) return h;
   }
   const words: string[] = [];
-  if (prog === "cd" || prog === "pushd") words.push(...a.filter((w) => !w.startsWith("-")).slice(0, 1));
-  else if (prog === "git") {
-    a.forEach((w, i) => {
-      if (w === "-C" || w === "--git-dir" || w === "--work-tree") words.push(a[i + 1] ?? "");
-      else if (/^--(?:git-dir|work-tree)=/.test(w)) words.push(w.slice(w.indexOf("=") + 1));
-      else if (/^-C.+/.test(w)) words.push(w.slice(2));
-    });
-  } else if (FENCE_WRITERS.has(prog) || (prog === "sed" && a.some((w) => /^-[A-Za-z]*i|^--in-place/.test(w)))) {
-    const src = copySourceWords(seg, prog);
-    words.push(...a.filter((w) => !src.has(w)));
+  const dirs: string[] = [];
+  // `git add` / `git commit` only stage for the protected-write floor, but they write the repository a `-C` names
+  const readOnly = readOnlySegment(seg, prog) && !(prog === "git" && a.some((w) => w === "add" || w === "commit"));
+  if (prog === "cd" || prog === "pushd") dirs.push(...a.filter((w) => !w.startsWith("-")).slice(0, 1));
+  else {
+    if (prog === "git") {
+      a.forEach((w, i) => {
+        if (w === "-C" || w === "--git-dir" || w === "--work-tree") (readOnly ? dirs : words).push(a[i + 1] ?? "");
+        else if (/^--(?:git-dir|work-tree)=/.test(w)) (readOnly ? dirs : words).push(w.slice(w.indexOf("=") + 1));
+        else if (/^-C.+/.test(w)) (readOnly ? dirs : words).push(w.slice(2));
+      });
+    }
+    if (!readOnly) {
+      // deny by default: every operand but a copy's sources (a `-t DIR` target is no source)
+      const src = copySourceWords(seg, prog);
+      a.forEach((w, i) => {
+        if (/^(?:-t|--target-directory)$/.test(w)) words.push(a[i + 1] ?? "");
+        else if (!src.has(w)) words.push(w);
+      });
+    }
   }
-  for (const w of words) {
-    const h = w ? fenceWord(w, cwd, env) : null;
-    if (h) return h;
+  for (const [list, readDir] of [[words, false], [dirs, true]] as const) {
+    for (const w of list) {
+      const h = w ? fenceWord(w, cwd, env, readDir) : null;
+      if (h) return h;
+    }
   }
   return null;
 }

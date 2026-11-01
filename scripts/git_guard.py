@@ -1716,7 +1716,7 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
         if d.level > ALLOW:
             return d
     if ctx.mode == "child":
-        d = foreman_checkout_rule(sub, ctx, call)
+        d = foreman_checkout_rule(sub, ctx, call, rest)
         if d.level > ALLOW:
             return d
         if s == "push":
@@ -2282,7 +2282,7 @@ CHILD_SCRATCH_WORD = re.compile(r'^"?\$FOREMAN_SCRATCH(/[^\s$`\\*?\[\]{}~"\'<>|&
 
 
 FOREMAN_FENCE_SUBS = frozenset("""add commit rm mv reset checkout switch restore merge rebase cherry-pick revert stash apply am clean
-tag branch push pull fetch update-ref commit-tree worktree config gc init symbolic-ref notes""".split())
+tag branch push pull fetch update-ref commit-tree worktree config gc init symbolic-ref notes clone""".split())
 
 
 def foreman_checkout_root(ctx):
@@ -2294,9 +2294,10 @@ def foreman_checkout_root(ctx):
     return os.path.realpath(d)
 
 
-def foreman_checkout_rule(sub, ctx, call):
-    """A worktree child's git write (`git -C <root> ...`, `cd <root>; git ...`, `--git-dir` / `--work-tree` at the root) never lands in the
-    foreman's checkout; its `.workflow/` and the child's own worktree (also when nested below the checkout) are exempt."""
+def foreman_checkout_rule(sub, ctx, call, rest=()):
+    """A worktree child's git write (`git -C <root> ...`, `cd <root>; git ...`, `--git-dir` / `--work-tree` at the root, the target of
+    `git clone`) never lands in the foreman's checkout; its `.workflow/scratch/` and the child's own worktree (also when nested below
+    the checkout) are exempt."""
     root = foreman_checkout_root(ctx)
     if root is None or sub.lower() not in FOREMAN_FENCE_SUBS:
         return OK
@@ -2305,11 +2306,13 @@ def foreman_checkout_rule(sub, ctx, call):
     while not os.path.lexists(os.path.join(own, ".git")) and os.path.dirname(own) != own:
         own = os.path.dirname(own)
     places = [call.cwd] + [p.split("=", 1)[1] for p in call.passthrough if p.startswith(("--git-dir=", "--work-tree="))]
+    if sub.lower() == "clone":
+        places += [os.path.join(call.cwd, w.text) for w in rest if not w.text.startswith("-")]
     for place in places:
         real = os.path.realpath(place)
-        if under(real, root) and not under(real, os.path.join(root, ".workflow")) and not under(real, own):
+        if under(real, root) and not under(real, os.path.join(root, ".workflow", "scratch")) and not under(real, own):
             return deny("write to %s denied: this child runs in its own worktree %s; the foreman's checkout %s is read-only for it "
-                        "(read its .workflow/ ledger and plan there). Use paths relative to your worktree; commit on your worktree's branch."
+                        "(read its .workflow/ ledger and plan there; only .workflow/scratch/ is writable). Use paths relative to your worktree; commit on your worktree's branch."
                         % (place, ctx.start_cwd, root))
     return OK
 

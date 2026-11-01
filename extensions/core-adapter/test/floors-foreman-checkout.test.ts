@@ -68,7 +68,7 @@ test("win32: drive letter, case folding and backslashes", () => {
   assert.equal(pathFloors({ path: "c:\\work\\foreman\\src\\a.ts" }, e, "edit")?.rule, "floor-foreman-checkout");
   assert.equal(pathFloors({ path: "C:/WORK/FOREMAN/src/a.ts" }, e, "write")?.rule, "floor-foreman-checkout");
   assert.equal(shell("echo x > c:/work/foreman/.WORKFLOW/scratch/n.md", e)?.rule, undefined);
-  assert.equal(pathFloors({ path: "C:\\Work\\Foreman\\.workflow\\LEDGER-x.md" }, e, "write")?.rule, undefined);
+  assert.equal(pathFloors({ path: "C:\\Work\\Foreman\\.workflow\\LEDGER-x.md" }, e, "write")?.rule, "floor-foreman-checkout");
   assert.equal(pathFloors({ path: "C:\\Work\\Foreman.wt\\child\\src\\a.ts" }, e, "edit")?.rule, undefined);
   assert.equal(shell('echo x > "C:\\Work\\Foreman.wt\\child\\f"', e)?.rule, undefined);
 });

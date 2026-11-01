@@ -2629,10 +2629,16 @@ function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
   return scratchOnlyWriter(command, ctx) ? null : deny;
 }
 
-/** The command with the body lines of its heredocs removed (the `<<WORD` line and the delimiter line stay). */
-function withoutHeredocBodies(command: string): string {
+const HEREDOC_OPEN = /<<(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([^\s|;&<>()'"]+))/y;
+
+/**
+ * The command with the body lines of its heredocs removed (the `<<WORD` line and the delimiter line stay), or null when it cannot be read with
+ * certainty (fail closed): a `<<` inside quotes or a comment, a delimiter that is not a plain word, a heredoc that is never closed.
+ */
+function withoutHeredocBodies(command: string): string | null {
   const out: string[] = [];
-  let pending: { word: string; dash: boolean }[] = [];
+  const pending: { word: string; dash: boolean }[] = [];
+  let quote = "";
   for (const line of command.split("\n")) {
     if (pending.length) {
       const p = pending[0];
@@ -2640,9 +2646,31 @@ function withoutHeredocBodies(command: string): string {
       continue;
     }
     out.push(line);
-    for (const m of line.matchAll(/<<(?!<)(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([^\s|;&<>()'"]+))/g)) pending.push({ word: m[2] ?? m[3] ?? m[4], dash: m[1] === "-" });
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quote && c === "<" && line[i + 1] === "<") return null;
+      if (quote === "'") {
+        if (c === "'") quote = "";
+      } else if (c === "\\") i++;
+      else if (quote === '"') {
+        if (c === '"') quote = "";
+      } else if (c === "'" || c === '"') quote = c;
+      else if (c === "#" && (i === 0 || /\s/.test(line[i - 1]))) {
+        if (line.includes("<<", i)) return null;
+        break;
+      } else if (c === "<" && line[i + 1] === "<") {
+        if (line[i + 2] === "<") i += 2;
+        else {
+          HEREDOC_OPEN.lastIndex = i;
+          const m = HEREDOC_OPEN.exec(line);
+          if (!m) return null;
+          pending.push({ word: m[2] ?? m[3] ?? m[4], dash: m[1] === "-" });
+          i += m[0].length - 1;
+        }
+      }
+    }
   }
-  return out.join("\n");
+  return pending.length ? null : out.join("\n");
 }
 
 /**
@@ -2666,8 +2694,10 @@ function scratchHeredocWrite(command: string, ctx: MatchCtx): boolean {
     try { if (fs.lstatSync(abs).isSymbolicLink()) return false; } catch { /* absent: a new file */ }
     return abs !== scratch && insideDir(scratch, abs, ctx) && realOf(abs) !== realScratch && insideDir(realScratch, realOf(abs), ctx);
   };
+  const bodiless = withoutHeredocBodies(command);
+  if (bodiless === null) return false;
   const units: string[][] = [[]];
-  for (const m of withoutHeredocBodies(command).replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "").matchAll(SHELL_WORD)) {
+  for (const m of bodiless.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "").matchAll(SHELL_WORD)) {
     if (/^[|;&\n]/.test(m[0])) units.push([]);
     else units[units.length - 1].push(m[0]);
   }
