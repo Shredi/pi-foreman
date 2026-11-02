@@ -143,8 +143,8 @@ class UsageCache:
                     row = json.loads(raw.decode("utf-8", "replace"))
                 except ValueError:
                     continue
-                if not isinstance(row, dict):
-                    continue
+                if not isinstance(row, dict) or row.get("kind") == "tool-usage":
+                    continue  # a tool-usage line is no model call (source of truth: foreman_retro.is_cost_line)
                 cost = row.get("cost")
                 cost = num(cost.get("total")) if isinstance(cost, dict) else 0
                 tin = num(row.get("input")) + num(row.get("cacheRead")) + num(row.get("cacheWrite"))

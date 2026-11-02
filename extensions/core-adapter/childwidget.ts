@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { abbrev } from "./footer.ts";
-import { parseLines } from "./usage.ts";
+import { isCostLine, parseLines } from "./usage.ts";
 import { priceRecord } from "./cost.ts";
 import { pullSummary } from "./remotesession.ts";
 import type { SessionEntry } from "./session.ts";
@@ -118,7 +118,7 @@ export class UsageTail {
       this.rest = cut < 0 ? all : all.subarray(cut + 1);
       if (cut < 0) return;
       for (const l of parseLines(all.subarray(0, cut).toString("utf8"))) {
-        if (!l.launchId) continue;
+        if (!l.launchId || !isCostLine(l)) continue;
         const s = this.by.get(l.launchId) ?? { input: 0, output: 0, cost: 0 };
         s.input += (l.input || 0) + (l.cacheRead || 0) + (l.cacheWrite || 0);
         s.output += l.output || 0;

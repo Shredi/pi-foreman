@@ -708,10 +708,34 @@
       "enable": ""
     },
     {
+      "id": "deferred-tools",
+      "area": "tools",
+      "title": "Deferred tool declarations and tool_search",
+      "purpose": "Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered.",
+      "doc": "docs/tools.md",
+      "keys": ["tools.deferred"],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "skill-visibility",
+      "area": "tools",
+      "title": "Searchable skills",
+      "purpose": "Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way.",
+      "doc": "docs/tools.md",
+      "keys": ["skills.visible", "skills.hidden", "roles.<x>.searchable"],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "ask-user-question",
       "area": "ui",
       "title": "Structured in-pane question",
-      "purpose": "The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`.",
+      "purpose": "The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer.",
       "doc": "docs/sessions.md#ask-by-file-parent-that-is-not-a-pi-session",
       "keys": [],
       "commands": [],
