@@ -14,8 +14,8 @@ One short JSON file holds the whole policy. Three files can exist; all use the s
 
 | File | Location | What it may contain |
 |---|---|---|
-| user | `<agentDir>/pi-foreman/permissions.json` | every key, including `mode` and `profiles` |
-| project | `<main checkout>/.workflow/permissions.json` | everything except `mode` and `profiles` (see the trust rule) |
+| user | `<agentDir>/pi-foreman/permissions.json` | every key, including `mode`, `profiles` and `workFolders` |
+| project | `<main checkout>/.workflow/permissions.json` | everything except `mode`, `profiles` and `workFolders` (see the trust rule) |
 | tracked | `<worktree>/.pi/permissions.json` | `deny`, `ask` and `classifier.deny` only |
 
 A missing user file is `mode: "auto"` with empty lists. The project file lives in the **main checkout**, found with `git worktree list`, so every worktree of a repository shares it.
@@ -104,7 +104,7 @@ Every call goes through these steps, in this order. Each step ends the call or p
 5. **Ask rules.** A matching `ask` rule opens the dialog (no remember option). An opaque-line floor ask (an opaque line that names a permissions file, a child push, a git config key, a remote, a force or protected-branch push, or the foreman config next to a gate key) opens the dialog here too.
 6. **Allow rules and built-in allows.** The line is allowed when every segment matches an `allow` rule or a [built-in allow](#built-in-allows).
 7. **Dangerous class.** What is left is checked against the [dangerous class](#the-dangerous-class).
-8. **Mode.** What is left is decided by the [mode](#modes): not dangerous runs under `auto` and `allow`, asks under `ask`, is denied under `deny`; dangerous goes to the classifier (`auto`), the dialog (`ask`), runs (`allow`) or is denied (`deny`).
+8. **Mode.** What is left is decided by the [mode](#modes): not dangerous runs under `auto` and `allow`, asks under `ask`, is denied under `deny`; dangerous goes to the classifier (`auto`), the dialog (`ask`), runs (`allow`) or is denied (`deny`). A not dangerous call that [work folders](#work-folders) relax runs under `auto` when the mode is `ask` or `deny` and was not set by a session override.
 9. **Dialog or deny.** An escalation opens the [owner dialog](#the-owner-dialog), in a child's case in the parent's pane. With nobody to ask it is a deny that says the owner is absent.
 10. **Decision log.** Every decision is one JSON line. See [Decision log](#decision-log).
 
@@ -166,7 +166,7 @@ A built-in allow is a named rule that allows without a model. A shell line is al
 
 | Rule | Allows |
 |---|---|
-| `default-own-tool` | pi-foreman's own tools that carry no file path and no shell or message payload: `plan_mode_question`, `plan_mode_complete`, `ask_user_question`, `foreman_ledger`, `foreman_triage`, `foreman_checkpoint`, `foreman_dialogs`, `foreman_wait`, `contact_supervisor`, `subagent_supervisor`, `bg_wait`, `bg_status`, `bg_logs`, `bg_kill`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `pr_track`, `pr_untrack`, `git_status`, `git_log`, `git_diff_stat`, `git_branch_state`, `subagents_enable` |
+| `default-own-tool` | pi-foreman's own tools that carry no file path and no shell or message payload: `plan_mode_question`, `plan_mode_complete`, `ask_user_question`, `foreman_ledger`, `foreman_triage`, `foreman_checkpoint`, `foreman_dialogs`, `foreman_wait`, `contact_supervisor`, `subagent_supervisor`, `bg_wait`, `bg_status`, `bg_logs`, `bg_kill`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `git_status`, `git_log`, `git_diff_stat`, `git_branch_state`, `subagents_enable` |
 | `default-role-launch` | the foreman session's own single `subagent` launch of one of `explorer`, `builder`, `reviewer`, with no `action`, `tasks`, `chain` or `workflow`, and a `cwd`/`worktree` inside the owned roots. The adapter's role, ceremony and spawn gates run after the gate and still refuse a launch they refuse. A launch outside the owned roots, a workflow script and the `tasks`/`chain` forms are `danger-launch-outside` |
 | `default-read` | the read class of `effects.ts` (`ls`, `cat`, `head`, `tail`, `wc`, `stat`, `grep`, `rg`, `find`, print-only `sed`, ...) on paths inside the session's roots |
 | `default-build-test` | the project's own build and test commands from its manifest, run from the worktree (not a dependency install) |
@@ -193,6 +193,21 @@ Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `fore
 - a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree and scratch dir, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
 
 A path write outside every root is `danger-write-outside`. Secret paths are floors and never reach this step.
+
+### Work folders
+
+`workFolders` in the **user** file names folders you work in (`~/git`, `~/notes`). A project or tracked file cannot set it (the dropped-key notice names it), and neither can a profile.
+
+```json
+{ "workFolders": [{ "path": "~/git", "mode": "auto" }, { "path": "~/notes", "mode": "read" }] }
+```
+
+- **Reads.** Every read inside a folder (either mode) is a built-in allow, `.git` included; floors still guard secret files. Path tools and shell reads (`cat`, `ls`, `grep`) alike. Children get none. Folders relax reads only: `git add`, `commit`, `push`, `pull`, `fetch` and `switch` in a repo inside a folder keep their usual rule (no built-in allow outside the worktree and scratch).
+- **`mode: "auto"`** (default when omitted) also relaxes a write that no other root covers: it is not `danger-write-outside`, and when the resolved mode is `ask` or `deny` it runs as under `auto`. With the mode `auto` or `allow` it runs without the classifier. `mode: "read"` leaves writes as they are. Any other value warns and counts as `read`.
+- **Protected places stay as they are**, in every spelling (symlinks, `.GIT`): a `.git` directory, `.pi` (except its `scratch` and `tasks` subtrees), the agent dir, the Pi install dirs and the pi-foreman package root.
+- **Shell writes** relax only when every segment is a built-in default with the folders as extra write roots: `touch`, `mkdir` and `cp` into a folder. Output redirects (`echo x > <folder>/notes.txt`) keep the worktree's parity: they stay `danger-write-outside`, like a redirect into the worktree. `tee` and `tar -x -C` / `unzip -d` / `rsync` / `patch -d` / `make -C` are never defaults, and `rm` and `mv` keep today's behaviour, so they stay `danger-write-outside`.
+- **Never consulted** for a dangerous-class call, a path in two folders or in one folder and outside it, a `/foreman perms mode` session override, or a floors-only session. Nested folders: the innermost entry wins. A worktree inside a folder keeps its own rules.
+- **Validation.** `~` expands; a relative path, the filesystem root, your home dir and any parent of it are dropped with a warning; a folder outside your home dir is kept with a warning. `/foreman perms list` prints a Work folders block with the folders, modes, the real spelling when it differs, and the warnings. The allowed trace event reads `mode:folder:auto` with `mode` and `source: workFolder` and no path.
 
 ### Web reads
 

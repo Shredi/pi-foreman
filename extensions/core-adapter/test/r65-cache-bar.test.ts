@@ -47,7 +47,7 @@ function line1(src: CacheSource | null, width = 300): string {
   const ctx = { mode: "tui", model: { id: "m", reasoning: false, contextWindow: 200_000 }, getContextUsage: () => ({ percent: 10, contextWindow: 200_000 }), ui: { setStatus: () => undefined } };
   const data = { getGitBranch: () => null, getExtensionStatuses: () => new Map<string, string>() };
   const mount = f.mount("s", ctx, { requestRender: () => undefined }, theme, data, () => "off", () => src);
-  f.update("s", ctx, MSG, { enabled: true, isChild: false, children: 0 });
+  f.update("s", ctx, MSG, { enabled: true, isChild: false });
   const line = plain(mount.render(width)[0]);
   mount.dispose();
   return line;

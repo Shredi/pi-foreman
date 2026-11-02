@@ -4,6 +4,9 @@
 // after the pool. Prints one PASS|FAIL line per module, the slowest 15, the wall time and the last 80 lines of each failure.
 // Exits 0 when every module passed, 1 when one failed, 2 when no module was found or the arguments are wrong.
 // Options (for tests): --dir <path> replaces tests/replay, --serial a,b replaces the SERIAL list (module stems).
+// Shards: --shard i/n (or FOREMAN_REPLAY_SHARD=i/n; the flag wins) runs shard i of n. Pool modules are dealt round-robin,
+// then SERIAL modules continue the count, so the shards are disjoint and their union is every module.
+// --list prints the stems the selection runs (pool first, then serial) and exits without starting Python.
 // The interpreter is PI_FOREMAN_PYTHON, else python on Windows and python3 elsewhere.
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -19,12 +22,18 @@ const TAIL_LINES = 80;
 const SLOWEST = 15;
 
 function usage(message) {
-  console.error(`${message}\nusage: node scripts/replay_run.mjs [--dir <path>] [--serial a,b]`);
+  console.error(`${message}\nusage: node scripts/replay_run.mjs [--dir <path>] [--serial a,b] [--shard i/n] [--list]`);
   process.exit(2);
 }
 
+function parseShard(spec, source) {
+  const m = /^([1-9]\d*)\/([1-9]\d*)$/.exec(spec);
+  if (!m || Number(m[1]) > Number(m[2])) usage(`${source} must be i/n with 1 <= i <= n, got "${spec}"`);
+  return { index: Number(m[1]), count: Number(m[2]) };
+}
+
 function parseArgs(argv) {
-  const opts = { dir: path.join(root, "tests", "replay"), serial: SERIAL };
+  const opts = { dir: path.join(root, "tests", "replay"), serial: SERIAL, shard: null, list: false };
   for (let i = 0; i < argv.length; i += 1) {
     const value = argv[i + 1];
     if (argv[i] === "--dir" && value !== undefined) {
@@ -33,10 +42,17 @@ function parseArgs(argv) {
     } else if (argv[i] === "--serial" && value !== undefined) {
       opts.serial = value.split(",").map((s) => s.trim()).filter(Boolean);
       i += 1;
+    } else if (argv[i] === "--shard" && value !== undefined) {
+      opts.shard = parseShard(value, "--shard");
+      i += 1;
+    } else if (argv[i] === "--list") {
+      opts.list = true;
     } else {
       usage(`unknown or incomplete argument ${argv[i]}`);
     }
   }
+  const envShard = process.env.FOREMAN_REPLAY_SHARD;
+  if (opts.shard === null && envShard) opts.shard = parseShard(envShard, "FOREMAN_REPLAY_SHARD");
   return opts;
 }
 
@@ -98,10 +114,18 @@ async function runPool(py, dir, files, jobs, results) {
   await Promise.all(workers);
 }
 
+/** The modules of one shard ({index, count}, 1-based; null runs all). Pool modules are dealt round-robin, serial modules continue the count. */
+function selectShard(poolFiles, serialFiles, shard) {
+  if (shard === null) return { pool: poolFiles, serial: serialFiles };
+  const mine = (k) => k % shard.count === shard.index - 1;
+  return {
+    pool: poolFiles.filter((_, k) => mine(k)),
+    serial: serialFiles.filter((_, j) => mine(poolFiles.length + j)),
+  };
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const jobs = poolSize();
-  const py = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
   const all = fs.existsSync(opts.dir)
     ? fs.readdirSync(opts.dir).filter((f) => /^test_.*\.py$/.test(f)).sort()
     : [];
@@ -111,11 +135,23 @@ async function main() {
   }
   const serialFiles = opts.serial.map((m) => `${m}.py`).filter((f) => all.includes(f));
   const poolFiles = all.filter((f) => !serialFiles.includes(f));
+  const selected = selectShard(poolFiles, serialFiles, opts.shard);
+  if (opts.list) {
+    for (const file of [...selected.pool, ...selected.serial]) console.log(file.replace(/\.py$/, ""));
+    return 0;
+  }
+  const shardLabel = opts.shard ? `shard ${opts.shard.index}/${opts.shard.count}` : "";
+  if (selected.pool.length + selected.serial.length === 0) {
+    console.log(`${shardLabel} selects no module (${all.length} in ${opts.dir})`);
+    return 0;
+  }
 
+  const jobs = poolSize();
+  const py = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
   const started = Date.now();
   const results = [];
-  await runPool(py, opts.dir, poolFiles, jobs, results);
-  for (const file of serialFiles) {
+  await runPool(py, opts.dir, selected.pool, jobs, results);
+  for (const file of selected.serial) {
     const result = await runModule(py, opts.dir, file);
     report(result);
     results.push(result);
@@ -136,7 +172,7 @@ async function main() {
   }
 
   const passed = results.length - failed.length;
-  console.log(`\nreplay modules: ${passed} passed, ${failed.length} failed (${results.length} modules, ${jobs} workers, ${serialFiles.length} serial, wall ${wall.toFixed(1)}s)`);
+  console.log(`\nreplay modules: ${passed} passed, ${failed.length} failed (${results.length} modules, ${jobs} workers, ${selected.serial.length} serial${shardLabel ? `, ${shardLabel}` : ""}, wall ${wall.toFixed(1)}s)`);
   return failed.length > 0 ? 1 : 0;
 }
 

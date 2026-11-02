@@ -113,6 +113,8 @@ def collect_notices(pi, recs, timeout=60.0):
 class TestParallelAsk(ReplayCase):
     def test_two_launches_one_ask(self):
         rig = self.rig("parallel-ask", load_fixture("parallel_ask"), permissions="baseline")
+        # pa2 waits for the marker pa1 writes after its reply, so neither child can end before the supervisor reply is delivered
+        self.user_permissions(rig, {"allow": ["Bash(until test -f replied.marker*)"]})
         pi = rig.start()
         sid = pi.session_id()
         res = tool_results(pi.prompt("[[replay:p1]] go", timeout=60), "subagent")

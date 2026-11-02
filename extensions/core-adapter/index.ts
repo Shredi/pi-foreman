@@ -19,7 +19,8 @@ import type { OwnedRoots } from "./owned.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
-import { PermStore, PERM_MODES, profileName } from "./permconfig.ts";
+import { PermStore, PERM_MODES, profileName, workFoldersBlock } from "./permconfig.ts";
+import { folderRelaxes } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, proposeRule } from "./rules.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
@@ -91,12 +92,12 @@ import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
-import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack, PR_TOOL_NAMES } from "./gitpack.ts";
+import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack } from "./gitpack.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, pollSnapshot } from "./prwatch.ts";
-import { PrDots, branchOf, prDotsEnabled } from "./prdots.ts";
-import { PrWidget } from "./prwidget.ts";
-import { PrBot, prBotDir, sharedDoctorLines } from "./prbot.ts";
+import { PrHost, branchOf } from "./prhost.ts";
+import { PushNotice } from "./pushnotice.ts";
+import { Where, originRepo } from "./where.ts";
 import { ExtStatus } from "./extstatus.ts";
 import { registerSafeOps, runSafeOp } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
@@ -115,7 +116,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -123,8 +124,7 @@ import { AskFlag } from "./askflag.ts";
 import { ASK_USER_TOOL, writeAskRuling } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
-import { ChildWidget, rungOf } from "./childwidget.ts";
-import type { BackgroundRow } from "./childwidget.ts";
+import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { OpenPrsRefresher, realGh } from "./openprs.ts";
@@ -147,7 +147,7 @@ import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } 
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
-import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, waitNote, type CacheSource } from "./footer.ts";
+import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
@@ -276,10 +276,11 @@ interface Session {
   prPack: boolean;
   prWatches: PrWatches;
   prCtx: ExtensionContext | null;
-  /** Foreman only: PR state dots for the sidebar (prdots.ts) and the external status hook (extstatus.ts); both feed the live file's `dots`. */
-  prDots: PrDots;
-  /** Foreman only: the shared PR watch (prbot.ts): leader lease, host polling, snapshot reader. */
-  prBot: PrBot;
+  /** The host rule for the PR tools' `host` argument (prhost.ts). */
+  prHost: PrHost;
+  /** Foreman only: the pushed branches and their close-time notice (pushnotice.ts). */
+  pushNotice: PushNotice;
+  /** Foreman only: the external status hook (extstatus.ts); feeds the live file's `dots`. */
   extStatus: ExtStatus;
   /** Project Claude Code config snapshot, checked before claude-bridge prompts (claudedrift.ts). */
   claudeCfg: ClaudeConfigWatch;
@@ -405,10 +406,8 @@ interface Session {
   lastAssistantAt: number | null;
   /** A turn is running (agent_start .. agent_settled); the footer's cache bar shows no warms. */
   running: boolean;
-  /** Children widget and its run view (childwidget.ts). */
-  widget: ChildWidget;
-  /** PR widget above the editor (prwidget.ts); never mounted in a child. */
-  prWidget: PrWidget;
+  /** Run view of the subagent launches (runs.ts). */
+  childRuns: ChildRuns;
   /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
   live: LiveState | null;
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
@@ -555,7 +554,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let bridgeTtlS: number | null = null;
   const reviewFacts = new ReviewFacts();
   const usageFooter = new UsageFooter(loadPrices(PKG_ROOT), (model) => piRuntimePoint(model));
-  /** Priced run cost per usage file, cached by size and mtime (the widget keeps only 64 rows and loses its total on restart). */
+  /** Priced run cost per usage file, cached by size and mtime (the run list keeps only 64 rows and loses its total on restart). */
   const runsCostCache = new Map<string, { sig: string; runs: number }>();
   /** The summed estimate (lane 3b): the foreman's own list-price cost plus every run's priced cost, read from the session's usage file. */
   function summedCost(s: Session): { foreman: number; runs: number; total: number } {
@@ -592,22 +591,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
   const askFlag = new AskFlag(); // /foreman flag-ask (askflag.ts): the last ask the owner answered
-  // Background rows of the children widget (childwidget.ts): the foreman's foreman_wait waits (pressure waits are not shown), its foreman_bg commands and its PR watches.
-  const backgroundOf = (s: Session): BackgroundRow[] => {
-    if (s.isChild) return [];
-    const now = Date.now();
-    const rows: BackgroundRow[] = waits.active(s.id).filter((w) => w.kind !== "pressure").map((w) => ({ label: w.bg ? "bg" : "wait", detail: w.note || w.kind, startedAt: now - w.ageSeconds * 1000 }));
-    for (const p of s.prWatches.list()) rows.push({ label: `pr #${p.n}`, detail: p.until, startedAt: p.startedAt });
-    return rows;
-  };
-  const prWidgetTouch = (s: Session, ctx: ExtensionContext): void => {
-    s.prWidget.request(ctx, { enabled: !s.isChild && s.prPack && get(s.config.config, "widget.prs") !== false, links: get(s.config.config, "widget.prLinks") !== false && ctx.mode === "tui", symbols: get(s.config.config, "ui.symbols") });
-  };
-  const radarTouch = (s: Session | undefined, ctx: ExtensionContext): void => {
+  const radarTouch = (s: Session | undefined, _ctx: ExtensionContext): void => {
     if (!s) return;
     s.live?.touch();
-    s.widget.request(ctx, { enabled: get(s.config.config, "widget.children") === true, agentDir: s.agentDir, intercomId: s.live?.intercomId ?? null, symbols: get(s.config.config, "ui.symbols"), background: () => backgroundOf(s), spinner: get(s.config.config, "ui.spinner") !== false });
-    prWidgetTouch(s, ctx);
   };
   pi.on("agent_start", async (_e, ctx) => {
     const s = sessionFor(ctx);
@@ -632,6 +618,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
+  // a worktree child gets the foreman's checkout in its env
+  if (process.env.PI_SUBAGENT_CHILD === "1") Object.assign(process.env, checkoutEnv(launchBinding));
   // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
   const mcpChild = process.env.PI_SUBAGENT_CHILD === "1" ? new McpChild(pi, { binding: launchBinding ? { role: launchBinding.role, ...(launchBinding.mcp ? { mcp: launchBinding.mcp } : {}) } : null, hiddenSkills: () => skillState.hidden.length, ...(deps.mcpChild ?? {}) }) : null;
 
@@ -680,7 +668,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
-    let lastShared: ReturnType<PrBot["read"]> = null;
     const s: Session = {
       id,
       cwd,
@@ -717,30 +704,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         trace: (r) => s.trace?.emit(r),
         intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
         now: () => Date.now(),
-        changed: () => {
-          s.live?.touch();
-          s.widget.refresh();
-        },
+        changed: () => s.live?.touch(),
       }),
-      prDots: new PrDots({
-        enabled: () => prDotsEnabled(s.prPack, s.isChild, get(s.config.config, "tools.prDots")),
-        preflight: () => safeOpDriftPreflight(s.gitDrift, s.isChild, s.cwd, os.homedir(), "foreman_pr_dots", { mode: "print", hasUI: false }, (r) => s.trace?.emit(r), "pr-dots"),
-        branch: () => branchOf(s.prCtx?.cwd ?? s.cwd),
+      prHost: new PrHost({ run: (op, args, cwd) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, args, 30_000) }),
+      pushNotice: new PushNotice({
+        enabled: () => s.prPack && !s.isChild,
         run: (op, args, cwd) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, args, 30_000),
-        cwd: () => s.prCtx?.cwd ?? s.cwd,
-        repoLookup: true,
-        discover: true,
-        batch: true,
-        traceTrack: (r) => s.trace?.emit(r),
-        interactions: () => get(s.config.config, "tools.prInteractions"),
-        beforeTick: () => {
-          const before = s.prBot.read();
-          if (before) s.prDots.onTouched(before.touched);
-          if (before !== lastShared) {
-            lastShared = before;
-            s.prWidget.refresh();
-          }
-        },
         baseBranch: () => {
           const b = get(s.config.config, "safety.ops.baseBranch");
           return typeof b === "string" && b ? b : null;
@@ -759,15 +728,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return null;
           }
         },
-        watched: () => s.prWatches.list().map((p) => p.n).reverse(),
-        watchChecks: (n) => s.prWatches.lastChecks(n),
-        intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
-        trace: (r) => s.trace?.emit(r),
-        changed: () => {
-          s.live?.touch();
-          s.widget.refresh();
-          s.prWidget.refresh();
-        },
       }),
       extStatus: new ExtStatus({
         enabled: () => !s.isChild && s.live !== null,
@@ -783,10 +743,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         env: process.env,
         platform,
         trace: (r) => s.trace?.emit(r),
-        changed: () => {
-          s.live?.touch();
-          s.widget.refresh();
-        },
+        changed: () => s.live?.touch(),
       }),
       claudeCfg: new ClaudeConfigWatch(),
       trace: ((t) => openTrace({ enabled: t.enabled, dir: get(config.config, "trace.dir"), stateDir: markerDir, sessionId: t.id, base: t.base }))(sessionTrace(get(config.config, "trace.enabled"), get(config.config, "retro.enabled"), ctx.mode, id, b)),
@@ -871,19 +828,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleCtx: null,
       lastAssistantAt: null,
       running: false,
-      widget: new ChildWidget(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT)),
-      prBot: new PrBot({
-        active: () => s.prPack && !s.isChild,
-        config: () => get(s.config.config, "tools.prShared"),
-        prHost: () => get(s.config.config, "tools.prHost"),
-        dir: prBotDir(agentDir),
-        sessionId: id,
-        run: (op, args, runCwd) => prRun(s, runCwd, op, args, 30_000),
-        cwd: () => s.prCtx?.cwd ?? s.cwd,
-        preflight: () => safeOpDriftPreflight(s.gitDrift, s.isChild, s.cwd, os.homedir(), "foreman_pr_shared", { mode: "print", hasUI: false }, (r) => s.trace?.emit(r), "pr-shared"),
-        trace: (r) => s.trace?.emit(r),
-      }),
-      prWidget: new PrWidget({ views: () => s.prDots.views(), shared: () => s.prBot.read(), current: () => s.prDots.currentRepo() }),
+      childRuns: new ChildRuns(new UsageTail(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT))),
       live: null,
       openPrs: null,
       pressureSampler: null,
@@ -906,14 +851,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.widget.runs.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? [...x.prDots.dots().map((d) => ({ n: d.n, state: d.state, label: d.label ?? `#${d.n}`, src: "pr" as const, ...(d.url ? { url: d.url } : {}) })), ...x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const }))] : []; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
+      const where = new Where({ cwd: () => s.cwd, repo: originRepo, branch: branchOf, changed: () => s.live?.touch() });
+      if (s.live) s.live.where = () => where.read();
       s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd) });
       s.openPrs.start();
       const live = s.live;
-      waits.onChange(id, () => {
-        live?.touch();
-        s.widget.refresh();
-      });
+      waits.onChange(id, () => live?.touch());
     }
     isoSetting = get(config.config, "bridge.isolateClaudeConfig");
     ttlSetting = bridgeTtlSetting(get(config.config, "bridge.promptCacheTtl"));
@@ -1307,9 +1251,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
     if (!s.isChild && s.live) {
-      prWidgetTouch(s, ctx);
-      s.prDots.start();
-      s.prBot.start();
       s.extStatus.start();
     }
     // Host pressure (pressure.ts): the foreman samples on a timer; the launch path only reads the file.
@@ -1409,9 +1350,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.registration = undefined;
     s.panels.clear();
     s.prWatches.clear();
-    s.prDots.clear();
-    s.prBot.dispose();
-    s.prWidget.dispose();
     s.extStatus.clear();
     if (!s.isChild) {
       syncKeepalives(s, ctx);
@@ -1424,7 +1362,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.live?.stop();
     s.openPrs?.stop();
     await s.pressureSampler?.stop();
-    s.widget.dispose();
     usageFooter.drop(s.id);
     compactionGate.reset(s.id);
     pythonCache.drop(s.id);
@@ -1948,9 +1885,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           closeChildAsk(s, ended);
         }
         if (typeof runId === "string" && !s.isChild) {
-          s.widget.runs.onRunEnd(runId);
+          s.childRuns.onRunEnd(runId);
           s.live?.touch();
-          s.widget.refresh();
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           const ended = runEndOf(data);
@@ -1981,7 +1917,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               if (r.verdict === "pass" && (r.occasion === "item" || r.occasion === "pre-pr")) s.ladder.probeRisks.clear(); // R39: the bypass probes were asked for and the review passed
             }
             // Lane 3g: the real end of each role of the run, with the run's priced cost and duration from the presence row.
-            const info = s.widget.runs.info(runId);
+            const info = s.childRuns.info(runId);
             const status = runEndOf(data)?.status;
             for (const role of roles) s.trace?.emit({ event: "role_result", role, runId, exit: status === "completed" ? 0 : 1, ...(info?.ms != null ? { ms: info.ms } : {}), ...(info ? { cost: Math.round(info.cost * 10000) / 10000 } : {}) });
           }
@@ -2179,12 +2115,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
 
   /** The session's roots for the gate's path rules and defaults (pathrules.ts GateRoots). */
-  async function gateRootsOf(s: Session, cwd: string, sessionDir: string | undefined, extraReadDirs: string[] = []): Promise<GateRoots> {
+  async function gateRootsOf(s: Session, cwd: string, sessionDir: string | undefined, extraReadDirs: string[] = [], folders: Resolved["workFolders"] = []): Promise<GateRoots> {
     const state = path.join(s.agentDir, "pi-foreman", "state");
     const rounds = roundWorktrees(state, s.usage.line.foremanSession, platform);
     const pi = await piRootsOf(s);
     const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
     const owned = sessionOwnedRoots(s);
+    // each work folder as written and in its real spelling (the same `real()` as tmp), same mode; a child has none
+    const workFolders = s.isChild ? [] : folders.flatMap((f) => (real(f.path) !== f.path ? [f, { path: real(f.path), mode: f.mode }] : [f]));
     return {
       worktree: workspaceOf(cwd).root,
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
@@ -2200,6 +2138,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
+      workFolders,
+      pkgRoot: PKG_ROOT,
     };
   }
 
@@ -2256,7 +2196,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rt = gs ? gateRuntimeOf(gs) : undefined;
     const resolved = rt ? rt.store.resolve() : undefined;
     if (gs && rt) for (const n of rt.store.drainNotices()) notifyOnce(gs, ctx, n, n);
-    const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx), resolved?.additionalDirectories) : undefined;
+    const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx), resolved?.additionalDirectories, resolved?.workFolders) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
@@ -2275,8 +2215,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // no session: no dialog, classifier or log to decide with, and the overlay below is no replacement for the gate; floors and rules ran above
     if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
-    const allowed = (rule: string, layer: GateLayer, label: string): undefined => {
-      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role });
+    const allowed = (rule: string, layer: GateLayer, label: string, folder = false): undefined => {
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role, ...(folder ? { mode: "auto", source: "workFolder" } : {}) });
       if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule); // the classifier logs its own record
       gateDecided.add(event.toolCallId);
       return undefined;
@@ -2303,7 +2243,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       const danger = out.danger;
       if (!danger) {
-        // nothing decided and not dangerous: runs under auto and allow, asks under ask, refused under deny
+        // nothing decided and not dangerous: runs under auto and allow, asks under ask, refused under deny. A call the work folders relax runs under
+        // auto instead (never for a session override or a floors-only session: modeSource session)
+        const folderMode = (resolved.mode === "deny" || resolved.mode === "ask") && roots && ["default", "user", "profile"].includes(resolved.modeSource)
+          && folderRelaxes({ tool: event.toolName, input: event.input, ...(out.segments ? { segments: out.segments } : {}), text: payload }, { roots, platform, cwd: ctx.cwd, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } });
+        if (folderMode) return allowed("no-rule", "mode", "mode:folder:auto", true);
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
         return allowed("no-rule", "mode", "mode:no-rule");
@@ -2457,6 +2401,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const e of r.prose.allow) lines.push(`${e.id}: ${e.text} (${e.source})`);
       for (const e of r.prose.deny) lines.push(`${e.id}: ${e.text} (${e.source})`);
       if (r.additionalDirectories.length) lines.push(`additionalDirectories: ${r.additionalDirectories.join(", ")}`);
+      lines.push(...workFoldersBlock(r, (p) => { try { return fs.realpathSync(p); } catch { return p; } }));
       return [...lines, ...rt.store.drainNotices()].join("\n");
     }
     return usage;
@@ -3058,7 +3003,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent") {
         const b = recordLaunchUsage(s, ctx, input, kind, limits, launchMcp, launchFlags);
-        if (!s.isChild) s.widget.runs.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
+        if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
       return undefined;
@@ -3142,7 +3087,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.turn.cacheWrite += Number(m.usage?.cacheWrite) || 0;
     }
     radarTouch(s, ctx);
-    usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, children: s.launches.size, wait: waitNote(waits.active(s.id)), runsCost: s.isChild ? undefined : summedCost(s).runs, perms: gateRuntimes.get(s.id)?.store.resolve().mode ?? null });
+    usageFooter.update(s.id, ctx, event.message, { enabled: get(s.config.config, "footer.usage"), isChild: s.isChild, runsCost: s.isChild ? undefined : summedCost(s).runs, perms: gateRuntimes.get(s.id)?.store.resolve().mode ?? null });
     // R12 item 4: after repeatRefusalStop every assistant message of the run carries the stop as its error; pi-subagents reports the last
     // assistant error as the run's error (the path a usage-policy block takes), so the parent's runEndOf sees REPEAT_REFUSAL_ERROR.
     const stoppedMsg = s.isChild ? repeatStopped.get(s.id) : undefined;
@@ -3604,6 +3549,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (mcp) b.mcp = mcp;
     if (flags?.reads !== undefined) b.reads = flags.reads;
     if (flags?.install) b.install = true;
+    if (input.worktree === true) b.worktree = true; // ceremony-fixes-2: the child's cwd is an isolation worktree
     bindLaunch(input, b);
     return b;
   }
@@ -3667,19 +3613,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       bashRulingSnaps.delete(event.toolCallId);
       selfRulingsFor(owner).markChanged(bashSnap, childDirsOf(owner));
     }
-    // A PR this session created joins the sidebar dots (prdots.ts).
-    if (owner && !owner.isChild && !event.isError && event.toolName === "pr_create") {
-      const d = event.details as { decision?: unknown; result?: { action?: unknown; number?: unknown; url?: unknown } } | undefined;
-      if (d?.decision === "ran" && d.result?.action === "pr_create" && typeof d.result.number === "number") owner.prDots.onCreated(d.result.number, typeof d.result.url === "string" ? d.result.url : undefined);
-    }
-    // Registration from command results and PR tool results (prtrack.ts); display data only, never blocks the result.
-    if (owner && !owner.isChild && owner.prPack && (event.toolName === "bash" || (PR_TOOL_NAMES.includes(event.toolName) && event.toolName !== "pr_comments" && event.toolName !== "pr_create"))) {
+    // Pushed branches for the close-time notice (pushnotice.ts); display data only, never blocks the result.
+    if (owner && !owner.isChild && owner.prPack && event.toolName === "bash") {
       const text = event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
-      if (event.toolName === "bash") {
-        const code = (event.details as { exitCode?: unknown } | undefined)?.exitCode;
-        const command = (event.input as Record<string, unknown>).command;
-        if (typeof command === "string") void owner.prDots.onBash(command, text, typeof code === "number" ? code === 0 : !event.isError, ctx.cwd).catch(() => undefined);
-      } else void owner.prDots.onResult(text, ctx.cwd).catch(() => undefined);
+      const code = (event.details as { exitCode?: unknown } | undefined)?.exitCode;
+      const command = (event.input as Record<string, unknown>).command;
+      if (typeof command === "string") void owner.pushNotice.onBash(command, text, typeof code === "number" ? code === 0 : !event.isError, ctx.cwd).catch(() => undefined);
     }
     owner?.mutating.delete(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
@@ -3724,7 +3663,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         closeChildAsk(s, launched);
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
-          s.widget.runs.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
+          s.childRuns.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
           radarTouch(s, ctx);
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
@@ -3966,12 +3905,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   }
 
-  /** Pushed branches without a tracked PR: evaluated in the background, one display-only warning each (prdots.ts pushNotice). */
+  /** Pushed branches without a PR: evaluated in the background, one display-only warning each (pushnotice.ts). */
   function startPushNotice(s: Session, ctx: ExtensionContext): void {
     if (s.isChild || !s.prPack) return;
-    void s.prDots.pushNotice((name) => {
+    void s.pushNotice.run((name) => {
       try {
-        ctx.ui.notify(`pi-foreman: pushed branch ${name} has no tracked PR (open one, or pr_track <number> once it exists)`, "warning");
+        ctx.ui.notify(`pi-foreman: pushed branch ${name} has no pull request (open one)`, "warning");
       } catch {
         // display only
       }
@@ -4062,7 +4001,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
         watches: s.prWatches,
         trace: (r) => s.trace?.emit(r),
-        tracker: s.prDots,
+        tracker: s.prHost,
       };
     },
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
@@ -4585,7 +4524,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman prs [list] | /foreman trust bridge | /foreman perms mode|reload|list",
+    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms mode|reload|list",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -4599,20 +4538,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
         persistCeremonyState(s);
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");
-        return;
-      }
-      if (sub === "prs") {
-        const s = await ensureSession(ctx);
-        if (s.isChild || rest.length > 1 || (rest[0] !== undefined && rest[0] !== "list")) {
-          ctx.ui.notify("Usage: /foreman prs [list] (foreman session only)", "warning");
-          return;
-        }
-        if (rest[0] === "list") {
-          ctx.ui.notify(s.prWidget.listText(), "info");
-          return;
-        }
-        const mode = s.prWidget.cycle();
-        ctx.ui.notify(`pi-foreman: PR widget ${mode}${get(s.config.config, "widget.prs") === false ? " (widget.prs is off, nothing shows)" : ""}`, "info");
         return;
       }
       if (sub === "session") return sessionCmd.command(args.trim().slice(sub.length), ctx);
@@ -4858,7 +4783,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else fail("session marker missing", `make ${s.markerDir} writable and restart the session.`);
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
     out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
-    out.push(...sharedDoctorLines(s.isChild ? "pr shared watch: off" : s.prBot.describe(), s.config.warnings));
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
     // The cache lines judge the base model: while downshifted the live model is the idle rung, which the idle-rung line below covers.
     const dm = idleModel.baseRef(ctx.model);

@@ -42,6 +42,13 @@ export function radarBinary(prop, machine, fallback = "foreman") {
 // ---- parse ---------------------------------------------------------------------------------------------------
 
 const CHECK = { fail: "fail", run: "pending", ok: "ok", none: "none" };
+const MERGEABLE = ["MERGEABLE", "CONFLICTING", "UNKNOWN"];
+
+// Fields a PR may carry beyond its checks: the radar `openPrs` entry has them; `baseRefName` is read from that entry only.
+const prExtras = (p) => ({
+  title: str(p.title), bodyText: str(p.bodyText), branch: str(p.headRefName),
+  baseRef: str(p.baseRefName), mergeable: MERGEABLE.includes(p.mergeable) ? p.mergeable : "",
+});
 
 function cleanRepoUrl(v) {
   const s = str(v).replace(/\.git$/, "").replace(/\/+$/, "");
@@ -55,10 +62,11 @@ function normDots(raw, repoUrl) {
     if (!isObj(d) || d.src !== "pr" || int(d.n) === null || !(d.state in CHECK)) continue;
     let pr = byN.get(d.n);
     if (!pr) {
-      pr = { number: d.n, checks: [], url: "", repo: "" };
+      pr = { number: d.n, checks: [], jobs: [], url: "", repo: "", ...prExtras(d) };
       byN.set(d.n, pr);
     }
     pr.checks.push(CHECK[d.state]);
+    pr.jobs.push({ name: str(d.name), state: CHECK[d.state] });
     if (!pr.url && isSafeHttpsUrl(d.url)) pr.url = d.url;
     if (!pr.repo) pr.repo = cleanRepoUrl(d.repo) || repoUrl;
   }
@@ -87,7 +95,19 @@ function normNode(raw, depth, budget) {
     hcTerminal: str(raw.hcTerminal), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
+    repo: nameOf(raw.repo), branch: str(raw.branch),
   };
+}
+
+const STATE_ALIAS = { pending: "run", running: "run", in_progress: "run", queued: "run", success: "ok", passed: "ok", pass: "ok", failure: "fail", failed: "fail", error: "fail" };
+
+/** One check of a feed entry in either shape: a state string ("ok") or an object {n|name, state, label}. null when it has no known state. */
+export function jobOf(c) {
+  const raw = isObj(c) ? c.state : c;
+  const key = typeof raw === "string" ? raw.toLowerCase() : "";
+  const state = CHECK[STATE_ALIAS[key] ?? key];
+  if (!state) return null;
+  return { name: isObj(c) ? str(c.n) || str(c.name) || str(c.label) : "", state };
 }
 
 function normOpenPrs(raw) {
@@ -95,10 +115,30 @@ function normOpenPrs(raw) {
   const out = [];
   for (const p of raw.slice(0, 200)) {
     if (!isObj(p) || int(p.number) === null) continue;
-    const checks = Array.isArray(p.checks) ? p.checks.filter(isObj).map((c) => CHECK[c.state]).filter(Boolean) : [];
-    out.push({ number: p.number, checks, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo), title: str(p.title), state: str(p.state) });
+    const jobs = (Array.isArray(p.checks) ? p.checks : Array.isArray(p.jobs) ? p.jobs : []).map(jobOf).filter(Boolean);
+    out.push({
+      number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
+      state: str(p.state), ...prExtras(p),
+    });
   }
   return out;
+}
+
+/** Puts each open feed PR on the sessions with the same repository and head branch (`node.repo`, `node.branch` from the live
+ *  file); a PR already on the node (same number) is not added twice. Mutates the nodes `parseRadarDoc` just built. */
+export function matchPrs(nodes, feed, depth = 0) {
+  if (depth > MAX_DEPTH) return;
+  for (const n of listOf(nodes)) {
+    if (!isObj(n)) continue;
+    if (n.kind === "session" && n.repo && n.branch) {
+      const repo = n.repo.toLowerCase();
+      for (const p of listOf(feed)) {
+        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.repo).toLowerCase() !== repo) continue;
+        if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
+      }
+    }
+    matchPrs(n.children, feed, depth + 1);
+  }
 }
 
 /** `{nodes, openPrs}` from the text of `foreman radar --json`, or null when the text is not a radar document. */
@@ -109,7 +149,9 @@ export function parseRadarDoc(text) {
   const budget = { left: MAX_NODES };
   const nodes = doc.roots.map((r) => normNode(r, 0, budget)).filter(Boolean);
   const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
-  return { nodes, openPrs: normOpenPrs(doc.openPrs), ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
+  const openPrs = normOpenPrs(doc.openPrs);
+  matchPrs(nodes, openPrs);
+  return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
 }
 
 /** The root nodes of the radar document, normalized; [] for anything else. */
@@ -193,6 +235,20 @@ export function joinAgents(agents, tree, machine = null) {
   return out;
 }
 
+/** Map pane-less child terminal address -> session node. `kids` are terminal records (`hc ls`), joined like agents on
+ *  `hcTerminal` == the address (`machine/` prefix: pass that machine). Nodes in `taken` (already shown under a paned agent) are
+ *  not used; a node joins one terminal only. */
+export function joinChildren(kids, tree, machine = null, taken = new Set()) {
+  const out = new Map();
+  const used = new Set(taken);
+  for (const [addr, n] of joinAgents(kids, tree, machine)) {
+    if (used.has(n)) continue;
+    used.add(n);
+    out.set(addr, n);
+  }
+  return out;
+}
+
 // ---- rows ----------------------------------------------------------------------------------------------------
 
 /** Cost as the TUI sidebar prints it. */
@@ -259,6 +315,16 @@ export function childTerminals(all, address) {
   return out;
 }
 
+/** Colours of the PR dot fill and the card groups from a theme `t`. Green is the ANSI green (the theme `done` is blue), amber the ANSI yellow. */
+export function prTones(t) {
+  return { green: t.ansi2 ?? t.ansi10 ?? t.done ?? t.working, red: t.blocked, amber: t.ansi3 ?? t.ansi11 ?? t.working, dim: t.dim };
+}
+
+/** Colour role of a PR check dot: green ok, red fail, amber (warning) pending, dim otherwise. */
+export function checkTone(state) {
+  return state === "ok" ? "ok" : state === "fail" ? "fail" : state === "pending" ? "warning" : "dim";
+}
+
 export function shortModel(m) {
   return str(m).replace(/^.*\//, "").replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }
@@ -271,20 +337,23 @@ export function totalCost(node) {
 }
 
 export function sessionCount(node) {
-  return allSessions([node]).length;
+  return allSessions([node]).filter((s) => s.state !== "closed").length;
 }
 
-const urgency = (pr) => (pr.checks.includes("fail") ? 0 : pr.checks.includes("pending") ? 1 : 2);
+const urgency = (pr) => {
+  const s = (Array.isArray(pr.checks) ? pr.checks : []).map(jobOf).filter(Boolean).map((j) => j.state);
+  return s.includes("fail") ? 0 : s.includes("pending") ? 1 : 2;
+};
 
 /** Failing first, then pending, then green; newest (highest number) first inside each. */
 export function sortPrs(prs) {
-  return (Array.isArray(prs) ? prs.filter((p) => isObj(p) && Array.isArray(p.checks)) : [])
+  return (Array.isArray(prs) ? prs.filter(isObj) : [])
     .slice().sort((a, b) => urgency(a) - urgency(b) || num(b.number) - num(a.number));
 }
 
 /** "N PRs · k failing · m pending", or "N PRs · all green"; "" for none. */
 export function prSummary(prs) {
-  const list = Array.isArray(prs) ? prs.filter((p) => isObj(p) && Array.isArray(p.checks)) : [];
+  const list = Array.isArray(prs) ? prs.filter(isObj) : [];
   if (!list.length) return "";
   const failing = list.filter((p) => urgency(p) === 0).length;
   const pending = list.filter((p) => urgency(p) === 1).length;
@@ -336,8 +405,8 @@ function extraRecords(n, recs) {
   });
 }
 
-/** Status for the glyph: hidden (ended session), blocked, working, done (hc: finished turn not yet seen), agents, bg, waiting
- *  or idle. `hcStatus` is the status of the joined hc terminal; without one the radar state decides. `recs` are the
+/** Status for the glyph, most urgent first: hidden (ended session), blocked, working, agents (own agents still run, also after
+ *  the turn ended), done (hc: finished turn not yet seen, no agents running), bg, waiting or idle. `hcStatus` is the status of the joined hc terminal; without one the radar state decides. `recs` are the
  *  parseRecords of that terminal; `n` may be null for a terminal with no radar node. */
 export function nodeStatus(n, hcStatus = null, recs = []) {
   if (!isObj(n)) {
@@ -347,13 +416,14 @@ export function nodeStatus(n, hcStatus = null, recs = []) {
   const extra = extraRecords(n, recs);
   if (n.state === "done") return "hidden";
   if (n.sym === "needs-you" || n.state === "ask" || listOf(n.asks).length > 0 || hcStatus === "blocked" || extra.some((r) => r.state === "blocked")) return "blocked";
+  const running = radarRuns(n).length > 0 || extra.length > 0;
   if (hcStatus === "working") return "working";
-  if (hcStatus === "done") return "done";
+  if (hcStatus === "done") return running ? "agents" : "done";
   if (hcStatus === null || hcStatus === undefined) {
     if (n.state === "blocked" || n.sym === "blocked") return "blocked";
     if (n.state === "working" || n.state === "starting" || n.sym === "working" || n.sym === "starting") return "working";
   }
-  if (radarRuns(n).length > 0 || extra.length > 0) return "agents";
+  if (running) return "agents";
   if (listOf(n.tasks).length > 0) return "bg";
   if (n.sym === "waiting-external" || listOf(n.waits).length > 0) return "waiting";
   return "idle";
@@ -393,7 +463,7 @@ const MAX_AGENT_LINES = 4;
 
 /** One line per running async agent under a session or agent row: `[{glyph: "working"|"blocked"|"", text}]`, at most 4,
  *  then a `+N more` item (glyph ""). Only records without a live worker row (matched by title/role, with counts) get a
- *  line, `title · msg`; radar runs are drawn as worker rows already (the workers `treeItems` draws under this row: sessions in
+ *  line, `title · msg`; radar runs are drawn as worker rows already (the agent rows of `sessionTree`: sessions in
  *  `skip` and hidden ones are left out). Finished records are not parsed in. `node` may be null. */
 export function agentLines(node, recs = [], skip = new Set()) {
   const left = new Map();
@@ -431,24 +501,6 @@ export function sessionRows(node, hcStatus = null, recs = []) {
   };
 }
 
-/** Workers and nested sessions under `node`, depth first, as flat items with tree guides (`├` `└` and `│` per level).
- *  Sessions in `skip` (they have an agent row of their own) and finished workers are left out. */
-export function treeItems(node, skip = new Set(), lead = [], depth = 0) {
-  if (!isObj(node) || depth > MAX_DEPTH) return [];
-  const kids = [
-    ...(node.workers ?? []).filter((w) => !w.ended).map((n) => ({ n, worker: true })),
-    ...(node.sessions ?? []).filter((s) => !skip.has(s) && nodeStatus(s) !== "hidden").map((n) => ({ n, worker: false })),
-  ];
-  return kids.flatMap((k, i) => {
-    const last = i === kids.length - 1;
-    const lines = [...lead, last ? "└" : "├"];
-    const item = k.worker
-      ? { worker: true, node: k.n, lines, label: [k.n.role || k.n.name, shortModel(k.n.model)].filter(Boolean).join(" "), running: k.n.state === "working", status: nodeStatus(k.n) }
-      : { worker: false, node: k.n, lines, label: k.n.name, costText: k.n.cost > 0 ? fmtCost(k.n.cost) : "", status: nodeStatus(k.n), ...splitPrs(k.n.prs) };
-    return [item, ...(k.worker ? [] : treeItems(k.n, skip, [...lead, last ? "" : "│"], depth + 1))];
-  });
-}
-
 // ---- open PRs ------------------------------------------------------------------------------------------------
 
 function repoName(url, fallback) {
@@ -456,32 +508,65 @@ function repoName(url, fallback) {
   return m ? m[1] : fallback;
 }
 
-/** The "Open PRs" section: PRs of the radar `openPrs` field plus those of session nodes that no agent row shows.
- *  `shown` is the set of nodes displayed under an agent. One group per repo, `[{repo, prs: [{...pr, href, title}]}]`;
- *  a PR is listed once (radar `openPrs` wins). Empty when there is nothing. */
+// owner/name of a repository given as an https URL or already as owner/name; "" for none.
+const nameOf = (v) => repoName(v, str(v));
+
+/** The feed entry a PR is: same URL when both have one; else same number and repository when both know it; else the same
+ *  number when exactly one feed entry has it. null when none (the PR is its own entry). */
+export function twinOf(pr, feed, fallbackRepo = "") {
+  const list = listOf(feed).filter(isObj);
+  const repo = nameOf(pr.repo || fallbackRepo);
+  const url = prUrl(null, { url: pr.url });
+  const same = list.filter((f) => f.number === pr.number);
+  return list.find((f) => {
+    const fu = prUrl(null, { url: f.url });
+    if (url && fu) return url === fu;
+    if (f.number !== pr.number) return false;
+    const fr = nameOf(f.repo);
+    return repo && fr ? repo === fr : same.length === 1;
+  }) ?? null;
+}
+
+/** The "Open PRs" section. A PR is listed once, at the first place of: (a) the row of a shown session (then not here at all),
+ *  (b) a session that is not shown (the first one owning it), (c) the radar `openPrs` feed. `shown` holds the nodes and/or the
+ *  node keys drawn in the tree. One group per repo, `[{repo, prs: [{...pr, href, title}]}]`. Empty when there is nothing. */
 export function openPrGroups(openPrs, tops, shown = new Set()) {
   const groups = new Map();
-  const seen = new Set();
-  // PRs under a live agent row: a radar PR is a duplicate when both have a URL and the URLs match, else when repo and number match.
-  const under = allSessions(tops).filter((s) => shown.has(s)).flatMap((s) => s.prs.map((pr) => ({
-    url: prUrl(s, pr), id: `${repoName(pr.repo || s.repoUrl, s.name || "other")}#${pr.number}`,
-  })));
-  const underAgent = (p) => under.some((u) => (u.url && p.url ? u.url === p.url : u.id === `${repoName(p.repo, p.repo || "")}#${p.number}`));
-  const add = (repo, pr, href) => {
-    const id = `${repo}#${pr.number}`;
-    if (seen.has(id)) return;
-    seen.add(id);
+  const feed = (Array.isArray(openPrs) ? openPrs : []).filter(isObj);
+  // A PR counts once, as the feed entry it is, else by its URL, else by repo#number; with none of them it is its own entry.
+  const claimed = new Set();
+  const idOf = (s, pr) => {
+    const twin = twinOf(pr, feed, s?.repoUrl);
+    if (twin) return `f:${feed.indexOf(twin)}`;
+    const url = prUrl(s, pr);
+    if (url) return `u:${url}`;
+    const repo = nameOf(pr.repo || s?.repoUrl);
+    return repo ? `r:${repo}#${pr.number}` : "";
+  };
+  const sessions = allSessions(tops);
+  const isShown = (s) => shown.has(s) || Boolean(s.key && shown.has(s.key));
+  // (a) PRs on the row of a shown session
+  for (const s of sessions) if (isShown(s)) for (const pr of s.prs) claimed.add(idOf(s, pr));
+  const add = (repo, pr, href, id) => {
+    if (id && claimed.has(id)) return;
+    if (id) claimed.add(id);
     if (!groups.has(repo)) groups.set(repo, []);
     groups.get(repo).push({ ...pr, href, title: str(pr.title) });
   };
-  for (const p of Array.isArray(openPrs) ? openPrs : []) {
-    if (!isObj(p) || p.state === "merged" || p.state === "closed" || underAgent(p)) continue;
-    add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p));
+  // (b) sessions that are not shown, the first owner wins
+  for (const s of sessions) {
+    if (isShown(s)) continue;
+    for (const own of s.prs) {
+      if (/^(merged|closed)$/.test(twinOf(own, feed, s.repoUrl)?.state ?? "")) continue;
+      const pr = enrichPrs([own], feed, s.repoUrl)[0];
+      add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr), idOf(s, own));
+    }
   }
-  for (const s of allSessions(tops)) {
-    if (shown.has(s)) continue;
-    for (const pr of s.prs) add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr));
-  }
+  // (c) the feed, under its repo
+  feed.forEach((p) => {
+    if (p.state === "merged" || p.state === "closed") return;
+    add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p), idOf(null, p));
+  });
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
 }
 
@@ -500,4 +585,221 @@ export function shownNodes(joined) {
   };
   for (const n of joined.values()) add(n, 0);
   return out;
+}
+
+/** What counts as shown for `openPrGroups`: the joined nodes and the keys of every radar node in the rows actually drawn.
+ *  A session dropped from the tree (closed) is not in it, so its open PRs go back to the Open PRs section. */
+export function shownSet(joinedNodes, drawnItems) {
+  return new Set([...joinedNodes, ...shownKeys(drawnItems)]);
+}
+
+/** Keys of the radar nodes drawn in the given tree items (from `sessionTree` / `hcChildItems`) and below them. */
+export function shownKeys(items) {
+  const out = new Set();
+  const walk = (it, d) => {
+    if (!isObj(it) || d > MAX_DEPTH) return;
+    if (isObj(it.node) && it.node.key) out.add(it.node.key);
+    for (const c of listOf(it.children)) walk(c, d + 1);
+  };
+  for (const it of listOf(items)) walk(it, 0);
+  return out;
+}
+
+// ---- session tree (items 21, 22) -----------------------------------------------------------------------------
+
+/** Glyph priority, most urgent first. */
+export const STATUS_RANK = ["hidden", "blocked", "working", "agents", "done", "bg", "waiting", "idle"];
+const rankOf = (s) => {
+  const i = STATUS_RANK.indexOf(s);
+  return i < 0 ? STATUS_RANK.length : i;
+};
+
+/** The most urgent of the statuses; "idle" for none. */
+export function urgentStatus(list) {
+  return listOf(list).reduce((best, s) => (rankOf(s) < rankOf(best) ? s : best), "idle");
+}
+
+/** The line under a top-most session's name: the open ask, else the background task, else the waits. */
+export function detailLine(node) {
+  if (!isObj(node)) return { text: "", blocked: false };
+  const ask = askText(node);
+  return { text: ask || bgText(node) || waitText(node), blocked: Boolean(ask) };
+}
+
+/** Tree of one session: its own agents and its child sessions are siblings, each child session carrying its own agents and
+ *  children. Item `{id, type: "session"|"agent"|"more", label, status, urgent, children, ...}`; `urgent` is the most urgent
+ *  status of the item and everything below it. Siblings are sorted by `urgent`. Sessions in `skip` and ended ones are left out.
+ *  null for a non-node. */
+export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set(), skipKeys = new Set(), extra = [], top = true, id: rootId = "" } = {}) {
+  if (!isObj(node)) return null;
+  const build = (n, status, id, depth, root) => {
+    const kids = [];
+    const closed = !root && n.state === "closed";
+    listOf(n.workers).forEach((w, i) => {
+      if (w.ended || closed) return;
+      const st = nodeStatus(w);
+      kids.push({ id: `${id}/a${i}`, type: "agent", label: [w.role || w.name, shortModel(w.model)].filter(Boolean).join(" "), status: st, urgent: st, children: [] });
+    });
+    if (root) {
+      kids.push(...recItems(n, recs, skip, id));
+      kids.push(...listOf(extra));
+    }
+    if (depth < MAX_DEPTH) {
+      listOf(n.sessions).forEach((s, i) => {
+        const st = nodeStatus(s);
+        if (skip.has(s) || skipKeys.has(s.key) || st === "hidden") return;
+        const child = build(s, st, `${id}/s${i}`, depth + 1, false);
+        if (child) kids.push(child);
+      });
+    }
+    if (closed && kids.length === 0) return null;
+    const children = sortItems(kids);
+    const isTop = root && top;
+    const total = isTop ? totalCost(n) : num(n.cost);
+    const prs = sortPrs(n.prs);
+    return {
+      id, type: "session", node: n, label: n.name, dim: closed, elsewhere: !isTop && (n.machine || !n.hcTerminal) ? n.machine || "elsewhere" : "", tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
+      sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
+      urgent: urgentStatus([closed ? "idle" : status, ...children.map((c) => c.urgent)]), children,
+      prs, summary: prSummary(prs), ...splitPrs(prs),
+    };
+  };
+  return build(node, nodeStatus(node, hcStatus, recs), rootId || node.key || node.name || "root", 0, true);
+}
+
+// Siblings by `urgent`; "+N more" items stay last.
+function sortItems(kids) {
+  const more = kids.filter((k) => k.type === "more");
+  const rest = kids.filter((k) => k.type !== "more");
+  const key = (k) => rankOf(k.urgent);
+  return [...rest.map((k, i) => ({ k, i })).sort((a, b) => key(a.k) - key(b.k) || a.i - b.i).map((x) => x.k), ...more];
+}
+
+// The agent rows of hc records radar does not show (at most 4, then "+N more").
+function recItems(n, recs, skip, id) {
+  return agentLines(n, recs, skip).map((l, i) => {
+    const st = l.glyph === "blocked" ? "blocked" : l.glyph ? "working" : "idle";
+    return { id: `${id}/r${i}`, type: l.glyph ? "agent" : "more", label: l.text, status: st, urgent: st, children: [] };
+  });
+}
+
+/** The pane-less hc child terminals below `address` (live ones, nested by `parent`) as tree items, to be siblings of the
+ *  agent's own agents. `resolve(term)` gives `{node, recs, own, status}`: the joined radar node (or null), its hc records, the
+ *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
+ *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
+ *  `program` for the click and the logo. */
+export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set() } = {}) {
+  if (!Array.isArray(all)) return [];
+  const seen = new Set([address]);
+  const walk = (parent, depth) => {
+    if (depth > MAX_DEPTH) return [];
+    const terms = all.filter((k) => isObj(k) && k.parent === parent && k.state === "live" && typeof k.address === "string" && !seen.has(k.address));
+    terms.forEach((k) => seen.add(k.address));
+    return terms.map((term) => {
+      const r = resolve(term) ?? {};
+      const below = walk(term.address, depth + 1);
+      const id = `hc:${term.address}`;
+      const label = (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
+      const status = r.status ?? "idle";
+      let item;
+      if (isObj(r.node)) {
+        item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], skip, skipKeys, extra: below, top: false, id });
+        item.status = status;
+        item.urgent = urgentStatus([status, ...item.children.map((c) => c.urgent)]);
+      } else {
+        const children = sortItems([...recItems(null, r.recs ?? [], skip, id), ...below]);
+        item = {
+          id, type: "session", node: null, label, dim: false, elsewhere: "", tier: "", costText: "", top: false, sessions: 0, status,
+          urgent: urgentStatus([status, ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]),
+        };
+      }
+      return { ...item, elsewhere: "", address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) };
+    });
+  };
+  return walk(address, 0);
+}
+
+/** Addresses of the listed agents that are hc children (by `parent`, through any chain of terminals) of another listed agent:
+ *  those are drawn once, nested under that parent by `hcChildItems`, not as top-level rows. */
+export function nestedAgents(list, all) {
+  const out = new Set();
+  if (!Array.isArray(list) || !Array.isArray(all)) return out;
+  const listed = new Set(list.map((a) => a?.address).filter((x) => typeof x === "string"));
+  const parentOf = new Map(all.filter((k) => isObj(k) && typeof k.address === "string" && k.state === "live" && typeof k.parent === "string").map((k) => [k.address, k.parent]));
+  for (const addr of listed) {
+    const seen = new Set([addr]);
+    for (let p = parentOf.get(addr); p !== undefined && !seen.has(p) && seen.size <= MAX_DEPTH + 1; p = parentOf.get(p)) {
+      if (listed.has(p)) { out.add(addr); break; }
+      seen.add(p);
+    }
+  }
+  return out;
+}
+
+/** The children of a paned agent that has no radar node: its record agents and hc child items, as siblings. */
+export function bareChildren(recs, extra) {
+  return sortItems([...recItems(null, recs, new Set(), "rec"), ...listOf(extra)]);
+}
+
+/** The status an item's glyph shows: its own, or, when it is folded, the most urgent one below it. */
+export function displayStatus(item, folded) {
+  return isObj(item) && listOf(item.children).length > 0 && folded?.has(item.id) ? item.urgent : item?.status ?? "idle";
+}
+
+// ---- PR dot and hover card (items 17 d, 19) ------------------------------------------------------------------
+
+/** The two-part dot of a PR: `ring` (outer, animated) while any job runs; `fill` (inner) "amber" while no job finished, "red"
+ *  once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
+export function prDotState(pr) {
+  const checks = listOf(pr?.checks).map(jobOf).filter(Boolean).map((j) => j.state);
+  const count = (s) => checks.filter((c) => c === s).length;
+  const fail = count("fail");
+  const ok = count("ok");
+  const run = count("pending");
+  return { ring: run > 0, fill: fail ? "red" : ok ? "green" : run ? "amber" : "dim", conflict: pr?.mergeable === "CONFLICTING" };
+}
+
+const CARD_CAP = 5;
+const EXCERPT_MAX = 200;
+
+/** Copy of `prs` with the title, description, mergeable flag, base and per-job names of the feed entry (same URL, else same
+ *  repository and number) filled in where the PR has none. */
+export function enrichPrs(prs, feed, fallbackRepo = "") {
+  const open = listOf(feed);
+  return listOf(prs).map((pr) => {
+    const twin = twinOf(pr, open, fallbackRepo);
+    if (!twin) return pr;
+    const named = listOf(pr.jobs).some((j) => isObj(j) && j.name);
+    return {
+      ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
+      baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch,
+      ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks } : {}),
+    };
+  });
+}
+
+/** Data of the hover card: title, description excerpt, conflict line, counts, and the jobs grouped failed / running / passed,
+ *  at most CARD_CAP names per group then `more`. */
+export function prCard(pr) {
+  const jobs = (listOf(pr?.jobs).length ? pr.jobs : listOf(pr?.checks)).map(jobOf).filter(Boolean);
+  // A PR known only from its session dot (jobs without names, no feed twin) has no job list to show: no invented "job N".
+  const dotOnly = jobs.length > 0 && listOf(pr?.jobs).length > 0 && !str(pr?.title) && jobs.every((j) => !j.name);
+  const dot = prDotState(pr);
+  const status = !dotOnly ? "" : dot.fill === "red" ? "checks failed" : dot.ring ? "checks running" : dot.fill === "green" ? "checks passed" : "";
+  const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state }));
+  const group = (key, label, state) => {
+    const names = named.filter((j) => j.state === state).map((j) => j.name);
+    return { key, label, count: names.length, names: names.slice(0, CARD_CAP), more: Math.max(0, names.length - CARD_CAP) };
+  };
+  const groups = [group("failed", "failed", "fail"), group("running", "running", "pending"), group("passed", "passed", "ok")];
+  const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
+  return {
+    title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
+    excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
+    conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
+    counts: { failed: groups[0].count, running: groups[1].count, passed: groups[2].count },
+    groups: dotOnly ? [] : groups.filter((g) => g.count > 0),
+    status,
+    note: dotOnly ? "details after the next feed refresh" : "",
+  };
 }
