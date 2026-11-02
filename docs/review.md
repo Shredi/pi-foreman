@@ -12,7 +12,7 @@ of one ledger item sends the next launch to `roles.reviewer.strong` (`rung_up` r
 security-shaped diff sends it to `ladder.reviewerClimb.securityRung` (reason `security`; see [ladder](ladder.md)).
 There is no climb on a finding: see [Why one reviewer](#why-one-reviewer).
 
-The gate's permission review is a separate path: one review-model call judges a policy ask of any session kind, a child's included; see [permissions](permissions.md#the-review-call).
+The gate's classifier is a separate path: one cheap model call clears a dangerous-class tool call only by citing a sentence of the owner's whitelist, in any session kind; see [permissions](permissions.md#the-classifier).
 
 ## Review occasions
 
@@ -118,6 +118,8 @@ Trace `plan_review {model, decision}`. The foreman's instructions carry the plan
 ## Security findings and the revision cap
 
 The one `reviewer` is modular: `roles.reviewer.skills` names the shipped `security-review` skill (`skills/security-review/SKILL.md`), which the reviewer reads from its catalog and applies when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input. There is no separate security reviewer role.
+
+The threat model in that skill is the scope of a security finding. The shell guards are guardrails against accidents by the harness's own agents, not a sandbox against an attacker; a `SECURITY:` line is only for a break of a hard floor (secrets, a child's publish or off-branch push, deletes outside its own worktree, a child changing guard or permission config, injection). Parser bypasses go to the report as `- [later]` CRITIQUE lines.
 
 A reviewer FAIL whose report has a finding line starting `SECURITY:` (the agent file tells
 it to prefix security findings so) makes the builder launches that answer it exempt from `ceremony.revisionRounds`:

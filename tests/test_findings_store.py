@@ -219,6 +219,13 @@ class Models(unittest.TestCase):
         self.assertEqual((t["timeToClean"]["items"], t["timeToClean"]["medianSecs"]), (1, 90.0))
         self.assertEqual(ff.models_table(recs, source="panel")["rows"], [])
 
+    def test_table_ignores_tool_usage_lines(self):
+        recs = [rev("r1", "h1", "PASS", model="p/cheap", secs=10, startedTs="2026-01-01T00:00:00Z", ts="2026-01-01T00:00:10Z")]
+        line = {"ts": "2026-01-01T00:00:05Z", "role": "reviewer", "provider": "p", "model": "cheap", "cost": {"total": 0.25}}
+        base = ff.models_table(recs, usage=lambda s: [line])["rows"]
+        tool = dict(line, kind="tool-usage", cost={"total": 9.0})
+        self.assertEqual(ff.models_table(recs, usage=lambda s: [line, tool])["rows"], base)
+
     def test_backlog_candidate_at_threshold(self):
         tmp = Path(tempfile.mkdtemp(prefix="findings_models_"))
         self.addCleanup(shutil.rmtree, tmp, True)

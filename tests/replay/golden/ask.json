@@ -11,6 +11,9 @@
    "model": "foreman-fake/foreman"
   },
   {
+   "event": "tools_deferred"
+  },
+  {
    "event": "chain_clear"
   },
   {
@@ -19,10 +22,6 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
-  },
-  {
-   "event": "review",
-   "decision": "allow"
   },
   {
    "event": "guard",
@@ -62,10 +61,6 @@
   {
    "event": "llm",
    "model": "foreman-fake/foreman"
-  },
-  {
-   "event": "review",
-   "decision": "allow"
   },
   {
    "event": "guard",
@@ -113,6 +108,9 @@
     "model": "foreman-fake/foreman"
    },
    {
+    "event": "tools_deferred"
+   },
+   {
     "event": "chain_clear"
    },
    {
@@ -121,10 +119,6 @@
    {
     "event": "llm",
     "model": "foreman-fake/foreman"
-   },
-   {
-    "event": "review",
-    "decision": "allow"
    },
    {
     "event": "guard",
@@ -171,6 +165,9 @@
     "model": "foreman-fake/foreman"
    },
    {
+    "event": "tools_deferred"
+   },
+   {
     "event": "chain_clear"
    },
    {
@@ -179,10 +176,6 @@
    {
     "event": "llm",
     "model": "foreman-fake/foreman"
-   },
-   {
-    "event": "review",
-    "decision": "allow"
    },
    {
     "event": "guard",

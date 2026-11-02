@@ -68,7 +68,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the optional pi-background-tasks add-on (install with `pi install npm:pi-background-tasks@2.6.10` on consent via `foreman setup --addon background-tasks`; set `PI_BG_FEATURES=process` in the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
-| [permissions](#permissions) | safety |  | on | Your own policy file (`gate.policy.userFile`, default `<agentDir>/pi-foreman/policy.md`) and an overlay's `safety.policy.files` add allow, deny and ask entries on top of the shipped policy, judged by the gate's review model; a project file can only add deny and ask entries. | on by default | [safety](safety.md#the-tool-gate) |
+| [permissions](#permissions) | safety |  | on | Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. | on by default | [permissions](permissions.md) |
 | [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots. | on by default | [permissions](permissions.md#owned-paths) |
 | [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
@@ -88,7 +88,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [session-worktree](#session-worktree) | sessions |  | on | `foreman session open <label> <brief> --worktree [--base REF]` (and `foreman_session_open` with `worktree: true`) creates the session's own linked worktree at `<close.worktreeDir>/<label>` on the branch `<prefix>/<label>` from the fetched default branch, installs dependencies with `npm ci` only when a lockfile is declared, and opens the session there. `sessions.worktree.branchPrefix` (default `round`) sets the prefix. User or overlay config only. | on by default | [sessions](sessions.md#worktree-for-a-new-session) |
 | [open-prs](#open-prs) | sessions |  | off | When enabled, the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 900) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk. `foreman radar --json` reports them as `openPrs` for the Open PRs section of the herdr-app mod; radar polls never call the network. Off by default. User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
-| [round-state](#round-state) | sessions |  | on | In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
+| [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
 | [retro](#retro) | retro | toggle | on | `/retro` prints the session's friction metrics, writes permission-allow proposals and files findings to a local backlog read with `foreman backlog`. | on by default | [retro](retro.md#switches) |
@@ -97,8 +97,10 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
 | [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
-| [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
-| [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
+| [deferred-tools](#deferred-tools) | tools |  | on | Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered. | on by default | [tools](tools.md) |
+| [skill-visibility](#skill-visibility) | tools |  | on | Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way. | on by default | [tools](tools.md) |
+| [ask-user-question](#ask-user-question) | ui |  | on | The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
+| [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors first, then self-modification rules (a dialog by rule, never classifier-cleared), your deny, ask and allow rules, and the dangerous class. Under mode auto the classifier judges a dangerous call against your whitelist sentences; an escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
 | [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
@@ -194,7 +196,7 @@ Switch: `providers` is non-empty.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write"]`, `reviewer`: `["read", "ls", "grep", "find", "bash"]` | tighten-only (can only narrow the list) |
 | `roles.<x>.denyTools` | `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
 | `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `["security-review"]` | not in project/session (the skills a role gets come from the user or overlay config) |
@@ -467,12 +469,11 @@ Switch: `ceremony.orientation.enabled` is true.
 
 ### permissions
 
-**Permission policy.** Your own policy file (`gate.policy.userFile`, default `<agentDir>/pi-foreman/policy.md`) and an overlay's `safety.policy.files` add allow, deny and ask entries on top of the shipped policy, judged by the gate's review model; a project file can only add deny and ask entries.
+**Permission rules.** Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules.
 
 | Key | Default | Layer |
 |---|---|---|
-| `gate.policy.userFile` | unset | any layer |
-| `safety.policy.files` | `[]` | not in project/session (no tighten rule for this safety key) |
+| `permissions.profile` | unset | not in project/session (it picks the permissions profile (r79 item 8): user or overlay config only) |
 | `paths.hubWorkflow` | `[]` | not in project/session (it loosens: it makes dirs outside the worktree readable; user or overlay config only) |
 
 ### owned-install-reads
@@ -679,7 +680,7 @@ Switch: `sessions.machines` is non-empty.
 
 ### round-state
 
-**Reload-safe round state.** In a round session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan.
+**Reload-safe round state.** In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan.
 
 No config key.
 
@@ -767,15 +768,33 @@ Switch: `retro.repoBacklog` is non-empty.
 
 No config key.
 
+### deferred-tools
+
+**Deferred tool declarations and tool_search.** Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered.
+
+| Key | Default | Layer |
+|---|---|---|
+| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "pr_track", "pr_untrack", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
+
+### skill-visibility
+
+**Searchable skills.** Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way.
+
+| Key | Default | Layer |
+|---|---|---|
+| `roles.<x>.searchable` | `builder`: `["foreman_move", "foreman_copy"]` | tighten-only (can only narrow the list) |
+| `skills.visible` | `[]` | not in project/session (it hides every other skill: user or overlay config only) |
+| `skills.hidden` | `["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"]` | tighten-only (entries are added, never removed) |
+
 ### ask-user-question
 
-**Structured in-pane question.** The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`.
+**Structured in-pane question.** The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer.
 
 No config key.
 
 ### auto-review-overlay
 
-**Gate review and dialog.** The gate decides every tool call: floors and defaults first, then self-modification rules (a dialog by rule, never model-cleared), then the review model against the policy. An allow continues, a deny is final, an ask or an unreachable review opens the owner dialog (a round session files ask.md; children and headless sessions are denied with what to report).
+**Gate classifier and dialog.** The gate decides every tool call: floors first, then self-modification rules (a dialog by rule, never classifier-cleared), your deny, ask and allow rules, and the dangerous class. Under mode auto the classifier judges a dangerous call against your whitelist sentences; an escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report).
 
 | Key | Default | Layer |
 |---|---|---|
@@ -874,7 +893,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [waits](#waits) | `/foreman waits` |
 | [pr-ops](#pr-ops) | `/foreman prs` |
 | [bridge-isolation](#bridge-isolation) | `/foreman trust`, `/foreman trust bridge` |
-| [sessions](#sessions) | `/foreman session`, `foreman session` |
+| [sessions](#sessions) | `/foreman session`, `foreman session`, `foreman session open --profile` |
 | [herdr-core](#herdr-core) | `foreman session open` |
 | [session-worktree](#session-worktree) | `foreman session open` |
 | [open-prs](#open-prs) | `foreman radar --json` |
@@ -884,7 +903,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
 | [footer-ui](#footer-ui) | `/foreman cost`, `/foreman dialogs` |
 | [dialogs-cli](#dialogs-cli) | `foreman dialogs` |
-| [auto-review-overlay](#auto-review-overlay) | `/foreman perms`, `foreman perms` |
+| [auto-review-overlay](#auto-review-overlay) | `/foreman perms` |
 | [knowledge](#knowledge) | `foreman knowledge` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
@@ -917,6 +936,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | Key | Reason |
 |---|---|
 | `profile` | the setup profile is recorded in the user or overlay config |
+| `permissions.profile` | it picks the permissions profile (r79 item 8): user or overlay config only |
 | `paths.hubWorkflow` | it loosens: it makes dirs outside the worktree readable; user or overlay config only |
 | `bridge.isolateClaudeConfig` | it loosens the host config isolation |
 | `bridge.promptCacheTtl` | the bridge cache TTL comes from the user or overlay config |
@@ -939,6 +959,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
+| `skills.visible` | it hides every other skill: user or overlay config only |
 | `tools.prShared` | the shared PR watch comes from the user or overlay config |
 | `tools.prInteractions` | the PR interaction patterns come from the user or overlay config |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |

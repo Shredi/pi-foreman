@@ -3,6 +3,7 @@
 // foreman_checkpoint, and every session start put the base model back. The base is remembered in memory and in a
 // persisted "foreman-idle-model" entry so a resume or reload can close an open downshift. One instance per extension
 // load: the state must survive a `new` session.
+import { askAnswered } from "./askhooks.ts";
 import type { Timers } from "./prwatch.ts";
 
 export const IDLE_ENTRY = "foreman-idle-model";
@@ -67,10 +68,11 @@ export function latestIdleEntry(entries: unknown[]): IdleEntry | null {
   return null;
 }
 
-/** Whether a tool result carries an owner answer: ask_user_question "answered", foreman_checkpoint approve (with an approver), revise or reject. */
-export function ownerAnswered(toolName: string, details: unknown): boolean {
+/** Whether a tool result carries an owner answer: ask_user_question answered (not cancelled, not an error), foreman_checkpoint approve (with an approver), revise or reject. */
+export function ownerAnswered(toolName: string, details: unknown, isError = false): boolean {
   const d = (details ?? {}) as { decision?: unknown; by?: unknown };
-  if (toolName === "ask_user_question") return d.decision === "answered";
+  // the package's shape (details.cancelled false, no details.error) next to the old details.decision
+  if (toolName === "ask_user_question") return d.decision === "answered" || askAnswered(details, isError);
   if (toolName === "foreman_checkpoint") return d.decision === "revise" || d.decision === "reject" || (d.decision === "approve" && d.by !== null && d.by !== undefined);
   return false;
 }

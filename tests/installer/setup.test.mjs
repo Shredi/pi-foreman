@@ -164,6 +164,19 @@ test("leftover top-level bundled packages and a legacy local pi-foreman entry ar
   assert.equal(installs(env).filter((a) => a[0] === "remove").length, 3);
 });
 
+test("a user-level npm: copy of the bundled ask package is removed (pinned or not); git and path installs of it stay", () => {
+  const env = fresh();
+  const git = "git:github.com/juicesharp/rpiv-mono";
+  seed(env, { packages: ["npm:@juicesharp/rpiv-ask-user-question@2.14.0", "npm:@juicesharp/rpiv-ask-user-question", git, "npm:@juicesharp/other-pkg@1.0.0", FOREMAN] });
+  const dry = run(env, ["--dry-run"]);
+  assert.equal(dry.code, 0, dry.out);
+  assert.match(dry.out, /would run: pi remove npm:@juicesharp\/rpiv-ask-user-question@2\.14\.0/);
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  assert.deepEqual(readSettings(env).packages, [git, "npm:@juicesharp/other-pkg@1.0.0", FOREMAN]);
+  assert.equal(installs(env).filter((a) => a[0] === "remove").length, 2);
+});
+
 test("without a pi-foreman package entry setup prints the install line and fails", () => {
   const env = fresh();
   seed(env, { packages: ["npm:some-provider@1.2.3"] });
@@ -339,16 +352,36 @@ test("setup migrates old permission keys and the rendered config with backups; a
   assert.deepEqual(snapshot(env.base), before);
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /safety\.permissions\.autoReview\.rulesFile: moved to gate\.policy\.userFile/);
+  assert.match(r.out, /safety\.permissions\.autoReview\.rulesFile: removed/); // r79 item 9: not moved to gate.policy.userFile any more
   assert.match(r.out, /safety\.permissions\.deny: removed/);
   assert.equal(fs.existsSync(permFile(env)), false);
   assert.ok(fs.existsSync(path.join(migrationDir(env), "foreman.json.pre-gate")));
   assert.equal(fs.readFileSync(path.join(migrationDir(env), "permission-system-config.json"), "utf8"), '{"permission": {"*": "ask"}}\n');
   const cfg = JSON.parse(fs.readFileSync(foreman, "utf8"));
   assert.equal(cfg.safety?.permissions, undefined);
-  assert.equal(cfg.gate.policy.userFile, "rules.md");
+  assert.equal(cfg.gate, undefined);
   const again = run(env, []);
   assert.doesNotMatch(again.out, /gate migration/);
+});
+
+// r79 item 9: one line per removed policy key; a leftover user policy.md is named, never deleted
+test("setup prints one removal line per policy key and names a leftover policy.md", () => {
+  const env = fresh();
+  const foreman = path.join(env.agentDir, "foreman.json");
+  fs.writeFileSync(foreman, JSON.stringify({ version: 1, providers: {}, gate: { policy: { userFile: "mine.md" } }, safety: { policy: { files: ["a.md"] } } }));
+  const policy = path.join(env.agentDir, "pi-foreman", "policy.md");
+  fs.mkdirSync(path.dirname(policy), { recursive: true });
+  fs.writeFileSync(policy, "old prose\n");
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  const lines = r.out.split("\n");
+  assert.equal(lines.filter((l) => /gate\.policy\.userFile: removed \(policy files are no longer read; rules and the whitelist live in permissions\.json\)/.test(l)).length, 1, r.out);
+  assert.equal(lines.filter((l) => /safety\.policy\.files: removed \(policy files are no longer read; rules and the whitelist live in permissions\.json\)/.test(l)).length, 1, r.out);
+  assert.equal(lines.filter((l) => l.includes("policy.md is no longer read; move its entries into permissions.json classifier.allow/deny")).length, 1, r.out);
+  assert.equal(fs.readFileSync(policy, "utf8"), "old prose\n");
+  const cfg = JSON.parse(fs.readFileSync(foreman, "utf8"));
+  assert.equal(cfg.gate, undefined);
+  assert.equal(cfg.safety, undefined);
 });
 
 test("--remove does not migrate or touch the rendered permission config", () => {

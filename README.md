@@ -28,6 +28,10 @@ nothing). Choose a feature profile with `--profile orchestration|standard|full`,
 `--pick` ([profiles, features and add-ons](docs/install.md#profiles-features-and-add-ons)). Map your models in `foreman.json`: see [install](docs/install.md). To work on pi-foreman itself, see
 [Developing](docs/install.md#developing).
 
+## Permissions
+
+A tool call that no rule decides simply runs. Deploys, publishing, installs, network writes and similar dangerous calls go to a cheap classifier that may only clear them by citing a sentence you wrote in `permissions.json`; whatever it cannot clear asks you in a dialog, and "allow and remember" grows your list. Floors for secrets, force pushes and the like stay on in every mode. See [docs/permissions.md](docs/permissions.md).
+
 ## First session
 
 1. Start `pi` in a repository.
@@ -43,7 +47,7 @@ nothing). Choose a feature profile with `--profile orchestration|standard|full`,
 | [docs/install.md](docs/install.md) | Package install, `foreman setup`, developing, update and remove, config layers, Claude bridge login |
 | [docs/roles.md](docs/roles.md) | Roles, model ladder, rank policy, presets |
 | [docs/ceremony.md](docs/ceremony.md) | Tiers, review and finish gates, planning, budgets |
-| [docs/safety.md](docs/safety.md) | Shell and git guards, PR gate, permissions, known limits |
+| [docs/safety.md](docs/safety.md) | Shell and git guards, PR gate, the tool gate, known limits |
 | [docs/sessions.md](docs/sessions.md) | `/sync`, `/retro`, `/foreman close`, `/foreman session`, intercom, Herdr |
 | [docs/bench.md](docs/bench.md) | Measuring the harness with `foreman bench` |
 | [docs/overlays.md](docs/overlays.md) | Private and organisation overlays |

@@ -10,6 +10,7 @@
   "packages": [
     { "name": "pi-subagents", "version": "0.78.0", "mode": "bundled", "notes": "https://github.com/nicobailon/pi-subagents/releases/tag/v{version}" },
     { "name": "pi-intercom", "version": "0.17.0", "mode": "bundled", "notes": "https://github.com/nicobailon/pi-intercom/releases/tag/v{version}" },
+    { "name": "@juicesharp/rpiv-ask-user-question", "version": "2.15.0", "mode": "bundled", "notes": "https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question/v/{version}" },
     { "name": "@inquirer/prompts", "version": "8.7.4", "mode": "bundled", "notes": "https://github.com/SBoudrias/Inquirer.js/releases/tag/%40inquirer%2Fprompts%40{version}" },
     { "name": "@earendil-works/pi-tui", "version": "1.4.0", "mode": "bundled", "notes": "https://github.com/earendil-works/pi/releases/tag/v{version} (same version as Pi)" },
     { "name": "unbash", "version": "6.0.1", "mode": "bundled", "notes": "https://github.com/webpro-nl/unbash/releases/tag/{version}" }

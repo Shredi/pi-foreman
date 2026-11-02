@@ -159,6 +159,13 @@ class TreeTests(Fixture):
             f.write(json.dumps({"launchId": "a", "input": 2}) + "\n" + '{"input": 9')  # partial last line
         self.assertEqual(cache.read(path)["tot"][0], 3)
 
+    def test_usage_cache_skips_tool_usage_lines(self):
+        self.put_usage("s", [{"launchId": "a", "input": 1, "output": 1},
+                            {"kind": "tool-usage", "role": "foreman", "declared": ["x"], "used": ["x"]}])
+        st = fr.UsageCache().read(self.base / "state" / "usage" / "s.jsonl")
+        self.assertEqual(list(st["runs"]), ["a"])
+        self.assertEqual(st["tot"][0], 1)
+
     def test_cycle_does_not_hang(self):
         self.put_live(live("a", "a", "fm-a", parent="fm-b"))
         self.put_live(live("b", "b", "fm-b", parent="fm-a"))

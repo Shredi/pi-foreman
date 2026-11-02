@@ -8,6 +8,14 @@
   "properties": {
     "version": { "type": "integer", "minimum": 1, "maximum": 1, "description": "Config format version." },
     "profile": { "type": ["string", "null"], "description": "The setup profile recorded by `foreman setup` (orchestration, standard or full); null = none chosen yet. User or overlay config only." },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The rules-first permission system.",
+      "properties": {
+        "profile": { "type": ["string", "null"], "description": "The permission profile. Honoured in the user, organisation and default layers only." }
+      }
+    },
     "rankTiers": { "type": "object", "description": "Preset template only (config/presets/inexpensive.json): roles named by rank tier, resolved to models by `foreman config apply-preset` and removed from the written file. The runtime never reads it." },
     "displayNames": {
       "type": ["string", "object"],
@@ -29,6 +37,7 @@
           "file": { "type": "string", "description": "Path of a role file that replaces the prompt (L2/L3 only)." },
           "promptAppend": { "type": "string", "description": "Text appended to the role prompt." },
           "tools": { "type": "array", "items": { "type": "string" }, "description": "Strict tool allowlist. Written as a JSON array into the generated settings. For the foreman it is informational. A project or session can only narrow it (intersection), and cannot add role ids." },
+          "searchable": { "type": "array", "items": { "type": "string" }, "description": "Tools a child of this role may find on demand through tool_search: declared in its allowlist (tools plus searchable) but hidden from its declarations until searched. Goes through the same denied-tool filter as tools. A project or session can only narrow it, and a name dropped from tools cannot come back through it." },
           "denyTools": { "type": "array", "items": { "type": "string" }, "description": "Tool-name globs (`*` wildcard) a child of this role never gets: the call is denied, never asked. Defaults deny mcp__* for the read-only roles. Layers add to the list; none removes an entry." },
           "mcp": { "type": "array", "items": { "type": "string" }, "description": "Ceiling of MCP servers a child of this role may load on demand through tool_search, by configured name: `server` for all its tools, `server/tool` for one. Declared up front only on a `mcp.directProviders` provider (its allowed deferred tools are preloaded); a launch `mcp` field can narrow it. User or overlay config only. Refused where the role's denyTools deny mcp__*." },
           "skills": { "type": "array", "items": { "type": "string", "pattern": "^(?!\\.\\.?$)[^/\\\\:*?\\[\\]{}]+$" }, "description": "Skills this role gets as catalog entries, by name: one plain path segment (no / or \\, not . or .., no glob characters, no colon). A role gets only the skills it names; inheritSkills stays off. Default none. User or overlay config only." },
@@ -564,17 +573,10 @@
       "properties": {
         "mode": { "type": "string", "enum": ["full", "floors-only"], "description": "Temporary, until the permission redesign. full (default): the whole gate. floors-only: only the floors decide (plus the unclear-push deny); every other tool call runs without review, dialog or ask. User config or overlay only; a project value is dropped." },
         "reviewTimeoutMs": { "type": "integer", "minimum": 100, "description": "Timeout of the review model call in ms (default 15000); a timeout defers to the ask path." },
-        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a round session waits for the owner's ruling-<n>.md before the call is denied, in ms (default 900000)." },
+        "askTimeoutMs": { "type": "integer", "minimum": 0, "description": "How long a child waits for its parent's ruling-<n>.md before the call is denied, in ms (default 900000). The value only bounds a child's ask wait; a session opened by another session asks in its own pane and has no timeout while the owner is present." },
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "tmpAccess": { "type": "boolean", "description": "Writes (and for the owner reads) under the OS temp dirs are allowed (default true)." },
-        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." },
-        "policy": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "userFile": { "type": ["string", "null"], "description": "The user's own policy file (absolute, ~/... or relative to the agent dir); null = none." }
-          }
-        }
+        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." }
       }
     },
     "safety": {
@@ -582,14 +584,6 @@
       "description": "Safety policy. An invalid value in a layer is dropped from that layer with a warning; the other layers still apply. The project layer can only tighten it.",
       "additionalProperties": false,
       "properties": {
-        "policy": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Tool gate policy files.",
-          "properties": {
-            "files": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Extra policy files of the owner's overlay, merged after the shipped and the user policy: absolute, ~/... or relative to the agent dir." }
-          }
-        },
         "requiredChildExtensions": { "type": "array", "items": { "type": "string" }, "description": "Extension paths every child must load. A project can add entries, not remove them." },
         "children": {
           "type": "object",
@@ -687,6 +681,15 @@
         "hubWorkflow": { "type": ["string", "array"], "items": { "type": "string" }, "description": "Absolute dir, or list of dirs, whose `.workflow/` path family (the hub's ledger and notes) is readable, read-only, for the foreman and its children in a round worktree: the read tool and read-only bash, no dialog. Writes stay denied. Default none. User or overlay config only; a project or session value is ignored with a warning." }
       }
     },
+    "skills": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Skill visibility: which skills sit in the default skill list and which are only found through tool_search (docs/tools.md). A skill's own frontmatter `metadata.visibility: search` also makes it searchable.",
+      "properties": {
+        "visible": { "type": "array", "items": { "type": "string" }, "description": "Skill name globs that stay in the default list. When non-empty, every other skill is searchable. User or overlay config only; the project and session layers cannot set it." },
+        "hidden": { "type": "array", "items": { "type": "string" }, "description": "Skill name globs that are searchable, not listed. User or overlay config sets the list; the project and session layers may only add names." }
+      }
+    },
     "tools": {
       "type": "object",
       "additionalProperties": false,
@@ -694,6 +697,7 @@
       "properties": {
         "git": { "type": "boolean", "description": "true = the git tool pack: git_status, git_log, git_diff_stat, git_branch_state for the foreman and for children whose role has bash. User or overlay config; the project and session layers may only set false. Re-run foreman setup after a change." },
         "pr": { "type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_track and pr_untrack for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change." },
+        "deferred": { "type": "array", "items": { "type": "string" }, "description": "Tool names or globs (`fusion_*`) whose declarations the harness leaves out of requests; the model finds them with tool_search and they stay callable (docs/tools.md). User or overlay config sets the list; the project and session layers may only add names. [] turns deferral off. plan_mode_question and plan_mode_complete stay declared in a session that starts in plan mode; tool_search, codemode, read, bash, subagent, foreman_ledger, foreman_triage, contact_supervisor, subagent_supervisor and ask_user_question are never deferred." },
         "prDots": { "type": "boolean", "description": "false = the PR status dots poller (sidebar dots and the external status hook) never starts, while the PR tools stay on. Default true." },
         "prHost": { "type": ["string", "object"], "additionalProperties": { "type": "string" }, "description": "Host CLI for the PR tools: \"auto\" (gh, then glab, found on PATH outside the workspace), \"gh\", \"glab\", or an object of command templates with the keys create, status, checks, comments, find and search (docs/tools.md#host-templates). User or overlay config only." },
         "prWatchSeconds": { "type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch polls (default 60)." },

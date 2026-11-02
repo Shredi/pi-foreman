@@ -58,14 +58,16 @@ class TestPermissionLayers(ReplayCase):
         # parent's pane shows the child's ask as a dialog and the parent's deny reaches the child (old assertion: no dialog and
         # "Children cannot answer asks"; that text stays for a headless parent).
         rig = self.baseline_rig("perm-ask", config={"providers": {PROVIDER_A: {"review": {"model": "%s/review-ask" % PROVIDER_A}}}})
+        self.user_permissions(rig, {"classifier": {"allow": ["Installing a package from the registry is allowed."]}})
         pi = rig.start()
-        # the subagent launch itself is a payload tool and goes to review (review-ask here): the owner approves that one dialog
-        pi.prompt("[[replay:c2]] go", answers=[{"value": "allow once"}], timeout=60)
+        # the owner's role launch is a gate default and opens no dialog; the child's `pip install requests` (danger-install) is escalated by the classifier
+        pi.prompt("[[replay:c2]] go", timeout=60)
         notice, recs = pi.wait_child_notify(timeout=90, answers=[{"value": "deny with reason"}, {"value": "scripted no"}])
         pi.close()
         dialogs = [r for r in recs if r.get("type") == "extension_ui_request" and r.get("method") == "select" and "asks" in str(r.get("title"))]
         self.assertEqual(len(dialogs), 1, dialogs)
-        self.assertIn("package-install", dialogs[0]["title"])
+        self.assertIn("cause: danger-install", dialogs[0]["title"])
+        self.assertIn("classifier: scripted ask", dialogs[0]["title"])
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
         self.assertIn("denied by the parent", text)
         self.assertNotIn("Children cannot answer asks", text)

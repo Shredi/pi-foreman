@@ -7,14 +7,34 @@ description: Reviews a diff for security defects. Use when the diff touches secr
 
 Apply this on top of the normal review. Read the actual files and the diff, not the summary you were given.
 
+## Threat model
+
+The shell guards are guardrails against accidents by the harness's own agents. They are not a sandbox against an attacker. Judge a change against the hard floors below.
+
+Real security findings (FAIL, `SECURITY:`) are only:
+- Secrets or tokens (API keys, credentials, `.ssh`, `.env`, auth files) read, written, logged or sent.
+- A publish by a child, or a push to anything other than the own branch.
+- A delete or overwrite outside the own worktree or scratch dir.
+- A child changing guard or permission config, or its own instructions.
+- A change that weakens one of these hard floors.
+- Injection of untrusted text into a command or an instruction.
+
+Not security findings:
+- Writes by a child inside its own worktree, checkout or scratch dir.
+- "A rare command could write past a list or parser."
+- A looser default inside the own worktree.
+- The foreman pushing its own round branch.
+
+Parser bypasses go in the report as a `- [later]` CRITIQUE line or a known-limit note, never FAIL. The question is "does this change weaken a hard floor?", not "can I find any bypass?"
+
 ## Checklist
 
 1. Secrets: credentials, tokens or keys written to a file, a log, a trace, a command line or an error message; secrets read from a place the code did not read before.
-2. Permissions: a widened allow rule, a removed deny rule, a tool or path a role can now reach that it could not before, a default that became more permissive.
+2. Permissions: does the change weaken a hard floor (secrets, publish or off-branch push, delete outside the own worktree or scratch dir, a child changing guard or permission config)? A wider allow rule or a looser default is a finding only when it breaks one of those floors.
 3. Destructive commands: deletes, overwrites, force pushes, resets, recursive operations; check that the path or target cannot be steered outside the intended directory.
 4. Trust boundaries: where text from a file, a tool result, a child run or a user crosses into an instruction, a command, a path or a config value. Each crossing must treat the text as data.
-5. Untrusted input: injection (shell, SQL, template, regex), path traversal (`..`, symlinks, absolute paths), unbounded size or count, unchecked parse results.
-6. Errors: a check that fails open, a swallowed error that skips a guard, a fallback that bypasses a gate.
+5. Untrusted input: injection of untrusted text into a command or an instruction (a hard floor). Path traversal counts only when it reaches a floor target outside the own worktree or scratch dir. Size, count or parse results count only when they break a floor.
+6. Errors: a check that fails open on a hard floor, a swallowed error that skips a floor check, or a fallback that bypasses a floor.
 
 ## Steps
 
@@ -35,4 +55,4 @@ Each is a FAIL unless the task text explicitly asks for it:
 
 ## Reporting
 
-Start the line of every security finding with `SECURITY:`, then the reason and the evidence. The harness exempts the builder revision that answers a `SECURITY:` finding from the revision cap. A security finding is a defect: it makes the verdict FAIL.
+Start the line of a security finding with `SECURITY:` only when it is on the threat-model list, then the reason and the evidence. Other guard or parser ideas go to CRITIQUE as `- [later]`. The harness exempts the builder revision that answers a `SECURITY:` finding from the revision cap. A security finding is a defect: it makes the verdict FAIL.
