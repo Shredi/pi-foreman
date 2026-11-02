@@ -1,0 +1,90 @@
+{
+  "v": 1,
+  "now": "2026-01-01T00:00:00Z",
+  "symbols": "emoji",
+  "recentRunSeconds": 8,
+  "openPrsAt": "2026-01-01T00:00:00Z",
+  "roots": [
+    {
+      "key": "k-parent",
+      "kind": "session",
+      "name": "parent",
+      "state": "working",
+      "sym": "working",
+      "cwd": "/home/user/repo",
+      "age_s": 5,
+      "children": [
+        {
+          "key": "k-r78",
+          "kind": "session",
+          "name": "r78",
+          "state": "working",
+          "sym": "working",
+          "cwd": "/home/user/repo",
+          "age_s": 0,
+          "dots": [
+            { "n": 50, "state": "run", "label": "#50", "src": "pr" },
+            { "n": 55, "state": "ok", "label": "#55", "src": "pr" }
+          ],
+          "children": [
+            {
+              "key": "k-sampler",
+              "kind": "session",
+              "name": "sampler",
+              "state": "working",
+              "sym": "working",
+              "cwd": "/home/user/repo",
+              "age_s": 0,
+              "dots": [{ "n": 50, "state": "run", "label": "#50", "src": "pr" }],
+              "children": []
+            },
+            {
+              "key": "k-keep",
+              "kind": "session",
+              "name": "keep",
+              "state": "working",
+              "sym": "working",
+              "hcTerminal": "t1f",
+              "cwd": "/home/user/repo",
+              "age_s": 0,
+              "dots": [{ "n": 55, "state": "ok", "label": "#55", "src": "pr", "url": "https://github.com/owner/repo/pull/55" }],
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "k-other",
+      "kind": "session",
+      "name": "other",
+      "state": "working",
+      "sym": "working",
+      "cwd": "/home/user/other",
+      "age_s": 5,
+      "children": []
+    }
+  ],
+  "openPrs": [
+    {
+      "repo": "owner/repo", "number": 55, "title": "Fix keep", "url": "https://github.com/owner/repo/pull/55", "state": "open",
+      "author": "someone", "headRefName": "fix/keep", "bodyText": "short neutral text", "mergeable": "MERGEABLE",
+      "checks": [{ "n": "test", "state": "ok", "label": "test" }, { "n": "bench", "state": "run", "label": "bench" }]
+    },
+    {
+      "repo": "owner/repo", "number": 51, "title": "Watch resume", "url": "https://github.com/owner/repo/pull/51", "state": "open",
+      "author": "someone", "headRefName": "fix/watch", "bodyText": "short neutral text", "mergeable": "MERGEABLE",
+      "checks": [{ "n": "test", "state": "ok", "label": "test" }]
+    },
+    {
+      "repo": "owner/repo", "number": 50, "title": "Sampler", "url": "https://github.com/owner/repo/pull/50", "state": "open",
+      "author": "someone", "headRefName": "feat/sampler", "bodyText": "short neutral text", "mergeable": "MERGEABLE",
+      "checks": [{ "n": "test", "state": "run", "label": "test" }]
+    },
+    {
+      "repo": "owner/other", "number": 1, "title": "Other", "url": "https://github.com/owner/other/pull/1", "state": "open",
+      "author": "someone", "headRefName": "main-fix", "bodyText": "short neutral text", "mergeable": "MERGEABLE",
+      "checks": [{ "n": "test", "state": "ok", "label": "test" }]
+    }
+  ]
+}

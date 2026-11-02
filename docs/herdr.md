@@ -6,7 +6,7 @@
 
 The plugin `integrations/herdr/pi-foreman-sidebar/` shows the pi-foreman session tree in Herdr's Agents panel: per Pi
 pane a header (tree connector, a state glyph or spinner frame, label, age or blocked timer), one line each for what runs (agents),
-what it watches (tasks, PRs, CI) and what it waits on, a row of status dots for its pull requests, and a line with tokens and cost. It needs Herdr
+what it watches (tasks, PR watches, CI) and what it waits on, a row of status dots for external status items, and a line with tokens and cost. It needs Herdr
 0.9.0 or later on Linux or macOS and Python 3.13+. Pane-level session features (blocked shim, group tag) are in
 [sessions](sessions.md#herdr).
 
@@ -86,8 +86,8 @@ touches the Agents view and exits 1 when a report failed. When nothing joined, t
 why.
 
 `python3 sidebar.py sample [--pane <id>] [--variant pr|mixed] [--reason <r>] [--symbols <set>] [--width <n>] [--minutes <m>] [--dry-run] [--clear]`
-shows a synthetic session (live agents, a PR watch, an open ask, the pressure suffix and the PR dots: `pr` one dot per
-state, `mixed` PRs, an external item and `+3`) on one pane so you can judge the colour rules in the snippet live.
+shows a synthetic session (live agents, a PR watch, an open ask, the pressure suffix and the dots row: `pr` one dot per
+state, `mixed` several, an external item and `+3`) on one pane so you can judge the colour rules in the snippet live.
 `--reason none|ask|review|agent|task|wait|blocked|idle|done` composes the session so that its header shows that reason
 or static state (default: the mixed sample); the glyph set is `--symbols`, else your `ui.symbols`. `--reason all
 --dry-run` prints one line per reason and state for every glyph set (or the one `--symbols` names): the ticking header
@@ -151,7 +151,7 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 | `fm_a1` agents | `◆ builder sonnet-5.5 ×2 · reviewer opus-5.5`: running child runs by role and model, and child sessions without a pane row of their own while they are live; a finished run shows `✓ role` for `radar.recentRunSeconds` |
 | `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`), `foreman_bg` commands and the `bg_run` add-on's tasks of this session |
 | `fm_a3` waits | `? ask 1: topic` for an open ask, then `◷ child r32b 4m`: timer, file, child and pid waits |
-| `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of pull requests and external items (see Dots) |
+| `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of external items (see Dots) |
 | `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix |
 
 A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A child session without its own pane row (a closed
@@ -164,36 +164,21 @@ and Herdr's status stays working, and the wait shows on its activity line.
 
 #### Dots
 
-The dots row shows one circle and a short label per tracked item, in the glyph set's `pr-fail`, `pr-run`, `pr-ok` and
-`pr-none` keys (see Symbols). The `emoji` set uses the same text circles as `unicode`, one cell each, so the row keeps its
-line height and the pr rules colour them. A pull request dot is labelled `#<number>`; a PR of another repository than the current one
-is labelled `owner/name#<number>`, cut to 20 characters; an external item (see
-[External status](#external-status)) shows its own label. The PR widget above the editor is the detailed view of the same
-data (checks by name, review state, the shared watch); see [tools](tools.md#pr-widget). Sidebar tokens stay plain text:
-no hyperlinks and no colour codes.
+The dots row shows one circle and a short label per external status item (see [External status](#external-status)), in the
+glyph set's `pr-fail`, `pr-run`, `pr-ok` and `pr-none` keys (see Symbols). The `emoji` set uses the same text circles as
+`unicode`, one cell each, so the row keeps its line height and the pr rules colour them. Pull requests are not drawn here
+and no longer tracked in the Pi session: the herdr-app mod is the only PR display (see Open PRs below; users without it keep
+`pr_status` and `pr_checks`). Sidebar tokens stay plain text: no hyperlinks and no colour codes.
 
 | State | Circle (`unicode`) | Meaning of a pull request |
 |---|---|---|
-| `fail` | ● | a check failed, or the PR has a merge conflict |
-| `run` | ◉ | checks are pending |
-| `ok` | ○ | checks are green and the PR is mergeable: only review or merge is left |
-| `none` | ◌ | no checks, or the state is unknown |
+| `fail` | ● | the item failed |
+| `run` | ◉ | the item is running |
+| `ok` | ○ | the item is fine |
+| `none` | ◌ | no state, or the state is unknown |
 
-The order is red, yellow, green, unknown, then by PR number (external items without a number after the PRs), then by
-label. At most four cells fit the row; when items are hidden by the cell count or by the width, the last placed cell
+The order is red, yellow, green, unknown, then by label. At most four cells fit the row; when items are hidden by the cell count or by the width, the last placed cell
 becomes `+n` (n = items not shown). At most 14 dots reach the sidebar.
-
-Which PRs are tracked: a PR registered by any of the paths in [tools](tools.md#registration-paths): a branch this session
-pushed, an author search, a command that acted on a PR, the user's events feed, `pr_create`, a PR URL in a result,
-`pr_track`, a PR under `pr_watch` and the PR of the current branch. A PR is identified by host, owner, repo and number. At
-most six are tracked. A closed or merged PR disappears from the row.
-
-Cost: on gh one GraphQL batch per tick and host covers every tracked PR (state, mergeability, review and checks), every
-`tools.prWatchSeconds` (floor 30 s), plus a few `pr_find` lookups for pushed branches and one author search every second
-tick, on top of the polls `pr_watch` makes itself. On glab and template hosts each tracked PR costs two calls (checks and
-mergeability), at most 12 for six PRs. A PR that a watch covers reuses the watch's checks snapshot. See
-[tools](tools.md#call-budget) and [tools](tools.md#watch). `tools.prDots: false` keeps the poller from starting at all (the
-PR tools stay on).
 
 ### Data
 
@@ -207,11 +192,12 @@ are additive: older readers ignore them, and each is present only when there is 
 | `prs` | the `pr_watch` wait | the watched PR numbers |
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
 | `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
-| `dots` | live file, radar session node | the dots row: `[{n, state, label, src, url?}]`, at most 14; `url` is the `https://` PR page of a `pr` dot (omitted when unknown, not `https` or not made of URL characters; the herdr-app mod opens it); `n` is the PR number or `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters, `src` `pr` or `ext` (the external status hook). The radar copies it unchanged to the session node; the `prs` field of the `pr_watch` wait is separate and unchanged |
+| `dots` | live file, radar session node | the dots row: `[{n, state, label, src}]`, at most 14: the external status items (`src` `ext`); `n` is `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters. The radar copies it unchanged to the session node; the `prs` field of the `pr_watch` wait is separate and unchanged |
+| `repo`, `branch` | live file, radar session node | `owner/name` of the origin remote and the checked-out branch (each present only when known); the herdr-app mod attaches a feed PR to the session with equal repo and head branch |
 
 The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
 (with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the
-waits); `dots` go to the pr row (`fm_pr1`..`fm_pr4`), pull request and external items mixed in one order.
+waits); `dots` go to the pr row (`fm_pr1`..`fm_pr4`).
 
 ### Header glyphs and colours
 
@@ -305,7 +291,7 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 | `fm_a1` | agents (see Activity lines) |
 | `fm_a2` | tasks and watches |
 | `fm_a3` | waits and an open ask |
-| `fm_pr1`..`fm_pr4` | PR status dots, one cell each: a circle (`pr-fail`, `pr-run`, `pr-ok`, `pr-none` of the glyph set) and the label (`#21`), ordered red, yellow, green, unknown; cells that do not fit collapse into a last `+n` cell |
+| `fm_pr1`..`fm_pr4` | status dots of external items, one cell each: a circle (`pr-fail`, `pr-run`, `pr-ok`, `pr-none` of the glyph set) and the label, ordered red, yellow, green, unknown; cells that do not fit collapse into a last `+n` cell |
 | `fm_meta` | `↑in ↓out · $cost · ✓n` and the pressure suffix; `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. When it does not fit, the `↑↓` counts drop as a whole first, then the text is cut; hidden below 20 columns |
 | `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done`, `lost`, `waiting-owner`, `waiting-external`, `idle` or `needs-you`, for your own rules |
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
@@ -371,7 +357,7 @@ current frame in and, every 250 ms while the session is neither blocked nor done
 like a working turn, so it sends `fm_hd` four times a second: that is the cost of showing a live wait. The timer stops
 when the session is blocked or done, and at shutdown. Panes the daemon publishes keep the static header (see Header glyphs
 and colours). `ui.spinner: false` (in `foreman.json`)
-turns the animation off everywhere: static glyphs in the sidebar and the widget. See
+turns the animation off everywhere: static glyphs in the sidebar. See
 [sessions](sessions.md#further-session-keys).
 
 Recent runs: a run that ended shows as `✓ role` on line 2 for `radar.recentRunSeconds` (default 8), then moves into
@@ -432,7 +418,7 @@ With pi-foreman's own view (see above) the foreman panes come first whatever `ag
 
 ## Symbols
 
-`ui.symbols` in `foreman.json` picks the glyph set for radar, the children widget and this plugin (via
+`ui.symbols` in `foreman.json` picks the glyph set for radar, the footer and this plugin (via
 `foreman radar --json`): `unicode` (default, the broadest terminal support), `emoji`, `nerd` or `ascii`; an unknown value
 reads as `unicode`. See [sessions](sessions.md#further-session-keys). The sets live in `config/symbols.json`.
 
@@ -476,8 +462,7 @@ Activity glyphs and the spinner:
 
 ## External status
 
-The dots row can also show items from a program you run yourself, for example a deployment or build status that has no
-pull request. Two keys under `sidebar` in `foreman.json`:
+The dots row shows items from a program you run yourself, for example a deployment or build status. Two keys under `sidebar` in `foreman.json`:
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -507,7 +492,7 @@ pull request. Two keys under `sidebar` in `foreman.json`:
   `timeout` or `program_missing`) and the item count, plus the first line of stderr (redacted, at most 200 characters) when the program fails; never the
   output. `foreman doctor` shows an INFO line `sidebar status: off` or `sidebar status: on (<program>)`.
 
-The items join the pull request dots in the same row and order (see Dots). Overlay authors: see
+The items fill the dots row in this order (see Dots). Overlay authors: see
 [overlays](overlays.md#external-sidebar-status).
 
 ## Optional add-on: background tasks
@@ -590,22 +575,22 @@ labels are passed.
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
 it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
 gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
-waits; one chip per PR with its check dots (failing, pending, green; newest first; red border on a failing check), wrapping,
-then "N PRs · k failing · m pending" or "all green". Nested sessions (any depth) are tree rows with their own cost and up to two
-inline PR chips (more go on a line below); workers are one tree row "role model" with a spinner. An "Open PRs" section at the
-bottom shows the `openPrs` field of radar when the installed pi-foreman provides it, else only the tracked PRs of ended sessions.
+waits; one two-part dot per PR (see Open PRs below), wrapping, then "N PRs · k failing · m pending" or "all green". Nested
+sessions (any depth) are tree rows with their own cost and up to two inline PR markers (more go on a line below); workers are one
+tree row "role model" with a spinner. An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
+session shows. The mod is the only PR and run display: Pi itself draws no PR or run widget and no PR or run parts in its footer,
+and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
+only (through `gh`), so GitLab users get no PR display.
 
 The mod reads `foreman radar --json` (every 3 s locally, 15 s per remote space) and, per agent terminal, `hc get <terminal> --json`
 (prop `hc` names the binary like `foreman`, default `hc`; failures are ignored) for the `pi-subagents` child records in state working or
 blocked: they count as running agents (`N agents: titles`, hollow spinner) or as a need, also for a terminal with no radar node; radar's
 running child runs stay the source and a record with the title of a radar run is not counted twice. It joins a not-done node to an agent on
 `hcTerminal` (the `machine/` prefix for remote spaces; when both sides have a pid they must match). Without a radar it shows one
-dim line and retries every 30 s. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
+dim line and retries every 30 s. A pane-less child terminal (a session started with `hc run`) whose `hcTerminal` matches a node shows the same detail rows under its child line, once, with records polled for it too; without `hcTerminal` it stays a bare line. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
 name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
 `rundll32 url.dll,FileProtocolHandler`; never a shell) on an `https://` URL made of URL characters only (no whitespace, no
-`& | ^ < > " '`). The URL comes from radar (the `url` of the PR dot, which the installed pi-foreman reports for a tracked PR, else
-an `https://` repository URL plus `/pull/<n>`); a chip opens the PR page when the installed pi-foreman reports PR URLs, and is
-plain where radar gives neither. Session status glyph (hc status of the joined terminal first, else radar; most urgent first):
+`& | ^ < > " '`). The URL is the `url` of the feed PR (`https://` only); the click opens the PR page. Session status glyph (hc status of the joined terminal first, else radar; most urgent first):
 "Needs you" pill (ask or hc `blocked`), spinner (working), filled dot (hc `done`, not yet seen), hollow spinner (child agents run;
 `N agents: roles`), small square (background tasks; `bg: <name> <age>`), hollow muted ring (waits; `wait: <note> <age>`), hollow dot
 (idle). Ended sessions are hidden under an agent. Under a session or agent row, each running async agent gets its own line (small
@@ -621,31 +606,35 @@ Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs"`.
 
 ### Open PRs
 
-The mod's **Open PRs** section lists PRs that no agent works on. Besides the tracked PRs of ended sessions it shows the
-`openPrs` field of `foreman radar --json`, which is off by default. It lists your open PRs (author), the open PRs with your
-review requested (`mine`), and the open PRs of configured bot authors inside a configured scope. A PR that a live agent row
-already shows is not listed again (matched by URL, else by repository and number).
+The `openPrs` field of `foreman radar --json` is the shared open-PRs feed and the only source of PR data for the mod. It is on
+by default (`radar.openPrs.enabled: false` turns it off). It lists your open PRs (author), the open PRs with your review
+requested (`mine`), and the open PRs of configured bot authors inside a configured scope. The mod draws one dot per PR: an
+outer ring that animates while any job runs, and an inner fill that is amber while no job has finished, red once one has
+failed, green when every job finished and passed, and dim when unknown. Hovering the dot shows a card (title, the first
+~200 characters of the description, the jobs grouped failed, running and passed, capped, and a CONFLICTING mark when the PR has
+a merge conflict); a click opens the PR. A PR whose repository and head branch equal the `repo` and `branch` of a live session
+is shown under that session; every other PR is listed under **Open PRs**. Forks and renamed branches fall into that list.
 
-User or overlay config only (a project cannot turn on a GitHub search):
+Owner and overlay config only (a project cannot change the GitHub search):
 
 ```json
-{ "radar": { "openPrs": { "enabled": true, "refreshSeconds": 900, "mine": true,
+{ "radar": { "openPrs": { "enabled": true, "refreshSeconds": 120, "mine": true,
                          "authors": ["renovate[bot]"], "scope": ["example-org", "acme/widgets"] } } }
 ```
 
 | Key | Default | Meaning |
 |---|---|---|
-| `radar.openPrs.enabled` | `false` | search GitHub through `gh` |
-| `radar.openPrs.refreshSeconds` | `900` | minimum seconds between two searches (60..86400) |
+| `radar.openPrs.enabled` | `true` | search GitHub through `gh` |
+| `radar.openPrs.refreshSeconds` | `120` | minimum seconds between two searches (60..86400) |
 | `radar.openPrs.mine` | `true` | list PRs you authored and PRs with your review requested |
 | `radar.openPrs.authors` | `[]` | other authors, for example `renovate[bot]` (a GitHub App `<name>[bot]` is searched as `author:app/<name>`) |
 | `radar.openPrs.scope` | `[]` | owners (`example-org`) or `owner/repo`; authors are searched only inside it, never unscoped |
 
 A Pi session (not a child) refreshes `<agent dir>/pi-foreman/state/open-prs.json` in the background, at most once per
-`refreshSeconds` across all sessions on the machine (an exclusive lock file with a stale timeout, then an atomic rename). One
+`refreshSeconds` across all sessions on the machine: one refresher per machine (an exclusive lock file with a stale timeout, then an atomic rename). One
 `gh api graphql` search runs per query: `author:@me`, `review-requested:@me`, and one per author and scope entry. `foreman
 radar --json` reads the file and never calls the network, so its 3 s polls cost nothing. It adds `openPrs` (`repo`, `number`,
-`title`, `url` (https only), `state`, `author`, `checks` as `{n, state, label}` with the states `fail`, `run`, `ok`, `none`) and
+`title`, `url` (https only), `state`, `author`, `headRefName`, `baseRefName` (what a conflict is against), `bodyText` (the description with secret-shaped tokens redacted, cut to 500 characters), `mergeable` (`MERGEABLE`, `CONFLICTING` or `UNKNOWN`), `checks` as `{n, state, label}` with the states `fail`, `run`, `ok`, `none`, at most 20 check names) and
 `openPrsAt`, the time of the last refresh in which a search succeeded (absent, so the mod shows no list, until one did); the mod shows its age on the section header. When `gh` is missing, not
 logged in or rate limited, the last file stays and carries `error` and `errorAt` (when only some queries fail, the others' PRs are kept and `error` counts the failed ones); radar and the sessions go on. Only `tools.prHost`
 `auto` or `gh` is searched. Remote spaces: the radar on that machine reads its own file.

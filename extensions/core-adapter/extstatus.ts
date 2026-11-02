@@ -6,7 +6,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { DotState } from "./prdots.ts";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
 import { redactCommand } from "./trace.ts";
@@ -18,6 +17,8 @@ export const MAX_STDOUT = 16 * 1024;
 export const MAX_STDERR = 4 * 1024;
 export const MAX_ITEMS = 8;
 export const MAX_LABEL = 20;
+/** fail, run, ok or none: the state of a status dot. */
+export type DotState = "fail" | "run" | "ok" | "none";
 const STATES: readonly DotState[] = ["fail", "run", "ok", "none"];
 
 export interface StatusItem {

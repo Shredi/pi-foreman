@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   parseRadar, parseRadarDoc, buildTree, joinAgents, sessionRows, sortPrs, prSummary, splitPrs, prUrl, isSafeHttpsUrl,
-  openerArgv, radarBinary, treeItems, openPrGroups, shownNodes, allSessions, fmtCost,
+  openerArgv, radarBinary, sessionTree, openPrGroups, shownNodes, allSessions, fmtCost,
   fmtSince, workerStatus, childTerminals, glyphSpec,
 } from "./model.js";
 
@@ -123,15 +123,17 @@ test("sessionRows: waits when nothing asks; empty input", () => {
   assert.equal(fmtCost(150.4), "$150");
 });
 
-test("treeItems: workers then sessions, guides, finished workers dropped, skip", () => {
+test("sessionTree: agents and sessions as siblings, finished agents dropped, skip", () => {
   const [top] = buildTree(parseRadar(text()));
-  const items = treeItems(top);
-  assert.deepEqual(items.map((i) => i.label), ["builder sonnet-4-5", "mid", "leaf"]);
-  assert.deepEqual(items.map((i) => i.lines), [["├"], ["└"], ["", "└"]]);
-  assert.equal(items[0].running, true);
-  assert.equal(items[1].costText, "$2.00");
-  assert.deepEqual(items[1].inline.map((p) => p.number), [21, 20]);
-  assert.deepEqual(treeItems(top, new Set([top.sessions[0]])).map((i) => i.label), ["builder sonnet-4-5"]);
+  const tree = sessionTree(top);
+  const [agent, mid] = tree.children;
+  assert.deepEqual(tree.children.map((i) => i.label), ["builder sonnet-4-5", "mid"]);
+  assert.deepEqual(mid.children.map((i) => i.label), ["leaf"]);
+  assert.equal(agent.type, "agent");
+  assert.equal(agent.status, "working");
+  assert.equal(mid.costText, "$2.00");
+  assert.deepEqual(mid.inline.map((p) => p.number), [21, 20]);
+  assert.deepEqual(sessionTree(top, { skip: new Set([top.sessions[0]]) }).children.map((i) => i.label), ["builder sonnet-4-5"]);
 });
 
 test("PR sort and summary for 0, 1, 2 and 5 PRs; inline split at 2", () => {

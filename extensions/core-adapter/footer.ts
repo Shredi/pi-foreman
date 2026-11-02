@@ -83,22 +83,13 @@ const usd = (v: number): string => `$${v.toFixed(2)}`;
 /** `n/a` when nothing is priced, `$x + n/a` when only part is. */
 const money = (v: number, unpriced: boolean): string => (!unpriced ? usd(v) : v !== 0 ? `${usd(v)} + n/a` : "n/a");
 
-/** `↑in ↓out tok · $total list (warm $x / cold $y)` plus ` · children n` when `children` is a number. */
-export function footerText(t: FooterTotals, children: number | null, wait: string | null = null, runsCost: number | null = null, perms: string | null = null): string {
+/** `↑in ↓out tok · $total list (warm $x / cold $y)`, plus the summed estimate when the runs cost something. */
+export function footerText(t: FooterTotals, runsCost: number | null = null, perms: string | null = null): string {
   const up = t.input + t.cacheRead + t.cacheWrite;
   const base = `↑${abbrev(up)} ↓${abbrev(t.output)} tok · ${money(t.cost, t.unpriced)} list (warm ${money(t.costCacheRead, t.unpriced)} / cold ${money(t.costCold, t.unpriced)})`;
   // The summed estimate: the foreman's cost plus every run's priced cost (lane 3b).
   const all = runsCost !== null && runsCost > 0 ? `${base} · all ${usd(t.cost + runsCost)} est (runs ${usd(runsCost)})` : base;
-  const withKids = children === null ? all : `${all} · children ${children}`;
-  const waiting = wait ? `${withKids} · waiting ${wait}` : withKids;
-  return perms && perms !== "auto" ? `${waiting} · perms: ${perms}` : waiting; // r79: the permissions mode shows when it is not the default
-}
-
-/** The note of the oldest active wait (its kind when it has none), `+n` for the others; null with no waits. */
-export function waitNote(waits: readonly { kind: string; note: string }[]): string | null {
-  if (waits.length === 0) return null;
-  const first = waits[0].note.trim() || waits[0].kind;
-  return waits.length > 1 ? `${first} +${waits.length - 1}` : first;
+  return perms && perms !== "auto" ? `${all} · perms: ${perms}` : all; // r79: the permissions mode shows when it is not the default
 }
 
 export const CACHE_STATUS_KEY = "foreman-cache";
@@ -201,7 +192,7 @@ export class UsageFooter {
     this.timers = timers;
   }
 
-  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; children: number; wait?: string | null; runsCost?: number; perms?: string | null }): void {
+  update(sessionId: string, ctx: FooterCtx, message: unknown, opts: { enabled: unknown; isChild: boolean; runsCost?: number; perms?: string | null }): void {
     try {
       const t = this.totals.get(sessionId) ?? zeroTotals();
       this.totals.set(sessionId, t);
@@ -209,7 +200,7 @@ export class UsageFooter {
       const mount = this.mounts.get(sessionId);
       if (mount) mount.ctx = ctx;
       if (opts.enabled !== true || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return;
-      const text = footerText(t, opts.isChild ? null : opts.children, opts.isChild ? null : opts.wait ?? null, opts.isChild ? null : opts.runsCost ?? null, opts.perms ?? null);
+      const text = footerText(t, opts.isChild ? null : opts.runsCost ?? null, opts.perms ?? null);
       if (!mount) {
         ctx.ui.setStatus(FOOTER_KEY, text);
         return;

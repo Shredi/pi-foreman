@@ -83,7 +83,7 @@ class PresenceTestsUseTempDirs(unittest.TestCase):
 
     PY = ["test_foreman_radar.py", "test_foreman_radar_tree.py", "test_herdr_sidebar.py",
           "test_herdr_cross_workspace.py", "test_foreman_radar_prune.py"]
-    TS = ["livestate", "sidebarlive", "footer", "wait", "bg", "childwidget"]
+    TS = ["livestate", "sidebarlive", "footer", "wait", "bg", "runs"]
 
     def test_python_presence_tests_never_resolve_the_real_agent_dir(self):
         bad = re.compile(r"Path\.home\(\)|expanduser|os\.environ\[.PI_CODING_AGENT_DIR|\"\.pi\"|'\.pi'")

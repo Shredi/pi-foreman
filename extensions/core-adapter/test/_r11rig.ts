@@ -47,6 +47,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   const l2 = {
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },
     trace: { enabled: true },
+    radar: { openPrs: { enabled: false } }, // no rig calls the real gh
     ceremony: { launchWait: "detach", ...ceremony },
     // r79 item 11: a rig that opens an owner dialog needs presence off (the probe's detached child keeps no event loop alive, the dialog hangs otherwise)
     presence: { enabled: false },

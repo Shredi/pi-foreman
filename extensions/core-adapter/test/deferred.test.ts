@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DEFERRED_ENTRY, DEFERRED_FLOOR, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, matchesPattern, mergeDeferredLayers, unmatchedPatterns } from "../deferred.ts";
 
-const DEFAULTS = ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "pr_track", "pr_untrack", "plan_mode_question", "plan_mode_complete"];
+const DEFAULTS = ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"];
 const DECLARED = ["read", "bash", "bg_run", "bg_wait", "bg_logs", "bg_status", "bg_result", "bg_kill", "bg_delegate", "bg_run_pi_attested", "fusion_validate", "fusion_reason", "subagent", "subagent_supervisor", "foreman_ledger", "foreman_move", "pr_comments", "pr_status", "plan_mode_question", "plan_mode_complete", "tool_search", "codemode"];
 
 test("a name pattern is exact and a glob stands for any run of characters", () => {

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.13+.
 
-Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo, pr_find,
-pr_search, pr_batch, pr_poll and pr_login (the last four need no work tree); the
+Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo and pr_find; the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object
 plus one key, `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object).
 
@@ -30,20 +29,11 @@ PR_TIMEOUT = 30
 BODY_CUT = 500
 MAX_LIST = 200
 MAX_FIND = 50
-MAX_POLL_BYTES = 64 * 1024
-MAX_POLL_ITEMS = 200
-MAX_BATCH = 50
-MAX_NAMES = 10
 PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}",
                 "{host}", "{mode}", "{author}", "{state}")
 HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?$")
 AUTHOR_RE = re.compile(r"^(?:@me|[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?)$")
-LOGIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?$")
 HTTPS_RE = re.compile(r"^https://[\x21-\x7e]+$")
-SINCE_IMF_RE = re.compile(r"^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$")
-ETAG_RE = re.compile(r'^(?:W/)?"[\x21\x23-\x7e]{1,128}"$')
-FAILED_CONCLUSIONS = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
-POLL_EVENT_TYPES = ("PullRequestEvent", "PullRequestReviewEvent", "PullRequestReviewCommentEvent", "IssueCommentEvent")
 CMD_SAFE = re.compile(r"^[A-Za-z0-9 ._/:@+,=#~-]*$")
 SINCE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 REPO_PATH_RE = re.compile(r"^(?!-)[A-Za-z0-9._-]+(/(?!-)[A-Za-z0-9._-]+)+$")
@@ -273,15 +263,6 @@ def arg_author(args, key="author"):
         return None
     if not isinstance(v, str) or not AUTHOR_RE.match(v):
         raise _bad("%s must be @me or a user name" % key)
-    return v
-
-
-def arg_login(args):
-    v = args.get("login")
-    if v is None:
-        return None
-    if not isinstance(v, str) or not LOGIN_RE.match(v):
-        raise _bad("login must be a user name")
     return v
 
 
@@ -916,27 +897,10 @@ def _create_answer(out, head, base, template):
             "head": head, "base": base}
 
 
-# ------------------------------------------------- repo, find, search, batch, poll, login
-
-def _repoless_root(req):
-    """The process cwd of an op that needs no work tree: realpath of an existing directory."""
-    cwd = req.get("cwd")
-    if not isinstance(cwd, str) or not cwd or not os.path.isdir(cwd):
-        raise _bad("cwd is not a directory")
-    return os.path.realpath(cwd)
-
-
-def _gh_only(pr_host, root, key):
-    if isinstance(pr_host, dict):
-        raise Precondition("pr_unsupported", "%s needs gh; tools.prHost templates have no '%s' key" % (key, key))
-    host = resolve_host(pr_host, key, root)
-    if host.kind != "gh":
-        raise Precondition("pr_unsupported", "%s needs gh; %s is not supported" % (key, host.label))
-    return host
-
+# ------------------------------------------------- repo, find
 
 def _optional_key(pr_host, key):
-    """A templates object without the optional `find`/`search` key: the op is unsupported, not a missing host."""
+    """A templates object without the optional `find` key: the op is unsupported, not a missing host."""
     if isinstance(pr_host, dict) and pr_host.get(key) is None:
         raise Precondition("pr_unsupported", "tools.prHost templates have no '%s' key" % key)
 
@@ -1024,318 +988,5 @@ def op_pr_find(req):
     return norm_find(d)
 
 
-def norm_search(items, template):
-    out = []
-    for e in items:
-        if not isinstance(e, dict) or not isinstance(e.get("number"), int) or isinstance(e.get("number"), bool):
-            continue
-        url = e.get("url")
-        if not isinstance(url, str) or not HTTPS_RE.match(url):
-            continue
-        r = e.get("repository")
-        if isinstance(r, dict):
-            r = r.get("nameWithOwner") or r.get("full_name")
-        item = {"number": e["number"], "url": url[:1024], "title": title_or_none(e.get("title")),
-                "repository": r if isinstance(r, str) and REPO_PATH_RE.match(r) else None}
-        if template and e.get("reviewRequested") is True:
-            item["reviewRequested"] = True
-        out.append(item)
-    return cap_lists({"action": "pr_search", "prs": out}, ["prs"], MAX_FIND)
-
-
-def op_pr_search(req):
-    args, cfg, pr_host = _setup(req, ("author", "reviewRequested", "host"))
-    author = arg_author(args)
-    rr = args.get("reviewRequested")
-    if rr is not None and rr is not True and not (isinstance(rr, str) and AUTHOR_RE.match(rr)):
-        raise _bad("reviewRequested must be true or a user name")
-    if (author is None) == (rr is None):
-        raise _bad("exactly one of author and reviewRequested")
-    hostname = arg_host(args)
-    root = _repoless_root(req)
-    if isinstance(pr_host, dict):
-        _optional_key(pr_host, "search")
-        host = resolve_host(pr_host, "search", root)
-        values = {"author": author, "host": hostname}
-        d = template_json(run_template(host, "search", values, root), "search", list)
-        return norm_search(d, True)
-    host = _gh_only(pr_host, root, "search")
-    if hostname:
-        raise _bad("gh search prs has no host option; host is for templates only")
-    sel = ["--author", author] if author else ["--review-requested", "@me" if rr is True else rr]
-    argv = [host.program, "search", "prs", "--state", "open", "--limit", str(MAX_FIND + 1),
-            "--json", "number,title,url,repository"] + sel
-    code, out, err = run_host(argv, root, [author or str(rr)])
-    d = host_json(host, code, out, err, "search")
-    if not isinstance(d, list):
-        raise ActionError("pr_host_failed", "gh: printed no JSON list")
-    return norm_search(d, False)
-
-
-ZERO_TIME = ("0001-01-01T00:00:00Z", "0001-01-01T00:00:00")
-
-
-def map_rollup(roll):
-    """{pending, failed, passed, missing (names, <= 10 each), counts, truncated} of one statusCheckRollup."""
-    names = {"pending": [], "failed": [], "passed": [], "missing": []}
-    counts = dict.fromkeys(names, 0)
-    ctx = roll.get("contexts") if isinstance(roll, dict) else None
-    nodes = ctx.get("nodes") if isinstance(ctx, dict) else None
-    total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
-    for nd in nodes if isinstance(nodes, list) else []:
-        if not isinstance(nd, dict):
-            continue
-        if nd.get("__typename") == "StatusContext":
-            name, st = nd.get("context"), str(nd.get("state") or "").upper()
-            group = "failed" if st in ("FAILURE", "ERROR") else "missing" if st == "EXPECTED" else \
-                "passed" if st == "SUCCESS" else "pending"
-        else:
-            name, st = nd.get("name"), str(nd.get("status") or "").upper()
-            concl = str(nd.get("conclusion") or "").upper()
-            if concl in FAILED_CONCLUSIONS:
-                group = "failed"
-            elif st != "COMPLETED":
-                group = "missing" if nd.get("isRequired") is True and (not nd.get("startedAt") or nd.get("startedAt") in ZERO_TIME) else "pending"
-            else:
-                group = "passed"
-        counts[group] += 1
-        if len(names[group]) < MAX_NAMES:
-            names[group].append(title_or_none(name) or "?")
-    out = dict(names)
-    out["counts"] = counts
-    out["truncated"] = isinstance(total, int) and not isinstance(total, bool) and total > 100
-    return out
-
-
-def _pr_query(count):
-    decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
-    parts = []
-    for i in range(count):
-        parts.append(
-            "r%d: repository(owner: $owner%d, name: $name%d) { pullRequest(number: $n%d) { number url title state "
-            "isDraft mergeable reviewDecision headRefName commits(last: 1) { nodes { commit { statusCheckRollup { state "
-            "contexts(first: 100) { totalCount nodes { __typename ... on CheckRun { name status conclusion startedAt "
-            "isRequired(pullRequestNumber: $n%d) } ... on StatusContext { context state "
-            "isRequired(pullRequestNumber: $n%d) } } } } } } } } }" % (i, i, i, i, i, i))
-    return "query(%s) { %s }" % (decl, " ".join(parts))
-
-
-def _batch_args(args):
-    prs = args.get("prs")
-    if not isinstance(prs, list) or not 1 <= len(prs) <= MAX_BATCH:
-        raise _bad("prs must be a list of 1 to %d entries" % MAX_BATCH)
-    out = []
-    for e in prs:
-        if not isinstance(e, dict) or set(e) != {"repo", "n"}:
-            raise _bad("each pr is {repo, n}")
-        repo, n = e["repo"], e["n"]
-        if not isinstance(repo, str) or len(repo) > 200 or not REPO_PATH_RE.match(repo) \
-                or any(s in (".", "..") for s in repo.split("/")) or two_part(repo) is None:
-            raise _bad("repo must be owner/name")
-        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 10 ** 9:
-            raise _bad("n must be an integer from 1 to 1000000000")
-        out.append((repo, n))
-    return out
-
-
-def _enum(v, allowed):
-    v = str(v or "").lower()
-    return v if v in allowed else None
-
-
-def op_pr_batch(req):
-    args, cfg, pr_host = _setup(req, ("host", "prs"))
-    hostname = arg_host(args)
-    entries = _batch_args(args)
-    root = _repoless_root(req)
-    host = _gh_only(pr_host, root, "batch")
-    variables = {}
-    for i, (repo, n) in enumerate(entries):
-        owner, name = two_part(repo)
-        variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
-    path = _body_file(json.dumps({"query": _pr_query(len(entries)), "variables": variables}))
-    try:   # the body goes through a file: 50 queries overflow the Windows command line
-        argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
-            ["--input", _argpath(path)]
-        code, out, err = run_host(argv, root, [_argpath(path)])
-    finally:
-        _unlink(path)
-    try:
-        d = json.loads(out)
-    except ValueError:
-        d = None
-    if not isinstance(d, dict):
-        if code != 0:
-            host_error(host, "batch", code, err)
-        raise ActionError("pr_host_failed", "gh: printed no JSON")
-    errs = [x for x in d.get("errors") if isinstance(x, dict)] if isinstance(d.get("errors"), list) else []
-    if any(x.get("type") == "RATE_LIMITED" for x in errs):
-        raise ActionError("pr_host_failed", "gh: GraphQL RATE_LIMITED")
-    data = d.get("data")
-    if not isinstance(data, dict):
-        if code != 0:
-            host_error(host, "batch", code, err)
-        msg = first_line(str(errs[0].get("message"))) if errs else "no data"
-        raise ActionError("pr_host_failed", "gh: %s" % msg)
-    prs, errors = [], []
-    for i, (repo, n) in enumerate(entries):
-        alias = "r%d" % i
-        node = data.get(alias)
-        pr = node.get("pullRequest") if isinstance(node, dict) else None
-        if not isinstance(pr, dict):
-            mine = [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]]
-            kind = "pr_host_failed" if mine and not any(x.get("type") == "NOT_FOUND" for x in mine) else "pr_not_found"
-            errors.append({"repo": repo, "number": n, "kind": kind})
-            continue
-        commits = pr.get("commits")
-        nodes = commits.get("nodes") if isinstance(commits, dict) else None
-        commit = nodes[0].get("commit") if isinstance(nodes, list) and nodes and isinstance(nodes[0], dict) else None
-        roll = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
-        mer = str(pr.get("mergeable") or "").upper()
-        prs.append({"repo": repo, "number": n, "url": s_or_none(pr.get("url"), 1024), "title": title_or_none(pr.get("title")),
-                    "state": _enum(pr.get("state"), ("open", "closed", "merged")),
-                    "draft": pr.get("isDraft") if isinstance(pr.get("isDraft"), bool) else None,
-                    "mergeable": "mergeable" if mer == "MERGEABLE" else "conflicting" if mer == "CONFLICTING" else "unknown",
-                    "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
-                    "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)})
-    return {"action": "pr_batch", "prs": prs, "errors": errors}
-
-
-def parse_http(out):
-    """(status, headers (lower-case names), body) of `gh api -i` output, or None."""
-    head, sep, body = out.partition("\r\n\r\n")
-    if not sep:
-        head, sep, body = out.partition("\n\n")
-    lines = head.splitlines()
-    m = re.match(r"^HTTP/\S+\s+(\d{3})", lines[0]) if lines else None
-    if not m:
-        return None
-    headers = {}
-    for ln in lines[1:]:
-        k, _, v = ln.partition(":")
-        headers[k.strip().lower()] = v.strip()
-    return int(m.group(1)), headers, body
-
-
-def reduce_notifications(items):
-    out = []
-    for t in items:
-        subj = t.get("subject") if isinstance(t, dict) else None
-        repo = t.get("repository") if isinstance(t, dict) else None
-        if not isinstance(subj, dict) or not isinstance(repo, dict) or t.get("reason") != "review_requested" \
-                or subj.get("type") != "PullRequest":
-            continue
-        m = re.search(r"/pulls/(\d+)$", str(subj.get("url") or ""))
-        full, html = repo.get("full_name"), repo.get("html_url")
-        if not m or not isinstance(full, str) or not REPO_PATH_RE.match(full) or not isinstance(html, str):
-            continue
-        url = html.rstrip("/") + "/pull/%s" % m.group(1)
-        if _url_host(url) is None or not url.endswith("/%s/pull/%s" % (full, m.group(1))):
-            continue
-        out.append({"repo": full, "n": int(m.group(1)), "title": title_or_none(subj.get("title")), "url": url})
-    return out
-
-
-def reduce_events(items, hostname):
-    default = hostname or (os.environ.get("GH_HOST") if HOST_RE.match(os.environ.get("GH_HOST") or "") else None) or "github.com"
-    out = []
-    for ev in items:
-        if not isinstance(ev, dict) or ev.get("type") not in POLL_EVENT_TYPES:
-            continue
-        r = ev.get("repo")
-        name = r.get("name") if isinstance(r, dict) else None
-        pl = ev.get("payload") if isinstance(ev.get("payload"), dict) else {}
-        if ev["type"] == "IssueCommentEvent":
-            src = pl.get("issue") if isinstance(pl.get("issue"), dict) else {}
-            if not src.get("pull_request"):
-                continue
-            n = src.get("number")
-        else:
-            src = pl.get("pull_request") if isinstance(pl.get("pull_request"), dict) else {}
-            n = src.get("number", pl.get("number"))
-        if not isinstance(name, str) or not REPO_PATH_RE.match(name) or two_part(name) is None \
-                or not isinstance(n, int) or isinstance(n, bool) or n < 1:
-            continue
-        h = _url_host(src.get("html_url"))
-        url = "https://%s/%s/pull/%d" % (h or default, name, n)
-        if h and src.get("html_url") != url:
-            url = "https://%s/%s/pull/%d" % (default, name, n)
-        out.append({"repo": name, "n": n, "url": url, "at": s_or_none(ev.get("created_at"), 40)})
-    return out
-
-
-def op_pr_poll(req):
-    args, cfg, pr_host = _setup(req, ("endpoint", "host", "since", "etag", "login", "page"))
-    endpoint = args.get("endpoint")
-    if endpoint not in ("notifications", "events"):
-        raise _bad("endpoint must be notifications or events")
-    hostname = arg_host(args)
-    since, etag, lg, page = args.get("since"), args.get("etag"), arg_login(args), args.get("page")
-    if since is not None and (not isinstance(since, str) or not SINCE_IMF_RE.match(since)):
-        raise _bad("since must be an HTTP date such as Sat, 31 Jan 2026 12:00:00 GMT")
-    if etag is not None and (not isinstance(etag, str) or not ETAG_RE.match(etag)):
-        raise _bad("etag must be a quoted entity tag")
-    if page is not None and (not isinstance(page, int) or isinstance(page, bool) or not 1 <= page <= 3):
-        raise _bad("page must be 1 to 3")
-    if endpoint == "events" and (lg is None or page is not None):
-        raise _bad("events need login and take no page")
-    if endpoint == "notifications" and lg is not None:
-        raise _bad("notifications take no login")
-    root = _repoless_root(req)
-    host = _gh_only(pr_host, root, "poll")
-    # Query parameters travel as -f fields (gh puts them in the query string under GET), so no argv element holds
-    # an `&` that cmd.exe would cut at when the host is a .cmd shim.
-    fields = [("all", "false"), ("participating", "false"), ("per_page", "100"), ("page", str(page or 1))] \
-        if endpoint == "notifications" else [("per_page", "100")]
-    path = "notifications" if endpoint == "notifications" else "users/%s/events" % lg
-    argv = [host.program, "api", "-i", "--method", "GET"] + (["--hostname", hostname] if hostname else [])
-    if since:
-        argv += ["-H", "If-Modified-Since: " + since]
-    if etag:
-        argv += ["-H", "If-None-Match: " + etag]
-    for k, v in fields:
-        argv += ["-f", "%s=%s" % (k, v)]
-    code, out, err = run_host(argv + [path], root)
-    parsed = parse_http(out)  # gh exits 1 on 304, 403 and 404 but still prints the status line and headers
-    if parsed is None:
-        if code != 0:
-            host_error(host, "poll", code, err)
-        raise ActionError("pr_host_failed", "gh: printed no HTTP response")
-    status, headers, body = parsed
-    items = None
-    if status == 200:
-        try:
-            data = json.loads(body)
-        except ValueError:
-            data = None
-        if not isinstance(data, list):
-            raise ActionError("pr_host_failed", "gh: printed no JSON list")
-        items = reduce_notifications(data) if endpoint == "notifications" else reduce_events(data, hostname)
-        items = items[:MAX_POLL_ITEMS]
-    iv = headers.get("x-poll-interval", "")
-    res = {"action": "pr_poll", "status": status, "lastModified": s_or_none(headers.get("last-modified"), 64),
-           "etag": headers.get("etag") if ETAG_RE.match(headers.get("etag", "")) else None,
-           "pollInterval": int(iv) if iv.isdigit() and 0 < int(iv) <= 86400 else None, "items": items}
-    while items and len(json.dumps(res)) > MAX_POLL_BYTES:
-        items.pop()
-    return res
-
-
-def op_pr_login(req):
-    args, cfg, pr_host = _setup(req, ("host",))
-    hostname = arg_host(args)
-    root = _repoless_root(req)
-    host = _gh_only(pr_host, root, "login")
-    argv = [host.program, "api"] + (["--hostname", hostname] if hostname else []) + ["user", "--jq", ".login"]
-    code, out, err = run_host(argv, root)
-    if code != 0:
-        host_error(host, "login", code, err)
-    v = out.strip()
-    if not LOGIN_RE.match(v):
-        raise ActionError("pr_host_failed", "gh: printed no user name")
-    return {"action": "pr_login", "login": v}
-
-
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
-       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_search": op_pr_search, "pr_batch": op_pr_batch,
-       "pr_poll": op_pr_poll, "pr_login": op_pr_login}
+       "pr_repo": op_pr_repo, "pr_find": op_pr_find}

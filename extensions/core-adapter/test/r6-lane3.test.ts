@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { costAt, loadPrices, priceRecord, tableRate } from "../cost.ts";
 import { budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap, budgetCap } from "../costguard.ts";
-import { ChildRuns, UsageTail } from "../childwidget.ts";
+import { ChildRuns, UsageTail } from "../runs.ts";
 import { footerText, zeroTotals, addMessage } from "../footer.ts";
 import { LiveState } from "../livestate.ts";
 import { aggregate, formatSummary, parseLines, pricedLine } from "../usage.ts";
@@ -97,7 +97,7 @@ test("3b: three runs: per-run cost, presence runs[].cost, status line and /forem
   const t = zeroTotals();
   addMessage(t, { provider: "claude-bridge", model: "claude-opus-5-5", usage: { input: 1000, cacheRead: 200000, cacheWrite: 10000, output: 3000, cost: { total: 0 } } }, undefined, prices);
   assert.ok(near(t.cost, foremanTotal));
-  const text = footerText(t, 3, null, summed);
+  const text = footerText(t, summed);
   const shown = Number(/all \$(\d+\.\d+) est/.exec(text)?.[1]);
   assert.ok(Math.abs(shown - (foremanTotal + runsTotal)) <= (foremanTotal + runsTotal) * 0.01 + 0.005, text);
   // /foreman cost

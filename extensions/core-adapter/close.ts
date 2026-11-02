@@ -486,7 +486,7 @@ export interface CloseSession {
   closeChildren?: (send: (to: string, text: string) => Promise<string>) => Promise<string[]>;
   /** What the parent would have to rule when the ceremony is incomplete ("" = complete). */
   ceremonyNote?: () => string;
-  /** Evaluate the pushed branches without a tracked PR and notify (fire-and-forget). */
+  /** Evaluate the pushed branches without any PR and notify (fire-and-forget). */
   pushNotice?: (ctx: ExtensionContext) => void;
   /** Notice command of a remote child (`remote notice closed|refused`, scripts/foreman_session.py). */
   remoteReply?: (kind: "closed" | "refused", arg?: string) => void | Promise<unknown>;
