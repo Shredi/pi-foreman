@@ -32,7 +32,7 @@ export function intercomBlock(toolName: string, input: unknown, p: IntercomPolic
     return "pi-foreman: intercom openProjectPaneIfMissing is refused: starting Pi in a new pane is a launch outside the role allowlist. Send to a running session, or set intercom.allowOpenPane in your foreman.json.";
   }
   if (typeof i.to === "string" && i.to.includes("@") && !p.allowRemote) {
-    return "pi-foreman: intercom targets of the form name@machine (cross-machine over SSH) are refused. Send to a session on this machine, or set intercom.allowRemote in your foreman.json.";
+    return "pi-foreman: intercom targets of the form name@machine (cross-machine over SSH or hc) are refused. Send to a session on this machine, or set intercom.allowRemote in your foreman.json.";
   }
   return undefined;
 }
@@ -85,7 +85,7 @@ export function intercomDoctor(agentDir: string, packageLists: unknown[], env: N
   const risks = all.filter((k) => k !== "stableId");
   // Security review S6: a shared stableId makes every session (children too) register under one id.
   if (all.includes("stableId")) out.push(`WARN ${intercomConfigPath(agentDir)} sets stableId: every Pi session of this agent dir, child sessions included, registers under that one intercom id, so a child can pose as the foreman's parent (foreman:close). Remove it and set PI_INTERCOM_STABLE_ID per session if you need a fixed id.`);
-  if (risks.length) out.push(`WARN ${intercomConfigPath(agentDir)} sets ${risks.join(", ")}: brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH. Fine if you set them on purpose.`);
+  if (risks.length) out.push(`WARN ${intercomConfigPath(agentDir)} sets ${risks.join(", ")}: brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH or hc. Fine if you set them on purpose.`);
   if (env.HERDR_ENV === "1" && !fs.existsSync(path.join(agentDir, "extensions", "herdr-agent-state.ts"))) {
     out.push("INFO Herdr detected; run `herdr integration install pi` for pane state");
   }

@@ -58,9 +58,9 @@ const INTERCOM = "pi-intercom";
 // pi-subagents spawns the hook without a shell, so a script cannot run on Windows (docs/safety.md, known limits).
 const WORKTREE_HOOK_TIMEOUT_MS = 600000;
 // Written once when absent (never overwritten): wake on every inbound message, the human's input first.
-const intercomHcKeys = (o) => ({ transport: "hc", ...(o.machineName ? { machineName: o.machineName } : {}) });
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
-// Keys that change the program pi-intercom starts or enable sends over SSH: trusted overrides, warned about.
+const intercomHcKeys = (o) => ({ transport: "hc", ...(o.machineName ? { machineName: o.machineName } : {}) });
+// Keys that change the program pi-intercom starts or enable sends over SSH or hc: trusted overrides, warned about.
 const INTERCOM_RISKY_KEYS = ["brokerCommand", "brokerArgs", "crossMachine"];
 // Providers an extension registers at runtime (no Pi registry file) that serve another provider's model ids: price tiers come from the base.
 const BUILTIN_MODEL_DATA_FROM = { "claude-bridge": "anthropic" };
@@ -94,7 +94,10 @@ function parseArgs(argv) {
     else if (flag === "--remove") o.remove = true;
     else if (flag === "--no-intercom") o.noIntercom = true;
     else if (flag === "--intercom-hc") o.intercomHc = true;
-    else if (flag === "--machine-name") o.machineName = value();
+    else if (flag === "--machine-name") {
+      o.machineName = value().trim();
+      if (!o.machineName || o.machineName.startsWith("--")) throw new Fatal(`${flag} needs a machine name, not an empty value or another flag.\n${USAGE}`, 2);
+    }
     else if (flag === "--develop") o.develop = true;
     else if (flag === "--overlay") o.overlay = value();
     else if (flag === "--agent-dir") o.agentDir = value();
@@ -1040,7 +1043,7 @@ async function main(argv) {
         }
         const risky = ic ? INTERCOM_RISKY_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(ic, k)) : [];
         say(`intercom config: present, ${opts.intercomHc ? "other keys left alone" : "left alone"}`);
-        if (risky.length) say(`  warning: ${icFile} sets ${risky.join(", ")} (brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH); fine only if you set them on purpose.`);
+        if (risky.length) say(`  warning: ${icFile} sets ${risky.join(", ")} (brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH or hc); fine only if you set them on purpose.`);
       }
     }
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");

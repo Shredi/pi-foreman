@@ -54,10 +54,10 @@ test("--intercom-hc --machine-name creates the config with the hc keys, warns, d
   assert.deepEqual(readCfg(env), { inboundTrigger: "always", busyDelivery: "human-first", crossMachine: { transport: "hc", machineName: "<machine>" } });
 });
 
-test("--intercom-hc merges into an existing config, keeps other keys and allowRemote, and is idempotent", () => {
+test("--intercom-hc merges into an existing config, keeps other keys, and is idempotent", () => {
   const env = fresh();
   fs.mkdirSync(path.dirname(env.cfg), { recursive: true });
-  const own = { inboundTrigger: "replies", allowRemote: false, crossMachine: { remoteCommand: "x" } };
+  const own = { inboundTrigger: "replies", crossMachine: { remoteCommand: "x" } };
   fs.writeFileSync(env.cfg, JSON.stringify(own));
   const r = run(env, ["--intercom-hc"]);
   assert.equal(r.code, 0, r.out);
@@ -68,6 +68,32 @@ test("--intercom-hc merges into an existing config, keeps other keys and allowRe
   assert.equal(again.code, 0, again.out);
   assert.equal(fs.readFileSync(env.cfg, "utf8"), settled);
   assert.doesNotMatch(again.out, /setting crossMachine/);
+});
+
+const foremanJson = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, "foreman.json"), "utf8"));
+
+test("--intercom-hc leaves intercom.allowRemote in foreman.json untouched (absent stays absent, a preset value stays)", () => {
+  const plain = fresh();
+  assert.equal(run(plain, []).code, 0);
+  const hc = fresh();
+  assert.equal(run(hc, ["--intercom-hc"]).code, 0);
+  assert.deepEqual(foremanJson(hc), foremanJson(plain));
+  const preset = fresh();
+  fs.writeFileSync(path.join(preset.agentDir, "foreman.json"), JSON.stringify({ intercom: { allowRemote: true } }));
+  assert.equal(run(preset, ["--intercom-hc"]).code, 0);
+  assert.equal(foremanJson(preset).intercom.allowRemote, true);
+});
+
+test("--machine-name refuses an empty, whitespace-only or flag-like value and trims the rest", () => {
+  const env = fresh();
+  for (const bad of ["", "   ", "--no-intercom"]) {
+    const r = run(env, ["--intercom-hc", "--machine-name", bad]);
+    assert.equal(r.code, 2, r.out);
+    assert.match(r.out, /--machine-name/);
+  }
+  assert.equal(fs.existsSync(env.cfg), false);
+  assert.equal(run(env, ["--intercom-hc", "--machine-name", "  box  "]).code, 0);
+  assert.equal(readCfg(env).crossMachine.machineName, "box");
 });
 
 test("--machine-name needs --intercom-hc; --intercom-hc refuses --no-intercom; help lists both", () => {
