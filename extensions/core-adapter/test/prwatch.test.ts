@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { baselineOf, countRuns, PR_MESSAGE_TYPE, prDelta, prMessage, PrWatches, pollWatch, watchIntervalMs } from "../prwatch.ts";
 import type { Bucket, CommentEntry, Run, Timers, WatchPoll, WatchSnapshot } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
-import type { PrKey } from "../prtrack.ts";
+import type { PrKey } from "../prhost.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const SHA = "abcdef0123456789";

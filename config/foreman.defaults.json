@@ -73,12 +73,11 @@
   },
   "sync": { "repos": [], "runRetro": true },
   "knowledge": { "nudgeDays": 30 },
-  "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": false, "refreshSeconds": 900, "mine": true, "authors": [], "scope": [] } },
+  "radar": { "doneTtlMinutes": 30, "recentRunSeconds": 8, "openPrs": { "enabled": true, "refreshSeconds": 120, "mine": true, "authors": [], "scope": [] } },
   "retro": { "proposalMinReviews": 5, "enabled": null, "workspaceKey": null, "backlogDir": null, "repoBacklog": [], "expireDays": 14, "askThreshold": 2, "panelThreshold": 3 },
   "intercom": { "allowRemote": false, "allowOpenPane": false },
   "close": { "from": ["herdr", "intercom-parent", "remote-parent"], "autoClean": true, "worktreeDir": "../<repo>.worktrees", "childWaitMs": 60000 },
   "footer": { "usage": true, "style": "foreman", "cacheBar": true },
-  "widget": { "children": true, "prs": true, "prLinks": true },
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },
   "sessions": { "backend": "auto", "hc": { "outliveParent": true }, "machines": {}, "worktree": { "branchPrefix": "round" } },
@@ -112,6 +111,6 @@
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
   "skills": { "visible": [], "hidden": ["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"] },
-  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "pr_track", "pr_untrack", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prDots": true, "prWatchSeconds": 60, "prInteractions": [], "prShared": { "enabled": false, "authors": [], "seconds": 180, "events": true } },
+  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prWatchSeconds": 60 },
   "sidebar": { "statusSeconds": 60 }
 }

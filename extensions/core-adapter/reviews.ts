@@ -5,6 +5,7 @@
 // run-end event, as for the delegation rounds; a reviewer that ran in another checkout than the
 // branch records another SHA, so the PR is refused (fail closed).
 import { execFile } from "node:child_process";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { Verdict } from "./rounds.ts";
@@ -14,6 +15,8 @@ export interface ReviewRecord {
   verdict: Verdict;
   /** HEAD of the run's cwd at launch and at the verdict; null when they differ or could not be read. */
   head: string | null;
+  /** Why head is null. */
+  why?: NoHeadWhy;
 }
 
 export const MAX_REVIEWS = 50;
@@ -80,9 +83,44 @@ export async function headsAt(cwds: readonly string[]): Promise<Map<string, stri
  * A start map of one directory stands for the run's cwd when the reported cwd is spelled differently.
  */
 export function reviewedHead(start: ReadonlyMap<string, string | null> | undefined, cwd: string, end: string | null): string | null {
-  if (!start || !end) return null;
-  const at = start.has(path.resolve(cwd)) ? start.get(path.resolve(cwd)) : start.size === 1 ? [...start.values()][0] : null;
-  return at === end ? end : null;
+  return reviewedHeadWhy(start, cwd, end).head;
+}
+
+/** Why a review carries no head (the `why` of {@link reviewedHeadWhy}). */
+export type NoHeadWhy = "no_launch_head" | "cwd_unmatched" | "head_moved" | "head_unread";
+const NO_HEAD_WHY: readonly NoHeadWhy[] = ["no_launch_head", "cwd_unmatched", "head_moved", "head_unread"];
+
+/** The spellings of a directory a start map may key it by: resolved and real path, case-folded on win32 only. */
+function spellings(dir: string): string[] {
+  const out = new Set<string>([path.resolve(dir)]);
+  try {
+    out.add(fs.realpathSync.native(dir));
+  } catch {
+    // not readable: the resolved spelling stands
+  }
+  return [...out].map((p) => (process.platform === "win32" ? p.toLowerCase() : p));
+}
+
+/** {@link reviewedHead} with the reason for a null head. */
+export function reviewedHeadWhy(start: ReadonlyMap<string, string | null> | undefined, cwd: string, end: string | null): { head: string | null; why?: NoHeadWhy } {
+  if (!start) return { head: null, why: "no_launch_head" };
+  const want = new Set(spellings(cwd));
+  let at: string | null | undefined;
+  let found = false;
+  for (const [k, v] of start) {
+    if (!spellings(k).some((p) => want.has(p))) continue;
+    at = v;
+    found = true;
+    break;
+  }
+  if (!found && start.size === 1) {
+    at = [...start.values()][0];
+    found = true;
+  }
+  if (!found) return { head: null, why: "cwd_unmatched" };
+  if (!at) return { head: null, why: "no_launch_head" };
+  if (!end) return { head: null, why: "head_unread" };
+  return at === end ? { head: end } : { head: null, why: "head_moved" };
 }
 
 /** Map set that drops the oldest entries past `max` (launch heads whose run end never arrives). */
@@ -105,6 +143,27 @@ export function passHeads(list: readonly ReviewRecord[]): string[] {
   const last = new Map<string, Verdict>();
   for (const r of list) if (r.head) last.set(r.head, r.verdict);
   return [...last].filter(([, v]) => v === "pass").map(([h]) => h);
+}
+
+/**
+ * Why the latest recorded verdict, a PASS, carries no head (`unknown` for a record restored without a reason); null when it
+ * is not a headless PASS. The ledger's review gate takes such a PASS, the PR gate cannot, so a refusal names it.
+ */
+export function headlessPass(list: readonly ReviewRecord[]): string | null {
+  const last = list[list.length - 1];
+  return last && last.verdict === "pass" && last.head === null ? last.why ?? "unknown" : null;
+}
+
+/** Records of a persisted ceremony-state entry, validated field by field (bad ones dropped), newest MAX_REVIEWS kept. */
+export function reviewsOfEntry(v: unknown): ReviewRecord[] {
+  const out: ReviewRecord[] = [];
+  if (!Array.isArray(v)) return out;
+  for (const r of v as Record<string, unknown>[]) {
+    if (!r || typeof r !== "object" || typeof r.role !== "string" || (r.verdict !== "pass" && r.verdict !== "fail")) continue;
+    if (r.head !== null && !(typeof r.head === "string" && /^[0-9a-f]{40,64}$/.test(r.head))) continue;
+    out.push({ role: r.role, verdict: r.verdict, head: r.head as string | null, ...(r.head === null && NO_HEAD_WHY.includes(r.why as NoHeadWhy) ? { why: r.why as NoHeadWhy } : {}) });
+  }
+  return out.slice(-MAX_REVIEWS);
 }
 
 /** Every `[pr_refused:<reason>]` the git guard (scripts/git_guard.py) and the PR tool gate emit. */
@@ -136,14 +195,15 @@ async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]
  * reads as `branch`), else workspace HEAD, against the reviewed heads. A branch argument that does
  * not resolve in the workspace refuses (head_unknown).
  */
-export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}): Promise<{ reason: PrRefusal; message: string } | null> {
+export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}, headless: string | null = null): Promise<{ reason: PrRefusal; message: string } | null> {
   const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
   const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
   const cur = await commitOf(cwd, "HEAD");
   for (const ref of refs) {
     const f = await headRefusal(cwd, ref, reviewed, cur);
     if (!f) continue;
-    const why = { no_review: "no reviewer PASS is recorded in this session", stale_review: `the recorded reviewer PASS is for another commit than this head (PASS ${f.passed}, head ${f.head})`, head_unknown: "the head could not be resolved in the workspace" }[f.reason];
+    const unbound = `the latest reviewer PASS carries no commit (${headless}: HEAD changed while the reviewer ran, or its launch directory or checkout could not be matched or read), so it cannot open the gate`;
+    const why = { no_review: headless ? unbound : "no reviewer PASS is recorded in this session", stale_review: headless ? unbound : `the recorded reviewer PASS is for another commit than this head (PASS ${f.passed}, head ${f.head})`, head_unknown: "the head could not be resolved in the workspace" }[f.reason];
     return { reason: f.reason, message: `pi-foreman: pull request creation refused [pr_refused:${f.reason}]: ${why}. Run a reviewer on this head (in the checkout the pull request comes from), then retry.` };
   }
   return null;
@@ -156,10 +216,10 @@ export function isPrToolName(name: string): boolean {
 }
 
 /** The PR gate for a PR-creating tool call: children never, the review test when ceremony.reviewBeforePr is on. */
-export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown> }): Promise<{ reason: string; message: string } | null> {
+export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown>; headless?: string | null }): Promise<{ reason: string; message: string } | null> {
   if (g.isChild) return { reason: "child", message: `pi-foreman: ${g.tool} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
   if (!g.gateOn) return null;
-  return prToolRefusal(g.cwd, g.reviewed, g.input ?? {});
+  return prToolRefusal(g.cwd, g.reviewed, g.input ?? {}, g.headless ?? null);
 }
 
 /** One line for the review panel block when the PR's checks failed ("" otherwise). */

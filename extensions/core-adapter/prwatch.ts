@@ -5,8 +5,8 @@
 // the dots and never ends the watch. Timers are unref'd; clear() (session shutdown) stops everything. The PR number is never
 // traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
-import { keyString } from "./prtrack.ts";
-import type { PrKey } from "./prtrack.ts";
+import { keyString } from "./prhost.ts";
+import type { PrKey } from "./prhost.ts";
 
 export const PR_MESSAGE_TYPE = "pi-foreman-pr";
 export const MAX_CONTENT = 4096;
@@ -519,7 +519,7 @@ export class PrWatches {
     return this.watches.size;
   }
 
-  /** The active watches (widget rows): key, number, the last event text and the start time (ms). */
+  /** The active watches (shown as one wait entry in the live file): key, number, the last event text and the start time (ms). */
   list(): { key: PrKey; n: number; event: string; startedAt: number }[] {
     return [...this.watches.values()].map((w) => ({ key: w.key, n: w.key.n, event: w.state.last, startedAt: w.started }));
   }

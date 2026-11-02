@@ -7,7 +7,7 @@ Design record of the 2026-10 PR-ops waves; docs/tools.md is the current referenc
 | Item | Value |
 |---|---|
 | Status | Design for the `pr-ops` build waves, 2026-10-11. Builders implement against this file without further decisions. Ledger item numbers are given as `(Ln)`. |
-| What | Six tools, `pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch` and `pr_unwatch` (plus `pr_track` and `pr_untrack`). They are on by default (`tools.pr`) and host-neutral (`tools.prHost`). The generic layer never hardcodes `gh`: `gh` and `glab` are two built-in template sets, and an overlay can bring its own. |
+| What | Six tools, `pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch` and `pr_unwatch`. They are on by default (`tools.pr`) and host-neutral (`tools.prHost`). The generic layer never hardcodes `gh`: `gh` and `glab` are two built-in template sets, and an overlay can bring its own. |
 | Pack | The tools extend the git tool pack (`design/git-tool-pack.md`) and are traced as `tool_pack {pack: "git", op}`. They are switched independently of `tools.git` (A1). |
 | Out | A merge op, auto-fixing CI, review-bot comments, Herdr display, any host-specific CLI beyond the gh/glab built-ins. |
 | Unverified | The gh and glab flags and JSON fields below are taken from their public CLI docs; no real host was called. Minimum versions: gh 2.40 (`pr checks --json`) and glab 1.36 (`mr view --output json`, `api --input`). Older versions fail with `pr_host_failed`. |
@@ -22,7 +22,7 @@ Design record of the 2026-10 PR-ops waves; docs/tools.md is the current referenc
 
 **`config/foreman.schema.json`.** Add three properties under `tools.properties`:
 
-- `"pr"`: `{"type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, pr_track and pr_untrack for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change."}`
+- `"pr"`: `{"type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments, pr_watch and pr_unwatch for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change."}`
 - `"prHost"`: `{"type": ["string", "object"], "additionalProperties": {"type": "string"}, "description": "Host CLI for the PR tools: \"auto\" (gh, then glab, found on PATH outside the workspace), \"gh\", \"glab\", or an object of command templates with the keys create, status, checks and comments (docs/tools.md#host-templates). User or overlay config only."}`. The value has no `properties`, so `schema_leaves` treats it as one leaf.
 - `"prWatchSeconds"`: `{"type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch polls (default 60; floored to 30 at runtime)."}` (the schema minimum stays 5)
 
@@ -43,7 +43,7 @@ Design record of the 2026-10 PR-ops waves; docs/tools.md is the current referenc
   - a value `shlex.split` rejects;
   - a word that contains `{` or `}` but is not exactly one of the placeholders in §2.3;
   - a first word that is a placeholder.
-- `CHILD_DENIED_TOOLS` becomes `("intercom", "pr_create", "pr_watch", "pr_unwatch", "pr_track", "pr_untrack")`. No role list can then hand a child any of them (L15).
+- `CHILD_DENIED_TOOLS` becomes `("intercom", "pr_create", "pr_watch", "pr_unwatch")`. No role list can then hand a child any of them (L15).
 - Role sets (A2, L15). Add next to `with_git_pack`:
 
 ```python
@@ -255,7 +255,7 @@ export function prHostLabel(prHost: unknown, workspace: string, env: NodeJS.Proc
   | `pr_watch` | `number` (`until` and `timeoutSeconds` are refused with `bad_request`) |
   | `pr_unwatch` | `number` required; `repo` (string, `owner/name`) |
 
-  `foremanOnly` is true for `pr_create`, `pr_watch`, `pr_unwatch`, `pr_track` and `pr_untrack`. Those are not registered in children (`deps.isChild`), which matches `registerSafeOps`.
+  `foremanOnly` is true for `pr_create`, `pr_watch` and `pr_unwatch`. Those are not registered in children (`deps.isChild`), which matches `registerSafeOps`.
 - **`applyGitPack`.** It now calls `setPackToken(env, "git", on)` and no longer assigns or deletes the whole variable. Its child branch is unchanged.
 - **`applyPrPack`.**
   - Foreman, on: activate the missing PR tool names, then `setPackToken(env, "pr", true)`.

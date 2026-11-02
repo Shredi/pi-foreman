@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { latestWatches, PR_MESSAGE_TYPE, PRWATCH_ENTRY, PrWatches } from "../prwatch.ts";
 import type { Timers, WatchPoll, WatchRecord, WatchSnapshot } from "../prwatch.ts";
-import type { PrKey } from "../prtrack.ts";
+import type { PrKey } from "../prhost.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 const SID = "sess-1";

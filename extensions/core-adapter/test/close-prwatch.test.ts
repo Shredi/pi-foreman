@@ -5,7 +5,7 @@ import { CloseFlow, closePrompt } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { Timers, WatchSnapshot } from "../prwatch.ts";
-import type { PrKey } from "../prtrack.ts";
+import type { PrKey } from "../prhost.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const snap = (): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abcdef0123456789", base: "main", updatedAt: "t0", runs: [], status: {} });

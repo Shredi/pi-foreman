@@ -19,7 +19,7 @@
       "clashes": [
         "PI_BG_FEATURES=process is read when Pi starts, not at install: set it permanently in your shell profile.",
         "Without `process`, its attribution extension takes over the global anthropic provider slot.",
-        "2.6.10 declares a Pi peer range of 0.81 to 0.84 while pi-foreman pins Pi 1.4.x; `/foreman doctor` reports the mismatch."
+        "2.6.10 declares a Pi peer range of 0.81 to 0.84 while pi-foreman pins Pi 1.5.x; `/foreman doctor` reports the mismatch."
       ]
     }
   ]

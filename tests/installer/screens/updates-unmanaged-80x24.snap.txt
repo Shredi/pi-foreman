@@ -1,10 +1,10 @@
  pi-foreman setup  Updates                                         3/7
   Name              Installed  Available  Pin      Managed  Status
-  Pi                1.4.0      1.4.0      1.4.x    yes      up to date
+  Pi                1.5.0      1.5.0      1.5.x    yes      up to date
   pi-foreman        0.9.2      0.9.3      –        yes      update available
   pi-subagents      0.78.0     0.78.0     0.78.0   yes      up to date
   pi-intercom       0.16.2     0.17.0     0.17.0   yes      update available
-  @earendil-works…  1.4.0      1.4.0      1.4.0    yes      up to date
+  @earendil-works…  1.5.0      1.5.0      1.5.0    yes      up to date
   @inquirer/promp…  8.7.4      8.7.4      8.7.4    yes      up to date
   unbash            6.0.1      6.0.1      6.0.1    yes      up to date
   pi-polish         –          0.1.2      0.1.2    yes      not installed

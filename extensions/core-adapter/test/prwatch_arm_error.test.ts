@@ -24,7 +24,7 @@ function setup(firstPoll: "error" | "not_found" | "ok") {
     return { code: 1, stdout: JSON.stringify({ ok: false, error: "host_error", message: "boom" }) + "\n", stderr: "", timedOut: false };
   };
   const watches = new PrWatches({ poll: async () => ticks.shift() ?? { error: "x" }, send: (m) => void sent.push(m), idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers: fakeTimers });
-  const tracker: PrTracker = { hostAllowed: async () => true, resolveRepo: async () => ({ host: "github.com", repo: "acme/app" }), trackTool: () => {}, untrack: () => {} };
+  const tracker: PrTracker = { hostAllowed: async () => true, repoFor: async () => ({ host: "github.com", repo: "acme/app" }) };
   const session: PrPackSession = { python: "/py", isChild: false, packOn: true, config: {}, gateOn: false, reviewed: async () => [], watches, trace: () => {}, tracker };
   registerPrPack({ registerTool: (t: unknown) => void tools.set((t as { name: string }).name, t as Tool) } as never, { isChild: false, session: async () => session, script: "/s.py", spawner, env: () => ({}), pushRefusal: async () => null });
   const call = (name: string, params: Record<string, unknown> = {}) => tools.get(name)!.execute("id1", params, undefined, undefined, { cwd: process.cwd() });

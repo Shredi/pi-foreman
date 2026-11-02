@@ -9,7 +9,7 @@ import { CloseFlow, prMergedPrompt } from "../close.ts";
 import type { CloseDeps, SelfFinish } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { Timers, WatchSnapshot } from "../prwatch.ts";
-import type { PrKey } from "../prtrack.ts";
+import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { selfFinish, spawnDetached, verifyMerged } from "../selffinish.ts";
 import type { SelfFinishDeps } from "../selffinish.ts";

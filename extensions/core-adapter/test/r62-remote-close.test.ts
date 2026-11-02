@@ -4,7 +4,6 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { closeChildren } from "../closechildren.ts";
-import { readOpened, remoteLine, remoteState, widgetLines } from "../childwidget.ts";
 import { CloseFlow, closeFrom, closePrompt, CLOSE_SOURCES, HANDOFF_DIR_ENV, INTERCOM_INBOUND_TYPE, PARENT_INTERCOM_ENV, REMOTE_PARENT_ENV, registerClose, remoteParentClose } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 import { applyRemoteNotice, parseRemoteNotice } from "../remotesession.ts";
@@ -312,38 +311,3 @@ test("foreman_session_open tool schema lists machine and trust", () => {
   assert.ok("error" in parseSessionArgs("open demo b.md --print-all"));
 });
 
-// ------------------------------------------------------------------ widget row
-
-const T = Date.parse("2026-10-25T12:00:00Z");
-const ago = (s: number): string => new Date(T - s * 1000).toISOString();
-
-test("remoteState: an open ask comes first, then the registry status", () => {
-  const e = (over: Partial<SessionEntry>): SessionEntry => remoteEntry("/x", over);
-  assert.equal(remoteState(e({})), "open");
-  assert.equal(remoteState(e({ ask: { at: ago(1) } })), "ask");
-  assert.equal(remoteState(e({ status: "closing" })), "closing");
-  assert.equal(remoteState(e({ status: "pending" })), "pending");
-  assert.equal(remoteState(e({ status: "pending", ask: { at: ago(1) } })), "ask");
-});
-
-test("children widget: a remote entry is a label@machine row with the live glyph, state and age", () => {
-  const agent = mk("widget");
-  const now = Date.now();
-  const opened = new Date(now - 7_000).toISOString();
-  writeRegistry(agent, { version: 1, sessions: [
-    remoteEntry(agent, { opened }),
-    remoteEntry(agent, { label: "asky", child: "c2", opened, ask: { at: new Date(now).toISOString() } }),
-    remoteEntry(agent, { label: "stopping", child: "c3", status: "closing", opened }),
-    { label: "local", child: "c4", parent: "sess-1", status: "open", opened: new Date(now - 60_000).toISOString() },
-  ] });
-  const rows = readOpened(agent, "sess-1");
-  assert.deepEqual(rows.map((r) => [r.label, r.machine, r.state]), [["demo", "alpha", "open"], ["asky", "alpha", "ask"], ["stopping", "alpha", "closing"], ["local", undefined, undefined]]);
-  const lines = widgetLines([], rows, now, null, "ascii");
-  assert.equal(lines.length, 4);
-  const sets = (l: string) => l.replace(/^\S+ /, "");
-  assert.match(sets(lines.find((l) => l.includes("demo@alpha"))!), /^demo@alpha · open · \d+s$/);
-  assert.match(lines.find((l) => l.includes("asky@alpha"))!, /asky@alpha · ask · /);
-  assert.match(lines.find((l) => l.includes("stopping@alpha"))!, /stopping@alpha · closing · /);
-  assert.ok(lines.includes("local · open · 1m"));
-  assert.equal(remoteLine({ label: "a", status: "open", at: now - 5_000, machine: "m", state: "lost" }, now, "ascii").endsWith("a@m · lost · 5s"), true);
-});

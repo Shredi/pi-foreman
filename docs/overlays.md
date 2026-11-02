@@ -76,8 +76,6 @@ and `foreman:ready`. There is no second handshake.
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Sidebar status | `sidebar.statusCommand` and `sidebar.statusSeconds` show a program's items as extra dots on the Herdr sidebar (see [External sidebar status](#external-sidebar-status)). User or overlay config only. |
-| Shared PR watch (`tools.prShared`) | One leader session polls the PR host for review requests, failing bot PRs and touched PRs and shares a snapshot (see [Shared PR watch](#shared-pr-watch)). User or overlay config only. |
-| PR interaction patterns (`tools.prInteractions`) | Ignored: a command no longer registers a PR (see [PR interaction patterns](#pr-interaction-patterns)). |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 | Host pressure limits | `resources.*` (see [resources](resources.md)); a project file may only tighten them |
 
@@ -113,21 +111,7 @@ To use a PR host other than gh or glab, set `tools.prHost` to a templates object
 [tools](tools.md#host-templates)). Point the templates at a wrapper script that prints the documented JSON, and keep
 that script outside the workspace. Project configs cannot change `tools.prHost`.
 
-The CI detail hook is not shipped. Use `tools.prHost` templates (`find`, `search`) to adapt another host.
-
-### Shared PR watch
-
-`tools.prShared` (`enabled`, `authors`, `seconds`, `events`) starts a poller of the PR host that runs in one session per
-machine. An overlay sets it when its users want review requests and the failing PRs of named bot authors in every
-session's PR widget, for example `{"tools": {"prShared": {"enabled": true, "authors": ["ci-bot"]}}}`. A project or
-session value is ignored with a warning, because the key makes the extension call the host on a schedule. Sources, files
-and limits are in [tools](tools.md#shared-pr-watch).
-
-### PR interaction patterns
-
-`tools.prInteractions` (a list of up to 16 `{pattern}` objects) once registered the PR a command acted on. A session now
-tracks only its own PRs (created, pushed, current branch, `pr_track`, `pr_watch`), so the key is accepted for existing
-configs and has no effect. See [tools](tools.md#registration-paths).
+The CI detail hook is not shipped. Use `tools.prHost` templates (`find`) to adapt another host. The PR display (the herdr-app mod) is fed by `gh` only, whatever `tools.prHost` says.
 
 Conflict rules and rationale: `design/architecture.md`
 [section 2](../design/architecture.md#2-layers-and-the-overlay-contract).

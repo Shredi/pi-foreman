@@ -8,7 +8,7 @@
 
 Setting up with an agent: point it at [features.md](features.md).
 
-Needs Node 22.19+, Pi 1.4.x on `PATH` and Python 3.13+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -125,7 +125,7 @@ Without consent, setup prints one line per add-on that is not installed: purpose
 - `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
 - `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
   starts**: set it permanently in your shell profile, not as a prefix on `pi install`. Without `process`, its attribution hook
-  takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.4.x;
+  takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.5.x;
   the doctor reports that. See [herdr](herdr.md#optional-add-on-background-tasks).
 
 `--remove` lists installed add-ons as `add-ons installed: <id> (<source>); kept, remove with: pi remove <source>` and runs
@@ -278,11 +278,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.4.0, range 1.4.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.5.0, range 1.5.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.4.0
+npm i -g @earendil-works/pi-coding-agent@1.5.0
 foreman setup --dry-run && foreman setup
 ```
 

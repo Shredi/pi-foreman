@@ -78,9 +78,26 @@ class OpenPrsTests(Fixture):
         self.assertNotIn("openPrs", d)
         self.assertNotIn("openPrsAt", d)
 
-    def test_default_config_is_off(self):
+    def test_default_config_is_on(self):
         self.put_cache({"v": 1, "fetchedAt": "2026-10-31T10:00:00Z", "openPrs": [GOOD]})
-        self.assertNotIn("openPrs", self.doc())
+        self.assertEqual(self.doc()["openPrs"], [GOOD])
+
+    def test_branch_description_and_mergeable_pass_through_only_when_valid(self):
+        full = dict(GOOD, headRefName="feat/x", bodyText="Fixes the flaky wait.", mergeable="CONFLICTING")
+        odd = dict(GOOD, number=8, url="https://example.test/acme/widgets/pull/8", headRefName=5, bodyText="", mergeable="MAYBE")
+        unknown = dict(GOOD, number=9, url="https://example.test/acme/widgets/pull/9", mergeable="UNKNOWN")
+        self.put_cache({"v": 1, "fetchedAt": "2026-10-31T10:00:00Z", "openPrs": [full, odd, unknown]})
+        got = {p["number"]: p for p in self.doc()["openPrs"]}
+        self.assertEqual((got[7]["headRefName"], got[7]["bodyText"], got[7]["mergeable"]), ("feat/x", "Fixes the flaky wait.", "CONFLICTING"))
+        for k in ("headRefName", "bodyText", "mergeable"):
+            self.assertNotIn(k, got[8])
+        self.assertEqual(got[9]["mergeable"], "UNKNOWN")
+
+    def test_description_is_cut_to_500_and_checks_to_20(self):
+        checks = [{"n": "c%d" % i, "state": "ok", "label": "c"} for i in range(30)]
+        self.put_cache({"v": 1, "fetchedAt": "2026-10-31T10:00:00Z", "openPrs": [dict(GOOD, bodyText="x" * 900, checks=checks)]})
+        pr = self.doc()["openPrs"][0]
+        self.assertEqual((len(pr["bodyText"]), len(pr["checks"])), (500, 20))
 
 
 if __name__ == "__main__":

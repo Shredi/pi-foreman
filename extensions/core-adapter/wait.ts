@@ -291,7 +291,7 @@ interface Entry {
   log?: string;
   /** pid waits: the watched process (a second wait on it dedupes). */
   pid?: number;
-  /** pid waits of foreman_bg (bg.ts): the children widget shows them as bg rows. */
+  /** pid waits of foreman_bg (bg.ts): the live file lists them as bg waits (the herdr-app mod shows them). */
   bg?: true;
   started: number;
   deadline: number;

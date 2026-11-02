@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { LiveState, liveDir } from "../livestate.ts";
 import type { LiveDot } from "../livestate.ts";
-import { ran, rig, url } from "./_prrig.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
 function written(dots: LiveDot[]): LiveDot[] {
@@ -17,16 +16,6 @@ function written(dots: LiveDot[]): LiveDot[] {
   rmTestTmp(agent);
   return f.dots;
 }
-
-test("a tracked PR's page URL is on its dot", async () => {
-  const h = rig({ branch: "" });
-  h.d.onCreated(7, url("acme/app", 7));
-  h.state.handle = (c) => (c.op === "pr_batch" ? ran({ prs: [{ repo: "acme/app", number: 7, url: url("acme/app", 7), title: "t", state: "open", draft: false, mergeable: "mergeable", reviewDecision: null, checks: undefined }], errors: [] }) : undefined);
-  h.d.start();
-  await h.fire();
-  const d = h.d.dots().find((x) => x.n === 7);
-  assert.equal(d?.url, url("acme/app", 7));
-});
 
 test("the presence dot keeps an https url and omits others", () => {
   const good = "https://example.test/acme/app/pull/7";

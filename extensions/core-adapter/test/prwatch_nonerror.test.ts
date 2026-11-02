@@ -17,7 +17,7 @@ test("pr_create: a non-Error throw while arming still returns the created PR and
   };
   const timers: Timers = { set: () => 1, clear: () => {} };
   const watches = new PrWatches({ poll: async () => ({ error: "x" }), send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers });
-  const tracker: PrTracker = { hostAllowed: async () => true, resolveRepo: async () => ({ host: "github.com", repo: "acme/app" }), trackTool: () => {}, untrack: () => {} };
+  const tracker: PrTracker = { hostAllowed: async () => true, repoFor: async () => ({ host: "github.com", repo: "acme/app" }) };
   const session: PrPackSession = { python: "/py", isChild: false, packOn: true, config: {}, gateOn: false, reviewed: async () => [], watches, trace: () => {}, tracker };
   registerPrPack({ registerTool: (t: unknown) => void tools.set((t as { name: string }).name, t as Tool) } as never, { isChild: false, session: async () => session, script: "/s.py", spawner, env: () => ({}), pushRefusal: async () => null });
   const r = await tools.get("pr_create")!.execute("id1", { title: "t", body: "b" }, undefined, undefined, { cwd: process.cwd() });

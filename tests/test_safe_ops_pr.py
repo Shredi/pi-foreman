@@ -369,29 +369,12 @@ def pair(argv, flag):
     return argv[argv.index(flag) + 1]
 
 
-def fields_of(argv):
-    return [argv[i + 1] for i, a in enumerate(argv) if a == "-f"]
-
-
 class CleanTitleTest(unittest.TestCase):
     def test_clean_title_strips_c1_cf_and_cuts(self):
         import pr_ops
         self.assertEqual(pr_ops.clean_title("a\x85b\u202ec\u200bd\x1be\x07f"), "abcdef")
         self.assertEqual(len(pr_ops.clean_title("x" * 500)), 200)
         self.assertEqual(pr_ops.clean_title(None), "")
-
-
-class RepoLessCase(PrCase):
-    """Ops that need no work tree run with any existing directory as cwd."""
-
-    def setUp(self):
-        super().setUp()
-        self.hosts("gh")
-        self.plain = os.path.join(self.tmp, "plain")
-        os.mkdir(self.plain)
-
-    def at(self, op, cwd=None, prhost="auto", **args):
-        return safe_ops.handle({"op": op, "args": args, "cwd": cwd or self.plain, "config": {"prHost": prhost}})
 
 
 class GhRepoOpsTest(PrCase):
@@ -526,44 +509,22 @@ class GlabRepoOpsTest(PrCase):
         self.ok(self.pr("pr_comments", number=3, repo="grp/proj"))
         self.assertEqual(argv_of(self.calls()[-1])[-1], "projects/grp%2Fproj/merge_requests/3/discussions?per_page=100")
 
-    def test_batch_search_poll_login_are_unsupported(self):
-        for op, args in (("pr_batch", {"prs": [{"repo": "a/b", "n": 1}]}), ("pr_search", {"author": "u"}),
-                         ("pr_poll", {"endpoint": "notifications"}), ("pr_login", {})):
-            self.failed(self.pr(op, **args), "pr_unsupported")
+    def test_batch_is_unsupported(self):
+        self.failed(self.pr("pr_batch", prs=[{"repo": "a/b", "n": 1}]), "pr_unsupported")
         self.assertEqual(self.calls(), [])
 
 
-class SearchTest(RepoLessCase):
-    def test_author_and_review_requested_argv(self):
-        found = [{"number": 9, "title": "t\x85", "url": "https://github.com/acme/web/pull/9", "repository": {"nameWithOwner": "acme/web", "name": "web"}},
-                 {"number": 10, "title": "bad", "url": "http://plain/10", "repository": {"nameWithOwner": "acme/web"}}]
-        self.scn({"gh search prs": {"stdout": j(found)}})
-        res = self.ok(self.at("pr_search", author="ci-bot"))
-        self.assertEqual(res["prs"], [{"number": 9, "url": found[0]["url"], "title": "t", "repository": "acme/web"}])
-        argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[:6], ["gh", "search", "prs", "--state", "open", "--limit"])
-        self.assertEqual((pair(argv, "--author"), pair(argv, "--json")), ("ci-bot", "number,title,url,repository"))
-        self.ok(self.at("pr_search", reviewRequested=True))
-        self.assertEqual(pair(argv_of(self.calls()[1]), "--review-requested"), "@me")
+class RepoLessCase(PrCase):
+    """Ops that need no work tree run with any existing directory as cwd."""
 
-    def test_validation(self):
-        for args in ({}, {"author": "a", "reviewRequested": True}, {"author": "-a"}, {"author": "a b"}, {"reviewRequested": "-x"}, {"author": "a", "host": "x.example.com"}):
-            self.failed(self.at("pr_search", **args), "bad_request")
-        self.assertEqual(self.calls(), [])
+    def setUp(self):
+        super().setUp()
+        self.hosts("gh")
+        self.plain = os.path.join(self.tmp, "plain")
+        os.mkdir(self.plain)
 
-    def test_runs_in_a_directory_that_is_no_repository(self):
-        self.scn({"gh search prs": {"stdout": "[]"}})
-        self.assertEqual(self.ok(self.at("pr_search", author="u"))["prs"], [])
-        self.assertEqual(self.at("pr_search", cwd=os.path.join(self.tmp, "missing"), author="u")["precondition"], "bad_request")
-
-    def test_template_search_contract(self):
-        h = {"search": "gh x {author} --host {host}"}
-        out = [{"number": 1, "url": "https://h.example/1", "title": "t", "repository": "a/b", "reviewRequested": True},
-               {"number": 2, "url": "https://h.example/2", "title": "u"}]
-        self.scn({"gh x": {"stdout": j(out)}})
-        res = self.ok(self.at("pr_search", prhost=h, author="u", host="h.example"))
-        self.assertEqual([(p["number"], p.get("reviewRequested")) for p in res["prs"]], [(1, True), (2, None)])
-        self.assertEqual(argv_of(self.calls()[0]), ["gh", "x", "u", "--host", "h.example"])
+    def at(self, op, cwd=None, prhost="auto", **args):
+        return safe_ops.handle({"op": op, "args": args, "cwd": cwd or self.plain, "config": {"prHost": prhost}})
 
 
 def rollup(*nodes, total=None):
@@ -706,115 +667,6 @@ class BatchTest(RepoLessCase):
         self.failed(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch="yes"), "bad_request")
 
 
-NOTIFS = [
-    {"reason": "review_requested", "subject": {"type": "PullRequest", "title": "R\x85", "url": "https://api.ghe.example.com/repos/acme/lib/pulls/7"},
-     "repository": {"full_name": "acme/lib", "html_url": "https://ghe.example.com/acme/lib"}},
-    {"reason": "mention", "subject": {"type": "PullRequest", "title": "x", "url": "https://api.github.com/repos/acme/lib/pulls/8"},
-     "repository": {"full_name": "acme/lib", "html_url": "https://github.com/acme/lib"}},
-    {"reason": "review_requested", "subject": {"type": "Issue", "title": "x", "url": "https://api.github.com/repos/acme/lib/issues/9"},
-     "repository": {"full_name": "acme/lib", "html_url": "https://github.com/acme/lib"}},
-]
-EVENTS = [
-    {"type": "PullRequestEvent", "repo": {"name": "acme/lib"}, "created_at": "2026-01-02T00:00:00Z", "payload": {"number": 3, "pull_request": {"number": 3, "html_url": "https://ghe.example.com/acme/lib/pull/3"}}},
-    {"type": "IssueCommentEvent", "repo": {"name": "acme/lib"}, "created_at": "2026-01-02T01:00:00Z", "payload": {"issue": {"number": 4, "pull_request": {"url": "u"}}}},
-    {"type": "IssueCommentEvent", "repo": {"name": "acme/lib"}, "created_at": "2026-01-02T02:00:00Z", "payload": {"issue": {"number": 5}}},
-    {"type": "PushEvent", "repo": {"name": "acme/lib"}, "created_at": "2026-01-02T03:00:00Z", "payload": {}},
-    {"type": "PullRequestReviewEvent", "repo": {"name": "-x/y"}, "created_at": "2026-01-02T04:00:00Z", "payload": {"pull_request": {"number": 6}}},
-]
-
-
-def http(status, headers, body=""):
-    return "HTTP/2.0 %s X\r\n%s\r\n\r\n%s" % (status, "\r\n".join("%s: %s" % kv for kv in headers.items()), body)
-
-
-class PollTest(RepoLessCase):
-    def test_notifications_200_conditional_headers_and_reduction(self):
-        self.scn({"gh api -i": {"stdout": http(200, {"Last-Modified": "Sat, 31 Jan 2026 12:00:00 GMT", "ETag": 'W/"abc"', "X-Poll-Interval": "60"}, j(NOTIFS))}})
-        res = self.ok(self.at("pr_poll", endpoint="notifications", since="Fri, 30 Jan 2026 12:00:00 GMT", page=2, host="ghe.example.com"))
-        self.assertEqual((res["status"], res["lastModified"], res["etag"], res["pollInterval"]), (200, "Sat, 31 Jan 2026 12:00:00 GMT", 'W/"abc"', 60))
-        self.assertEqual(res["items"], [{"repo": "acme/lib", "n": 7, "title": "R", "url": "https://ghe.example.com/acme/lib/pull/7"}])
-        argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[:6], ["gh", "api", "-i", "--method", "GET", "--hostname"])
-        self.assertEqual(argv[-1], "notifications")
-        self.assertEqual(fields_of(argv), ["all=false", "participating=false", "per_page=100", "page=2"])
-        self.assertEqual(pair(argv, "-H"), "If-Modified-Since: Fri, 30 Jan 2026 12:00:00 GMT")
-        self.assertNotIn("If-None-Match", " ".join(argv))
-
-    def test_events_200_etag_header_and_reduction(self):
-        self.scn({"gh api -i": {"stdout": http(200, {"ETag": '"e1"'}, j(EVENTS))}})
-        res = self.ok(self.at("pr_poll", endpoint="events", login="octo-user", etag='W/"e0"'))
-        argv = argv_of(self.calls()[0])
-        self.assertEqual(argv[-1], "users/octo-user/events")
-        self.assertEqual(fields_of(argv), ["per_page=100"])
-        self.assertEqual(pair(argv, "-H"), 'If-None-Match: W/"e0"')
-        self.assertEqual(res["etag"], '"e1"')
-        self.assertEqual(res["items"], [
-            {"repo": "acme/lib", "n": 3, "url": "https://ghe.example.com/acme/lib/pull/3", "at": "2026-01-02T00:00:00Z"},
-            {"repo": "acme/lib", "n": 4, "url": "https://github.com/acme/lib/pull/4", "at": "2026-01-02T01:00:00Z"}])
-
-    def test_poll_argv_has_no_cmd_metacharacters(self):
-        for kw in (dict(endpoint="notifications", page=3, since="Fri, 30 Jan 2026 12:00:00 GMT"),
-                   dict(endpoint="events", login="octo-user")):
-            self.scn({"gh api -i": {"stdout": http(200, {}, "[]")}})
-            self.ok(self.at("pr_poll", **kw))
-            argv = argv_of(self.calls()[0])
-            self.assertIn("-f", argv)
-            for a in argv:
-                if a.startswith("If-Modified-Since"):
-                    continue   # a header value, no cmd.exe metacharacter in an HTTP date
-                self.assertFalse(set(a) & set("&|<>^%"), (kw, a))
-
-    def test_304_403_404_with_gh_exit_1_are_answers(self):
-        for code in (304, 403, 404):
-            self.scn({"gh api -i": {"stdout": http(code, {"ETag": '"e"'}), "stderr": "gh: HTTP %d\n" % code, "exit": 1}})
-            res = self.ok(self.at("pr_poll", endpoint="events", login="u"))
-            self.assertEqual((res["status"], res["items"]), (code, None))
-        self.scn({"gh api -i": {"stdout": "", "stderr": "gh: not logged in\n", "exit": 4}})
-        self.failed(self.at("pr_poll", endpoint="events", login="u"), "pr_auth_missing")
-        self.scn({"gh api -i": {"stdout": "garbage", "exit": 0}})
-        self.assertEqual(self.at("pr_poll", endpoint="events", login="u")["error"], "pr_host_failed")
-
-    def test_validation(self):
-        ok_since = "Sat, 31 Jan 2026 12:00:00 GMT"
-        bad = [{"endpoint": "other"}, {"endpoint": "notifications", "since": "2026-01-31T12:00:00Z"},
-               {"endpoint": "notifications", "since": ok_since + "\nX: y"}, {"endpoint": "notifications", "etag": "abc"},
-               {"endpoint": "notifications", "etag": '"a\nb"'}, {"endpoint": "notifications", "page": 0}, {"endpoint": "notifications", "page": 4},
-               {"endpoint": "notifications", "page": True}, {"endpoint": "notifications", "login": "u"},
-               {"endpoint": "events"}, {"endpoint": "events", "login": "-u"}, {"endpoint": "events", "login": "a/b"},
-               {"endpoint": "events", "login": "u", "page": 1}, {"endpoint": "events", "login": "u", "host": "-h"}]
-        for args in bad:
-            self.failed(self.at("pr_poll", **args), "bad_request")
-        self.assertEqual(self.calls(), [])
-        self.scn({"gh api -i": {"stdout": http(304, {})}})
-        self.ok(self.at("pr_poll", endpoint="notifications", since=ok_since, etag='"x"'))
-        self.assertEqual([a for a in argv_of(self.calls()[0]) if a.startswith("If-")], ["If-Modified-Since: " + ok_since, 'If-None-Match: "x"'])
-
-    def test_item_cap_200(self):
-        many = [{"reason": "review_requested", "subject": {"type": "PullRequest", "title": "t", "url": "https://api.github.com/repos/a/b/pulls/%d" % (i + 1)},
-                 "repository": {"full_name": "a/b", "html_url": "https://github.com/a/b"}} for i in range(260)]
-        self.scn({"gh api -i": {"stdout": http(200, {}, j(many))}})
-        self.assertEqual(len(self.ok(self.at("pr_poll", endpoint="notifications"))["items"]), 200)
-
-    def test_byte_cap_64k(self):
-        full = "o" * 39 + "/" + "r" * 100
-        many = [{"reason": "review_requested", "subject": {"type": "PullRequest", "title": "t" * 900, "url": "https://api.github.com/repos/%s/pulls/%d" % (full, i + 1)},
-                 "repository": {"full_name": full, "html_url": "https://github.com/" + full}} for i in range(260)]
-        self.scn({"gh api -i": {"stdout": http(200, {}, j(many))}})
-        res = self.ok(self.at("pr_poll", endpoint="notifications"))
-        self.assertLess(len(j({k: v for k, v in res.items() if k != "ok"})), 64 * 1024 + 200)
-        self.assertLess(len(res["items"]), 200)
-
-
-class LoginTest(RepoLessCase):
-    def test_login(self):
-        self.scn({"gh api": {"stdout": "octo-user\n"}})
-        self.assertEqual(self.ok(self.at("pr_login"))["login"], "octo-user")
-        self.assertEqual(argv_of(self.calls()[0]), ["gh", "api", "user", "--jq", ".login"])
-        self.ok(self.at("pr_login", host="ghe.example.com"))
-        self.assertEqual(pair(argv_of(self.calls()[1]), "--hostname"), "ghe.example.com")
-        self.scn({"gh api": {"stdout": "-evil\n"}})
-        self.assertEqual(self.at("pr_login")["error"], "pr_host_failed")
-
 
 class FindTemplateTest(PrCase):
     def test_find_template_contract_with_mode_and_state(self):
@@ -840,18 +692,14 @@ class OptionalTemplateKeyTest(PrCase):
         self.assertEqual(res["precondition"], "pr_unsupported")
         res = safe_ops.handle({"op": "pr_find", "args": {"author": "u"}, "cwd": self.repo, "config": {"prHost": h}})
         self.assertEqual(res["precondition"], "pr_unsupported")
-        res = safe_ops.handle({"op": "pr_search", "args": {"author": "u"}, "cwd": self.repo, "config": {"prHost": h}})
-        self.assertEqual(res["precondition"], "pr_unsupported")
         self.refused(self.pr("pr_status", host={"find": "gh x"}), "pr_host_missing")
 
 
-class ReplessSetTest(unittest.TestCase):
-    def test_repoless_ops_are_pr_ops(self):
-        self.assertEqual(set(safe_ops.REPOLESS_PR_OPS), {"pr_search", "pr_batch", "pr_poll", "pr_login"})
-        self.assertTrue(set(safe_ops.REPOLESS_PR_OPS) <= set(safe_ops.PR_OPS))
-        for op in ("pr_repo", "pr_find"):
-            self.assertIn(op, safe_ops.PR_OPS)
-            self.assertNotIn(op, safe_ops.REPOLESS_PR_OPS)
+class PrOpsSetTest(unittest.TestCase):
+    def test_only_the_watch_poller_op_is_left(self):
+        self.assertEqual(set(safe_ops.PR_OPS), {"pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch"})
+        for op in ("pr_search", "pr_poll", "pr_login"):
+            self.assertEqual(safe_ops.handle({"op": op})["precondition"], "bad_request")
 
 
 if __name__ == "__main__":
