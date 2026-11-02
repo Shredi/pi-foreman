@@ -43,7 +43,7 @@
     "@earendil-works/pi-tui": "1.4.0",
     "@inquirer/prompts": "8.7.4",
     "@juicesharp/rpiv-ask-user-question": "2.15.0",
-    "pi-intercom": "0.17.0",
+    "pi-intercom": "git+https://github.com/Shredi/pi-intercom.git#366b3938c60e23bca5e2f22d5b538fac82adcb29",
     "pi-subagents": "0.78.0",
     "unbash": "6.0.1"
   },

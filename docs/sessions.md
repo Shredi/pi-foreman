@@ -496,7 +496,11 @@ deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `los
 `pi-intercom` is bundled with the package (pinned); `foreman setup` filters it out with `--no-intercom` and otherwise writes
 `<agent dir>/intercom/config.json` (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent
 (see [install](install.md)). Sessions then address each other by name or id; the close request above travels over
-it as plain text `foreman:close`, accepted only from the recorded parent session.
+it as plain text `foreman:close`, accepted only from the recorded parent session. `foreman setup --intercom-hc
+[--machine-name <name>]` sets `crossMachine.transport: "hc"` (and `crossMachine.machineName`) in that file, so a child on
+a remote machine can send to `<uuid>@<parentName>` over hc; the remote needs `hc machine add <parentName>`
+([safety](safety.md#known-limit-remote-machine-trust-boundary)). The package pins a fork of `pi-intercom` for this
+(see [install](install.md)).
 
 ## Herdr
 

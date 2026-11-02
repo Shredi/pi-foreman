@@ -1,11 +1,13 @@
 // pi-intercom adoption (Phase 4, ledger items 3, 4, 22): the guard on the `intercom` tool, the
-// inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.17.0 (pinned in
-// packages.lock.json):
-//   - tool `intercom` (index.ts:2434), params incl. action, to, cwd, openProjectPaneIfMissing;
-//     a `to` of the form name@machine is a cross-machine send over SSH (cross-machine-discovery.ts).
+// inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.18.1 (the fork pin
+// in packages.lock.json, upstream v0.18.1 plus the hc transport):
+//   - tool `intercom` (index.ts:2597), params incl. action, to, cwd, openProjectPaneIfMissing;
+//     a `to` of the form name@machine is a cross-machine send, over SSH (crossMachine.transport
+//     "herdr", default) or `hc` (transport "hc") (cross-machine-discovery.ts).
 //   - inbound messages: pi.sendMessage({customType: "intercom_message", details: {from, message,
-//     replyCommand?, bodyText}}) (index.ts:1289); an idle session is then woken with
-//     pi.sendUserMessage("New intercom message above.") (index.ts:1302).
+//     replyCommand?, bodyText}}) (index.ts:1335); on Pi before 1.2.0 an idle session is then woken
+//     with pi.sendUserMessage("New intercom message above.") (index.ts:1347), on Pi 1.2.0 and
+//     newer with sendMessage's triggerTurn and no wake line.
 //   - config: <agentDir>/intercom/config.json (config.ts getConfigPath, broker/paths.ts).
 // Intercom messages are data: no gate is relaxed for a turn they start.
 import * as fs from "node:fs";

@@ -16,6 +16,11 @@
       "automerge": false
     },
     {
+      "matchPackageNames": ["pi-intercom"],
+      "enabled": false,
+      "description": "pi-intercom is a fork pin (git+https spec) carrying the hc transport; updates are taken by rebasing the fork, see docs/install.md. Remove this rule when pi-foreman returns to upstream."
+    },
+    {
       "groupName": "npm devDependencies",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],
