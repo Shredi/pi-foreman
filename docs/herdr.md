@@ -576,7 +576,7 @@ labels are passed.
 it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
 gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
 waits; one two-part dot per PR (see Open PRs below), wrapping, then a summary that follows the chip states ("N PRs · k failing · m pending", "all green", or just "N PRs" without CI data); merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
-tree row "role model" with a spinner. An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
+tree row "🤖 role model" (no status circle inside a card). An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
 session shows. The mod is the only PR and run display: Pi itself draws no PR or run widget and no PR or run parts in its footer,
 and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
 only (through `gh`), so GitLab users get no PR display.
@@ -585,7 +585,7 @@ The mod reads `foreman radar --json` (every 3 s locally, 15 s per remote space) 
 (prop `hc` names the binary like `foreman`, default `hc`; failures are ignored) for the `pi-subagents` child records in state working or
 blocked: they count as running agents (`N agents: titles`, same filled spinner as working) or as a need, also for a terminal with no radar node; radar's
 running child runs stay the source and a record with the title of a radar run is not counted twice. It joins a not-done node to an agent on
-`hcTerminal` first (the `machine/` prefix for remote spaces; when both sides have a pid they must match), else by the terminal's foreground pid (`hc get --json`; the pid fallback skips done, ended and remote nodes and terminals already matched). Without a radar it shows one
+`hcTerminal` first (the `machine/` prefix for remote spaces; when both sides have a pid they must match), else by the terminal's foreground pid (from the herdr terminal record; the pid fallback skips done, ended and remote nodes and terminals already matched). Without a radar it shows one
 dim line and retries every 30 s. A pane-less child terminal (a session started with `hc run`) joins a node the same way (`hcTerminal`, else the foreground pid) and shows the same detail rows under its child line, once, with records polled for it too; only a child that matches no node stays a bare line. The prop `foreman` names the binary: a string for this computer, or an object keyed by machine
 name with the key `local`; a missing entry means plain `foreman`. A chip click runs the platform opener (`open`, `xdg-open`,
 `rundll32 url.dll,FileProtocolHandler`; never a shell) on an `https://` URL made of URL characters only (no whitespace, no
@@ -611,7 +611,7 @@ outer ring that animates while any job runs, and an inner fill that is amber whi
 failed, green when every job finished and passed, and dim when unknown. Hovering the dot shows a card (title, the first
 ~200 characters of the description, the jobs grouped failed, running and passed, capped, and a CONFLICTING mark when the PR has
 a merge conflict); a click opens the PR. A PR whose repository and head branch equal the `repo` and `branch` of a live session
-is shown under that session; fork PRs match through `headRepo` (the head repository), so a fork PR gets a chip only on the session whose repo is the fork. A watched PR whose head is not the session's branch stays in that session's PR widget without a chip; every other PR is listed under **Open PRs**. Renamed branches fall into that list.
+is shown under that session; fork PRs match through `headRepo` (the head repository), so a fork PR gets a chip only on the session whose repo is the fork. A watched PR whose head is not the session's branch shows only as the session's `⏳ N pr watch` wait line, with no chip; when the feed has it, it is listed under **Open PRs**, like every other PR nobody shows. Renamed branches fall into that list.
 
 Owner and overlay config only (a project cannot change the GitHub search):
 
