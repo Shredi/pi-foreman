@@ -9,11 +9,11 @@
     { "id": "apply", "title": "Apply" }
   ],
   "components": [
-    { "id": "pi", "name": "Pi", "kind": "pi-self", "installed": "1.4.0", "available": "1.4.0", "pin": "1.4.x", "source": "npm:@earendil-works/pi-coding-agent", "managed": true },
+    { "id": "pi", "name": "Pi", "kind": "pi-self", "installed": "1.5.0", "available": "1.5.0", "pin": "1.5.x", "source": "npm:@earendil-works/pi-coding-agent", "managed": true },
     { "id": "pi-foreman", "name": "pi-foreman", "kind": "pi-foreman", "installed": "0.9.2", "available": "0.9.3", "source": "git:github.com/Shredi/pi-foreman", "managed": true },
     { "id": "pi-subagents", "name": "pi-subagents", "kind": "pi-package", "installed": "0.78.0", "available": "0.78.0", "pin": "0.78.0", "source": "npm:pi-subagents", "managed": true, "note": "updated with pi-foreman" },
     { "id": "pi-intercom", "name": "pi-intercom", "kind": "pi-package", "installed": "0.16.2", "available": "0.17.0", "pin": "0.17.0", "source": "npm:pi-intercom", "managed": true, "note": "updated with pi-foreman" },
-    { "id": "pi-tui", "name": "@earendil-works/pi-tui", "kind": "pi-package", "installed": "1.4.0", "available": "1.4.0", "pin": "1.4.0", "source": "npm:@earendil-works/pi-tui", "managed": true, "note": "same version as Pi" },
+    { "id": "pi-tui", "name": "@earendil-works/pi-tui", "kind": "pi-package", "installed": "1.5.0", "available": "1.5.0", "pin": "1.5.0", "source": "npm:@earendil-works/pi-tui", "managed": true, "note": "same version as Pi" },
     { "id": "inquirer-prompts", "name": "@inquirer/prompts", "kind": "pi-package", "installed": "8.7.4", "available": "8.7.4", "pin": "8.7.4", "source": "npm:@inquirer/prompts", "managed": true },
     { "id": "unbash", "name": "unbash", "kind": "pi-package", "installed": "6.0.1", "available": "6.0.1", "pin": "6.0.1", "source": "npm:unbash", "managed": true },
     { "id": "pi-polish", "name": "pi-polish", "kind": "pi-package", "available": "0.1.2", "pin": "0.1.2", "source": "npm:pi-polish", "managed": true, "note": "optional add-on" },

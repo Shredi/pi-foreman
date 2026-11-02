@@ -16,6 +16,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
+import { holdsHome } from "./effects.ts";
 import { parseRule } from "./rules.ts";
 import type { ParsedRule, RuleSets } from "./rules.ts";
 
@@ -48,6 +49,12 @@ export const BUILTIN_PROFILES: Readonly<Record<string, PermBody>> = {
   },
 };
 
+/** A folder the user works in (user file only): reads allowed; `auto` also relaxes writes no root covers (pathrules.ts workFolderOf). */
+export interface WorkFolder {
+  path: string;
+  mode: "auto" | "read";
+}
+
 export interface RuleEntry {
   kind: "allow" | "ask" | "deny";
   rule: ParsedRule;
@@ -71,6 +78,10 @@ export interface Resolved {
   prose: { allow: ProseEntry[]; deny: ProseEntry[] };
   /** Absolute directories the read roots widen by. */
   additionalDirectories: string[];
+  /** Validated work folders of the user file: absolute, normalised, never the home dir or one of its ancestors. */
+  workFolders: WorkFolder[];
+  /** Why a folder was dropped or kept with a warning (shown by `/foreman perms list`). */
+  workFolderNotes: string[];
   /** The project file may widen (untracked, ignored, no symlink). */
   projectTrusted: boolean;
   /** The project file as the remember writer would write it. */
@@ -108,6 +119,18 @@ export function profileName(config: unknown, env: Record<string, string | undefi
 
 export const userFilePath = (agentDir: string): string => path.join(agentDir, "pi-foreman", "permissions.json");
 
+/** The "Work folders" block of `/foreman perms list`: each folder with its mode and the spelling matched (the real path when it differs), then the warnings. */
+export function workFoldersBlock(r: Pick<Resolved, "workFolders" | "workFolderNotes">, real: (p: string) => string = (p) => p): string[] {
+  if (r.workFolders.length === 0 && r.workFolderNotes.length === 0) return [];
+  const lines = ["Work folders:"];
+  for (const f of r.workFolders) {
+    const rp = real(f.path);
+    lines.push(`  ${f.path} (${f.mode === "auto" ? "auto: reads allowed, uncovered writes run under auto" : "read: reads allowed"})${rp !== f.path ? `, also matched as ${rp}` : ""}`);
+  }
+  for (const n of r.workFolderNotes) lines.push(`  warning: ${n}`);
+  return lines;
+}
+
 // ------------------------------------------------------------------ parsing
 
 type Json = Record<string, unknown>;
@@ -120,6 +143,8 @@ interface ParsedFile {
   profiles: Record<string, PermBody>;
   /** Keys present that this file kind may not use. */
   dropped: string[];
+  /** `workFolders` as written in the user file (validated at resolve time). */
+  workFolders: WorkFolder[];
   notices: string[];
 }
 
@@ -170,6 +195,23 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
   if (typeof body === "string") return { ok: false, error: body };
   const profiles: Record<string, PermBody> = {};
   const dropped: string[] = [];
+  const workFolders: WorkFolder[] = [];
+  if (raw.workFolders !== undefined) {
+    if (kind !== "user") dropped.push("workFolders");
+    else if (!Array.isArray(raw.workFolders)) notices.push("workFolders must be a list; ignored");
+    else {
+      raw.workFolders.forEach((f, i) => {
+        const p = isObj(f) ? f.path : undefined;
+        if (typeof p !== "string" || p.trim() === "") {
+          notices.push(`workFolders[${i}] has no path; skipped`);
+          return;
+        }
+        const m = (f as Json).mode;
+        if (m !== undefined && m !== "auto" && m !== "read") notices.push(`workFolders[${i}] mode '${clip(String(m))}' is not auto or read; using read`);
+        workFolders.push({ path: p.trim(), mode: m === undefined || m === "auto" ? "auto" : "read" });
+      });
+    }
+  }
   if (raw.profiles !== undefined) {
     if (kind !== "user") dropped.push("profiles");
     else if (!isObj(raw.profiles)) return { ok: false, error: "profiles must be an object" };
@@ -179,6 +221,7 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
           notices.push(`profiles.${name} is not an object; skipped`);
           continue;
         }
+        if (v.workFolders !== undefined) dropped.push(`profiles.${name}.workFolders`);
         const b = parseBody(v, `profiles.${name}.`, notices);
         if (typeof b === "string") notices.push(`${b}; profile skipped`);
         else profiles[name] = b;
@@ -197,7 +240,7 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
     body.additionalDirectories = [];
     body.classifier.allow = [];
   }
-  return { ok: true, body, profiles, dropped, notices };
+  return { ok: true, body, profiles, dropped, workFolders, notices };
 }
 
 // ------------------------------------------------------------------ the store
@@ -394,6 +437,8 @@ export class PermStore {
       for (const d of p.body.additionalDirectories) dirs.push(this.expandDir(d));
     }
 
+    const workFolderNotes: string[] = [];
+    const workFolders = this.validFolders(userOk?.workFolders ?? [], workFolderNotes);
     let mode: PermMode = "auto";
     let modeSource: Resolved["modeSource"] = "default";
     if (user.parsed && !user.parsed.ok) {
@@ -411,9 +456,43 @@ export class PermStore {
       mode = this.sessionMode;
       modeSource = "session";
     }
-    const resolved: Resolved = { mode, modeSource, profile, rules: sets, entries, prose, additionalDirectories: [...new Set(dirs)], projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
+    const resolved: Resolved = { mode, modeSource, profile, rules: sets, entries, prose, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
     this.cached = { sig, resolved };
     return resolved;
+  }
+
+  /** Work folders that may stand: absolute (after `~`), not the filesystem root, the home dir or an ancestor of it. Each drop and the outside-home case warn once. */
+  private validFolders(list: WorkFolder[], notes: string[]): WorkFolder[] {
+    const warn = (t: string): void => {
+      notes.push(t);
+      this.note(t);
+    };
+    const out: WorkFolder[] = [];
+    const platform = process.platform;
+    const home = this.env.home;
+    const real = (p: string): string => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return p;
+      }
+    };
+    for (const f of list) {
+      const tilde = f.path === "~" || f.path.startsWith("~/") || f.path.startsWith("~\\");
+      if (!tilde && !path.isAbsolute(f.path)) {
+        warn(`workFolders '${clip(f.path, 200)}' is not an absolute path; dropped`);
+        continue;
+      }
+      const p = this.expandDir(f.path);
+      const rp = real(p);
+      if (path.dirname(p) === p || [p, rp].some((r) => holdsHome(platform, r, home) || holdsHome(platform, r, real(home)))) {
+        warn(`workFolders '${clip(f.path, 200)}' is the filesystem root, your home dir or one of its parents; dropped`);
+        continue;
+      }
+      if (!holdsHome(platform, home, p) && !holdsHome(platform, home, rp)) warn(`workFolders '${clip(f.path, 200)}' lies outside your home dir; kept`);
+      if (!out.some((o) => o.path === p)) out.push({ path: p, mode: f.mode });
+    }
+    return out;
   }
 
   private expandDir(d: string): string {

@@ -134,7 +134,7 @@ test("unsafe or incomplete entries are dropped; duplicates by url are listed onc
 });
 
 test("disabled, or nothing to search: no calls and no file", async () => {
-  for (const cfg of [{}, { enabled: false }, { enabled: true, mine: false }]) {
+  for (const cfg of [{ enabled: false }, { enabled: true, mine: false }]) {
     const r = rig(cfg);
     assert.equal(await r.run(), "off");
     assert.equal(r.queries.length, 0);

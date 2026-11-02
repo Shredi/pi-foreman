@@ -49,7 +49,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   fs.writeFileSync(path.join(ps, "package.json"), JSON.stringify({ name: "@gotgenes/pi-permission-system" }));
   fs.writeFileSync(path.join(ps, "src", "index.ts"), "export default () => undefined;\n");
   const roles = ["explorer", "builder", "reviewer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "fake/review" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, radar: { openPrs: { enabled: false } }, ceremony: { launchWait: "detach", default: "heavy", ...o.ceremony } }));
   const sessionId = `r46-${++n}`;
   const sessionFile = path.join(agentDir, "sessions", "--project--", `2026_${sessionId}.jsonl`);
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
@@ -156,6 +156,10 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
         const r = (await handlers.get("tool_result")!({ toolName, toolCallId: id, input, details: {}, content: [{ type: "text", text: "ok" }], isError: false }, ctx)) as { content?: { text: string }[] } | undefined;
         return { block: undefined, note: (r?.content ?? []).map((c) => c.text).join("\n") };
       },
+      /** Fires a Pi event (e.g. `session_compact`) at the adapter's handler. */
+      fire: (name: string, event: unknown) => handlers.get(name)?.(event, ctx),
+      /** The run-end event of a launch started by `reviewLaunch` (its callId), as the harness delivers it. */
+      endRun: (id: string, output: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] }),
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
       command: (name: string, args: string) => commands.get(name)!.handler(args, ctx),
       /** A foreman write of the ledger (tool_call, file, tool_result) so the tier header is read. */

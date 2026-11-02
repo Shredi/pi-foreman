@@ -54,9 +54,9 @@ test("the foreman registers the harness tool_search, hides the deferred tools an
   const search = r.registered.get("tool_search");
   assert.ok(search, "tool_search is registered");
   // the adapter's own PR tools join the active set before the hidden set is computed
-  const expected = ["bg_result", "bg_kill", "fusion_reason", "foreman_move", "plan_mode_question", "pr_comments", "pr_track", "pr_untrack"];
+  const expected = ["bg_result", "bg_kill", "fusion_reason", "foreman_move", "plan_mode_question", "pr_comments"];
   assert.deepEqual(hiddenOf(search, r.active()), expected);
-  assert.deepEqual(r.rig.events("tools_deferred").map((e) => [e.count, e.names]), [[8, expected.join(",")]]);
+  assert.deepEqual(r.rig.events("tools_deferred").map((e) => [e.count, e.names]), [[6, expected.join(",")]]);
   assert.deepEqual(r.entries, [{ type: "deferred-loaded", data: { names: [], planMode: false } }]);
   assert.ok(r.sets.length >= 1); // the loadout is re-applied once the set is in place
 });
@@ -66,7 +66,7 @@ test("before_agent_start adds the pi-foreman-deferred section with names only, u
   const event = { prompt: "go", systemPromptOptions: { sections: {} as Record<string, string> } };
   await r.rig.fire("before_agent_start", event);
   const hint = event.systemPromptOptions.sections["pi-foreman-deferred"];
-  assert.match(hint, /^Deferred tools, search with `tool_search` before use; a found tool is callable at once from a codemode script as `tools\.<name>\(\)`: bg_result, bg_kill, fusion_reason, foreman_move, plan_mode_question, pr_comments, pr_track, pr_untrack$/);
+  assert.match(hint, /^Deferred tools, search with `tool_search` before use; a found tool is callable at once from a codemode script as `tools\.<name>\(\)`: bg_result, bg_kill, fusion_reason, foreman_move, plan_mode_question, pr_comments$/);
   const without = await rigWith(t, { active: NAMES.filter((n) => n !== "codemode"), roles: { foreman: { codemode: false } } });
   const event2 = { prompt: "go", systemPromptOptions: { sections: {} as Record<string, string> } };
   await without.rig.fire("before_agent_start", event2);
@@ -136,7 +136,7 @@ test("a child hides the names its role makes searchable and keeps tool_search ac
 test("/foreman status shows the deferred count", async (t) => {
   const r = await rigWith(t);
   await r.commands.get("foreman")!.handler("status", r.rig.ctx);
-  assert.ok(r.notes.some((n) => n.includes("deferred tools: 8")), r.notes.join("\n"));
+  assert.ok(r.notes.some((n) => n.includes("deferred tools: 6")), r.notes.join("\n"));
 });
 
 test("foreman doctor warns about a pattern that matches nothing and prints the PI_BG_FEATURES=process line for the add-on's optional tools", async (t) => {

@@ -37,7 +37,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], over: { config?: Record<stri
       appendEntry: () => undefined,
     },
     deps: {
-      piVersion: async () => "1.4.0",
+      piVersion: async () => "1.5.0",
       spawner: (cmd: string, args: string[], o: never) => (args.some((a) => a.endsWith("foreman_session.py")) ? (spawned.push(args), Promise.resolve({ code: 0, stdout: "handoff: x", stderr: "", timedOut: false })) : defaultSpawner(cmd, args, o)),
     },
   });
