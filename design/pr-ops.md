@@ -1,5 +1,7 @@
 # PR tools (PR op family in the git tool pack)
 
+Design record of the 2026-10 PR-ops waves; docs/tools.md is the current reference.
+
 ## 0. Status and scope
 
 | Item | Value |
@@ -20,7 +22,7 @@
 
 **`config/foreman.schema.json`.** Add three properties under `tools.properties`:
 
-- `"pr"`: `{"type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments, pr_watch and pr_unwatch for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change."}`
+- `"pr"`: `{"type": "boolean", "description": "true (default) = the PR tools pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, pr_track and pr_untrack for the foreman; children whose role has bash get the read tools. The host comes from tools.prHost. The project and session layers may only set false. Re-run foreman setup after a change."}`
 - `"prHost"`: `{"type": ["string", "object"], "additionalProperties": {"type": "string"}, "description": "Host CLI for the PR tools: \"auto\" (gh, then glab, found on PATH outside the workspace), \"gh\", \"glab\", or an object of command templates with the keys create, status, checks and comments (docs/tools.md#host-templates). User or overlay config only."}`. The value has no `properties`, so `schema_leaves` treats it as one leaf.
 - `"prWatchSeconds"`: `{"type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch polls (default 60; floored to 30 at runtime)."}` (the schema minimum stays 5)
 
@@ -206,7 +208,7 @@ Any other non-zero exit gives `ActionError("pr_host_failed", "<program>: " + red
 | `number` | status, checks, comments | int, not bool, 1..10^9 |
 | `since` | comments | str fullmatching `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z\|[+-]\d{2}:\d{2})`, parsed with `datetime.fromisoformat` after `Z` becomes `+00:00` |
 
-Every string value is checked for a leading `-` before substitution, which is the `--`/option-injection refusal (L24). `until` and `timeoutSeconds` are validated in TS only (§3).
+Every string value is checked for a leading `-` before substitution, which is the `--`/option-injection refusal (L24). `until` and `timeoutSeconds` are refused in TS (`bad_request`) (§3).
 
 ### 2.7 pr_create in Python (L9; TS checks first, §3.3)
 

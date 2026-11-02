@@ -73,7 +73,7 @@ ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role
 
 | Event | Fields | Meaning |
 |---|---|---|
-| `tool_pack` | `pack` (`git`), `op` | one pack call while the pack is on; `op` is `status`, `log`, `diff_stat`, `branch_state`, `move`, `copy` or `worktree_remove`, or a PR tool name (`pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `pr_unwatch`). A call the drift preflight blocked is not counted. |
+| `tool_pack` | `pack` (`git`), `op` | one pack call while the pack is on; `op` is `status`, `log`, `diff_stat`, `branch_state`, `move`, `copy` or `worktree_remove`, or a PR tool name (`pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `pr_unwatch`, `pr_track`, `pr_untrack`). A call the drift preflight blocked is not counted. |
 | `pr_watch` | `outcome` (`started`, `event`, `merged`, `closed`, `gone`, `unwatched`, `polling_failed`, `recovered` or `lost`) | a watch started, sent a message or ended (`lost`: it could not be resumed after a restart); the PR number is never traced |
 | `pr_track` | `path` (`push`, `create`, `tool`, `watch`, `branch` or `untrack`), `dup`, `skipped`, `foreign`, `count` | a PR was registered (see [Registration paths](#registration-paths)); never the number, branch, host, repo, author or login |
 | `pr_shared` | `outcome`, `source`, `count` | the shared PR watch did something (see [Shared PR watch](#shared-pr-watch)); never a PR number, repo, author or login |
