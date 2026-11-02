@@ -333,9 +333,12 @@ class RemoteOpenTest(RemoteBase):
         self.assertIn("remote notice", brief)
         self.assertIn("pi-foreman remote session `demo`", brief)
         launch = (h / "launch.txt").read_text("utf-8")
-        self.assertIn("PI_FOREMAN_REMOTE_PARENT=1", launch)
-        self.assertIn("PI_FOREMAN_PARENT_LABEL=beta", launch)
-        self.assertIn("PI_FOREMAN_PARENT_INTERCOM=%s" % ADDRESS, launch)
+        # the launch line is in the form of the platform the child runs on: `K=V` words on POSIX, `$env:K='V'` on win32
+        def assign(key, value):
+            return "$env:%s='%s'" % (key, value) if fsn.host_platform() == "win32" else "%s=%s" % (key, value)
+        self.assertIn(assign("PI_FOREMAN_REMOTE_PARENT", "1"), launch)
+        self.assertIn(assign("PI_FOREMAN_PARENT_LABEL", "beta"), launch)
+        self.assertIn(assign("PI_FOREMAN_PARENT_INTERCOM", ADDRESS), launch)
         entry = self.remote_registry()[0]
         self.assertEqual((entry["child"], entry["parent"], entry["status"], entry["backend"]), (reply["child"], ADDRESS, "open", "hc"))
 
@@ -773,7 +776,8 @@ class ParentTest(RemoteBase):
         sent = json.loads(calls[1]["stdin"])
         self.assertEqual((sent["label"], sent["cwd"], sent["parentAddress"], sent["trust"], sent["dryRun"], sent["space"]),
                          ("demo", str(self.rproj), ADDRESS, False, False, "sp-alpha"))
-        self.assertEqual(sent["brief"], self.brief.read_text("utf-8"))
+        # the brief goes out as the file's exact bytes (CRLF on Windows, where write_text wrote them)
+        self.assertEqual(sent["brief"], self.brief.read_bytes().decode("utf-8"))
         full = self.hc_calls("machine", "exec")
         self.assertEqual(full[0], ["machine", "ls", "--json"])
         self.assertEqual(full[1][:9], ["exec", "--on", "alpha", "--timeout", "15", "-i", "--json", "--", "foreman"])
