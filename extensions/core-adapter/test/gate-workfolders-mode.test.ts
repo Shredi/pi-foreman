@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
+import { shPath } from "./_shpath.ts";
 
 // the folder lives below the home dir (a folder outside it only warns), outside every gate tmp root
 const homeBase = path.join(os.homedir(), ".cache", "pi-foreman-tests");
@@ -14,6 +15,8 @@ fs.mkdirSync(homeBase, { recursive: true });
 const folder = fs.realpathSync(fs.mkdtempSync(path.join(homeBase, "pf-wf-mode-")));
 const other = fs.realpathSync(fs.mkdtempSync(path.join(homeBase, "pf-wf-other-")));
 fs.mkdirSync(path.join(folder, "repo", ".git", "hooks"), { recursive: true });
+// the folder as a shell word: a win32 backslash path would lose its separators to the parser
+const fw = shPath(folder);
 after(() => {
   fs.rmSync(folder, { recursive: true, force: true });
   fs.rmSync(other, { recursive: true, force: true });
@@ -42,9 +45,9 @@ test("2 an uncovered write in an auto folder runs under auto when the global mod
     assert.equal(await r.call("write", w("a.txt")), undefined, mode);
     assert.equal(r.last()?.decision, "allowed", mode);
     assert.equal(r.last()?.rule, "mode:folder:auto", mode);
-    assert.equal(await r.call("bash", { command: `touch ${folder}/x` }), undefined, mode);
+    assert.equal(await r.call("bash", { command: `touch ${fw}/x` }), undefined, mode);
     assert.equal(r.last()?.rule, "mode:folder:auto", mode);
-    assert.equal(await r.call("bash", { command: `mkdir ${folder}/d` }), undefined, mode);
+    assert.equal(await r.call("bash", { command: `mkdir ${fw}/d` }), undefined, mode);
   }
 });
 
@@ -64,10 +67,10 @@ test("2 a read folder, no folder, a redirect and a non-default segment keep the 
   const none = await rig(t, { mode: "deny" });
   assert.equal(await blocked(none, "write", w("a.txt")), true);
   const r = await rig(t, { mode: "deny", workFolders: wfs() });
-  assert.equal(await blocked(r, "bash", { command: `echo x > ${folder}/notes.txt` }), true);
-  assert.equal(await blocked(r, "bash", { command: `python3 build.py > ${folder}/out.txt` }), true);
-  assert.equal(await blocked(r, "bash", { command: `cat /etc/hosts > ${folder}/y` }), true);
-  assert.equal(await blocked(r, "bash", { command: `tar -xf a.tgz -C ${folder}/repo` }), true);
+  assert.equal(await blocked(r, "bash", { command: `echo x > ${fw}/notes.txt` }), true);
+  assert.equal(await blocked(r, "bash", { command: `python3 build.py > ${fw}/out.txt` }), true);
+  assert.equal(await blocked(r, "bash", { command: `cat /etc/hosts > ${fw}/y` }), true);
+  assert.equal(await blocked(r, "bash", { command: `tar -xf a.tgz -C ${fw}/repo` }), true);
 });
 
 test("4 protected places and a dangerous class inside the folder are not relaxed", async (t) => {
@@ -75,8 +78,8 @@ test("4 protected places and a dangerous class inside the folder are not relaxed
   for (const [tool, input] of [
     ["write", { path: path.join(folder, "repo", ".git", "config"), content: "x" }],
     ["write", { path: path.join(folder, "repo", ".pi", "extensions", "x.ts"), content: "x" }],
-    ["bash", { command: `touch ${folder}/repo/.GIT/hooks/x` }],
-    ["bash", { command: `touch ${folder}/x && git push origin main` }],
+    ["bash", { command: `touch ${fw}/repo/.GIT/hooks/x` }],
+    ["bash", { command: `touch ${fw}/x && git push origin main` }],
   ] as [string, Record<string, unknown>][]) {
     await r.call(tool, input);
     assert.notEqual(r.last()?.rule, "mode:folder:auto", JSON.stringify(input));

@@ -4,7 +4,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { longForm } from "./pathnorm.ts";
-import { segmentAlias } from "./effects.ts";
 
 /** The roots of one session, resolved by index.ts at call time. All paths absolute. */
 export interface GateRoots {
@@ -45,6 +44,12 @@ export interface GateRoots {
 export type PathVerdict = { allow: true; rule: string } | undefined;
 
 const px = (platform: string): typeof path.posix => (platform === "win32" ? path.win32 : path.posix);
+
+/** A win32 path segment that is `name` (`.git`) as Windows spells it: trailing dots and spaces dropped, or the 8.3 short name `git~N`. */
+const winAlias = (s: string, name: string): boolean => {
+  const bare = s.replace(/[. ]+$/, "").toLowerCase();
+  return bare === name || new RegExp(`^${name.slice(1)}~\\d+$`).test(bare);
+};
 const parts = (platform: string, p: string, base?: string): string[] => px(platform).resolve(...(base ? [base, p] : [p])).split(/[\\/]+/).filter(Boolean).map((s) => (platform === "win32" ? s.toLowerCase() : s));
 
 /** `p` at or below `root` (`*` segments of the root match any one segment). Lexical. */
@@ -103,7 +108,8 @@ export function folderProtected(r: GateRoots, platform: string, abs: string): bo
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
   // `.git` and `.pi` match case-insensitively on every platform: a `.GIT` on Linux is a distinct dir, but the protection must not be weaker there.
   // The `scratch`/`tasks` exception stays per platform (folded only where the file system folds), so `.pi/SCRATCH` on Linux is still protected.
-  const named = (s: string, name: string): boolean => s.toLowerCase() === name || segmentAlias(platform, name, s);
+  // win32: a trailing dot or space, or the 8.3 short name of `name` (`GIT~1`, `PI~1`). Any other `~N` (the CI temp base `RUNNER~1`) is no alias of it.
+  const named = (s: string, name: string): boolean => s.toLowerCase() === name || (platform === "win32" && winAlias(s, name));
   const fold = (s: string): string => (platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
   for (const p of new Set([abs, realSpelling(platform, abs, real)])) {
     const segs = p.split(/[\\/]+/).filter(Boolean);
