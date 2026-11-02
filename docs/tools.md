@@ -127,7 +127,7 @@ whose role has bash get the three read tools. Unknown keys give
 | `pr_status` | `number` (default: the current branch's PR), `repo`, `host` | `number`, `url`, `title`, `state` (`open`, `closed`, `merged`), `draft`, `mergeable` (`mergeable`, `conflicting`, `unknown`), `reviewDecision` (`approved`, `changes_requested`, `review_required` or null), `headSha`, `headRefName`, `baseRef`, `updatedAt` |
 | `pr_checks` | `number`, `repo`, `host`, `required` (true = only the checks the branch protection requires; gh `--required`, none reported is an empty list) | `required`, `pending`, `failed`, `passed` (each entry `name`, `status`, `conclusion`, `url`, `startedAt`, `completedAt`), `summary`, `truncated`, `total` |
 | `pr_comments` | `number`, `repo`, `host`, `since` (ISO 8601 timestamp with zone; keeps newer comments) | `comments [{id, kind, author, createdAt, body, bodyCut?, path?, line?, resolved?, state?}]`, `truncated`, `total`; `kind` is `issue`, `review` (inline) or `review_summary` |
-| `pr_watch` | `number` (default: the current branch's PR); `until` and `timeoutSeconds` are gone and refused with `bad_request` | `watching`, `number`, `intervalSeconds`, `head`, `checks`, `mergeable`; see [Watch](#watch) |
+| `pr_watch` | `number` (default: the current branch's PR); `until` and `timeoutSeconds` are gone and refused with `bad_request` | `watching`, `number`, `intervalSeconds`, `head`, `checks`, `mergeable`; when the first poll failed, the text `armed, but the first poll failed (<reason>); it will retry` instead of the state; see [Watch](#watch) |
 | `pr_unwatch` | `number` required; `repo` (`owner/name`; without it the current repository's watch of that number ends if there is one, else every watch of that number) | `number`, `unwatched` (false when no watch of that number existed); ends the watch without a message |
 | `pr_track` | `number` (1..1000000000) required; `repo` (`owner/name`), `host` (a host name); default the current repository | `key` (`host/owner/name#n`), `title`; `pr_gone` when the PR is merged or closed, see [Registration paths](#registration-paths) |
 | `pr_untrack` | `number` required; `repo`, `host` as for `pr_track` | `key`; the PR leaves the dots and the widget and no automatic path adds it again this session |
@@ -204,7 +204,11 @@ a missing login gives `pr_auth_missing` with the command to run yourself.
 
 `pr_create` arms a watch of the PR it opened; `pr_watch` arms one for a PR opened elsewhere. The watch is persistent: it polls every
 `tools.prWatchSeconds` seconds (floor 30) until the PR is merged or closed, or `pr_unwatch` ends it, and never ends on a
-push, a rerun, a comment or a failed poll. It needs no model turn to keep running. After a baseline poll each tick that finds
+push, a rerun, a comment or a failed poll. It needs no model turn to keep running. If the first poll fails (a host error), the watch is
+armed anyway and retries with backoff; the first good poll baselines comments, reviews and mergeable (old ones are not sent) but
+reports CI like any other poll, so a failed check or a settled result is sent once. If the PR is not found, or is not open, on the
+first poll nothing is armed (`pr_watch` answers with the error; `pr_create` appends `pr_watch: not armed (<reason>)` to its answer).
+After a baseline poll each tick that finds
 something new sends one `pi-foreman-pr` message that folds all events of the tick: a failed check (a fresh failed run id, so a
 rerun or a new head reports again, while other checks still run), the CI result once every check settled (`checks finished:
 pass|fail`, once per head and result), a new comment or review, a mergeable change (`UNKNOWN` is ignored), no checks for two

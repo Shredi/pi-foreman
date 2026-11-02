@@ -540,7 +540,7 @@ export class PrWatches {
 
   /**
    * Arm a watch whose first poll failed: an empty baseline (`last` "arming") and one error on the backoff; the first successful
-   * poll takes the baseline without events.
+   * poll seeds comments and mergeable, and reports CI like any other poll.
    */
   startPending(key: PrKey, error: string): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [], status: {} };
@@ -723,13 +723,9 @@ export class PrWatches {
       if (child && snap.state === "closed") d.closedUnmerged = true;
       return this.end(w, d);
     }
-    if (w.state.last === "arming") {
-      w.state = baselineOf(snap);
-      this.persist();
-      this.deps.changed?.();
-      return this.arm(w);
-    }
-    const { state, delta } = prDelta(w.state, snap, child);
+    // a pending start: comments and mergeable count as reported, CI does not, so failed runs and a settled result are sent once
+    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0 } : w.state;
+    const { state, delta } = prDelta(from, snap, child);
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;
     if (changed) this.persist();

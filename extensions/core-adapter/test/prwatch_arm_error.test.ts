@@ -48,26 +48,91 @@ test("pr_watch: a host error on the first poll keeps the watch armed", async () 
   assert.equal(r.details.decision, "watching");
 });
 
-test("a later successful poll takes the baseline without events, the next change is reported", async () => {
+const flush = () => new Promise((r) => setImmediate(r));
+const texts = (sent: unknown[]) => sent.map((m) => (m as { content: string }).content);
+const oldComment = { id: "c1", kind: "issue", author: "a", body: "old" };
+
+test("a later successful poll reports the failed check once, the next change is reported", async () => {
   const h = setup("error");
   await h.call("pr_create", { title: "t", body: "b" });
   h.ticks.push({ snap: snap() });
   h.timers[0]();
-  await new Promise((r) => setImmediate(r));
-  assert.equal(h.sent.length, 0);
+  await flush();
+  assert.equal(h.sent.length, 1);
+  const t = texts(h.sent)[0];
+  assert.equal(t.match(/checks finished: fail/g)?.length, 1);
+  assert.match(t, /- failed ci/);
   assert.equal(h.watches.size(), 1);
   assert.equal(h.timers.length, 2);
   h.ticks.push({ snap: snap({ head: "def7654321", updatedAt: "t2", runs: [{ id: "2", name: "ci", bucket: "failed", url: "u" }] }) });
   h.timers[1]();
-  await new Promise((r) => setImmediate(r));
+  await flush();
+  assert.equal(h.sent.length, 2);
+});
+
+test("a pending start reports a failed check while other checks still run", async () => {
+  const h = setup("error");
+  await h.call("pr_create", { title: "t", body: "b" });
+  h.ticks.push({ snap: snap({ runs: [{ id: "1", name: "ci", bucket: "failed", url: "u" }, { id: "2", name: "lint", bucket: "pending", url: "u" }] }) });
+  h.timers[0]();
+  await flush();
   assert.equal(h.sent.length, 1);
+  assert.match(texts(h.sent)[0], /check failed/);
+  assert.doesNotMatch(texts(h.sent)[0], /checks finished/);
+});
+
+test("a pending start baselines old comments and mergeable, and reports a settled green result once", async () => {
+  const h = setup("error");
+  await h.call("pr_create", { title: "t", body: "b" });
+  const green = snap({ comments: [oldComment], runs: [{ id: "1", name: "ci", bucket: "passed", url: "u" }] });
+  h.ticks.push({ snap: green });
+  h.timers[0]();
+  await flush();
+  assert.equal(h.sent.length, 1);
+  const t = texts(h.sent)[0];
+  assert.match(t, /checks finished: pass/);
+  assert.doesNotMatch(t, /new comments|mergeable (MERGEABLE|CONFLICTING)\b.*,|old/);
+  h.ticks.push({ snap: green });
+  h.timers[1]();
+  await flush();
+  assert.equal(h.sent.length, 1);
+});
+
+test("a pending start with an old comment and a mergeable state sends neither", async () => {
+  const h = setup("error");
+  await h.call("pr_create", { title: "t", body: "b" });
+  h.ticks.push({ snap: snap({ comments: [oldComment], runs: [{ id: "1", name: "ci", bucket: "pending", url: "u" }] }) });
+  h.timers[0]();
+  await flush();
+  assert.equal(h.sent.length, 0);
+});
+
+test("a restored arming record behaves like a pending start", async () => {
+  const h = setup("error");
+  await h.call("pr_create", { title: "t", body: "b" });
+  const watches = h.watches.records();
+  assert.equal(watches[0].state.last, "arming");
+  h.watches.clear();
+  h.ticks.push({ snap: snap({ comments: [oldComment] }) });
+  h.watches.restore({ status: "ok", watches, bad: 0 });
+  await flush();
+  assert.equal(h.sent.length, 1);
+  const t = texts(h.sent)[0];
+  assert.equal(t.match(/checks finished: fail/g)?.length, 1);
+  assert.doesNotMatch(t, /new comments/);
+});
+
+test("pr_create: a not-found first poll adds a not armed line", async () => {
+  const h = setup("not_found");
+  const r = await h.call("pr_create", { title: "t", body: "b" });
+  assert.match(r.content[0].text, /\npr_watch: not armed \(the pull request was not found\)$/);
 });
 
 test("pr_not_found on the first poll does not arm", async () => {
   const h = setup("not_found");
   const r = await h.call("pr_create", { title: "t", body: "b" });
   assert.equal(h.watches.size(), 0);
-  assert.doesNotMatch(r.content[0].text, /armed/);
+  assert.doesNotMatch(r.content[0].text, /pr_watch: armed/);
 });
 
 test("pr_unwatch: repo ends only that repository's watch; a number alone prefers the current repository", async () => {

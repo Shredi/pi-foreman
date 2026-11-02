@@ -251,7 +251,7 @@ export function prHostLabel(prHost: unknown, workspace: string, env: NodeJS.Proc
   | `pr_status`, `pr_checks` | `number` (integer 1..1000000000) |
   | `pr_comments` | `number`, `since` (string 20..35) |
   | `pr_watch` | `number` (`until` and `timeoutSeconds` are refused with `bad_request`) |
-  | `pr_unwatch` | `number` required |
+  | `pr_unwatch` | `number` required; `repo` (string, `owner/name`) |
 
   `foremanOnly` is true for `pr_create`, `pr_watch` and `pr_unwatch`. Those are not registered in children (`deps.isChild`), which matches `registerSafeOps`.
 - **`applyGitPack`.** It now calls `setPackToken(env, "git", on)` and no longer assigns or deletes the whole variable. Its child branch is unchanged.
