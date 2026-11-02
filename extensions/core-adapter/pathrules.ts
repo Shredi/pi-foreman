@@ -101,11 +101,14 @@ export function rootHolds(root: string, abs: string, platform: string, realpath?
  */
 export function folderProtected(r: GateRoots, platform: string, abs: string): boolean {
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
+  // `.git` and `.pi` match case-insensitively on every platform: a `.GIT` on Linux is a distinct dir, but the protection must not be weaker there.
+  // The `scratch`/`tasks` exception stays per platform (folded only where the file system folds), so `.pi/SCRATCH` on Linux is still protected.
+  const named = (s: string, name: string): boolean => s.toLowerCase() === name || segmentAlias(platform, name, s);
   const fold = (s: string): string => (platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
   for (const p of new Set([abs, realSpelling(platform, abs, real)])) {
     const segs = p.split(/[\\/]+/).filter(Boolean);
-    if (segs.some((s) => segmentAlias(platform, ".git", s))) return true;
-    if (segs.some((s, i) => segmentAlias(platform, ".pi", s) && !(i + 1 < segs.length && ["scratch", "tasks"].includes(fold(segs[i + 1]))))) return true;
+    if (segs.some((s) => named(s, ".git"))) return true;
+    if (segs.some((s, i) => named(s, ".pi") && !(i + 1 < segs.length && ["scratch", "tasks"].includes(fold(segs[i + 1]))))) return true;
     const guarded = [r.agentDir, r.pkgRoot, ...r.install].filter((x): x is string => !!x);
     if (guarded.some((g) => [g, real(g)].some((x) => !!x && rootHolds(x, p, platform, r.realpath, r.worktree)))) return true;
   }

@@ -219,3 +219,14 @@ test("pathDecide still classes the worktree first and never allows a folder writ
   assert.equal(pathDecide("write", { path: path.join(work, "n.txt") }, wt, roots(), process.platform), undefined);
   assert.equal(pathDecide("read", { path: path.join(work, "n.txt") }, wt, roots(), process.platform)?.rule, "path-read-owned");
 });
+
+test("4 protected .git and .pi segments match case-insensitively on every platform; the .pi scratch exception folds only where the fs folds", () => {
+  const r = roots();
+  for (const platform of ["linux", "darwin", "win32"]) {
+    assert.equal(folderProtected(r, platform, path.join(work, "repo", ".GIT", "hooks", "x")), true, platform);
+    assert.equal(folderProtected(r, platform, path.join(work, "repo", ".PI", "extensions", "x.ts")), true, platform);
+    assert.equal(folderProtected(r, platform, path.join(work, "repo", ".pi", "scratch", "n")), false, platform);
+  }
+  assert.equal(folderProtected(r, "linux", path.join(work, "repo", ".pi", "SCRATCH", "n")), true);
+  assert.equal(folderProtected(r, "darwin", path.join(work, "repo", ".pi", "SCRATCH", "n")), false);
+});
