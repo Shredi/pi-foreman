@@ -29,7 +29,8 @@ const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLev
 const BUILTIN_TOOL_SEARCH_OFF = "-builtin:tool-search";
 /** Settings with Pi's built-in `tool-search` extension switched off (pi-foreman registers its own `tool_search`; Pi warns when it has to drop the built-in itself), or null when the settings already carry an entry for it. */
 export function withBuiltinToolSearchOff(settings) {
-  const list = Array.isArray(settings.extensions) ? settings.extensions : [];
+  if (settings.extensions !== undefined && !Array.isArray(settings.extensions)) return null;
+  const list = settings.extensions ?? [];
   if (list.some((e) => typeof e === "string" && e.replace(/^[+\-!]/, "") === "builtin:tool-search")) return null;
   return { ...settings, extensions: [...list, BUILTIN_TOOL_SEARCH_OFF] };
 }

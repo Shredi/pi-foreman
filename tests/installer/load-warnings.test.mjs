@@ -19,6 +19,10 @@ test("package.json: no host-provided Pi package in dependencies, pi-tui is a '*'
   assert.ok(pkg.devDependencies["@earendil-works/pi-tui"], "dev installs keep pi-tui for setup --preview and the tests");
 });
 
+test("withBuiltinToolSearchOff: leaves a non-array extensions value alone", () => {
+  for (const v of ["x", {}, 3]) assert.equal(withBuiltinToolSearchOff({ extensions: v }), null, String(v));
+});
+
 test("withBuiltinToolSearchOff: adds the disable entry once and respects an existing one", () => {
   assert.deepEqual(withBuiltinToolSearchOff({ packages: ["x"] }), { packages: ["x"], extensions: ["-builtin:tool-search"] });
   assert.deepEqual(withBuiltinToolSearchOff({ extensions: ["+a.ts"] }).extensions, ["+a.ts", "-builtin:tool-search"]);
