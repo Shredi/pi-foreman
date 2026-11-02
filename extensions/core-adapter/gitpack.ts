@@ -263,6 +263,8 @@ export interface PrPackSession {
   gateOn: boolean;
   /** Awaits the review sync, then the heads with a reviewer PASS. */
   reviewed(): Promise<string[]>;
+  /** Why the latest verdict is a PASS without a head (reviews.ts headlessPass); null: it is not one. */
+  headless?(): Promise<string | null>;
   watches: PrWatches;
   trace(rec: Record<string, unknown>): void;
   /** The host rule for `host` arguments (prhost.ts). */
@@ -350,7 +352,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         }
         if (t.op === "pr_watch") return watch(s, params, run, report, t.name);
         if (t.op === "pr_create") {
-          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), cwd: ctx.cwd, input: { head: params.head } });
+          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head } });
           if (refusal) {
             s.trace({ event: "pr_refused", reason: refusal.reason, toolFamily: "pr_create" });
             return failure(refusal.message, { decision: "pr_refused", reason: refusal.reason });
