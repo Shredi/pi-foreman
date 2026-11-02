@@ -7,7 +7,7 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
-import { PrWatches, countRuns, pollWatch } from "./prwatch.ts";
+import { PrWatches, countRuns, oneLine, pollWatch } from "./prwatch.ts";
 import type { WatchSnapshot } from "./prwatch.ts";
 import { cleanText } from "./prdots.ts";
 import { keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prtrack.ts";
@@ -237,7 +237,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch" | "p
     op: "pr_unwatch",
     label: "Unwatch PR",
     description: "End the watch of a pull request without a message.",
-    parameters: { type: "object", properties: { number: num("PR number.") }, required: ["number"], additionalProperties: false },
+    parameters: { type: "object", properties: { number: num("PR number."), repo: { type: "string", description: "Repository owner/name (default: the current repository's watch if there is one, else every watch with that number)." } }, required: ["number"], additionalProperties: false },
     foremanOnly: true,
   },
 ];
@@ -374,7 +374,13 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         if (t.op === "pr_watch") return watch(s, ctx, params, run, report, t.name);
         if (t.op === "pr_unwatch") {
           if (!validNumber(params.number)) return failure(`${t.name}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
-          const ended = s.watches.unwatch(params.number) > 0;
+          if (params.repo !== undefined && !validRepo(params.repo)) return failure(`${t.name}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
+          let ended: boolean;
+          if (typeof params.repo === "string") ended = s.watches.unwatch(params.number, params.repo) > 0;
+          else {
+            const cur = await s.tracker?.resolveRepo(ctx.cwd).catch(() => null);
+            ended = (cur ? s.watches.unwatch(params.number, cur.repo) : 0) > 0 || s.watches.unwatch(params.number) > 0;
+          }
           return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}` }], details: { decision: "ran" } };
         }
         if (t.op === "pr_create") {
@@ -393,7 +399,8 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const armed = await armWatch(s, ctx, run, outcome.result.number, outcome.result.url).catch(() => null);
         if (!armed || "duplicate" in armed || "error" in armed) return res;
         const r = res as { content: { type: "text"; text: string }[] };
-        return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)` }] };
+        const note = "retry" in armed ? `; the first poll failed (${oneLine(armed.retry)}), it will retry` : "";
+        return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${note}` }] };
       },
     } as never);
   }
@@ -439,14 +446,19 @@ async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url:
 }
 
 /** Reserve the slot, take the baseline poll and start the watch; `snap` is that first poll. */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, run: PrRun, n: number, url: unknown): Promise<{ key: PrKey; snap: WatchSnapshot } | { duplicate: true } | { error: string }> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, run: PrRun, n: number, url: unknown): Promise<{ key: PrKey; snap: WatchSnapshot } | { key: PrKey; retry: string } | { duplicate: true } | { error: string }> {
   const key = await watchKey(s, ctx, n, url);
   if (!s.watches.reserve(key)) return { duplicate: true };
   try {
     const p = await pollWatch(run, key, { updatedAt: "" });
+    if ("error" in p) {
+      s.watches.startPending(key, p.error);
+      s.trace({ event: "pr_watch", outcome: "started" });
+      return { key, retry: p.error };
+    }
     if (!("snap" in p)) {
       s.watches.release(key);
-      return { error: "gone" in p ? "the pull request was not found" : p.error };
+      return { error: "the pull request was not found" };
     }
     if (p.snap.state !== "open") {
       s.watches.release(key);
@@ -476,6 +488,7 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
   const armed = await armWatch(s, ctx, run, n, url);
   if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate" });
   if ("error" in armed) return failure(`${tool}: ${armed.error}`, { decision: "error" });
+  if ("retry" in armed) return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() })}; armed, but the first poll failed (${oneLine(armed.retry)}); it will retry` }], details: { decision: "watching", number: n } };
   const { snap } = armed;
   const state = { head: snap.head.slice(0, 7), checks: countRuns(snap.runs), mergeable: snap.mergeable };
   return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, intervalSeconds: s.watches.intervalSeconds(), ...state })}` }], details: { decision: "watching", number: n } };

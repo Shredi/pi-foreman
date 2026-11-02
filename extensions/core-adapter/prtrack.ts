@@ -320,4 +320,3 @@ export function branchWithUpstream(cwd: string): Promise<string> {
   const git = (args: string[]) => new Promise<string>((resolve) => execFile("git", args, { cwd, timeout: 5000, windowsHide: true }, (err, stdout) => resolve(err ? "" : String(stdout).trim())));
   return git(["symbolic-ref", "--short", "-q", "HEAD"]).then(async (b) => (b && (await git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${b}@{upstream}`])) ? b : ""));
 }
-

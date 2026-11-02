@@ -128,7 +128,7 @@ whose role has bash get the three read tools. Unknown keys give
 | `pr_checks` | `number`, `repo`, `host`, `required` (true = only the checks the branch protection requires; gh `--required`, none reported is an empty list) | `required`, `pending`, `failed`, `passed` (each entry `name`, `status`, `conclusion`, `url`, `startedAt`, `completedAt`), `summary`, `truncated`, `total` |
 | `pr_comments` | `number`, `repo`, `host`, `since` (ISO 8601 timestamp with zone; keeps newer comments) | `comments [{id, kind, author, createdAt, body, bodyCut?, path?, line?, resolved?, state?}]`, `truncated`, `total`; `kind` is `issue`, `review` (inline) or `review_summary` |
 | `pr_watch` | `number` (default: the current branch's PR); `until` and `timeoutSeconds` are gone and refused with `bad_request` | `watching`, `number`, `intervalSeconds`, `head`, `checks`, `mergeable`; see [Watch](#watch) |
-| `pr_unwatch` | `number` required | `number`, `unwatched` (false when no watch of that number existed); ends the watch without a message |
+| `pr_unwatch` | `number` required; `repo` (`owner/name`; without it the current repository's watch of that number ends if there is one, else every watch of that number) | `number`, `unwatched` (false when no watch of that number existed); ends the watch without a message |
 | `pr_track` | `number` (1..1000000000) required; `repo` (`owner/name`), `host` (a host name); default the current repository | `key` (`host/owner/name#n`), `title`; `pr_gone` when the PR is merged or closed, see [Registration paths](#registration-paths) |
 | `pr_untrack` | `number` required; `repo`, `host` as for `pr_track` | `key`; the PR leaves the dots and the widget and no automatic path adds it again this session |
 
