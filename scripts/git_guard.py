@@ -1176,13 +1176,11 @@ def stdin_write_problem(name, args, seg, ctx):
         if any(SCRIPT_WRITE.search(t) for t in texts):
             return deny(STDIN_WRITE_REASON + ".")
         return None
-    # ceremony-fixes-2 item 4: a heredoc write whose every target lies strictly inside the child's own scratch dir is allowed
     if name == "cat" and seg.outs and (seg.heredocs or seg.herestrings):
-        if not child_scratch_targets(seg.outs, ctx):
-            return deny(STDIN_WRITE_REASON + ".")
+        return deny(STDIN_WRITE_REASON + ".")
     if name == "tee" and (seg.heredocs or seg.herestrings or (seg.pipe_in and ctx.root and "<<" in ctx.root[0])):
         files = [w for w in args if not w.text.startswith("-") and w.text != "/dev/null"]
-        if files and not child_scratch_targets(files + seg.outs, ctx):
+        if files:
             return deny(STDIN_WRITE_REASON + ".")
     return None
 
@@ -1716,9 +1714,6 @@ def git_sub(sub, rest, seg, flavor, ctx, depth, envs, via_xargs, xargs_repl, cal
         if d.level > ALLOW:
             return d
     if ctx.mode == "child":
-        d = foreman_checkout_rule(sub, ctx, call, rest)
-        if d.level > ALLOW:
-            return d
         if s == "push":
             d = pr_push(rest, ctx, call, envs, seg)
             if d.level > ALLOW:
@@ -2281,50 +2276,6 @@ CHILD_F_DIRS = "$FOREMAN_SCRATCH or <worktree>/.workflow/scratch/"
 CHILD_SCRATCH_WORD = re.compile(r'^"?\$FOREMAN_SCRATCH(/[^\s$`\\*?\[\]{}~"\'<>|&;()]+)"?$')
 
 
-FOREMAN_FENCE_SUBS = frozenset("""add commit rm mv reset checkout switch restore merge rebase cherry-pick revert stash apply am clean
-tag branch push pull fetch update-ref commit-tree worktree config gc init symbolic-ref notes clone""".split())
-
-
-def foreman_checkout_root(ctx):
-    """ceremony-fixes-2 item 1: the realpath of the foreman's checkout for a child launched into an isolation worktree, from the launch
-    environment (FOREMAN_CHECKOUT in ctx.env, never the command text): an existing absolute dir without white space, else None."""
-    d = ctx.env.get("FOREMAN_CHECKOUT") or ""
-    if not os.path.isabs(d) or re.search(r"\s", d) or not os.path.isdir(d):
-        return None
-    return os.path.realpath(d)
-
-
-def foreman_checkout_rule(sub, ctx, call, rest=()):
-    """A worktree child's git write (`git -C <root> ...`, `cd <root>; git ...`, `--git-dir` / `--work-tree` at the root, the target of
-    `git clone`) never lands in the foreman's checkout; its `.workflow/scratch/` and the child's own worktree (also when nested below
-    the checkout) are exempt. Where a mutating git command runs (cwd, `-C`, `--git-dir`, `--work-tree`) has no scratch exemption: a commit
-    run from `.workflow/scratch` still writes the foreman's repository; only a file target (clone destination, `--output`) may be scratch."""
-    root = foreman_checkout_root(ctx)
-    if root is None:
-        return OK
-    words = [w.text for w in rest]
-    outs = [w.split("=", 1)[1] for w in words if w.startswith("--output=")] + \
-        [words[i + 1] for i, w in enumerate(words[:-1]) if w == "--output"]
-    if sub.lower() not in FOREMAN_FENCE_SUBS and not outs:
-        return OK
-    under = lambda p, r: os.path.normcase(p) == os.path.normcase(r) or os.path.normcase(p).startswith(os.path.normcase(r) + os.sep)
-    own = os.path.realpath(ctx.start_cwd)
-    while not os.path.lexists(os.path.join(own, ".git")) and os.path.dirname(own) != own:
-        own = os.path.dirname(own)
-    run = [call.cwd] + [p.split("=", 1)[1] for p in call.passthrough if p.startswith(("--git-dir=", "--work-tree="))]
-    files = [os.path.join(call.cwd, o) for o in outs]
-    if sub.lower() == "clone":
-        files += [os.path.join(call.cwd, w.text) for w in rest if not w.text.startswith("-")]
-    scratch = os.path.join(root, ".workflow", "scratch")
-    for place, is_file in [(p, False) for p in (run if sub.lower() in FOREMAN_FENCE_SUBS else [])] + [(p, True) for p in files]:
-        real = os.path.realpath(place)
-        if under(real, root) and not (is_file and under(real, scratch)) and not under(real, own):
-            return deny("write to %s denied: this child runs in its own worktree %s; the foreman's checkout %s is read-only for it "
-                        "(read its .workflow/ ledger and plan there; only .workflow/scratch/ is writable). Use paths relative to your worktree; commit on your worktree's branch."
-                        % (place, ctx.start_cwd, root))
-    return OK
-
-
 def child_scratch_root(ctx):
     """R14 item 2: the realpath of the running child's own scratch dir, from the hook's launch environment (ctx.env, never the command
     text or a segment's inline env): an existing absolute dir `<tmp>/pi-foreman-scratch/<session>/<launch>` (childscratch.ts), else None.
@@ -2347,30 +2298,6 @@ def child_scratch_word(w, ctx):
             re.search(r"(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])", ctx.root[0]):
         return None
     return ctx.env["FOREMAN_SCRATCH"] + m.group(1)
-
-
-def child_scratch_targets(words, ctx):
-    """ceremony-fixes-2 item 4: True when every word names a file strictly inside the child's own scratch dir: a whole
-    `$FOREMAN_SCRATCH/<rest>` word (child_scratch_word) or an absolute path, static, without `..` or a glob, whose realpath lies below
-    the scratch realpath. Anything else (a workspace path, the dir itself, a rebound name, a computed word) is False."""
-    root = child_scratch_root(ctx)
-    if root is None or not words or not ctx.root:
-        return False
-    # a link planted by the same line would redirect the write: no rule of the guard looks at `ln`, so the exception stands down here
-    if re.search(r"(?<![\w.-])(?:ln|mklink)\s|symlink|SymbolicLink|junction", ctx.root[0], re.I):
-        return False
-    for w in words:
-        if (w.raw or "").lstrip('"').startswith("$"):
-            p = child_scratch_word(w, ctx)
-        else:
-            p = None if w.dynamic or w.glob else w.text
-        if not p or not os.path.isabs(p) or ".." in re.split(r"[\\/]", p) or re.search(r"[*?\[\]{}~$`]", p):
-            return False
-        real = os.path.realpath(p)
-        if os.path.normcase(real) == os.path.normcase(root) or \
-                not os.path.normcase(real).startswith(os.path.normcase(root) + os.sep):
-            return False
-    return True
 
 
 def child_message_dir_problem(name, real, top, ctx):

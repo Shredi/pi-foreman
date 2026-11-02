@@ -7,7 +7,7 @@ import type { PiRoots } from "./orient.ts";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-const WORKTREE_LINE = "You run in your own worktree (your cwd). The plan and ledger above live in the foreman's checkout: read them there, never cd into or edit that checkout; the commit goes on your worktree's branch.";
+const WORKTREE_LINE = "You run in your own worktree (your cwd). The plan and ledger above live in the foreman's checkout: read them there, never cd into or edit that checkout, and commit on your worktree's branch. Write scratch and project files with the write and edit tools at absolute paths.";
 
 /** The block text; `plan` and `ledger` are absolute paths or null (only passed for a builder); `worktree`: the entry is launched into an isolation worktree. */
 export function rootsBlock(roots: PiRoots, files: { plan?: string | null; ledger?: string | null; worktree?: boolean } = {}): string {

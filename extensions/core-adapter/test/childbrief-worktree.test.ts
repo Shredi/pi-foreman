@@ -4,7 +4,7 @@ import { applyRootsBlock, rootsBlock } from "../childbrief.ts";
 import type { PiRoots } from "../orient.ts";
 
 const roots: PiRoots = { installRoot: "/pi", typesFile: "/pi/types.d.ts", npmRoot: "/npm", pkgRoot: "/pkg" } as unknown as PiRoots;
-const LINE = "You run in your own worktree (your cwd). The plan and ledger above live in the foreman's checkout: read them there, never cd into or edit that checkout; the commit goes on your worktree's branch.";
+const LINE = "You run in your own worktree (your cwd). The plan and ledger above live in the foreman's checkout: read them there, never cd into or edit that checkout, and commit on your worktree's branch. Write scratch and project files with the write and edit tools at absolute paths.";
 const files = { plan: "/f/.workflow/scratch/plan.md", ledger: "/f/.workflow/LEDGER.md" };
 
 test("rootsBlock: the worktree line only when asked", () => {

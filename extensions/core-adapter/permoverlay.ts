@@ -80,8 +80,6 @@ import { workspaceOf } from "./python.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead, gitReadWrites } from "./effects.ts";
-import { forEachChild, parse } from "unbash";
-import type { SyntaxNode } from "unbash";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
@@ -2619,79 +2617,13 @@ const STDIN_WRITE = /open\s*\([^)]*['"]\s*>>?|open\([^)]*,\s*(?:mode\s*=\s*)?(['
 function childStdinWriteDeny(command: string, ctx: MatchCtx): Decision | null {
   const heredoc = /<<(?!<)/.test(command);
   const stripped = command.replace(/\d*>&\d*-?|&>\s*\/dev\/null|\d*>>?\s*\/dev\/null/g, "");
-  // ceremony-fixes-2 item 4: a cat/tee heredoc write whose every target lies strictly inside the child's own scratch dir is not this deny;
-  // the dd, interpreter and inline clauses still run on the whole line
-  const catTee = heredoc && /\bcat\b[^|;&\n]*>|\btee\b/.test(stripped) && !scratchHeredocWrite(command, ctx);
-  const writer = catTee || (heredoc && /\bdd\b[^|;&\n]*\bof=/.test(stripped))
+  const writer = (heredoc && /\bcat\b[^|;&\n]*>|\btee\b|\bdd\b[^|;&\n]*\bof=/.test(stripped))
     || ((heredoc || /\|\s*(python[\d.]*|node|perl|ruby)\b|\b(python[\d.]*|node|perl|ruby)\s+-(\s|$)|<<</.test(command)) && /\b(python[\d.]*|node|perl|ruby)\b/.test(command) && STDIN_WRITE.test(command));
   const deny: Decision = { kind: "deny", reason: "pi-foreman: denied for a child (heredoc or stdin-script file write): never heredoc or stdin-script file writes; use the write or edit tool." };
   if (writer) return deny;
   if (INLINE_CODE.test(command) && STDIN_WRITE.test(command)) return deny;
   if (!INPLACE_EDIT.test(command)) return null;
   return scratchOnlyWriter(command, ctx) ? null : deny;
-}
-
-/** The number of heredoc and here-string operators unbash finds in the script; null when it does not parse or a heredoc is never closed. */
-function heredocOperators(command: string): number | null {
-  let script: ReturnType<typeof parse>;
-  try {
-    script = parse(command);
-  } catch {
-    return null;
-  }
-  if (script.errors?.length) return null;
-  let open = false;
-  const walk = (n: SyntaxNode): number => {
-    let k = n.type === "HereDoc" || n.type === "HereString" ? 1 : 0;
-    if (n.type === "HereDoc" && !(n as { closing?: unknown }).closing) open = true;
-    forEachChild(n, (c) => { k += walk(c); });
-    return k;
-  };
-  const k = walk(script as unknown as SyntaxNode);
-  return open ? null : k;
-}
-
-/**
- * True when the command writes through `cat` / `tee` with at least one output target and every target (`>` / `>>` redirects of a cat or tee unit,
- * the file arguments of a tee) is a literal path strictly inside the child's own scratch dir, lexically and through links (no `..`, no glob, no
- * expansion but a leading `$FOREMAN_SCRATCH` that the line does not bind). A line that plants a link (`ln`, `mklink`, a symlink call) gets no exception.
- */
-function scratchHeredocWrite(command: string, ctx: MatchCtx): boolean {
-  const scratch = scratchOf(ctx);
-  const cwd = ctx.cwd;
-  if (!scratch || !cwd || ctx.bound?.has("FOREMAN_SCRATCH") || /(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])/.test(command)) return false;
-  // a link planted by the same line would redirect the write: no other rule judges `ln`, so the exception stands down
-  if (/(?<![\w.-])(?:ln|mklink)\s|symlink|SymbolicLink|junction/i.test(command)) return false;
-  const fsx = defaults(ctx);
-  const realOf = (x: string): string => fsx.realpath(x) ?? (path.dirname(x) === x ? x : path.join(realOf(path.dirname(x)), path.basename(x)));
-  const realScratch = fsx.realpath(scratch) ?? scratch;
-  const strictlyIn = (w: string): boolean => {
-    if (!w || /(^|[\\/])\.\.([\\/]|$)|[*?\[\]{}~`]|\$(?!FOREMAN_SCRATCH\/)/.test(w)) return false;
-    const abs = path.resolve(cwd, expandWord(w, ctx));
-    // a dangling link realpaths to itself, yet the write would create its target
-    try { if (fs.lstatSync(abs).isSymbolicLink()) return false; } catch { /* absent: a new file */ }
-    return abs !== scratch && insideDir(scratch, abs, ctx) && realOf(abs) !== realScratch && insideDir(realScratch, realOf(abs), ctx);
-  };
-  // the targets come from the parser's segments; whatever it flags as opaque or cannot parse (an unterminated quote, `$((a<<b))`, `$'\''`)
-  // keeps the deny, and so does a heredoc operator that the segments do not account for
-  const segs = parseAst(command, { cwd, platform: ctx.platform, env: { FOREMAN_SCRATCH: scratch } });
-  const operators = heredocOperators(command);
-  if (operators === null || segs.length === 0 || operators !== segs.filter((sg) => sg.heredoc).length) return false;
-  let targets = 0;
-  for (const sg of segs) {
-    // the variable grammar stops at a heredoc line, so a plain `$FOREMAN_SCRATCH/x` word is unresolved there; any other `$` or backtick is not
-    const plain = (w: string): boolean => !/[$`]/.test(w) || /^"?\$FOREMAN_SCRATCH\/[^\s$`\\"']*"?$/.test(w);
-    const tolerated = sg.opaque === "unresolved_var" ? [...sg.argv, ...sg.redirects.map((r) => r.target)].every(plain) : sg.opaque === "writing_wrapper" && sg.program === "tee";
-    if (sg.opaque && !tolerated) return false;
-    if (sg.program !== "cat" && sg.program !== "tee") continue;
-    const files = sg.redirects.filter((r) => r.op !== "<" && r.op !== "dup" && r.target !== "/dev/null").map((r) => r.target);
-    if (sg.program === "tee") files.push(...sg.argv.filter((w) => !w.startsWith("-")));
-    for (const f of files.map(unquote)) {
-      if (!strictlyIn(f)) return false;
-      targets++;
-    }
-  }
-  return targets > 0;
 }
 
 const INPLACE_EDIT = /\b(perl|ruby)\b[^|;&\n]*(?<=\s)-(?![MIrCEFm])[A-Za-z0-9]*i[A-Za-z0-9.]*(?=\s|$)|\b\w*awk\b[^|;&\n]*\s-i\s*inplace\b/;

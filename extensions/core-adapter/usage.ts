@@ -21,7 +21,7 @@ import type { PriceTable, Rate } from "./cost.ts";
 
 export const BINDING_NS = "pi-foreman/1";
 export const BINDINGS_ENV = "PI_SUBAGENT_EXTENSION_BINDINGS";
-/** Env of a worktree child: the foreman's checkout (the launch binding's workspace); the floors and the child git guard fence it read-only. */
+/** Env of a worktree child: the foreman's checkout (the launch binding's workspace). */
 export const CHECKOUT_ENV = "FOREMAN_CHECKOUT";
 export const PARENT_SESSION_ENV = "PI_SUBAGENT_PARENT_SESSION";
 

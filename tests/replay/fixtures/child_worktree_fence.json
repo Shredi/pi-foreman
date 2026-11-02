@@ -1,19 +1,14 @@
 {
  "foreman": {
   "s1": [
-   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "worktree": true, "task": "[[replay:fence]] work in your worktree; the plan lives in the foreman checkout @ROOT@"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "worktree": true, "task": "[[replay:fence]] work in your worktree"}}]},
    {"text": "Launched."},
    {"text": "Builder reported."}
   ]
  },
  "builder": {
   "fence": [
-   {"tools": [{"name": "bash", "arguments": {"command": "cd @ROOT@; git add f; git commit -m 'fix: x'"}}]},
-   {"tools": [{"name": "bash", "arguments": {"command": "git -C @ROOT@ commit -m 'fix: x'"}}]},
-   {"tools": [{"name": "bash", "arguments": {"command": "echo x > @ROOT@/f"}}]},
-   {"tools": [{"name": "edit", "arguments": {"path": "@ROOT@/src/a.ts", "edits": [{"oldText": "alpha", "newText": "beta"}]}}]},
-   {"tools": [{"name": "bash", "arguments": {"command": "cat @ROOT@/.workflow/LEDGER-x.md"}}]},
-   {"tools": [{"name": "bash", "arguments": {"command": "echo own-ok > f; cat f"}}]},
+   {"tools": [{"name": "bash", "arguments": {"command": "printenv FOREMAN_CHECKOUT"}}]},
    {"text": "child: fence finished"}
   ]
  }

@@ -312,7 +312,5 @@ export function reviewGitFacts(cwd: string): { branch: string | null; head: stri
 
 /** The default floor environment: process facts and git lookups. index.ts passes richer roots when it wires the session in. */
 export function baseFloorEnv(cwd: string, extra: Partial<FloorEnv> = {}): FloorEnv {
-  // a worktree child's launch exports the foreman's checkout (index.ts, FOREMAN_CHECKOUT); the foreman-checkout floor reads it from here
-  const checkout = extra.child && process.env.FOREMAN_CHECKOUT ? { foremanRoot: process.env.FOREMAN_CHECKOUT } : {};
-  return { cwd, home: os.homedir(), platform: process.platform, writeRoots: [cwd, os.tmpdir(), "/tmp"], currentBranch, remoteHead, ...checkout, ...extra };
+  return { cwd, home: os.homedir(), platform: process.platform, writeRoots: [cwd, os.tmpdir(), "/tmp"], currentBranch, remoteHead, ...extra };
 }
