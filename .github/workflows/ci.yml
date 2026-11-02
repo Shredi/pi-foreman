@@ -101,7 +101,7 @@ jobs:
       - name: install bundled packages (pi-subagents, intercom)
         run: npm install --no-package-lock --no-audit --no-fund
       - name: install Pi (pinned)
-        run: npm install -g @earendil-works/pi-coding-agent@1.4.0
+        run: npm install -g @earendil-works/pi-coding-agent@1.5.0
       - name: replay scenarios (fake provider only, no secrets), one shard
         env:
           FOREMAN_REPLAY_REQUIRED: "1"
