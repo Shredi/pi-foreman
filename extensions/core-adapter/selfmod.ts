@@ -1,5 +1,5 @@
 // R41 self-modification rules (plan 2.5, ledger item 7): writes that change how Pi or pi-foreman itself runs are a dialog by rule, never
-// a default and never a model verdict. The gate runs this layer after the floors and before the defaults. An owner or round session is
+// a default and never a model verdict. The gate runs this layer after the floors and before the defaults. An owner or a session opened by another session is
 // asked; a child or headless session is denied with the rule name and what to report. Targets are judged lexically and through realpath
 // (a link placed in `.pi/scratch` that points at `.pi/settings.json` is the settings file), and by inode for a hard link.
 import * as fs from "node:fs";

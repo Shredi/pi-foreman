@@ -35,7 +35,7 @@ test("other tools are untouched", () => {
 });
 
 test("sender label: name, else id prefix; cross-machine marked; newest since the last user message", () => {
-  assert.equal(intercomSender({ from: { id: "abcdef123456", name: "planner" }, message: {} }), "planner");
+  assert.equal(intercomSender({ from: { id: "abcdef123456", name: "builder" }, message: {} }), "builder");
   assert.equal(intercomSender({ from: { id: "abcdef123456" }, message: {} }), "abcdef12");
   assert.match(intercomSender({ from: { name: "x" }, message: { crossMachine: { origin: {} } } }), /unverified cross-machine/);
   const im = (name: string) => ({ type: "custom_message", customType: "intercom_message", details: { from: { id: "id", name } } });

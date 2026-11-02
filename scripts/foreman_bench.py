@@ -436,7 +436,7 @@ def cost_stats(done, prices):
             "warm_share_usd": _stat(shares("read_usd", "write_usd")),
             "unpriced": sorted({m for c in cs for m in c["unpriced"]}),
             "tier_approx": any(c["tier_approx"] for c in cs), "retro_usd": _stat([c["retro_usd"] for c in cs]),
-            "autoreview_usd": _stat([c["by_role"].get("autoreview", 0.0) for c in with_log]) if with_log else None,
+            "autoreview_usd": _stat([c["by_role"].get("classifier", 0.0) + c["by_role"].get("autoreview", 0.0) for c in with_log]) if with_log else None,
             **({"by_role": {r: _stat([c["by_role"].get(r, 0.0) for c in with_log]) for r in roles}} if with_log else {})}
 
 
@@ -652,11 +652,16 @@ def _stat(values):
 
 
 def _role_totals(rec, role):
-    """(tokens, calls) of one role in the usage log's per-role buckets, (0, 0) when absent."""
+    """(tokens, calls) of one role in the usage log's per-role buckets, (0, 0) when absent.
+
+    r79: the permission classifier records as role "classifier"; the retired "autoreview" role of older logs counts with it.
+    """
     tok = n = 0
-    for u in ((rec.get("usage_by_role_model") or {}).get(role) or {}).values():
-        tok += sum(int(u.get(k) or 0) for k in TOKEN_KINDS)
-        n += int(u.get("n") or 0)
+    roles = ("classifier", "autoreview") if role == "autoreview" else (role,)
+    for r in roles:
+        for u in ((rec.get("usage_by_role_model") or {}).get(r) or {}).values():
+            tok += sum(int(u.get(k) or 0) for k in TOKEN_KINDS)
+            n += int(u.get("n") or 0)
     return tok, n
 
 

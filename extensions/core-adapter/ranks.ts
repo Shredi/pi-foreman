@@ -150,9 +150,6 @@ export function rolesOfModel(input: Json, model: string): string[] {
   return out;
 }
 
-/** Added to the rank-policy refusal of a planner launch (the role sits on the foreman's own rung). */
-export const PLANNER_OWN_RUNG_HINT = "The planner role sits on the foreman's own rung: plan it yourself (write .workflow/scratch/plan-<topic>.md) or map the role to a lower rung.";
-
 /** Every model a `subagent` call launches (after applyLaunchModels wrote them): top level and each entry. */
 export function launchedModels(input: Json): string[] {
   const out: string[] = [];

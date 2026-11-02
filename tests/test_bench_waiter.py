@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "bench"))
 import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import wait_session as ws  # noqa: E402
 
-ROLES = ["foreman", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"]
+ROLES = ["foreman", "explorer", "builder", "reviewer"]
 
 
 def row(**kw):
@@ -295,6 +295,17 @@ class ReviewDenyCountTest(unittest.TestCase):
             seen = {"asks": 1, "asks_denied": [{"method": "select", "title": "", "role": "builder"}]}  # the RPC driver saw it already
             ws.count_review_denies(agent, seen)
             self.assertEqual((seen["asks"], len(seen["asks_denied"])), (1, 1))
+
+    def test_headless_child_no_parent_deny_counts_as_denied_ask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            agent = Path(tmp) / "agent"
+            state = agent / "pi-foreman" / "state"
+            state.mkdir(parents=True)
+            line = {"event": "dialog", "guard": "gate", "cause": "danger", "kind": "child", "decision": "no-parent", "toolFamily": "bash", "role": "builder"}
+            (state / "trace-s1.jsonl").write_text(json.dumps(line) + "\n", "utf-8")
+            status = {"asks": 0, "asks_denied": []}
+            ws.count_review_denies(agent, status)
+            self.assertEqual((status["asks"], [d["method"] for d in status["asks_denied"]]), (1, ["gate_dialog"]))
 
 
 if __name__ == "__main__":

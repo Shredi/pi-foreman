@@ -33,7 +33,7 @@ const run = (role: string, tool: string, input: Record<string, unknown>, withLed
 };
 
 test("every child role reads the main checkout's ledger and .workflow by bash", { skip: !posix }, () => {
-  for (const role of ["builder", "reviewer", "scout", "planner"]) {
+  for (const role of ["builder", "reviewer", "scout", "explorer"]) {
     assert.equal(run(role, "bash", { command: `cat ${ledger}; git log --oneline -3` }), "pass", role);
     assert.equal(run(role, "bash", { command: `cat ${path.join(main, ".workflow", "notes.md")}` }), "pass", role);
     assert.equal(run(role, "bash", { command: `grep -n item ${path.join(main, ".workflow")}/LEDGER-*.md` }), "pass", role);

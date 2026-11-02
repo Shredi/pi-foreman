@@ -1,4 +1,4 @@
-// R14 ruling 10: the finalizer and reviewer roles list NO bg_run, bg_status or bg_logs while the pi-background-tasks add-on is not wired
+// R14 ruling 10: the reviewer role lists NO bg_run, bg_status or bg_logs while the pi-background-tasks add-on is not wired
 // conditionally. pi-subagents treats `tools` as a strict allowlist and refuses to start a child that names an unavailable tool ("Agent
 // 'reviewer' requested unavailable child tools: bg_run, bg_status, bg_logs"), so without the add-on every reviewer launch ended exit 1
 // with no verdict. The guard map still covers bg_run for sessions that have the add-on.
@@ -19,7 +19,7 @@ const frontmatter = (role: string): Record<string, string> => {
 };
 const defaults = JSON.parse(fs.readFileSync(path.join(pkgRoot, "config", "foreman.defaults.json"), "utf8")) as { roles: Record<string, { tools: string[] }> };
 
-for (const role of ["finalizer", "reviewer"]) {
+for (const role of ["reviewer"]) {
   test(`${role}: no bg_run, bg_status, bg_logs in the agent tools or the default role tools`, () => {
     const tools = frontmatter(role).tools.split(",").map((x) => x.trim());
     for (const b of BG) assert.equal(tools.includes(b), false, `${role}.md tools has no ${b}`);

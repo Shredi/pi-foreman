@@ -151,14 +151,14 @@ test("powershell is one opaque segment: raw-text floors, then no default", () =>
 test("own tools: exactly the enumeration is a default; every other tool falls through", () => {
   const listed = ["plan_mode_question", "plan_mode_complete", "ask_user_question", "foreman_ledger", "foreman_triage", "foreman_checkpoint", "foreman_dialogs", "foreman_wait", "contact_supervisor", "subagent_supervisor", "bg_wait", "bg_status", "bg_logs", "bg_kill", "pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_track", "pr_untrack", "git_status", "git_log", "git_diff_stat", "git_branch_state", "subagents_enable"];
   assert.deepEqual([...OWN_TOOLS].sort(), [...listed].sort());
-  for (const t of listed) assert.deepEqual(g(t, {}), { allow: true, rule: "default-own-tool" }, t);
+  for (const t of listed) assert.deepEqual(g(t, {}), { allow: true, rule: "default-own-tool", layer: "default" }, t); // r79: the result names its layer
   for (const t of ["foreman_bg", "bg_run", "foreman_move", "foreman_copy", "foreman_session_open", "pr_create", "subagent", "intercom", "codemode", "mcp", "skill", "read", "write", "edit", "unknown_tool"]) assert.equal(kind(g(t, {})), "pass", t);
   assert.equal(kind(g("foreman_bg", { command: "ls" })), "allow", "foreman_bg is judged on its command");
   assert.equal(kind(g("bg_run", { command: "sudo ls" })), "block");
 });
 
 test("fetch: GET and HEAD of a plain http(s) URL only", () => {
-  // ledger item 25 ruling (seq 49): no default for any fetch, every URL goes to the web-read review
+  // r79 items 3, 15: no tool default for any fetch; a plain GET passes webReadAllow in the gate's allow step, anything else is danger-net-write
   assert.equal(toolDefault("fetch", { url: "https://example.com/a" }), undefined);
   assert.equal(toolDefault("fetch", { url: "https://example.com/a", method: "head" }), undefined);
   for (const i of [{ url: "https://example.com", method: "POST" }, { url: "https://example.com", body: "x" }, { url: "https://example.com", headers: { Authorization: "x" } }, { url: "file:///etc/passwd" }, { method: "GET" }, {}]) assert.equal(toolDefault("fetch", i), undefined, JSON.stringify(i));

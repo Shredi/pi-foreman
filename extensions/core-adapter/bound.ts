@@ -11,11 +11,9 @@
 // tool result. Only `/ceremony` by the user resets it.
 //
 // D2 required steps (`ceremony.required.<tier>`): counted per session from the run-end events
-// of runs this session launched (single, chain and tasks launches): planner = a planner run that
-// completed; builder = a builder run that
-// completed (not failed, timed out or stopped); reviewer = a reviewer or senior-reviewer run
-// whose output has a verdict (PASS/FAIL, APPROVE/BLOCK); finalizer = a finalizer run that
-// completed.
+// of runs this session launched (single, chain and tasks launches): builder = a builder run that
+// completed (not failed, timed out or stopped); reviewer = a reviewer run whose output has a
+// verdict (PASS/FAIL).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { verdictOf, REVIEW_ROLES, type Verdict } from "./rounds.ts";
@@ -180,18 +178,18 @@ export function boundRefusal(toolName: string, target: string, t: Tally, b: Triv
 
 // ------------------------------------------------------------------ D2 required steps
 
-export type Step = "planner" | "builder" | "reviewer" | "finalizer";
+export type Step = "builder" | "reviewer";
 export type StepCounts = Record<Step, number>;
 
 export function emptySteps(): StepCounts {
-  return { planner: 0, builder: 0, reviewer: 0, finalizer: 0 };
+  return { builder: 0, reviewer: 0 };
 }
 
 /** `ceremony.required.<tier>` as a list of known steps (trivial: none). */
 export function requiredSteps(configured: unknown, tier: string): Step[] {
   const v = configured && typeof configured === "object" ? (configured as Record<string, unknown>)[tier] : undefined;
   if (!Array.isArray(v)) return [];
-  return [...new Set(v.filter((x): x is Step => x === "planner" || x === "builder" || x === "reviewer" || x === "finalizer"))];
+  return [...new Set(v.filter((x): x is Step => x === "builder" || x === "reviewer"))];
 }
 
 export function missingSteps(counts: StepCounts, required: Step[]): Step[] {
@@ -210,15 +208,13 @@ const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.
 export function stepsOfRunEnd(data: unknown): Step[] {
   const out: Step[] = [];
   for (const { agent, verdict } of completedChildren(data)) {
-    if (agent === "planner") out.push("planner");
-    else if (agent === "builder") out.push("builder");
-    else if (agent === "finalizer") out.push("finalizer");
+    if (agent === "builder") out.push("builder");
     else if (REVIEW_ROLES.includes(agent) && verdict !== null) out.push("reviewer");
   }
   return out;
 }
 
-/** Verdicts (null = none parseable) of the completed reviewer / senior-reviewer children of a run-end event, in order. A builder child revises the tree: only the verdicts after the last one count (the last verdict on the current tree wins). */
+/** Verdicts (null = none parseable) of the completed reviewer children of a run-end event, in order. A builder child revises the tree: only the verdicts after the last one count (the last verdict on the current tree wins). */
 export function reviewVerdictsOfRunEnd(data: unknown): (Verdict | null)[] {
   const out: (Verdict | null)[] = [];
   for (const c of completedChildren(data)) {
@@ -244,10 +240,10 @@ function completedChildren(data: unknown): { agent: string; verdict: Verdict | n
 
 // ------------------------------------------------------------------ reviewer step (ceremony.reviewGate)
 //
-// "pass" (default): the reviewer step holds only while the latest reviewer / senior-reviewer
-// verdict is PASS (APPROVE) and nothing was revised since. A FAIL/BLOCK or a review without a
+// "pass" (default): the reviewer step holds only while the latest reviewer
+// verdict is PASS and nothing was revised since. A FAIL or a review without a
 // parseable verdict clears it; a revision after any verdict (a builder launch or a foreman
-// project-file edit; not a finalizer, explorer or scratchpad write) re-opens it.
+// project-file edit; not an explorer or scratchpad write) re-opens it.
 // "verdict": any verdict counts, as before (the step counter in StepCounts).
 
 export type ReviewGateMode = "pass" | "verdict";
@@ -311,7 +307,7 @@ export function reviewHint(g: ReviewGate): string {
   return "";
 }
 
-const STEP_TEXT: Record<Step, string> = { planner: "a planner run must complete", builder: "a builder run must complete", reviewer: "a reviewer must pass", finalizer: "a finalizer run must complete" };
+const STEP_TEXT: Record<Step, string> = { builder: "a builder run must complete", reviewer: "a reviewer must pass" };
 
 /** The finish steps `ceremony.required[tier]` asks for, stated up front ("" at a tier without any). */
 export function finishLine(configured: unknown, tier: string): string {

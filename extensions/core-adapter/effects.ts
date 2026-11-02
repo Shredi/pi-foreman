@@ -28,6 +28,7 @@ import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
 import { netReadSegment } from "./netread.ts";
+import { foldCase } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
 /** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
@@ -120,7 +121,7 @@ export function readRootsOf(roots: unknown, platform: string = process.platform,
 
 const plat = (c: EffectCtx): string => c.platform ?? process.platform;
 const px = (c: EffectCtx): path.PlatformPath => (plat(c) === "win32" ? path.win32 : path.posix);
-const fold = (c: EffectCtx, s: string): string => (plat(c) === "win32" || plat(c) === "darwin" ? s.toLowerCase() : s);
+const fold = (c: EffectCtx, s: string): string => foldCase(plat(c), s);
 
 /** `p` lies inside `base` (equal allowed unless `strict`), same drive. */
 function within(c: EffectCtx, base: string, p: string, strict: boolean): boolean {

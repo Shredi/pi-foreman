@@ -13,6 +13,9 @@ export type Block = { block?: boolean; reason?: string } | undefined;
 
 let rigs = 0;
 
+/** A symbol key on `opts.ctx` whose value the rig writes as the user's permissions.json (carried by the ctx object so the callers that only pass `.ctx` of reviewAllowOpts() get it). */
+export const RIG_PERMISSIONS = Symbol.for("r11rig.permissions");
+
 /** `opts.ctx`: fields that replace the fake ctx's (ui, modelRegistry, ...); `opts.config`: top-level keys merged into the user foreman.json. */
 export async function r11Rig(t: { after(fn: () => void | Promise<void>): void }, ceremony: Record<string, unknown> = {}, opts: { ctx?: Record<string, unknown>; config?: Record<string, unknown>; child?: boolean; deps?: Record<string, unknown>; piExtra?: Record<string, unknown>; inTmp?: boolean } = {}) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID", "HERDR_PANE_ID", "HERDR_ENV"];
@@ -40,14 +43,21 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   delete process.env.HERDR_PANE_ID; // the presence file would name the runner's pane
   delete process.env.HERDR_ENV;
-  const roles = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+  const roles = ["explorer", "builder", "reviewer"];
   const l2 = {
     providers: { fake: { roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach", ...ceremony },
+    // r79 item 11: a rig that opens an owner dialog needs presence off (the probe's detached child keeps no event loop alive, the dialog hangs otherwise)
+    presence: { enabled: false },
     ...opts.config,
   };
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify(l2));
+  const perms = (opts.ctx as Record<symbol, unknown> | undefined)?.[RIG_PERMISSIONS];
+  if (perms) {
+    fs.mkdirSync(path.join(agentDir, "pi-foreman"), { recursive: true });
+    fs.writeFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), JSON.stringify(perms));
+  }
   const handlers = new Map<string, Handler>();
   const inputHandlers: Handler[] = [];
   const channels = new Map<string, (d: unknown) => void>();
@@ -64,8 +74,12 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     getActiveTools: () => [] as string[],
     getAllTools: () => [{ name: "bash" }, { name: "subagent" }],
     setActiveTools: () => undefined,
-    setModel: async () => true,
+    setModel: async (m: unknown) => {
+      (ctx as { model: unknown }).model = m;
+      return true;
+    },
     setThinkingLevel: () => undefined,
+    getThinkingLevel: () => "high",
     sendMessage: () => undefined,
     ...opts.piExtra,
   };
@@ -144,6 +158,10 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     turnStart: () => handlers.get("turn_start")!({}, ctx),
     /** session_start again (a reload): the round-state file is restored. */
     restart: () => handlers.get("session_start")!({ reason: "reload" }, ctx),
+    /** The live model changes the way a /model pick does (ctx.model only; fire `model_select` for the event). */
+    setModel: (m: { provider: string; id: string }) => void ((ctx as { model: unknown }).model = m),
+    /** A notice turn (a child completion by default) as `before_agent_start` sees it. */
+    noticeTurn: (customType = "subagent-notify") => handlers.get("before_agent_start")!({ messageType: "custom", message: { customType }, systemPrompt: "", systemPromptOptions: { sections: {} } }, ctx),
     /** An input event of any source. */
     input: (source: string, text: string) => handlers.get("input")!({ source, text }, ctx),
     ownerPrompt: (text = "next") => handlers.get("input")!({ source: "interactive", text }, ctx),
@@ -173,16 +191,13 @@ export function gateOutcome(recs: Record<string, unknown>[]): string {
   return last ? `${last.decision}:${last.rule}` : "pass";
 }
 
-/** R41: r11Rig options whose gate review always allows (policy entry read-only-inspection), for rigs whose bash calls have no default allow. */
+/**
+ * r79 item 11: r11Rig options of a rig whose bash calls need no review. Under the rules-first gate an unmatched call that is not of the dangerous
+ * class runs in mode auto with no model call, so the only option is the presence probe off (an owner dialog awaits the probe's detached child,
+ * which keeps no event loop alive in a bare test process); the name stays for the rigs that already pass them. Group launches (tasks, chain)
+ * and MCP tool calls are dangerous-class calls, so the user permissions.json allows `subagent` and `mcp__*` by rule: such rigs test what
+ * comes after the gate.
+ */
 export function reviewAllowOpts(): { ctx: Record<string, unknown>; config: Record<string, unknown> } {
-  return {
-    ctx: {
-      modelRegistry: {
-        find: () => ({ id: "m" }),
-        getProviderAuthStatus: () => ({ configured: false }),
-        complete: async () => ({ content: [{ type: "text", text: JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "stub" }) }], stopReason: "stop", usage: { input: 1, output: 1 } }),
-      },
-    },
-    config: { providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `fake/${r}` }])) } } },
-  };
+  return { ctx: { [RIG_PERMISSIONS]: { allow: ["subagent", "mcp__*"] } }, config: { presence: { enabled: false } } };
 }

@@ -1,4 +1,5 @@
-"""A child's policy ask goes to its parent (plan Addendum 5): the fake reviewer asks, the child's gate writes ask.md in the
+"""A child's policy ask goes to its parent (plan Addendum 5): the child's `pip install requests` is the dangerous class `danger-install`, the
+classifier (a fake model against the rig's one-sentence whitelist) escalates, the child's gate writes ask.md in the
 parent-owned ask dir, the parent's pane shows one dialog naming the child, and the answer decides the child's call.
 Same prerequisites and skips as test_replay.py."""
 from __future__ import annotations
@@ -26,12 +27,13 @@ class TestChildAsk(ReplayCase):
         if gate:
             config["gate"] = gate
         rig = self.rig("child-ask-" + kind, load_fixture("child_ask"), permissions="baseline", config=config)
+        self.user_permissions(rig, {"classifier": {"allow": ["Installing a package from the registry is allowed."]}})
         pi = rig.start()
         pi.prompt("[[replay:f1]] go", timeout=60, answers=[ALLOW])
         seen = []
 
         def answer(rec):
-            # the launch itself is reviewed too (the fake reviewer asks for everything): allow it; answer the child's ask as the case says
+            # the owner's role launch is a default and opens no dialog; answer the child's ask as the case says (anything else is allowed)
             if is_child_ask(rec):
                 seen.append(rec)
                 return answer_child
@@ -47,7 +49,8 @@ class TestChildAsk(ReplayCase):
         seen, dialogs, notice, _ = self.run_child("ask", ALLOW)
         self.assertEqual(len(seen), 1, "one dialog for the child's ask")
         self.assertIn("builder", seen[0]["title"])
-        self.assertIn("uname -s", seen[0]["title"])
+        self.assertIn("pip install requests", seen[0]["title"])
+        self.assertIn("cause: danger-install", seen[0]["title"])
         self.assertIn("parent-allow", [d.get("decision") for d in dialogs])
         self.assertIn("builder child finished", notice)
 
@@ -61,9 +64,11 @@ class TestChildAsk(ReplayCase):
         self.assertEqual(len(seen), 1)
         self.assertIn("parent-deny", [d.get("decision") for d in dialogs])
 
-    def test_invalid_verdict_still_denies_and_never_reaches_the_parent(self):
-        seen, dialogs, _, events = self.run_child("invalid", ALLOW)
-        self.assertEqual(seen, [], "an unreachable review is a deny for a child, not an ask to the parent")
+    def test_invalid_verdict_escalates_to_the_parent(self):
+        # r79: an unusable classifier reply (a verdict citing no whitelist entry) escalates, so the child's ask reaches the parent like any other
+        seen, dialogs, _, events = self.run_child("invalid", {"value": "deny with reason"})
+        self.assertEqual(len(seen), 1, "an unusable classifier reply is an ask to the parent")
+        self.assertIn("parent-deny", [d.get("decision") for d in dialogs])
         self.assertNotIn("parent-allow", [d.get("decision") for d in dialogs])
 
     def test_child_ask_deny_keeps_the_old_deny_without_a_parent_dialog(self):

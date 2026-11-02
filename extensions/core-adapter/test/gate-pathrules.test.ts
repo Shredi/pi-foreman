@@ -116,8 +116,9 @@ test("Windows paths: drive letters, both separators, case", () => {
 test("the gate: a secret path is a floor before the path rules; an ordinary read is a default; an unknown path falls through", () => {
   const env: FloorEnv = { cwd: wt, home: "/pf41/home", agentDir: AGENT, platform: process.platform };
   const g = (tool: string, input: Record<string, unknown>) => gateDecide(tool, input, wt, { env: () => env, roots: () => roots() });
-  assert.deepEqual(g("read", { path: `${AGENT}/auth.json` }), { block: true, rule: "floor-secret-path", reason: (g("read", { path: `${AGENT}/auth.json` }) as { reason: string }).reason });
-  assert.deepEqual(g("read", { path: "src/a.ts" }), { allow: true, rule: "path-read-worktree" });
+  // r79 item 3: a floor result names its layer
+  assert.deepEqual(g("read", { path: `${AGENT}/auth.json` }), { block: true, rule: "floor-secret-path", layer: "floor", reason: (g("read", { path: `${AGENT}/auth.json` }) as { reason: string }).reason });
+  assert.deepEqual(g("read", { path: "src/a.ts" }), { allow: true, rule: "path-read-worktree", layer: "default" });
   assert.equal(g("read", { path: "/etc/hosts" }), undefined);
   assert.equal(gateDecide("read", { path: "src/a.ts" }, wt, { env: () => env }), undefined, "without roots the gate applies floors only");
 });

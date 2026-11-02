@@ -1,7 +1,6 @@
 // Pressure gate on child launches through the real adapter hooks (index.ts tool_call): pressure file injected, sampler and clock faked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { reviewAllowOpts } from "./_r11rig.ts";
 import * as fs from "node:fs";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import * as os from "node:os";
@@ -15,7 +14,7 @@ type Tool = { name: string; execute: (...a: unknown[]) => Promise<unknown> };
 const NOW = Date.parse("2026-03-01T10:00:00Z");
 let rigs = 0;
 const iso = (ms: number): string => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
-const ROLES = ["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"];
+const ROLES = ["explorer", "builder", "reviewer"];
 
 
 function tmp(t: { after(fn: () => void): void }, prefix: string): string {
@@ -64,11 +63,14 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
   delete process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
   const l2 = {
-    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/senior-reviewer" } } : {}) }])) } },
+    providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}`, ...(o.strong && r === "builder" ? { strong: { model: "fake/reviewer-strong" } } : {}) }])) } },
     trace: { enabled: true },
     ceremony: { launchWait: "detach" },
+    presence: { enabled: false }, // r79 item 11: see reviewAllowOpts in _r11rig.ts
   };
   fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify(l2));
+  fs.mkdirSync(path.join(agentDir, "pi-foreman"), { recursive: true });
+  fs.writeFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), JSON.stringify({ allow: ["subagent"] })); // a tasks call is dangerous-class
   const handlers = new Map<string, Handler>();
   const tools = new Map<string, Tool>();
   const wakes: { customType: string; content: string }[] = [];
@@ -101,7 +103,7 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
     hasUI: true,
     isProjectTrusted: () => false,
     isIdle: () => true,
-    modelRegistry: reviewAllowOpts().ctx.modelRegistry,
+    modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }) },
     ui: { notify: () => undefined, confirm: async () => false, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
   };
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
@@ -241,7 +243,7 @@ test("high: a RUNG_UP strong relaunch keeps the strong rung like ok (pressure de
     const relaunch: Record<string, unknown> = { agent: "builder", task: "continue item 1", model: "strong" };
     await a.assistant(["b2"], () => relaunch);
     assert.equal(await a.launch("b2", relaunch), undefined, level);
-    assert.equal(relaunch.model, "fake/senior-reviewer", level);
+    assert.equal(relaunch.model, "fake/reviewer-strong", level);
     assert.equal(events(a, "rung_up").length, 1, level);
     assert.deepEqual(events(a, "climb_suppressed"), [], level);
     assert.match(String(relaunch.task), /rung-up handoff/, level);

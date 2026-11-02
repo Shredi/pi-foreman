@@ -236,6 +236,13 @@ def in_use_by(state, sid, path):
         cwd = d.get("cwd")
         if isinstance(cwd, str) and cwd and safe_ops.is_inside(os.path.realpath(path), os.path.realpath(cwd), True):
             return str(d.get("sessionId"))
+    # a session opened by `foreman session open` (its registry entry) still holds its cwd until the entry is closed
+    reg = read_json(os.path.join(state, "sessions.json"))
+    for s in (reg.get("sessions") if isinstance(reg, dict) else None) or []:
+        cwd = s.get("cwd") if isinstance(s, dict) else None
+        if (isinstance(cwd, str) and cwd and s.get("status") in LIVE_REGISTRY
+                and safe_ops.is_inside(os.path.realpath(path), os.path.realpath(cwd), True)):
+            return str(s.get("child") or s.get("label"))
     return None
 
 

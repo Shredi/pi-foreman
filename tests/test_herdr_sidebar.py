@@ -2061,7 +2061,7 @@ class StateCellTest(unittest.TestCase):
         self.assertEqual(sidebar._reason(tnode("s", "l", "x", waits=[{"kind": "pr"}]), {}), "task")
         self.assertEqual(sidebar._reason(tnode("s", "l", "x", waits=[{"kind": "file", "bg": True}]), {}), "task")
         self.assertEqual(sidebar._reason(tnode("s", "l", "x", waits=[{"kind": "pid"}]), {}), "wait")
-        self.assertEqual(sidebar._reason(tnode("s", "l", "x", children=[trun("r", "senior-reviewer")]), {}), "review")
+        self.assertEqual(sidebar._reason(tnode("s", "l", "x", children=[trun("r", "reviewer")]), {}), "review")
         self.assertIsNone(sidebar._reason(tnode("s", "l", "x", children=[trun("r", "builder", state="done", sym="done")]), {}))
 
     def test_precedence_ask_review_agent_task_wait(self):

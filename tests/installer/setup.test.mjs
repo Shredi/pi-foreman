@@ -101,6 +101,7 @@ test("first run backs up, writes the managed block, keeps user keys in order", (
   assert.equal(s.theme, "dark");
   assert.equal(s.subagents.agentOverrides.builder.tools.includes("edit"), true);
   assert.equal(s.subagents.forceTopLevelAsync, true);
+  assert.deepEqual(s.subagents.agentOverrides.reviewer.skills, ["security-review"]);
   assert.ok(s.packages.includes("npm:some-provider@1.2.3"));
   assert.ok(s.packages.includes(FOREMAN));
   const managed = JSON.parse(fs.readFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), "utf8"));
@@ -338,16 +339,36 @@ test("setup migrates old permission keys and the rendered config with backups; a
   assert.deepEqual(snapshot(env.base), before);
   const r = run(env, []);
   assert.equal(r.code, 0, r.out);
-  assert.match(r.out, /safety\.permissions\.autoReview\.rulesFile: moved to gate\.policy\.userFile/);
+  assert.match(r.out, /safety\.permissions\.autoReview\.rulesFile: removed/); // r79 item 9: not moved to gate.policy.userFile any more
   assert.match(r.out, /safety\.permissions\.deny: removed/);
   assert.equal(fs.existsSync(permFile(env)), false);
   assert.ok(fs.existsSync(path.join(migrationDir(env), "foreman.json.pre-gate")));
   assert.equal(fs.readFileSync(path.join(migrationDir(env), "permission-system-config.json"), "utf8"), '{"permission": {"*": "ask"}}\n');
   const cfg = JSON.parse(fs.readFileSync(foreman, "utf8"));
   assert.equal(cfg.safety?.permissions, undefined);
-  assert.equal(cfg.gate.policy.userFile, "rules.md");
+  assert.equal(cfg.gate, undefined);
   const again = run(env, []);
   assert.doesNotMatch(again.out, /gate migration/);
+});
+
+// r79 item 9: one line per removed policy key; a leftover user policy.md is named, never deleted
+test("setup prints one removal line per policy key and names a leftover policy.md", () => {
+  const env = fresh();
+  const foreman = path.join(env.agentDir, "foreman.json");
+  fs.writeFileSync(foreman, JSON.stringify({ version: 1, providers: {}, gate: { policy: { userFile: "mine.md" } }, safety: { policy: { files: ["a.md"] } } }));
+  const policy = path.join(env.agentDir, "pi-foreman", "policy.md");
+  fs.mkdirSync(path.dirname(policy), { recursive: true });
+  fs.writeFileSync(policy, "old prose\n");
+  const r = run(env, []);
+  assert.equal(r.code, 0, r.out);
+  const lines = r.out.split("\n");
+  assert.equal(lines.filter((l) => /gate\.policy\.userFile: removed \(policy files are no longer read; rules and the whitelist live in permissions\.json\)/.test(l)).length, 1, r.out);
+  assert.equal(lines.filter((l) => /safety\.policy\.files: removed \(policy files are no longer read; rules and the whitelist live in permissions\.json\)/.test(l)).length, 1, r.out);
+  assert.equal(lines.filter((l) => l.includes("policy.md is no longer read; move its entries into permissions.json classifier.allow/deny")).length, 1, r.out);
+  assert.equal(fs.readFileSync(policy, "utf8"), "old prose\n");
+  const cfg = JSON.parse(fs.readFileSync(foreman, "utf8"));
+  assert.equal(cfg.gate, undefined);
+  assert.equal(cfg.safety, undefined);
 });
 
 test("--remove does not migrate or touch the rendered permission config", () => {
@@ -911,7 +932,7 @@ test("compaction: --dry-run prints exactly one line per key for every branch and
         roles: {
           builder: { model: "tp/a", strong: { model: "tp/gone" } },
           reviewer: { model: "tp/rm", strong: { model: "tp/bm" } },
-          planner: { model: "tp/kept" },
+          explorer: { model: "tp/kept" },
         },
       },
     },
@@ -927,7 +948,7 @@ test("compaction: --dry-run prints exactly one line per key for every branch and
         roles: {
           builder: { model: "tp/a", strong: { model: "tp/new" } },
           reviewer: { model: "tp/bm", strong: { model: "tp/kept" } },
-          planner: { model: "tp/small", strong: { model: "tp/missing" } },
+          explorer: { model: "tp/small", strong: { model: "tp/missing" } },
         },
       },
     },
@@ -1032,7 +1053,7 @@ test("compaction: a declared key on a provider without a registry file spawns no
 test("compaction: the listing's context cell is read like Pi's formatTokenCount", () => {
   const env = fresh();
   seed(env);
-  writeCfg(env, { ...CAP150, providers: { xb: { roles: { builder: { model: "xb/k-tenths", strong: { model: "xb/k-top" } }, reviewer: { model: "xb/m-int" }, planner: { model: "xb/bare", strong: { model: "xb/k-small" } } } } } });
+  writeCfg(env, { ...CAP150, providers: { xb: { roles: { builder: { model: "xb/k-tenths", strong: { model: "xb/k-top" } }, reviewer: { model: "xb/m-int" }, explorer: { model: "xb/bare", strong: { model: "xb/k-small" } } } } } });
   const rows = [["xb", "k-tenths", "262.1K"], ["xb", "k-small", "1.4K"], ["xb", "k-top", "1000.0K"], ["xb", "bare", "512"], ["xb", "m-int", "1M"]];
   const r = run(env, [], listing(env, rows));
   assert.equal(r.code, 0, r.out);

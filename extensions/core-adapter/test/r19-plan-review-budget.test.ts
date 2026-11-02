@@ -32,13 +32,6 @@ test("plan_review_pass_keeps_the_normal_read_budget", async (t) => {
   assert.equal(a.events("recheck_budget").filter((r) => r.action === "start").length, 0);
 });
 
-test("senior_reviewer_plan_review_pass_keeps_the_normal_read_budget", async (t) => {
-  const a = await r11Rig(t);
-  await passed(a, "senior-reviewer", "[plan-review] review plan-x.md", "run-senior");
-  assert.equal(await fourth(a), undefined);
-  assert.equal(a.events("recheck_budget").filter((r) => r.action === "start").length, 0);
-});
-
 test("code_review_pass_still_starts_the_recheck_window", async (t) => {
   const a = await r11Rig(t);
   await passed(a, "reviewer", "review items 1", "run-code");
