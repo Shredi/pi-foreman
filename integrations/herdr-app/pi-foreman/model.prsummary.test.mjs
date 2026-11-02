@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { prSummary, prState, enrichPrs, prDotState } from "./model.js";
+import { prSummary, prState, enrichPrs, prDotState, glyphSpec } from "./model.js";
 
 const pr = (number, checks, extra = {}) => ({ number, checks, ...extra });
 
@@ -21,6 +21,23 @@ test("all green only when every counted chip is green", () => {
   assert.equal(prSummary([pr(1, ["ok"]), pr(2, ["ok", "ok"])]), "2 PRs · all green");
 });
 
+test("no CI data on any counted PR: just the count, no all green", () => {
+  assert.equal(prSummary([pr(1, [])]), "1 PR");
+  assert.equal(prSummary([pr(1, []), pr(2, [])]), "2 PRs");
+  assert.equal(prSummary([pr(1, []), pr(2, [], { state: "merged" })]), "1 PR");
+});
+
+test("mixed with no-data PRs keeps the counts and never says all green", () => {
+  assert.equal(prSummary([pr(1, ["fail"]), pr(2, [])]), "2 PRs · 1 failing");
+  assert.equal(prSummary([pr(1, ["run"]), pr(2, [])]), "2 PRs · 1 pending");
+  assert.equal(prSummary([pr(1, ["ok"]), pr(2, [])]), "2 PRs");
+});
+
+test("the agents spinner is the working spinner: same fill, no slower speed", () => {
+  assert.deepEqual(glyphSpec("agents"), glyphSpec("working"));
+  assert.equal("ms" in glyphSpec("agents"), false);
+});
+
 test("the summary state is the chip's: prState follows prDotState", () => {
   for (const checks of [["fail"], ["ok", "run"], ["run"], ["ok"], []]) {
     const d = prDotState(pr(1, checks));
@@ -35,6 +52,6 @@ test("a PR whose checks and state come from its feed twin is summed as drawn", (
     { number: 66, url: "https://github.com/o/r/pull/66", checks: ["fail"], jobs: [{ name: "ci", state: "fail" }] },
     { number: 56, url: "https://github.com/o/r/pull/56", state: "merged" },
   ];
-  assert.equal(prSummary(bare), "2 PRs · all green"); // unenriched: the old mismatch
+  assert.equal(prSummary(bare), "2 PRs"); // unenriched: no CI data known
   assert.equal(prSummary(enrichPrs(bare, feed)), "1 PR · 1 failing");
 });

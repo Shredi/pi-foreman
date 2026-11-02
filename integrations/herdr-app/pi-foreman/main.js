@@ -312,7 +312,7 @@ export default class ForemanAgents extends View {
     const active = item.address !== undefined && item.address === this.shown;
     const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
     return row
-      .when(active, (el) => el.bg(t.raised).rounded(6))
+      .when(active && root, (el) => el.bg(t.raised).rounded(6)) // a card carries the selection itself (see node)
       .child(item.address === undefined ? name : name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }))))
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
@@ -336,7 +336,9 @@ export default class ForemanAgents extends View {
     const agents = item.children.filter((c) => c.type !== "session");
     const sessions = item.children.filter((c) => c.type === "session");
     const after = open && sessions.length > 0; // the line leaves the card at the bottom
-    const card = v_flex().id(`card:${item.id}`).flex_none().mx(4).mt(2).mb(after ? 0 : 2).pt(2).pb(after ? 0 : 2).rounded(6).border(1).border_color(t.border)
+    const active = item.address !== undefined && item.address === this.shown;
+    const card = v_flex().id(`card:${item.id}`).flex_none().mx(4).mt(2).mb(after ? 0 : 2).pt(2).pb(after ? 0 : 2).rounded(6).border(1).border_color(active ? t.working : t.border)
+      .when(active, (el) => el.bg(t.raised))
       .child(this.nodeRow(t, item, ind, x)).children(this.extras(t, item, ind, x))
       .when(open && agents.length > 0, (el) => el.child(v_flex().flex_none().ml(ind + 2).children(agents.map((c, i) => this.link(t, c, !after && i === agents.length - 1)))));
     return node.child(card)

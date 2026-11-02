@@ -301,7 +301,7 @@ const GLYPHS = {
   blocked: { kind: "pill", tone: "blocked", hollow: false },
   idle: { kind: "dot", tone: "idle", hollow: true },
   done: { kind: "dot", tone: "done", hollow: false },
-  agents: { kind: "spin", tone: "working", hollow: true, ms: 1800 },
+  agents: { kind: "spin", tone: "working", hollow: false },
   bg: { kind: "square", tone: "working", hollow: false },
   waiting: { kind: "dot", tone: "muted", hollow: true },
 };
@@ -374,14 +374,17 @@ export function sortPrs(prs) {
     .slice().sort((a, b) => urgency(a) - urgency(b) || num(b.number) - num(a.number));
 }
 
-/** "N PRs · k failing · m pending", or "N PRs · all green"; "" for none. Merged and closed PRs are not counted. */
+/** "N PRs · k failing · m pending", "N PRs · all green" (every PR ok), or just "N PRs" (no CI data); "" for none. Merged and closed PRs are not counted. */
 export function prSummary(prs) {
   const list = (Array.isArray(prs) ? prs.filter(isObj) : []).filter((p) => p.state !== "merged" && p.state !== "closed");
   if (!list.length) return "";
+  const noun = `${list.length} PR${list.length === 1 ? "" : "s"}`;
+  if (list.every((p) => prState(p) === "none")) return noun;
   const failing = list.filter((p) => urgency(p) === 0).length;
   const pending = list.filter((p) => urgency(p) === 1).length;
   const parts = [failing && `${failing} failing`, pending && `${pending} pending`].filter(Boolean);
-  return `${list.length} PR${list.length === 1 ? "" : "s"} · ${parts.join(" · ") || "all green"}`;
+  const rest = parts.length ? parts : list.every((p) => prState(p) === "ok") ? ["all green"] : [];
+  return [noun, ...rest].join(" · ");
 }
 
 /** Up to INLINE_MAX chips sit on a session row; more go on a line below. */

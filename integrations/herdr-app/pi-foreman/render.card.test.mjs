@@ -12,8 +12,8 @@ const dots = (...ns) => ns.map((n) => ({ n, state: n % 2 ? "fail" : "run", src: 
 const wait = (note) => ({ kind: "ci", note, age_s: 29 });
 
 // One paned agent t5 whose joined radar node is `root`.
-function render(root) {
-  stubs.world.agents = [{ address: "t5", pane: "p1", space: 1, space_name: "s", status: "idle", program: { name: "pi" } }];
+function render(root, focused = false) {
+  stubs.world.agents = [{ address: "t5", pane: "p1", space: 1, space_name: "s", status: "idle", focused, program: { name: "pi" } }];
   stubs.world.terminals = [{ address: "t5", state: "live", foreground: { pid: 7 } }];
   const mod = Object.create(Mod.prototype);
   mod.changed = {}; mod.feed = []; mod.folded = new Set();
@@ -115,6 +115,27 @@ test("(f) agents only: the last agent gets the elbow and there is no stub below 
   assert.ok(inCard.some((id) => /^conn:elbow:.*\/a0$/.test(id)));
   assert.ok(inCard.some((id) => /^rail:.*\/row$/.test(id)), "rail from the chevron");
   assert.equal(byId(root, "rail:").filter((e) => e.props.id.endsWith("/s0/gap")).length, 0);
+});
+
+test("(g) the selection sits on the card (bg + accent border), not on its header row; the root keeps its row fill", () => {
+  const mod = Object.create(Mod.prototype);
+  mod.folded = new Set(); mod.changed = {}; mod.radar = new Map(); mod.busy = new Map(); mod.recs = new Map(); mod.childPi = new Set();
+  const kid = sessionTree(top([sess("k", "kid", { hcTerminal: "t9" }, [run("b", "builder")])])).children[0];
+  const t = stubs.theme();
+  kid.address = "t9";
+  const cardOf = (shown) => { mod.shown = shown; return walk(mod.node(t, kid, 0)).find((e) => e.props.id === `card:${kid.id}`); };
+  const on = cardOf(kid.address);
+  assert.equal(on.props.bg, t.raised);
+  assert.equal(on.props.border_color, t.working);
+  assert.equal(on.props.rounded, 6);
+  assert.equal(walk(on).find((e) => e.props.id === `row:${kid.id}`).props.bg, undefined, "no fill on the header row");
+  const off = cardOf("other");
+  assert.equal(off.props.bg, undefined);
+  assert.equal(off.props.border_color, t.border);
+  // the root is uncarded: its row keeps the fill
+  const root = render(top([]), true);
+  assert.equal(byId(root, "agent:t5")[0].props.bg, t.selected);
+  assert.equal(byId(root, "card:").length, 0);
 });
 
 test("status lines get an icon and a dot-separated age", () => {
