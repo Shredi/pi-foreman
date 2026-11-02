@@ -1,5 +1,5 @@
 // Fake `pi` for installer tests. Run through Node (PI_FOREMAN_PI_BIN).
-// Records every call as one JSON line in $FAKE_PI_LOG; `--version` answers $FAKE_PI_VERSION (default 1.4.0).
+// Records every call as one JSON line in $FAKE_PI_LOG; `--version` answers $FAKE_PI_VERSION (default 1.5.0).
 // `--list-models` answers from the file named by $FAKE_PI_LIST_MODELS.
 // `install` / `remove` edit `packages` in settings.json the way Pi does (local paths are stored
 // relative to the settings directory).
@@ -11,7 +11,7 @@ if (process.env.FAKE_PI_LOG) {
   fs.appendFileSync(process.env.FAKE_PI_LOG, `${JSON.stringify({ args, agentDir: process.env.PI_CODING_AGENT_DIR })}\n`);
 }
 if (args[0] === "--version") {
-  console.log(process.env.FAKE_PI_VERSION || "1.4.0");
+  console.log(process.env.FAKE_PI_VERSION || "1.5.0");
   process.exit(0);
 }
 if (args[0] === "--list-models") {

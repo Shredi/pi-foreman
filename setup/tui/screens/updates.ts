@@ -17,7 +17,7 @@ function cmp(a: string, b: string): number {
   return 0;
 }
 
-/** True when `v` lies above the pin: an exact pin ("0.17.0") or a range ("1.4.x"). */
+/** True when `v` lies above the pin: an exact pin ("0.17.0") or a range ("1.5.x"). */
 function beyondPin(v: string, pin: string): boolean {
   return pin.endsWith(".x") ? !v.startsWith(pin.slice(0, -1)) : cmp(v, pin) > 0;
 }
