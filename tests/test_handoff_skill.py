@@ -16,7 +16,7 @@ class HandoffSkillWiringTests(unittest.TestCase):
         self.assertIn("per the `handoff`", fsn.footer("demo", False))
 
     def test_remote_footer_names_the_handoff_skill(self):
-        self.assertIn("per the `handoff`", fsn.remote_footer("demo", False, 32768))
+        self.assertIn("per the `handoff`", fsn.remote_footer("demo", False))
 
     def test_notice_credits_the_upstream_author(self):
         notice = (Path(__file__).resolve().parent.parent / "NOTICE").read_text(encoding="utf-8")
