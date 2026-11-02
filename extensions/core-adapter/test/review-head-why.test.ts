@@ -75,8 +75,12 @@ test("a PASS whose commit moved: review_recorded names head null and why; V clos
   assert.ok(!r.blocked, r.blocked);
   g.commit("chore: during");
   a.endRun(r.id, "Overall verdict: PASS");
-  await tick(100);
-  const rec = (await w.traceEvents()).filter((e) => e.event === "review_recorded");
+  // The record waits on a git subprocess (headOf); slow on Windows, so poll instead of a fixed wait.
+  let rec: Record<string, unknown>[] = [];
+  for (let i = 0; i < 100 && rec.length === 0; i++) {
+    await tick(100);
+    rec = (await w.traceEvents()).filter((e) => e.event === "review_recorded");
+  }
   assert.equal(rec.length, 1);
   assert.equal(rec[0].verdict, "pass");
   assert.equal(rec[0].head, null);
