@@ -196,6 +196,11 @@ export function bindLaunch(input: Json, b: LaunchBinding): void {
   input.extensionBindings = { ...prev, [BINDING_NS]: { ...b } };
 }
 
+/** Env a child exports: the foreman's checkout for a worktree binding, nothing otherwise. */
+export function checkoutEnv(b: LaunchBinding | null): Record<string, string> {
+  return b?.worktree && b.workspace ? { [CHECKOUT_ENV]: b.workspace } : {};
+}
+
 /** This process's launch binding (child side), or null. */
 export function readBinding(env: Env): LaunchBinding | null {
   const raw = env[BINDINGS_ENV];
