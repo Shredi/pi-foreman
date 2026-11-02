@@ -180,23 +180,21 @@ test("foreman:refused: parsed, applied (closing back to open, one clean line cut
 // ------------------------------------------------------------------ closeChildren and session close with a runner
 
 function remoteEntry(agent: string, over: Partial<SessionEntry> = {}): SessionEntry {
-  return { label: "demo", child: CHILD, parent: "sess-1", status: "open", opened: NOW.toISOString(), handoff: path.join(agent, "m"), machine: "alpha", originMachine: "Alpha", returnPath: "pull", ...over };
+  return { label: "demo", child: CHILD, parent: "sess-1", status: "open", opened: NOW.toISOString(), handoff: path.join(agent, "m"), machine: "alpha", originMachine: "Alpha", backend: "hc", ...over };
 }
 const spawnOk = (stdout = "{}", code = 0, stderr = ""): SpawnResult => ({ code, stdout, stderr, timedOut: false });
 
-function ccRig(agent: string, runRemote: (a: string[]) => Promise<SpawnResult>, waitMs: number, onPull?: () => void) {
+function ccRig(agent: string, runRemote: (a: string[]) => Promise<SpawnResult>, waitMs: number, onSleep?: (n: number) => void) {
   const slept: number[] = [];
-  const pulls: string[] = [];
   const lines = () =>
     closeChildren({
       agentDir: agent, opener: "sess-1", send: async () => "sent", waitMs, runRemote,
-      sleep: async (ms) => void slept.push(ms),
-      pullNow: async (c) => (pulls.push(c), onPull?.(), { ok: true, entries: 0, skipped: 0 }),
+      sleep: async (ms) => (slept.push(ms), onSleep?.(slept.length)),
     });
-  return { slept, pulls, lines };
+  return { slept, lines };
 }
 
-test("closeChildren: the remote child is closed through runRemote, pulled every 5 s while waiting, and reported closed", async () => {
+test("closeChildren: the remote child is closed through runRemote, polled in the registry while waiting, and reported closed", async () => {
   const agent = mk("cc-closed");
   writeRegistry(agent, { version: 1, sessions: [remoteEntry(agent)] });
   const calls: string[][] = [];
@@ -206,8 +204,8 @@ test("closeChildren: the remote child is closed through runRemote, pulled every 
     reg.sessions[0].status = "closing";
     writeRegistry(agent, reg);
     return spawnOk();
-  }, 30_000, () => {
-    if (r.pulls.length === 2) {
+  }, 30_000, (n) => {
+    if (n === 2) {
       const reg = readRegistry(agent);
       reg.sessions[0].status = "closed";
       writeRegistry(agent, reg);
@@ -216,8 +214,7 @@ test("closeChildren: the remote child is closed through runRemote, pulled every 
   const out = await r.lines();
   assert.deepEqual(calls, [["close-remote", CHILD]]);
   assert.deepEqual(out, [`child demo@alpha (${CHILD}): closed`]);
-  assert.equal(r.pulls.length, 2);
-  assert.equal(r.slept.reduce((a, b) => a + b, 0), 10_000);
+  assert.equal(r.slept.reduce((a, b) => a + b, 0), 2_000);
 });
 
 test("closeChildren: a refused notice, a timeout and a failed send are reported per child", async () => {
@@ -245,7 +242,6 @@ test("closeChildren: a refused notice, a timeout and a failed send are reported 
   writeRegistry(failAgent, { version: 1, sessions: [remoteEntry(failAgent)] });
   const r3 = ccRig(failAgent, async () => spawnOk("", 1, "pi-foreman session: refused [not_open]: demo is closed, not open"), 6_000);
   assert.deepEqual(await r3.lines(), [`child demo@alpha (${CHILD}): not sent (not_open)`]);
-  assert.equal(r3.pulls.length, 0);
 });
 
 test("closeChildren: without a runner the remote entry is reported and untouched; local children still close", async () => {
@@ -321,37 +317,31 @@ test("foreman_session_open tool schema lists machine and trust", () => {
 const T = Date.parse("2026-10-25T12:00:00Z");
 const ago = (s: number): string => new Date(T - s * 1000).toISOString();
 
-test("remoteState follows the radar: live state while the pull is fresh, ask and closing first, lost when stale", () => {
-  const live = (state: string, beat: number) => ({ state, heartbeatAgeSeconds: beat, lastEventAgeSeconds: 1, blockedAgeSeconds: null, workingRuns: 1, paneId: null });
-  const e = (over: Partial<SessionEntry>): SessionEntry => remoteEntry("/x", { pulledAt: ago(5), remoteLive: live("working", 3), ...over });
-  assert.equal(remoteState(e({}), T), "working");
-  assert.equal(remoteState(e({ remoteLive: live("blocked", 3) }), T), "blocked");
-  assert.equal(remoteState(e({ remoteLive: live("waiting", 3) }), T), "idle");
-  assert.equal(remoteState(e({ remoteLive: live("done", 3) }), T), "done");
-  assert.equal(remoteState(e({ remoteLive: live("working", 200) }), T), "idle");
-  assert.equal(remoteState(e({ ask: { at: ago(1) } }), T), "ask");
-  assert.equal(remoteState(e({ status: "closing" }), T), "closing");
-  assert.equal(remoteState(e({ pulledAt: ago(300) }), T), "lost");
-  assert.equal(remoteState(e({ pulledAt: undefined, remoteLive: undefined }), T), "starting");
-  assert.equal(remoteState(e({ status: "pending", pulledAt: undefined, remoteLive: undefined }), T), "starting");
+test("remoteState: an open ask comes first, then the registry status", () => {
+  const e = (over: Partial<SessionEntry>): SessionEntry => remoteEntry("/x", over);
+  assert.equal(remoteState(e({})), "open");
+  assert.equal(remoteState(e({ ask: { at: ago(1) } })), "ask");
+  assert.equal(remoteState(e({ status: "closing" })), "closing");
+  assert.equal(remoteState(e({ status: "pending" })), "pending");
+  assert.equal(remoteState(e({ status: "pending", ask: { at: ago(1) } })), "ask");
 });
 
-test("children widget: a remote entry is a label@machine row with the live glyph, state, age and pull age", () => {
+test("children widget: a remote entry is a label@machine row with the live glyph, state and age", () => {
   const agent = mk("widget");
   const now = Date.now();
-  const live = { state: "working", heartbeatAgeSeconds: 3, lastEventAgeSeconds: 1, blockedAgeSeconds: null, workingRuns: 1, paneId: null };
+  const opened = new Date(now - 7_000).toISOString();
   writeRegistry(agent, { version: 1, sessions: [
-    remoteEntry(agent, { pulledAt: new Date(now - 7_000).toISOString(), remoteLive: live }),
-    remoteEntry(agent, { label: "asky", child: "c2", pulledAt: new Date(now - 7_000).toISOString(), ask: { at: new Date(now).toISOString() } }),
-    remoteEntry(agent, { label: "stopping", child: "c3", status: "closing", pulledAt: new Date(now - 7_000).toISOString() }),
+    remoteEntry(agent, { opened }),
+    remoteEntry(agent, { label: "asky", child: "c2", opened, ask: { at: new Date(now).toISOString() } }),
+    remoteEntry(agent, { label: "stopping", child: "c3", status: "closing", opened }),
     { label: "local", child: "c4", parent: "sess-1", status: "open", opened: new Date(now - 60_000).toISOString() },
   ] });
   const rows = readOpened(agent, "sess-1");
-  assert.deepEqual(rows.map((r) => [r.label, r.machine, r.state]), [["demo", "alpha", "working"], ["asky", "alpha", "ask"], ["stopping", "alpha", "closing"], ["local", undefined, undefined]]);
+  assert.deepEqual(rows.map((r) => [r.label, r.machine, r.state]), [["demo", "alpha", "open"], ["asky", "alpha", "ask"], ["stopping", "alpha", "closing"], ["local", undefined, undefined]]);
   const lines = widgetLines([], rows, now, null, "ascii");
   assert.equal(lines.length, 4);
   const sets = (l: string) => l.replace(/^\S+ /, "");
-  assert.match(sets(lines.find((l) => l.includes("demo@alpha"))!), /^demo@alpha · working · \d+s · pull \d+s$/);
+  assert.match(sets(lines.find((l) => l.includes("demo@alpha"))!), /^demo@alpha · open · \d+s$/);
   assert.match(lines.find((l) => l.includes("asky@alpha"))!, /asky@alpha · ask · /);
   assert.match(lines.find((l) => l.includes("stopping@alpha"))!, /stopping@alpha · closing · /);
   assert.ok(lines.includes("local · open · 1m"));

@@ -118,11 +118,9 @@ Keys outside safety that the project and session layers cannot loosen either
     close.autoClean                  only false is accepted (true removes worktrees and scratch at close)
     close.worktreeDir                ignored (the worktree convention: L1/L3/L2 only)
     close.childWaitMs                ignored (how long a close waits for child sessions: L1/L3/L2 only)
-    sessions.machines                ignored (the machines a session may open on over SSH: user or overlay config only)
-    sessions.pull, sessions.ssh      ignored (the pull poll periods and SSH multiplexing: user or overlay config only)
+    sessions.machines                ignored (the machines a session may open on over hc: user or overlay config only)
     sessions.backend, sessions.hc    ignored (where a local session opens and the herdr-core options: user or overlay config only)
     sessions.worktree                ignored (the branch prefix of `session open --worktree`: user or overlay config only)
-    sessions.remoteInlineMaxBytes    lower only, minimum 1024 (a higher cap sends more of a remote result inline)
     compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
                                      the session layer is ignored with a warning (setup applies it)
     compaction.priceTiers, compaction.threshold   removed in r52: a warning, the keys are dropped (see REMOVED_COMPACTION_KEYS)
@@ -245,9 +243,7 @@ IGNORED_KEYS = [
     (("retro", "panelThreshold"), "the panel threshold comes from the user or overlay config"),
     (("close", "worktreeDir"), "the worktree convention comes from the user or overlay config"),
     (("close", "childWaitMs"), "the child close wait comes from the user or overlay config"),
-    (("sessions", "machines"), "the machines a session may open on over SSH come from the user or overlay config"),
-    (("sessions", "pull"), "the remote pull poll periods come from the user or overlay config"),
-    (("sessions", "ssh"), "the SSH multiplexing switch comes from the user or overlay config"),
+    (("sessions", "machines"), "the machines a session may open on over hc come from the user or overlay config"),
     (("sessions", "backend"), "where a local session opens comes from the user or overlay config"),
     (("sessions", "hc"), "the herdr-core session options come from the user or overlay config"),
     (("sessions", "worktree"), "the branch prefix of a session's own worktree comes from the user or overlay config"),
@@ -320,7 +316,6 @@ LAYER_TIGHTEN = [
     (("wait", "ci"), "false_only"),
     (("close", "from"), "intersect"),
     (("close", "autoClean"), "false_only"),
-    (("sessions", "remoteInlineMaxBytes"), "lower_only"),
     (("compaction", "maxTokens"), "lower_only"),
     (("wait", "maxSeconds"), "lower_only"),
     (("wait", "maxActive"), "lower_only"),
@@ -342,8 +337,7 @@ GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk")
 LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
                  "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
-                 "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1,
-                 "remoteInlineMaxBytes": 1024}
+                 "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120, "budgetShare": 0.5, "awayTicks": 0,
              "selfWarmWindowMinutes": 180, "awayAfterMinutes": 11}
@@ -859,7 +853,7 @@ MACHINE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 
 def machine_issues(machines):
-    """sessions.machines keys are Herdr saved-machine names (the schema cannot constrain map keys)."""
+    """sessions.machines keys are hc machine names (the schema cannot constrain map keys)."""
     return [("error", "sessions.machines." + str(k), "sessions.machines: %r is not a valid machine name (A-Z a-z 0-9 . _ -, at most 64, starting with a letter or digit)" % (k,))
             for k in (machines if isinstance(machines, dict) else {}) if not MACHINE_NAME_RE.match(str(k))]
 
