@@ -168,10 +168,8 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_EN
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import type { CloseReport } from "./close.ts";
-import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, registerSessionOpenTool, sessionModelOf } from "./session.ts";
+import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
-import { createRemotePull } from "./remotepull.ts";
-import type { PullHost } from "./remotepull.ts";
 import { AskContract } from "./askcontract.ts";
 import { SteerReader } from "./steer.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
@@ -429,8 +427,6 @@ export interface AdapterDeps {
   piVersion?: () => Promise<string | null>;
   /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
-  /** Tests: the timer of the remote pull loop (remotepull.ts); the default is an unref'd setInterval. */
-  pullSetInterval?: (fn: () => void, ms: number) => { unref?: () => void };
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
@@ -466,7 +462,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   }) as never);
   pi.on("session_shutdown", async () => {
-    remotePull.stop();
     core.release();
   });
   // Before any session_start (pi-intercom reads PI_INTERCOM_STABLE_ID when it connects): review S6.
@@ -1295,10 +1290,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.reason === "reload" || event.reason === "resume") restoreStoredPlans(s, ctx);
     emitReady(pi.events as EventBus | undefined, core.claim);
-    if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1" && (ctx.mode === "tui" || ctx.mode === "rpc")) {
-      pullBind = { s, ctx };
-      remotePull.start();
-    }
     if (!s.isChild) {
       idleBind = { s, ctx };
       await idleModel.onSessionStart(ctx.sessionManager.getBranch?.() ?? []); // before applyForemanModel: a downshift left open is closed first
@@ -4126,7 +4117,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: async (kind, arg) => { const py = pyPath(s); if (py) await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", "foreman_session.py"), "--agent-dir", s.agentDir, "remote", "notice", kind, ...(kind === "refused" ? [`--reason=${arg ?? ""}`] : arg ? ["--close", arg] : [])], { timeoutMs: 60_000, cwd: s.cwd }); }, closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), pullNow: (c) => remotePull.pullNow(c), runRemote: (a) => remotePull.runRemote(a) }) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: async (kind, arg) => { const py = pyPath(s); if (py) await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", "foreman_session.py"), "--agent-dir", s.agentDir, "remote", "notice", kind, ...(kind === "refused" ? [`--reason=${arg ?? ""}`] : arg ? ["--close", arg] : [])], { timeoutMs: 60_000, cwd: s.cwd }); }, closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
     },
   });
 
@@ -4143,29 +4134,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pkgRoot: PKG_ROOT,
     onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
     session: sessionHost,
-    pullNow: (c) => remotePull.pullNow(c),
-    runRemote: (a) => remotePull.runRemote(a),
-  });
-
-  // Pull return path of remote children (remotepull.ts): the loop starts from session_start of a top session only.
-  let pullBind: { s: Session; ctx: ExtensionContext } | null = null;
-  const pullHost = (): PullHost | null =>
-    pullBind && {
-      id: pullBind.s.id,
-      isChild: pullBind.s.isChild,
-      agentDir: pullBind.s.agentDir,
-      opener: openerIntercomId(process.env, pullBind.s.agentDir, pullBind.s.id),
-      python: pyPath(pullBind.s),
-      config: pullBind.s.config.config,
-      notify: (text, level) => pullBind?.ctx.ui.notify(text, level),
-      trace: (r) => pullBind?.s.trace?.emit(r),
-    };
-  const remotePull = createRemotePull({
-    host: pullHost,
-    spawner,
-    pkgRoot: PKG_ROOT,
-    onNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
-    ...(deps.pullSetInterval ? { setInterval: deps.pullSetInterval } : {}),
   });
 
   if (process.env.PI_SUBAGENT_CHILD !== "1") registerSessionOpenTool(pi, { spawner, pkgRoot: PKG_ROOT, session: sessionHost });
