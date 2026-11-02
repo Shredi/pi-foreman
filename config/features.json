@@ -354,7 +354,7 @@
       "id": "permissions",
       "area": "safety",
       "title": "Permission rules",
-      "purpose": "Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules.",
+      "purpose": "Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. The user file can also name work folders: reads there are allowed and an auto folder lets writes no other root covers run as under mode auto, except in protected places (`/foreman perms list` shows them).",
       "doc": "docs/permissions.md",
       "keys": ["permissions.profile", "paths.hubWorkflow"],
       "commands": [],
