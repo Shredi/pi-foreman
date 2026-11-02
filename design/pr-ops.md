@@ -334,7 +334,7 @@ export class PrWatches {
 - **Start, in the `pr_watch` execute after §3.1 steps 1–5.**
   1. If there is no `number`, run `pr_status` and take its `number`. A precondition failure is returned as is.
   2. `watches.has(n)` refuses with `pr_watch: PR #<n> is already watched; one watch per PR per session.` and `{decision: "duplicate"}`.
-  3. Take a baseline snapshot with one poll (`pollWatch`). A failure there fails the tool, and no watch starts; a PR that is not open is refused.
+  3. Take a baseline snapshot with one poll (`pollWatch`). A host error there arms a pending watch (the first poll retries with backoff) and the tool answers "armed, but the first poll failed … it will retry"; `pr_not_found`, a merged or a closed PR do not arm.
   4. `start()`, then trace `{event: "pr_watch", outcome: "started"}`. `pr_create` runs the same arming after its answer.
   5. Return `pr_watch: {"watching":true,"number":n,"intervalSeconds":i,"head":h,"checks":counts,"mergeable":m}`.
 - **Timers.** One per watch. `setTimeout(poll, intervalMs())` is `unref`'d and re-armed after each poll. A poll never overlaps the next: there is a busy flag. `intervalMs = tools.prWatchSeconds * 1000`, read per poll.

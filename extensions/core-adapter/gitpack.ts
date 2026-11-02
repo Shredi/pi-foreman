@@ -396,7 +396,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const res = report(outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR watches it; a failed arm never fails the create
-        const armed = await armWatch(s, ctx, run, outcome.result.number, outcome.result.url).catch((err: Error) => ({ error: err.message }));
+        const armed = await armWatch(s, ctx, run, outcome.result.number, outcome.result.url).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
         if ("duplicate" in armed) return res;
         const r = res as { content: { type: "text"; text: string }[] };
         if ("error" in armed) return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };

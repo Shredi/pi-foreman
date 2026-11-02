@@ -199,7 +199,8 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean): 
   }
 
   if (snap.mergeable !== "unknown") {
-    if (st.mergeable && st.mergeable !== snap.mergeable) {
+    // no known baseline yet: a first CONFLICTING is news, a first MERGEABLE is just the baseline
+    if (st.mergeable ? st.mergeable !== snap.mergeable : snap.mergeable === "conflicting") {
       events.push(`mergeable ${snap.mergeable.toUpperCase()}`);
       if (child && snap.mergeable === "conflicting") d.conflict = true;
     }
