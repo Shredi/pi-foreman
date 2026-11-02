@@ -141,6 +141,27 @@ export function matchPrs(nodes, feed, depth = 0) {
   }
 }
 
+const FEED_FRESH_MS = 30 * 60 * 1000;
+
+/** Drops from every node the PRs that are not open any more: a PR whose feed twin says merged or closed, and, while the feed is
+ *  fresh (`at` within 30 minutes of `now`, both ms), a PR with a known repository that the feed covers (has an entry of) but
+ *  does not list. A PR without a known repository, a stale feed or an uncovered repository leaves the chip. Mutates the nodes. */
+export function dropClosedPrs(nodes, feed, at, now, depth = 0) {
+  if (depth > MAX_DEPTH) return;
+  const fresh = Number.isFinite(at) && Number.isFinite(now) && now - at <= FEED_FRESH_MS;
+  const covered = new Set(listOf(feed).filter(isObj).map((f) => nameOf(f.repo).toLowerCase()).filter(Boolean));
+  for (const n of listOf(nodes)) {
+    if (!isObj(n)) continue;
+    n.prs = listOf(n.prs).filter((p) => {
+      const twin = twinOf(p, feed, n.repoUrl);
+      if (twin) return twin.state !== "merged" && twin.state !== "closed";
+      const repo = (nameOf(p.repo || n.repoUrl) || nameOf(str(p.url).replace(/\/pull\/\d+\/?$/, ""))).toLowerCase();
+      return !(fresh && repo && covered.has(repo));
+    });
+    dropClosedPrs(n.children, feed, at, now, depth + 1);
+  }
+}
+
 /** `{nodes, openPrs}` from the text of `foreman radar --json`, or null when the text is not a radar document. */
 export function parseRadarDoc(text) {
   let doc;
@@ -151,6 +172,7 @@ export function parseRadarDoc(text) {
   const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
   const openPrs = normOpenPrs(doc.openPrs);
   matchPrs(nodes, openPrs);
+  dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
   return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
 }
 
