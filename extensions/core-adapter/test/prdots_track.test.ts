@@ -78,7 +78,7 @@ test("author search runs every second tick; only the current or a pushed branch'
   assert.equal(authors(), 1);
   await h.fire();
   assert.equal(authors(), 2);
-  assert.deepEqual(h.tracks.filter((t) => t.path === "search").length, 2);
+  assert.deepEqual(h.tracks.filter((t) => t.path === "push").length, 2);
   assert.deepEqual(h.d.dots().map((d) => d.n).sort(), [1, 2]);
 });
 
@@ -142,7 +142,7 @@ test("views: foreign label, link only when the URL matches the key, names capped
   assert.equal(v1?.checks.running.length, 10);
   assert.equal(v1?.checks.counts.running, 14);
   assert.equal(v2?.url, null, "the answer's URL names another repository");
-  assert.deepEqual(h.d.dots().find((d) => d.n === 1), { n: 1, state: "run", label: "acme/lib#1" });
+  assert.deepEqual(h.d.dots().find((d) => d.n === 1), { n: 1, state: "run", label: "acme/lib#1", counts: { fail: 0, run: 14, ok: 0 } });
 });
 
 test("pr_batch errors fail only that PR; a not-found drops to gone", async () => {
@@ -224,26 +224,19 @@ test("a merged PR keeps a view for 60 s, its dot goes at once", async () => {
   assert.equal(h.d.views().length, 0);
 });
 
-test("watched numbers are keyed by the URL of their first pr_status answer (one call per new number)", async () => {
-  const h = rig({ branch: "", watched: () => [7] });
-  h.state.handle = (c) => {
-    if (c.op === "pr_status") return ran({ number: 7, url: url("acme/up", 7), state: "open" });
-    return c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n, { repo: "acme/up", url: url("acme/up", p.n) })), errors: [] }) : undefined;
-  };
+test("a watched key carries its repository: no pr_status lookup, tracked as a watch entry", async () => {
+  const h = rig({ branch: "", watched: () => [{ host: "github.com", repo: "acme/up", n: 7 }] });
+  h.state.handle = (c) => (c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n, { repo: "acme/up", url: url("acme/up", p.n) })), errors: [] }) : undefined);
   h.d.start();
   await h.fire();
   assert.deepEqual(h.callsOf("pr_batch")[0].args.prs, [{ repo: "acme/up", n: 7 }]);
   assert.equal(h.d.views()[0].source, "watch");
-  await h.fire();
-  assert.equal(h.callsOf("pr_status").filter((c) => c.args.number === 7).length, 1, "asked once");
+  assert.equal(h.callsOf("pr_status").filter((c) => c.args.number === 7).length, 0);
 });
 
-test("a watched number whose answer has no URL falls back to the current repository", async () => {
-  const h = rig({ branch: "", watched: () => [7] });
-  h.state.handle = (c) => {
-    if (c.op === "pr_status") return ran({ number: 7, state: "open" });
-    return c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n)), errors: [] }) : undefined;
-  };
+test("a watched number-only key falls back to the current repository", async () => {
+  const h = rig({ branch: "", watched: () => [{ host: "", repo: "", n: 7 }] });
+  h.state.handle = (c) => (c.op === "pr_batch" ? ran({ prs: (c.args.prs as { n: number }[]).map((p) => entry(p.n)), errors: [] }) : undefined);
   h.d.start();
   await h.fire();
   assert.deepEqual(h.callsOf("pr_batch")[0].args.prs, [{ repo: "acme/app", n: 7 }]);

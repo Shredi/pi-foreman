@@ -183,9 +183,9 @@ The order is red, yellow, green, unknown, then by PR number (external items with
 label. At most four cells fit the row; when items are hidden by the cell count or by the width, the last placed cell
 becomes `+n` (n = items not shown). At most 14 dots reach the sidebar.
 
-Which PRs are tracked: a PR registered by any of the paths in [tools](tools.md#registration-paths): a branch this session
-pushed, an author search, a command that acted on a PR, the user's events feed, `pr_create`, a PR URL in a result,
-`pr_track`, a PR under `pr_watch` and the PR of the current branch. A PR is identified by host, owner, repo and number. At
+Which PRs are tracked: only the session's own, by the paths in [tools](tools.md#registration-paths): `pr_create`, a branch
+this session pushed (also found by the author search), `pr_track`, a PR under `pr_watch` and the PR of the current branch.
+A PR that a message, a command or a tool result merely mentions is not tracked. A PR is identified by host, owner, repo and number. At
 most six are tracked. A closed or merged PR disappears from the row.
 
 Cost: on gh one GraphQL batch per tick and host covers every tracked PR (state, mergeability, review and checks), every
@@ -207,7 +207,7 @@ are additive: older readers ignore them, and each is present only when there is 
 | `prs` | the `pr_watch` wait | the watched PR numbers |
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
 | `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
-| `dots` | live file, radar session node | the dots row: `[{n, state, label, src, url?}]`, at most 14; `url` is the `https://` PR page of a `pr` dot (omitted when unknown, not `https` or not made of URL characters; the herdr-app mod opens it); `n` is the PR number or `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters, `src` `pr` or `ext` (the external status hook). The radar copies it unchanged to the session node; the `prs` field of the `pr_watch` wait is separate and unchanged |
+| `dots` | live file, radar session node | the dots row: `[{n, state, label, src, url?}]`, at most 14; `url` is the `https://` PR page of a `pr` dot (omitted when unknown, not `https` or not made of URL characters; the herdr-app mod opens it); `n` is the PR number or `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters, `src` `pr` or `ext` (the external status hook). A `pr` dot also carries an optional `checks: [{name, state}]` (`state` `fail`, `run` or `ok`; `name` at most 60 characters; failing first, then running, then green; at most 12 entries) for the watched and the tracked PRs; a PR with more than 12 checks (or more than the 10 names the view keeps) carries `counts: {fail, run, ok}` instead; `state` stays the overall value for older readers and for the sidebar dots row, which ignores both fields; the herdr-app chip draws one dot per check. The live file lists only open PRs, and the radar copies the dots to the session node unless the live file is stale (heartbeat older than 90 s, the lost rule) or its session is done; the herdr-app mod counts a PR seen twice once and skips a merged or closed one. The `prs` field of the `pr_watch` wait is separate and unchanged |
 
 The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
 (with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the

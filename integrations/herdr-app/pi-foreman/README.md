@@ -12,7 +12,8 @@ a top-most foreman session:
 - line 1: label · tier · cost of the session plus every nested session (`$x.xx`, as the TUI sidebar prints it), and "N sessions" when N > 1;
 - line 2: the open ask (red while the session is blocked), else the waits;
 - a PR line: one chip per PR (number and its check dots), failing first, then pending, then green, newest first; a red
-  border marks a failing check; the chips wrap, followed by "N PRs · k failing · m pending" or "N PRs · all green";
+  border marks a failing check; a chip draws one dot per check of the PR's `dots` entry (`checks`, or `counts` above 12
+  checks, at most 12 dots) and falls back to the overall `state` dot when a radar sends neither; the chips wrap, followed by "N PRs · k failing · m pending" or "N PRs · all green";
 - nested foreman sessions (any depth) as tree rows: label, own cost, up to two PR chips inline, status glyph; more than two PRs
   go on a wrapping line under the row;
 - workers (builder, reviewer, explorer …) as one tree row "role model", with a spinner while they run;

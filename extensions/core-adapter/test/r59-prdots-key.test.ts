@@ -26,7 +26,7 @@ function rig(prDots: unknown) {
       return { kind: "ran", result: { ok: true } };
     },
     watched: () => [],
-    watchChecks: () => null,
+    watchView: () => null,
     intervalMs: () => 60_000,
     trace: () => {},
     timers: {

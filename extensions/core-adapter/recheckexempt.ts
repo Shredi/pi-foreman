@@ -21,7 +21,7 @@ const PATH_FIELDS = ["path", "file", "dir", "directory", "cwd"] as const;
 const NEUTRAL_VERBS = new Set(["sleep", "echo", "true", ":", "printf", "date"]);
 const WORKTREE = /^(?:git\s+(?:-C\s+\S+\s+)?worktree\s+(?:add|list|prune)(?:\s|$))/;
 // R41 item 16: PR coordination and a default-branch sync are no re-check either. Plain words only (no quotes, `$`, redirects).
-const PR_TOOLS: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments", "pr_watch"]);
+const PR_TOOLS: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch"]);
 const ARGS = String.raw`(?:\s+[A-Za-z0-9_./:=@%+,#-]+)*`;
 const PR_VIEW = new RegExp(String.raw`^(?:gh|glab)\s+(?:pr|mr|run|ci)\s+(?:view|list|checks|status)${ARGS}$`);
 const WORD = String.raw`[A-Za-z0-9_.:-]+`;

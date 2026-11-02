@@ -4,6 +4,7 @@ import type { PrDotsDeps } from "../prdots.ts";
 import type { PrOp } from "../gitpack.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { Timers } from "../prwatch.ts";
+import type { PrKey } from "../prtrack.ts";
 
 export const ran = (result: Record<string, unknown>): SafeOpOutcome => ({ kind: "ran", result: { ok: true, ...result } });
 export const pre = (precondition: string): SafeOpOutcome => ({ kind: "precondition", precondition, message: "m" });
@@ -15,7 +16,7 @@ export interface Call {
   cwd?: string;
 }
 
-export function rig(opts: { branch?: string; enabled?: boolean; batch?: boolean; discover?: boolean; repoLookup?: boolean; watched?: () => number[]; interactions?: unknown; merged?: PrDotsDeps["merged"]; baseBranch?: string | null; quietBranch?: string; remotes?: string[] } = {}) {
+export function rig(opts: { branch?: string; enabled?: boolean; batch?: boolean; discover?: boolean; repoLookup?: boolean; watched?: () => PrKey[]; merged?: PrDotsDeps["merged"]; baseBranch?: string | null; quietBranch?: string; remotes?: string[] } = {}) {
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
   const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => void (typeof h === "number" && timers[h] && (timers[h].live = false)) };
   const calls: Call[] = [];
@@ -48,7 +49,7 @@ export function rig(opts: { branch?: string; enabled?: boolean; batch?: boolean;
       return pre("pr_not_found");
     },
     watched: opts.watched ?? (() => []),
-    watchChecks: () => null,
+    watchView: () => null,
     intervalMs: () => 60_000,
     trace: (r) => void traces.push(r),
     traceTrack: (r) => void tracks.push(r),
@@ -58,7 +59,6 @@ export function rig(opts: { branch?: string; enabled?: boolean; batch?: boolean;
     discover: opts.discover ?? true,
     batch: opts.batch ?? true,
     now: () => clock,
-    interactions: () => opts.interactions,
     remoteHosts: async () => opts.remotes ?? ["github.com"],
     quietBranch: async () => opts.quietBranch ?? "",
     baseBranch: () => (opts.baseBranch === undefined ? null : opts.baseBranch),

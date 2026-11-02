@@ -1,8 +1,9 @@
 """Replay: pr_checks and pr_watch through the real Pi tool path against a fake gh (PR tools, ledger item 24).
 
 The fake gh (tests/fixtures/fake_pr_host.py behind sh and .cmd shims, first on PATH) reports one pending
-check. The foreman reads it with pr_checks, then starts pr_watch (tools.prWatchSeconds 5). The watch polls
-the host again while the session lives, and session shutdown clears it: the host sees no call afterwards.
+check. The foreman reads it with pr_checks, then starts pr_watch (tools.prWatchSeconds 5, floored to 30 at
+runtime). The persistent watch polls the host again while the session lives, and session shutdown clears it:
+the host sees no call afterwards.
 The trace holds `tool_pack` for both tools and `pr_watch` outcome `started`, and never the PR number.
 Same prerequisites and skips as test_replay.py.
 """
@@ -24,6 +25,9 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 KEYS = ("event", "pack", "op", "outcome")
 CHECKS = [{"name": "build", "state": "PENDING", "bucket": "pending", "link": "https://example.com/run/1",
            "startedAt": "2026-10-11T10:00:00Z", "completedAt": None}]
+VIEW = {"number": 7, "url": "https://example.com/acme/app/pull/7", "title": "t", "state": "OPEN", "isDraft": False,
+        "mergeable": "MERGEABLE", "reviewDecision": "", "headRefOid": "0123456789abcdef", "baseRefName": "main",
+        "updatedAt": "2026-10-11T10:00:00Z", "comments": [], "reviews": []}
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
@@ -32,7 +36,8 @@ class TestPrOps(ReplayCase):
         rig = self.rig("props", load_fixture("pr_ops"), config={"tools": {"prWatchSeconds": 5}})
         host = rig.root / "host"
         host.mkdir()
-        (host / "scenario.json").write_text(json.dumps({"gh pr checks": {"stdout": json.dumps(CHECKS), "exit": 8}}), "utf-8")
+        scenario = {"gh pr checks": {"stdout": json.dumps(CHECKS), "exit": 8}, "gh pr view": {"stdout": json.dumps(VIEW)}, "gh api": {"stdout": "[]"}}
+        (host / "scenario.json").write_text(json.dumps(scenario), "utf-8")
         calls = host / "calls.jsonl"
         bin_dir = make_bin(str(rig.root), ["gh"])
         pi = rig.start(env={"PATH": bin_dir + os.pathsep + rig.env()["PATH"], "FAKE_PR_HOST_DIR": str(host)})
@@ -45,14 +50,14 @@ class TestPrOps(ReplayCase):
         def count():
             return len(calls.read_text("utf-8").splitlines()) if calls.exists() else 0
 
-        deadline = time.time() + 30
+        deadline = time.time() + 60
         before = count()
         while count() <= before and time.time() < deadline:
             time.sleep(0.5)
         self.assertGreater(count(), before, "the watch never polled the host")
         pi.close()
         after = count()
-        time.sleep(7)
+        time.sleep(35)  # longer than the 30 s watch interval floor
         self.assertEqual(count(), after, "the watch kept polling after shutdown")
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]

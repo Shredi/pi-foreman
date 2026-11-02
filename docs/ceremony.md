@@ -99,7 +99,9 @@ When a triaged session finishes with no child run active (and is not waiting for
 
 ## Round flow
 
-Every round goes through a PR. The foreman works on a branch `round/<n>-<topic>` cut from `main`; a reviewer pre-pr PASS on the branch head comes first, then `pr_create` opens the PR and `pr_watch` waits for its checks. When CI is green the foreman squash-merges it. `main` is branch-protected (the seven CI checks, strict), so nothing lands on it except through that merge. Run `npm run test:ci` before the PR (see [development](development.md#ci)).
+Every round goes through a PR. The foreman works on a branch `round/<n>-<topic>` cut from `main`; a reviewer pre-pr PASS on the branch head comes first, then `pr_create` opens the PR and arms a watch that stays until the PR is merged or closed and reports each CI result, failing job, comment, review and conflict. When CI is green the foreman squash-merges it. `main` is branch-protected (the seven CI checks, strict), so nothing lands on it except through that merge.
+
+**Fast merge.** A green, mergeable PR is merged as it stands: no merge of the base into the branch and no CI rerun, even if the base moved since CI ran (a reviewer does not count that as a finding). After each merge the foreman checks the base's CI on the merge commit and, if it is red, fixes forward with a small PR. The base is merged into a branch only when the PR is CONFLICTING, or when the base fix is needed for that branch's own CI. Run `npm run test:ci` before the PR (see [development](development.md#ci)).
 
 ## Further ceremony keys
 

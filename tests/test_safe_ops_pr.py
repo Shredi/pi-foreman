@@ -683,6 +683,28 @@ class BatchTest(RepoLessCase):
         self.failed(self.at("pr_batch", prhost={"status": "gh pr view"}, prs=[{"repo": "a/b", "n": 1}]), "pr_unsupported")
         self.assertEqual(self.calls(), [])
 
+    def test_watch_adds_head_runs_and_the_query_fields_only_when_asked(self):
+        nodes = [run("a"), dict(run("b", conclusion="FAILURE"), databaseId=222, detailsUrl="https://ci.example/b"),
+                 dict(run("c", status="IN_PROGRESS", conclusion=None), databaseId=333),
+                 dict(status("s", "FAILURE"), createdAt="2026-01-01T00:00:01Z", targetUrl="https://ci.example/s")]
+        nodes[0]["databaseId"] = 111
+        pr = gql_pr(5, rollup(*nodes), headRefOid="abc1234567", baseRefName="main", updatedAt="2026-01-02T00:00:00Z")
+        self.scn({"gh api graphql": {"stdout": j({"data": {"r0": pr}})}})
+        plain = self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}]))["prs"][0]
+        for key in ("runs", "headSha", "baseRef", "updatedAt"):
+            self.assertNotIn(key, plain)
+        for frag in ("databaseId", "headRefOid", "detailsUrl", "targetUrl"):
+            self.assertNotIn(frag, json.loads(self.calls()[0]["body"])["query"])
+        got = self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch=True))["prs"][0]
+        query = json.loads(self.calls()[1]["body"])["query"]
+        for frag in ("databaseId", "headRefOid", "baseRefName", "updatedAt", "detailsUrl", "createdAt", "targetUrl"):
+            self.assertIn(frag, query)
+        self.assertEqual((got["headSha"], got["baseRef"], got["updatedAt"]), ("abc1234567", "main", "2026-01-02T00:00:00Z"))
+        self.assertEqual([(r["id"], r["name"], r["bucket"], r["url"]) for r in got["runs"]],
+                         [("222", "b", "failed", "https://ci.example/b"), ("s@2026-01-01T00:00:01Z", "s", "failed", "https://ci.example/s"),
+                          ("333", "c", "pending", None), ("111", "a", "passed", None)])
+        self.failed(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch="yes"), "bad_request")
+
 
 NOTIFS = [
     {"reason": "review_requested", "subject": {"type": "PullRequest", "title": "R\x85", "url": "https://api.ghe.example.com/repos/acme/lib/pulls/7"},

@@ -422,7 +422,7 @@ def finish_comments(items, since):
     return safe_ops.cap({"action": "pr_comments", "comments": cs}, "comments")
 
 
-STATUS_KEYS = ("number", "url", "state", "draft", "mergeable", "reviewDecision", "headSha", "baseRef", "updatedAt")
+STATUS_KEYS = ("number", "url", "state", "draft", "mergeable", "reviewDecision", "headSha", "headRefName", "baseRef", "updatedAt")
 
 
 def finish_status(d):
@@ -438,6 +438,7 @@ def finish_status(d):
     out["mergeable"] = enum(d.get("mergeable"), ("mergeable", "conflicting", "unknown"))
     out["reviewDecision"] = enum(d.get("reviewDecision"), ("approved", "changes_requested", "review_required"))
     out["headSha"] = s_or_none(d.get("headSha"), 64)
+    out["headRefName"] = s_or_none(d.get("headRefName"), 200)
     out["baseRef"] = s_or_none(d.get("baseRef"), 200)
     out["updatedAt"] = s_or_none(d.get("updatedAt"), 40)
     return out
@@ -450,7 +451,8 @@ def gh_status(d):
         "draft": d.get("isDraft"),
         "mergeable": "mergeable" if mer == "MERGEABLE" else "conflicting" if mer == "CONFLICTING" else "unknown",
         "reviewDecision": str(d.get("reviewDecision") or "").lower() or None,
-        "headSha": d.get("headRefOid"), "baseRef": d.get("baseRefName"), "updatedAt": d.get("updatedAt")})
+        "headSha": d.get("headRefOid"), "headRefName": d.get("headRefName"), "baseRef": d.get("baseRefName"),
+        "updatedAt": d.get("updatedAt")})
 
 
 def glab_status(d):
@@ -462,7 +464,8 @@ def glab_status(d):
         "draft": d.get("draft"),
         "mergeable": "mergeable" if ds == "mergeable" else "conflicting" if ds == "conflict" else "unknown",
         "reviewDecision": "review_required" if ds == "not_approved" else None,
-        "headSha": d.get("sha"), "baseRef": d.get("target_branch"), "updatedAt": d.get("updated_at")})
+        "headSha": d.get("sha"), "headRefName": d.get("source_branch"), "baseRef": d.get("target_branch"),
+        "updatedAt": d.get("updated_at")})
 
 
 def gh_check(e):
@@ -681,7 +684,7 @@ def op_pr_status(req):
     rflag = repo_flag(host, repo, hostname)
     if host.kind == "gh":
         return gh_status(gh_view(host, root, number,
-                                 "number,url,title,state,isDraft,mergeable,reviewDecision,headRefOid,baseRefName,updatedAt",
+                                 "number,url,title,state,isDraft,mergeable,reviewDecision,headRefOid,headRefName,baseRefName,updatedAt",
                                  rflag))
     return glab_status(glab_view(host, root, number, rflag))
 
@@ -1075,29 +1078,57 @@ def op_pr_search(req):
 ZERO_TIME = ("0001-01-01T00:00:00Z", "0001-01-01T00:00:00")
 
 
+def _node_group(nd):
+    """(name, group) of one rollup node: group is pending, failed, passed or missing."""
+    if nd.get("__typename") == "StatusContext":
+        name, st = nd.get("context"), str(nd.get("state") or "").upper()
+        group = "failed" if st in ("FAILURE", "ERROR") else "missing" if st == "EXPECTED" else \
+            "passed" if st == "SUCCESS" else "pending"
+    else:
+        name, st = nd.get("name"), str(nd.get("status") or "").upper()
+        concl = str(nd.get("conclusion") or "").upper()
+        if concl in FAILED_CONCLUSIONS:
+            group = "failed"
+        elif st != "COMPLETED":
+            group = "missing" if nd.get("isRequired") is True and (not nd.get("startedAt") or nd.get("startedAt") in ZERO_TIME) else "pending"
+        else:
+            group = "passed"
+    return name, group
+
+
+def _rollup_nodes(roll):
+    ctx = roll.get("contexts") if isinstance(roll, dict) else None
+    nodes = ctx.get("nodes") if isinstance(ctx, dict) else None
+    return [nd for nd in nodes if isinstance(nd, dict)] if isinstance(nodes, list) else []
+
+
+def watch_runs(roll):
+    """One entry {id, name, bucket, url} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
+    or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run."""
+    out = []
+    for nd in _rollup_nodes(roll):
+        name, group = _node_group(nd)
+        if nd.get("__typename") == "StatusContext":
+            rid, url = "%s@%s" % (nd.get("context"), nd.get("createdAt")), nd.get("targetUrl")
+        else:
+            rid, url = nd.get("databaseId"), nd.get("detailsUrl")
+        out.append({"id": s_or_none(str(rid), 200) if rid is not None else "", "name": title_or_none(name) or "?",
+                    "bucket": group, "url": s_or_none(url, 300)})
+    order = ("failed", "missing", "pending", "passed")
+    out.sort(key=lambda r: order.index(r["bucket"]))
+    while len(out) > 1 and len(json.dumps(out)) > 12000:   # the answer stays under the 16 KB cap; passed runs go first
+        out.pop()
+    return out
+
+
 def map_rollup(roll):
     """{pending, failed, passed, missing (names, <= 10 each), counts, truncated} of one statusCheckRollup."""
     names = {"pending": [], "failed": [], "passed": [], "missing": []}
     counts = dict.fromkeys(names, 0)
     ctx = roll.get("contexts") if isinstance(roll, dict) else None
-    nodes = ctx.get("nodes") if isinstance(ctx, dict) else None
     total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
-    for nd in nodes if isinstance(nodes, list) else []:
-        if not isinstance(nd, dict):
-            continue
-        if nd.get("__typename") == "StatusContext":
-            name, st = nd.get("context"), str(nd.get("state") or "").upper()
-            group = "failed" if st in ("FAILURE", "ERROR") else "missing" if st == "EXPECTED" else \
-                "passed" if st == "SUCCESS" else "pending"
-        else:
-            name, st = nd.get("name"), str(nd.get("status") or "").upper()
-            concl = str(nd.get("conclusion") or "").upper()
-            if concl in FAILED_CONCLUSIONS:
-                group = "failed"
-            elif st != "COMPLETED":
-                group = "missing" if nd.get("isRequired") is True and (not nd.get("startedAt") or nd.get("startedAt") in ZERO_TIME) else "pending"
-            else:
-                group = "passed"
+    for nd in _rollup_nodes(roll):
+        name, group = _node_group(nd)
         counts[group] += 1
         if len(names[group]) < MAX_NAMES:
             names[group].append(title_or_none(name) or "?")
@@ -1107,16 +1138,20 @@ def map_rollup(roll):
     return out
 
 
-def _pr_query(count):
+def _pr_query(count, watch=False):
+    # watch: the extra fields pr_watch reads (head, base, updatedAt, run identity and link)
+    pr_extra = "headRefOid baseRefName updatedAt " if watch else ""
+    run_extra = "databaseId detailsUrl " if watch else ""
+    ctx_extra = "createdAt targetUrl " if watch else ""
     decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
     parts = []
     for i in range(count):
         parts.append(
             "r%d: repository(owner: $owner%d, name: $name%d) { pullRequest(number: $n%d) { number url title state "
-            "isDraft mergeable reviewDecision headRefName commits(last: 1) { nodes { commit { statusCheckRollup { state "
-            "contexts(first: 100) { totalCount nodes { __typename ... on CheckRun { name status conclusion startedAt "
-            "isRequired(pullRequestNumber: $n%d) } ... on StatusContext { context state "
-            "isRequired(pullRequestNumber: $n%d) } } } } } } } } }" % (i, i, i, i, i, i))
+            "isDraft mergeable reviewDecision headRefName %s commits(last: 1) { nodes { commit { statusCheckRollup { state "
+            "contexts(first: 100) { totalCount nodes { __typename ... on CheckRun { name status conclusion startedAt %s"
+            "isRequired(pullRequestNumber: $n%d) } ... on StatusContext { context state %s"
+            "isRequired(pullRequestNumber: $n%d) } } } } } } } } }" % (i, i, i, i, pr_extra, run_extra, i, ctx_extra, i))
     return "query(%s) { %s }" % (decl, " ".join(parts))
 
 
@@ -1144,16 +1179,19 @@ def _enum(v, allowed):
 
 
 def op_pr_batch(req):
-    args, cfg, pr_host = _setup(req, ("host", "prs"))
+    args, cfg, pr_host = _setup(req, ("host", "prs", "watch"))
     hostname = arg_host(args)
     entries = _batch_args(args)
+    watch = args.get("watch", False)
+    if not isinstance(watch, bool):
+        raise _bad("watch must be true or false")
     root = _repoless_root(req)
     host = _gh_only(pr_host, root, "batch")
     variables = {}
     for i, (repo, n) in enumerate(entries):
         owner, name = two_part(repo)
         variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
-    path = _body_file(json.dumps({"query": _pr_query(len(entries)), "variables": variables}))
+    path = _body_file(json.dumps({"query": _pr_query(len(entries), watch), "variables": variables}))
     try:   # the body goes through a file: 50 queries overflow the Windows command line
         argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
             ["--input", _argpath(path)]
@@ -1192,12 +1230,16 @@ def op_pr_batch(req):
         commit = nodes[0].get("commit") if isinstance(nodes, list) and nodes and isinstance(nodes[0], dict) else None
         roll = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
         mer = str(pr.get("mergeable") or "").upper()
-        prs.append({"repo": repo, "number": n, "url": s_or_none(pr.get("url"), 1024), "title": title_or_none(pr.get("title")),
+        item = {"repo": repo, "number": n, "url": s_or_none(pr.get("url"), 1024), "title": title_or_none(pr.get("title")),
                     "state": _enum(pr.get("state"), ("open", "closed", "merged")),
                     "draft": pr.get("isDraft") if isinstance(pr.get("isDraft"), bool) else None,
                     "mergeable": "mergeable" if mer == "MERGEABLE" else "conflicting" if mer == "CONFLICTING" else "unknown",
                     "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
-                    "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)})
+                    "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)}
+        if watch:
+            item.update({"headSha": s_or_none(pr.get("headRefOid"), 64), "baseRef": s_or_none(pr.get("baseRefName"), 200),
+                         "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": watch_runs(roll)})
+        prs.append(item)
     return {"action": "pr_batch", "prs": prs, "errors": errors}
 
 

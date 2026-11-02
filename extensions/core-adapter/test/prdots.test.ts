@@ -2,8 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { dotState, PrDots } from "../prdots.ts";
 import type { PrDotsDeps } from "../prdots.ts";
-import { PrWatches, baselineOf } from "../prwatch.ts";
-import type { ChecksAnswer, Timers } from "../prwatch.ts";
+import { PrWatches } from "../prwatch.ts";
+import type { ChecksAnswer, Timers, WatchSnapshot } from "../prwatch.ts";
+import type { PrKey } from "../prtrack.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 
 const chk = (name: string) => ({ name, status: "completed", conclusion: null, url: null });
@@ -11,6 +12,7 @@ const checks = (o: Partial<ChecksAnswer>): ChecksAnswer => ({ pending: [], faile
 const ran = (result: Record<string, unknown>): SafeOpOutcome => ({ kind: "ran", result: { ok: true, ...result } });
 const pre = (precondition: string): SafeOpOutcome => ({ kind: "precondition", precondition, message: "m" });
 const green = checks({ passed: [chk("a")] });
+const wk = (n: number): PrKey => ({ host: "github.com", repo: "acme/app", n });
 
 interface Pr {
   status?: Record<string, unknown>;
@@ -18,7 +20,7 @@ interface Pr {
   fail?: SafeOpOutcome;
 }
 
-function harness(opts: { enabled?: boolean; branch?: string; intervalMs?: number; watched?: () => number[]; watchChecks?: PrDotsDeps["watchChecks"]; blocked?: () => boolean } = {}) {
+function harness(opts: { enabled?: boolean; branch?: string; intervalMs?: number; watched?: () => PrKey[]; watchView?: PrDotsDeps["watchView"]; blocked?: () => boolean } = {}) {
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
   const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms, live: true }), timers.length - 1), clear: (h) => void (typeof h === "number" && timers[h] && (timers[h].live = false)) };
   const prs = new Map<number, Pr>();
@@ -42,7 +44,7 @@ function harness(opts: { enabled?: boolean; branch?: string; intervalMs?: number
       return op === "pr_status" ? ran({ number: n, state: "open", draft: false, mergeable: "mergeable", ...p.status }) : ran({ ...(p.checks ?? green) });
     },
     watched: opts.watched ?? (() => []),
-    watchChecks: opts.watchChecks ?? (() => null),
+    watchView: opts.watchView ?? (() => null),
     intervalMs: () => opts.intervalMs ?? 60_000,
     trace: (r) => void traces.push(r),
     timers: fake,
@@ -78,11 +80,11 @@ test("a draft with green checks gives ok", async () => {
   h.d.onCreated(5);
   h.d.start();
   await h.fire();
-  assert.deepEqual(h.d.dots(), [{ n: 5, state: "ok" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 5, state: "ok", checks: [{ name: "a", state: "ok" }] }]);
 });
 
 test("the tracked set: created, watched, and the branch PR; newest first, at most 6, no duplicates", async () => {
-  const h = harness({ watched: () => [30, 20, 10] });
+  const h = harness({ watched: () => [30, 20, 10].map(wk) });
   for (const n of [1, 2, 3, 10, 20, 30, 40, 50]) h.prs.set(n, {});
   h.setBranchPr({ number: 40, status: { number: 40, state: "open", mergeable: "mergeable" } });
   h.d.onCreated(1);
@@ -94,7 +96,7 @@ test("the tracked set: created, watched, and the branch PR; newest first, at mos
   assert.deepEqual(h.d.dots().map((x) => x.n), [2, 3, 1, 30, 20, 10]);
   assert.equal(h.calls.filter((c) => c.number === undefined).length, 1, "one pr_status without a number");
   // the branch PR joins when there is room
-  const h2 = harness({ watched: () => [10] });
+  const h2 = harness({ watched: () => [wk(10)] });
   h2.prs.set(10, {});
   h2.prs.set(40, {});
   h2.setBranchPr({ number: 40, status: { number: 40, state: "open", mergeable: "mergeable" } });
@@ -114,7 +116,7 @@ test("the branch lookup is cached per branch name, hits and misses, and runs aga
   h.setBranch("other", { number: 9, status: { number: 9, state: "open", mergeable: "mergeable" } });
   await h.fire();
   assert.equal(h.calls.filter((c) => c.number === undefined).length, 2);
-  assert.deepEqual(h.d.dots(), [{ n: 9, state: "ok" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 9, state: "ok", checks: [{ name: "a", state: "ok" }] }]);
   await h.fire();
   assert.equal(h.calls.filter((c) => c.number === undefined).length, 2);
   h.setBranch("feat", null); // back to a cached miss
@@ -124,7 +126,7 @@ test("the branch lookup is cached per branch name, hits and misses, and runs aga
 });
 
 test("closed, merged and pr_not_found are dropped and not tracked again", async () => {
-  const h = harness({ watched: () => [3] });
+  const h = harness({ watched: () => [wk(3)] });
   h.prs.set(1, { status: { state: "closed" } });
   h.prs.set(2, { status: { state: "merged" } });
   h.prs.set(3, {});
@@ -133,9 +135,9 @@ test("closed, merged and pr_not_found are dropped and not tracked again", async 
   h.d.onCreated(4); // not found
   h.d.start();
   await h.fire();
-  assert.deepEqual(h.d.dots(), [{ n: 3, state: "ok" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 3, state: "ok", checks: [{ name: "a", state: "ok" }] }]);
   await h.fire();
-  assert.deepEqual(h.d.dots(), [{ n: 3, state: "ok" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 3, state: "ok", checks: [{ name: "a", state: "ok" }] }]);
   assert.equal(h.calls.filter((c) => c.number === 1 || c.number === 2 || c.number === 4).length, 3, "each asked once");
 });
 
@@ -183,35 +185,32 @@ test("backoff doubles per failed tick, caps at 600 s and resets on success; the 
   assert.ok(h.traces.some((t) => t.outcome === "error"));
 });
 
-test("a watched PR reuses a fresh watch snapshot (status only), a stale one polls checks", async () => {
-  let age = 1000;
-  const h = harness({ watched: () => [7], watchChecks: () => ({ checks: checks({ pending: [chk("a")] }), ageMs: age }) });
+const wsnap = (bucket: "pending" | "passed"): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abc", base: "main", updatedAt: "t", runs: [{ id: "1", name: "a", bucket, url: "" }], status: { number: 7, state: "open", draft: false, mergeable: "mergeable" } });
+
+test("a watched PR is shown from the watch's snapshot and is not polled by the dots", async () => {
+  const h = harness({ watched: () => [wk(7)], watchView: () => ({ snap: wsnap("pending"), ageMs: 1000 }) });
   h.prs.set(7, { checks: green });
   h.d.start();
   await h.fire();
-  assert.deepEqual(h.d.dots(), [{ n: 7, state: "run" }]);
-  assert.deepEqual(h.calls.filter((c) => c.number === 7).map((c) => c.op), ["pr_status"]);
-  age = 90_000;
-  await h.fire();
-  assert.deepEqual(h.d.dots(), [{ n: 7, state: "ok" }]);
-  assert.deepEqual(h.calls.filter((c) => c.number === 7).map((c) => c.op), ["pr_status", "pr_status", "pr_checks"]);
+  assert.deepEqual(h.d.dots(), [{ n: 7, state: "run", checks: [{ name: "a", state: "run" }] }]);
+  assert.deepEqual(h.calls.filter((c) => c.number === 7).map((c) => c.op), []);
 });
 
-test("PrWatches.lastChecks: the latest poll's checks and age; null without a watch or poll", async () => {
+test("PrWatches.lastSnapshot: the latest poll's snapshot and age; null without a watch", async () => {
   let clock = 1000;
   const timers: { fn: () => void; ms: number }[] = [];
   const fake: Timers = { set: (fn, ms) => (timers.push({ fn, ms }), timers.length - 1), clear: () => undefined };
-  const snap = checks({ pending: [chk("a")] });
-  const w = new PrWatches({ poll: async () => ({ checks: snap }), send: () => undefined, idle: () => true, trace: () => undefined, intervalMs: () => 5000, now: () => clock, timers: fake });
-  assert.equal(w.lastChecks(1), null);
-  w.start(1, "checks", baselineOf({ checks: snap }), 3_600_000);
-  assert.equal(w.lastChecks(1), null);
+  const w = new PrWatches({ poll: async () => ({ snap: wsnap("passed") }), send: () => undefined, idle: () => true, trace: () => undefined, intervalMs: () => 5000, now: () => clock, timers: fake });
+  assert.equal(w.lastSnapshot(wk(1)), null);
+  w.start(wk(1), wsnap("pending"));
+  assert.equal(w.lastSnapshot(wk(1))?.snap.runs[0].bucket, "pending");
   clock = 6000;
-  timers[1].fn();
+  timers[0].fn();
   await new Promise((r) => setImmediate(r));
   clock = 8000;
-  assert.deepEqual(w.lastChecks(1), { checks: snap, ageMs: 2000 });
-  assert.equal(w.lastChecks(2), null);
+  const v = w.lastSnapshot(wk(1));
+  assert.deepEqual([v?.snap.runs[0].bucket, v?.ageMs], ["passed", 2000]);
+  assert.equal(w.lastSnapshot(wk(2)), null);
 });
 
 test("a blocked preflight skips the tick and keeps the states", async () => {
@@ -226,11 +225,11 @@ test("a blocked preflight skips the tick and keeps the states", async () => {
   const before = h.calls.length;
   await h.fire();
   assert.equal(h.calls.length, before, "no host call");
-  assert.deepEqual(h.d.dots(), [{ n: 5, state: "ok" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 5, state: "ok", checks: [{ name: "a", state: "ok" }] }]);
   assert.equal(h.live()?.ms, 60_000, "no backoff");
   blocked = false;
   await h.fire();
-  assert.deepEqual(h.d.dots(), [{ n: 5, state: "fail" }]);
+  assert.deepEqual(h.d.dots(), [{ n: 5, state: "fail", checks: [{ name: "a", state: "fail" }] }]);
 });
 
 test("host or auth missing stops the loop with one trace event; tracked PRs show none", async () => {
@@ -275,7 +274,7 @@ test("clear() stops the timer and empties the dots; the live-file hook is called
 });
 
 test("trace records never hold a PR number", async () => {
-  const h = harness({ watched: () => [4242] });
+  const h = harness({ watched: () => [wk(4242)] });
   h.prs.set(4242, {});
   h.prs.set(987654, { fail: { kind: "error", message: "boom 987654" } });
   h.d.onCreated(987654);

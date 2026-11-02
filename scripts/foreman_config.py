@@ -184,7 +184,7 @@ CHILD_ROLES = ["explorer", "builder", "reviewer"]
 SESSION_FOREMAN = "session-foreman"
 # Tools a child never gets, whatever roles.<id>.tools says: children reach the foreman through
 # contact_supervisor, never through pi-intercom (the adapter also refuses the tool in children).
-CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch", "pr_track", "pr_untrack")
+CHILD_DENIED_TOOLS = ("intercom", "pr_create", "pr_watch", "pr_unwatch", "pr_track", "pr_untrack")
 THINKING = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 # project-layer tightening of safety.* (see module docstring)

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { ChildWidget, MAX_ROWS, type BackgroundRow, type WidgetOpts, type WidgetRows } from "../childwidget.ts";
 import { PrWatches } from "../prwatch.ts";
+import type { WatchSnapshot } from "../prwatch.ts";
 import { WaitRuntime, type Timers, waitLimits } from "../wait.ts";
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "r30-widget-"));
@@ -61,7 +62,7 @@ function wiring(clock: ReturnType<typeof fakeClock>, dead: Set<number>) {
   const w = new ChildWidget(path.join(dir, "u.jsonl"));
   const rows = (): BackgroundRow[] => [
     ...rt.list().filter((e) => e.kind !== "pressure").map((e) => ({ label: e.bg ? "bg" : "wait", detail: e.note || e.kind, startedAt: clock.now() - e.ageSeconds * 1000 })),
-    ...pw.list().map((p) => ({ label: `pr #${p.n}`, detail: p.until, startedAt: p.startedAt })),
+    ...pw.list().map((p) => ({ label: `pr #${p.n}`, detail: p.event, startedAt: p.startedAt })),
   ];
   const opts: WidgetOpts = { enabled: true, agentDir: dir, intercomId: null, background: rows };
   const show = () => w.request(ctx, opts, clock.now());
@@ -89,7 +90,7 @@ function wiring(clock: ReturnType<typeof fakeClock>, dead: Set<number>) {
   return { st, ctx, w, opts, show, rt, pw, dispose: () => w.dispose() };
 }
 
-const baseline = () => ({ checks: new Map<string, string>(), commentIds: new Set<string>() });
+const baseline = (): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abc", base: "main", updatedAt: "", runs: [], status: {} });
 
 test("a foreman_wait row appears when a wait starts and goes on fire and on cancel", () => {
   const clock = fakeClock();
@@ -122,14 +123,16 @@ test("a foreman_bg command shows as a bg row and leaves when its process exits; 
   h.dispose();
 });
 
-test("a PR watch row shows its until and leaves when the watch ends", () => {
+test("a PR watch row shows its last event and leaves when the watch ends", () => {
   const clock = fakeClock();
   const h = wiring(clock, new Set());
   clock.advance(1000);
-  assert.equal(h.pw.reserve(7), true);
-  h.pw.start(7, "checks", baseline(), 30_000);
-  assert.deepEqual(shown(h.st), ["pr #7 · checks · 0s"]);
-  clock.advance(30_000); // the watch times out (before its first poll)
+  const key = { host: "github.com", repo: "acme/app", n: 7 };
+  assert.equal(h.pw.reserve(key), true);
+  h.pw.start(key, baseline());
+  assert.deepEqual(shown(h.st), ["pr #7 · watching · 0s"]);
+  clock.advance(30_000); // past the render gap
+  assert.equal(h.pw.unwatch(7), 1); // pr_unwatch: the row leaves
   assert.equal(h.st.rows, null);
   h.dispose();
 });

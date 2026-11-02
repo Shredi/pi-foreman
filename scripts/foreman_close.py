@@ -7,6 +7,13 @@
                   [--owner O] [--class private|round|durable] [--session S] [--state D]
     foreman close --take PATH | --drop PATH [--session S] [--state D]
     foreman close merged --ws D --ref REF [--base B]    (prints {"merged": true|false}; needs no session)
+    foreman close selfclean --ws D --branch B [--verified-merged SHA] [--archive DIR] [--session S] [--state D]
+                  [--wait-pid N --exempt-workflow --out PATH]
+        a child whose PR was merged removes its own worktree and local branch (docs/close.md). Without --wait-pid:
+        the checks (archive `.workflow/` to DIR and exempt it from ignored_files; --verified-merged lifts not_merged
+        for a squash merge while the tip is still SHA) as one JSON object; exit 0 ok, 3 refused. With --wait-pid:
+        wait for that pid to exit, check again, `git worktree remove` and `git update-ref -d` against the verified sha (`git branch -d` without the fact),
+        write the result to --out.
 
 Session S defaults to CLAUDE_CODE_SESSION_ID; the state dir to PI_FOREMAN_STATE_DIR, else
 `<agentDir>/pi-foreman/state` (foreman_config.resolve_agent_dir). This module is the single writer
@@ -541,6 +548,103 @@ def run(state, sid, cwd, cfg, clean=True, dry_run=False, result=None):
     return rep
 
 
+# ------------------------------------------------------------------ self-finish (a child whose PR was merged)
+
+WAIT_PID_MAX = 600  # seconds the detached cleanup waits for the session's pi process to exit
+
+
+def pid_alive(pid):
+    if pid <= 0:
+        return False
+    if os.name == "nt":  # os.kill(pid, 0) would send CTRL_C_EVENT there
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not h:
+            return False
+        try:
+            return k32.WaitForSingleObject(h, 0) == 258  # WAIT_TIMEOUT: still running
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def archive_workflow(ws, dest):
+    """Copy the worktree's own `.workflow/` (ledger, scratch, results) to `dest`; the number of files copied."""
+    src = os.path.join(ws, ".workflow")
+    if not os.path.isdir(src) or safe_ops.is_link(src):
+        return 0
+    shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
+    return sum(len(files) for _, _, files in os.walk(dest))
+
+
+def remote_branch(ws, branch):
+    """The remote head branch that still exists after the merge (`<remote>/<branch>`), else None (also when unreachable)."""
+    code, rem, _ = safe_ops.git(["config", "--get", "branch.%s.remote" % branch], ws)
+    remote = rem.strip() if code == 0 and rem.strip() else "origin"
+    code, out, _ = safe_ops.git(["ls-remote", "--heads", remote, "refs/heads/" + branch], ws)
+    return "%s/%s" % (remote, branch) if code == 0 and out.strip() else None
+
+
+def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workflow=False):
+    """(reason, chk): None and the worktree check when the worktree and local branch may go, else the refusal reason.
+
+    `verified` is the verified-merged fact (the PR is MERGED, its head ref is `branch` and its head commit is this sha,
+    checked by the caller): with it `not_merged` does not apply, but only while the branch tip and HEAD still are that
+    commit. `exempt_workflow` drops the worktree's own `.workflow/` from the ignored-files check (it was archived).
+    """
+    cfg = dict(ops_cfg)
+    top_level = (".workflow",) if exempt_workflow else ()  # only the worktree's own top-level .workflow/, never a nested one
+    try:
+        if verified:
+            tip = safe_ops.git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], ws)[1].strip()
+            head = safe_ops.git(["rev-parse", "--verify", "--quiet", "HEAD"], ws)[1].strip()
+            if tip != verified or head != verified:
+                return "verified_merged_stale", None
+        chk = safe_ops.check_worktree(ws, ws, cfg, verified_merged=bool(verified), top_level=top_level)
+    except safe_ops.Precondition as exc:
+        return exc.name, None
+    except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
+        return "check_failed (%s)" % str(exc)[:80], None
+    if chk["branch"] != branch:
+        return "branch_mismatch", None
+    user = in_use_by(state, sid, ws) if sid else None
+    if user:
+        return "in_use (session %s)" % user, None
+    return None, chk
+
+
+def selfclean_run(a, state, ops_cfg):
+    """The detached step: wait for the pi pid to exit, check again, remove worktree and branch, write `--out`."""
+    deadline = time.time() + WAIT_PID_MAX
+    while pid_alive(a.wait_pid) and time.time() < deadline:
+        time.sleep(0.5)
+    out = {"v": 1, "ts": now(), "worktree": os.path.abspath(a.ws), "branch": a.branch, "status": "failed"}
+    if pid_alive(a.wait_pid):
+        out["reason"] = "the session did not exit within %d s" % WAIT_PID_MAX
+    else:
+        reason, chk = selfclean_check(a.ws, a.branch, state, a.session, ops_cfg, a.verified_merged, a.exempt_workflow)
+        if reason is None:
+            try:
+                res = safe_ops.remove_worktree(chk, force_branch=bool(a.verified_merged), verified_sha=a.verified_merged or None)
+                out.update(status="removed", branchDeleted=res["branchDeleted"])
+                if res.get("branchMessage"):
+                    out["branchMessage"] = res["branchMessage"][:200]
+            except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
+                out["reason"] = "remove_failed (%s)" % str(exc)[:120]
+        else:
+            out["reason"] = reason
+    if a.out:
+        write_json(a.out, out)
+    return out
+
+
 # ------------------------------------------------------------------ cli
 
 def common(p):
@@ -549,6 +653,20 @@ def common(p):
 
 
 def parse(argv):
+    if argv and argv[0] == "selfclean":
+        p = argparse.ArgumentParser(prog="foreman close selfclean")
+        p.add_argument("--ws", required=True)
+        p.add_argument("--branch", required=True)
+        p.add_argument("--verified-merged", metavar="SHA", help="the PR is MERGED and its head commit is SHA (the branch tip)")
+        p.add_argument("--archive", metavar="DIR", help="copy the worktree's .workflow/ to DIR first and exempt it")
+        p.add_argument("--exempt-workflow", action="store_true")
+        p.add_argument("--wait-pid", type=int, help="run the removal after this pid exits (the detached step)")
+        p.add_argument("--out", help="write the removal result (cleanup.json) here")
+        p.add_argument("--trusted-project", action="store_true")
+        common(p)
+        a = p.parse_args(argv[1:])
+        a.cmd = "selfclean"
+        return a
     if argv and argv[0] == "merged":
         p = argparse.ArgumentParser(prog="foreman close merged")
         p.add_argument("--ws", required=True)
@@ -584,6 +702,44 @@ def parse(argv):
     return a
 
 
+def main_selfclean(a):
+    """`selfclean`: check (default; prints one JSON object, exit 0 ok, 3 refused) or, with --wait-pid, the detached removal."""
+    if not os.path.isdir(a.ws):
+        print("foreman close selfclean: --ws must be a directory", file=sys.stderr)
+        return 2
+    ws = os.path.realpath(a.ws)
+    a.ws = ws
+    a.session = safe_sid(a.session or os.environ.get(SESSION_ENV, ""))
+    state = os.path.abspath(os.path.expanduser(a.state or default_state()))
+    try:
+        res = fc.load_config(os.path.dirname(os.path.dirname(state)), ws, a.trusted_project)
+    except fc.ConfigError as exc:
+        print("foreman close selfclean: %s" % exc, file=sys.stderr)
+        return 2
+    if res["errors"]:
+        print("foreman close selfclean: config errors: %s" % "; ".join(res["errors"]), file=sys.stderr)
+        return 2
+    ops_cfg = safe_ops.ops_config(res["config"])
+    if a.wait_pid is not None:
+        return 0 if selfclean_run(a, state, ops_cfg)["status"] == "removed" else 3
+    out = {"ok": False, "archived": 0}
+    if a.archive:
+        try:
+            out["archived"] = archive_workflow(ws, a.archive)
+        except OSError as exc:
+            out["reason"] = "archive_failed (%s)" % str(exc)[:80]
+            print(json.dumps(out))
+            return 3
+    reason, _ = selfclean_check(ws, a.branch, state, a.session, ops_cfg, a.verified_merged, a.exempt_workflow or bool(a.archive))
+    out["ok"] = reason is None
+    if reason:
+        out["reason"] = reason
+    else:
+        out["remoteBranch"] = remote_branch(ws, a.branch)
+    print(json.dumps(out))
+    return 0 if out["ok"] else 3
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
@@ -596,6 +752,8 @@ def main(argv=None):
             return 2
         print(json.dumps({"merged": merged_into_base(os.path.abspath(a.ws), a.ref, a.base or None)}))
         return 0
+    if a.cmd == "selfclean":
+        return main_selfclean(a)
     sid = (a.session or os.environ.get(SESSION_ENV, "")).strip()
     if not safe_sid(sid):
         print("foreman close: no session (pass --session or set %s)" % SESSION_ENV, file=sys.stderr)

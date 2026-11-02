@@ -11,7 +11,7 @@ const ctx = { cwd, home: path.resolve("/t/home"), platform: process.platform, ow
 const bash = (command: string): boolean => recheckExempt("bash", { command }, ctx);
 
 test("r41 recheckexempt: PR coordination tools and read-only gh/glab views are exempt", () => {
-  for (const n of ["pr_status", "pr_checks", "pr_comments", "pr_watch"]) assert.equal(recheckExempt(n, {}, ctx), true, n);
+  for (const n of ["pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch"]) assert.equal(recheckExempt(n, {}, ctx), true, n);
   for (const c of ["gh pr view 12", "gh pr checks 12", "gh pr list --state open", "gh run view 99 --log-failed", "glab mr view 3", "glab ci status"]) assert.equal(bash(c), true, c);
   assert.equal(bash("gh pr merge 12"), false);
   assert.equal(bash("gh pr view 12 > /etc/out"), false);

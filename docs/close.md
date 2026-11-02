@@ -84,6 +84,52 @@ A removed entry is marked `removed: <ts>` in the manifest, so a second run of th
 `timeout`, `not sent`) under the CLOSE report. This never fails the parent's close. See
 [sessions](sessions.md#closing-the-children-with-the-parent).
 
+## Close refused while a PR is open
+
+A session that holds a [PR watch](tools.md#watch) on a PR that is not merged or closed refuses every close (`/foreman close`,
+an intercom `foreman:close`, a remote parent's close order): `pi-foreman: close refused: PR #n open and watched (merge it,
+or pr_unwatch)`. Merge or close the PR, or end the watch with `pr_unwatch`, then close again. The check is part of the same
+refusals as a running child run or a pending `foreman_wait`, so a parent's close of a child gets the refusal as a reply.
+
+A PR merged after the last poll does not block: before refusing, a close runs one fresh `pr_status` per watched PR and ends
+the watches of merged or closed PRs (without a message). While that lookup runs the close counts as in progress, so a second
+close (say from Herdr and from intercom) is refused as `a close is already in progress`. With no watch held the close needs
+no lookup and starts at once. A lookup that fails keeps the watch, and so the refusal.
+
+## Self-finish on merge
+
+A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose watched PR is merged closes itself; nobody sends `foreman:close`.
+When the watch reports `merged`, the adapter starts the normal close sequence with the source `pr-merged` (it is not a
+`close.from` source). The sequence is the one above, with these differences:
+
+- The close prompt asks for the result file `<handoff dir>/result.md`: the PR number, the merge commit and anything left open.
+- After the result file the session tells its parent `PR #n merged, closing` and the usual `Result from <label>: <path>`.
+- **Verified-merged fact.** A squash or rebase merge leaves the branch tip outside the base branch, so `not_merged` would
+  refuse. The adapter runs one `pr_status` and passes the fact only when the PR is `merged`, its head ref is this worktree's
+  branch and its `headSha` equals the local branch tip. The fact is a `--verified-merged <sha>` flag of
+  `foreman_close.py selfclean`. With it `not_merged` does not apply and the local branch is deleted with `git update-ref -d`
+  against `<sha>`, for exactly that branch, and only while the branch tip and `HEAD` still are `<sha>` when the removal runs (a
+  moved tip keeps the branch). Without it the rules
+  of [Cleanup preconditions](#cleanup-preconditions) stay (`git branch -d`, merged into the base or its pushed upstream).
+- **`.workflow/` archive.** Before the checks the worktree's own `.workflow/` (ledger, scratch, results) is copied into
+  `<handoff dir>/workflow/`; only then it no longer counts for `ignored_files`. The line `workflow archive: <dir>` goes into the
+  report. Every other precondition stays: clean tree, no stash entry referencing the branch, not locked, no other live
+  session with its cwd inside.
+- **Checks before the exit.** The preconditions are checked in the session. A refusal (`worktree_dirty`, `stash_references_branch`,
+  `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
+  message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
+  and the branch stay.
+- **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
+  `spawn` with `detached` and `unref`, no console window on Windows). It waits for the session's pi process to exit, checks
+  again, runs `git worktree remove` (never `--force`) and the branch delete, and writes `<handoff dir>/cleanup.json`:
+  `{"status": "removed" | "failed", "reason"?, "worktree", "branch", "branchDeleted"?, "ts"}`. It needs no parent adapter and
+  no closed notice, so it also works when the close was started by Herdr. It gives up after 10 minutes if the process does not exit.
+- **Remote branch.** Nothing is deleted on the remote and no guard is lifted. If the remote head branch still exists, the report
+  lists `kept: remote branch <b> (enable delete head branch on merge)`. Turn on the host's setting *Automatically delete head
+  branches* (GitHub: repository settings, General, Pull Requests) so merging the PR removes it.
+- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup. The watch message says
+  `report to the parent: PR #n closed unmerged`, and the session waits for the parent.
+
 ## Pushed branches without a PR
 
 `/foreman close` also starts a check for branches this session pushed. For each pushed branch, in this order:
@@ -112,7 +158,7 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
 - Worktree: clean including ignored files (outside `safety.ops.worktreeDisposable`), branch merged into the base
   branch or contained in its pushed upstream, not locked, no stash entry referencing the branch, no live session
   of another id with its cwd inside. Removal is `git worktree remove` without `--force`, then `git branch -d`
-  (never `-D`).
+  (`-D` only with the verified-merged fact of a [self-finish](#self-finish-on-merge)). Cleanup of a manifest entry never uses `-D`.
 - Scratch: a directory inside `.workflow/scratch/` or `<state>/scratch/`, not a symlink, no live session inside.
   Removal uses `trash` when available, else removes exactly that path and nothing else.
 - A failed precondition turns the entry into a handover with the reason (`worktree_dirty`, `ignored_files`,
@@ -126,6 +172,9 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
 - `foreman close --take PATH` (on the parent): a child's handover becomes the parent's own manifest entry.
 - `foreman close --drop PATH`: stop listing it; nothing is removed.
 - Untaken child handovers are re-listed on every run and keep the parent's report open.
+- `foreman close selfclean --ws <worktree> --branch <b> [--verified-merged <sha>] [--archive <dir>]`: the checks of a
+  [self-finish](#self-finish-on-merge) as one JSON object (`ok`, `reason`, `archived`, `remoteBranch`; exit 0 ok, 3 refused).
+  With `--wait-pid <pid> --exempt-workflow --out <file>` it is the detached removal. An adapter-internal command, not a model tool.
 - `foreman worktree sweep [--cwd D] [--dry-run]`: removes every linked worktree of the repository that passes
   the same preconditions, listed in a manifest or not (`removed:`, `would remove:`, `skipped: <path> — <reason>`).
   A worktree outside `close.worktreeDir`, `.claude/worktrees` and `../worktrees/<repo>` also gets an `off-convention: <path>` line

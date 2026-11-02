@@ -97,12 +97,24 @@ Plain pi-intercom text, one line each:
   entry becomes `closed` with that result path. A close that is refused is answered with
   `pi-foreman: close refused: <reason>`, for example `the sender is not the parent recorded at spawn`,
   `N child run(s) still active; let them finish (a close never cancels them), then close again` or
-  `N foreman_wait pending (…)` (only when a wait cannot be cancelled).
+  `N foreman_wait pending (…)` (only when a wait cannot be cancelled) or
+  `PR #n open and watched (merge it, or pr_unwatch)`: a session cannot close while its PR is open; the parent merges the PR
+  first (see [close](close.md#close-refused-while-a-pr-is-open)).
 - The child's brief footer tells it to re-read `parent` before each message (the parent can change).
 - Parent to child brief: `Brief from <opener id>: read <absolute path> and act on it`, the path being `<handoff dir>/brief-<n>.md`.
   `n` starts at 1 per handoff dir and takes the lowest free number (a gap is filled); an existing `brief-<n>.md` is never
   overwritten, and a name that appears during the write is refused. A text brief is written to the same kind of file and stays
   on disk. A parent-written `brief-<n>.md` lifts the child's review cap, recheck and read budgets (see [ceremony](ceremony.md)).
+
+### A child that finishes on merge
+
+A child that opened a PR watches it itself (the parent does not watch child PRs) and reports the parent only that the PR is
+ready to merge, or why it is stuck. The parent merges. When the child's watch reports `merged`, the child closes itself
+without a `foreman:close`: it writes `<handoff dir>/result.md` (PR number, merge commit, anything left open), sends the parent
+`PR #n merged, closing` and `Result from <label>: <path>`, archives its `.workflow/` into `<handoff dir>/workflow/` and exits.
+A detached process then removes its worktree and local branch and writes `<handoff dir>/cleanup.json`; a failed precondition
+keeps both and is named in `result.md` and in the message to the parent. A PR closed without a merge starts nothing: the child
+reports `PR #n closed unmerged` and waits for the parent. See [close](close.md#self-finish-on-merge).
 
 ### Closing the children with the parent
 
@@ -186,7 +198,7 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
   `foreman_wait lost on restart: …` listing the lost ids, kinds and notes, and starts again what it still needs (trace `wait`
   decision `lost`). Nothing is reattached; a pid is not reattached because the process may be gone or reused. `pr_watch`
-  watches do resume (see [tools](tools.md#watch)).
+  watches do resume, without a deadline (see [tools](tools.md#watch)).
 
 Worked example:
 
@@ -359,7 +371,7 @@ The usage footer (tokens, list-price cost, child launches, and `waiting <note>` 
 widget (`widget.children`, on by default, TUI only) lists this session's subagent runs as `role · rung · state · ↑in ↓out · $cost`
 (state `working`, or `ask` while a forwarded permission ask of that role waits) and its opened sessions as
 `label · status · age`; runs that finished during the batch fold into one `<n> done` line. The foreman adds its background rows
-after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · until · age`
+after the active runs: a pending `foreman_wait` as `wait · note · age`, an active `pr_watch` as `pr #n · <last event> · age`
 and a running `foreman_bg` command as `bg · note · age`. These rows show with or without child runs and leave when they end; the widget
 hides only when every row is empty. While any run or background row is active the
 widget keeps its height (it may grow when a row starts, padded rather than shrunk, at most 8 rows, one screen row each; a ninth

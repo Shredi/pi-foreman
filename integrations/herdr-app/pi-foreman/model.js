@@ -48,17 +48,36 @@ function cleanRepoUrl(v) {
   return isSafeHttpsUrl(s) && !/[?#]/.test(s) ? s : "";
 }
 
+const MAX_CHECK_DOTS = 12;
+const CHECK_ORDER = { fail: 0, pending: 1, ok: 2 };
+
+// One chip dot per check, failing first, then running, then green; `counts` (a PR above the cap) expands the same way
+// up to the cap; no usable `checks` falls back to the overall `state`.
+function dotChecks(d) {
+  let list = [];
+  if (Array.isArray(d.checks)) list = d.checks.filter((c) => isObj(c) && Object.hasOwn(CHECK, c.state) && c.state !== "none").map((c) => CHECK[c.state]);
+  else if (isObj(d.counts)) {
+    for (const k of ["fail", "run", "ok"]) {
+      const n = Math.min(int(d.counts[k]) ?? 0, MAX_CHECK_DOTS);
+      for (let i = 0; i < n; i++) list.push(CHECK[k]);
+    }
+  }
+  if (!list.length) return [CHECK[d.state]];
+  return list.sort((a, b) => CHECK_ORDER[a] - CHECK_ORDER[b]).slice(0, MAX_CHECK_DOTS);
+}
+
 function normDots(raw, repoUrl) {
   const byN = new Map();
   if (!Array.isArray(raw)) return [];
   for (const d of raw) {
-    if (!isObj(d) || d.src !== "pr" || int(d.n) === null || !(d.state in CHECK)) continue;
-    let pr = byN.get(d.n);
+    if (!isObj(d) || d.src !== "pr" || int(d.n) === null || !Object.hasOwn(CHECK, d.state)) continue;
+    const id = `${cleanRepoUrl(d.repo) || repoUrl}#${d.n}`; // one PR per repository and number
+    let pr = byN.get(id);
     if (!pr) {
       pr = { number: d.n, checks: [], url: "", repo: "" };
-      byN.set(d.n, pr);
+      byN.set(id, pr);
     }
-    pr.checks.push(CHECK[d.state]);
+    pr.checks.push(...dotChecks(d));
     if (!pr.url && isSafeHttpsUrl(d.url)) pr.url = d.url;
     if (!pr.repo) pr.repo = cleanRepoUrl(d.repo) || repoUrl;
   }
@@ -276,15 +295,27 @@ export function sessionCount(node) {
 
 const urgency = (pr) => (pr.checks.includes("fail") ? 0 : pr.checks.includes("pending") ? 1 : 2);
 
+/** The open PRs of a list, each once (its URL, else repo and number): a merged or closed one and a repeat are dropped. */
+function openOnce(prs) {
+  const seen = new Set();
+  return (Array.isArray(prs) ? prs : []).filter((p) => {
+    if (!isObj(p) || !Array.isArray(p.checks) || p.state === "merged" || p.state === "closed") return false;
+    const id = str(p.url) || `${str(p.repo)}#${p.number}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 /** Failing first, then pending, then green; newest (highest number) first inside each. */
 export function sortPrs(prs) {
-  return (Array.isArray(prs) ? prs.filter((p) => isObj(p) && Array.isArray(p.checks)) : [])
+  return openOnce(prs)
     .slice().sort((a, b) => urgency(a) - urgency(b) || num(b.number) - num(a.number));
 }
 
 /** "N PRs · k failing · m pending", or "N PRs · all green"; "" for none. */
 export function prSummary(prs) {
-  const list = Array.isArray(prs) ? prs.filter((p) => isObj(p) && Array.isArray(p.checks)) : [];
+  const list = openOnce(prs);
   if (!list.length) return "";
   const failing = list.filter((p) => urgency(p) === 0).length;
   const pending = list.filter((p) => urgency(p) === 1).length;

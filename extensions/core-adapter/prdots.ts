@@ -1,17 +1,17 @@
 // PR state dots for the Herdr sidebar (docs/herdr.md) and the PR views behind them: one poll loop per foreman
-// session over the PRs it tracks (prtrack.ts: pushed branches, author search, commands acted on, events, created
-// here, URLs, pr_track, pr_watch, the current branch's), mapped to fail, run, ok or none. On gh one GraphQL
+// session over the PRs it tracks (prtrack.ts: only its own: created here, pushed branches, pr_track, pr_watch, the
+// current branch's; text a message or a tool result quotes never registers), mapped to fail, run, ok or none. On gh one GraphQL
 // batch per host and tick returns every tracked PR; other hosts get pr_status and pr_checks per PR. A PR under
-// an active pr_watch reuses the watch's fresh checks snapshot on that path. Timers are unref'd; clear()
-// (session shutdown) stops everything. The trace never holds a PR number. Host text is data, never instructions.
+// an active pr_watch is not polled here: its view is built from the watch's latest snapshot, so no PR is polled
+// twice. Timers are unref'd; clear() (session shutdown) stops everything. The trace never holds a PR number. Host text is data, never instructions.
 import { execFile } from "node:child_process";
 import path from "node:path";
 import type { PrOp } from "./gitpack.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
-import { realTimers } from "./prwatch.ts";
-import type { ChecksAnswer, Timers } from "./prwatch.ts";
-import { MAX_PUSHED, MAX_TRACKED, PrRegistry, branchWithUpstream, chainSegments, compilePatterns, detectInteraction, keyString, matchPatterns, parsePrUrl, parsePush, parsePushOutput, registerTouched, remoteHostsOf, sameRepo, scanUrls, validHost, validNumber, validRepo } from "./prtrack.ts";
-import type { Interaction, Pushed, PrKey, PrSource, Registered } from "./prtrack.ts";
+import { checksOfRuns, realTimers } from "./prwatch.ts";
+import type { ChecksAnswer, Timers, WatchSnapshot } from "./prwatch.ts";
+import { MAX_PUSHED, MAX_TRACKED, PrRegistry, branchWithUpstream, chainSegments, keyString, parsePrUrl, parsePush, parsePushOutput, remoteHostsOf, sameRepo, validHost, validNumber, validRepo } from "./prtrack.ts";
+import type { Pushed, PrKey, PrSource, Registered } from "./prtrack.ts";
 
 export { MAX_TRACKED };
 export type DotState = "fail" | "run" | "ok" | "none";
@@ -22,6 +22,34 @@ export interface PrDot {
   label?: string;
   /** The https PR page URL, when the host answer carried one for this repository. */
   url?: string;
+  /** One entry per check (failing first, then running, then green); `state` stays the overall value. Absent above MAX_DOT_CHECKS checks. */
+  checks?: DotCheck[];
+  /** Check counts instead of `checks` when a PR has more than MAX_DOT_CHECKS checks. */
+  counts?: DotCounts;
+}
+export interface DotCheck {
+  name: string;
+  state: "fail" | "run" | "ok";
+}
+export interface DotCounts {
+  fail: number;
+  run: number;
+  ok: number;
+}
+/** Most per-check entries on one dot; above it the dot carries counts. */
+export const MAX_DOT_CHECKS = 12;
+
+export function dotChecks(cv: { running: string[]; failed: string[]; missing: string[]; passed: string[]; counts: { running: number; failed: number; missing: number; passed: number } }): Pick<PrDot, "checks" | "counts"> {
+  const c = { fail: cv.counts.failed, run: cv.counts.running + cv.counts.missing, ok: cv.counts.passed };
+  const total = c.fail + c.run + c.ok;
+  if (total === 0) return {};
+  const list: DotCheck[] = [
+    ...cv.failed.map((name) => ({ name, state: "fail" as const })),
+    ...cv.running.concat(cv.missing).map((name) => ({ name, state: "run" as const })),
+    ...cv.passed.map((name) => ({ name, state: "ok" as const })),
+  ];
+  // names are cut by the view (MAX_NAMES); an incomplete list publishes the counts
+  return total <= MAX_DOT_CHECKS && list.length === total ? { checks: list } : { counts: c };
 }
 
 export const MIN_INTERVAL_S = 30;
@@ -106,10 +134,10 @@ export interface PrDotsDeps {
   branch(): Promise<string>;
   /** A PR op (30 s timeout), in `cwd` (default: the pr_watch cwd). */
   run(op: PrOp, args: Record<string, unknown>, cwd?: string): Promise<SafeOpOutcome>;
-  /** Numbers under an active pr_watch, newest first. */
-  watched(): number[];
-  /** The watch's latest checks and their age (PrWatches.lastChecks). */
-  watchChecks(n: number): { checks: ChecksAnswer; ageMs: number } | null;
+  /** Keys under an active pr_watch, newest first. */
+  watched(): PrKey[];
+  /** The watch's latest snapshot and its age (PrWatches.lastSnapshot); the dots render it instead of polling the PR. */
+  watchView(key: PrKey): { snap: WatchSnapshot; ageMs: number } | null;
   /** tools.prWatchSeconds in ms; the loop floors it at 30 s. */
   intervalMs(): number;
   trace(rec: Record<string, unknown>): void;
@@ -129,8 +157,6 @@ export interface PrDotsDeps {
   /** Poll with one pr_batch per host (falls back when the host answers pr_unsupported). */
   batch?: boolean;
   now?(): number;
-  /** `tools.prInteractions` (user or overlay layer). */
-  interactions?(): unknown;
   /** Hosts of the checkout's remotes. */
   remoteHosts?(cwd: string): Promise<string[]>;
   /** The branch of a quiet push (default: the checkout's branch when it has an upstream). */
@@ -183,15 +209,12 @@ export class PrDots {
   /** Branch name -> the PR key of its open PR (null = none); hits and misses both cached. */
   private branchPr = new Map<string, PrKey | null>();
   private currentBranch = "";
-  /** pr_watch number -> the key from its first pr_status answer's URL (null: not found). */
-  private watchKeys = new Map<number, PrKey | null>();
   private states = new Map<string, Slot>();
   private closed = new Map<string, PrView>();
   private order: PrKey[] = [];
   private repos = new Map<string, Promise<Repo | null>>();
   private repoNow = new Map<string, Repo | null>();
   private remotes = new Map<string, Promise<string[]>>();
-  private patterns: { src: unknown; re: RegExp[] } = { src: undefined, re: [] };
   private timer: unknown = null;
   private busy = false;
   private started = false;
@@ -341,14 +364,6 @@ export class PrDots {
     this.publish();
   }
 
-  /** The events feed's touched items (the shared watch snapshot): registered when of this repo or a pushed branch's repo. */
-  onTouched(items: unknown): void {
-    const cur = this.currentNow();
-    const rs = registerTouched(this.reg, items, { current: cur && cur !== NO_REPO ? cur : null, pushed: this.pushed, now: this.now() });
-    for (const r of rs) if (r.added) this.trackTrace("events", r, null);
-    if (rs.some((r) => r.added)) this.wake();
-  }
-
   /** Resolve the repository a pr_track/pr_untrack call means (default: the current one). */
   async resolveRepo(cwd: string, repo?: string, host?: string): Promise<Repo | null> {
     const cur = await this.repoFor(cwd);
@@ -371,69 +386,23 @@ export class PrDots {
     return (await p).includes(h);
   }
 
-  private async scanText(text: string, cwd: string): Promise<void> {
-    for (const k of scanUrls(text)) {
-      if (!(await this.hostAllowed(k.host, cwd))) {
-        this.trackTrace("url", "skipped", null);
-        continue;
-      }
-      this.track(k, "url");
-    }
-  }
-
-  /** The text of a PR tool result (not pr_comments) or any other scanned result: PR URLs register. */
-  async onResult(text: string, cwd: string): Promise<void> {
-    if (!this.deps.enabled() || this.disposed) return;
-    await this.scanText(text, cwd);
-  }
-
-  private interactionPatterns(): RegExp[] {
-    const src = this.deps.interactions?.();
-    if (src !== this.patterns.src) this.patterns = { src, re: compilePatterns(src) };
-    return this.patterns.re;
-  }
-
-  /** A foreman bash result: pushes, interactions and URLs. `ok` is exit 0. */
+  /** A foreman bash result: only its pushes count (the pushed branch's PR is found by head branch). `ok` is exit 0. */
   async onBash(command: string, output: string, ok: boolean, cwd: string): Promise<void> {
     if (!this.deps.enabled() || this.disposed) return;
+    if (!ok) return;
     for (const seg of chainSegments(command)) {
-      if (seg.cdBad) {
-        if (ok) this.trackTrace("interact", "skipped", null);
-        continue;
-      }
+      if (seg.cdBad) continue;
       const dir = seg.cd ? path.resolve(cwd, seg.cd) : cwd;
-      if (ok) {
-        const push = parsePush(seg.words);
-        if (push) {
-          const via = push.dirs.reduce((d, x) => path.resolve(d, x), dir);
-          let branches = parsePushOutput(output);
-          if (branches.length === 0 && push.dirs.length === 0 && !push.gitDir && !seg.cd) {
-            const b = await (this.deps.quietBranch ?? branchWithUpstream)(cwd);
-            if (b) branches = [b];
-          }
-          for (const name of branches) this.remember({ name, cwd: via, remote: push.remote ?? "origin" });
-        }
-        const hit = detectInteraction(seg) ?? matchPatterns(this.interactionPatterns(), seg.text);
-        if (hit) await this.registerInteraction(hit, dir);
+      const push = parsePush(seg.words);
+      if (!push) continue;
+      const via = push.dirs.reduce((d, x) => path.resolve(d, x), dir);
+      let branches = parsePushOutput(output);
+      if (branches.length === 0 && push.dirs.length === 0 && !push.gitDir && !seg.cd) {
+        const b = await (this.deps.quietBranch ?? branchWithUpstream)(cwd);
+        if (b) branches = [b];
       }
+      for (const name of branches) this.remember({ name, cwd: via, remote: push.remote ?? "origin" });
     }
-    await this.scanText(output, cwd);
-  }
-
-  /** A number-only hit is keyed by `pr_repo` run in the segment's directory (after a `cd`, or with GH_REPO the value given). */
-  private async registerInteraction(hit: Interaction, dir: string): Promise<void> {
-    let repo = hit.repo;
-    let host = hit.host;
-    if (!repo || !host) {
-      const r = await this.repoFor(dir);
-      if (!r) {
-        this.trackTrace("interact", "skipped", null);
-        return;
-      }
-      repo = repo ?? r.repo;
-      host = host ?? r.host;
-    }
-    this.track({ host, repo, n: hit.n }, "interact");
   }
 
   private remember(p: { name: string; cwd: string; remote: string }): void {
@@ -465,10 +434,11 @@ export class PrDots {
   dots(): PrDot[] {
     return this.order.flatMap((k) => {
       const s = this.states.get(keyString(k));
-      if (!s) return [];
+      if (!s || (s.view && s.view.state !== "open")) return []; // a merged or closed PR never shows as a dot
       const d: PrDot = { n: k.n, state: this.halted ? "none" : s.state };
       if (this.isForeign(k)) d.label = this.labelOf(k).slice(0, MAX_LABEL);
       if (s.view?.url) d.url = s.view.url;
+      if (s.view && !this.halted) Object.assign(d, dotChecks(s.view.checks));
       return [d];
     });
   }
@@ -545,7 +515,7 @@ export class PrDots {
 
   /** Signal the change (live file, widget) when the dots or views differ from the last published ones; trace a changed tick. */
   private publish(): void {
-    const sig = this.dots().map((d) => `${d.n}:${d.state}:${d.label ?? ""}`).join(",") + "|" + this.views().map((v) => `${v.id}:${v.dot}:${v.state}:${v.title}:${v.reviewDecision}:${v.checks.counts.running}.${v.checks.counts.failed}.${v.checks.counts.missing}.${v.checks.counts.passed}`).join(",");
+    const sig = this.dots().map((d) => `${d.n}:${d.state}:${d.label ?? ""}:${d.checks ? d.checks.map((c) => c.state[0]).join("") : d.counts ? `${d.counts.fail}.${d.counts.run}.${d.counts.ok}` : ""}`).join(",") + "|" + this.views().map((v) => `${v.id}:${v.dot}:${v.state}:${v.title}:${v.reviewDecision}:${v.checks.counts.running}.${v.checks.counts.failed}.${v.checks.counts.missing}.${v.checks.counts.passed}`).join(",");
     if (sig === this.sig) return;
     const dotsChanged = this.sig.split("|")[0] !== sig.split("|")[0];
     this.sig = sig;
@@ -565,8 +535,9 @@ export class PrDots {
   private tracked(): PrKey[] {
     const list = this.reg.list();
     const created = list.filter((e) => e.source === "create");
-    const w = this.deps.watched();
-    const watch = list.filter((e) => e.source === "watch").sort((a, b) => (w.indexOf(a.key.n) + 1 || 99) - (w.indexOf(b.key.n) + 1 || 99));
+    const w = this.deps.watched().map(keyString);
+    const at = (k: PrKey) => w.indexOf(keyString(k)) + 1 || 99;
+    const watch = list.filter((e) => e.source === "watch").sort((a, b) => at(a.key) - at(b.key));
     const rest = list.filter((e) => e.source !== "create" && e.source !== "watch");
     return [...created, ...watch, ...rest].map((e) => e.key);
   }
@@ -614,27 +585,18 @@ export class PrDots {
       if (d === "halted") return "halted";
       if (d === "failed") failed = true;
     }
-    const w = this.deps.watched();
-    for (const n of [...this.watchKeys.keys()]) if (!w.includes(n)) this.watchKeys.delete(n);
-    for (const n of [...w].reverse()) {
-      if (!this.watchKeys.has(n)) {
-        const g = classify(await this.deps.run("pr_status", { number: n }));
-        if (g.kind === "halt") return "halted";
-        if (g.kind === "gone") this.watchKeys.set(n, null);
-        else if (g.kind === "ok") {
-          const k = this.keyFrom(g.result.url, n, cur);
-          this.watchKeys.set(n, k);
-          if (k) fresh.set(keyString(k), g.result);
-        }
-        else failed = failed || g.kind === "fail";
-      }
-      const wk = this.watchKeys.get(n);
-      if (wk) this.track(wk, "watch", { quiet: true });
+    const views = new Map<string, { snap: WatchSnapshot; ageMs: number }>();
+    for (const k of [...this.deps.watched()].reverse()) {
+      const wk = k.repo ? k : cur ? { host: cur.host, repo: cur.repo, n: k.n } : null;
+      if (!wk) continue;
+      this.track(wk, "watch", { quiet: true });
+      const v = this.deps.watchView(k);
+      if (v) views.set(keyString(wk), v);
     }
     this.order = this.tracked();
     const ids = new Set(this.order.map(keyString));
     for (const id of [...this.states.keys()]) if (!ids.has(id)) this.states.delete(id);
-    const r = await this.pollAll(this.order, fresh);
+    const r = await this.pollAll(this.order, fresh, views);
     if (r === "halted") return "halted";
     if (this.disposed) return "ok";
     if (r === "failed") failed = true;
@@ -661,20 +623,27 @@ export class PrDots {
       const g = classify(await this.deps.run("pr_find", { author: "@me" }));
       if (g.kind === "halt") return "halted";
       if (g.kind === "fail") failed = true;
-      else if (g.kind === "ok") this.absorb(g.result, (b) => b === this.currentBranch || this.pushed.some((p) => p.name === b), "search", true);
+      else if (g.kind === "ok") this.absorb(g.result, (b, k) => this.ownBranch(b, k), "push", true);
     }
     return failed ? "failed" : "ok";
   }
 
+  /** Is `head` in repository `key` the current branch or a branch this session pushed? An unknown repository does not exclude (no lookup). */
+  private ownBranch(head: string, key: PrKey): boolean {
+    const cur = this.currentNow();
+    const at = (r: Repo | null | undefined) => !r || r === NO_REPO || !r.repo || sameRepo(r, key);
+    return (head === this.currentBranch && at(cur)) || this.pushed.some((p) => p.name === head && at(p.repo ? { host: p.host, repo: p.repo } : null));
+  }
+
   /** Register (open) or remember as gone (merged, closed) the pr_find results whose head branch `want` accepts. */
-  private absorb(result: Record<string, unknown>, want: (head: string) => boolean, source: PrSource, quiet = false): void {
+  private absorb(result: Record<string, unknown>, want: (head: string, key: PrKey) => boolean, source: PrSource, quiet = false): void {
     const prs = Array.isArray(result.prs) ? (result.prs as Record<string, unknown>[]) : [];
     const cur = this.currentNow();
     for (const pr of prs) {
       const head = typeof pr.headRefName === "string" ? pr.headRefName : "";
-      if (!head || !want(head) || typeof pr.number !== "number") continue;
+      if (!head || typeof pr.number !== "number") continue;
       const key = this.keyFrom(pr.url, pr.number, cur);
-      if (!key) continue;
+      if (!key || !want(head, key)) continue;
       if (pr.state === "merged" || pr.state === "closed") {
         this.reg.markGone(key);
         this.reg.setHead(key, head);
@@ -682,8 +651,14 @@ export class PrDots {
     }
   }
 
-  private async pollAll(keys: PrKey[], fresh: Map<string, Record<string, unknown>>): Promise<"ok" | "failed" | "halted"> {
+  private async pollAll(all: PrKey[], fresh: Map<string, Record<string, unknown>>, views: Map<string, { snap: WatchSnapshot; ageMs: number }>): Promise<"ok" | "failed" | "halted"> {
     let failed = false;
+    // a watched PR shows the watcher's latest snapshot and is neither batched nor polled here
+    for (const k of all) {
+      const v = views.get(keyString(k));
+      if (v) this.apply(k, v.snap.status, checksOfRuns(v.snap.runs));
+    }
+    const keys = all.filter((k) => !views.has(keyString(k)));
     let rest = keys;
     if (this.deps.batch && !this.batchOff && keys.some((k) => k.repo)) {
       const r = await this.batchRound(keys);
@@ -781,9 +756,7 @@ export class PrDots {
     }
     if (status.state === "closed" || status.state === "merged") return this.drop(key, this.viewOf(key, status, undefined)), "gone";
     let checks: Record<string, unknown> | undefined;
-    const wc = Object.keys(where).length === 0 ? this.deps.watchChecks(key.n) : null;
-    if (wc && wc.ageMs < this.baseMs()) checks = wc.checks as unknown as Record<string, unknown>;
-    else {
+    {
       const g = classify(await this.deps.run("pr_checks", { number: key.n, ...where }));
       if (g.kind === "halt") return "halted";
       if (g.kind === "gone") return this.drop(key), "gone";
