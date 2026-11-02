@@ -7,7 +7,6 @@
 //        Peer messages carry no authority.
 // close  sends `foreman:close [path]`; the target's close flow checks the sender against its
 //        parent and replies `foreman:closed <path>` or `pi-foreman: close refused: <reason>`.
-// pull   polls the outbox of pull-mode remote children now (remotepull.ts; the same poll runs on a timer).
 // list   prints the registry `<agent dir>/pi-foreman/state/sessions.json`.
 // Inbound `Plan from|Result from|Update from <label>: <path>`, `foreman:plan|result <path>` and `foreman:closed <path>`
 // from a registry child update its registry entry and show a notice (a `foreman_wait kind:child` wait resolves on it);
@@ -22,22 +21,20 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ageText } from "./childwidget.ts";
 import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
 import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { INTERCOM_MESSAGE_TYPE, intercomConfigPath, lastIntercomDetails } from "./intercomguard.ts";
-import type { PullNow, RunRemote } from "./remotepull.ts";
-import { applyRemoteNotice, parseRemoteNotice, pullSummary, remoteOrigin } from "./remotesession.ts";
+import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
 import { sessionRankRefusal } from "./ranks.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
-import type { Spawner } from "./spawn.ts";
+import type { SpawnResult, Spawner } from "./spawn.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const SESSION_USAGE =
-  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session pull [label] | /foreman session list";
+  "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
 export const CHILD_REFUSAL = "/foreman session is for a top-level foreman session only; refused in subagent children.";
 /** Seconds an outbox send waits for pi-intercom's result (a confirmation dialog may be open). */
 export const SEND_WAIT_MS = 15_000;
@@ -51,7 +48,6 @@ export type SessionCommand =
   | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean; worktree?: boolean; base?: string }
   | { sub: "brief"; target: string; body: string }
   | { sub: "close"; target: string; path?: string }
-  | { sub: "pull"; target?: string }
   | { sub: "list" }
   | { error: string };
 
@@ -60,7 +56,6 @@ export function parseSessionArgs(args: string): SessionCommand {
   const t = args.trim();
   const [sub = "", ...rest] = t.split(/\s+/);
   if (sub === "list") return rest.length ? { error: SESSION_USAGE } : { sub: "list" };
-  if (sub === "pull") return rest.length > 1 ? { error: SESSION_USAGE } : rest[0] ? { sub: "pull", target: rest[0] } : { sub: "pull" };
   if (sub === "brief") {
     const m = /^brief\s+(\S+)\s+(\S[\s\S]*)$/.exec(t);
     return m ? { sub: "brief", target: m[1], body: m[2].trim() } : { error: SESSION_USAGE };
@@ -130,6 +125,15 @@ export interface SessionEntry {
   result?: string;
   last?: { kind: string; path?: string; at: string } | null;
   [k: string]: unknown;
+}
+/** Run a `foreman_session.py` verb (`close-remote`) against the agent dir; the verb runs hc itself. */
+export type RunRemote = (args: string[]) => Promise<SpawnResult>;
+const REMOTE_RUN_TIMEOUT_MS = 120_000;
+export function remoteRunner(o: { python: string | null; spawner: Spawner; pkgRoot: string; agentDir: string }): RunRemote {
+  return async (args) =>
+    o.python
+      ? o.spawner(o.python, ["-E", "-s", path.join(o.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", o.agentDir, ...args], { timeoutMs: REMOTE_RUN_TIMEOUT_MS })
+      : { code: null, stdout: "", stderr: "", error: new Error("foreman_session.py: no usable Python (run /foreman doctor)."), timedOut: false };
 }
 export interface Registry {
   version: number;
@@ -260,12 +264,10 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
 }
 
 export function formatList(reg: Registry): string {
-  const nowMs = Date.now();
   if (!reg.sessions.length) return "pi-foreman sessions: none opened yet.";
   const rows = reg.sessions.map((s) => {
     const last = s.last ? ` · last: ${s.last.kind}${s.last.path ? ` ${s.last.path}` : ""} (${s.last.at})` : "";
-    const pull = pullSummary(s, nowMs, (ms) => `${ageText(ms)} ago`);
-    return `${s.label}  ${typeof s.model === "string" && s.model ? s.model : "-"}  ${s.status ?? "?"}  ${s.handoff ?? ""}  ${s.child}${last}${pull ? ` · ${pull}` : ""}`;
+    return `${s.label}  ${typeof s.model === "string" && s.model ? s.model : "-"}  ${s.status ?? "?"}  ${s.handoff ?? ""}  ${s.child}${last}`;
   });
   return ["pi-foreman sessions (label, model, status, handoff dir, child id):", ...rows].join("\n");
 }
@@ -293,9 +295,7 @@ export interface SessionDeps {
   trace?: (rec: Record<string, unknown>) => void;
   /** Record a worktree this open created in the opener's manifest. */
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
-  /** Poll a remote child's outbox now (remotepull.ts); absent where no pull module runs. */
-  pullNow?: PullNow;
-  /** Run a `foreman_session.py` verb through the pull queue (remotepull.ts). */
+  /** Run a `foreman_session.py` verb (see remoteRunner). */
   runRemote?: RunRemote;
 }
 
@@ -428,7 +428,7 @@ export async function sessionBrief(d: SessionDeps, target: string, body: string)
   const reg = readRegistry(d.agentDir);
   const newest = [...reg.sessions].reverse().find((s) => s.label === target || s.child === target); // as find_entry in the script
   if (newest && typeof newest.machine === "string") {
-    // a remote child is briefed over ssh by the script (`remote deliver`), not over the local intercom
+    // a remote child is briefed over hc exec by the script (`remote deliver`), not over the local intercom
     if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
     const file = /\s/.test(body) ? body : path.resolve(d.cwd, body);
     const r = await d.spawner(d.python, ["-E", "-s", path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "brief", target, fs.existsSync(file) ? file : body], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
@@ -470,30 +470,6 @@ export async function sessionClose(d: SessionDeps, target: string, resultPath?: 
   return r;
 }
 
-/** `/foreman session pull [label]`: polls the pull-mode remote entries of this session (or the one named) now. */
-export async function sessionPull(d: SessionDeps, target?: string): Promise<SessionResult> {
-  if (!d.pullNow) return { text: "pi-foreman session: pull is not available in this session.", ok: false };
-  const reg = readRegistry(d.agentDir);
-  const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
-  const rows = target
-    ? [...reg.sessions].reverse().filter((s) => s.label === target || s.child === target).slice(0, 1)
-    : reg.sessions.filter((s) => s.parent === opener);
-  const eligible = rows.filter((s) => typeof s.machine === "string" && s.returnPath === "pull" && (s.status === "open" || s.status === "pending" || s.status === "closing"));
-  if (!eligible.length) return { text: target ? `pi-foreman session: ${target} is not an open pull session on a remote machine.` : "pi-foreman session: no open pull sessions.", ok: !target };
-  const lines: string[] = [];
-  let ok = true;
-  for (const s of eligible) {
-    const r = await d.pullNow(s.child);
-    const who = `${s.label}@${String(s.machine)}`;
-    if (r.ok) lines.push(`${who}: pulled ${r.entries} entr${r.entries === 1 ? "y" : "ies"}${r.skipped ? `, ${r.skipped} skipped` : ""}${r.closed ? ", closed" : ""}`);
-    else {
-      ok = false;
-      lines.push(`${who}: pull failed (${r.error ?? "unknown"})`);
-    }
-  }
-  return { text: lines.join("\n"), ok };
-}
-
 export function sessionList(d: SessionDeps): SessionResult {
   return { text: formatList(readRegistry(d.agentDir)), ok: true };
 }
@@ -506,7 +482,6 @@ export async function runSessionCommand(d: SessionDeps, args: string): Promise<S
   if (c.sub === "open") return sessionOpen(d, c);
   if (c.sub === "brief") return sessionBrief(d, c.target, c.body);
   if (c.sub === "close") return sessionClose(d, c.target, c.path);
-  if (c.sub === "pull") return sessionPull(d, c.target);
   return sessionList(d);
 }
 
@@ -557,7 +532,7 @@ const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) 
 /** Inbound report recognition plus the `/foreman session` handler. */
 export function registerSession(
   pi: ExtensionAPI,
-  deps: { session: (ctx: ExtensionContext) => Promise<SessionHost>; spawner: Spawner; pkgRoot: string; onChildNotice?: (sessionId: string, label: string, kind: string, notePath: string) => void; pullNow?: PullNow; runRemote?: RunRemote },
+  deps: { session: (ctx: ExtensionContext) => Promise<SessionHost>; spawner: Spawner; pkgRoot: string; onChildNotice?: (sessionId: string, label: string, kind: string, notePath: string) => void },
 ): { command: (args: string, ctx: ExtensionContext) => Promise<void> } {
   const seen = new Set<string>();
   const onInbound = async (ctx: ExtensionContext, details: unknown): Promise<void> => {
@@ -639,8 +614,7 @@ export function registerSession(
           commands: commandNames(pi),
           trace: s.trace,
           recordWorktree: s.recordWorktree,
-          pullNow: deps.pullNow,
-          runRemote: deps.runRemote,
+          runRemote: remoteRunner({ python: s.python, spawner: deps.spawner, pkgRoot: deps.pkgRoot, agentDir: s.agentDir }),
         },
         args,
       );

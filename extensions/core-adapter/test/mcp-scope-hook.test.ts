@@ -109,7 +109,8 @@ test("denyTools is judged first: its reason wins over the scope reason", async (
 });
 
 test("tool_search leaves the active set when the role allows nothing, and stays when it allows a server", async (t) => {
-  const none = await childRig(t, { roles: { builder: {} } });
+  // the builder default has searchable names, which keep tool_search on: this case needs none
+  const none = await childRig(t, { roles: { builder: { searchable: [] } } });
   assert.deepEqual(none.active, ["read"]);
   const some = await childRig(t);
   assert.deepEqual(some.active, ["read", "tool_search"]);
@@ -122,7 +123,7 @@ test("the MCP extension is created in every child with a loadConfig", async (t) 
 });
 
 test("a missing loader refuses MCP in that child: trace mcp_child_unsupported, tool_search inactive, a prompt line", async (t) => {
-  const { rig, active } = await childRig(t, { resolveRoot: () => null });
+  const { rig, active } = await childRig(t, { resolveRoot: () => null, roles: { builder: { mcp: ["fx"], searchable: [] } } });
   const rows = rig.events("mcp_child_unsupported");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].role, "builder");

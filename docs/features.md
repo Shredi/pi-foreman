@@ -87,7 +87,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [herdr-core](#herdr-core) | sessions |  | on | Inside an herdr-app terminal (`HC_TERMINAL_ID` set), `foreman session open` can run the child with `hc run`, nested under the parent terminal; presence files record the terminal id so a viewer can join them. `--no-notify` is always passed, so hc never types a child's notes into the parent, and `--keep` is always passed, so the child survives core loss and reboot (in its own tab when the opener's terminal carries `herdr.space`). `sessions.backend` picks herdr, hc or the printed command (default `auto`); `sessions.hc.outliveParent` (default true) lets a child outlive its parent terminal. User or overlay config only. | on by default | [herdr](herdr.md#herdr-app-and-herdr-core) |
 | [session-worktree](#session-worktree) | sessions |  | on | `foreman session open <label> <brief> --worktree [--base REF]` (and `foreman_session_open` with `worktree: true`) creates the session's own linked worktree at `<close.worktreeDir>/<label>` on the branch `<prefix>/<label>` from the fetched default branch, installs dependencies with `npm ci` only when a lockfile is declared, and opens the session there. `sessions.worktree.branchPrefix` (default `round`) sets the prefix. User or overlay config only. | on by default | [sessions](sessions.md#worktree-for-a-new-session) |
 | [open-prs](#open-prs) | sessions |  | off | When enabled, the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 900) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk. `foreman radar --json` reports them as `openPrs` for the Open PRs section of the herdr-app mod; radar polls never call the network. Off by default. User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
-| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
+| [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The return path lands in PR 4. User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
 | [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
@@ -97,7 +97,9 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [trace](#trace) | ops | toggle | on | Writes allowlisted trace records per session and child (no command lines or file contents); by default it follows the effective retro switch. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
 | [footer-ui](#footer-ui) | ui | toggle | on | Shows tokens, list-price cost and child launches in the footer, the children widget below the editor and the glyph set, with `/foreman cost` for a summary. | on by default | [sessions](sessions.md#commands) |
 | [dialogs-cli](#dialogs-cli) | ui |  | on | The foreman-only `foreman_dialogs({trace?})` tool and `foreman dialogs <trace>` (`bin/foreman`, `.cmd`, `.ps1`) return the JSON of `/foreman dialogs --json` for this session's trace or a named trace file; read only. A session's own async run results join the read-only verbs. | on by default | [sessions](sessions.md#commands) |
-| [ask-user-question](#ask-user-question) | ui |  | on | The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
+| [deferred-tools](#deferred-tools) | tools |  | on | Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered. | on by default | [tools](tools.md) |
+| [skill-visibility](#skill-visibility) | tools |  | on | Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way. | on by default | [tools](tools.md) |
+| [ask-user-question](#ask-user-question) | ui |  | on | The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors first, then self-modification rules (a dialog by rule, never classifier-cleared), your deny, ask and allow rules, and the dangerous class. Under mode auto the classifier judges a dangerous call against your whitelist sentences; an escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
 | [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
@@ -194,7 +196,7 @@ Switch: `providers` is non-empty.
 |---|---|---|
 | `roles.<x>.file` | unset | not in project/session (a role file replaces the prompt: user or overlay config only) |
 | `roles.<x>.promptAppend` | unset | any layer |
-| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write", "foreman_move", "foreman_copy"]`, ... (see `config/foreman.defaults.json`) | tighten-only (can only narrow the list) |
+| `roles.<x>.tools` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `["read", "ls", "grep", "find", "bash"]`, `builder`: `["read", "ls", "grep", "find", "bash", "edit", "write"]`, `reviewer`: `["read", "ls", "grep", "find", "bash"]` | tighten-only (can only narrow the list) |
 | `roles.<x>.denyTools` | `explorer`: `["mcp__*"]`, `reviewer`: `["mcp__*"]` | any layer |
 | `roles.<x>.mcp` | unset | not in project/session (an MCP server runs a command: user or overlay config only) |
 | `roles.<x>.skills` | `foreman`: `[]`, `session-foreman`: `[]`, `explorer`: `[]`, `builder`: `[]`, `reviewer`: `["security-review"]` | not in project/session (the skills a role gets come from the user or overlay config) |
@@ -662,19 +664,15 @@ Switch: `radar.openPrs.enabled` is true.
 
 ### remote-sessions
 
-**Remote child sessions over SSH.** `foreman session open --machine <name>` opens a child session on a machine saved in Herdr and listed in `sessions.machines`, over SSH. By default (`returnPath` `pull`) the child appends its notices to an outbox file on that machine and the parent fetches them over its own SSH call, so the remote never connects back; `push` sends them by cross-machine pi-intercom notices instead. The parent mirrors the notices into files. `foreman session close-remote` (and `/foreman close`) closes such a child over the same SSH call. User or overlay config only.
+**Remote child sessions over herdr-core.** `foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The return path lands in PR 4. User or overlay config only.
 
 Switch: `sessions.machines` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
-| `sessions.machines.<x>.returnPath` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
-| `sessions.machines.<x>.foremanCommand` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
-| `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over SSH come from the user or overlay config) |
-| `sessions.remoteInlineMaxBytes` | `32768` | tighten-only (lower only, minimum 1024) |
-| `sessions.pull.intervalSeconds` | `20` | not in project/session (the remote pull poll periods come from the user or overlay config) |
-| `sessions.pull.fastSeconds` | `5` | not in project/session (the remote pull poll periods come from the user or overlay config) |
-| `sessions.ssh.controlMaster` | `true` | not in project/session (the SSH multiplexing switch comes from the user or overlay config) |
+| `sessions.machines.<x>.foremanArgv` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
+| `sessions.machines.<x>.space` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
+| `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
 
 ### round-state
 
@@ -766,9 +764,27 @@ Switch: `retro.repoBacklog` is non-empty.
 
 No config key.
 
+### deferred-tools
+
+**Deferred tool declarations and tool_search.** Rarely used tools (the `fusion_*` family, `bg_delegate`, `bg_result`, `bg_kill`, some `foreman_*` and `pr_*` tools, the plan-mode tools outside plan mode) stay registered and callable but their declarations are left out of requests, which shrinks the cached prefix. The harness `tool_search` finds them (and Pi's own searchable tools and MCP tools): with codemode it prints the schema and the `tools.<name>()` call and leaves the declarations unchanged; without codemode the found tool is declared from the next request and stays declared for the session. `tools.deferred` is the list; `[]` turns it off. `foreman doctor` names patterns that match nothing and recommends `PI_BG_FEATURES=process` when the add-on's optional tools are registered.
+
+| Key | Default | Layer |
+|---|---|---|
+| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "pr_track", "pr_untrack", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
+
+### skill-visibility
+
+**Searchable skills.** Rarely used skills leave the default skill list and are found with `tool_search`, then read as usual; `/skill:<name>` keeps working. `skills.visible`, `skills.hidden` and a skill's frontmatter `metadata.visibility: search` decide, in that order. A child role's `roles.<role>.skills` follow the same rule, and `roles.<role>.searchable` lets a child find extra tools (the builder's `foreman_move` and `foreman_copy`) the same way.
+
+| Key | Default | Layer |
+|---|---|---|
+| `roles.<x>.searchable` | `builder`: `["foreman_move", "foreman_copy"]` | tighten-only (can only narrow the list) |
+| `skills.visible` | `[]` | not in project/session (it hides every other skill: user or overlay config only) |
+| `skills.hidden` | `["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"]` | tighten-only (entries are added, never removed) |
+
 ### ask-user-question
 
-**Structured in-pane question.** The foreman-only `ask_user_question({questions})` tool (1 to 4 questions, 2 to 4 options each plus free text) raises the questions in the pane and blocks the turn until a human answers; without a UI it tells the agent to use the ask.md file path, which stays unchanged. With an open ask.md in a handoff dir where the session is the child the answer is also written to `ruling-<n>.md`.
+**Structured in-pane question.** The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer.
 
 No config key.
 
@@ -877,7 +893,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [herdr-core](#herdr-core) | `foreman session open` |
 | [session-worktree](#session-worktree) | `foreman session open` |
 | [open-prs](#open-prs) | `foreman radar --json` |
-| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session pull`, `foreman session close-remote` |
+| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session close-remote` |
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |
@@ -939,6 +955,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
+| `skills.visible` | it hides every other skill: user or overlay config only |
 | `tools.prShared` | the shared PR watch comes from the user or overlay config |
 | `tools.prInteractions` | the PR interaction patterns come from the user or overlay config |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
@@ -952,9 +969,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `retro.panelThreshold` | the panel threshold comes from the user or overlay config |
 | `close.worktreeDir` | the worktree convention comes from the user or overlay config |
 | `close.childWaitMs` | the child close wait comes from the user or overlay config |
-| `sessions.machines` | the machines a session may open on over SSH come from the user or overlay config |
-| `sessions.pull` | the remote pull poll periods come from the user or overlay config |
-| `sessions.ssh` | the SSH multiplexing switch comes from the user or overlay config |
+| `sessions.machines` | the machines a session may open on over hc come from the user or overlay config |
 | `sessions.backend` | where a local session opens comes from the user or overlay config |
 | `sessions.hc` | the herdr-core session options come from the user or overlay config |
 | `sessions.worktree` | the branch prefix of a session's own worktree comes from the user or overlay config |
