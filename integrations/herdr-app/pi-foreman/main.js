@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
 } from "./model.js";
 
@@ -223,9 +223,11 @@ export default class ForemanAgents extends View {
   }
 
   // A PR line: every chip, wrapping onto further lines; a summary after them.
-  prLine(t, node, prs, summary, key, indent) {
+  prLine(t, node, prs, withSummary, key, indent) {
+    const shown = this.enrich(prs); // the summary counts the enriched PRs, the ones the chips are drawn from
+    const summary = withSummary ? guard(() => prSummary(shown), "") : "";
     return h_flex().pl(indent).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
-      .children(this.enrich(prs).map((p) => this.prChip(t, p, prUrl(node, p), key)))
+      .children(shown.map((p) => this.prChip(t, p, prUrl(node, p), key)))
       .when(Boolean(summary), (el) => el.child(div().text_color(t.dim).child(summary)));
   }
 
@@ -281,7 +283,7 @@ export default class ForemanAgents extends View {
     const rows = [
       ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
         .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : line.icon ? t.dim : t.muted).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
-      ...(prs.length ? [this.prLine(t, item.node, prs, root ? item.summary : "", item.id, ind + 20)] : []),
+      ...(prs.length ? [this.prLine(t, item.node, prs, root, item.id, ind + 20)] : []),
     ];
     return x === null ? rows : rows.map((r, i) => div().relative().flex_none().child(r).child(this.rail(t, `${item.id}/x${i}`, x)));
   }
@@ -302,12 +304,11 @@ export default class ForemanAgents extends View {
       .text_size(session ? 12.5 : 11)
       .child(slot);
     if (item.type === "more") return row.child(div().flex_1().truncate().text_color(t.dim).child(item.label));
-    const glyphRight = statusGlyph(t, displayStatus(item, this.folded));
-    if (!session) {
+    if (!session) { // an agent row sits in its session's card: the card's header row shows the state
       return row.child(div().flex_none().text_size(11).child(AGENT_GLYPH))
-        .child(div().flex_1().min_w(0).truncate().text_color(item.status === "blocked" ? t.blocked : t.muted).child(item.label))
-        .child(glyphRight);
+        .child(div().flex_1().min_w(0).truncate().text_color(item.status === "blocked" ? t.blocked : t.muted).child(item.label));
     }
+    const glyphRight = statusGlyph(t, displayStatus(item, this.folded));
     const active = item.address !== undefined && item.address === this.shown;
     const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
     return row

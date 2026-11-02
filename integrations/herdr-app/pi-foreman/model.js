@@ -359,10 +359,14 @@ export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;
 }
 
-const urgency = (pr) => {
-  const s = (Array.isArray(pr.checks) ? pr.checks : []).map(jobOf).filter(Boolean).map((j) => j.state);
-  return s.includes("fail") ? 0 : s.includes("pending") ? 1 : 2;
-};
+/** The one state of a PR that the chip colour, the sort and the summary share: "fail" (red chip), "pending" (a job runs and none
+ *  failed), "ok" (green) or "none" (no checks known). */
+export function prState(pr) {
+  const d = prDotState(pr);
+  return d.fill === "red" ? "fail" : d.ring || d.fill === "amber" ? "pending" : d.fill === "green" ? "ok" : "none";
+}
+
+const urgency = (pr) => ({ fail: 0, pending: 1 })[prState(pr)] ?? 2;
 
 /** Failing first, then pending, then green; newest (highest number) first inside each. */
 export function sortPrs(prs) {
@@ -370,9 +374,9 @@ export function sortPrs(prs) {
     .slice().sort((a, b) => urgency(a) - urgency(b) || num(b.number) - num(a.number));
 }
 
-/** "N PRs · k failing · m pending", or "N PRs · all green"; "" for none. */
+/** "N PRs · k failing · m pending", or "N PRs · all green"; "" for none. Merged and closed PRs are not counted. */
 export function prSummary(prs) {
-  const list = Array.isArray(prs) ? prs.filter(isObj) : [];
+  const list = (Array.isArray(prs) ? prs.filter(isObj) : []).filter((p) => p.state !== "merged" && p.state !== "closed");
   if (!list.length) return "";
   const failing = list.filter((p) => urgency(p) === 0).length;
   const pending = list.filter((p) => urgency(p) === 1).length;
@@ -799,7 +803,7 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
     const named = listOf(pr.jobs).some((j) => isObj(j) && j.name);
     return {
       ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
-      baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch,
+      baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
       ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks } : {}),
     };
   });
