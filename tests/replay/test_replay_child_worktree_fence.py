@@ -33,7 +33,7 @@ class TestChildWorktreeBinding(ReplayCase):
         self.assertIn("child: fence finished", notice)
         text = "\n".join(p.read_text("utf-8", "replace") for p in rig.agent.rglob("*.jsonl"))
         # printenv exits 1 when FOREMAN_CHECKOUT is unset; the result carries the foreman's checkout
-        self.assertRegex(text, r'"toolName":"bash","isError":false,"text":"[^"]*/project\\n"')
+        self.assertRegex(text, r'"toolName":"bash","isError":false,"text":"[^"]*(?:/|\\\\)project\\n"')
         self.assertIn(LINE, text)
 
 
