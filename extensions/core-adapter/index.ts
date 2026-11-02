@@ -19,7 +19,8 @@ import type { OwnedRoots } from "./owned.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
-import { PermStore, PERM_MODES, profileName } from "./permconfig.ts";
+import { PermStore, PERM_MODES, profileName, workFoldersBlock } from "./permconfig.ts";
+import { folderRelaxes } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, proposeRule } from "./rules.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
@@ -115,7 +116,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -633,6 +634,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
+  // a worktree child gets the foreman's checkout in its env
+  if (process.env.PI_SUBAGENT_CHILD === "1") Object.assign(process.env, checkoutEnv(launchBinding));
   // r68: the child's MCP scope. The binding is captured here; the allowed set is computed from it in session_start (never from env later).
   const mcpChild = process.env.PI_SUBAGENT_CHILD === "1" ? new McpChild(pi, { binding: launchBinding ? { role: launchBinding.role, ...(launchBinding.mcp ? { mcp: launchBinding.mcp } : {}) } : null, hiddenSkills: () => skillState.hidden.length, ...(deps.mcpChild ?? {}) }) : null;
 
@@ -2194,12 +2197,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const manifestCtx = (s: Session, cwd: string) => ({ cwd, stateDir: path.join(s.agentDir, "pi-foreman", "state"), platform });
 
   /** The session's roots for the gate's path rules and defaults (pathrules.ts GateRoots). */
-  async function gateRootsOf(s: Session, cwd: string, sessionDir: string | undefined, extraReadDirs: string[] = []): Promise<GateRoots> {
+  async function gateRootsOf(s: Session, cwd: string, sessionDir: string | undefined, extraReadDirs: string[] = [], folders: Resolved["workFolders"] = []): Promise<GateRoots> {
     const state = path.join(s.agentDir, "pi-foreman", "state");
     const rounds = roundWorktrees(state, s.usage.line.foremanSession, platform);
     const pi = await piRootsOf(s);
     const real = (p: string): string => { try { return fs.realpathSync(p); } catch { return p; } };
     const owned = sessionOwnedRoots(s);
+    // each work folder as written and in its real spelling (the same `real()` as tmp), same mode; a child has none
+    const workFolders = s.isChild ? [] : folders.flatMap((f) => (real(f.path) !== f.path ? [f, { path: real(f.path), mode: f.mode }] : [f]));
     return {
       worktree: workspaceOf(cwd).root,
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
@@ -2215,6 +2220,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
+      workFolders,
+      pkgRoot: PKG_ROOT,
     };
   }
 
@@ -2271,7 +2278,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rt = gs ? gateRuntimeOf(gs) : undefined;
     const resolved = rt ? rt.store.resolve() : undefined;
     if (gs && rt) for (const n of rt.store.drainNotices()) notifyOnce(gs, ctx, n, n);
-    const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx), resolved?.additionalDirectories) : undefined;
+    const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx), resolved?.additionalDirectories, resolved?.workFolders) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
@@ -2290,8 +2297,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // no session: no dialog, classifier or log to decide with, and the overlay below is no replacement for the gate; floors and rules ran above
     if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
-    const allowed = (rule: string, layer: GateLayer, label: string): undefined => {
-      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role });
+    const allowed = (rule: string, layer: GateLayer, label: string, folder = false): undefined => {
+      gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role, ...(folder ? { mode: "auto", source: "workFolder" } : {}) });
       if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule); // the classifier logs its own record
       gateDecided.add(event.toolCallId);
       return undefined;
@@ -2318,7 +2325,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       const danger = out.danger;
       if (!danger) {
-        // nothing decided and not dangerous: runs under auto and allow, asks under ask, refused under deny
+        // nothing decided and not dangerous: runs under auto and allow, asks under ask, refused under deny. A call the work folders relax runs under
+        // auto instead (never for a session override or a floors-only session: modeSource session)
+        const folderMode = (resolved.mode === "deny" || resolved.mode === "ask") && roots && ["default", "user", "profile"].includes(resolved.modeSource)
+          && folderRelaxes({ tool: event.toolName, input: event.input, ...(out.segments ? { segments: out.segments } : {}), text: payload }, { roots, platform, cwd: ctx.cwd, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } });
+        if (folderMode) return allowed("no-rule", "mode", "mode:folder:auto", true);
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
         return allowed("no-rule", "mode", "mode:no-rule");
@@ -2472,6 +2483,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const e of r.prose.allow) lines.push(`${e.id}: ${e.text} (${e.source})`);
       for (const e of r.prose.deny) lines.push(`${e.id}: ${e.text} (${e.source})`);
       if (r.additionalDirectories.length) lines.push(`additionalDirectories: ${r.additionalDirectories.join(", ")}`);
+      lines.push(...workFoldersBlock(r, (p) => { try { return fs.realpathSync(p); } catch { return p; } }));
       return [...lines, ...rt.store.drainNotices()].join("\n");
     }
     return usage;
@@ -3619,6 +3631,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (mcp) b.mcp = mcp;
     if (flags?.reads !== undefined) b.reads = flags.reads;
     if (flags?.install) b.install = true;
+    if (input.worktree === true) b.worktree = true; // ceremony-fixes-2: the child's cwd is an isolation worktree
     bindLaunch(input, b);
     return b;
   }

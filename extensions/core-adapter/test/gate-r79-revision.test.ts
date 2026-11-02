@@ -98,11 +98,12 @@ test("F: a brace group or glob that could expand to a protected file name is an 
 test("G: a command word is never a RegExp: 40 trailing stars then z against a protected name is fast", () => {
   const e: FloorEnv = { cwd: wt, home: path.join(base, "home"), writeRoots: [wt, scr], scratch: [scr], protectedBranches: [], currentBranch: () => "round/79-x", remoteHead: () => "main" };
   const l = `rm ${WT}/.workflow/${"a*".repeat(40)}z`;
+  // Absolute 1000 ms, not a ratio to a ~1 ms baseline (noise on shared runners): catastrophic backtracking on 40 stars takes hours.
   const t0 = Date.now();
   lineFloors(l, segs(l), e);
-  assert.ok(Date.now() - t0 < 50, `${Date.now() - t0} ms`);
+  assert.ok(Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
   const l2 = `rm ${"*".repeat(40)}z`;
   const t1 = Date.now();
   lineFloors(l2, segs(l2), e);
-  assert.ok(Date.now() - t1 < 50, `${Date.now() - t1} ms`);
+  assert.ok(Date.now() - t1 < 1000, `${Date.now() - t1} ms`);
 });
