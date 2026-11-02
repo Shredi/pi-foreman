@@ -224,6 +224,9 @@ def read_open_prs(adir):
         base = p.get("baseRefName")
         if isinstance(base, str) and base:
             out[-1]["baseRefName"] = base[:255]
+        head_repo = p.get("headRepo")
+        if isinstance(head_repo, str) and head_repo:
+            out[-1]["headRepo"] = head_repo[:140]
         if isinstance(body, str) and body:
             out[-1]["bodyText"] = body[:500]
         if mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):

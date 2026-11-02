@@ -118,7 +118,7 @@ function normOpenPrs(raw) {
     const jobs = (Array.isArray(p.checks) ? p.checks : Array.isArray(p.jobs) ? p.jobs : []).map(jobOf).filter(Boolean);
     out.push({
       number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
-      state: str(p.state), ...prExtras(p),
+      state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p),
     });
   }
   return out;
@@ -133,7 +133,7 @@ export function matchPrs(nodes, feed, depth = 0) {
     if (n.kind === "session" && n.repo && n.branch) {
       const repo = n.repo.toLowerCase();
       for (const p of listOf(feed)) {
-        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.repo).toLowerCase() !== repo) continue;
+        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.headRepo || p.repo).toLowerCase() !== repo) continue;
         if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
       }
     }
@@ -214,8 +214,9 @@ const pidOf = (a) => int(a?.pid) ?? int(a?.foreground?.pid);
 
 /** Map agent address -> session node. Join on `hcTerminal` == the agent's terminal address (`machine/` prefix for an agent of
  *  a remote space: pass that machine), only nodes that are not done and not themselves remote; when both sides have a pid
- *  they must match. */
-export function joinAgents(agents, tree, machine = null) {
+ *  they must match. An agent without a `hcTerminal` match joins the live local node with the same pid (a session started by hand
+ *  in an hc terminal); a node matched by `hcTerminal` or in `taken` is never used for that. */
+export function joinAgents(agents, tree, machine = null, taken = new Set()) {
   const out = new Map();
   if (!Array.isArray(agents)) return out;
   const prefix = machine ? `${machine}/` : "";
@@ -232,6 +233,21 @@ export function joinAgents(agents, tree, machine = null) {
     if (pid !== null && n.pid !== null && pid !== n.pid) continue;
     out.set(addr, n);
   }
+  if (machine) return out;
+  const used = new Set([...out.values(), ...taken]);
+  const byPid = new Map();
+  for (const n of allSessions(tree)) {
+    if (n.pid !== null && n.state !== "done" && !isEnded(n) && !n.machine && !used.has(n) && !byPid.has(n.pid)) byPid.set(n.pid, n);
+  }
+  for (const a of agents) {
+    const addr = str(a?.address);
+    const pid = pidOf(a);
+    if (!addr || addr.includes("/") || out.has(addr) || pid === null) continue;
+    const n = byPid.get(pid);
+    if (!n || used.has(n)) continue;
+    used.add(n);
+    out.set(addr, n);
+  }
   return out;
 }
 
@@ -241,7 +257,7 @@ export function joinAgents(agents, tree, machine = null) {
 export function joinChildren(kids, tree, machine = null, taken = new Set()) {
   const out = new Map();
   const used = new Set(taken);
-  for (const [addr, n] of joinAgents(kids, tree, machine)) {
+  for (const [addr, n] of joinAgents(kids, tree, machine, taken)) {
     if (used.has(n)) continue;
     used.add(n);
     out.set(addr, n);
@@ -336,8 +352,11 @@ export function totalCost(node) {
   return sum;
 }
 
+/** A session that is over without the "done" mark: closed by its owner, or lost (its process vanished). */
+export const isEnded = (n) => n.state === "closed" || n.state === "lost";
+
 export function sessionCount(node) {
-  return allSessions([node]).filter((s) => s.state !== "closed").length;
+  return allSessions([node]).filter((s) => !isEnded(s)).length;
 }
 
 const urgency = (pr) => {
@@ -619,6 +638,14 @@ export function urgentStatus(list) {
   return listOf(list).reduce((best, s) => (rankOf(s) < rankOf(best) ? s : best), "idle");
 }
 
+/** A detail line as drawn in the card: "wait: x 29s" / "bg: x 3m" become `{icon: "⏳"|"⚙", text: "x · 29s"}`; an ask or
+ *  any other line keeps its text and has no icon. */
+export function statusLine(line) {
+  const m = /^(wait|bg): (.*)$/.exec(line?.text ?? "");
+  if (!m || line.blocked) return { icon: "", text: line?.text ?? "" };
+  return { icon: m[1] === "wait" ? "⏳" : "⚙", text: m[2].replace(/ (\d+[smhd])\b/g, " · $1") };
+}
+
 /** The line under a top-most session's name: the open ask, else the background task, else the waits. */
 export function detailLine(node) {
   if (!isObj(node)) return { text: "", blocked: false };
@@ -634,7 +661,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set()
   if (!isObj(node)) return null;
   const build = (n, status, id, depth, root) => {
     const kids = [];
-    const closed = !root && n.state === "closed";
+    const closed = !root && isEnded(n);
     listOf(n.workers).forEach((w, i) => {
       if (w.ended || closed) return;
       const st = nodeStatus(w);
