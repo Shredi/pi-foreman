@@ -85,7 +85,7 @@ const HANDOFF_NOTE = /^(?:ruling|brief)[A-Za-z0-9._-]*\.md$/;
  * (no symlink out). Relative roots resolve against `base`. win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`),
  * so long forms count too.
  */
-export function insideRoot(root: string, abs: string, platform: string, realpath?: (p: string) => string | null, base?: string): boolean {
+export function rootHolds(root: string, abs: string, platform: string, realpath?: (p: string) => string | null, base?: string): boolean {
   const real = realpath ?? (platform === process.platform ? realDefault : () => null);
   const ra = realSpelling(platform, abs, real);
   const win = platform === "win32";
@@ -107,7 +107,7 @@ export function folderProtected(r: GateRoots, platform: string, abs: string): bo
     if (segs.some((s) => segmentAlias(platform, ".git", s))) return true;
     if (segs.some((s, i) => segmentAlias(platform, ".pi", s) && !(i + 1 < segs.length && ["scratch", "tasks"].includes(fold(segs[i + 1]))))) return true;
     const guarded = [r.agentDir, r.pkgRoot, ...r.install].filter((x): x is string => !!x);
-    if (guarded.some((g) => insideRoot(g, p, platform, r.realpath, r.worktree))) return true;
+    if (guarded.some((g) => [g, real(g)].some((x) => !!x && rootHolds(x, p, platform, r.realpath, r.worktree)))) return true;
   }
   return false;
 }
@@ -116,7 +116,7 @@ export function folderProtected(r: GateRoots, platform: string, abs: string): bo
 export function workFolderOf(r: GateRoots, platform: string, abs: string): { path: string; mode: "auto" | "read" } | undefined {
   let best: { path: string; mode: "auto" | "read" } | undefined;
   for (const f of r.workFolders ?? []) {
-    if (!insideRoot(f.path, abs, platform, r.realpath, r.worktree)) continue;
+    if (!rootHolds(f.path, abs, platform, r.realpath, r.worktree)) continue;
     if (!best || px(platform).resolve(f.path).length > px(platform).resolve(best.path).length) best = f;
   }
   return best && !folderProtected(r, platform, abs) ? best : undefined;
@@ -129,7 +129,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
   const win = platform === "win32";
   // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
   const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
-  const inside = (root: string): boolean => insideRoot(root, abs, platform, r.realpath, r.worktree);
+  const inside = (root: string): boolean => rootHolds(root, abs, platform, r.realpath, r.worktree);
   const gitFree = (root: string): boolean => !px(platform).relative(root, abs).split(/[\\/]/).includes(".git");
   const noWrite = dir === "write";
   if (inside(r.worktree) && (!noWrite || gitFree(r.worktree))) return "worktree";

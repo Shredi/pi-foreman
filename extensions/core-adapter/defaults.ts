@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
-import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, resolveWord, under, workFolderOf } from "./pathrules.ts";
+import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
@@ -200,12 +200,21 @@ function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boole
   return !c.facts.pushConfigured(cwd);
 }
 
+const GIT_READ_ONLY_SUBS: ReadonlySet<string> = new Set(["branch", "remote"]);
+
+/** `cwd` lies in a work folder (the session is not a child). */
+function inWorkFolder(c: DefaultCtx, cwd: string): boolean {
+  return !c.roots.child && (c.roots.workFolders ?? []).some((f) => rootHolds(f.path, cwd, c.platform, c.roots.realpath, c.roots.worktree));
+}
+
 function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec: EffectCtx, chain: Segment): string | null {
   const sub = argv[0];
   const rest = argv.slice(1);
   if (!sub || sub.startsWith("-")) return null; // global options (-C, -c, --git-dir ...) are never a default
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
   if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !rest.some((w) => /^--(?:output|exec|upload-pack)/.test(w)) ? "default-git-read" : null;
+  // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
+  if (!GIT_READ_ONLY_SUBS.has(sub) && inWorkFolder(c, cwd) && !contained({ ...ec, extraWriteRoots: [] }, cwd, ".", true)) return null;
   switch (sub) {
     case "branch":
       return rest.every((w) => BRANCH_LIST.has(w)) ? "default-git-read" : null;

@@ -1,4 +1,4 @@
-// PR5 work folders: pathrules (insideRoot, folderProtected, workFolderOf, read classing), effects (extraWriteRoots, extraWriteGuard, segmentAlias) and
+// PR5 work folders: pathrules (rootHolds, folderProtected, workFolderOf, read classing), effects (extraWriteRoots, extraWriteGuard, segmentAlias) and
 // defaults (readRoots, pathWriteOutside, shellWriteOutside, folderRelaxes) through gateEvaluate. The mode step itself is in gate-workfolders-mode.test.ts.
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { gateEvaluate, type GateOutcome } from "../gate.ts";
 import { dangerMatch, folderRelaxes } from "../defaults.ts";
 import type { DangerCall, GitFacts } from "../defaults.ts";
-import { folderProtected, insideRoot, pathDecide, workFolderOf } from "../pathrules.ts";
+import { folderProtected, pathDecide, rootHolds, workFolderOf } from "../pathrules.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { contained, segmentAlias } from "../effects.ts";
 import type { EffectCtx } from "../effects.ts";
@@ -163,7 +163,7 @@ test("5 shell: writeVerb forms relax; protected targets, redirects and non-defau
 });
 
 test("9 symlinks: a link out of the folder is not inside; a folder spelled through a link is inside via the real entry", () => {
-  assert.equal(insideRoot(work, path.join(work, "out", "f.txt"), process.platform), false);
+  assert.equal(rootHolds(work, path.join(work, "out", "f.txt"), process.platform), false);
   assert.equal(workFolderOf(roots(), process.platform, path.join(work, "out", "f.txt")), undefined);
   assert.equal(danger(gate("write", { path: path.join(work, "out", "f.txt"), content: "x" })), "danger-write-outside");
   assert.equal(rule(gate("read", { path: path.join(work, "out", "f.txt") })), null);
@@ -171,7 +171,7 @@ test("9 symlinks: a link out of the folder is not inside; a folder spelled throu
   const r = roots({ workFolders: [{ path: link, mode: "auto" }, { path: work, mode: "auto" }] });
   assert.equal(workFolderOf(r, process.platform, path.join(work, "n.txt"))?.mode, "auto");
   assert.equal(workFolderOf(r, process.platform, path.join(link, "n.txt"))?.mode, "auto");
-  assert.equal(insideRoot(link, path.join(link, "n.txt"), process.platform), true);
+  assert.equal(rootHolds(link, path.join(link, "n.txt"), process.platform), true);
 });
 
 test("10 children: no folders, child-write-outside unchanged", () => {
