@@ -351,5 +351,125 @@ class RetroTest(unittest.TestCase):
             self.assertEqual(fr.main(["--selftest"]), 0)
 
 
+def tool_usage_line(i, role="foreman", used=(), found=(), read=(), declared=None, hidden=("example_hidden",),
+                    skills_listed=("example-listed-skill", "example-unread-skill"), skills_hidden=("example-domain-skill",)):
+    declared = ["read", "example_used", "example_tool", "example_extra"] if declared is None else declared
+    return {"ts": "2026-01-01T00:00:%02d.000Z" % (i % 60), "kind": "tool-usage", "session": "s%d" % i, "role": role,
+            "declared": declared, "hidden": list(hidden), "used": list(used), "found": list(found),
+            "skillsListed": list(skills_listed), "skillsHidden": list(skills_hidden), "skillsRead": list(read),
+            "sources": {"read": "builtin", "example_used": "pi-foreman", "example_tool": "example-package",
+                        "example_extra": "example-package", "fusion_reason": "pi-background-tasks"}}
+
+
+class ToolUsageRetroTest(unittest.TestCase):
+    NOW = 1767225600.0 + 3600  # 2026-01-01T01:00:00Z
+
+    def setUp(self):
+        self.agent = Path(tempfile.mkdtemp(prefix="retro_tu_"))
+        self.addCleanup(shutil.rmtree, self.agent, True)
+        self.dir = self.agent / "pi-foreman" / "state" / "usage"
+        self.dir.mkdir(parents=True)
+
+    def write_sessions(self, lines, name="f1.jsonl"):
+        with open(self.dir / name, "w", encoding="utf-8") as fh:
+            for r in lines:
+                fh.write(json.dumps(r) + "\n")
+
+    def twenty(self):
+        out = []
+        for i in range(20):
+            used = ["read", "example_used"] + (["example_tool"] if i == 0 else [])  # example_tool: 1 of 20 = 5%
+            out.append(tool_usage_line(i, used=used, found=["example_hidden", "example-domain-skill"] if i < 6 else [],
+                                       read=["example-listed-skill"]))
+        return out
+
+    def test_twenty_sessions_fire_suggestions_and_package_lines(self):
+        self.write_sessions(self.twenty())
+        t = fr.tool_usage_metrics(str(self.agent), now=self.NOW)
+        text = "\n".join(fr.render_tool_usage(t))
+        self.assertIn("tools: declared never used: example_extra (0 of 20 sessions); found: example_hidden (6 of 20)", text)
+        self.assertIn("skills: listed never read: example-unread-skill; found: example-domain-skill (6 of 20)", text)
+        self.assertIn('used in under 10% (foreman, 20 sessions): tools.deferred: add "example_tool"', text)
+        self.assertEqual(text.count("example_extra"), 2)  # the counts line and the never-used line, not the searchable line
+        self.assertIn("found in 25% or more", text)
+        self.assertIn("always on, remove from tools.deferred: example_hidden", text)
+        self.assertIn("never used (foreman, 20 sessions): example_extra (example-package) -> tools.deferred", text)
+        self.assertIn("skills never read (foreman, 20 sessions): example-unread-skill -> skills.hidden or remove the skill directory", text)
+        self.assertIn("skills found in 25% or more", text)
+        self.assertNotIn("example_used", text)
+
+    def test_unused_package_gets_pi_remove_and_bg_features_remedy(self):
+        lines = []
+        for i in range(20):
+            line = tool_usage_line(i, used=["example_used"], declared=["example_used", "example_tool", "example_extra", "fusion_reason"])
+            lines.append(line)
+        self.write_sessions(lines)
+        text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
+        self.assertIn("example_extra, example_tool (example-package) -> pi remove npm:example-package", text)
+        self.assertIn("fusion_reason (pi-background-tasks) -> pi remove npm:pi-background-tasks", text)
+        # a package with one used tool is not removed: the add-on's optional tool points at the source switch instead
+        lines = [tool_usage_line(i, used=["example_used", "bg_run"], declared=["example_used", "bg_run", "fusion_reason"]) for i in range(20)]
+        lines = [dict(l, sources={"example_used": "pi-foreman", "bg_run": "pi-background-tasks", "fusion_reason": "pi-background-tasks"}) for l in lines]
+        self.write_sessions(lines)
+        text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
+        self.assertIn("fusion_reason (pi-background-tasks) -> PI_BG_FEATURES=process", text)
+        self.assertNotIn("pi remove", text)
+
+    def test_a_tool_is_printed_once_package_remedy_wins(self):
+        lines = [tool_usage_line(i, used=["example_used"], declared=["example_used", "example_tool", "example_extra"]) for i in range(20)]
+        self.write_sessions(lines)
+        text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
+        self.assertIn("-> pi remove npm:example-package", text)
+        self.assertNotIn("used in under 10%", text)
+
+    def test_floor_and_bg_feature_constants_match_deferred_ts(self):
+        import re
+        ts = (Path(__file__).resolve().parent.parent / "extensions" / "core-adapter" / "deferred.ts").read_text(encoding="utf-8")
+        floor = re.search(r"DEFERRED_FLOOR[^=]*=\s*\[([^\]]*)\]", ts).group(1)
+        self.assertEqual(list(fr.TOOL_FLOOR), re.findall(r'"([^"]+)"', floor))
+        # the doctor's optional tools: fusion_ prefix and two names
+        doctor = re.search(r"const optional = registered\.filter\(([^;]*)\);", ts).group(1)
+        want = ["fusion_*"] + re.findall(r'n === "([^"]+)"', doctor)
+        self.assertIn('n.startsWith("fusion_")', doctor)
+        self.assertEqual(list(fr.BG_FEATURE_TOOLS), want)
+
+    def test_five_sessions_print_counts_only(self):
+        self.write_sessions(self.twenty()[:5])
+        t = fr.tool_usage_metrics(str(self.agent), now=self.NOW)
+        self.assertIsNone(t["suggestions"])
+        text = "\n".join(fr.render_tool_usage(t))
+        self.assertIn("tools: declared never used: example_extra (0 of 5 sessions); found: example_hidden (5 of 5)", text)
+        self.assertIn("fewer than 20: no suggestion", text)
+        self.assertNotIn("suggest", text.replace("no suggestion", ""))
+        self.assertNotIn("->", text)
+
+    def test_last_line_per_session_and_old_sessions_are_counted_right(self):
+        first = tool_usage_line(1, used=[])
+        last = dict(tool_usage_line(1, used=["example_extra"]), ts="2026-01-01T00:00:50.000Z")
+        old = dict(tool_usage_line(2), ts="2025-01-01T00:00:00.000Z")
+        self.write_sessions([last, first, old])
+        t = fr.tool_usage_metrics(str(self.agent), now=self.NOW)
+        self.assertEqual(t["sessions"], 1)
+        self.assertNotIn("example_extra", t["tools_never_used"])
+        self.assertIsNone(fr.tool_usage_metrics(str(self.agent / "nowhere"), now=self.NOW))
+
+    def test_tool_usage_lines_do_not_change_usage_metrics(self):
+        rec = {"role": "builder", "kind": "first", "launchId": "L1", "foremanSession": "f1", "input": 10, "output": 5,
+               "cost": {"total": 0.5}}
+        before = fr.usage_metrics([rec], "f1")
+        extra = [tool_usage_line(1, role="builder"), dict(tool_usage_line(2, role="explorer"), foremanSession="f1")]
+        self.assertEqual(fr.usage_metrics([rec] + extra, "f1"), before)
+        self.assertEqual(list(fr.usage_metrics(extra, "f1")), [])
+        self.assertEqual(fr.explorer_metrics(None, extra, "f1"), fr.explorer_metrics(None, [], "f1"))
+
+    def test_cli_prints_the_lines_after_the_report(self):
+        self.write_sessions(self.twenty())
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(fr.main(["--agent-dir", str(self.agent)]), 0)
+        # fixtures are dated 2026-01-01: inside the window only while the clock is near it, so only the shape is pinned here
+        self.assertTrue(out.getvalue().startswith("pi-foreman retro"))
+
+
 if __name__ == "__main__":
     unittest.main()

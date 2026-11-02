@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"name": "example-listed-skill", "rules": {"visible": [], "hidden": []}, "skillMd": "---\nname: example-listed-skill\ndescription: Plain.\n---\nBody\n", "hidden": false},
+    {"name": "example-search-skill", "rules": {"visible": [], "hidden": []}, "skillMd": "---\nname: example-search-skill\ndescription: Searchable.\nmetadata:\n  visibility: search\n---\nBody\n", "hidden": true},
+    {"name": "example-search-upper", "rules": {"visible": [], "hidden": []}, "skillMd": "---\nname: example-search-upper\nmetadata:\n  visibility:  Search \n---\nBody\n", "hidden": true},
+    {"name": "example-other-tag", "rules": {"visible": [], "hidden": []}, "skillMd": "---\nname: example-other-tag\ntags:\n  visibility: search\n---\nBody\n", "hidden": false},
+    {"name": "example-glob-skill", "rules": {"visible": [], "hidden": ["example-glob-*"]}, "skillMd": "---\nname: example-glob-skill\n---\nBody\n", "hidden": true},
+    {"name": "example-kept-skill", "rules": {"visible": ["example-kept-*"], "hidden": []}, "skillMd": "---\nname: example-kept-skill\nmetadata:\n  visibility: search\n---\nBody\n", "hidden": false},
+    {"name": "example-not-kept-skill", "rules": {"visible": ["example-kept-*"], "hidden": []}, "skillMd": "---\nname: example-not-kept-skill\n---\nBody\n", "hidden": true},
+    {"name": "example-both-skill", "rules": {"visible": ["example-both-skill"], "hidden": ["example-both-*"]}, "skillMd": "---\nname: example-both-skill\n---\nBody\n", "hidden": false},
+    {"name": "example-nofm-skill", "rules": {"visible": [], "hidden": []}, "skillMd": "# no frontmatter\nmetadata:\n  visibility: search\n", "hidden": false}
+  ],
+  "expectedHidden": ["example-search-skill", "example-search-upper", "example-glob-skill", "example-not-kept-skill"]
+}

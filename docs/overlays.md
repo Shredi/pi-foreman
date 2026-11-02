@@ -69,6 +69,7 @@ and `foreman:ready`. There is no second handshake.
 | Providers and models | A `providers.<p>` block; the provider itself as a Pi extension (`registerProvider`); [presets](presets.md) resolve role models from its `ranks`; `providers.<p>.models` gives context windows and price tiers for models Pi's registry lacks (see [Models Pi does not list](#models-pi-does-not-list)) |
 | Display names | `displayNames` preset or per-id map |
 | Skills | `skills/` in the overlay package (Pi skills format) |
+| Deferred tools and searchable skills | `tools.deferred` (tools or globs whose declarations are left out until `tool_search` finds them), `skills.visible` / `skills.hidden` (which skills are listed; the rest are found with `tool_search`) and `roles.<x>.searchable` (tools a child role finds on demand). User or overlay config sets them; a project or session may only add names. See [tools](tools.md#deferred-tools-and-searchable-skills). |
 | Gate rules | None: an overlay has no policy files. Permission rules and the classifier whitelist live in the user's `permissions.json` (see [permissions](permissions.md)); `permissions.profile` may be set from an overlay. An overlay can only tighten the gate's other keys |
 | Guards and child extensions | `safety.requiredChildExtensions` |
 | MCP servers | Pi `mcp.json` or `registerMcpServer` from the overlay extension |
