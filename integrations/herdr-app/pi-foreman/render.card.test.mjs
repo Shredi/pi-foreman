@@ -138,6 +138,16 @@ test("(g) the selection sits on the card (bg + accent border), not on its header
   assert.equal(byId(root, "card:").length, 0);
 });
 
+test("an agent directly under the uncarded root keeps its status glyph; one inside a card has none", () => {
+  const kid = sess("k", "kid", { hcTerminal: "t9" }, [run("b", "builder")]);
+  const root = render(top([kid, run("r", "reviewer")]));
+  const rows = walk(root).filter((e) => /^row:.*\/a\d+$/.test(String(e.props.id ?? "")));
+  const inCard = walk(byId(root, "card:").find((e) => e.props.id.endsWith("/s0"))).find((e) => /^row:.*\/a0$/.test(String(e.props.id ?? "")));
+  const under = rows.find((e) => e !== inCard);
+  assert.ok(under && inCard, "both rows found");
+  assert.equal(under.kids.length, inCard.kids.length + 1, "the root-level agent has one more cell, the glyph");
+});
+
 test("status lines get an icon and a dot-separated age", () => {
   assert.deepEqual(statusLine({ text: "wait: 1 pr watch 29s", blocked: false }), { icon: "⏳", text: "1 pr watch · 29s" });
   assert.deepEqual(statusLine({ text: "bg: build 3m", blocked: false }), { icon: "⚙", text: "build · 3m" });

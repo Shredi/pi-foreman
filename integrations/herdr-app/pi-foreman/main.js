@@ -257,7 +257,7 @@ export default class ForemanAgents extends View {
   // A child with its connector column. The head cell is as tall as the row (tee: line through plus the stub to the icon;
   // elbow: line to the middle, rounded corner, stub); below it, the pass cell carries the line past the child's own extras and
   // descendants when later siblings follow. Drawn with divs: the lines stay 1px and meet the next row, no stretched svg.
-  link(t, item, last) {
+  link(t, item, last, carded = false) {
     const h = item.type === "session" ? 26 + CARD : 20; // a session's row sits in its card: CARD of margin, border and padding above it
     const mid = item.type === "session" ? CARD + 13 : 10;
     const ink = t.dim + "66";
@@ -267,7 +267,7 @@ export default class ForemanAgents extends View {
     const pass = div().id(`conn:pass:${item.id}`).relative().flex_1().w(LINE)
       .child(div().absolute().top(0).bottom(0).left(6).w(1).bg(ink));
     const column = v_flex().flex_none().w(LINE).self_stretch().child(head).when(!last, (el) => el.child(pass));
-    return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0).flex_1().min_w(0));
+    return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0, carded).flex_1().min_w(0));
   }
 
   // Under a session row: the ask / background / wait line of its node and its PR chips (all on a line at the top, more than
@@ -277,8 +277,9 @@ export default class ForemanAgents extends View {
   extras(t, item, ind, x = null) {
     if (item.type !== "session") return [];
     const root = item.top === true;
-    const line = statusLine(detailLine(item.node));
-    const blocked = detailLine(item.node).blocked;
+    const detail = detailLine(item.node);
+    const line = statusLine(detail);
+    const blocked = detail.blocked;
     const prs = root ? item.prs : item.below;
     const rows = [
       ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
@@ -295,7 +296,7 @@ export default class ForemanAgents extends View {
 
   // One tree row: fold slot (svg chevron), label, cost, PR chips, status glyph; folded, the glyph is the most urgent below.
   // `x` (left of the connector line) is set when the children below are shown: the line starts under the chevron.
-  nodeRow(t, item, ind, x = null) {
+  nodeRow(t, item, ind, x = null, carded = false) {
     const root = item.top === true;
     const kids = item.children.length > 0;
     const slot = this.foldSlot(t, item.id, kids);
@@ -304,9 +305,10 @@ export default class ForemanAgents extends View {
       .text_size(session ? 12.5 : 11)
       .child(slot);
     if (item.type === "more") return row.child(div().flex_1().truncate().text_color(t.dim).child(item.label));
-    if (!session) { // an agent row sits in its session's card: the card's header row shows the state
+    if (!session) { // in a card the card's header row shows the state; an agent outside one (under the root) keeps its glyph
       return row.child(div().flex_none().text_size(11).child(AGENT_GLYPH))
-        .child(div().flex_1().min_w(0).truncate().text_color(item.status === "blocked" ? t.blocked : t.muted).child(item.label));
+        .child(div().flex_1().min_w(0).truncate().text_color(item.status === "blocked" ? t.blocked : t.muted).child(item.label))
+        .when(!carded, (el) => el.child(statusGlyph(t, displayStatus(item, this.folded))));
     }
     const glyphRight = statusGlyph(t, displayStatus(item, this.folded));
     const active = item.address !== undefined && item.address === this.shown;
@@ -327,12 +329,12 @@ export default class ForemanAgents extends View {
   // its child sessions follow the card in a Collapsible, outside: a card inside a card would cost the nested rows another inset
   // of width per level in a narrow sidebar. With child sessions shown, the connector runs on through the card's bottom border
   // via a stub below it, and their connector column sits CARD further right to stay on the chevron's line.
-  node(t, item, ind) {
+  node(t, item, ind, carded = false) {
     const kids = item.children.length > 0;
     const open = kids && !this.folded.has(item.id);
     const x = open ? ind + 8 : null;
     const node = Collapsible.new().flex().flex_col().flex_none().open(open);
-    if (item.type !== "session") return node.child(this.nodeRow(t, item, ind)).when(kids, (el) => el.content(this.childBody(t, item.children, ind)));
+    if (item.type !== "session") return node.child(this.nodeRow(t, item, ind, null, carded)).when(kids, (el) => el.content(this.childBody(t, item.children, ind)));
     const agents = item.children.filter((c) => c.type !== "session");
     const sessions = item.children.filter((c) => c.type === "session");
     const after = open && sessions.length > 0; // the line leaves the card at the bottom
@@ -340,7 +342,7 @@ export default class ForemanAgents extends View {
     const card = v_flex().id(`card:${item.id}`).flex_none().mx(4).mt(2).mb(after ? 0 : 2).pt(2).pb(after ? 0 : 2).rounded(6).border(1).border_color(active ? t.working : t.border)
       .when(active, (el) => el.bg(t.raised))
       .child(this.nodeRow(t, item, ind, x)).children(this.extras(t, item, ind, x))
-      .when(open && agents.length > 0, (el) => el.child(v_flex().flex_none().ml(ind + 2).children(agents.map((c, i) => this.link(t, c, !after && i === agents.length - 1)))));
+      .when(open && agents.length > 0, (el) => el.child(v_flex().flex_none().ml(ind + 2).children(agents.map((c, i) => this.link(t, c, !after && i === agents.length - 1, true)))));
     return node.child(card)
       // top -1: the stub overlaps the card's 1px bottom border, so the line has no gap there
       .when(after, (el) => el.child(div().relative().flex_none().h(2).child(this.rail(t, `${item.id}/gap`, x + CARD, -1))))
