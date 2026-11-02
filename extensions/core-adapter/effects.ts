@@ -58,6 +58,10 @@ export interface EffectCtx {
   role?: NetRole;
   /** The dirs a network read may write an output file into (`curl -o`, `>`): the orchestrator's ceremony scratch dir, a child's role scratch. None = no output. */
   netOut?: string[];
+  /** Work folders (auto mode) as extra places for writes only; set only by the folder-aware evaluation (defaults.ts). */
+  extraWriteRoots?: string[];
+  /** True for a path under an extra write root that must stay refused (protected places); consulted by `contained`. */
+  extraWriteGuard?: (abs: string) => boolean;
 }
 
 export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform, readRoots: unknown = [], role?: NetRole, netOut?: string[]): EffectCtx {
@@ -94,6 +98,14 @@ const existsDefault = (p: string): boolean => {
   }
 };
 
+/** `r` is `h` or one of its ancestors (`/Users`, `~/..`, `/private`): it would cover all of `h`. Case-folded on win32 and darwin. */
+export function holdsHome(platform: string, r: string, h: string): boolean {
+  const x = platform === "win32" ? path.win32 : path.posix;
+  const f = (s: string): string => x.resolve(platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
+  const rel = x.relative(f(r), f(h));
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel));
+}
+
 /** safety.permissions.readRoots as real absolute dirs: `~` and `%USERPROFILE%` mean the home dir; empty, relative or missing roots are dropped, and so are a filesystem root (`/`, `C:\`, a UNC share root) and the home dir or any dir that contains it (raw and realpath). */
 export function readRootsOf(roots: unknown, platform: string = process.platform, real: (p: string) => string | null = realDefault, home: string = os.homedir()): string[] {
   if (!Array.isArray(roots)) return [];
@@ -107,13 +119,8 @@ export function readRootsOf(roots: unknown, platform: string = process.platform,
     const rp = real(x.resolve(p));
     if (!rp || x.dirname(rp) === rp || x.dirname(x.resolve(p)) === x.resolve(p)) continue;
     const rh = real(home) ?? home;
-    const f = (s: string): string => x.resolve(platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
-    // the root is the home dir or one of its ancestors (`/Users`, `~/..`, `/private`): it would cover all of home
-    const holds = (r: string, h: string): boolean => {
-      const rel = x.relative(f(r), f(h));
-      return rel === "" || (rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel));
-    };
-    if ([rp, x.resolve(p)].some((r) => holds(r, home) || holds(r, rh))) continue;
+    // the root is the home dir or one of its ancestors: it would cover all of home
+    if ([rp, x.resolve(p)].some((r) => holdsHome(platform, r, home) || holdsHome(platform, r, rh))) continue;
     out.push(rp);
   }
   return out;
@@ -132,9 +139,12 @@ function within(c: EffectCtx, base: string, p: string, strict: boolean): boolean
   return rel !== ".." && !rel.startsWith(".." + x.sep) && !x.isAbsolute(rel);
 }
 
-/** A path component that is or may alias `.git`: on win32 also an 8.3 short name (`GIT~1`) or a trailing dot or space (`.git.`). */
+/** A path component that is or may alias `name` (`.git`, `.pi`): case-folded per platform, on win32 also an 8.3 short name (`GIT~1`) or a trailing dot or space (`.git.`). */
+export function segmentAlias(platform: string, name: string, part: string): boolean {
+  return (platform === "darwin" ? part.toLowerCase() : foldCase(platform, part)) === name || (platform === "win32" && (/[. ]$/.test(part) || /~\d/.test(part)));
+}
 function gitAlias(c: EffectCtx, part: string): boolean {
-  return fold(c, part) === ".git" || (plat(c) === "win32" && (/[. ]$/.test(part) || /~\d/.test(part)));
+  return segmentAlias(plat(c), ".git", part);
 }
 const hasGitPart = (c: EffectCtx, rel: string): boolean => rel.split(/[\\/]/).some((p) => gitAlias(c, p));
 
@@ -166,7 +176,7 @@ function resolveWord(c: EffectCtx, cwd: string | null, word: string): string | n
 }
 
 function bases(c: EffectCtx, write: boolean): string[] {
-  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && !c.noTmp && plat(c) !== "win32" ? ["/tmp"] : []), ...(write ? [] : (c.readRoots ?? []))];
+  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && !c.noTmp && plat(c) !== "win32" ? ["/tmp"] : []), ...(write ? (c.extraWriteRoots ?? []) : (c.readRoots ?? []))];
 }
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
@@ -182,6 +192,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
     const [base, p] = within(c, b, abs, write) ? [b, abs] : alt && within(c, rb, alt, write) ? [rb, alt] : [null, null];
     if (base === null || p === null) continue;
     if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
+    if (write && c.extraWriteGuard && (c.extraWriteRoots ?? []).includes(b) && c.extraWriteGuard(p)) return false;
     if (realInside(c, base, p, write, write)) return true;
   }
   return false;
