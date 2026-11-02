@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { longForm } from "./pathnorm.ts";
+import { segmentAlias } from "./effects.ts";
 
 /** The roots of one session, resolved by index.ts at call time. All paths absolute. */
 export interface GateRoots {
@@ -33,6 +34,10 @@ export interface GateRoots {
   agentDir?: string;
   /** The dir of the session's own Pi session file (moving it, or an ancestor up to `<agentDir>/sessions`, is a self-modification ask). */
   sessionDir?: string;
+  /** Work folders of the user file (permconfig.ts), each as written and in its real spelling. Foreman only; a child gets none. Reads in them are allowed; writes relax only in `auto` ones (`workFolderOf`). */
+  workFolders?: { path: string; mode: "auto" | "read" }[];
+  /** The pi-foreman package root; `install` holds only the roots below it. A work folder never relaxes writes under it. */
+  pkgRoot?: string;
   /** Injectable for tests: realpath of an existing path, null when it does not exist. */
   realpath?: (p: string) => string | null;
 }
@@ -75,6 +80,48 @@ type Dir = "read" | "write";
 /** The parent's notes to a session it opened: `ruling*.md`, `brief*.md` (a plain file name, no separator). */
 const HANDOFF_NOTE = /^(?:ruling|brief)[A-Za-z0-9._-]*\.md$/;
 
+/**
+ * `abs` lies inside `root` (`*` segments match one segment): lexical on the given spelling, then the real spelling must stay inside the same root
+ * (no symlink out). Relative roots resolve against `base`. win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`),
+ * so long forms count too.
+ */
+export function insideRoot(root: string, abs: string, platform: string, realpath?: (p: string) => string | null, base?: string): boolean {
+  const real = realpath ?? (platform === process.platform ? realDefault : () => null);
+  const ra = realSpelling(platform, abs, real);
+  const win = platform === "win32";
+  const longRoot = (r: string): string => realSpelling(platform, base ? px(platform).resolve(base, r) : px(platform).resolve(r), real);
+  if (!under(platform, root, abs, base)) return win && !root.includes("*") && under(platform, longRoot(root), ra, base);
+  if (ra === abs) return true;
+  return under(platform, root, ra, base) || (!root.includes("*") && under(platform, real(root) ?? root, ra, base)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, base));
+}
+
+/**
+ * Protected places inside a work folder, in either spelling of `abs`: a `.git` segment, a `.pi` segment outside its `scratch` and `tasks` subtrees
+ * (selfmod.ts), the Pi agent dir, any install root and the package root. One predicate for path tools and, through `extraWriteGuard`, the shell.
+ */
+export function folderProtected(r: GateRoots, platform: string, abs: string): boolean {
+  const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
+  const fold = (s: string): string => (platform === "win32" || platform === "darwin" ? s.toLowerCase() : s);
+  for (const p of new Set([abs, realSpelling(platform, abs, real)])) {
+    const segs = p.split(/[\\/]+/).filter(Boolean);
+    if (segs.some((s) => segmentAlias(platform, ".git", s))) return true;
+    if (segs.some((s, i) => segmentAlias(platform, ".pi", s) && !(i + 1 < segs.length && ["scratch", "tasks"].includes(fold(segs[i + 1]))))) return true;
+    const guarded = [r.agentDir, r.pkgRoot, ...r.install].filter((x): x is string => !!x);
+    if (guarded.some((g) => insideRoot(g, p, platform, r.realpath, r.worktree))) return true;
+  }
+  return false;
+}
+
+/** The innermost work folder `abs` lies in, or undefined when none does or `abs` is a protected place. The only entry point for write relaxation. */
+export function workFolderOf(r: GateRoots, platform: string, abs: string): { path: string; mode: "auto" | "read" } | undefined {
+  let best: { path: string; mode: "auto" | "read" } | undefined;
+  for (const f of r.workFolders ?? []) {
+    if (!insideRoot(f.path, abs, platform, r.realpath, r.worktree)) continue;
+    if (!best || px(platform).resolve(f.path).length > px(platform).resolve(best.path).length) best = f;
+  }
+  return best && !folderProtected(r, platform, abs) ? best : undefined;
+}
+
 /** The class of root `abs` lies in for `dir`, or null. The real spelling must stay inside the same root (no symlink out). */
 function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string | null {
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
@@ -82,11 +129,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
   const win = platform === "win32";
   // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
   const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
-  const inside = (root: string): boolean => {
-    if (!under(platform, root, abs, r.worktree)) return win && !root.includes("*") && under(platform, longRoot(root), ra, r.worktree);
-    if (ra === abs) return true;
-    return under(platform, root, ra, r.worktree) || (!root.includes("*") && under(platform, real(root) ?? root, ra, r.worktree)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, r.worktree));
-  };
+  const inside = (root: string): boolean => insideRoot(root, abs, platform, r.realpath, r.worktree);
   const gitFree = (root: string): boolean => !px(platform).relative(root, abs).split(/[\\/]/).includes(".git");
   const noWrite = dir === "write";
   if (inside(r.worktree) && (!noWrite || gitFree(r.worktree))) return "worktree";
@@ -105,6 +148,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string 
   if (r.child) return null;
   if (r.tmpAccess && r.tmp.some(inside) && !(r.scratchBase && inside(r.scratchBase))) return "tmp";
   if (dir === "read" && r.owned.some(inside)) return "owned";
+  if (dir === "read" && (r.workFolders ?? []).some((f) => inside(f.path))) return "owned";
   return null;
 }
 
@@ -151,4 +195,18 @@ export function pathDecide(tool: string, input: unknown, cwd: string, roots: Gat
     rule ??= `path-${dir}-${cls}`;
   }
   return rule ? { allow: true, rule } : undefined;
+}
+
+/** True when every path operation of a path tool call lies in one and the same `auto` work folder, outside every protected place (the mode step's relaxation). */
+export function inOneAutoFolder(tool: string, input: unknown, cwd: string, roots: GateRoots, platform: string = process.platform): boolean {
+  const ops = opsOf(tool, (input && typeof input === "object" ? input : {}) as Record<string, unknown>);
+  if (!ops || ops.length === 0 || roots.child) return false;
+  let folder: string | undefined;
+  for (const [w] of ops) {
+    const abs = resolveWord(platform, cwd, w);
+    const f = abs ? workFolderOf(roots, platform, abs) : undefined;
+    if (!f || f.mode !== "auto" || (folder !== undefined && folder !== f.path)) return false;
+    folder = f.path;
+  }
+  return true;
 }

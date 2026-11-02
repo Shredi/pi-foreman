@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
-import { pathDecide, under } from "./pathrules.ts";
+import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, resolveWord, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
@@ -94,8 +94,49 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
   const ec = effectCtx(c.cwd, r.scratch, c.platform);
   ec.root = r.worktree;
   ec.noTmp = r.child || !r.tmpAccess;
-  ec.readRoots = [...(r.child ? [] : r.tmp), ...r.install, ...r.roundFlow, ...r.handoffs];
+  ec.readRoots = [...(r.child ? [] : r.tmp), ...r.install, ...r.roundFlow, ...r.handoffs, ...(r.child ? [] : (r.workFolders ?? []).map((f) => f.path))];
   return ec;
+}
+
+/** `effectCtxOf` with the `auto` work folders as extra write roots (guarded by `folderProtected`), or null when the session has none. */
+function folderCtxOf(c: DefaultCtx): EffectCtx | null {
+  const r = c.roots;
+  const dirs = r.child ? [] : (r.workFolders ?? []).filter((f) => f.mode === "auto").map((f) => f.path);
+  if (dirs.length === 0) return null;
+  const ec = effectCtxOf(c);
+  ec.extraWriteRoots = dirs;
+  ec.extraWriteGuard = (abs) => folderProtected(r, c.platform, abs);
+  return ec;
+}
+
+/** The folder-aware context when every live segment of the call is a built-in default under it (decision 9 rule), else null. */
+function folderAware(c: DangerCall, env: DangerEnv): { ctx: DefaultCtx; ec: EffectCtx } | null {
+  if (!env.facts || env.roots.child) return null;
+  const ctx: DefaultCtx = { roots: env.roots, facts: env.facts, platform: env.platform, cwd: env.cwd };
+  const ec = folderCtxOf(ctx);
+  const segs = (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
+  if (!ec || segs.length === 0) return null;
+  return segs.every((s) => segmentDefault(s, c.text ?? "", ctx, ec) !== null) ? { ctx, ec } : null;
+}
+
+/** The write target `w` (run from `cwd`) lies in an `auto` work folder outside every protected place. */
+function inAutoFolder(env: DangerEnv, w: string, cwd: string): boolean {
+  const abs = resolveWord(env.platform, cwd, w);
+  return !!abs && workFolderOf(env.roots, env.platform, abs)?.mode === "auto";
+}
+
+/** The mode step's relaxation: a path tool whose operands all lie in one `auto` work folder, or a shell call the folders make a built-in default. Foreman only. */
+export function folderRelaxes(call: DangerCall, env: DangerEnv): boolean {
+  if (env.roots.child) return false;
+  if (PATH_TOOL_NAMES.has(call.tool)) return inOneAutoFolder(call.tool, call.input, env.cwd, env.roots, env.platform);
+  return call.tool !== "powershell" && BASH_TOOL_NAMES.has(call.tool) && folderShellRelaxes(call, env);
+}
+
+/** A shell call the work folders relax: every live segment is a built-in default with the folders as extra write roots, and one writes into an `auto` folder. */
+export function folderShellRelaxes(c: DangerCall, env: DangerEnv): boolean {
+  const fa = folderAware(c, env);
+  if (!fa) return false;
+  return (c.segments ?? []).some((s) => s.opaque === null && s.program !== "" && writeTargets(s).some((w) => !SINK.has(w) && s.cwd !== null && inAutoFolder(env, w, s.cwd)));
 }
 
 const NAME = /^[A-Za-z0-9._\/-]+$/;
@@ -640,7 +681,15 @@ function pathWriteOutside(c: DangerCall, env: DangerEnv): boolean {
   if (!["write", "edit", "foreman_move", "foreman_copy"].includes(c.tool)) return false;
   const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
   if (!["path", "file_path", "filePath", "dst"].some((k) => typeof i[k] === "string")) return false;
-  return pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) === undefined;
+  if (pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) !== undefined) return false;
+  // an uncovered write in an `auto` work folder is no write outside (the call then reaches the mode step); reads must be covered as usual
+  const ops = opsOf(c.tool, i);
+  if (env.roots.child || !ops) return true;
+  return !ops.every(([w, dir]) => {
+    const abs = resolveWord(env.platform, env.cwd, w);
+    if (!abs) return false;
+    return dir === "write" ? pathDecide("write", { path: abs }, env.cwd, env.roots, env.platform) !== undefined || inAutoFolder(env, abs, env.cwd) : pathDecide("read", { path: abs }, env.cwd, env.roots, env.platform) !== undefined;
+  });
 }
 
 /** Operands of a command: the words that are no option, past `--` all of them; the options in `valued` swallow the next word. */
@@ -785,16 +834,18 @@ function writeTargets(s: ShellSegment): string[] {
 const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
 
 /** The write target `w` (run from `cwd`) lies where the path rules allow a write: the worktree, scratch, and (outside children) the OS temp dir. */
-function writable(w: string, cwd: string | null, env: DangerEnv): boolean {
+function writable(w: string, cwd: string | null, env: DangerEnv, folders = false): boolean {
   if (SINK.has(w)) return true;
   if (cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) return false;
-  return pathDecide("write", { path: w }, cwd ?? env.cwd, env.roots, env.platform) !== undefined;
+  return pathDecide("write", { path: w }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
 }
 
 /** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp. */
 function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
-  const ec = effectCtxOf(env);
-  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env))) return true;
+  // work folders count only when every live segment is a built-in default with them as write roots; otherwise today's context
+  const fa = folderAware(c, env);
+  const ec = fa ? fa.ec : effectCtxOf(env);
+  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa))) return true;
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;
     const chain = toChain(s);
