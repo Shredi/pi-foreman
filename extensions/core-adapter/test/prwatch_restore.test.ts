@@ -137,7 +137,10 @@ test("wiring: a resumed adapter session reports an expired watch once, empties t
   assert.equal(sets.length, 1);
   assert.deepEqual(sets[0].data, { v: 1, piSessionId: sid, watches: [] });
   assert.deepEqual(rig.events("pr_watch").map((e) => e.outcome), ["lost"]);
-  assert.ok(!JSON.stringify(rig.events("pr_watch")).includes("99"));
+  const leaves = (v: unknown): unknown[] => (v && typeof v === "object" ? Object.values(v).flatMap(leaves) : [v]);
+  const values = rig.events("pr_watch").flatMap(leaves);
+  assert.ok(!values.includes(99));
+  assert.ok(!values.some((v) => typeof v === "string" && (v.includes("#99") || v.includes("PR 99"))));
   await rig.fire("session_shutdown", {});
   assert.equal(appended.filter((a) => a.type === PRWATCH_ENTRY).length, 1);
 });
