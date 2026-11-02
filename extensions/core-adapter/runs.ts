@@ -1,7 +1,7 @@
 // Run view of the foreman's subagent launches: in-memory run state plus the usage log (read incrementally).
 // It feeds the live-state file (livestate.ts), the radar runs and the `role_result` trace cost and duration.
 import fs from "node:fs";
-import { parseLines } from "./usage.ts";
+import { isCostLine, parseLines } from "./usage.ts";
 import { priceRecord } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
 
@@ -84,7 +84,7 @@ export class UsageTail {
       this.rest = cut < 0 ? all : all.subarray(cut + 1);
       if (cut < 0) return;
       for (const l of parseLines(all.subarray(0, cut).toString("utf8"))) {
-        if (!l.launchId) continue;
+        if (!l.launchId || !isCostLine(l)) continue;
         const s = this.by.get(l.launchId) ?? { input: 0, output: 0, cost: 0 };
         s.input += (l.input || 0) + (l.cacheRead || 0) + (l.cacheWrite || 0);
         s.output += l.output || 0;

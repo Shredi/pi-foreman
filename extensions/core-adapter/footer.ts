@@ -3,6 +3,7 @@
 import { tableRate } from "./cost.ts";
 import type { PriceTable } from "./cost.ts";
 import { symbolSet } from "./symbols.ts";
+import { isCostLine } from "./usage.ts";
 import { renderFooter } from "./footerview.ts";
 import type { CacheBarView, FooterTheme, FooterView } from "./footerview.ts";
 import { cacheBar, formatLeft } from "./cachebar.ts";
@@ -43,7 +44,7 @@ export const zeroTotals = (): FooterTotals => ({ input: 0, cacheRead: 0, cacheWr
 /** Add one assistant message's usage to the totals. */
 export function addMessage(t: FooterTotals, message: unknown, registry?: PriceRegistry, table?: PriceTable | null): void {
   const m = (message && typeof message === "object" ? message : {}) as Json;
-  if (m.kind === "keepalive") return; // keep-alive refreshes are summed by /foreman cost, not per turn
+  if (m.kind === "keepalive" || !isCostLine(m)) return; // keep-alive refreshes are summed by /foreman cost, not per turn; a tool-usage line is no model call
   const u = (m.usage && typeof m.usage === "object" ? m.usage : {}) as Json;
   const c = (u.cost && typeof u.cost === "object" ? u.cost : {}) as Json;
   t.input += num(u.input);

@@ -394,7 +394,7 @@ def _usage_lines(logs, post):
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(rec, dict) and rec.get("kind") != "retro" and after_marker(marker, rec.get("ts")) == post:  # retro lines are not cell cost
+            if isinstance(rec, dict) and rec.get("kind") not in ("retro", "tool-usage") and after_marker(marker, rec.get("ts")) == post:  # retro and tool-usage lines are not cell cost
                 yield rec
 
 

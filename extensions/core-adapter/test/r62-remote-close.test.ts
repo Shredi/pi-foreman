@@ -179,23 +179,21 @@ test("foreman:refused: parsed, applied (closing back to open, one clean line cut
 // ------------------------------------------------------------------ closeChildren and session close with a runner
 
 function remoteEntry(agent: string, over: Partial<SessionEntry> = {}): SessionEntry {
-  return { label: "demo", child: CHILD, parent: "sess-1", status: "open", opened: NOW.toISOString(), handoff: path.join(agent, "m"), machine: "alpha", originMachine: "Alpha", returnPath: "pull", ...over };
+  return { label: "demo", child: CHILD, parent: "sess-1", status: "open", opened: NOW.toISOString(), handoff: path.join(agent, "m"), machine: "alpha", originMachine: "Alpha", backend: "hc", ...over };
 }
 const spawnOk = (stdout = "{}", code = 0, stderr = ""): SpawnResult => ({ code, stdout, stderr, timedOut: false });
 
-function ccRig(agent: string, runRemote: (a: string[]) => Promise<SpawnResult>, waitMs: number, onPull?: () => void) {
+function ccRig(agent: string, runRemote: (a: string[]) => Promise<SpawnResult>, waitMs: number, onSleep?: (n: number) => void) {
   const slept: number[] = [];
-  const pulls: string[] = [];
   const lines = () =>
     closeChildren({
       agentDir: agent, opener: "sess-1", send: async () => "sent", waitMs, runRemote,
-      sleep: async (ms) => void slept.push(ms),
-      pullNow: async (c) => (pulls.push(c), onPull?.(), { ok: true, entries: 0, skipped: 0 }),
+      sleep: async (ms) => (slept.push(ms), onSleep?.(slept.length)),
     });
-  return { slept, pulls, lines };
+  return { slept, lines };
 }
 
-test("closeChildren: the remote child is closed through runRemote, pulled every 5 s while waiting, and reported closed", async () => {
+test("closeChildren: the remote child is closed through runRemote, polled in the registry while waiting, and reported closed", async () => {
   const agent = mk("cc-closed");
   writeRegistry(agent, { version: 1, sessions: [remoteEntry(agent)] });
   const calls: string[][] = [];
@@ -205,8 +203,8 @@ test("closeChildren: the remote child is closed through runRemote, pulled every 
     reg.sessions[0].status = "closing";
     writeRegistry(agent, reg);
     return spawnOk();
-  }, 30_000, () => {
-    if (r.pulls.length === 2) {
+  }, 30_000, (n) => {
+    if (n === 2) {
       const reg = readRegistry(agent);
       reg.sessions[0].status = "closed";
       writeRegistry(agent, reg);
@@ -215,8 +213,7 @@ test("closeChildren: the remote child is closed through runRemote, pulled every 
   const out = await r.lines();
   assert.deepEqual(calls, [["close-remote", CHILD]]);
   assert.deepEqual(out, [`child demo@alpha (${CHILD}): closed`]);
-  assert.equal(r.pulls.length, 2);
-  assert.equal(r.slept.reduce((a, b) => a + b, 0), 10_000);
+  assert.equal(r.slept.reduce((a, b) => a + b, 0), 2_000);
 });
 
 test("closeChildren: a refused notice, a timeout and a failed send are reported per child", async () => {
@@ -244,7 +241,6 @@ test("closeChildren: a refused notice, a timeout and a failed send are reported 
   writeRegistry(failAgent, { version: 1, sessions: [remoteEntry(failAgent)] });
   const r3 = ccRig(failAgent, async () => spawnOk("", 1, "pi-foreman session: refused [not_open]: demo is closed, not open"), 6_000);
   assert.deepEqual(await r3.lines(), [`child demo@alpha (${CHILD}): not sent (not_open)`]);
-  assert.equal(r3.pulls.length, 0);
 });
 
 test("closeChildren: without a runner the remote entry is reported and untouched; local children still close", async () => {

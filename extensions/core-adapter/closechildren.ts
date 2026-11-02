@@ -1,13 +1,10 @@
 // `/foreman close` also closes the session's own child sessions (R3b point 4): each registry entry (sessions.json)
 // whose `parent` is this session's opener id and whose status is open or pending gets `foreman:close`; the registry
 // is polled until every sent child reports `closed` (or the bounded wait ends). One report line per child. Never throws.
-import type { PullNow, RunRemote } from "./remotepull.ts";
 import { closeText, readRegistry, writeRegistry } from "./session.ts";
-import type { SessionEntry } from "./session.ts";
+import type { RunRemote, SessionEntry } from "./session.ts";
 
 export const CHILD_POLL_MS = 1_000;
-/** While waiting, the outbox of a sent remote child is pulled this often. */
-export const REMOTE_PULL_MS = 5_000;
 
 const isRemote = (s: SessionEntry): boolean => typeof s.machine === "string";
 const who = (s: SessionEntry): string => (isRemote(s) ? `${s.label}@${String(s.machine)}` : s.label);
@@ -22,9 +19,7 @@ export interface CloseChildrenDeps {
   waitMs: number;
   /** Injectable timer: resolves after `ms`. */
   sleep: (ms: number) => Promise<void>;
-  /** Poll a remote child's outbox now (remotepull.ts); runs every 5 s while a sent remote child is awaited. */
-  pullNow?: PullNow;
-  /** Run a `foreman_session.py` verb through the pull queue (remotepull.ts). */
+  /** Run a `foreman_session.py` verb (session.ts remoteRunner). */
   runRemote?: RunRemote;
 }
 
@@ -62,7 +57,6 @@ export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
       writeRegistry(d.agentDir, reg);
     }
     let waited = 0;
-    let pulled = 0;
     for (;;) {
       const reg = readRegistry(d.agentDir);
       let pending = 0;
@@ -81,17 +75,6 @@ export async function closeChildren(d: CloseChildrenDeps): Promise<string[]> {
       const step = Math.min(CHILD_POLL_MS, d.waitMs - waited);
       await d.sleep(step);
       waited += step;
-      if (d.pullNow && waited - pulled >= REMOTE_PULL_MS) {
-        pulled = waited;
-        for (const s of sent) {
-          if (!isRemote(s) || outcome.get(s.child) !== "sent") continue;
-          try {
-            await d.pullNow(s.child);
-          } catch {
-            // the pull module records its own errors
-          }
-        }
-      }
     }
     return [...skipped, ...open.map((s) => {
       const o = outcome.get(s.child) as Outcome;

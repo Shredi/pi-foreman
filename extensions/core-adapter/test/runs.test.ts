@@ -8,6 +8,15 @@ import { ChildRuns, UsageTail, ageText, rungOf } from "../runs.ts";
 const line = (launchId: string, input: number, output: number, total: number) => JSON.stringify({ role: "builder", launchId, input, cacheRead: 0, cacheWrite: 0, output, cost: { total } });
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "runs-"));
 
+test("usage tail skips a tool-usage line: no row for its launch id", () => {
+  const d = tmp();
+  const f = path.join(d, "u.jsonl");
+  fs.writeFileSync(f, line("a", 100, 10, 0.5) + "\n" + JSON.stringify({ kind: "tool-usage", role: "foreman", launchId: "t", declared: ["x"], used: ["x"] }) + "\n");
+  const t = new UsageTail(f);
+  t.refresh();
+  assert.deepEqual([...t.by.keys()], ["a"]);
+});
+
 test("usage tail sums per launch id incrementally and waits for a full line", () => {
   const d = tmp();
   const f = path.join(d, "u.jsonl");

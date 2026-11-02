@@ -85,6 +85,8 @@ Trace `plan_review {model, decision}`. The foreman's instructions carry the plan
 
 The one `reviewer` is modular: `roles.reviewer.skills` names the shipped `security-review` skill (`skills/security-review/SKILL.md`), which the reviewer reads from its catalog and applies when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input. There is no separate security reviewer role.
 
+The threat model in that skill is the scope of a security finding. The shell guards are guardrails against accidents by the harness's own agents, not a sandbox against an attacker; a `SECURITY:` line is only for a break of a hard floor (secrets, a child's publish or off-branch push, deletes outside its own worktree, a child changing guard or permission config, injection). Parser bypasses go to the report as `- [later]` CRITIQUE lines.
+
 A reviewer FAIL whose report has a finding line starting `SECURITY:` (the agent file tells
 it to prefix security findings so) makes the builder launches that answer it exempt from `ceremony.revisionRounds`:
 the builder launches after that FAIL, up to the next review verdict (trace `revision_security_exempt`). Every other

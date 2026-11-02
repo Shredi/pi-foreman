@@ -1,18 +1,17 @@
 """Remote child sessions (scripts/foreman_session.py): the config, the remote verbs probe/open/deliver/notice and the parent CLI.
 
-Only fakes: a fake `ssh` (runs the remote verb in a second process against a second agent dir), a fake `herdr`
-(saved machines, agent list, server up/down) and a fake `node` for pi-intercom's CLI. Machine names are alpha and beta.
-The fake binaries are POSIX scripts, so the tests that need them are skipped on win32; the win32 cases are covered by
-tests that patch the platform.
+The transport is `hc exec --on <machine>`; the tests run on the fake hc of tests/fakes/hc.py, which runs the remote verb
+in-process against a second agent dir. Other fakes: `herdr-app` (spaces) and a `node` for pi-intercom's CLI. Machine names
+are alpha, beta and gamma. The fakes install as scripts on POSIX and as .cmd + .py pairs on win32.
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import io
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -26,85 +25,33 @@ TESTS = Path(__file__).resolve().parent
 SCRIPTS = TESTS.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(TESTS))
+sys.path.insert(0, str(TESTS / "fakes"))
 import _isolation  # noqa: E402,F401  (agent dir -> temp)
 import foreman_config as fc  # noqa: E402
 import foreman_session as fsn  # noqa: E402
 import foreman_trust  # noqa: E402
+from hc_install import install_fake_hc  # noqa: E402
 
 PARENT = "11111111-2222-3333-4444-555555555555"
 OTHER = "99999999-8888-7777-6666-555555555555"
 ADDRESS = PARENT + "@beta"
-PARENT_MACHINES = [{"label": "alpha", "target": "alpha-host", "enabled": True},
-                   {"label": "beta", "target": "beta-host", "enabled": False},
-                   {"label": "gamma", "target": "gamma-host", "enabled": True}]
-REMOTE_MACHINES = [{"label": "beta", "target": "beta-host", "enabled": True}]
+HC_MACHINES = ["alpha", "beta", "gamma"]
+SPACES = [{"id": "sp-beta", "machine": "beta"}, {"id": "sp-alpha", "machine": "alpha"}]
 
-
-def pi_row(uuid):
-    return {"agent": "pi", "agent_session": {"kind": "path", "value": "/s/2026-01-01T00-00-00_%s.jsonl" % uuid}}
-
-
-REMOTE_AGENTS = [pi_row(PARENT), {"agent": "shell"}, pi_row(OTHER)]
-
-FAKE_SSH = r'''
-import io, json, os, sys, time
-argv = sys.argv[1:]
-data = sys.stdin.buffer.read()
-with open(os.environ["FAKE_SSH_LOG"], "a", encoding="utf-8") as f:
-    f.write(json.dumps({"argv": argv, "stdin": data.decode("utf-8")}) + "\n")
-mode = os.environ.get("FAKE_SSH_MODE", "ok")
-if mode == "255":
-    sys.stderr.write("ssh: connect to host alpha-host port 22: Connection refused\n")
-    sys.exit(255)
-if mode == "timeout":
-    time.sleep(30)
-if mode == "nonjson":
-    print("not json at all")
-    sys.exit(0)
-words = argv[-1].split()
-verb = words[words.index("remote") + 1]
-if mode == "banner":
-    print("Welcome to alpha-host")
-os.environ["PI_CODING_AGENT_DIR"] = os.environ["FAKE_REMOTE_AGENT"]
-os.environ["FAKE_HERDR_MACHINES"] = os.environ.get("FAKE_REMOTE_HERDR_MACHINES", "[]")
-os.environ["FAKE_HERDR_AGENTS"] = os.environ.get("FAKE_REMOTE_HERDR_AGENTS", "[]")
-os.environ.pop("FAKE_HERDR_DOWN", None)
-if os.environ.get("FAKE_REMOTE_HERDR_DOWN"):
-    os.environ["FAKE_HERDR_DOWN"] = "1"
-os.environ.pop("HERDR_PANE_ID", None)
-for _k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN"):
-    os.environ.pop(_k, None)
-if os.environ.get("FAKE_REMOTE_PATH"):
-    os.environ["PATH"] = os.environ["FAKE_REMOTE_PATH"]
-sys.path.insert(0, os.environ["FAKE_SCRIPTS"])
-import foreman_session as fsn
-from pathlib import Path
-fsn.intercom_cli = (lambda: None) if os.environ.get("FAKE_NO_INTERCOM") else (lambda: Path(os.environ["FAKE_CLI"]))
-if os.environ.get("FAKE_SSH_PROTOCOL"):
-    fsn.REMOTE_PROTOCOL = int(os.environ["FAKE_SSH_PROTOCOL"])
-sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8")
-sys.exit(fsn.main(["remote", verb, "--json"]))
-'''
-
-FAKE_HERDR = r'''
+FAKE_HERDR_APP = r'''
 import json, os, sys
 args = sys.argv[1:]
-with open(os.environ["FAKE_HERDR_LOG"], "a", encoding="utf-8") as f:
+with open(os.environ["FAKE_APP_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps(args) + "\n")
-if args[:2] == ["workspace", "list"] and os.environ.get("FAKE_HERDR_DOWN"):
-    sys.stderr.write("no server\n")
-    sys.exit(1)
-if args[:3] == ["machine", "list", "--json"]:
-    out = {"result": {"machines": json.loads(os.environ.get("FAKE_HERDR_MACHINES", "[]"))}}
-elif args[:1] == ["--machine"] and args[2:4] == ["agent", "list"]:
-    out = {"result": {"agents": json.loads(os.environ.get("FAKE_HERDR_AGENTS", "[]"))}}
-elif args[:2] == ["workspace", "list"]:
-    out = {"result": {"workspaces": []}}
-elif args[:2] == ["workspace", "create"]:
-    out = {"result": {"workspace": {"workspace_id": "w9"}, "tab": {"tab_id": "w9:t1"}, "root_pane": {"pane_id": "w9:p1"}}}
+if args == ["ls"]:
+    print(json.dumps({"spaces": json.loads(os.environ.get("FAKE_APP_SPACES", "[]"))}))
+elif args[:2] == ["do", "space.new"]:
+    if os.environ.get("FAKE_APP_NEW_FAIL"):
+        sys.stderr.write("cannot create\n")
+        sys.exit(1)
+    print(json.dumps({"space": {"id": "sp-new"}}))
 else:
-    out = {"result": {}}
-print(json.dumps(out))
+    print("{}")
 '''
 
 FAKE_NODE = r'''
@@ -122,7 +69,21 @@ def lines_of(path):
     return [json.loads(l) for l in path.read_text("utf-8").splitlines()] if path.exists() else []
 
 
-posix_only = unittest.skipIf(sys.platform == "win32", "fake ssh, herdr and node are POSIX scripts")
+def install_script(bin_dir, name, body):
+    """A fake executable `name` running the Python `body`: a script on POSIX, name.cmd + name.py on win32."""
+    bin_dir = Path(bin_dir)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        (bin_dir / (name + ".py")).write_text(body, "utf-8")
+        (bin_dir / (name + ".cmd")).write_bytes(('@"%s" "%%~dp0%s.py" %%*\r\n' % (sys.executable, name)).encode("utf-8"))
+    else:
+        path = bin_dir / name
+        path.write_text("#!%s\n%s" % (sys.executable, body), "utf-8")
+        path.chmod(0o755)
+
+
+def calls_of(rows, *names):
+    return [c for c in rows if c and c[0] in names]
 
 
 class RemoteBase(unittest.TestCase):
@@ -133,50 +94,48 @@ class RemoteBase(unittest.TestCase):
         self.radir = self.tmp / "remote agent"
         self.rproj = self.tmp / "remote proj"
         self.rproj.mkdir()
-        self.bin = self.tmp / "bin"
-        self.bin.mkdir()
+        self.hcbin = install_fake_hc(self.tmp / "hcbin")
+        self.appbin = self.tmp / "appbin"
         self.pibin = self.tmp / "pibin"
-        self.pibin.mkdir()
-        for name, body in (("ssh", FAKE_SSH), ("herdr", FAKE_HERDR), ("node", FAKE_NODE)):
-            self.script(self.bin / name, body)
-        self.script(self.pibin / "pi", "print('pi 9.9.9')\n")
+        install_script(self.appbin, "herdr-app", FAKE_HERDR_APP)
+        install_script(self.pibin, "node", FAKE_NODE)
+        install_script(self.pibin, "pi", "print('pi 9.9.9')\n")
         cli = self.radir / "npm" / "node_modules" / "pi-intercom"
         cli.mkdir(parents=True)
         (cli / "cli.mjs").write_text("// fake\n", "utf-8")
-        (cli / "package.json").write_text('{"version": "1.2.3"}', "utf-8")
         self.cli = cli / "cli.mjs"
         self.brief = self.tmp / "brief.md"
         self.brief.write_text("# Task\n\nDo the thing.\n", "utf-8")
-        self.logs = {k: self.tmp / (k + ".log") for k in ("ssh", "herdr", "node")}
+        self.logs = {k: self.tmp / (k + ".log") for k in ("hc", "exec", "app", "node")}
         self.write_config({"alpha": {"parentName": "beta"}, "beta": {}, "gamma": {}})
-        self.env = {"PATH": os.pathsep.join([str(self.bin), str(self.pibin), os.environ.get("PATH", "")]),
-                    "PI_CODING_AGENT_DIR": str(self.padir), "HERDR_PANE_ID": "w1:p1",
-                    "FAKE_SSH_LOG": str(self.logs["ssh"]), "FAKE_HERDR_LOG": str(self.logs["herdr"]),
+        self.env = {"PATH": self.path(), "PI_CODING_AGENT_DIR": str(self.padir),
+                    "FAKE_HC_LOG": str(self.logs["hc"]), "FAKE_HC_EXEC_LOG": str(self.logs["exec"]),
+                    "FAKE_HC_STATE": str(self.tmp / "hcstate"), "FAKE_HC_MACHINES": json.dumps(HC_MACHINES),
+                    "FAKE_APP_LOG": str(self.logs["app"]), "FAKE_APP_SPACES": json.dumps(SPACES),
                     "FAKE_NODE_LOG": str(self.logs["node"]), "FAKE_SCRIPTS": str(SCRIPTS), "FAKE_CLI": str(self.cli),
-                    "FAKE_REMOTE_AGENT": str(self.radir), "FAKE_HERDR_MACHINES": json.dumps(PARENT_MACHINES),
-                    "FAKE_REMOTE_HERDR_MACHINES": json.dumps(REMOTE_MACHINES),
-                    "FAKE_REMOTE_HERDR_AGENTS": json.dumps(REMOTE_AGENTS)}
-        for k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN",
-                  "HERDR_BIN", "HERDR_BIN_PATH", "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR",
-                  "PI_FOREMAN_REMOTE_PARENT", "PI_FOREMAN_SESSION_MODEL", "FAKE_SSH_MODE", "FAKE_REMOTE_PATH",
-                  "FAKE_NO_INTERCOM", "FAKE_SSH_PROTOCOL", "FAKE_HERDR_DOWN", "FAKE_REMOTE_HERDR_DOWN", "FAKE_NODE_EXIT"):
+                    "FAKE_REMOTE_AGENT": str(self.radir)}
+        for k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN", "HERDR_PANE_ID", "HERDR_BIN",
+                  "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_REMOTE_PARENT",
+                  "PI_FOREMAN_SESSION_MODEL", "FAKE_HC_FAIL", "FAKE_HC_CORE_DOWN", "FAKE_HC_EXEC_MODE", "FAKE_REMOTE_PATH",
+                  "FAKE_SSH_PROTOCOL", "FAKE_REMOTE_HC_DOWN", "FAKE_APP_NEW_FAIL", "FAKE_NODE_EXIT"):
             self.env[k] = ""
         for k in os.environ:
             if k.startswith("PI_BG_"):
                 self.env[k] = ""
 
-    def script(self, path, body):
-        path.write_text("#!%s\n%s" % (sys.executable, body), "utf-8")
-        path.chmod(0o755)
+    def path(self, hc=True, app=True):
+        """A PATH of the fakes (fake hc and herdr-app optional) followed by the real one, minus the directories that hold a
+        real hc or herdr-app (a developer machine may have both)."""
+        parts = ([str(self.hcbin)] if hc else []) + ([str(self.appbin)] if app else []) + [str(self.pibin)]
+        rest = [d for d in os.environ.get("PATH", "").split(os.pathsep)
+                if d and not shutil.which("hc", path=d) and not shutil.which("herdr-app", path=d)]
+        return os.pathsep.join(parts + rest)
 
     def write_config(self, machines, extra=None, adir=None):
         adir = Path(adir or self.padir)
         adir.mkdir(parents=True, exist_ok=True)
         cfg = {"sessions": {"machines": machines}}
         cfg.update(extra or {})
-        for row in cfg["sessions"].get("machines", {}).values():  # the push fixture, unless a test sets its own
-            row.setdefault("returnPath", "push")
-        cfg["sessions"].setdefault("ssh", {}).setdefault("controlMaster", False)
         (adir / "foreman.json").write_text(json.dumps(cfg), "utf-8")
 
     def apply_env(self, env, stack):
@@ -201,8 +160,7 @@ class RemoteBase(unittest.TestCase):
     def remote(self, verb, params, raw=None, **env):
         """The remote side in this process: `remote <verb> --json` against the remote agent dir."""
         stdin = raw if raw is not None else json.dumps(params, ensure_ascii=False).encode("utf-8")
-        renv = {"PI_CODING_AGENT_DIR": str(self.radir), "HERDR_PANE_ID": "", "FAKE_HERDR_MACHINES": json.dumps(REMOTE_MACHINES),
-                "FAKE_HERDR_AGENTS": json.dumps(REMOTE_AGENTS)}
+        renv = {"PI_CODING_AGENT_DIR": str(self.radir)}
         renv.update(env)
         code, out, err = self.run_main("remote", verb, "--json", stdin=stdin, **renv)
         reply = json.loads(out.strip().splitlines()[-1])
@@ -213,6 +171,12 @@ class RemoteBase(unittest.TestCase):
         if parent:
             args += ["--parent-id", parent]
         return tuple(args) + extra
+
+    def hc_calls(self, *names):
+        return calls_of(lines_of(self.logs["hc"]), *names)
+
+    def exec_calls(self):
+        return lines_of(self.logs["exec"])
 
     def parent_registry(self):
         path = self.padir / "pi-foreman" / "state" / "sessions.json"
@@ -268,31 +232,31 @@ class ConfigTest(unittest.TestCase):
 
     def test_defaults(self):
         sessions = self.load()["config"]["sessions"]
-        self.assertEqual(sessions, {"backend": "auto", "hc": {"outliveParent": True}, "machines": {}, "remoteInlineMaxBytes": 32768, "pull": {"intervalSeconds": 20, "fastSeconds": 5},
-                                    "ssh": {"controlMaster": True}, "worktree": {"branchPrefix": "round"}})
+        self.assertEqual(sessions, {"backend": "auto", "hc": {"outliveParent": True}, "machines": {}, "worktree": {"branchPrefix": "round"}})
 
     def test_machines_from_the_project_layer_are_ignored(self):
         r = self.load(project={"sessions": {"machines": {"alpha": {}}}}, l2={"sessions": {"machines": {"beta": {}}}})
         self.assertEqual(list(r["config"]["sessions"]["machines"]), ["beta"])
         self.assertTrue(any("sessions.machines" in w for w in r["warnings"]), r["warnings"])
 
-    def test_inline_max_bytes_is_lower_only_with_a_minimum(self):
-        self.assertEqual(self.load(project={"sessions": {"remoteInlineMaxBytes": 4096}})["config"]["sessions"]["remoteInlineMaxBytes"], 4096)
-        self.assertEqual(self.load(project={"sessions": {"remoteInlineMaxBytes": 40000}})["config"]["sessions"]["remoteInlineMaxBytes"], 32768)
-        r = self.load(project={"sessions": {"remoteInlineMaxBytes": 10}})
-        self.assertEqual(r["config"]["sessions"]["remoteInlineMaxBytes"], 32768)
-        self.assertEqual(r["errors"], [])
-
     def test_schema_bounds_and_patterns(self):
-        ok = {"sessions": {"machines": {"alpha": {"foremanCommand": "/opt/fm/bin/foreman", "parentName": "beta"}},
-                           "remoteInlineMaxBytes": 49152}}
+        ok = {"sessions": {"machines": {"alpha": {"foremanArgv": ["powershell.exe", "-NoProfile", "-File", "C:/Program Files/fm/bin/foreman.ps1"],
+                                                  "parentName": "beta", "space": "sp-1"}}}}
         self.assertEqual(self.issues(ok), [])
-        for bad in ({"sessions": {"remoteInlineMaxBytes": 1023}}, {"sessions": {"remoteInlineMaxBytes": 49153}},
-                    {"sessions": {"machines": {"alpha": {"foremanCommand": "-oProxyCommand=x"}}}},
-                    {"sessions": {"machines": {"alpha": {"foremanCommand": "a b"}}}},
+        for bad in ({"sessions": {"remote": {"fetchTimeoutSeconds": 30}}},
+                    {"sessions": {"machines": {"alpha": {"foremanArgv": ["a;b"]}}}},
+                    {"sessions": {"machines": {"alpha": {"foremanArgv": "foreman"}}}},
+                    {"sessions": {"machines": {"alpha": {"space": "a b"}}}},
                     {"sessions": {"machines": {"alpha": {"parentName": "-x"}}}},
                     {"sessions": {"machines": {"-alpha": {}}}}, {"sessions": {"machines": {"a b": {}}}},
                     {"sessions": {"machines": {"alpha": {"unknown": 1}}}}):
+            self.assertTrue(self.issues(bad), bad)
+
+    def test_the_ssh_pull_and_outbox_keys_are_gone(self):
+        for bad in ({"sessions": {"ssh": {"controlMaster": False}}}, {"sessions": {"pull": {"intervalSeconds": 20}}},
+                    {"sessions": {"remoteInlineMaxBytes": 4096}},
+                    {"sessions": {"machines": {"alpha": {"foremanCommand": "foreman"}}}},
+                    {"sessions": {"machines": {"alpha": {"returnPath": "push"}}}}):
             self.assertTrue(self.issues(bad), bad)
 
     def test_remote_sessions_feature_follows_machines(self):
@@ -300,67 +264,36 @@ class ConfigTest(unittest.TestCase):
         feature = next(f for f in fd.load_features()["features"] if f["id"] == "remote-sessions")
         self.assertFalse(fd.switch_on(feature, self.load()["config"]))
         self.assertTrue(fd.switch_on(feature, self.load(l2={"sessions": {"machines": {"alpha": {}}}})["config"]))
+        text = feature["description"] if "description" in feature else json.dumps(feature)
+        self.assertIn("hc", text)
+        self.assertIn("PR 4", text)
 
 
-@posix_only
 class ProbeTest(RemoteBase):
     def probe(self, **env):
         return self.remote("probe", {"parentName": "beta", "parentAddress": ADDRESS}, **env)
 
-    def test_probe_fields(self):
+    def test_probe_reply_shape(self):
         code, r = self.probe()
         self.assertEqual(code, 0)
-        self.assertEqual(r["protocol"], 2)
-        self.assertEqual(r["returnPath"], "push")
-        self.assertEqual((r["piVersion"], r["intercomVersion"], r["platform"]), ("pi 9.9.9", "1.2.3", sys.platform))
-        self.assertEqual(r["herdr"], {"available": True, "serverUp": True})
-        self.assertEqual((r["agentDir"], r["returnPathOk"]), (str(self.radir), True))
+        self.assertEqual(r["protocol"], 3)
+        self.assertEqual((r["piVersion"], r["platform"]), ("pi 9.9.9", sys.platform))
+        self.assertEqual(r["hc"], {"available": True, "coreUp": True, "version": "0.0.0-fake"})
+        self.assertEqual((r["agentDir"], r["intercomMachineName"]), (str(self.radir), fsn.short_hostname()))
         self.assertIn("foremanVersion", r)
-        self.assertEqual(r["intercomMachine"], fsn.short_hostname())
+        for gone in ("herdr", "returnPath", "returnPathOk", "returnPathError", "relayCommand", "intercomVersion", "intercomMachine"):
+            self.assertNotIn(gone, r)
 
     def test_intercom_machine_name_comes_from_the_intercom_config(self):
         (self.radir / "intercom").mkdir()
         (self.radir / "intercom" / "config.json").write_text(json.dumps({"crossMachine": {"machineName": " beta "}}), "utf-8")
-        self.assertEqual(self.probe()[1]["intercomMachine"], "beta")
+        self.assertEqual(self.probe()[1]["intercomMachineName"], "beta")
 
-    def test_server_down(self):
-        self.assertEqual(self.probe(FAKE_HERDR_DOWN="1")[1]["herdr"], {"available": True, "serverUp": False})
+    def test_core_down(self):
+        self.assertEqual(self.probe(FAKE_HC_CORE_DOWN="1")[1]["hc"], {"available": True, "coreUp": False, "version": None})
 
-    def test_return_path_needs_the_parent_saved_and_enabled(self):
-        off = [dict(REMOTE_MACHINES[0], enabled=False)]
-        r = self.probe(FAKE_HERDR_MACHINES=json.dumps(off))[1]
-        self.assertFalse(r["returnPathOk"])
-        self.assertEqual(r["returnPath"], "push")
-        self.assertIn("beta", r["returnPathError"])
-        self.assertFalse(self.probe(FAKE_HERDR_MACHINES="[]")[1]["returnPathOk"])
-
-    def test_return_path_needs_exactly_one_agent_with_the_parent_uuid(self):
-        self.assertFalse(self.probe(FAKE_HERDR_AGENTS=json.dumps([pi_row(OTHER)]))[1]["returnPathOk"])
-        two = self.probe(FAKE_HERDR_AGENTS=json.dumps([pi_row(PARENT), pi_row(PARENT)]))[1]
-        self.assertFalse(two["returnPathOk"])
-        self.assertEqual(two["returnPath"], "push")
-        self.assertIn("2 pi agents", two["returnPathError"])
-
-    def test_return_path_reads_pi_rows_with_a_session_file_only(self):
-        rows = [{"agent": "shell", "agent_session": {"kind": "path", "value": "/s/x_%s.jsonl" % PARENT}},
-                {"agent": "pi", "agent_session": {"kind": "name", "value": "x_%s.jsonl" % PARENT}},
-                {"agent": "pi", "agent_session": {"kind": "path", "value": "/s/%s.jsonl" % PARENT}}]
-        self.assertFalse(self.probe(FAKE_HERDR_AGENTS=json.dumps(rows))[1]["returnPathOk"])
-        letters = "abcdefab-cdef-abcd-efab-cdefabcdefab"
-        asked = {"parentName": "beta", "parentAddress": letters + "@beta"}
-        for row, expected in ((pi_row(letters), True), (pi_row(letters.upper()), False)):  # ids compare exactly
-            reply = self.remote("probe", asked, FAKE_HERDR_AGENTS=json.dumps([row]))[1]
-            self.assertEqual(reply["returnPathOk"], expected)
-            self.assertEqual(reply["returnPath"], "push")
-
-    def test_herdr_bin_path_rule(self):
-        r = self.probe(HERDR_BIN_PATH=str(self.tmp / "missing herdr"))[1]
-        self.assertFalse(r["returnPathOk"])
-        self.assertEqual(r["returnPath"], "push")
-        self.assertIn("not found", r["returnPathError"])
-        other = self.tmp / "herdr2"
-        self.script(other, FAKE_HERDR)
-        self.assertTrue(self.probe(HERDR_BIN_PATH=str(other))[1]["returnPathOk"])
+    def test_no_hc_on_the_path(self):
+        self.assertEqual(self.probe(PATH=self.path(hc=False))[1]["hc"], {"available": False, "coreUp": False, "version": None})
 
     def test_probe_refuses_bad_requests(self):
         code, r = self.remote("probe", {"parentName": "beta", "parentAddress": ADDRESS, "extra": 1})
@@ -382,24 +315,17 @@ class ProbeTest(RemoteBase):
         self.assertEqual((code, r["code"]), (1, "too_large"))
 
 
-class Win32LaunchTest(RemoteBase):
-    def test_win32_launch_line_is_the_powershell_form(self):
-        with mock.patch.object(fsn, "host_platform", return_value="win32"), mock.patch.object(fsn, "herdr_bin", return_value=None):
-            code, reply = self.remote("open", self.open_params())
-        self.assertEqual(code, 0)
-        self.assertEqual(reply["status"], "pending")
-        self.assertTrue(reply["launch"].startswith("$env:PI_FOREMAN_HANDOFF_DIR="), reply["launch"])
-        self.assertIn("$env:PI_FOREMAN_REMOTE_PARENT='1'", reply["launch"])
-        self.assertEqual((self.handoff(reply) / "launch.txt").read_text("utf-8").strip(), reply["launch"])
-
-
-@posix_only
 class RemoteOpenTest(RemoteBase):
-    def test_open_writes_the_remote_handoff(self):
-        reply = self.remote_open()
+    def run_args(self):
+        (call,) = self.hc_calls("run")
+        return call
+
+    def test_open_runs_the_child_under_the_remote_hc(self):
+        reply = self.remote_open(space="sp-alpha")
         h = self.handoff(reply)
         self.assertEqual(reply["status"], "open")
-        self.assertEqual(reply["herdr"], {"workspace": "w9", "tab": "w9:t1", "pane": "w9:p1"})
+        self.assertEqual(reply["hc"]["address"], "t1")
+        self.assertNotIn("herdr", reply)
         self.assertRegex(reply["handoffName"], r"^\d{8}-\d{6}-demo$")
         self.assertEqual((h / "parent").read_text("utf-8").strip(), ADDRESS)
         self.assertEqual((h / "child").read_text("utf-8").strip(), reply["child"])
@@ -407,42 +333,90 @@ class RemoteOpenTest(RemoteBase):
         self.assertIn("remote notice", brief)
         self.assertIn("pi-foreman remote session `demo`", brief)
         launch = (h / "launch.txt").read_text("utf-8")
-        self.assertIn("PI_FOREMAN_REMOTE_PARENT=1", launch)
-        self.assertIn("PI_FOREMAN_PARENT_LABEL=beta", launch)
-        self.assertIn("PI_FOREMAN_PARENT_INTERCOM=%s" % ADDRESS, launch)
+        # the launch line is in the form of the platform the child runs on: `K=V` words on POSIX, `$env:K='V'` on win32
+        def assign(key, value):
+            return "$env:%s='%s'" % (key, value) if fsn.host_platform() == "win32" else "%s=%s" % (key, value)
+        self.assertIn(assign("PI_FOREMAN_REMOTE_PARENT", "1"), launch)
+        self.assertIn(assign("PI_FOREMAN_PARENT_LABEL", "beta"), launch)
+        self.assertIn(assign("PI_FOREMAN_PARENT_INTERCOM", ADDRESS), launch)
         entry = self.remote_registry()[0]
-        self.assertEqual((entry["child"], entry["parent"], entry["status"]), (reply["child"], ADDRESS, "open"))
-        pane_run = [c for c in lines_of(self.logs["herdr"]) if c[:2] == ["pane", "run"]]
-        self.assertEqual(len(pane_run), 1)
-        self.assertIn("PI_FOREMAN_REMOTE_PARENT=1", pane_run[0][3])
+        self.assertEqual((entry["child"], entry["parent"], entry["status"], entry["backend"]), (reply["child"], ADDRESS, "open", "hc"))
+
+    def test_hc_run_argv_has_the_labels_no_parent_and_bg(self):
+        reply = self.remote_open(space="sp-alpha")
+        run = self.run_args()
+        head = run[:run.index("--")]
+        self.assertEqual(head[:5], ["run", "--json", "--bg", "--no-notify", "--keep"])
+        self.assertIn("--no-parent", head)
+        self.assertNotIn("--outlive-parent", head)
+        labels = [head[i + 1] for i, a in enumerate(head) if a == "--label"]
+        self.assertEqual(labels, ["herdr.space=sp-alpha", "fm.child=" + reply["child"], "fm.parent=" + PARENT])
+        self.assertEqual(head[head.index("--cwd") + 1], str(self.rproj))
+        self.assertEqual(head[head.index("--name") + 1], fsn.hc_name(reply["child"]))
+        self.assertEqual(run[run.index("--") + 1], "env" if sys.platform != "win32" else "powershell")
+
+    def test_a_space_without_a_tab_label(self):
+        self.remote_open(space="sp-alpha")
+        self.assertFalse(any(a.startswith("herdr.tab=") for a in self.run_args()))
+
+    def test_no_space_means_no_space_label(self):
+        self.remote_open()
+        self.assertFalse(any(a.startswith("herdr.") for a in self.run_args()))
+
+    def test_win32_child_argv_names_pi_cmd(self):
+        with mock.patch.object(fsn, "host_platform", return_value="win32"):
+            reply = self.remote_open(space="sp-alpha")
+        run = self.run_args()
+        argv = run[run.index("--") + 1:]
+        self.assertEqual(argv[:3], ["powershell", "-NoProfile", "-Command"])
+        self.assertEqual(len(argv), 4)
+        self.assertIn("; pi.cmd '", argv[3])
+        self.assertNotIn("; pi '", argv[3])
+        self.assertIn("$env:PI_FOREMAN_REMOTE_PARENT='1'", argv[3])
+        self.assertEqual(reply["status"], "open")
 
     def test_open_stdout_is_exactly_one_json_line(self):
         _, out, _ = self.run_main("remote", "open", "--json", stdin=json.dumps(self.open_params()).encode("utf-8"),
-                                  PI_CODING_AGENT_DIR=str(self.radir), HERDR_PANE_ID="")
+                                  PI_CODING_AGENT_DIR=str(self.radir))
         self.assertEqual(len(out.strip().splitlines()), 1)
         self.assertTrue(json.loads(out)["ok"])
 
-    def test_without_a_herdr_server_the_session_is_pending_with_a_launch_line(self):
-        code, reply = self.remote("open", self.open_params(), FAKE_HERDR_DOWN="1")
-        self.assertEqual((code, reply["status"], reply["herdr"] if "herdr" in reply else None), (0, "pending", None))
-        self.assertTrue(reply["launch"].startswith("env "), reply["launch"])
-        self.assertEqual((self.handoff(reply) / "launch.txt").read_text("utf-8").strip(), reply["launch"])
-        self.assertEqual(self.remote_registry()[0]["status"], "pending")
+    def test_hc_run_failure_leaves_a_failed_entry_with_a_launch_line(self):
+        real = fsn.hc
+
+        def failing(binary, args, timeout=fsn.HC_TIMEOUT):
+            if args and args[0] == "run":
+                raise fsn.HcError("hc run exited 1: no core")
+            return real(binary, args, timeout)
+
+        with mock.patch.object(fsn, "hc", side_effect=failing):
+            code, reply = self.remote("open", self.open_params())
+        self.assertEqual((code, reply["status"]), (0, "failed"))
+        self.assertTrue(reply["launch"])
+        self.assertEqual(self.remote_registry()[0]["status"], "failed")
+
+    def test_no_hc_on_the_remote_is_remote_launcher(self):
+        rc, reply = self.remote("open", self.open_params(), PATH=self.path(hc=False))
+        self.assertEqual((rc, reply["code"]), (1, "remote_launcher"))
+        self.assertFalse((self.radir / "pi-foreman").exists())
+        rc, reply = self.remote("open", self.open_params(dryRun=True), PATH=self.path(hc=False))
+        self.assertEqual((rc, reply["code"]), (1, "remote_launcher"))
 
     def test_dry_run_writes_nothing(self):
-        code, reply = self.remote("open", self.open_params(dryRun=True))
+        code, reply = self.remote("open", self.open_params(dryRun=True, space="sp-alpha"))
         self.assertEqual((code, reply["status"]), (0, "dryRun"))
         self.assertFalse((self.radir / "pi-foreman").exists())
-        self.assertEqual([c for c in lines_of(self.logs["herdr"]) if c[0] in ("tab", "pane", "workspace") and c[1] != "list"], [])
+        self.assertEqual(self.hc_calls("run"), [])
 
     def test_refusals(self):
         cases = [({"extra": 1}, "bad_request"), ({"label": "-bad"}, "bad_request"), ({"model": "a b"}, "bad_request"),
-                 ({"parentAddress": "x@beta"}, "bad_request"), ({"parentAddress": PARENT + "@alpha"}, "bad_request"),
+                 ({"parentAddress": "x"}, "bad_request"), ({"parentAddress": PARENT + "@alpha"}, "bad_request"),
+                 ({"space": "a b"}, "bad_request"),
                  ({"cwd": str(self.tmp / "nowhere")}, "bad_cwd"), ({"cwd": str(self.tmp / "a;b")}, "refused"),
                  ({"brief": "x" * (64 * 1024 + 1)}, "too_large"), ({"planFirst": "yes"}, "bad_request")]
         for over, code in cases:
             rc, reply = self.remote("open", self.open_params(**over))
-            self.assertEqual((rc, reply["ok"], reply["code"]), (1, False, code), over)
+            self.assertEqual((rc, reply["ok"], reply.get("code")), (1, False, code), over)
         self.assertFalse((self.radir / "pi-foreman").exists())
 
     def test_rank_refusal_on_the_remote(self):
@@ -459,6 +433,7 @@ class RemoteOpenTest(RemoteBase):
         rc, reply = self.remote("open", self.open_params())
         self.assertEqual((rc, reply["code"]), (1, "remote_untrusted"))
         self.assertFalse((self.radir / "pi-foreman").exists())
+        self.assertEqual(self.hc_calls("run"), [])
         rc, reply = self.remote("open", self.open_params(dryRun=True, trust=True))
         self.assertEqual(rc, 0)
         self.assertEqual(foreman_trust.decision(self.radir, self.rproj), None)  # a dry run grants nothing
@@ -494,7 +469,6 @@ class RemoteOpenTest(RemoteBase):
         self.assertFalse((self.radir / "trust.json").exists())
 
 
-@posix_only
 class DeliverTest(RemoteBase):
     def setUp(self):
         super().setUp()
@@ -588,80 +562,312 @@ class DeliverTest(RemoteBase):
         self.assertEqual(self.deliver(content=5)[1]["code"], "bad_request")
 
 
-@posix_only
-class ParentTest(RemoteBase):
-    def ssh_calls(self):
-        return lines_of(self.logs["ssh"])
+class ArgvWordTest(unittest.TestCase):
+    def test_words_the_shared_validator_accepts(self):
+        for word in ("foreman", "/opt/fm/bin/foreman", "C:/Program Files/fm/foreman.cmd", "C:\\fm\\bin\\foreman.ps1",
+                     "-NoProfile", "a b", "bin:x", "a.b_c-d"):
+            self.assertTrue(fsn.argv_word(word), word)
 
+    def test_a_word_with_a_space_is_ok_but_a_blank_one_is_not(self):
+        self.assertTrue(fsn.argv_word("Program Files"))
+        for word in ("", " ", "   "):
+            self.assertFalse(fsn.argv_word(word), repr(word))
+
+    def test_metacharacters_are_refused(self):
+        for word in ("a;b", "a|b", "a&b", "a$b", "`x`", "a\"b", "a'b", "a>b", "a<b", "a(b)", "a*b", "a\nb", "a\tb", "a\u2018b",
+                     "a\n", "x" * 201):
+            self.assertFalse(fsn.argv_word(word), repr(word))
+        for word in (5, None, ["a"]):
+            self.assertFalse(fsn.argv_word(word))
+
+    def test_the_first_word_is_checked_for_a_dash_after_stripping(self):
+        for word in ("-x", " -x", "  -x ", "--"):
+            self.assertFalse(fsn.argv_first_word(word), repr(word))
+        for word in ("foreman", "C:/fm/foreman.cmd", "a -x"):
+            self.assertTrue(fsn.argv_first_word(word), repr(word))
+
+
+class MachineEntryTest(RemoteBase):
+    def entry(self, machines, name="alpha"):
+        with mock.patch.object(fsn, "session_config", return_value={"machines": machines}):
+            return fsn.machine_entry(self.padir, name)
+
+    def test_the_default_argv_is_foreman(self):
+        entry, argv = self.entry({"alpha": {}})
+        self.assertEqual((entry, argv), ({}, ["foreman"]))
+
+    def test_a_custom_argv_is_returned_with_the_entry(self):
+        words = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:/Program Files/fm/bin/foreman.ps1"]
+        entry, argv = self.entry({"alpha": {"foremanArgv": words, "space": "sp-1"}})
+        self.assertEqual((argv, entry["space"]), (words, "sp-1"))
+
+    def test_one_to_eight_words(self):
+        self.assertEqual(self.entry({"alpha": {"foremanArgv": ["f"] * 8}})[1], ["f"] * 8)
+        for words in ([], ["f"] * 9, "foreman", [5], None):
+            with self.assertRaises(fsn.Refused) as cm:
+                self.entry({"alpha": {"foremanArgv": words}})
+            self.assertEqual(cm.exception.code, "machine_not_allowed", words)
+
+    def test_a_bad_word_or_a_leading_dash_is_refused(self):
+        for words in (["foreman;rm"], ["a", "b|c"], ["-oProxyCommand=x"], ["--version"], ["foreman", "a\"b"]):
+            with self.assertRaises(fsn.Refused) as cm:
+                self.entry({"alpha": {"foremanArgv": words}})
+            self.assertEqual(cm.exception.code, "machine_not_allowed", words)
+
+    def test_a_leading_dash_is_fine_after_the_first_word(self):
+        self.assertEqual(self.entry({"alpha": {"foremanArgv": ["powershell.exe", "-NoProfile"]}})[1], ["powershell.exe", "-NoProfile"])
+
+    def test_unknown_machine_and_case_mismatch(self):
+        for name in ("delta", "ALPHA", "Alpha", "", "a b", "alpha\n"):
+            with self.assertRaises(fsn.Refused) as cm:
+                self.entry({"alpha": {}}, name)
+            self.assertEqual(cm.exception.code, "machine_not_allowed", name)
+
+    def test_two_entries_differing_in_case_are_two_machines(self):
+        machines = {"alpha": {"foremanArgv": ["one"]}, "ALPHA": {"foremanArgv": ["two"]}}
+        self.assertEqual(self.entry(machines, "alpha")[1], ["one"])
+        self.assertEqual(self.entry(machines, "ALPHA")[1], ["two"])
+
+    def test_hc_machine_ls_is_the_allowlist_with_exact_case(self):
+        binary = str(self.hcbin / ("hc.cmd" if sys.platform == "win32" else "hc"))
+        with mock.patch.dict(os.environ, dict(self.env, PATH=self.path())):
+            os.environ.pop("HC_BIN", None)
+            fsn.check_hc_machine(binary, "alpha")
+            for listed, asked in (("ALPHA", "alpha"), ("alpha", "Alpha"), ("alpha-2", "alpha"), ("beta", "alpha")):
+                os.environ["FAKE_HC_MACHINES"] = json.dumps([listed])
+                with self.assertRaises(fsn.Refused) as cm:
+                    fsn.check_hc_machine(binary, asked)
+                self.assertEqual(cm.exception.code, "machine_unknown", (listed, asked))
+            os.environ["FAKE_HC_MACHINES"] = json.dumps(["alpha", "ALPHA"])  # two entries of different case: exact match wins
+            fsn.check_hc_machine(binary, "alpha")
+            fsn.check_hc_machine(binary, "ALPHA")
+            os.environ["FAKE_HC_FAIL"] = "1"
+            with self.assertRaises(fsn.Refused) as cm:
+                fsn.check_hc_machine(binary, "alpha")
+            self.assertEqual(cm.exception.code, "machine_unknown")
+
+
+class HcExecVerbTest(unittest.TestCase):
+    """hc_exec_verb against a stubbed subprocess: the envelope handling, with no fake binary."""
+
+    def envelope(self, stdout=b"", stderr=b"", code=0, timed_out=False):
+        return {"code": code, "ms": 5, "signal": None, "stderr": base64.b64encode(stderr).decode("ascii"),
+                "stdout": base64.b64encode(stdout).decode("ascii"), "timed_out": timed_out, "truncated": False}
+
+    def run_verb(self, env, returncode=0, stderr=b"", argv=("foreman",)):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen.update(cmd=cmd, kw=kw)
+            return subprocess.CompletedProcess(cmd, returncode, json.dumps(env).encode("utf-8") if env is not None else b"", stderr)
+
+        with mock.patch.object(fsn.subprocess, "run", side_effect=fake_run):
+            try:
+                return fsn.hc_exec_verb("/x/hc", "alpha", list(argv), "probe", {"a": "\u6f22"}, 15), seen
+            finally:
+                self.seen = seen
+
+    def test_the_command_line(self):
+        reply, seen = self.run_verb(self.envelope(b'{"ok": true, "protocol": 3}\n'), argv=("powershell.exe", "-File", "C:/a b/f.ps1"))
+        self.assertEqual(reply, {"ok": True, "protocol": 3})
+        self.assertEqual(seen["cmd"], ["/x/hc", "exec", "--on", "alpha", "--timeout", "15", "-i", "--json", "--",
+                                       "powershell.exe", "-File", "C:/a b/f.ps1", "session", "remote", "probe", "--json"])
+        self.assertEqual(json.loads(seen["kw"]["input"].decode("utf-8")), {"a": "\u6f22"})
+        self.assertNotIn("shell", seen["kw"])
+
+    def test_utf8_then_cp850(self):
+        self.assertEqual(fsn.decode_hc_text(base64.b64encode("caf\u00e9 \u6f22".encode("utf-8")).decode()), "caf\u00e9 \u6f22")
+        self.assertEqual(fsn.decode_hc_text(base64.b64encode("caf\u00e9".encode("cp850")).decode()), "caf\u00e9")
+        self.assertEqual(fsn.decode_hc_text("not base64!"), "")
+        self.assertEqual(fsn.decode_hc_text(None), "")
+
+    def test_a_stderr_in_cp850_reaches_the_message(self):
+        with self.assertRaises(fsn.Unreachable) as cm:
+            self.run_verb(self.envelope(b"", "caf\u00e9 failed".encode("cp850"), code=1))
+        self.assertEqual(str(cm.exception), "remote alpha unreachable: caf\u00e9 failed")
+
+    def test_hc_failures_are_unreachable(self):
+        cases = [(self.envelope(timed_out=True), 0, b"", "no answer within 15 s"),
+                 (None, 1, b'{"error": {"kind": "spawn_failed"}}', "spawn_failed"),
+                 (self.envelope(b"not json\n"), 0, b"", "no usable reply"),
+                 ({"code": "x"}, 0, b"", "without a result"),
+                 (None, 0, b"", "without a result")]
+        for env, rc, err, text in cases:
+            with self.assertRaises(fsn.Unreachable) as cm:
+                self.run_verb(env, rc, err)
+            self.assertTrue(str(cm.exception).startswith("remote alpha unreachable: "), str(cm.exception))
+            self.assertIn(text, str(cm.exception))
+
+    def test_control_characters_of_a_remote_error_are_stripped(self):
+        out = b'{"ok": false, "code": "bad\\u001b[31m_cwd", "error": "no\\u001b]0;x\\u0007 dir\\u009b\\u007f\\n!"}\n'
+        with self.assertRaises(fsn.Refused) as cm:
+            self.run_verb(self.envelope(out, code=1))
+        self.assertEqual((cm.exception.code, str(cm.exception)), ("bad[31m_cwd", "remote alpha: no]0;x dir!"))
+
+    def test_a_banner_before_the_json_line_is_skipped(self):
+        reply, _ = self.run_verb(self.envelope(b'Welcome\r\n{"ok": true}\r\n\r\n'))
+        self.assertEqual(reply, {"ok": True})
+
+    def test_a_remote_refusal_keeps_its_code(self):
+        with self.assertRaises(fsn.Refused) as cm:
+            self.run_verb(self.envelope(b'{"ok": false, "code": "bad_cwd", "error": "no dir"}\n', code=1))
+        self.assertEqual((cm.exception.code, str(cm.exception)), ("bad_cwd", "remote alpha: no dir"))
+        self.assertNotIsInstance(cm.exception, fsn.Unreachable)
+
+    def test_a_missing_or_timed_out_subprocess(self):
+        with mock.patch.object(fsn.subprocess, "run", side_effect=subprocess.TimeoutExpired("hc", 25)):
+            with self.assertRaises(fsn.Unreachable) as cm:
+                fsn.hc_exec_verb("/x/hc", "alpha", ["foreman"], "probe", {}, 15)
+        self.assertIn("no answer within 15 s", str(cm.exception))
+        with mock.patch.object(fsn.subprocess, "run", side_effect=OSError("gone")):
+            with self.assertRaises(fsn.Unreachable):
+                fsn.hc_exec_verb("/x/hc", "alpha", ["foreman"], "probe", {}, 15)
+
+
+class SpaceTest(RemoteBase):
+    def space(self, entry=None, cwd="/w", **env):
+        with mock.patch.dict(os.environ, dict(self.env, **env)):
+            for k, v in env.items():
+                if v == "":
+                    os.environ.pop(k, None)
+            return fsn.machine_space(entry or {}, "alpha", cwd)
+
+    def test_a_pinned_space_asks_nobody(self):
+        self.assertEqual(self.space({"space": "sp-pin"}), "sp-pin")
+        self.assertEqual(lines_of(self.logs["app"]), [])
+
+    def test_the_first_space_of_the_machine_is_used(self):
+        self.assertEqual(self.space(), "sp-alpha")
+        self.assertEqual(lines_of(self.logs["app"]), [["ls"]])
+
+    def test_a_missing_space_is_created_with_space_new(self):
+        self.assertEqual(self.space(cwd="/w", FAKE_APP_SPACES=json.dumps([{"id": "sp-beta", "machine": "beta"}])), "sp-new")
+        ls, new = lines_of(self.logs["app"])
+        self.assertEqual(ls, ["ls"])
+        self.assertEqual(new[:2], ["do", "space.new"])
+        self.assertEqual(json.loads(new[2]), {"name": "alpha", "machine": "alpha", "folder": "/w"})
+
+    def test_space_new_failing_is_no_remote_space(self):
+        with self.assertRaises(fsn.Refused) as cm:
+            self.space(FAKE_APP_SPACES="[]", FAKE_APP_NEW_FAIL="1")
+        self.assertEqual(cm.exception.code, "no_remote_space")
+
+    def test_without_herdr_app_there_is_no_space(self):
+        self.assertIsNone(self.space(PATH=self.path(app=False)))
+
+
+class ParentTest(RemoteBase):
     def refused(self, *args, code, **env):
         rc, out, err = self.run_main(*args, **env)
         self.assertEqual(rc, 1, (out, err))
         self.assertIn("[%s]" % code, err)
         self.assertEqual(self.parent_registry(), [])
+        self.assertFalse((self.padir / "pi-foreman").exists())
         return err
 
     def test_open_success(self):
         rc, out, err = self.run_main(*self.open_args())
         self.assertEqual(rc, 0, err)
         entry = self.parent_registry()[0]
-        calls = self.ssh_calls()
-        self.assertEqual([c["argv"][-1] for c in calls], ["foreman session remote probe --json",
-                                                           "foreman session remote open --json"])
-        self.assertEqual(calls[0]["argv"][:5], ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "alpha-host"])
+        calls = self.exec_calls()
+        self.assertEqual([c["argv"] for c in calls], [["foreman", "session", "remote", "probe", "--json"],
+                                                       ["foreman", "session", "remote", "open", "--json"]])
         self.assertEqual(json.loads(calls[0]["stdin"]), {"parentName": "beta", "parentAddress": ADDRESS})
         sent = json.loads(calls[1]["stdin"])
-        self.assertEqual((sent["label"], sent["cwd"], sent["parentAddress"], sent["trust"], sent["dryRun"]),
-                         ("demo", str(self.rproj), ADDRESS, False, False))
-        self.assertEqual(sent["brief"], self.brief.read_text("utf-8"))
+        self.assertEqual((sent["label"], sent["cwd"], sent["parentAddress"], sent["trust"], sent["dryRun"], sent["space"]),
+                         ("demo", str(self.rproj), ADDRESS, False, False, "sp-alpha"))
+        # the brief goes out as the file's exact bytes (CRLF on Windows, where write_text wrote them)
+        self.assertEqual(sent["brief"], self.brief.read_bytes().decode("utf-8"))
+        full = self.hc_calls("machine", "exec")
+        self.assertEqual(full[0], ["machine", "ls", "--json"])
+        self.assertEqual(full[1][:9], ["exec", "--on", "alpha", "--timeout", "15", "-i", "--json", "--", "foreman"])
+        self.assertEqual(full[2][:5], ["exec", "--on", "alpha", "--timeout", "60"])
         handoff_name = entry["handoffName"]
         mirror = self.padir / "pi-foreman" / "remote" / "alpha" / handoff_name
         self.assertEqual({k: entry[k] for k in ("label", "parent", "parentAddress", "machine", "originMachine", "handoffName",
-                                                "mirror", "handoff", "status", "lastError", "briefs", "last", "cwd")},
+                                                "mirror", "handoff", "status", "lastError", "briefs", "last", "cwd", "backend")},
                          {"label": "demo", "parent": PARENT, "parentAddress": ADDRESS, "machine": "alpha",
                           "originMachine": fsn.short_hostname(), "handoffName": handoff_name, "mirror": str(mirror),
                           "handoff": str(mirror), "status": "open", "lastError": None, "briefs": 0, "last": None,
-                          "cwd": str(self.rproj)})
+                          "cwd": str(self.rproj), "backend": "hc"})
+        self.assertEqual(entry["hc"], {"address": "alpha/t1", "space": "sp-alpha", "tab": None})
         self.assertEqual(entry["remoteHandoff"], str(self.radir / "pi-foreman" / "handoffs" / handoff_name))
         self.assertEqual((entry["remote"]["protocol"], entry["remote"]["piVersion"], entry["remote"]["platform"]),
-                         (2, "pi 9.9.9", sys.platform))
+                         (3, "pi 9.9.9", sys.platform))
         self.assertTrue(mirror.is_dir() and not list(mirror.iterdir()))
         remote_entry = self.remote_registry()[0]
         self.assertEqual((remote_entry["child"], remote_entry["parent"]), (entry["child"], ADDRESS))
         self.assertTrue((Path(entry["remoteHandoff"]) / "brief.md").is_file())
-        self.assertIn("alpha", out)
+        self.assertIn("remote: alpha", out)
+        self.assertIn("opened under hc on alpha", out)
+        for removed in ("returnPath", "pulledAt", "remoteLive"):
+            self.assertNotIn(removed, entry)
 
-    def test_custom_foreman_command(self):
-        self.write_config({"alpha": {"parentName": "beta", "foremanCommand": "/opt/fm/bin/foreman"}})
+    def test_the_remote_run_carries_the_space_looked_up_by_the_parent(self):
         self.assertEqual(self.run_main(*self.open_args())[0], 0)
-        self.assertEqual([c["argv"][-1] for c in self.ssh_calls()],
-                         ["/opt/fm/bin/foreman session remote probe --json", "/opt/fm/bin/foreman session remote open --json"])
+        (run,) = self.hc_calls("run")
+        self.assertIn("herdr.space=sp-alpha", run)
+        self.assertEqual(lines_of(self.logs["app"]), [["ls"]])
 
-    def test_parent_name_falls_back_to_the_intercom_config(self):
+    def test_a_pinned_space_wins_over_the_listing(self):
+        self.write_config({"alpha": {"parentName": "beta", "space": "sp-pin"}})
+        self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["space"], "sp-pin")
+        self.assertEqual(lines_of(self.logs["app"]), [])
+
+    def test_without_herdr_app_the_child_runs_but_is_not_shown(self):
+        rc, out, err = self.run_main(*self.open_args(), PATH=self.path(app=False))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("opened under hc on alpha", out)
+        self.assertIn("not shown: no herdr-app space", out)
+        self.assertNotIn("space", json.loads(self.exec_calls()[1]["stdin"]))
+        (run,) = self.hc_calls("run")
+        self.assertFalse(any(a.startswith("herdr.") for a in run))
+        self.assertIsNone(self.parent_registry()[0]["hc"]["space"])
+
+    def test_no_space_and_space_new_failing_is_no_remote_space(self):
+        self.refused(*self.open_args(), code="no_remote_space", FAKE_APP_SPACES="[]", FAKE_APP_NEW_FAIL="1")
+        self.assertEqual(len(self.exec_calls()), 1)  # the probe only
+        self.assertEqual(self.hc_calls("run"), [])
+
+    def test_a_missing_space_is_created_for_the_machine(self):
+        self.assertEqual(self.run_main(*self.open_args(), FAKE_APP_SPACES="[]")[0], 0)
+        self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["space"], "sp-new")
+        self.assertEqual(lines_of(self.logs["app"])[1][:2], ["do", "space.new"])
+
+    def test_a_windows_foreman_argv_is_passed_as_words(self):
+        words = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:/Program Files/fm/bin/foreman.ps1"]
+        self.write_config({"alpha": {"parentName": "beta", "foremanArgv": words}})
+        self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        self.assertEqual([c["argv"] for c in self.exec_calls()],
+                         [words + ["session", "remote", "probe", "--json"], words + ["session", "remote", "open", "--json"]])
+
+    def test_parent_name_defaults_to_the_short_hostname_not_the_intercom_config(self):
         self.write_config({"alpha": {}})
         (self.padir / "intercom").mkdir()
         (self.padir / "intercom" / "config.json").write_text(json.dumps({"crossMachine": {"machineName": "beta"}}), "utf-8")
-        self.assertEqual(self.run_main(*self.open_args())[0], 0)
-        self.assertEqual(json.loads(self.ssh_calls()[0]["stdin"])["parentName"], "beta")
+        with mock.patch.object(fsn, "short_hostname", return_value="gamma"):
+            self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        self.assertEqual(json.loads(self.exec_calls()[0]["stdin"])["parentName"], "gamma")
 
-    def test_ssh_banner_line_before_the_json(self):
-        self.assertEqual(self.run_main(*self.open_args(), FAKE_SSH_MODE="banner")[0], 0)
+    def test_parent_name_default_without_any_intercom_config(self):
+        self.write_config({"alpha": {}})
+        with mock.patch.object(fsn, "short_hostname", return_value="gamma"):
+            self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        self.assertEqual(json.loads(self.exec_calls()[0]["stdin"])["parentName"], "gamma")
+
+    def test_a_banner_line_before_the_json_is_ignored(self):
+        real = fsn.decode_hc_text
+        with mock.patch.object(fsn, "decode_hc_text", side_effect=lambda b64: "Welcome\n" + real(b64)):
+            self.assertEqual(self.run_main(*self.open_args())[0], 0)
         self.assertEqual(len(self.parent_registry()), 1)
-
-    def test_without_a_herdr_server_the_launch_line_is_printed(self):
-        rc, out, err = self.run_main(*self.open_args(), FAKE_REMOTE_HERDR_DOWN="1")
-        self.assertEqual(rc, 0, err)
-        entry = self.parent_registry()[0]
-        self.assertEqual(entry["status"], "pending")
-        launch = (Path(entry["remoteHandoff"]) / "launch.txt").read_text("utf-8").strip()
-        self.assertIn(launch, out)
 
     def test_unlisted_machine(self):
         err = self.refused(*self.open_args(machine="delta"), code="machine_not_allowed")
-        self.assertEqual(self.ssh_calls(), [])
-        self.assertEqual(lines_of(self.logs["herdr"]), [])
+        self.assertEqual(self.hc_calls("machine", "exec"), [])
         self.write_config({})
         self.refused(*self.open_args(), code="machine_not_allowed")
-        self.assertEqual(self.ssh_calls(), [])
+        self.assertEqual(self.hc_calls("machine", "exec"), [])
         self.assertIn("sessions.machines", err)
 
     def test_machines_listed_only_in_the_project_layer_are_not_allowed(self):
@@ -671,36 +877,28 @@ class ParentTest(RemoteBase):
         (proj / ".pi" / "foreman.json").write_text(json.dumps({"sessions": {"machines": {"alpha": {}}}}), "utf-8")
         self.refused(*self.open_args(cwd=proj), code="machine_not_allowed")
 
-    def test_machine_must_be_saved_and_enabled_in_herdr(self):
-        self.refused(*self.open_args(machine="beta"), code="machine_disabled")
+    def test_hc_missing(self):
+        self.refused(*self.open_args(), code="hc_missing", PATH=self.path(hc=False))
+        self.refused(*self.open_args(), code="hc_missing", HC_BIN=str(self.tmp / "no-such-hc"))
+        self.assertEqual(self.exec_calls(), [])
+
+    def test_hc_bin_names_the_hc(self):
+        real = str(self.hcbin / ("hc.cmd" if sys.platform == "win32" else "hc"))
+        rc, out, err = self.run_main(*self.open_args(), PATH=self.path(hc=False), HC_BIN=real, FAKE_REMOTE_PATH=self.path())
+        self.assertEqual(rc, 0, err)
+
+    def test_machine_unknown(self):
+        self.refused(*self.open_args(), code="machine_unknown", FAKE_HC_MACHINES=json.dumps(["beta"]))
+        self.refused(*self.open_args(), code="machine_unknown", FAKE_HC_MACHINES=json.dumps(["ALPHA"]))  # exact case
+        self.refused(*self.open_args(), code="machine_unknown", FAKE_HC_MACHINES="[]")
         self.write_config({"alpha": {}, "delta": {}})
         self.refused(*self.open_args(machine="delta"), code="machine_unknown")
-        self.refused(*self.open_args(), code="machine_unknown", FAKE_HERDR_MACHINES="[]")
-        twice = PARENT_MACHINES + [dict(PARENT_MACHINES[0], label="ALPHA")]
-        self.refused(*self.open_args(), code="machine_unknown", FAKE_HERDR_MACHINES=json.dumps(twice))
-        self.assertEqual(self.ssh_calls(), [])
+        self.refused(*self.open_args(), code="machine_unknown", FAKE_HC_FAIL="1")  # hc machine ls itself fails: fail closed
+        self.assertEqual(self.hc_calls("exec"), [])
 
-    def test_the_ssh_target_comes_only_from_a_usable_herdr_row(self):
-        for target in ("-oProxyCommand=evil", "a b", "x;y", "", "a" * 201):
-            rows = [dict(PARENT_MACHINES[0], target=target)]
-            self.refused(*self.open_args(), code="machine_target", FAKE_HERDR_MACHINES=json.dumps(rows))
-        self.assertEqual(self.ssh_calls(), [])
-
-    def test_herdr_missing(self):
-        self.refused(*self.open_args(), code="herdr_missing", PATH=str(self.pibin), HERDR_BIN="")
-        self.assertEqual(self.ssh_calls(), [])
-
-    def test_ssh_missing(self):
-        (self.bin / "ssh").unlink()
-        real_which = shutil.which
-        with mock.patch.object(fsn.shutil, "which", side_effect=lambda n, *a, **k: None if n == "ssh" else real_which(n, *a, **k)):
-            self.refused(*self.open_args(), code="ssh_missing")
-
-    def test_no_return_path_without_a_session_uuid_and_a_pane(self):
-        self.refused(*self.open_args(parent="fm-stable-id"), code="no_return_path")
+    def test_no_return_path_without_an_opener_id(self):
         self.refused(*self.open_args(parent=None), code="no_return_path")
-        self.refused(*self.open_args(), code="no_return_path", HERDR_PANE_ID="")
-        self.assertEqual(self.ssh_calls(), [])
+        self.assertEqual(self.hc_calls("machine", "exec"), [])
 
     def test_cwd_is_required_and_trust_needs_a_machine(self):
         self.refused("open", "demo", str(self.brief), "--machine", "alpha", "--parent-id", PARENT, code="cwd_required")
@@ -710,93 +908,102 @@ class ParentTest(RemoteBase):
 
     def test_remote_cwd_is_passed_unresolved(self):
         self.assertEqual(self.run_main(*self.open_args(cwd="/home/u/p"))[0], 1)  # the remote refuses: no such directory
-        self.assertEqual(json.loads(self.ssh_calls()[1]["stdin"])["cwd"], "/home/u/p")
+        self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["cwd"], "/home/u/p")
 
-    def test_rank_refusal_happens_before_any_ssh(self):
+    def test_rank_refusal_happens_before_any_hc_call(self):
         ranks = [{"match": "big-*", "tier": 0}, {"match": "small-*", "tier": 2}]
         self.write_config({"alpha": {"parentName": "beta"}}, {"providers": {"prov": {"ranks": ranks}}})
         err = self.refused(*self.open_args("--model", "big-x", "--own-model", "small-y"), code="session_rank")
         self.assertIn("tier 0", err)
-        self.assertEqual(self.ssh_calls(), [])
+        self.assertEqual(self.hc_calls("machine", "exec"), [])
 
-    def test_probe_refusals(self):
-        err = self.refused(*self.open_args(), code="no_return_path", FAKE_REMOTE_HERDR_MACHINES="[]")
-        self.assertIn("beta", err)
-        self.assertEqual(len(self.ssh_calls()), 1)  # probe only
-        self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="3")
-        self.refused(*self.open_args(), code="remote_missing", FAKE_REMOTE_PATH=str(self.bin))
-        self.refused(*self.open_args(), code="remote_missing", FAKE_NO_INTERCOM="1")
+    def test_remote_protocol(self):
+        err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="4")
+        self.assertIn("remote alpha speaks protocol 4, this side speaks 3;", err)
+        self.assertEqual(len(self.exec_calls()), 1)
+
+    def test_remote_missing(self):
+        self.refused(*self.open_args(), code="remote_missing", FAKE_REMOTE_PATH=str(self.hcbin))
         self.assertEqual(self.remote_registry(), [])
 
-    def test_protocol_mismatch_names_both_values(self):
-        err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="3")
-        self.assertIn("remote alpha speaks protocol 3, this side speaks 2;", err)
+    def test_remote_launcher_when_the_remote_core_is_down_or_hc_is_absent(self):
+        err = self.refused(*self.open_args(), code="remote_launcher", FAKE_REMOTE_HC_DOWN="1")
+        self.assertIn("alpha has no herdr-core answering (hc available: True, core up: False)", err)
+        err = self.refused(*self.open_args(), code="remote_launcher", FAKE_REMOTE_PATH=str(self.pibin))
+        self.assertIn("(hc available: False, core up: False)", err)
+        self.assertEqual(len(self.exec_calls()), 2)  # a probe each, never an open
+        self.assertEqual(self.hc_calls("run"), [])
+        self.assertEqual(lines_of(self.logs["app"]), [])
 
     def test_remote_refusals_are_passed_through(self):
         (self.rproj / ".pi").mkdir()
         err = self.refused(*self.open_args(), code="remote_untrusted")
         self.assertIn("remote alpha", err)
-        self.assertEqual(len(self.ssh_calls()), 2)
+        self.assertEqual(len(self.exec_calls()), 2)
         self.assertEqual(self.run_main(*self.open_args("--trust"))[0], 0)
         self.assertIs(foreman_trust.decision(self.radir, self.rproj), True)
 
     def test_dry_run_writes_nothing_on_either_side(self):
         rc, out, err = self.run_main(*self.open_args("--dry-run"))
         self.assertEqual(rc, 0, err)
-        self.assertEqual(json.loads(self.ssh_calls()[1]["stdin"])["dryRun"], True)
+        self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["dryRun"], True)
+        self.assertNotIn("space", json.loads(self.exec_calls()[1]["stdin"]))
+        self.assertIn("dry run: nothing was written on either machine", out)
         self.assertEqual(self.parent_registry(), [])
         self.assertFalse((self.padir / "pi-foreman").exists())
         self.assertFalse((self.radir / "pi-foreman").exists())
+        self.assertEqual(self.hc_calls("run"), [])
+        self.assertEqual(lines_of(self.logs["app"]), [])  # no space is looked up or created
 
     def test_unreachable_leaves_no_local_entry(self):
-        for mode, text in (("255", "Connection refused"), ("nonjson", "no usable reply"), ("timeout", "no answer within 1 s")):
-            with mock.patch.object(fsn, "PROBE_TIMEOUT", 1):
-                rc, out, err = self.run_main(*self.open_args(), FAKE_SSH_MODE=mode)
+        for mode, text in (("timed_out", "no answer within 15 s"), ("spawn_failed", "spawn_failed"),
+                           ("garbage", "no usable reply")):
+            rc, out, err = self.run_main(*self.open_args(), FAKE_HC_EXEC_MODE=mode)
             self.assertEqual(rc, 1, mode)
             self.assertIn("remote alpha unreachable: ", err)
             self.assertIn(text, err)
             self.assertNotIn("refused [", err)
-            self.assertNotIn(": refused:", err)
             self.assertEqual(self.parent_registry(), [])
             self.assertFalse((self.padir / "pi-foreman").exists())
+            self.assertFalse((self.radir / "pi-foreman").exists())
+        self.assertEqual(self.hc_calls("run"), [])
 
     def test_open_unreachable_after_a_good_probe(self):
-        real = fsn.ssh_verb
+        real = fsn.hc_exec_verb
 
-        def flaky(name, target, command, verb, payload, timeout):
+        def flaky(binary, name, argv, verb, payload, timeout):
             if verb == "open":
                 raise fsn.Unreachable("remote %s unreachable: dropped" % name)
-            return real(name, target, command, verb, payload, timeout)
+            return real(binary, name, argv, verb, payload, timeout)
 
-        with mock.patch.object(fsn, "ssh_verb", side_effect=flaky):
+        with mock.patch.object(fsn, "hc_exec_verb", side_effect=flaky):
             rc, out, err = self.run_main(*self.open_args())
         self.assertEqual((rc, self.parent_registry()), (1, []))
         self.assertIn("remote alpha unreachable: dropped", err)
 
     def test_timeouts_per_verb(self):
-        self.assertEqual((fsn.PROBE_TIMEOUT, fsn.OPEN_TIMEOUT, fsn.DELIVER_TIMEOUT), (15, 60, 20))
-        seen = []
-        real = fsn.subprocess.run
-
-        def spy(argv, **kw):
-            if argv and Path(argv[0]).name == "ssh":
-                seen.append(kw.get("timeout"))
-            return real(argv, **kw)
-
-        with mock.patch.object(fsn.subprocess, "run", side_effect=spy):
-            self.assertEqual(self.run_main(*self.open_args())[0], 0)
-        self.assertEqual(seen, [15, 60])
+        self.assertEqual((fsn.PROBE_TIMEOUT, fsn.OPEN_TIMEOUT, fsn.DELIVER_TIMEOUT, fsn.CLOSE_TIMEOUT), (15, 60, 20, 20))
+        self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        seen = [c[c.index("--timeout") + 1] for c in self.hc_calls("exec")]
+        self.assertEqual(seen, ["15", "60"])
 
     def test_local_open_is_unchanged_by_the_new_flags(self):
         proj = self.tmp / "local"
         proj.mkdir()
         rc, out, err = self.run_main("open", "demo", str(self.brief), "--cwd", str(proj), "--parent-id", "parent-1", "--dry-run")
         self.assertEqual(rc, 0, err)
-        self.assertEqual(self.ssh_calls(), [])
+        self.assertEqual(self.hc_calls("machine", "exec"), [])
         self.assertTrue(out.startswith("handoff: "))
 
+    def test_session_list_shows_the_hc_address_of_a_remote_child(self):
+        self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        rc, out, err = self.run_main("list")
+        self.assertEqual(rc, 0, err)
+        (row,) = [l for l in out.splitlines() if l.strip().startswith("demo")]
+        self.assertTrue(row.rstrip().endswith("hc:alpha/t1"), row)
+        self.assertEqual(json.loads(self.run_main("list", "--json")[1])["sessions"][0]["hc"]["address"], "alpha/t1")
 
-@posix_only
+
 class BriefTest(RemoteBase):
     def setUp(self):
         super().setUp()
@@ -813,15 +1020,14 @@ class BriefTest(RemoteBase):
         self.assertEqual((self.rh / "brief-2.md").read_text("utf-8"), "again")
         entry = self.parent_registry()[0]
         self.assertEqual((entry["briefs"], entry["lastError"]), (2, None))
-        last = json.loads(self.ssh_calls()[-1]["stdin"])
-        self.assertEqual((last["kind"], last["name"], last["parentAddress"], last["handoffName"]),
+        last = self.exec_calls()[-1]
+        sent = json.loads(last["stdin"])
+        self.assertEqual((sent["kind"], sent["name"], sent["parentAddress"], sent["handoffName"]),
                          ("brief", "brief-2.md", ADDRESS, self.entry["handoffName"]))
-        self.assertEqual(self.ssh_calls()[-1]["argv"][-1], "foreman session remote deliver --json")
+        self.assertEqual(last["argv"], ["foreman", "session", "remote", "deliver", "--json"])
+        self.assertEqual(self.hc_calls("exec")[-1][4], "20")
         call = lines_of(self.logs["node"])[-1]
         self.assertEqual(call["argv"][1:4], ["send", "--to", self.entry["child"]])
-
-    def ssh_calls(self):
-        return lines_of(self.logs["ssh"])
 
     def test_allowlisted_basename_keeps_its_name_and_kind(self):
         for name, kind in (("ruling.md", "ruling"), ("ruling-plan.md", "ruling"), ("ruling-2.md", "ruling"),
@@ -829,7 +1035,7 @@ class BriefTest(RemoteBase):
             f = self.tmp / name
             f.write_text("content of " + name, "utf-8")
             self.assertEqual(self.send(str(f))[0], 0, name)
-            sent = json.loads(self.ssh_calls()[-1]["stdin"])
+            sent = json.loads(self.exec_calls()[-1]["stdin"])
             self.assertEqual((sent["kind"], sent["name"], sent["content"]), (kind, name, "content of " + name))
             self.assertEqual((self.rh / name).read_text("utf-8"), "content of " + name)
 
@@ -840,13 +1046,13 @@ class BriefTest(RemoteBase):
         self.assertEqual((self.rh / "brief-1.md").read_text("utf-8"), "some notes")
         self.assertEqual(self.parent_registry()[0]["briefs"], 1)
 
-    def test_cjk_brief_over_ssh(self):
+    def test_cjk_brief_over_hc(self):
         text = "\u6f22" * 21845
         self.assertEqual(self.send(text)[0], 0)
         self.assertEqual((self.rh / "brief-1.md").read_text("utf-8"), text)
 
     def test_failure_sets_last_error_and_exit_1(self):
-        rc, out, err = self.send("hello", FAKE_SSH_MODE="255")
+        rc, out, err = self.send("hello", FAKE_HC_EXEC_MODE="timed_out")
         self.assertEqual(rc, 1)
         self.assertIn("remote alpha unreachable", err)
         entry = self.parent_registry()[0]
@@ -856,6 +1062,12 @@ class BriefTest(RemoteBase):
         self.assertEqual(self.send("hello")[0], 0)  # a later success clears it
         entry = self.parent_registry()[0]
         self.assertEqual((entry["briefs"], entry["lastError"]), (1, None))
+
+    def test_a_machine_gone_from_hc_is_refused_and_recorded(self):
+        rc, out, err = self.send("hello", FAKE_HC_MACHINES=json.dumps(["beta"]))
+        self.assertEqual(rc, 1)
+        self.assertIn("[machine_unknown]", err)
+        self.assertIn("[machine_unknown]", self.parent_registry()[0]["lastError"])
 
     def test_remote_refusal_is_recorded(self):
         reg = self.padir / "pi-foreman" / "state" / "sessions.json"
@@ -894,8 +1106,7 @@ class NoticeBase(RemoteBase):
         self.reply = self.remote_open()
         self.dir = self.handoff(self.reply)
         self.child = self.reply["child"]
-        self.env.update(PI_CODING_AGENT_DIR=str(self.radir), PI_FOREMAN_REMOTE_PARENT="1", PI_FOREMAN_HANDOFF_DIR=str(self.dir),
-                        HERDR_PANE_ID="")
+        self.env.update(PI_CODING_AGENT_DIR=str(self.radir), PI_FOREMAN_REMOTE_PARENT="1", PI_FOREMAN_HANDOFF_DIR=str(self.dir))
 
     def notice(self, *args, **env):
         code, out, err = self.run_main("remote", "notice", *args, **env)
@@ -905,55 +1116,19 @@ class NoticeBase(RemoteBase):
         return lines_of(self.logs["node"])
 
 
-@posix_only
 class NoticeTest(NoticeBase):
-    def test_result_notice(self):
-        data = "# Result\n\nAll done \u2713\n".encode("utf-8")
-        (self.dir / "result.md").write_bytes(data)
-        code, r = self.notice("result")
-        self.assertEqual((code, r), (0, {"sent": True, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
-                                         "truncated": False, "ok": True}))
-        call = self.sent()[0]
-        self.assertEqual(call["argv"][1:5], ["send", "--to", ADDRESS, "--text"])
-        self.assertEqual(call["session"], self.child)
-        head = "Result from demo: %s sha256:%s bytes:%d" % (self.dir / "result.md", r["sha256"], len(data))
-        self.assertEqual(call["argv"][5], head + "\n---\n" + data.decode("utf-8"))
+    """The child-side `remote notice` checks its input, then refuses `no_return_path`: the hc label return path lands in PR 4."""
 
-    def test_kinds_use_their_files(self):
-        for kind, name, head in (("plan", "plan.md", "Plan"), ("update", "result.md", "Update"), ("ask", "ask.md", "Ask")):
-            (self.dir / name).write_text("body of " + name, "utf-8")
-            self.assertEqual(self.notice(kind)[0], 0)
-            self.assertTrue(self.sent()[-1]["argv"][5].startswith("%s from demo: %s sha256:" % (head, self.dir / name)))
-        self.assertEqual(self.notice("plan", "plan.md")[0], 0)  # the default name, relative to the handoff dir
-        self.assertEqual(self.notice("plan", str(self.dir / "plan.md"))[0], 0)
-
-    def test_truncation_at_a_character_boundary(self):
-        self.write_config({}, {"sessions": {"remoteInlineMaxBytes": 1024}}, adir=self.radir)
-        data = ("\u6f22" * 500).encode("utf-8")  # 1500 bytes; 1024 falls inside a character
-        (self.dir / "result.md").write_bytes(data)
-        code, r = self.notice("result")
-        self.assertEqual((code, r["truncated"], r["bytes"], r["sha256"]), (0, True, 1500, hashlib.sha256(data).hexdigest()))
-        text = self.sent()[0]["argv"][5]
-        head, body = text.split("\n---\n", 1)
-        self.assertTrue(head.endswith("bytes:1500 truncated"), head)
-        self.assertEqual(body, "\u6f22" * 341)  # 1023 bytes: the partial character is dropped
-        self.assertLessEqual(len(body.encode("utf-8")), 1024)
-
-    def test_default_cap(self):
-        (self.dir / "result.md").write_text("x" * 40000, "utf-8")
-        code, r = self.notice("result")
-        self.assertTrue(r["truncated"])
-        self.assertEqual(len(self.sent()[0]["argv"][5].split("\n---\n", 1)[1]), 32768)
-
-    def test_closed_notice(self):
-        code, r = self.notice("closed", "--close", "ready")
-        self.assertEqual((code, r["ok"]), (0, True))
-        self.assertEqual(self.sent()[-1]["argv"][5], "foreman:closed CLOSE: ready")  # no result.md yet
-        (self.dir / "result.md").write_text("r", "utf-8")
-        self.assertEqual(self.notice("closed", "--close", "open")[0], 0)
-        self.assertEqual(self.sent()[-1]["argv"][5], "foreman:closed %s CLOSE: open" % (self.dir / "result.md"))
-        self.assertEqual(self.notice("closed")[0], 0)
-        self.assertEqual(self.sent()[-1]["argv"][5], "foreman:closed %s" % (self.dir / "result.md"))
+    def test_a_valid_notice_is_refused_until_the_return_path_exists(self):
+        (self.dir / "result.md").write_text("done", "utf-8")
+        (self.dir / "plan.md").write_text("plan", "utf-8")
+        (self.dir / "ask.md").write_text("# Ask 1: x", "utf-8")
+        for args in (("result",), ("plan",), ("ask",), ("update",), ("closed", "--close", "ready"), ("closed",)):
+            code, r = self.notice(*args)
+            self.assertEqual((code, r["ok"], r["code"]), (1, False, "no_return_path"), args)
+            self.assertIn("not available", r["error"])
+        self.assertEqual(self.sent(), [])
+        self.assertEqual(self.hc_calls("label"), [])
 
     def test_no_entry(self):
         (self.dir / "child").write_text("fm-other-000000\n", "utf-8")
@@ -961,7 +1136,6 @@ class NoticeTest(NoticeBase):
         self.assertEqual((code, r["code"]), (1, "no_entry"))
         (self.dir / "child").unlink()
         self.assertEqual(self.notice("closed")[1]["code"], "no_entry")
-        self.assertEqual(self.sent(), [])
 
     def test_bad_name(self):
         (self.dir / "result.md").write_text("r", "utf-8")
@@ -970,7 +1144,6 @@ class NoticeTest(NoticeBase):
                      ("plan", "result.md"), ("ask", str(self.tmp / "ask.md")), ("plan",)):
             code, r = self.notice(*args)
             self.assertEqual((code, r["code"]), (1, "bad_name"), args)  # ("plan",): plan.md does not exist
-        self.assertEqual(self.sent(), [])
 
     @unittest.skipIf(sys.platform == "win32", "symlinks need privileges on win32")
     def test_symlinked_file_is_refused(self):
@@ -978,27 +1151,18 @@ class NoticeTest(NoticeBase):
         (self.dir / "result.md").symlink_to(self.tmp / "secret.txt")
         code, r = self.notice("result")
         self.assertEqual((code, r["code"]), (1, "bad_name"))
-        self.assertEqual(self.sent(), [])
 
     def test_bad_parent_file(self):
         (self.dir / "result.md").write_text("r", "utf-8")
-        for text in ("xyz", "not-a-uuid@beta", PARENT, PARENT + "@-x", PARENT + "@a b"):
+        for text in ("xyz", PARENT, PARENT + "@-x", PARENT + "@a b", "@beta"):
             (self.dir / "parent").write_text(text + "\n", "utf-8")
             code, r = self.notice("result")
             self.assertEqual((code, r["code"]), (1, "bad_parent"), text)
-        self.assertEqual(self.sent(), [])
-
-    def test_failed_send_exits_1(self):
-        (self.dir / "result.md").write_text("r", "utf-8")
-        code, r = self.notice("result", FAKE_NODE_EXIT="1")
-        self.assertEqual((code, r["ok"], r["code"]), (1, False, "send_failed"))
-        self.assertIn("broker down", r["error"])
 
     def test_needs_the_remote_parent_environment(self):
         (self.dir / "result.md").write_text("r", "utf-8")
         self.assertEqual(self.notice("result", PI_FOREMAN_REMOTE_PARENT="")[1]["code"], "not_remote")
         self.assertEqual(self.notice("result", PI_FOREMAN_HANDOFF_DIR="")[1]["code"], "no_handoff")
-        self.assertEqual(self.sent(), [])
 
     def test_usage_errors(self):
         self.assertEqual(self.run_main("remote", "notice", "bogus")[0], 1)
@@ -1015,87 +1179,56 @@ class NoticeTest(NoticeBase):
         self.assertNotIn("session", argv)
         (self.dir / "result.md").write_text("from the footer", "utf-8")
         rc, out, err = self.run_main(*argv[4:])
-        self.assertEqual(rc, 0, err)
-        self.assertIn("from the footer", self.sent()[-1]["argv"][5])
-        closed = by_kind["closed"]
-        self.assertEqual(closed[-2:], ["--close", "ready"])
-        self.assertEqual(self.run_main(*closed[4:])[0], 0)
-        self.assertTrue(self.sent()[-1]["argv"][5].endswith("CLOSE: ready"))
+        self.assertEqual(rc, 1)
+        self.assertEqual(json.loads(out)["code"], "no_return_path")
 
 
-class NoticeWin32Test(NoticeBase):
-    """Patched-platform and pure-function cases: no fake POSIX executable runs, so they run on every platform."""
-
-    def setUp(self):
-        patch = mock.patch.object(fsn, "herdr_bin", return_value=None)  # the remote open is then pending, no herdr call
-        patch.start()
-        self.addCleanup(patch.stop)
-        super().setUp()
-
-    def test_win32_cut_keeps_the_command_line_under_the_limit(self):
-        self.write_config({}, {"sessions": {"remoteInlineMaxBytes": 49152}}, adir=self.radir)
-        data = b"x" * 49152
-        (self.dir / "result.md").write_bytes(data)
-        captured = []
-
-        def fake_run(argv, **kw):
-            captured.append(argv)
-            return subprocess.CompletedProcess(argv, 0, b"", b"")
-
-        with mock.patch.object(fsn, "host_platform", return_value="win32"), \
-                mock.patch.object(fsn.shutil, "which", return_value="C:/tools/node.exe"), \
-                mock.patch.object(fsn.subprocess, "run", side_effect=fake_run):
-            code, r = self.notice("result")
-        argv = captured[0]
-        self.assertEqual(code, 0)
-        self.assertLessEqual(len(subprocess.list2cmdline(argv)), 32000)
-        head = "Result from demo: %s sha256:%s bytes:%d truncated" % (self.dir / "result.md", r["sha256"], len(data))
-
-        def fits(n):  # the rule: the longest cut whose command line is within 32000 characters
-            text = "%s\n---\n%s" % (head, "x" * n)
-            return len(subprocess.list2cmdline(argv[:6] + [text])) <= 32000
-
-        body = len(argv[6].split("\n---\n", 1)[1])
-        self.assertTrue(fits(body) and not fits(body + 1), body)
-        self.assertTrue(r["truncated"])
-
-    def test_win32_node_must_be_an_exe(self):
-        (self.dir / "result.md").write_text("x", "utf-8")
-        with mock.patch.object(fsn, "host_platform", return_value="win32"), \
-                mock.patch.object(fsn.shutil, "which", return_value="C:/tools/node.cmd"):
-            code, r = self.notice("result")
-        self.assertEqual((code, r["code"]), (1, "node_shim"))
-        self.assertEqual(self.sent(), [])
+class FooterTest(unittest.TestCase):
+    def commands(self, plan_first):
+        text = fsn.remote_footer("demo", plan_first)
+        return text, [l.strip() for l in text.splitlines() if " remote notice" in l]
 
     def test_footer_forms(self):
         for plan_first in (False, True):
-            text = fsn.remote_footer("demo", plan_first, 32768)
-            cmds = [l.strip() for l in text.splitlines() if " remote notice " in l]
+            text, cmds = self.commands(plan_first)
             self.assertTrue(cmds)
             for c in cmds:
                 self.assertNotIn("\\", c)
                 self.assertNotIn("&", c)
                 self.assertNotIn("session remote", c)
+                self.assertNotIn("\n", c)
             self.assertEqual(any(c.endswith(" plan") for c in cmds), plan_first)
-            self.assertIn("32768 bytes", text)
-            self.assertIn("the owner closes this pane on this machine", text)
             self.assertIn("ruling-<n>.md", text)
             self.assertEqual("`ruling.md`" in text, plan_first)
+            for gone in ("outbox", "bytes (", "owner closes this pane"):
+                self.assertNotIn(gone, text)
+
+    def test_each_command_is_one_line_and_valid_under_bash(self):
+        bash = shutil.which("bash")
+        if sys.platform == "win32" or not bash:
+            self.skipTest("bash syntax check is for POSIX hosts")
+        for plan_first in (False, True):
+            _, cmds = self.commands(plan_first)
+            for c in cmds:
+                r = subprocess.run([bash, "-n", "-c", c], capture_output=True)
+                self.assertEqual(r.returncode, 0, (c, r.stderr))
+
+    def test_the_interpreter_is_quoted_when_its_path_has_a_space(self):
+        with mock.patch.object(fsn.sys, "executable", "/opt/my python/bin/python3"):
+            _, cmds = self.commands(False)
+        self.assertTrue(all(c.startswith("'/opt/my python/bin/python3' -E -s ") for c in cmds), cmds)
 
 
 class RemoteOptionTest(RemoteBase):
     def test_unsupported_flags_are_refused_with_machine(self):
-        for flag in ("--print-all",):
-            extra = (flag, "/x") if flag == "--first-command" else (flag,)
-            rc, out, err = self.run_main(*self.open_args(*extra))
-            self.assertEqual(rc, 1, flag)
-            self.assertIn("[remote_option]", err)
-            self.assertIn("%s is not supported with --machine" % flag, err)
-            self.assertEqual(lines_of(self.logs["ssh"]), [], flag)
-            self.assertEqual(lines_of(self.logs["herdr"]), [], flag)
-            self.assertEqual(self.parent_registry(), [], flag)
-            self.assertFalse((self.padir / "pi-foreman").exists(), flag)
-            self.assertFalse((self.radir / "pi-foreman").exists(), flag)
+        rc, out, err = self.run_main(*self.open_args("--print-all"))
+        self.assertEqual(rc, 1)
+        self.assertIn("[remote_option]", err)
+        self.assertIn("--print-all is not supported with --machine", err)
+        self.assertEqual(self.hc_calls("machine", "exec", "run"), [])
+        self.assertEqual(self.parent_registry(), [])
+        self.assertFalse((self.padir / "pi-foreman").exists())
+        self.assertFalse((self.radir / "pi-foreman").exists())
 
     def test_local_open_with_plan_mode_still_works(self):
         rc, out, err = self.run_main("open", "demo", str(self.brief), "--cwd", str(self.rproj), "--parent-id", PARENT,
@@ -1103,13 +1236,13 @@ class RemoteOptionTest(RemoteBase):
         self.assertEqual(rc, 0, err)
         # the dry-run line is PowerShell on win32, where every message is single-quoted
         self.assertIn("pi '/plan Read the handoff", out)
-        self.assertEqual(lines_of(self.logs["ssh"]), [])
+        self.assertEqual(self.hc_calls("machine", "exec"), [])
 
 
 class TrailingNewlineTest(unittest.TestCase):
     def test_validation_patterns_refuse_a_trailing_newline(self):
-        ok = {"MACHINE_RE": "alpha", "UUID_RE": PARENT, "ADDRESS_RE": ADDRESS, "FOREMAN_CMD_RE": "foreman",
-              "TARGET_RE": "alpha-host", "HANDOFF_NAME_RE": "20261024-120000-demo", "LABEL_RE": "demo", "VALUE_RE": "model-1"}
+        ok = {"MACHINE_RE": "alpha", "ADDRESS_RE": ADDRESS, "ARGV_WORD_RE": "foreman",
+              "HANDOFF_NAME_RE": "20261024-120000-demo", "LABEL_RE": "demo", "VALUE_RE": "model-1"}
         for name, value in ok.items():
             rx = getattr(fsn, name)
             self.assertTrue(rx.match(value), name)
