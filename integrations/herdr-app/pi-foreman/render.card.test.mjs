@@ -94,6 +94,29 @@ test("(e) every session row is a bordered card, also one without status lines", 
   assert.ok(walk(card).some((e) => e.props.id === "row:" + card.props.id.slice(5)), "the row is inside the card");
 });
 
+test("(f) a session's own agent rows and their connector sit inside its card; child sessions follow the card", () => {
+  const kid = sess("k", "kid", { hcTerminal: "t9", waits: [wait("1 pr watch")] }, [run("b", "builder"), run("c", "tester"), sess("g", "grand", { hcTerminal: "t8" })]);
+  const root = render(top([kid]));
+  const cards = byId(root, "card:");
+  const card = cards.find((e) => e.props.id.endsWith("/s0"));
+  const inCard = walk(card).map((e) => e.props.id);
+  assert.ok(inCard.some((id) => /^row:.*\/a0$/.test(id)) && inCard.some((id) => /^row:.*\/a1$/.test(id)), "both agent rows inside the card");
+  assert.ok(inCard.some((id) => /^conn:tee:.*\/a0$/.test(id)) && inCard.some((id) => /^conn:tee:.*\/a1$/.test(id)), "tees inside the card: the line goes on to the child session");
+  assert.equal(walk(card).filter((e) => String(e.props.id ?? "").startsWith("card:")).length, 1, "the child session is no card inside it");
+  assert.equal(cards.length, 2, "the kid's card and the child session's card after it; the root is uncarded");
+  assert.ok(byId(root, "rail:").some((e) => e.props.id.endsWith("/s0/gap")), "stub below the card");
+});
+
+test("(f) agents only: the last agent gets the elbow and there is no stub below the card", () => {
+  const kid = sess("k", "kid", { hcTerminal: "t9" }, [run("b", "builder")]);
+  const root = render(top([kid]));
+  const card = byId(root, "card:").find((e) => e.props.id.endsWith("/s0"));
+  const inCard = walk(card).map((e) => e.props.id);
+  assert.ok(inCard.some((id) => /^conn:elbow:.*\/a0$/.test(id)));
+  assert.ok(inCard.some((id) => /^rail:.*\/row$/.test(id)), "rail from the chevron");
+  assert.equal(byId(root, "rail:").filter((e) => e.props.id.endsWith("/s0/gap")).length, 0);
+});
+
 test("status lines get an icon and a dot-separated age", () => {
   assert.deepEqual(statusLine({ text: "wait: 1 pr watch 29s", blocked: false }), { icon: "⏳", text: "1 pr watch · 29s" });
   assert.deepEqual(statusLine({ text: "bg: build 3m", blocked: false }), { icon: "⚙", text: "build · 3m" });

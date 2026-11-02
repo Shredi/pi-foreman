@@ -322,21 +322,26 @@ export default class ForemanAgents extends View {
       .when(x !== null, (el) => el.relative().child(this.rail(t, `${item.id}/row`, x, Math.floor(((root ? 22 : 26) + 16) / 2))));
   }
 
-  // A tree node: a session is a small bordered card (its row and extras inside), an agent a bare row; the children follow in a
-  // Collapsible. With children shown, the connector runs from the chevron through the card to a stub below it, and the
-  // children's connector column sits CARD further right to stay on the chevron's line.
+  // A tree node: a session is a small bordered card holding its row, extras and its own agent rows (connector inside the card);
+  // its child sessions follow the card in a Collapsible, outside: a card inside a card would cost the nested rows another inset
+  // of width per level in a narrow sidebar. With child sessions shown, the connector runs on through the card's bottom border
+  // via a stub below it, and their connector column sits CARD further right to stay on the chevron's line.
   node(t, item, ind) {
     const kids = item.children.length > 0;
     const open = kids && !this.folded.has(item.id);
     const x = open ? ind + 8 : null;
     const node = Collapsible.new().flex().flex_col().flex_none().open(open);
     if (item.type !== "session") return node.child(this.nodeRow(t, item, ind)).when(kids, (el) => el.content(this.childBody(t, item.children, ind)));
-    const card = v_flex().id(`card:${item.id}`).flex_none().mx(4).mt(2).mb(open ? 0 : 2).pt(2).pb(open ? 0 : 2).rounded(6).border(1).border_color(t.border)
-      .child(this.nodeRow(t, item, ind, x)).children(this.extras(t, item, ind, x));
+    const agents = item.children.filter((c) => c.type !== "session");
+    const sessions = item.children.filter((c) => c.type === "session");
+    const after = open && sessions.length > 0; // the line leaves the card at the bottom
+    const card = v_flex().id(`card:${item.id}`).flex_none().mx(4).mt(2).mb(after ? 0 : 2).pt(2).pb(after ? 0 : 2).rounded(6).border(1).border_color(t.border)
+      .child(this.nodeRow(t, item, ind, x)).children(this.extras(t, item, ind, x))
+      .when(open && agents.length > 0, (el) => el.child(v_flex().flex_none().ml(ind + 2).children(agents.map((c, i) => this.link(t, c, !after && i === agents.length - 1)))));
     return node.child(card)
       // top -1: the stub overlaps the card's 1px bottom border, so the line has no gap there
-      .when(open, (el) => el.child(div().relative().flex_none().h(2).child(this.rail(t, `${item.id}/gap`, x + CARD, -1))))
-      .when(kids, (el) => el.content(this.childBody(t, item.children, ind + CARD)));
+      .when(after, (el) => el.child(div().relative().flex_none().h(2).child(this.rail(t, `${item.id}/gap`, x + CARD, -1))))
+      .when(sessions.length > 0, (el) => el.content(this.childBody(t, sessions, ind + CARD)));
   }
 
   // One agent of the list: name, machine tag, time in this status, status.
