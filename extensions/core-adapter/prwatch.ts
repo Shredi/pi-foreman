@@ -724,8 +724,9 @@ export class PrWatches {
       if (child && snap.state === "closed") d.closedUnmerged = true;
       return this.end(w, d);
     }
-    // a pending start: comments and mergeable count as reported, CI does not, so failed runs and a settled result are sent once
-    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0 } : w.state;
+    // a pending start: comments count as reported, CI does not (failed runs and a settled result are sent once), and mergeable has
+    // no baseline: a first CONFLICTING is news, a first MERGEABLE is the baseline
+    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const } : w.state;
     const { state, delta } = prDelta(from, snap, child);
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;

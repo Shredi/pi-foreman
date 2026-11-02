@@ -38,3 +38,26 @@ test("prDelta: an UNKNOWN baseline followed by CONFLICTING sends the conflict; a
   // a known conflicting baseline is unchanged
   assert.equal(prDelta(baselineOf(snap({ mergeable: "conflicting" })), snap({ mergeable: "conflicting" }), true).delta, null);
 });
+
+test("a pending watch whose first good poll is CONFLICTING sends the conflict; MERGEABLE and UNKNOWN stay quiet", async () => {
+  for (const [mergeable, expectEvent] of [["conflicting", true], ["mergeable", false], ["unknown", false]] as const) {
+    const fns: (() => void)[] = [];
+    const sent: { content: string }[] = [];
+    const timers: Timers = { set: (fn) => fns.push(fn), clear: () => {} };
+    const watches = new PrWatches({
+      poll: async () => ({ snap: snap({ mergeable }) }),
+      send: (m) => void sent.push(m),
+      idle: () => true,
+      trace: () => {},
+      intervalMs: () => 60_000,
+      now: () => 0,
+      timers,
+      child: () => true,
+    });
+    watches.startPending({ host: "github.com", repo: "acme/app", n: 7 }, "boom");
+    fns[0]();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(sent.length, expectEvent ? 1 : 0, mergeable);
+    if (expectEvent) assert.match(sent[0].content, /mergeable CONFLICTING[\s\S]*merge main into the branch/);
+  }
+});

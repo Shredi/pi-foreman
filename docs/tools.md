@@ -205,13 +205,13 @@ a missing login gives `pr_auth_missing` with the command to run yourself.
 `pr_create` arms a watch of the PR it opened; `pr_watch` arms one for a PR opened elsewhere. The watch is persistent: it polls every
 `tools.prWatchSeconds` seconds (floor 30) until the PR is merged or closed, or `pr_unwatch` ends it, and never ends on a
 push, a rerun, a comment or a failed poll. It needs no model turn to keep running. If the first poll fails (a host error), the watch is
-armed anyway and retries with backoff; the first good poll baselines comments, reviews and mergeable (old ones are not sent) but
-reports CI like any other poll, so a failed check or a settled result is sent once. If the PR is not found, or is not open, on the
+armed anyway and retries with backoff; the first good poll baselines comments, reviews and a mergeable state (old ones are not sent; a first
+`CONFLICTING` is news and is sent, with the child's merge line) but reports CI like any other poll, so a failed check or a settled result is sent once. If the PR is not found, or is not open, on the
 first poll nothing is armed (`pr_watch` answers with the error; `pr_create` appends `pr_watch: not armed (<reason>)` to its answer).
 After a baseline poll each tick that finds
 something new sends one `pi-foreman-pr` message that folds all events of the tick: a failed check (a fresh failed run id, so a
 rerun or a new head reports again, while other checks still run), the CI result once every check settled (`checks finished:
-pass|fail`, once per head and result), a new comment or review, a mergeable change (`UNKNOWN` is ignored), no checks for two
+pass|fail`, once per head and result), a new comment or review, a mergeable change (`UNKNOWN` is ignored; with no state known yet, a first `CONFLICTING` is sent and a first `MERGEABLE` is only the baseline), no checks for two
 ticks, and `merged` or `closed` (or `not found`), which end the watch with a message. The message has the head, the check counts,
 the mergeable state, up to 10 failed checks and up to 10 new comments (cut to 4 KB). It starts a turn when the foreman is idle and
 follows up when it is busy; the message is data, not an instruction. One watch per PR and session (`duplicate` otherwise).
