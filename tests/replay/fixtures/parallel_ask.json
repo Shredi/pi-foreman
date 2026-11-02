@@ -16,9 +16,11 @@
  "builder": {
   "pa1": [
    {"tools": [{"name": "contact_supervisor", "arguments": {"reason": "need_decision", "message": "[[replay:bsup]] may I go on?"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": "replied.marker", "content": "go"}}]},
    {"text": "first child finished"}
   ],
   "pa2": [
+   {"tools": [{"name": "bash", "arguments": {"command": "until test -f replied.marker; do sleep 0.1; done"}}]},
    {"text": "second child finished"}
   ]
  }
