@@ -1,4 +1,4 @@
-// A parent that cannot answer (no UI, not a round session) gives its children no ask dir, so a child's ask is denied at once
+// r79 items 5, 11: the child's ask is denied at once with the no-pane text. A parent that cannot answer (no UI, not a session opened by another session) gives its children no ask dir, so a child's ask is denied at once
 // (never after gate.askTimeoutMs) and the trace carries the reason.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import { r11Rig } from "./_r11rig.ts";
 import { gateLogFile } from "../gatelog.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
+import { NO_PANE_TEXT } from "../presencewait.ts";
 
 type T = Parameters<typeof r11Rig>[0];
 const ROLES = ["explorer", "builder", "reviewer"];
@@ -15,7 +16,7 @@ function registry(reply: string) {
   return { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
 }
 // a long askTimeoutMs: a wait on a ruling nobody writes would blow the 10 s bound
-const config = { gate: { askTimeoutMs: 600000 }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } } };
+const config = { gate: { askTimeoutMs: 600000 }, presence: { enabled: false }, providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(ROLES.map((r) => [r, { model: `fake/${r}` }])) } } };
 
 test("headless parent: the launch binding has no askDir, and the child's ask is denied within 10 s with the reason in the log", async (t: T) => {
   const parent = await r11Rig(t, {}, { ctx: { hasUI: false, mode: "print", modelRegistry: registry(ALLOW) }, config });
@@ -36,9 +37,10 @@ test("headless parent: the launch binding has no askDir, and the child's ask is 
   const res = await child.call("bash", { command: "pip install requests" });
   assert.ok(Date.now() - t0 < 10000);
   assert.ok(res?.block);
-  assert.match(String(res.reason), /Children cannot answer asks/);
+  assert.match(String(res.reason), /nobody is at this session \(no pane\)/);
   const f = gateLogFile(child.agentDir);
   const recs = fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>);
   const rec = recs.filter((x) => x.layer === "dialog").at(-1)!;
-  assert.deepEqual([rec.verdict, rec.reason, rec.kind], ["deny", "no-dialog", "child"]);
+  assert.deepEqual([rec.verdict, rec.kind], ["deny", "child"]);
+  assert.equal(rec.reason, `${NO_PANE_TEXT} The call was: danger-install: installs, runs or removes software from a package registry.`);
 });

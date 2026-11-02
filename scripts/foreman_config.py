@@ -40,6 +40,7 @@ Keys outside safety that the project and session layers cannot loosen either
     key                              project / session value
     -------------------------------  -----------------------------------------
     paths.hubWorkflow                ignored (it loosens: dirs outside the worktree become readable)
+    permissions.profile              ignored (it picks the permissions profile: L1/L3/L2 only)
     bridge.isolateClaudeConfig       ignored (switching it off loosens the host config isolation)
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
@@ -201,6 +202,7 @@ LOOSEN_ONLY = [("subagents", "allowWorkflow")]
 # One row per rule so a rule can be reverted on its own.
 IGNORED_KEYS = [
     (("profile",), "the setup profile is recorded in the user or overlay config"),
+    (("permissions", "profile"), "it picks the permissions profile (r79 item 8): user or overlay config only"),
     (("paths", "hubWorkflow"), "it loosens: it makes dirs outside the worktree readable; user or overlay config only"),
     (("bridge", "isolateClaudeConfig"), "it loosens the host config isolation"),
     (("bridge", "promptCacheTtl"), "the bridge cache TTL comes from the user or overlay config"),

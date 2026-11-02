@@ -142,7 +142,12 @@ class TestCheckpoint(ReplayCase):
 
     def test_tasks_and_chain_builders_are_refused(self):
         rig, pi, _ = self.start("ck-forms")
-        res = tool_results(pi.prompt("[[replay:forms]] build it", timeout=90))
+        # r79: a tasks / chain launch is the dangerous class `danger-launch-outside`: the owner is asked first (one dialog per call, allowed here),
+        # then the heavy builder gate refuses it
+        recs = pi.prompt("[[replay:forms]] build it", answers=[{"value": "allow once"}] * 3, timeout=90)
+        res = tool_results(recs)
+        asks = [d for d in dialogs(recs) if "cause: danger-launch-outside" in str(d.get("title"))]
+        self.assertEqual(len(asks), 3, asks)
         self.assertEqual([(n, e) for n, e, _ in res], [("foreman_triage", False), ("write", False), ("subagent", True), ("subagent", True), ("subagent", True), ("subagent", False)], res)
         for _, _, text in res[2:5]:
             self.assertIn("[launch_refused:plan_required]", text)

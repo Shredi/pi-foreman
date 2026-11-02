@@ -1,4 +1,7 @@
-"""gate.mode (r76, temporary): only the user layer and the overlay set "floors-only"; the project and session layers drop it."""
+"""gate.mode (r76, temporary): only the user layer and the overlay set "floors-only"; the project and session layers drop it.
+
+r79 item 14: the adapter reads a user-layer "floors-only" as permissions mode allow and prints a retirement notice; the config
+layer rules below are unchanged, and the new mode key lives in permissions.json (no config layer to test)."""
 import json
 import os
 import sys
