@@ -139,7 +139,7 @@ The table above has the key rows; this section gives the behaviour.
 - Visibility: the skills a role names follow the same three inputs as the foreman's skill list (`skills.visible`, `skills.hidden`, frontmatter `metadata.visibility: search`; see [tools](tools.md#deferred-tools-and-searchable-skills)). `foreman setup` writes only the visible ones into the agent file. The child computes the hidden ones itself from the same config, finds them with `tool_search` and gets a `pi-foreman-skills` prompt line naming them.
 - Read scope: shell reads are granted per role, only for the skill dirs that role names. The `read` tool sees the union of the skills any role names. `foreman setup` re-renders the `external_directory_read` keys, so re-run it after changing `skills` (see docs/permissions.md, "Skill reads").
 - Residual: a package skill under `{agentDir}/npm/node_modules`, or a skill from a settings `skills` path, still asks when a child reads its body. An in-repo named skill stays denied to a child's shell read (the `read` tool works).
-- The package ships two generic skills, listed in `pi.skills`: `skills/skill-authoring` (writing and debugging skills) and `skills/prompting-guides` (writing system prompts, role files and briefs for a target model family). Name either in a role's `skills` to give that role the guide.
+- The package ships two generic skills, listed in `pi.skills`: `skills/skill-authoring` (writing and debugging skills) and `skills/prompting-guides` (writing system prompts, role files and briefs for a target model family). Name either in a role's `skills` to give that role the guide. It also ships `skills/handoff`, for the main session (session briefs and rulings); no role needs it.
 
 ### `roles.<id>.mcp`
 

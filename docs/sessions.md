@@ -22,6 +22,7 @@ again. All four subcommands are yours to type; a subagent child refuses every on
   `Brief from <your id>: read <absolute path> and act on it` (the message names that file). A single word naming an
   existing file is copied; anything else is written as typed. See the message contract below.
   Example: `/foreman session brief docs ./more-context.md`, `/foreman session brief docs also cover the CLI flags`
+  Briefs, rulings and `result.md` follow the package's `handoff` skill (`skills/handoff`).
 - `/foreman session close <target> [result-path]` sends `foreman:close [result-path]` (see the contract below)
   and marks the registry entry `closing` once the send went out. The result path may use only `A-Z a-z 0-9 . _ / -`,
   at most 200 characters, and must end in `.md`. Example: `/foreman session close docs .workflow/result-docs.md`
