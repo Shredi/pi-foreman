@@ -16,6 +16,8 @@ import type { Tier, TierSource } from "./ceremony.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
+import { reviewsOfEntry } from "./reviews.ts";
+import type { ReviewRecord } from "./reviews.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
 
@@ -51,13 +53,15 @@ export interface CeremonyStateEntry {
   tierSource: TierSource | null;
   /** The plan phase is on (index.ts): .workflow-only writes, no builder launch. */
   planPhase: boolean;
+  /** Reviewer verdicts with the head they covered (reviews.ts), so the PR gate survives compaction, /reload and resume. */
+  reviews: ReviewRecord[];
 }
 
 export function emptyCeremonyState(): CeremonyStateEntry {
-  return { v: 1, plan: null, lineages: [], planReviews: {}, userTier: null, tier: null, tierSource: null, planPhase: false };
+  return { v: 1, plan: null, lineages: [], planReviews: {}, userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; planReviews: Record<string, number>; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; planReviews: Record<string, number>; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[] }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -68,6 +72,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tier: o.tier ?? null,
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.why ? { why: r.why } : {}) })),
   };
 }
 
@@ -107,6 +112,7 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     out.tier = isTier(d.tier) ? d.tier : null;
     out.tierSource = typeof d.tierSource === "string" && TIER_SOURCES.has(d.tierSource) ? (d.tierSource as TierSource) : null;
     out.planPhase = d.planPhase === true;
+    out.reviews = reviewsOfEntry(d.reviews);
     return out;
   }
   return null;

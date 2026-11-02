@@ -105,7 +105,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendReview, capSet, checksLine, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHead, reviewsOfRunEnd } from "./reviews.ts";
+import { appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, reviewsOfRunEnd } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -943,6 +943,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       tier: s.ceremony.tier,
       tierSource: s.ceremony.source,
       planPhase: s.planPhase,
+      reviews: s.reviews,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -963,6 +964,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.topicReviews = { ...e.planReviews };
     s.planPhase = e.planPhase;
+    if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -1942,7 +1944,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
-              appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: reviewedHead(start, cwd, await headOf(cwd)) });
+              const h = reviewedHeadWhy(start, cwd, await headOf(cwd));
+              appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: h.head, ...(h.why ? { why: h.why } : {}) });
+              s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why });
+              persistCeremonyState(s);
             });
           }
         }
@@ -2523,7 +2528,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       try {
         const s = await ensureSession(ctx);
         if (!s.isChild) await s.reviewSync;
-        const refusal = await prGateRefusal({ tool: event.toolName, isChild: s.isChild, gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed: passHeads(s.reviews), cwd: ctx.cwd, input: event.input as Record<string, unknown> });
+        const refusal = await prGateRefusal({ tool: event.toolName, isChild: s.isChild, gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed: passHeads(s.reviews), headless: headlessPass(s.reviews), cwd: ctx.cwd, input: event.input as Record<string, unknown> });
         if (refusal) {
           s.trace?.emit({ event: "pr_refused", reason: refusal.reason, toolFamily: event.toolName });
           return { block: true, reason: refusal.message };
@@ -3999,6 +4004,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           await s.reviewSync;
           return passHeads(s.reviews);
         },
+        headless: async () => {
+          await s.reviewSync;
+          return headlessPass(s.reviews);
+        },
         watches: s.prWatches,
         trace: (r) => s.trace?.emit(r),
         tracker: s.prHost,
@@ -4215,6 +4224,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const st = await runLedger(s, ["status"], null);
       if (st.text) out.push(st.text);
       ok = ok && st.ok;
+      if (plan.attested) await s.reviewSync;
+      const unbound = plan.attested && ok ? headlessPass(s.reviews) : null;
+      if (unbound) out.push(`Note: the reviewer PASS carries no commit (${unbound}), so the PR gate will refuse; run a reviewer again on the head before pr_create.`);
       s.trace?.emit({ event: "ledger_call", kind, allowed: true, items: traceItems || undefined, attested: plan.attested || undefined });
       const hint = ok ? ledgerHint(kind, traceItems, out.join("\n"), params.text) : null;
       if (hint) writeHint(boundLedger(s.markerDir, s.id), hint.ids, hint.text, s.retro.hints, hintOpts(s));
