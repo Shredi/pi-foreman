@@ -214,7 +214,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
   if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !rest.some((w) => /^--(?:output|exec|upload-pack)/.test(w)) ? "default-git-read" : null;
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
-  if (!GIT_READ_ONLY_SUBS.has(sub) && inWorkFolder(c, cwd) && !contained({ ...ec, extraWriteRoots: [] }, cwd, ".", true)) return null;
+  if (!GIT_READ_ONLY_SUBS.has(sub) && inWorkFolder(c, cwd) && ![c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree))) return null;
   switch (sub) {
     case "branch":
       return rest.every((w) => BRANCH_LIST.has(w)) ? "default-git-read" : null;

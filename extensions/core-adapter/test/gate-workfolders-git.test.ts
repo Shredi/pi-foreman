@@ -58,6 +58,31 @@ test("shell reads in a folder stay built-in", () => {
   }
 });
 
+// PR5 review 2: a worktree that lies inside a work folder keeps its git defaults, at its root and below.
+const outer = path.join(base, "outer");
+const wt2 = path.join(outer, "wt2");
+fs.mkdirSync(path.join(wt2, "sub"), { recursive: true });
+fs.mkdirSync(path.join(outer, "other-repo", ".git"), { recursive: true });
+const env2: FloorEnv = { ...env, cwd: wt2, writeRoots: [wt2, scr, tmpDir, "/tmp"] };
+const sh2 = (line: string, cwd: string, r: GateRoots): GateOutcome => gateEvaluate("bash", { command: line }, cwd, { env: () => ({ ...env2, cwd }), roots: () => r, facts });
+const GIT2 = ["git commit -m x", "git add -A", "git push origin HEAD", "git fetch", "git switch round/x"];
+
+for (const mode of ["read", "auto"] as const) {
+  test(`worktree inside a ${mode} folder keeps default-git allows at root and below`, () => {
+    const r = roots({ worktree: wt2, workFolders: [{ path: outer, mode }] });
+    const n = roots({ worktree: wt2, workFolders: [] });
+    for (const cwd of [wt2, path.join(wt2, "sub")]) {
+      for (const g of GIT2) {
+        const o = sh2(g, cwd, r);
+        assert.ok(/default-git/.test(rule(o) ?? ""), `${cwd}: ${g}: ${shape(o)}`);
+        assert.equal(rule(o), rule(sh2(g, cwd, n)), `${cwd}: ${g}`);
+      }
+    }
+    const o = sh2("git commit -m x", path.join(outer, "other-repo"), r);
+    assert.ok(!/default-git/.test(rule(o) ?? ""), shape(o));
+  });
+}
+
 test("guarded pkgRoot given as a link: its real spelling is protected too", () => {
   const r = roots({ pkgRoot: linkPkg, workFolders: [{ path: base, mode: "auto" }] });
   const target = path.join(realPkg, "extensions", "gate.ts");
