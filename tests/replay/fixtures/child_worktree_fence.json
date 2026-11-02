@@ -1,0 +1,15 @@
+{
+ "foreman": {
+  "s1": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "worktree": true, "task": "[[replay:fence]] work in your worktree"}}]},
+   {"text": "Launched."},
+   {"text": "Builder reported."}
+  ]
+ },
+ "builder": {
+  "fence": [
+   {"tools": [{"name": "bash", "arguments": {"command": "printenv FOREMAN_CHECKOUT"}}]},
+   {"text": "child: fence finished"}
+  ]
+ }
+}
