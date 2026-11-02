@@ -15,7 +15,7 @@
 - `bench/` benchmark presets, prices and Harbor agents; `bin/` the `foreman` and `ledger` wrappers
 - `design/` architecture record; `tests/` Python tests, `tests/installer`, `tests/replay`
 - `setup.mjs` setup script (`foreman setup`); `packages.lock.json` pinned Pi and packages
-- Runtime dependencies (`package.json`, exact pins mirrored in `packages.lock.json`): pi-subagents, pi-intercom, `unbash` (the gate's shell parser), and `@inquirer/prompts` (the arrow-key setup picker, imported lazily by `setup.mjs`)
+- Runtime dependencies (`package.json`, exact pins mirrored in `packages.lock.json`): pi-subagents, pi-intercom, `unbash` (the gate's shell parser), and `@inquirer/prompts` (the arrow-key setup picker, imported lazily by `setup.mjs`). `@earendil-works/pi-tui` is a Pi-provided peer (`"*"`), not a dependency, because Pi warns about host packages under `dependencies`; a checkout has it as a devDependency for `setup --preview` and the installer tests, so a package install without dev dependencies has no `--preview`
 
 Running from a checkout instead of the installed package: [install](install.md#developing).
 

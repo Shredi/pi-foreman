@@ -194,6 +194,13 @@ set to `true` hides it.
 Then re-run `foreman setup` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
 
+### Pi's built-in `tool-search`
+
+pi-foreman registers its own `tool_search` (deferred tools and skills), which replaces Pi's built-in `tool-search` extension. Without
+help Pi prints `built-in extension tool-search was not loaded` at every start. `foreman setup` adds `-builtin:tool-search` to the
+`extensions` list of the target `settings.json` (what `pi config` writes when you disable it under Built-in extensions) so the
+replacement is silent. An existing `builtin:tool-search` entry of any kind (`+`, `-`, `!`) is left alone, and `--remove` keeps the entry.
+
 ### What setup writes for compaction
 
 Pi decides when to compact; pi-foreman only sets the point. Setup derives one point per model and writes it as
