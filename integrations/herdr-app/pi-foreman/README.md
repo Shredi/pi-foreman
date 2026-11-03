@@ -10,7 +10,7 @@ Agents are grouped by space, in the order `agents()` gives (the same order goes 
 a top-most foreman session, one tree:
 
 - the agent row itself carries the session's tier, cost (the session plus every nested session, `$x.xx`, as the TUI sidebar prints it) and "N sessions" when N > 1; a joined radar node is merged into this row, there is no second session row; the open ask (red while the session is blocked), else the background task or the waits, sits on a line under it;
-- the PR chips of the session: one per PR (number, a red "!" when it conflicts, and its two-part dot), failing first, then pending, then green, newest first, wrapping, followed by "N PRs · k failing · m pending" or "N PRs · all green" (it follows the chip states, reads "N PRs" without CI data, and drops merged or closed PRs);
+- the PR chips of the session: one per PR whose head branch (and head repository, for a fork) is the session's branch and repo; a PR it only watches has no chip, just its `⏳ N pr watch` line; a chip shows (number, a red "!" when it conflicts, and its two-part dot), failing first, then pending, then green, newest first, wrapping, followed by "N PRs · k failing · m pending" or "N PRs · all green" (it follows the chip states, reads "N PRs" without CI data, and drops merged or closed PRs);
 - the session's own agents (builder, reviewer, explorer …; radar runs and the running `pi-subagents` records of `hc get`) and its child sessions (nested foreman sessions, live `hc` children; a pane-less child (`hc run` session) whose `hcTerminal` matches is a full session with its own agents; a node joins on `hcTerminal` first, else on the terminal's foreground pid, skipping done, ended and remote nodes and terminals already matched) are siblings, most urgent first. The root row is uncarded (a selected root keeps its filled header row). Every other session is a bordered card holding its header row (name without pi logo or leading "π", tier, own cost, up to two PR chips inline, more on a line under it, status glyph on the right), its status lines `⏳ note · age` (wait) and `⚙ name · age` (bg), its chips and its own agent rows; its child session cards follow outside it. A selected card gets the raised background and an accent border. An agent row shows 🤖 and the role, muted and a little smaller; inside a card it has no status circle (the header shows the state), directly under the root it keeps the glyph. A click on a live `hc` child runs `terminal.peek`;
 - connectors join the rows: a tee for a middle child, a rounded elbow for the last, a pass cell for an ancestor that continues; 1px lines in the translucent dim tone, continuous from under the parent's chevron through its status and chip rows to the last child. Every parent row, the agent row included, has a chevron that folds it; a folded row shows the most urgent status below it.
 
@@ -52,8 +52,10 @@ read keeps the last good data for up to 5 polls; if a machine then still has no 
 <machine> (set props.foreman)" and the mod retries every 30 s. The mod calls only `hc get`, never writes a file and never fetches.
 
 A radar node joins an agent when its `hcTerminal` equals the agent's terminal address (`machine/` prefix for a remote space),
-the node is not done, and, when both sides carry a pid, the pids match. `hc ls --json` has no pid, so the not-done filter may
-be the only guard against an address reused after a core restart.
+the node is not done, and, when both sides carry a pid, the pids match. The agent's pid is the terminal's foreground pid from herdr
+`terminals()`, so the equal-pid check guards this join against an address reused after a core restart whenever radar has a pid.
+An agent with no `hcTerminal` match joins the live local node whose pid equals the terminal's foreground pid; done, ended and
+remote nodes and nodes already matched are skipped.
 
 ## PR links
 
