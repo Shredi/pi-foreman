@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependencies are @inquirer/prompts (picker) and @earendil-works/pi-tui (--preview), both loaded lazily.
+// pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependency is @inquirer/prompts (picker), loaded lazily; --preview needs @earendil-works/pi-tui, a Pi-provided peer that a checkout installs as a devDependency.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
 //                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]
 // pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents
@@ -26,6 +26,14 @@ const PI_DEFAULT_KEEP_RECENT = pointModule?.PI_DEFAULT_KEEP_RECENT ?? 20000;
 const ROOT = fs.realpathSync(path.dirname(fileURLToPath(import.meta.url)));
 const WIN = process.platform === "win32";
 const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]; // same keys as /foreman doctor
+const BUILTIN_TOOL_SEARCH_OFF = "-builtin:tool-search";
+/** Settings with Pi's built-in `tool-search` extension switched off (pi-foreman registers its own `tool_search`; Pi warns when it has to drop the built-in itself), or null when the settings already carry an entry for it. */
+export function withBuiltinToolSearchOff(settings) {
+  if (settings.extensions !== undefined && !Array.isArray(settings.extensions)) return null;
+  const list = settings.extensions ?? [];
+  if (list.some((e) => typeof e === "string" && e.replace(/^[+\-!]/, "") === "builtin:tool-search")) return null;
+  return { ...settings, extensions: [...list, BUILTIN_TOOL_SEARCH_OFF] };
+}
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const FOREMAN_INSTALL = "pi install git:github.com/Shredi/pi-foreman";
 const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
@@ -1295,6 +1303,12 @@ async function main(argv) {
       comp.apply(next);
     }
     if (comp.recordChanged) anyChange = true;
+    const searchOff = withBuiltinToolSearchOff(next);
+    if (searchOff) {
+      anyChange = true;
+      next = searchOff;
+      say(`extensions: ${dry ? "would add" : "adding"} ${BUILTIN_TOOL_SEARCH_OFF} (pi-foreman's tool_search replaces Pi's built-in tool-search)`);
+    }
     if (!same) {
       if (hasCur && record && sha(cur) !== record.subagentsHash) say("subagents block: edited by hand since the last install; backing it up and overwriting");
       else if (hasCur && !record) say("subagents block: present but not recorded as ours; backing it up and overwriting");
@@ -1336,18 +1350,20 @@ async function main(argv) {
       if (needRecord) say(`would record the managed hash in ${managedFile}`);
       if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);
     } else if (anyChange) {
-      if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed) backup();
+      if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed || searchOff) backup();
       for (const a of [...removeArgs, ...installArgs]) runOrDie(a);
       for (const a of addonNew) {
         if (!isObj(managed.addons)) managed.addons = {};
         managed.addons[a.id] = { spec: a.spec, installedAt: new Date().toISOString() };
       }
       let finalBlock = pick(next.subagents);
-      if (!same || filtered || reordered || comp.changed) {
+      if (!same || filtered || reordered || comp.changed || searchOff) {
         // pi edits `packages` in the same file, so merge into what is on disk now
         const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
         if (!same) applyWanted(fresh);
         comp.apply(fresh);
+        const freshOff = withBuiltinToolSearchOff(fresh);
+        if (freshOff) fresh.extensions = freshOff.extensions;
         const filteredNow = applyFilter(fresh.packages);
         fresh.packages = foremanBeforeBridge(filteredNow, baseDir) ?? filteredNow;
         writeFile(settingsFile, toJson(fresh));
