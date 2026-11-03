@@ -259,7 +259,9 @@ export interface SegmentEffect {
 }
 
 const READ = new Set(["ls", "cat", "head", "tail", "cut", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find"]);
-const FIND_BAD = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-H", "-follow"]);
+/** The programs of the read class (floors.ts reads a line as read-looking by them). */
+export const READ_CLASS: ReadonlySet<string> = READ;
+export const FIND_BAD = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-H", "-follow"]);
 
 function shortHas(a: string, ch: string): boolean {
   return /^-[A-Za-z0-9]+$/.test(a) && a.slice(1).includes(ch);

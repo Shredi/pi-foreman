@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import type { ShellSegment } from "./shellast.ts";
 import { lexUnder, normPath, sameOrUnder, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch } from "./glob.ts";
+import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
+import { nonPathArgs } from "./permoverlay.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -502,12 +504,25 @@ function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): 
   if (SHELL_LIKE.has(prog) && seg.opaque === "stdin_fed" && line.some((s) => s !== seg && DOWNLOAD.has(base(s.program)))) return hit("download-shell", "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.");
   // quoted text and regexes are data (r79 item 4); a terminal payload is typed text, judged by the inject floor above
   const payload = injection(seg, prog)?.words ?? [];
-  for (const w of [...seg.argv, ...seg.redirects.map((r) => r.target)]) {
-    if (dataWord(w) || payload.includes(w)) continue;
+  const patterns = searchPatterns(seg, prog);
+  const words = [...seg.argv, ...seg.redirects.map((r) => r.target)];
+  for (const [i, w] of words.entries()) {
+    if (dataWord(w) || payload.includes(w) || patterns.has(i)) continue;
     const s = secretPath(w, env);
     if (s) return s;
   }
   return null;
+}
+
+const PATTERN_PROGS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk"]);
+
+/**
+ * Indexes into `seg.argv` of the pattern operands of the search programs (A4): the grep/rg pattern and `-e` values, and the sed script or awk
+ * program when it can only read (permoverlay's operand logic). `-f`/`--file` values and every other operand stay paths.
+ */
+function searchPatterns(seg: ShellSegment, prog: string): Set<number> {
+  if (!PATTERN_PROGS.has(prog)) return new Set();
+  return new Set(nonPathArgs([seg.program, ...seg.argv], new Set()).map((i) => i - 1).filter((i) => i >= 0));
 }
 
 /** A word that is text or a pattern, not a path: it holds whitespace (and does not start like a path), or an alternation or group character. */
@@ -610,6 +625,19 @@ export function secretPath(word: string, env: FloorEnv): FloorHit | null {
 // ------------------------------------------------------------------ raw text
 
 const CMD = "(?:^|[;&|(\\n`]|\\$\\()\\s*(?:\\w+=\\S*\\s+)*";
+
+// A2: `git` at a command position. CMD widened by the shell keywords that can stand before a command and by the wrapper programs; the options
+// `-C <dir>`, `-c k=v`, `--git-dir`, `--work-tree` and friends may sit between `git` and its verb (captured).
+const GIT_WRAPPERS = "env|nohup|xargs|timeout|nice|command|exec|time|sudo|doas|stdbuf|ionice|setsid";
+const GIT_VERB = `(?:[\\w.~/-]*/)?git(?:[ \\t]+(?:-[Cc][ \\t]+\\S+|--(?:git-dir|work-tree|namespace|exec-path)(?:=\\S*|[ \\t]+\\S+)|-[pP]|--(?:no-pager|paginate|bare|no-replace-objects|literal-pathspecs|no-optional-locks)))*[ \\t]+([a-z][\\w-]*)`;
+const GIT_CALL = new RegExp(
+  `(?:^|[;&|(\\n\`{!]|\\$\\()[ \\t]*(?:\\w+=\\S*[ \\t]+)*(?:(?:do|then|else|elif|if|while|until|coproc|time)[ \\t]+|[!{(][ \\t]*)*` +
+    `(?:(?:${GIT_WRAPPERS})(?:[ \\t]+(?:-{1,2}[\\w-]+(?:=\\S+)?|\\d+[smhd]?|\\w+=\\S*|\\{\\}))*[ \\t]+)*` +
+    GIT_VERB,
+  "g",
+);
+/** The command position is unknown (a runner or a program built by substitution reads the text as code): git anywhere. */
+const GIT_ANY = /\b(push|remote)\b/g;
 const RAW: { name: string; re: RegExp; reason: string }[] = [
   { name: "download-shell", re: /\b(?:curl|wget|fetch|iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n;&]*\|\s*(?:sudo\s+(?:-\S+\s+)*)?(?:env\s+\S+\s+)?(?:\/\S*\/)?(?:sh|bash|zsh|dash|ksh|fish|python[0-9.]*|node|perl|ruby|php|iex|invoke-expression|pwsh|powershell)\b/i, reason: "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked." },
   { name: "download-shell", re: /\b(?:sh|bash|zsh|dash|ksh|source|\.)\s+<\(\s*(?:curl|wget)\b/i, reason: "A download run through process substitution runs unreviewed code. Download to your scratch dir, read it, then run it." },
@@ -640,16 +668,24 @@ const rawWords = (text: string): string[] => text.toLowerCase().split(/[\s'"`=;&
  * call, never a deny and never the classifier's. A package publish or a removal of the root stays a deny. Obfuscation reaches the owner or a deny,
  * never a default allow and never the mode step.
  */
-export function opaqueTextFloors(text: string, env: FloorEnv): FloorHit | null {
+export function opaqueTextFloors(text: string, env: FloorEnv, anywhere = false): FloorHit | null {
   const lower = text.toLowerCase();
-  if (/\bgit\b/.test(lower)) {
-    if (env.child && /\bpush\b/.test(lower)) return askHit("git-push-child", "The unparsed line looks like a git push. Children never push; the foreman pushes.");
+  // A2: git counts only at a command position (after `;` `&` `|` `(` a newline, a shell keyword or a wrapper program); the verb is the word after git's own options
+  const calls = (anywhere && !/\bgit\b/.test(lower) ? [] : [...lower.matchAll(anywhere ? GIT_ANY : GIT_CALL)]).map((m) => {
+    const end = (m.index ?? 0) + m[0].length;
+    return { verb: m[1], tail: lower.slice(end).split(/[\n;&|]/)[0], tailText: text.slice(end).split(/[\n;&|]/)[0] };
+  });
+  if (calls.length > 0 || (anywhere && /\bgit\b/.test(lower))) {
+    const push = calls.find((c) => c.verb === "push");
+    // A3: a child cannot answer an owner question about a line the parser could not read: a deterministic deny that says how to rephrase
+    const flag = env.child ? opaqueDeny : askHit;
+    if (env.child && push) return flag("git-push-child", "The unparsed line looks like a git push. Children never push; the foreman pushes.");
     const key = rawWords(text).find((w) => floorKey(w) && w.includes("."));
-    if (key !== undefined) return askHit("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`);
-    if (/\bremote\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(lower)) return askHit("git-config", "The unparsed line changes a git remote.");
-    if (/\bpush\b/.test(lower) && /(?:\s--(?:force|force-with-lease|force-if-includes|mirror|delete|prune|all)\b|\s-[a-z]*[fd][a-z]*\b|\s\+\S|\s:\S)/.test(lower)) return askHit("git-push-force", "The unparsed line looks like a force, delete, mirror or colon-refspec push.");
-    const prot = [...protectedSet(env)].find((b) => new RegExp(`\\bpush\\b[^\\n;&|]*\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
-    if (prot !== undefined) return askHit("git-push-protected", `The unparsed line pushes '${prot}', a default or protected branch.`);
+    if (key !== undefined) return flag("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`);
+    if (calls.some((c) => c.verb === "remote" && /^\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(c.tail))) return flag("git-config", "The unparsed line changes a git remote.");
+    if (push && /(?:\s--(?:force|force-with-lease|force-if-includes|mirror|delete|prune|all)\b|\s-[a-z]*[fd][a-z]*\b|\s\+\S|\s:\S)/.test(push.tail)) return flag("git-push-force", "The unparsed line looks like a force, delete, mirror or colon-refspec push.");
+    const prot = push ? [...protectedSet(env)].find((b) => new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(push.tailText)) : undefined;
+    if (prot !== undefined) return flag("git-push-protected", `The unparsed line pushes '${prot}', a default or protected branch.`);
   }
   if (/\b(?:npm|pnpm|yarn|bun|cargo|twine|gem|poetry)\s+(?:\S+\s+)*(?:publish|upload|push)\b/.test(lower)) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.");
   if (new RegExp(`${CMD}rm\\s+(?:-\\S+\\s+)*(?:--\\s+)?(?:/|~|\\$HOME|\\$\\{HOME\\})/?\\*?(?:\\s|$)`).test(text)) return hit("rm-system", "Removing the file system root or the home directory is never allowed.");
@@ -686,20 +722,83 @@ export function maskQuoted(text: string): string {
   return out;
 }
 
-/** Programs whose quoted arguments are text, not a command line: output, search, paging and git (whose `-c` overrides are floored on the parsed argv). */
-const DATA_PROGS = new Set(["echo", "printf", "grep", "egrep", "fgrep", "rg", "git", "cat", "head", "tail", "wc", "ls", "jq", "cut", "sort", "uniq", "tr", "tee", "true", "test", "[", "herdr"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "pwsh", "powershell", "cmd"]);
+const INTERP_E = new Set(["node", "nodejs", "python", "python2", "python3", "perl", "ruby", "php", "pwsh", "powershell", "deno", "bun", "lua", "rscript"]);
+const EXTRA_RUNNERS = new Set(["eval", "source", ".", "xargs", "ssh", "awk", "gawk", "mawk", "nawk", "osascript"]);
 
-function dataLine(segments: ShellSegment[]): boolean {
-  return segments.length > 0 && segments.every((s) => s.wrappers.length === 0 && DATA_PROGS.has(base(s.program)) && !(base(s.program) === "git" && s.argv.some((w) => /^-c|^--config/.test(w))));
+/** Whether a segment runs text as a command: a runner program or wrapper, an interpreter given code, `-exec`, awk, ssh, osascript, deno eval|run (A1). Read from the parsed segments, never from raw words. */
+function runsText(s: ShellSegment): boolean {
+  const names = [base(s.program), ...s.wrappers.map(base)];
+  if (names.some((n) => RUNNERS.has(n) || EXTRA_RUNNERS.has(n) || SHELLS.has(n))) return true;
+  const p = names[0];
+  if (p === "deno" && s.argv.some((a) => a === "eval" || a === "run")) return true;
+  if (INTERP_E.has(p) && s.argv.some((a) => /^-[A-Za-z]*[ec]/.test(a) || a === "--eval" || a === "--command")) return true;
+  return s.argv.some((a) => a === "-exec" || a === "-execdir" || a === "-ok" || a === "-okdir");
 }
+
+/** A program that runs a script or code: a runner, an interpreter, or a shell fed through stdin. */
+function runsCode(s: ShellSegment): boolean {
+  return runsText(s) || INTERP_E.has(base(s.program)) || s.opaque === "stdin_fed";
+}
+
+/** `text` with the bodies of heredocs blanked (the delimiter lines stay). */
+function maskHeredocs(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    const m = /<<(-?)\s*(?:'([^']+)'|"([^"]+)"|\\?([\w.-]+))/.exec(lines[i]);
+    if (!m) continue;
+    const tag = m[2] ?? m[3] ?? m[4];
+    let j = i + 1;
+    while (j < lines.length && (m[1] === "-" ? lines[j].replace(/^\t+/, "") : lines[j]).replace(/\r$/, "") !== tag) j++;
+    if (j >= lines.length) continue;
+    out.push("");
+    out.push(lines[j]);
+    i = j;
+  }
+  return out.join("\n");
+}
+
+/**
+ * The text the raw and opaque-text floors scan (A1): quoted strings and the bodies of `cat`/`tee`/redirect-only heredocs are blanked.
+ * Unchanged when a segment runs text, and the heredoc bodies stay visible when any segment of the line runs code.
+ */
+export function maskLine(text: string, segments: ShellSegment[]): string {
+  if (segments.some(runsText)) return text;
+  const bodies = segments.filter((s) => s.heredoc);
+  const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
+  const t = bodies.length > 0 && data && !segments.some(runsCode) ? maskHeredocs(text) : text;
+  return maskQuoted(t);
+}
+
+const LOOP_WORDS = new Set(["for", "while", "until", "if", "select", "case"]);
+const NULL_TARGET = /^(\/dev\/null|nul)$/i;
+
+/**
+ * A3: the line only reads. Every segment's program (wrapper-stripped) is in the effects read class (or a loop keyword), no inline code, no runner,
+ * no find action, no output redirect but an fd dup or the null device. Opacity does not count against it: the loop `for f in a b; do grep x $f; done` is opaque and still reads.
+ */
+export function readLooking(segments: ShellSegment[]): boolean {
+  return segments.length > 0 && segments.every((s) => {
+    const p = base(s.program);
+    if (runsText(s)) return false;
+    if (!LOOP_WORDS.has(p) && !READ_CLASS.has(p) && !/^(echo|printf|true|false|cd|pwd|test|\[)$/.test(p)) return false;
+    if (p === "find" && s.argv.some((a) => FIND_BAD.has(a))) return false;
+    if (s.heredoc && s.opaque !== null) return false;
+    return s.redirects.every((r) => r.op === "<" || r.op === "dup" || NULL_TARGET.test(r.target));
+  });
+}
+
+/** A deterministic deny for a text-only hit on a line the parser could not read: the child cannot answer an owner dialog (A3). */
+const opaqueDeny = (name: string, reason: string): FloorHit => hit(name, `${reason} Rephrase without a variable or loop, or let the foreman do it.`);
 
 /**
  * The floors of a parsed shell line (r79): raw-text floors (quoted strings of a data-program line are blanked first: pinned steward cases 1 and 2),
  * every segment (a deny), then the opaque-line scan, whose hits are asks. A deny of any kind wins over an ask.
  */
 export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
-  const data = dataLine(segments);
-  const scan = data ? maskQuoted(text) : text;
+  const scan = maskLine(text, segments);
   const raw = rawFloors(scan);
   if (raw) return raw;
   // a quoted assignment runs inside `bash -c '...'`: the profile floor reads the unmasked text
@@ -707,7 +806,8 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   if (profile) return hit(profile.name, profile.reason);
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
-    const o = opaqueTextFloors(scan, env) ?? opaqueProtected(text, env);
+    const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
+    const o = opaqueTextFloors(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true));
     if (o?.kind === "deny") return o;
     pending = o;
   }
@@ -946,16 +1046,17 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
 }
 
 /** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1). */
-function opaqueProtected(text: string, env: FloorEnv): FloorHit | null {
+function opaqueProtected(text: string, env: FloorEnv, deny = false): FloorHit | null {
+  const flag = deny ? opaqueDeny : askHit;
   const entries = protectedEntries(env);
   // both spellings: split on braces and commas (the pieces of a brace group) and whole (a brace group inside one word is expanded by protectedWord)
   const flat = text.replace(/\$(?=['"])/g, "").replace(/['"`]/g, "");
   const words = [...new Set([...flat.split(/[\s;&|<>(){},]+/), ...flat.split(/[\s;&|<>()]+/)])].filter(Boolean);
   const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
-  if (w !== undefined) return askHit("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`);
+  if (w !== undefined) return flag("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`);
   if (FLOOR_KEYS.test(text)) {
     const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env));
-    if (c !== undefined) return askHit("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`);
+    if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`);
   }
   return null;
 }

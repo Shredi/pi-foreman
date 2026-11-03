@@ -1835,7 +1835,7 @@ function awkReadOnly(prog: string): boolean {
  * and `-e` values, the sed script, the awk program, find's -name/-iname/-path/-regex values,
  * every echo/printf argument. `skip` = redirect targets. Files named by `-f` stay paths.
  */
-function nonPathArgs(core: string[], skip: Set<number>): number[] {
+export function nonPathArgs(core: string[], skip: Set<number>): number[] {
   const verb = core.length ? baseName(core[0]) : "";
   const readOnly = (s: string): boolean => (verb === "sed" ? sedReadOnly(s) : verb.endsWith("awk") ? awkReadOnly(s) : true);
   // a script-file or output flag may mis-sort the operands (`awk -F -- --fil=p.awk f`): then every word stays a path

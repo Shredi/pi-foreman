@@ -1,0 +1,11 @@
+[
+  "cd src && for f in *.ts; do names=$(grep -o -E '^[A-Za-z][a-z_]*:[' \"$f\" | sed -E 's/x/y/' | paste -sd, - ); others=$(grep -E '[a-z]+[' \"$f\" | grep -v -E 'x' | sed -E 's/a/b/' | cut -c1-40 | paste -sd, -); [ -n \"$names\" ] && echo \"$f\"-\"$others\"; done; echo done; for f in *.ts; do grep -q '^[' \"$f\" || echo \"$f\"; done",
+  "cd src; grep -rlIE '^[A-Za-z]*[' --include=*.md . docs | head; echo ---; grep -rhoIE '[[a-z]*[' --include=*.md . docs | sort -u | head",
+  "for r in aaa bbb; do echo \"$r\"; ls $r; grep -o '^[A-Za-z][a-z_]*:[' $r/x | sort | uniq -c | head; grep -o '^[A-Za-z][a-z_]*:[' $r/y | sort | uniq -c | head -3; [ -f $r/z ] && echo ok; done",
+  "ls; node --test test/x.test.ts 2>&1 | grep -E '[example-[a-z]*]' | head",
+  "ls | grep -v '^[a-z_]*[' ; sed -n 40,200p a.ts | grep -v '^[a-z_]*[' | head -40; ls extensions | head",
+  "git -C . log --oneline -1 a.ts; sed -n 1,12p a.ts | head -3; grep -E '[[]*][r-c3]=[' a.ts",
+  "L=1; sed -n 225,251p a.ts | grep -o '^[a-z][a-z_]*:[' | sed 's/a/b/' | cut -c1-260 | head -10; echo ----; sed -n 225,251p a.ts | grep -o '^[a-z][a-z_]*:[' | cut -c1-200 | head -30",
+  "(git diff; for f in $(git ls-files -o --exclude-standard); do echo \"$f\"; cat \"$f\"; done) | grep -n -i -E '^[0-9][a-z_]*:[' | grep -v 'x' | head -20; git status --short | head -40",
+  "grep -nE '^[0-9][a-z_]*:[' a.txt | sed 's/a/b/' | head -120"
+]
