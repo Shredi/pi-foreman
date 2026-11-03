@@ -22,6 +22,8 @@ export interface GitFacts {
   hasUpstream?: (cwd: string) => boolean;
   /** r79 item 3: branches checked out in the other (linked) worktrees of the repo; a plain push of one from a second worktree is as routine as the cwd branch. */
   ownBranches?: (cwd: string) => string[];
+  /** The session's own checkout or a worktree it created holds `dir`. Absent: no worktree is held back (the plain git lookups). A push from any other worktree is no default. */
+  isOwnWorktree?: (dir: string) => boolean;
 }
 
 export interface DefaultCtx {
@@ -185,6 +187,7 @@ const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", 
 /** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */
 function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boolean {
   if (c.roots.child) return false;
+  if (c.facts.isOwnWorktree && !c.facts.isOwnWorktree(cwd)) return false;
   // a harmless env prefix is dropped by the walker; the push default wants none at all
   if (/(?:^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]*=/.test(text)) return false;
   const a = [...rest];
@@ -202,19 +205,52 @@ function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boole
 
 const GIT_READ_ONLY_SUBS: ReadonlySet<string> = new Set(["branch", "remote"]);
 
+/** The leading `-C <dir>` options of a git argv resolved against `cwd`, and the words after them. Null when an operand cannot be resolved. */
+function gitC(argv: string[], cwd: string, platform: string): { dir: string; argv: string[] } | null {
+  let dir = cwd;
+  let i = 0;
+  while (argv[i] === "-C") {
+    const r = resolveWord(platform, dir, argv[i + 1]);
+    if (!r) return null;
+    dir = r;
+    i += 2;
+  }
+  return { dir, argv: argv.slice(i) };
+}
+
+/** `cd <dir>` into the session's own checkout or a worktree it created: a read, so a following push in that worktree can be a default. */
+function cdIntoOwn(argv: string[], cwd: string, c: DefaultCtx): boolean {
+  if (c.roots.child || argv.length !== 1 || argv[0].startsWith("-") || !c.facts.isOwnWorktree) return false;
+  const abs = resolveWord(c.platform, cwd, argv[0]);
+  return abs !== null && c.facts.isOwnWorktree(abs);
+}
+
 /** `cwd` lies in a work folder (the session is not a child). */
 function inWorkFolder(c: DefaultCtx, cwd: string): boolean {
   return !c.roots.child && (c.roots.workFolders ?? []).some((f) => rootHolds(f.path, cwd, c.platform, c.roots.realpath, c.roots.worktree));
 }
 
+/** A git write in `dir` is no default: it lies in a work folder but not in the worktree or scratch. */
+function workFolderBarred(c: DefaultCtx, dir: string): boolean {
+  return inWorkFolder(c, dir) && ![c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, dir, c.platform, c.roots.realpath, c.roots.worktree));
+}
+
 function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec: EffectCtx, chain: Segment): string | null {
   const sub = argv[0];
   const rest = argv.slice(1);
+  if (sub === "-C") {
+    // `git -C <dir> push ...` only: the branch, protected and push-config facts are those of <dir>
+    const g = gitC(argv, cwd, c.platform);
+    if (!g || g.argv[0] !== "push" || workFolderBarred(c, g.dir)) return null;
+    // without the session's worktree list, only the session's checkout is known to be own
+    if (!(c.facts.isOwnWorktree ? c.facts.isOwnWorktree(g.dir) : rootHolds(c.roots.worktree, g.dir, c.platform, c.roots.realpath, c.roots.worktree))) return null;
+    return pushOk(g.argv.slice(1), text, g.dir, c) ? "default-git-push" : null;
+  }
   if (!sub || sub.startsWith("-")) return null; // global options (-C, -c, --git-dir ...) are never a default
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
   if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !rest.some((w) => /^--(?:output|exec|upload-pack)/.test(w)) ? "default-git-read" : null;
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
-  if (!GIT_READ_ONLY_SUBS.has(sub) && inWorkFolder(c, cwd) && ![c.roots.worktree, ...c.roots.scratch].some((d) => rootHolds(d, cwd, c.platform, c.roots.realpath, c.roots.worktree))) return null;
+  if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
   switch (sub) {
     case "branch":
       return rest.every((w) => BRANCH_LIST.has(w)) ? "default-git-read" : null;
@@ -340,6 +376,7 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   // r79 item 3: a segment of the dangerous class is never a built-in allow (the class is the question the classifier answers)
   if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts }) !== null) return null;
   for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform)) return null;
+  if (seg.program === "cd" && cdIntoOwn(seg.argv, cwd, c)) return "default-read";
   if (seg.program === "git") return gitDefault(seg.argv, text, cwd, c, ec, chain);
   if (seg.program === "gh" || seg.program === "glab") return ghDefault(seg.program, seg.argv, cwd, ec) ? "default-gh-read" : null;
   const e = segmentEffect(ec, cwd, chain);
@@ -602,6 +639,15 @@ function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
   return { sub: a[i], rest: a.slice(i + 1) };
 }
 
+/** The directory a git call works in: `cwd` moved by every `-C` among the global options; null when an operand cannot be resolved. */
+function gitDirOf(a: string[], cwd: string, platform: string): string | null {
+  let dir: string | null = cwd;
+  for (let i = 0; dir !== null && i < a.length && a[i].startsWith("-"); i += GIT_GLOBAL_VALUED.has(a[i]) ? 2 : 1) {
+    if (a[i] === "-C") dir = resolveWord(platform, dir, a[i + 1]);
+  }
+  return dir;
+}
+
 const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
 const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
@@ -611,6 +657,7 @@ const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", 
  * Anything else is `danger-git` (the push floors deny force and protected-branch pushes before this question).
  */
 function pushOwn(rest: string[], cwd: string, env: DangerEnv): boolean {
+  if (env.facts?.isOwnWorktree && !env.facts.isOwnWorktree(cwd)) return false;
   if (rest.some((w) => w.startsWith("--repo=") && URLISH.test(w.slice(7)))) return false;
   if (rest.some((w) => /^--(?:tags|mirror|all|branches|delete|prune|follow-tags)$/.test(w) || /^-[A-Za-z]*d[A-Za-z]*$/.test(w))) return false;
   const pos = positionals(rest, PUSH_VALUED);
@@ -643,8 +690,10 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
     case "branch":
       return flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete");
-    case "push":
-      return !pushOwn(rest, s.cwd ?? env.cwd, env);
+    case "push": {
+      const dir = gitDirOf(s.argv, s.cwd ?? env.cwd, env.platform);
+      return dir === null || !pushOwn(rest, dir, env);
+    }
     case "rebase":
     case "filter-branch":
     case "filter-repo":

@@ -146,7 +146,7 @@ A built-in table in `defaults.ts` (`DANGER_RULES`). A call that falls into one e
 | `danger-mcp-act` | An MCP tool whose name is not a read (`list_*`, `get_*`, `search_*`, `read_*`, `take_*`, `find_*`, `describe_*`; `navigate_page` to a plain URL) | `mcp__chrome__click` |
 | `danger-launch-outside` | A `subagent` launch with a `cwd` or worktree outside the owned roots, or a workflow script, `tasks` or `chain` form | `subagent` with `cwd: "/srv/other-repo"` |
 
-Everything else that no rule decides is safe under `auto`: reads of unfloored paths, GET fetches, `curl` and `wget` reads, build and test commands, in-worktree writes, routine git (including a push of the own branch to a named remote and merges), `gh pr create`, `pr_create` (the ceremony's PR gate and reviewer PASS still apply), intercom, `foreman_session_open`, harness tools. `codemode` is not special: each call its script makes passes the gate on its own.
+Everything else that no rule decides is safe under `auto`: reads of unfloored paths, GET fetches, `curl` and `wget` reads, build and test commands, in-worktree writes, routine git (including a push of the own branch to a named remote, from the session's checkout or a worktree it created, and merges), `gh pr create`, `pr_create` (the ceremony's PR gate and reviewer PASS still apply), intercom, `foreman_session_open`, harness tools. `codemode` is not special: each call its script makes passes the gate on its own.
 
 ## The classifier
 
@@ -174,7 +174,7 @@ A built-in allow is a named rule that allows without a model. A shell line is al
 | `default-git-read`, `default-git-add`, `default-git-commit` | read-only git; `add`; `commit` with a message (secrets-in-commit still runs; an amend of a branch with an upstream is dangerous) |
 | `default-git-fetch`, `default-git-pull` | `fetch`; `pull --ff-only` |
 | `default-git-switch` | `switch`/`checkout` of the own branch |
-| `default-git-push` | `git push [-u] origin <own branch>\|HEAD` with an empty environment prefix, and no force, delete, mirror, tag, `:` refspec, `-o`, `--repo`, `--receive-pack`, `--exec`, `-c`, or `remote.origin.push`. The own branches are the cwd branch and the branches checked out in the other worktrees of the same repository. Never for a child (floor) |
+| `default-git-push` | `git push [-u] origin <own branch>\|HEAD` with an empty environment prefix, and no force, delete, mirror, tag, `:` refspec, `-o`, `--repo`, `--receive-pack`, `--exec`, `-c`, or `remote.origin.push`. The own branch is the branch checked out in the worktree the push runs in: the cwd after a `cd`, or the `-C <path>` of `git -C <path> push ...` (its branch, protected-branch and push-config facts are those of that worktree). That worktree must be the session's own checkout or a worktree this session created (the session manifest); a linked worktree it did not create is not own, and a push from it is no default. A push from a second worktree of the session (`cd <wt> && git push -u origin <b>`, `git -C <wt> push origin <b>`) is routine even when `<wt>` lies outside the session's roots. A branch checked out in another worktree of the session stays own. Never for a child (floor) |
 | `default-gh-read` | read-only `gh`/`glab` (`run view\|list`, `pr view\|checks\|diff\|list\|status`, `issue view\|list`, `repo view`, `api` with no method, no GraphQL and no `-f/-F/--input`; `run download` only into scratch) |
 | `default-assign` | the closed allowlist of harmless assignments |
 | `builtin-web-read` | a plain download, see [Web reads](#web-reads) |

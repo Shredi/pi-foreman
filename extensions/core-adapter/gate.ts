@@ -278,6 +278,17 @@ function gitOut(cwd: string, args: string[]): string | null {
 const currentBranch = (cwd: string): string | null => gitOut(cwd, ["symbolic-ref", "--short", "-q", "HEAD"]) || null;
 const remoteHead = (cwd: string): string | null => gitOut(cwd, ["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"])?.replace(/^origin\//, "") || null;
 
+/** The linked worktrees of the repo (`git worktree list --porcelain` without its first block, the main checkout): path and checked-out branch (null when detached). */
+export function linkedWorktrees(cwd: string): { path: string; branch: string | null }[] {
+  const blocks = (gitOut(cwd, ["worktree", "list", "--porcelain"]) ?? "").split(/\n\s*\n/).slice(1);
+  return blocks.flatMap((b) => {
+    const p = /^worktree (.+)$/m.exec(b);
+    if (!p) return [];
+    const m = /^branch refs\/heads\/(.+)$/m.exec(b);
+    return [{ path: p[1], branch: m ? m[1] : null }];
+  });
+}
+
 /** The real git lookups for the push and switch defaults. `protectedBranches` joins the config list in index.ts. */
 export const gitFacts: GitFacts = {
   currentBranch,
@@ -290,12 +301,8 @@ export const gitFacts: GitFacts = {
     }
   },
   ownBranches: (cwd) => {
-    // `git worktree list --porcelain`: the first block is the main checkout, every later one a linked worktree (made by `git worktree add`)
-    const blocks = (gitOut(cwd, ["worktree", "list", "--porcelain"]) ?? "").split(/\n\s*\n/).slice(1);
-    return blocks.flatMap((b) => {
-      const m = /^branch refs\/heads\/(.+)$/m.exec(b);
-      return m ? [m[1]] : [];
-    });
+    // every linked worktree (made by `git worktree add`); index.ts narrows it to the session's own
+    return linkedWorktrees(cwd).flatMap((w) => (w.branch !== null ? [w.branch] : []));
   },
   hasUpstream: (cwd) => gitOut(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]) !== null,
 };
