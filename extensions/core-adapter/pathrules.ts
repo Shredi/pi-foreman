@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { longForm } from "./pathnorm.ts";
+import { readFieldOf, type ReadToolMap } from "./rules.ts";
 
 /** The roots of one session, resolved by index.ts at call time. All paths absolute. */
 export interface GateRoots {
@@ -26,6 +27,8 @@ export interface GateRoots {
   /** Handoff dirs of sessions this session opened (its id is in the dir's `parent` file): `ruling*.md` and `brief*.md` may be written there. */
   openedHandoffs?: string[];
   child: boolean;
+  /** `gate.readTools`: extension tools judged like read/grep on their path field. */
+  readTools?: ReadToolMap;
   /** A child only: the foreman's checkout (launch binding, FOREMAN_CHECKOUT) in its real spelling; a shell write into it is `child-write-foreman-checkout`. Absent for `tasks`/`chain` launches. */
   checkout?: string;
   role: string;
@@ -178,7 +181,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
 const GLOBBED = (w: unknown): boolean => typeof w === "string" && (px("posix").isAbsolute(w) || /^[A-Za-z]:|^[\\/]|^~/.test(w) || w.split(/[\\/]/).includes(".."));
 
 /** The path operations of a path tool call: [path word, direction]; null when the input names none this module understands. */
-export function opsOf(tool: string, inp: Record<string, unknown>): Array<[unknown, Dir]> | null {
+export function opsOf(tool: string, inp: Record<string, unknown>, readTools?: ReadToolMap): Array<[unknown, Dir]> | null {
   const p = inp.path ?? inp.file_path ?? inp.filePath;
   switch (tool) {
     case "read":
@@ -197,8 +200,10 @@ export function opsOf(tool: string, inp: Record<string, unknown>): Array<[unknow
       return [[inp.src, "write"], [inp.dst, "write"]];
     case "foreman_copy":
       return [[inp.src, "read"], [inp.dst, "write"]];
-    default:
-      return null;
+    default: {
+      const f = readFieldOf(readTools, tool);
+      return f === undefined ? null : [[(f === null ? undefined : inp[f]) ?? ".", "read"]];
+    }
   }
 }
 
@@ -207,7 +212,7 @@ export const PATH_TOOL_NAMES: ReadonlySet<string> = new Set(["read", "write", "e
 /** The default allow of a path tool call, or undefined (review decides). */
 export function pathDecide(tool: string, input: unknown, cwd: string, roots: GateRoots, platform: string = process.platform): PathVerdict {
   const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const ops = opsOf(tool, inp);
+  const ops = opsOf(tool, inp, roots.readTools);
   if (!ops) return undefined;
   let rule: string | undefined;
   for (const [w, dir] of ops) {
@@ -223,7 +228,7 @@ export function pathDecide(tool: string, input: unknown, cwd: string, roots: Gat
 
 /** True when every path operation of a path tool call lies in one and the same `auto` work folder, outside every protected place (the mode step's relaxation). */
 export function inOneAutoFolder(tool: string, input: unknown, cwd: string, roots: GateRoots, platform: string = process.platform): boolean {
-  const ops = opsOf(tool, (input && typeof input === "object" ? input : {}) as Record<string, unknown>);
+  const ops = opsOf(tool, (input && typeof input === "object" ? input : {}) as Record<string, unknown>, roots.readTools);
   if (!ops || ops.length === 0 || roots.child) return false;
   let folder: string | undefined;
   for (const [w] of ops) {

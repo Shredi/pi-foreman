@@ -33,6 +33,16 @@ export type ParseResult = { ok: true; rule: ParsedRule } | { ok: false; error: s
 
 export const BASH_TOOLS: ReadonlySet<string> = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
 export const READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
+/** `gate.readTools`: extension tool name -> its path field (null: no path field, the tool reads the cwd). */
+export type ReadToolMap = Readonly<Record<string, string | null>>;
+
+/** The path field of a configured read tool (null: none), or undefined when `tool` is not one; the built-in tools are never remapped. */
+export function readFieldOf(map: ReadToolMap | undefined, tool: string): string | null | undefined {
+  if (!map || !Object.hasOwn(map, tool) || READ_TOOLS.has(tool) || BASH_TOOLS.has(tool)) return undefined;
+  const f = map[tool];
+  return typeof f === "string" || f === null ? f : undefined;
+}
+
 const EDIT_TOOLS: ReadonlySet<string> = new Set(["edit", "write", "foreman_move", "foreman_copy"]);
 const WRITE_TOOLS: ReadonlySet<string> = new Set(["write", "foreman_move", "foreman_copy"]);
 /** Lower-case spellings of tools that have a family name: a rule using them would silently match the JSON payload, so they are refused. */
@@ -104,6 +114,8 @@ export interface RuleEnv {
   platform: string;
   /** The main checkout: the base of relative path patterns (a worktree's own files are not what the owner means). */
   checkout: string;
+  /** `gate.readTools`: a `Read(...)` rule also covers these tools. */
+  readTools?: ReadToolMap;
 }
 
 /** The absolute comparable glob of a path pattern (before the regex). */
@@ -151,6 +163,8 @@ export interface CallCtx {
   platform: string;
   /** The parsed segments of a shell tool's line. */
   segments?: ShellSegment[];
+  /** `gate.readTools`: extension tools judged like read/grep. */
+  readTools?: ReadToolMap;
 }
 
 const strOf = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
@@ -177,6 +191,11 @@ export function ruleCallOf(tool: string, input: unknown, ctx: CallCtx): RuleCall
   };
   if (READ_TOOLS.has(tool)) {
     const p = resolve(inp.path ?? inp.file_path ?? inp.filePath ?? (tool === "read" ? undefined : "."));
+    return { tool, paths: p ? [p] : [] };
+  }
+  const rf = readFieldOf(ctx.readTools, tool);
+  if (rf !== undefined) {
+    const p = resolve((rf === null ? undefined : inp[rf]) ?? ".");
     return { tool, paths: p ? [p] : [] };
   }
   if (EDIT_TOOLS.has(tool)) {
@@ -216,12 +235,12 @@ function unitsOf(call: RuleCall, env: RuleEnv): Unit[] {
 }
 
 /** Whether the rule's tool covers the call's tool. */
-function toolCovers(rule: ParsedRule, tool: string): boolean {
+function toolCovers(rule: ParsedRule, tool: string, readTools?: ReadToolMap): boolean {
   switch (rule.family) {
     case "bash":
       return BASH_TOOLS.has(tool);
     case "read":
-      return READ_TOOLS.has(tool);
+      return READ_TOOLS.has(tool) || readFieldOf(readTools, tool) !== undefined;
     case "edit":
       return EDIT_TOOLS.has(tool);
     case "write":
@@ -234,7 +253,7 @@ function toolCovers(rule: ParsedRule, tool: string): boolean {
 }
 
 function ruleMatchesUnit(rule: ParsedRule, call: RuleCall, u: Unit, env: RuleEnv, allowing: boolean): boolean {
-  if (!toolCovers(rule, call.tool)) return false;
+  if (!toolCovers(rule, call.tool, env.readTools)) return false;
   if (u.kind === "segment" && allowing && u.writesRedirect && !(rule.pattern ?? "").includes(">")) return false;
   if (rule.pattern === null) return true;
   switch (u.kind) {
@@ -255,7 +274,7 @@ export function matchRules(sets: RuleSets, call: RuleCall, env: RuleEnv, builtin
   const units = unitsOf(call, env);
   for (const kind of ["deny", "ask"] as const) {
     for (const r of sets[kind]) {
-      if (units.length === 0 ? toolCovers(r, call.tool) && r.pattern === null : units.some((u) => ruleMatchesUnit(r, call, u, env, false))) return { verdict: kind, rule: r.text };
+      if (units.length === 0 ? toolCovers(r, call.tool, env.readTools) && r.pattern === null : units.some((u) => ruleMatchesUnit(r, call, u, env, false))) return { verdict: kind, rule: r.text };
     }
   }
   if (units.length === 0) return { verdict: "none" };

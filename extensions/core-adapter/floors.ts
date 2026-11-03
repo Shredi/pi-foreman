@@ -832,8 +832,10 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
 }
 
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
-export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string): FloorHit | null {
-  for (const k of ["path", "file_path", "filePath", "src", "dst", "glob", "pattern"]) {
+export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string, readField?: string | null): FloorHit | null {
+  // a configured read tool (gate.readTools): its path field and `glob` only; `pattern`/`patterns` are search patterns
+  const keys = readField !== undefined ? (readField === null ? ["glob"] : [readField, "glob"]) : ["path", "file_path", "filePath", "src", "dst", "glob", "pattern"];
+  for (const k of keys) {
     const v = input[k];
     if (typeof v === "string" && v) {
       const h = secretPath(v, env);
