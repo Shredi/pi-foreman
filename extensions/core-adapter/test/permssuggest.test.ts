@@ -350,11 +350,13 @@ test("bin wrappers run permssuggest-cli.ts for 'perms' (sh, cmd, PowerShell)", (
   assert.equal(run("sh", [sh, "perms"]).status, 2);
   if (process.platform === "win32") {
     const cmd = run("cmd.exe", ["/c", path.join(pkgRoot, "bin", "foreman.cmd"), "perms", "review"]);
-    assert.match(cmd.stdout, /no adopted entries/);
+    assert.equal(cmd.status, 0, `status ${cmd.status} signal ${cmd.signal} error ${cmd.error?.message} stderr ${cmd.stderr}`);
+    assert.match(cmd.stdout, /no adopted entries/, `stderr ${cmd.stderr}`);
   }
   const pwsh = spawnSync("pwsh", ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"], { encoding: "utf8" });
   if (pwsh.status === 0) {
     const ps = run("pwsh", ["-NoProfile", "-File", path.join(pkgRoot, "bin", "foreman.ps1"), "perms", "review"]);
-    assert.match(ps.stdout, /no adopted entries/);
+    assert.equal(ps.status, 0, `status ${ps.status} signal ${ps.signal} error ${ps.error?.message} stderr ${ps.stderr}`);
+    assert.match(ps.stdout, /no adopted entries/, `stderr ${ps.stderr}`);
   }
 });

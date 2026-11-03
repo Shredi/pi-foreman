@@ -1,6 +1,6 @@
 # pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|perms|features|knowledge [args]` for PowerShell.
 $sub = if ($args.Count -gt 0) { [string]$args[0] } else { '' }
-$rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+$rest = @(if ($args.Count -gt 1) { $args[1..($args.Count - 1)] })
 if ($sub -eq 'setup') {
     & node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" 2>$null
     if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine('foreman setup needs Node >= 22.19'); exit 1 }
