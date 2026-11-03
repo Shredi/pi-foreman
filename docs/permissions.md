@@ -242,6 +242,7 @@ Floors deny with a reason and no model call, for every session kind and every mo
 - a download piped into a shell; package publish (`publish`, `twine upload`, `docker push`, `gh release create|upload|edit|delete`, ...);
 - **`terminal-inject`**: typing into another terminal pane (`herdr pane send-keys|send-text`, `tmux send-keys`, `osascript` keystrokes) is denied when any line of the payload starts with `/` (a slash command), the payload is 2 characters or fewer (a dialog answer) or a token is a key name (`Enter`, `Escape`, `Tab`, `Space`, arrows, `C-x`, `M-x`, `F1`, ...). Such input would drive the dialogs and commands of another session, which only its owner may do. Ordinary text longer than that is `danger-inject`;
 - **`perms-profile`**: a shell line that sets or exports `PI_FOREMAN_PERMS_PROFILE`, or passes `--profile` to `foreman session open` or `foreman_session.py`. The profile is the owner's choice, made in the owner's own terminal;
+- **`perms-adopt`**: a shell line that runs `foreman perms adopt` (any `foreman` spelling) or `permssuggest-cli.ts adopt`. Adoption writes your user permissions file and is your command in your own terminal or pane; an agent runs `foreman perms suggest` and hands you the report;
 - the existing guards, unchanged: the git guard, the shell-write guard, the destructive guard, secrets-in-commit, `protect.deny`, `childDeny`, own-ruling writes and foreign session dirs.
 
 **Opaque-text matches ask instead of denying.** On a line the parser could not state exactly, a text match for a child push, a git config key, a remote change, a force or protected-branch push or a permissions file asks the owner (never the classifier, never run under mode `allow`). The same words on a parsed segment are a deny. The `rawFloors` list (download piped into a shell, privilege, shutdown, disk, `GIT_CONFIG_*`, `--config-env`), publish and `rm` of system dirs stay denies on the raw text.
@@ -258,6 +259,7 @@ A command of up to 60 lines is shown whole. A longer one shows its first 40 and 
 |---|---|
 | allow once | the call runs; nothing is stored |
 | allow and remember | the call runs and the owner may store a sentence (and a pattern rule); offered for dangerous-class escalations only |
+| allow and remember this exact command | the call runs and one exact rule per segment, `Bash(<program> <args>)` without a wildcard, goes into the project file's `allow`; no sentence is written. Offered next to *allow and remember* only when every segment is readable (no opaque segment), no segment redirects output and no word carries a glob character (`*`, `?`, parentheses) |
 | deny with comment | the call is denied with `pi-foreman: denied by the user: <your text>`, which the agent reads |
 | deny and stop | the call is denied and the agent is told to stop and ask what to do next |
 
@@ -269,6 +271,8 @@ A dismissed dialog is a deny. A repeated identical deny is handled as before (`r
 2. A select shows the proposed sentence, written from the call (`Run "kubectl" "apply" against the host ... in the namespace "staging"`; variable parts quoted and capped at 80 characters): `use this sentence`, `edit the sentence` (opens an editor prefilled; up to 300 characters) or `cancel` (denies).
 3. Only when a complete pattern rule can be derived (every segment readable, no exec flag), a second select asks `also add pattern rule Bash(kubectl apply *)?` yes or no.
 4. The write goes to the **project file** (`classifier.allow`, and `allow` for the rule), preserving the file's other keys and order. The permission files are reloaded, the classifier cache is cleared, the call runs.
+
+**Allow and remember this exact command.** The rule is the normalised text of each segment (single spaces, quotes stripped), so `git commit -m "a b"` is stored as `Bash(git commit -m a b)`. The same project-file trust check as above applies; if it fails the call runs once. A per-segment rule matches that segment wherever it stands: also inside other lines (`git fetch origin && make deploy` is covered for its `git fetch origin` segment) and from other directories. It does not make a line allowed unless every segment of that line is covered.
 
 Self-modification, ask-rule and floor-ask dialogs, and mode-`ask` dialogs for calls outside the dangerous class, offer no remember option.
 
@@ -322,6 +326,13 @@ All in the owner pane of the session:
 - `/foreman perms mode` shows the mode and where it came from. `/foreman perms mode auto|ask|allow|deny` sets the session override until the session ends or you set it again (a child cannot change it).
 - `/foreman perms reload` re-reads the files and clears the classifier cache; it prints notices about bad entries.
 - `/foreman perms list` shows the mode, every merged pattern rule with its file, every sentence with its number (`A1..`, `D1..`) and file, and the additional directories.
+- **The rule workshop** turns what the decision log shows you answering again and again into rules. `foreman perms ...` runs in a terminal (bash, cmd and PowerShell entry points; Node >= 22.6); the same three work as `/foreman perms suggest|review|adopt`.
+  - `foreman perms suggest [--since <days>] [--min <n>] [--json]` (default: the last 7 days, groups with at least 3 hits in at least 2 sessions) reads `state/gate/log.jsonl` and `log.1.jsonl`. It takes the decisions that cost something (classifier calls, cache hits, dialogs, child asks, and `danger-*` calls that ran only because the mode is `allow`) and groups them by program and subcommand (segments with an exec flag, a flag in first position or an opaque form group by program, subcommand and option words). Each group gets a candidate `Bash(<program> <subcommand> *)` rule built by the same code as the dialog's pattern rule, or, where no rule is safe, a classifier sentence. Each candidate carries a safety note: exec-flag exposure, how many distinct logged segments the rule covers, and whether it also covers lines you or a parent denied.
+  - **Replay.** Every candidate rule is matched against every logged shell shape of the period. The report shows *would-allow* counts and `conflicts: n` for denied shapes the rule would allow, and marks those candidates `review`. The log keeps redacted shapes, so the counts are approximate: **would-allow is a lower bound** (an opaque, truncated or multi-segment shape never matches a single-segment rule).
+  - The report is a markdown file `.workflow/scratch/perms-suggest-<date>.md` in the current directory plus a table on stdout. Nothing is written to a permissions file.
+  - `foreman perms adopt <report> <n>...` appends the chosen candidates to the **user** file (`allow`, or `classifier.allow` for a sentence; `3:s` picks candidate 3's sentence). The report is a file an agent can write, so adopt re-validates every chosen entry (rule grammar, the `Bash(<program> [<subcommand>] *)` shape, no exec flag or glob, sentence length and control characters), prints the exact text and asks for a `y` on the terminal. It refuses when stdin or stdout is not a TTY, and a floor keeps agents from running it. The write is atomic and keeps the file's other keys and their order. The slash form asks one select per candidate: rule, sentence or skip.
+  - Each adopted entry is recorded in `<agentDir>/pi-foreman/permissions.meta.json` (`{added, source: "suggest", shapes}`), so `permissions.json` keeps its grammar. `foreman perms review` lists them with their age and the log hits since adoption (`rule` lines naming the pattern) and flags a rule older than 60 days with no hit; it writes nothing.
+  - `/retro` adds one line when 10 or more decisions cost a dialog or a classifier call in the last 7 days. The thresholds (60 days, 10 decisions) are constants, not config keys.
 - `/foreman doctor` prints the classifier model, the mode and counts, the decision-log path, and warns about an invalid user file, a tracked or unignored project file, and leftover keys of the older gates.
 
 ## Decision log
@@ -402,7 +413,7 @@ The gate that asked a review model to judge every undecided call against policy 
 | `gate.policy.userFile` | removed |
 | `safety.policy.files[]` | removed |
 | the review model judged every undecided call | undecided calls run under `auto`; the classifier sees only the dangerous class and only clears what a sentence of yours covers |
-| `foreman perms candidates`, `export-eval`, `/foreman perms adopt`, the live eval | gone; the remember step in the dialog grows the whitelist |
+| `foreman perms candidates`, `export-eval`, the live eval | gone; the remember step in the dialog and the rule workshop (`foreman perms suggest|adopt|review`, see Commands) grow the whitelist |
 | `ask.md` from a session opened by another session to its parent for a gate ask | gone; such a session asks in its own pane. The handoff files `plan.md`, `ruling.md`, `result.md` and `brief-<n>.md` stay |
 | `gate.mode: "floors-only"` | retired; maps to mode `allow` with a notice. Set `"mode": "allow"` in `permissions.json` |
 | `gate.askTimeoutMs` | now only bounds how long a child waits for its parent |

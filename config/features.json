@@ -756,6 +756,18 @@
       "enable": ""
     },
     {
+      "id": "rule-workshop",
+      "area": "safety",
+      "title": "Permission rule workshop",
+      "purpose": "`foreman perms suggest` groups the decisions that cost a dialog or a classifier call in the gate log into candidate generic rules and sentences, with a safety note each and a replay against the logged history (a lower bound, since the log keeps redacted shapes). `foreman perms adopt` re-validates chosen candidates and writes them to your user file at your terminal; `foreman perms review` flags adopted rules that never fire. The owner dialog also offers to remember the exact command.",
+      "doc": "docs/permissions.md#commands",
+      "keys": [],
+      "commands": ["foreman perms"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "knowledge",
       "area": "install",
       "title": "Knowledge sources",
