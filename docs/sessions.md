@@ -502,6 +502,12 @@ a remote machine can send to `<uuid>@<parentName>` over hc; the remote needs `hc
 ([safety](safety.md#known-limit-remote-machine-trust-boundary)). The package pins a fork of `pi-intercom` for this
 (see [install](install.md)).
 
+An inbound intercom message starts a turn in every session, subagent children included, under the session's normal guards
+(none of the gates is relaxed for it). pi-foreman detects the message itself (custom message type `intercom_message`), so it works with
+both delivery paths of `pi-intercom` 0.18.1: on Pi 1.2.0 and newer an idle session is started by the message (no wake line), on
+Pi before 1.2.0 `pi-intercom` wakes it with the legacy line `New intercom message above.`. An accepted `foreman:close` to an idle
+session makes that started turn the close turn (no extra turn); to a busy session the close turn follows the run.
+
 ## Herdr
 
 Herdr's Pi integration (`herdr integration install pi`, installed by you, never by the installer) shows a session

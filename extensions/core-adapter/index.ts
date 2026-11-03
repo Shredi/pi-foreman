@@ -190,7 +190,7 @@ import { liftSizing, misplacedHint, subagentDescription, planSizing, prependProb
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
-import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
+import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -1611,6 +1611,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) {
       // Idle downshift: a custom message has not passed message_end yet, so its cause is read here; a user message carries the input handler's.
       idleBind = { s, ctx };
+      // Pi 1.2+: an inbound intercom message starts an idle run through triggerTurn (no input event, and agent_start
+      // fires before the message_end), so the cause and the sender for the turn notice are set here.
+      const inbound = intercomInbound({ hook: "before_agent_start", messageType: (event as { messageType?: unknown }).messageType, message: (event as { message?: unknown }).message });
+      if (inbound) (s.turn.cause = "intercom"), (s.turn.intercomFrom = intercomSender(inbound.details));
       const customType = (event as { message?: { customType?: unknown } }).message?.customType;
       await idleModel.beforeTurn((event as { messageType?: string }).messageType === "custom" ? causeOfCustom(customType) : s.turn.cause);
     }
@@ -3200,7 +3204,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (s && !s.isChild) s.turn.cause = isSubagentWake(event.source, event.text) ? idleCause ?? "child" : causeOfInput(event.source, event.text);
-    if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
+    // Legacy Pi < 1.2.0: the wake line; the message is the newest intercom entry of the branch.
+    const wake = s && !s.isChild ? intercomInbound({ hook: "input", source: event.source, text: event.text, branch: ctx.sessionManager.getBranch?.() ?? [] }) : null;
+    if (s && wake) s.turn.intercomFrom = intercomSender(wake.details);
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && isOwnerPrompt(event.source, event.text)) {
       s.chains.clear();

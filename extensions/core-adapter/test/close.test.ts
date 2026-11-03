@@ -214,7 +214,7 @@ test("close: the start deadline is cleared at the close run's agent_start, so a 
   assert.equal(r.log.at(-1), "shutdown");
 });
 
-test("close: a child session swallows pi-intercom's wake prompt (no child turn from intercom, review S6)", async () => {
+test("close: a child session takes pi-intercom's wake prompt like any session (no swallow)", async () => {
   const handlers = new Map<string, (e: unknown, c: unknown) => Promise<unknown>>();
   const pi = { on: (n: string, h: (e: unknown, c: unknown) => Promise<unknown>) => void handlers.set(n, h) };
   registerClose(pi as never, { platform: process.platform, activeWaits: () => [], activeRuns: () => 0, session: async () => { throw new Error("not reached"); } });
@@ -222,7 +222,7 @@ test("close: a child session swallows pi-intercom's wake prompt (no child turn f
   const before = process.env.PI_SUBAGENT_CHILD;
   process.env.PI_SUBAGENT_CHILD = "1";
   try {
-    assert.deepEqual(await handlers.get("input")!({ text: INTERCOM_WAKE_TEXT, source: "extension" }, ctx), { action: "handled" });
+    assert.deepEqual(await handlers.get("input")!({ text: INTERCOM_WAKE_TEXT, source: "extension" }, ctx), { action: "continue" });
     assert.deepEqual(await handlers.get("input")!({ text: INTERCOM_WAKE_TEXT, source: "interactive" }, ctx), { action: "continue" });
   } finally {
     if (before === undefined) delete process.env.PI_SUBAGENT_CHILD;

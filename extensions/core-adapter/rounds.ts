@@ -253,8 +253,9 @@ export function securityOf(reportRun: string | null, notice: string, noticeIds: 
 
 /**
  * True when a prompt is the owner's (revision chains start again): interactive and rpc always; an extension prompt unless it
- * is a harness text (the foreman's own `pi-foreman ...` steer and retro prompts, the subagent and intercom wakes, a
- * pi-subagents `Background task ...` notice).
+ * is a harness text (the foreman's own `pi-foreman ...` steer and retro prompts, the subagent wake, the legacy intercom
+ * wake line of Pi < 1.2.0, a pi-subagents `Background task ...` notice). Pi 1.2+ starts an inbound intercom run without
+ * an `input` event, so it never reaches this check.
  */
 export function isOwnerPrompt(source: unknown, text: unknown): boolean {
   if (source === "interactive" || source === "rpc") return true;

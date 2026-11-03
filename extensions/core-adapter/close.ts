@@ -8,9 +8,13 @@
 // PI_FOREMAN_PARENT_INTERCOM, the parent recorded at spawn). A refused request is traced and
 // otherwise stays plain data. An accepted intercom close replies `foreman:closed <result path>`
 // to the sender before the shutdown.
-// An idle foreman gets the message without an extension `message_end` (pi-intercom appends it,
-// then wakes the session with INTERCOM_WAKE_TEXT): the `input` hook reads the newest intercom
-// entry from the branch then (review S1). Children swallow that wake (review S6).
+// The extension `message_end` of the inbound intercom message is the trigger on every Pi: a busy
+// session steers it in, and on Pi 1.2+ pi-intercom (0.18.1) starts an idle session with triggerTurn
+// (no wake line, no `input` event; the close waits for that run to settle). Only on Pi before 1.2.0 an
+// idle foreman gets the message without `message_end`, then pi-intercom's wake line
+// (INTERCOM_WAKE_TEXT): the `input` hook reads the newest intercom entry from the branch then
+// (review S1) and replaces the wake turn with the close turn. Every session takes the message
+// under its normal guards; there is no extra rule for children.
 //
 // Sequence: refuse while a child run is active (never cancelled); the session's own pending foreman_waits are
 // cancelled (trace `waits_cancelled`; a session that closes has nothing left to wake for), and only a wait that
@@ -25,7 +29,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { get } from "./config.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
-import { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE, lastIntercomDetails } from "./intercomguard.ts";
+import { intercomInbound } from "./intercomguard.ts";
 import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const CLOSE_TEXT = "foreman:close";
@@ -56,7 +60,7 @@ export function parentIntercomId(env: Record<string, string | undefined>): strin
   }
   return env[PARENT_INTERCOM_ENV] || undefined;
 }
-/** pi-intercom 0.17.0 extension-api.ts: the outbox result event. */
+/** pi-intercom extension-api.ts: the outbox result event. */
 export const INTERCOM_OUTBOX_RESULT_EVENT = "intercom:outbox-result";
 /** How long an outbox send (the closed ack) waits for its result before going ahead. */
 export const OUTBOX_WAIT_MS = 5_000;
@@ -64,8 +68,10 @@ export const OUTBOX_WAIT_MS = 5_000;
 const SEND_WAIT_MS = 15_000;
 export { INTERCOM_MESSAGE_TYPE as INTERCOM_INBOUND_TYPE } from "./intercomguard.ts";
 export { INTERCOM_WAKE_TEXT } from "./usage.ts";
-/** pi-intercom 0.17.0 extension-api.ts: outbox request event (reply to the sender). */
+/** pi-intercom extension-api.ts: outbox request event (reply to the sender). */
 export const INTERCOM_OUTBOX_EVENT = "intercom:outbox-request";
+/** customType of the close prompt a triggerTurn intercom run carries (before_agent_start). */
+export const CLOSE_MESSAGE_TYPE = "foreman_close";
 export const CLOSE_SOURCES = ["herdr", "intercom-parent", "remote-parent"] as const;
 export type CloseSource = (typeof CLOSE_SOURCES)[number];
 
@@ -311,8 +317,11 @@ export class CloseFlow {
     return true;
   }
 
-  /** Start a close (validated source and path). */
-  request(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake = false): void {
+  /**
+   * Start a close (validated source and path). `inRun`: the run that carries the request is already starting
+   * (before_agent_start of a triggerTurn run), so it is the close turn and no close prompt is sent.
+   */
+  request(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake = false, inRun = false): void {
     if (this.phase) return this.refuse("a close is already in progress", req.source, req.replyTo);
     if (this.waitsBlock(req.source, req.replyTo)) return;
     this.req = req;
@@ -322,19 +331,29 @@ export class CloseFlow {
     const open = this.d.ceremonyNote?.() ?? "";
     if (open) this.d.notify(`pi-foreman: ceremony incomplete. ${open}`, "warning");
     this.d.pushNotice?.();
-    if (ctx.isIdle()) this.closeTurn();
+    if (inRun || ctx.isIdle()) this.closeTurn(inRun);
     else this.phase = "idle-wait";
   }
 
-  private closeTurn(): void {
+  private closeTurn(inRun = false): void {
     if (!this.req) return;
     if (this.waitsBlock(this.req.source, this.req.replyTo)) return this.reset();
     this.phase = "result-turn";
-    this.promptPending = true;
+    this.promptPending = !inRun;
     this.d.trace({ event: "close", cause: this.req.source, decision: "turn" });
     const timer = this.d.setTimer ?? ((fn, ms) => { const h = setTimeout(fn, ms); h.unref?.(); return () => clearTimeout(h); });
     this.clearDeadline = timer(() => this.expire(), CLOSE_START_DEADLINE_MS);
+    if (inRun) {
+      this.promptSeen = true;
+      this.d.markCause();
+      return;
+    }
     this.d.sendUserMessage(this.prompt());
+  }
+
+  /** The close prompt of the accepted request. */
+  closeText(): string {
+    return this.prompt();
   }
 
   private prompt(): string {
@@ -351,6 +370,7 @@ export class CloseFlow {
 
   /** `agent_start` after the close prompt passed `input`: the close run began, the start deadline is met (N3). */
   onAgentStart(): void {
+    this.wakePending = false; // a run began: no legacy wake line is still to come
     if (this.phase !== "result-turn" || !this.promptSeen) return;
     this.clearDeadline?.();
     this.clearDeadline = null;
@@ -587,7 +607,7 @@ export function registerClose(
     flows.delete(sid(ctx));
   });
   /** An inbound intercom message's details: start a close (true), refuse, or ignore (false). */
-  const fromIntercom = (s: CloseSession, ctx: ExtensionContext, details: unknown, viaWake: boolean): boolean => {
+  const fromIntercom = (s: CloseSession, ctx: ExtensionContext, details: unknown, viaWake: boolean, inRun = false): boolean => {
     const from = closeFrom(s.config());
     const handoff = process.env[HANDOFF_DIR_ENV];
     const remote = process.env[REMOTE_PARENT_ENV] === "1" && !!handoff;
@@ -603,28 +623,48 @@ export function registerClose(
     if (r.kind === "refused") return void flow.refuse(r.reason, source, replyTo), false;
     const file = resultPath(r.path, { cwd: s.cwd, sessionId: s.id, now: new Date(), platform: deps.platform });
     if ("error" in file) return void flow.refuse(file.error, source, replyTo), false;
-    flow.request({ source, file: file.path, shown: file.shown, replyTo }, ctx, viaWake);
+    flow.request({ source, file: file.path, shown: file.shown, replyTo }, ctx, viaWake, inRun);
     return true;
   };
-  // Busy session: pi-intercom steers the message in and the extension message_end fires.
+  // The single trigger on every Pi: a busy session steers the message in, Pi 1.2+ also runs an idle
+  // session through triggerTurn; either way the extension message_end fires. No wake line follows, so
+  // wakePending stays false.
   pi.on("message_end", async (event, ctx) => {
-    const m = event.message as { role?: string; customType?: string; details?: unknown; stopReason?: unknown };
+    const m = event.message as { role?: string; stopReason?: unknown };
     if (m.role === "assistant") return void flows.get(sid(ctx))?.flow.onModelReply(m.stopReason);
-    if (m.role !== "custom" || m.customType !== INTERCOM_INBOUND_TYPE || process.env.PI_SUBAGENT_CHILD === "1") return;
+    const hit = intercomInbound({ hook: "message_end", message: event.message });
+    if (!hit || process.env.PI_SUBAGENT_CHILD === "1" || inRunSeen.has(hit.id)) return;
     const s = await deps.session(ctx);
     if (s.isChild) return;
-    fromIntercom(s, ctx, m.details, true);
+    fromIntercom(s, ctx, hit.details, false);
+  });
+  // Pi 1.2+ idle session: the intercom message starts a triggerTurn run. A foreman:close that passes the
+  // checks makes that run the close turn: its prompt rides along as a custom message (the result can only
+  // add a message, not replace the starting one), so the message costs no extra model turn. A refusal
+  // lets the run go on with the original message. The message_end of this message is skipped (inRunSeen).
+  const inRunSeen = new Set<string>();
+  pi.on("before_agent_start", async (event, ctx) => {
+    const e = event as { messageType?: unknown; message?: unknown };
+    const hit = intercomInbound({ hook: "before_agent_start", messageType: e.messageType, message: e.message });
+    if (!hit || process.env.PI_SUBAGENT_CHILD === "1") return undefined;
+    const s = await deps.session(ctx);
+    if (s.isChild || flows.get(s.id)?.flow.active) return undefined;
+    if (hit.id) {
+      inRunSeen.add(hit.id);
+      if (inRunSeen.size > 64) inRunSeen.delete(inRunSeen.values().next().value!);
+    }
+    fromIntercom(s, ctx, hit.details, false, true);
+    const flow = flows.get(s.id)?.flow;
+    return flow?.active ? { message: { customType: CLOSE_MESSAGE_TYPE, content: flow.closeText(), display: true } } : undefined;
   });
   pi.on("input", async (event, ctx) => {
     const wake = event.source === "extension" && event.text === INTERCOM_WAKE_TEXT;
-    // Review S6: children take no turns from inbound intercom (pi-intercom's idle wake prompt).
-    if (wake && process.env.PI_SUBAGENT_CHILD === "1") return { action: "handled" as const };
     const slot = flows.get(sid(ctx));
     if (slot?.flow.active && slot.flow.onInput(event.text, event.source)) return { action: "handled" as const };
-    // Review S1: an idle session got the message without an extension message_end; read the
-    // newest intercom entry since the last user message. The close turn replaces the wake turn.
+    // Legacy Pi < 1.2.0 (review S1): an idle session got the message without an extension message_end;
+    // read the newest intercom entry since the last user message. The close turn replaces the wake turn.
     if (wake && !slot?.flow.active) {
-      const hit = lastIntercomDetails(ctx.sessionManager.getBranch());
+      const hit = intercomInbound({ hook: "input", source: event.source, text: event.text, branch: ctx.sessionManager.getBranch() });
       const s = hit ? await deps.session(ctx) : null;
       if (s && !s.isChild && fromIntercom(s, ctx, hit!.details, false)) return { action: "handled" as const };
     }

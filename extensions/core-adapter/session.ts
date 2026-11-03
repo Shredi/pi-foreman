@@ -26,12 +26,11 @@ import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
 import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
-import { INTERCOM_MESSAGE_TYPE, intercomConfigPath, lastIntercomDetails } from "./intercomguard.ts";
+import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
 import { sessionRankRefusal } from "./ranks.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
-import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const SESSION_USAGE =
   "Usage: /foreman session open <label> <brief-file> [--cwd DIR] [--model ID] [--plan-first] [--plan-mode] [--first-command /CMD]… [--focus] [--dry-run] [--worktree [--base REF]] [--machine NAME [--trust]] | /foreman session brief <target> <file|text…> | /foreman session close <target> [result-path] | /foreman session list";
@@ -94,7 +93,7 @@ export function parseSessionArgs(args: string): SessionCommand {
 }
 
 /**
- * The opener's intercom id: PI_INTERCOM_SESSION_ID first (pi-intercom 0.17.0 publishes its resolved id
+ * The opener's intercom id: PI_INTERCOM_SESSION_ID first (pi-intercom publishes its resolved id
  * there, index.ts ~1030, which also covers ids claimed via intercom:session-identity), else its own
  * rule (index.ts:556): PI_INTERCOM_STABLE_ID, else `stableId` in <agent dir>/intercom/config.json,
  * else the Pi session id.
@@ -581,16 +580,15 @@ export function registerSession(
     deps.onChildNotice?.(s.id, entry.label, msg.kind, msg.path);
   };
   pi.on("message_end", async (event, ctx) => {
-    const m = event.message as { role?: string; customType?: string; details?: unknown };
-    if (m.role !== "custom" || m.customType !== INTERCOM_MESSAGE_TYPE || process.env.PI_SUBAGENT_CHILD === "1") return;
-    await onInbound(ctx, m.details);
+    const hit = intercomInbound({ hook: "message_end", message: event.message });
+    if (!hit || process.env.PI_SUBAGENT_CHILD === "1") return;
+    await onInbound(ctx, hit.details);
   });
-  // An idle session gets the message without an extension message_end (see close.ts); display only.
+  // Legacy Pi < 1.2.0: an idle session gets the message without an extension message_end, then the
+  // wake line (see close.ts); display only. Pi 1.2+ delivers every message through message_end.
   pi.on("input", async (event, ctx) => {
-    if (event.source === "extension" && event.text === INTERCOM_WAKE_TEXT && process.env.PI_SUBAGENT_CHILD !== "1") {
-      const hit = lastIntercomDetails(ctx.sessionManager.getBranch());
-      if (hit) await onInbound(ctx, hit.details);
-    }
+    const hit = process.env.PI_SUBAGENT_CHILD === "1" ? null : intercomInbound({ hook: "input", source: event.source, text: event.text, branch: ctx.sessionManager.getBranch?.() ?? [] });
+    if (hit) await onInbound(ctx, hit.details);
     return { action: "continue" as const };
   });
 
