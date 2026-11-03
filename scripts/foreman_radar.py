@@ -478,12 +478,20 @@ def reg_glyph(status, opened, now, has_result=False):
     return "idle", status if status in ("closing", "closed") else "idle"
 
 
+REMOTE_LIVE = {"blocked": ("blocked", "blocked"), "working": ("working", "working"), "idle": ("idle", "idle"),
+               "done": ("idle", "idle"), "lost": ("idle", "finished")}  # state "done" would hide the row in the mod
+
+
 def remote_glyph(e, opened, now):
-    """(glyph, state) of a registry entry on a remote machine: an open ask first, else the registry status (no live data
-    reaches this machine until the hc label return path lands)."""
+    """(glyph, state) of a registry entry on a remote machine: an open ask first, then the hc terminal state the parent's
+    watcher stored in `remoteLive` (no freshness window: the watcher writes it on change), else the registry status."""
     status = e.get("status")
     if status in ("open", "pending") and isinstance(e.get("ask"), dict):
         return "blocked", "ask"
+    live = e.get("remoteLive")
+    word = live.get("state") if isinstance(live, dict) else None
+    if status in ("open", "pending", "closing") and word in REMOTE_LIVE:
+        return REMOTE_LIVE[word]
     return reg_glyph(status, opened, now)
 
 
@@ -623,6 +631,9 @@ def build(data, now):
                 n["machine"] = e["machine"]
                 n["name"] += "@" + e["machine"]
                 n["glyph"], n["state"] = remote_glyph(e, opened, now)
+                ask = e.get("ask")
+                if n["state"] == "ask" and isinstance(ask.get("seq"), int):
+                    n["asks"] = [{"n": ask["seq"], "topic": "remote"}]
             else:
                 n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
             n["last"] = n["last"] or opened
