@@ -128,7 +128,7 @@ export interface CacheSource {
 }
 
 /** The bar of a source, or null when it is hidden (no entry, unknown TTL, per-request billing, switched off). */
-function cacheViewOf(src: CacheSource | null): CacheBarView | null {
+export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const p = src?.policy;
   if (!src || !src.enabled || !p || p.billing === "request" || p.ttlSeconds === null) return null;
   if (p.skip === "no_entry" || p.skip === "ttl_unknown" || p.skip === "billing_request") return null;
@@ -140,6 +140,7 @@ function cacheViewOf(src: CacheSource | null): CacheBarView | null {
     left: bar.leftMs === null ? null : formatLeft(bar.leftMs),
     cold: !src.running && (bar.leftMs === null || bar.leftMs <= 0),
     warms: bar.warmsLeft > 0 ? { count: bar.warmsLeft, limiter: bar.limiter === "budget" || bar.limiter === "away" ? bar.limiter : null } : null,
+    awayLeft: src.away && src.away.ticks > 0 ? Math.max(0, src.away.ticks - src.away.used) : null,
     step: !src.downshifted ? src.idleRung : null,
     glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift },
   };

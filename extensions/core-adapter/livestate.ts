@@ -105,6 +105,8 @@ export interface LiveFile {
   presence: PresenceName;
   /** Host pressure (pressure.ts); present only when the level is high or critical. */
   pressure?: { level: "high" | "critical"; reasons: string[] };
+  /** A foreman warm window is open and the owner is away (limited warms); present only then. */
+  away?: true;
 }
 
 export type PresenceName = "working" | "waiting-owner" | "waiting-external" | "idle" | "done" | "needs-you";
@@ -188,6 +190,11 @@ export class LiveState {
   private readonly waits: (() => LiveWait[]) | undefined;
   private readonly pressure: (() => { level: string; reasons: string[] } | null) | undefined;
   private readonly dotsOf: (() => LiveDot[]) | undefined;
+  private awayOf: (() => boolean) | null = null;
+  /** The adapter's away source, read at write time like `pressure` so it cannot go stale. */
+  setAwayGetter(fn: () => boolean): void {
+    this.awayOf = fn;
+  }
   /** Cached repo and branch of the checkout (where.ts); set by the adapter after start. */
   where: (() => { repo: string | null; branch: string | null }) | null = null;
   private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null, dots?: () => LiveDot[]) {
@@ -373,6 +380,12 @@ export class LiveState {
     } catch {
       // pressure is best effort
     }
+    let away = false;
+    try {
+      away = this.awayOf?.() === true;
+    } catch {
+      // away is best effort
+    }
     const asks = this.askList();
     const tasks = this.taskList();
     const dots = this.dotList();
@@ -382,7 +395,7 @@ export class LiveState {
     } catch {
       // repo and branch are best effort
     }
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}) };
   }
 
   private schedule(): void {

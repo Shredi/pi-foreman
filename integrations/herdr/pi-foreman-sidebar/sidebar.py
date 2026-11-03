@@ -538,7 +538,7 @@ def _meta(node, recent, width, place, budget):
     tot = node.get("tot") or {}
     shown = sum(1 for k in node.get("children") or [] if _recent_run(k, recent))
     done = max(0, (node.get("done_children") or 0) - shown)
-    parts = [fmt_cost(tot.get("cost")) + _pressure_suffix(node.get("pressure"))]
+    parts = [fmt_cost(tot.get("cost")) + _pressure_suffix(node.get("pressure")) + (" · away" if node.get("away") is True else "")]
     if done:
         parts.append("✓%d" % done)
     if not (tot.get("in") or tot.get("out") or tot.get("uncached")):

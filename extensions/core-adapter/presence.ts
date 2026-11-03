@@ -158,11 +158,25 @@ export class Presence {
     return this.deps.config().enabled && this.last?.outcome === "away";
   }
 
+  /** The presence gate is switched on. */
+  enabled(): boolean {
+    return this.deps.config().enabled;
+  }
+
   /** Re-probe unless the sample is younger than a minute; resolves once the sample is current. */
   refresh(): Promise<void> {
+    return this.probeNow(false);
+  }
+
+  /** Re-probe now, whatever the age of the sample (the settle check of a warm window); resolves once the sample is current. */
+  refreshNow(): Promise<void> {
+    return this.probeNow(true);
+  }
+
+  private probeNow(force: boolean): Promise<void> {
     const cfg = this.deps.config();
     if (!cfg.enabled) return Promise.resolve();
-    if (this.last && this.deps.now() - this.last.at < PROBE_MIN_GAP_MS) return Promise.resolve();
+    if (!force && this.last && this.deps.now() - this.last.at < PROBE_MIN_GAP_MS) return Promise.resolve();
     if (this.inflight) return this.inflight;
     this.inflight = (async () => {
       let idle: number | null = null;
