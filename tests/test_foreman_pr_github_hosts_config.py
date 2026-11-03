@@ -54,6 +54,9 @@ class PrGithubHostsConfigTest(unittest.TestCase):
             self.assertEqual(semantic(["github.com", bad]), ["%s: %s is not a valid host name" % (KEY, bad)], bad)
             self.assertNotEqual(schema_issues(["github.com", bad]), [], bad)
 
+    def test_a_trailing_newline_is_not_a_valid_host(self):
+        self.assertEqual(semantic(["ghe.x\n"]), ["%s: ghe.x\n is not a valid host name" % KEY])
+
 
 if __name__ == "__main__":
     unittest.main()

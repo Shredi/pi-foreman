@@ -33,6 +33,11 @@ class GithubHostsTest(PrCase):
     def api_argv(self):
         return argv_of(self.calls()[-1])
 
+    def test_a_host_with_a_trailing_newline_is_invalid(self):
+        self.scn({"gh pr view 7": {"stdout": j(GH_STATUS)}})
+        self.ok(self.prh("pr_status", [GHE + "\n"], number=7, repo="o/r"))
+        self.assertEqual(pair(argv_of(self.calls()[0]), "-R"), "o/r")
+
     def test_status_and_checks_with_a_repo_get_the_first_listed_host(self):
         self.scn({"gh pr view 7": {"stdout": j(GH_STATUS)}, "gh pr checks": {"stdout": j(GH_CHECKS), "exit": 8}})
         self.ok(self.prh("pr_status", [GHE, "github.com"], number=7, repo="o/r"))

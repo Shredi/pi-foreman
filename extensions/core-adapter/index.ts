@@ -1232,8 +1232,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost and, when set, tools.prGithubHosts (only a valid list; unset or invalid means the read tools add no host). */
   function prOpsConfig(s: Session): Record<string, unknown> {
     const ops = get(s.config.config, "safety.ops");
-    const hosts = get(s.config.config, "tools.prGithubHosts");
-    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto", ...(Array.isArray(hosts) && hosts.length >= 1 && hosts.length <= 20 && hosts.every((h) => typeof h === "string" && h.length <= 253 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$/.test(h)) ? { githubHosts: hosts } : {}) };
+    const h = resolveGithubHosts(s.config.config);
+    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto", ...("hosts" in h ? { githubHosts: h.hosts } : {}) };
   }
 
   function prRun(s: Session, cwd: string, op: PrOp, args: Record<string, unknown>, timeoutMs?: number) {

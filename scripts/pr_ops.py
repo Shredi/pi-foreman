@@ -292,7 +292,7 @@ def github_hosts(cfg):
     v = cfg.get("githubHosts")
     if not isinstance(v, list) or not 1 <= len(v) <= 20:
         return []
-    if not all(isinstance(h, str) and len(h) <= 253 and GITHUB_HOST_RE.match(h) for h in v):
+    if not all(isinstance(h, str) and len(h) <= 253 and GITHUB_HOST_RE.fullmatch(h) for h in v):
         return []
     return [h.lower() for h in v]
 

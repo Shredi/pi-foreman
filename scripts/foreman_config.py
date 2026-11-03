@@ -911,7 +911,7 @@ def pr_github_hosts_issues(hosts):
     if len(hosts) > 20:
         return [("error", path, "%s: has more than 20 hosts" % path)]
     for h in hosts:
-        if not isinstance(h, str) or len(h) > 253 or not GITHUB_HOST_RE.match(h):
+        if not isinstance(h, str) or len(h) > 253 or not GITHUB_HOST_RE.fullmatch(h):
             return [("error", path, "%s: %s is not a valid host name" % (path, h))]
     return []
 
