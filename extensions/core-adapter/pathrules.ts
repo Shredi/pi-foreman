@@ -26,6 +26,8 @@ export interface GateRoots {
   /** Handoff dirs of sessions this session opened (its id is in the dir's `parent` file): `ruling*.md` and `brief*.md` may be written there. */
   openedHandoffs?: string[];
   child: boolean;
+  /** A child only: the foreman's checkout (launch binding, FOREMAN_CHECKOUT) in its real spelling; a shell write into it is `child-write-foreman-checkout`. Absent for `tasks`/`chain` launches. */
+  checkout?: string;
   role: string;
   /** `gate.tmpAccess` (default true): writes (and for the owner reads) under the OS temp dirs. */
   tmpAccess: boolean;

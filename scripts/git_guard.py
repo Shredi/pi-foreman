@@ -1936,10 +1936,51 @@ def child_restore(s, rest, ctx, call, seg, via_xargs):
     return OK
 
 
+# A9: the write subcommands of defaults.ts GIT_WRITE_SUBS (the TS side's list; `clone` and `init` write to a destination operand)
+GIT_WRITE_SUBS = frozenset("""commit add rm mv merge rebase reset checkout switch restore stash tag cherry-pick revert apply am pull
+fetch clone init clean worktree branch submodule config gc prune update-index update-ref notes bisect""".split())
+
+
+def worktree_top(path):
+    """The realpath of the nearest ancestor (itself included) holding a `.git` entry, else None."""
+    p = os.path.realpath(path)
+    while True:
+        if os.path.lexists(os.path.join(p, ".git")):
+            return p
+        up = os.path.dirname(p)
+        if up == p:
+            return None
+        p = up
+
+
+def foreman_checkout_problem(s, rest, ctx, call):
+    """A9: a child's git write verb whose cwd, `-C`, `--git-dir`, `--work-tree` or clone/init destination resolves (realpath) into the foreman's
+    checkout (FOREMAN_CHECKOUT from the launch environment). The child's own worktree, even one nested in the checkout, is not the checkout's."""
+    d = ctx.env.get("FOREMAN_CHECKOUT") or ""
+    if s not in GIT_WRITE_SUBS or not os.path.isabs(d):
+        return None
+    checkout = os.path.realpath(d)
+    own = worktree_top(ctx.start_cwd)
+    cands = [call.cwd] + [p.partition("=")[2] for p in call.passthrough]
+    if s in ("clone", "init"):
+        ops = [w for w in rest if not w.dynamic and not w.text.startswith("-")]
+        if ops and (s == "init" or len(ops) >= 2):
+            cands.append(os.path.join(call.cwd, ops[-1].text))
+    for c in cands:
+        real = os.path.realpath(c)
+        if (real == checkout or real.startswith(checkout.rstrip(os.sep) + os.sep)) and worktree_top(real) != own:
+            return deny("child-write-foreman-checkout: children never write the foreman's checkout (git %s reaches %s). "
+                        "Work in your own worktree and report to the foreman." % (s, c))
+    return None
+
+
 def child_rules(s, rest, ctx, call, seg=None, via_xargs=False):
     def no(what):
         return deny("children may not run `git %s` (%s). Report back and let the foreman do it." % (what, CHILD_WHY.get(s, "it can destroy work")))
 
+    d = foreman_checkout_problem(s, rest, ctx, call)
+    if d is not None:
+        return d
     if s in ("push", "send-pack", "http-push"):
         return no(s)
     if s == "restore":

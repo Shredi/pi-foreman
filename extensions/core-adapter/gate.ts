@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesOutside } from "./defaults.ts";
+import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, realDeep, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
@@ -62,6 +62,7 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
   if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
+  if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
   if (writesOutside(call, env)) return deny("child-write-outside", "Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories.");
   return undefined;
 }
@@ -151,12 +152,14 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
 /**
  * A child's own scratch dir in both spellings (the launch binding's and its deepest-existing-ancestor realpath), resolved once when the roots are read:
  * a symlinked temp dir (macOS `/var` -> `/private/var`) makes a literal `cd /private/var/...` write-in. The literal spelling stays first (`$FOREMAN_SCRATCH`).
- * The fence compares the target's real spelling inside the same root (`rootHolds`), so a link out of the dir is still outside.
+ * The fence compares the target's real spelling inside the same root (`rootHolds`), so a link out of the dir is still outside. The foreman's checkout
+ * (`roots.checkout`, A9) is resolved the same way.
  */
 function withRealScratch(roots: GateRoots | undefined): GateRoots | undefined {
-  if (!roots?.child || !roots.scratch.length) return roots;
+  if (!roots?.child) return roots;
   const scratch = [...new Set(roots.scratch.flatMap((d) => [d, realDeep(d) ?? d]))];
-  return scratch.length === roots.scratch.length ? roots : { ...roots, scratch };
+  const checkout = roots.checkout ? (realDeep(roots.checkout) ?? roots.checkout) : undefined;
+  return scratch.length === roots.scratch.length && checkout === roots.checkout ? roots : { ...roots, scratch, ...(checkout ? { checkout } : {}) };
 }
 
 /** What a gate evaluation found: the synchronous result, the dangerous-class entry when nothing decided, and the parse. */
