@@ -96,7 +96,7 @@ export const runProbe: RunProbe = (cmd, args, timeoutMs, shell) =>
     }, timeoutMs);
     (timer as { unref?: () => void }).unref?.();
     try {
-      child = spawn(cmd, args, { detached: true, shell, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+      child = spawn(cmd, args, { detached: process.platform !== "win32", shell, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
       child.unref();
       child.stdout?.on("data", (d: Buffer) => {
         out += d.toString();
