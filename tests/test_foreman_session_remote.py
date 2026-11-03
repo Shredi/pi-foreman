@@ -296,6 +296,27 @@ class ProbeTest(RemoteBase):
         for gone in ("herdr", "returnPath", "returnPathOk", "returnPathError", "relayCommand", "intercomVersion", "intercomMachine"):
             self.assertNotIn(gone, r)
 
+    def test_win32_probe_resolves_pi_cmd(self):
+        pi_cmd = self.tmp / "pi-win" / "pi.cmd"
+        pi_cmd.parent.mkdir()
+        if sys.platform == "win32":
+            pi_cmd.write_bytes(b"@echo pi 9.9.9\r\n")
+        else:
+            pi_cmd.write_text("#!%s\nprint('pi 9.9.9')\n" % sys.executable, "utf-8")
+            pi_cmd.chmod(0o755)
+        asked = []
+        real_which = shutil.which
+
+        def which(name, *a, **k):
+            asked.append(name)
+            return str(pi_cmd) if name == "pi" else real_which(name, *a, **k)
+
+        with mock.patch.object(fsn, "host_platform", return_value="win32"), mock.patch.object(fsn.shutil, "which", side_effect=which):
+            code, r = self.probe()
+        self.assertEqual(code, 0, r)
+        self.assertIn("pi", asked)
+        self.assertEqual((r["piVersion"], r["platform"]), ("pi 9.9.9", "win32"))
+
     def test_intercom_machine_name_comes_from_the_intercom_config(self):
         (self.radir / "intercom").mkdir()
         (self.radir / "intercom" / "config.json").write_text(json.dumps({"crossMachine": {"machineName": " beta "}}), "utf-8")
@@ -591,6 +612,16 @@ class ArgvWordTest(unittest.TestCase):
             self.assertFalse(fsn.argv_word(word), repr(word))
         for word in (5, None, ["a"]):
             self.assertFalse(fsn.argv_word(word))
+
+    def test_a_root_under_program_files_x86_is_refused(self):
+        self.assertFalse(fsn.argv_word("C:/Program Files (x86)/x"))
+
+    def test_a_non_ascii_letter_is_refused(self):
+        self.assertFalse(fsn.argv_word("C:/Users/J\u00f6rg/x"))
+
+    def test_plus_and_at_are_refused(self):
+        for word in ("a+b", "a@b"):
+            self.assertFalse(fsn.argv_word(word), word)
 
     def test_the_first_word_is_checked_for_a_dash_after_stripping(self):
         for word in ("-x", " -x", "  -x ", "--"):
@@ -1229,6 +1260,30 @@ class NoticeTest(NoticeBase):
         rc, out, err = self.run_main(*argv[4:], HC_TERMINAL_ID="t1")
         self.assertEqual(rc, 0, out)
         self.assertEqual(json.loads(out)["seq"], 1)
+
+
+class WindowsRemoteTest(NoticeBase):
+    def test_a_notice_over_crlf_bytes_labels_the_exact_bytes(self):
+        data = b"# Result\r\nline 2\r\n"
+        (self.dir / "result.md").write_bytes(data)
+        code, r = self.notice("result")
+        self.assertEqual(code, 0)
+        self.assertEqual(r["label"], "1:result:%s:%d" % (hashlib.sha256(data).hexdigest(), len(data)))
+        self.assertEqual(len(data), 18)
+
+
+class ProbePlatformRegistryTest(RemoteBase):
+    def test_the_probed_platform_lands_in_the_registry(self):
+        real = fsn.hc_exec_verb
+
+        def as_windows(binary, name, argv, verb, payload, timeout):
+            reply = real(binary, name, argv, verb, payload, timeout)
+            return dict(reply, platform="win32") if verb == "probe" else reply
+
+        with mock.patch.object(fsn, "hc_exec_verb", side_effect=as_windows):
+            code, out, err = self.run_main(*self.open_args())
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.parent_registry()[0]["remote"]["platform"], "win32")
 
 
 class NoticeLabelTest(NoticeBase):

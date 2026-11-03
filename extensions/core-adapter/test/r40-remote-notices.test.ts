@@ -58,6 +58,15 @@ test("parseRemoteNotice: strips one unverified-origin line, head then --- then c
   for (const bad of ["Result from demo: x", "Plan from demo: /p/plan.md sha256:zz bytes:1\n---\nx", t.replace("\n---\n", "\nxx\n"), 5, "hello"]) assert.equal(parseRemoteNotice(bad), null);
 });
 
+test("parseRemoteNotice: CRLF in the content is kept; only the header's \\r is stripped", () => {
+  const content = "# plan\r\nline 2\r\n";
+  const head = `Plan from demo: ${REMOTE_DIR}/plan.md sha256:${sha(content)} bytes:${Buffer.byteLength(content)}`;
+  const n = parsed(`${head}\r\n---\r\n${content}`);
+  assert.equal((n as { content: string }).content, content);
+  assert.equal((n as { bytes: number }).bytes, 16);
+  assert.equal(sha((n as { content: string }).content), (n as { sha256: string }).sha256);
+});
+
 test("parseRemoteNotice: foreman:closed allows a spaced path and a CLOSE tail, and no body", () => {
   assert.deepEqual(parseRemoteNotice("foreman:closed /h/a b/result.md CLOSE: ready"), { kind: "closed", path: "/h/a b/result.md", close: "ready" });
   assert.deepEqual(parseRemoteNotice(`${UNVERIFIED_PREFIX}foreman:closed`), { kind: "closed" });

@@ -41,7 +41,7 @@ already shows is not repeated. See `docs/herdr.md#open-prs`.
 
 `foreman`: the binary that runs `radar --json`. A string is used for this computer; an object is keyed by machine name, with the
 key `local` for this computer (`{ "local": "/abs/path/foreman", "alpha": "/other/path/foreman" }`). A missing entry means plain
-`foreman`, resolved the way `exec` resolves it (your real environment; over SSH, the remote one).
+`foreman`, resolved the way `exec` resolves it (your real environment; through hc on that machine, the remote one).
 
 ## Data
 

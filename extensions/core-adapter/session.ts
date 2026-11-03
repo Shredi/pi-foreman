@@ -10,8 +10,9 @@
 // list   prints the registry `<agent dir>/pi-foreman/state/sessions.json`.
 // Inbound `Plan from|Result from|Update from <label>: <path>`, `foreman:plan|result <path>` and `foreman:closed <path>`
 // from a registry child update its registry entry and show a notice (a `foreman_wait kind:child` wait resolves on it);
-// nothing is acted on. A remote child (`open --machine`, entry field `machine`) reports through pi-intercom's cross-machine
-// relay: remotesession.ts matches the structured origin to the entry, mirrors the file and wakes the same waits.
+// nothing is acted on. A remote child (`open --machine`, entry field `machine`) sets `fm.notice`/`fm.close` labels on its hc
+// terminal; remotewatch.ts (RemoteWatcher) watches the local `hc events --json` stream, fetches the file with
+// `hc file read --on` and feeds applyRemoteNotice in remotesession.ts, which mirrors it and wakes the same waits.
 // Subagent children refuse every subcommand. The functions below take plain deps; the `foreman_session_open` tool
 // (registerSessionOpenTool) runs the same sessionOpen; children never get it.
 // open --first-command /cmd (repeatable) and --plan-mode (= --first-command /plan) are Pi extension commands the new
