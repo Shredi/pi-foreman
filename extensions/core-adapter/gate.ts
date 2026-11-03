@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
+import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, realDeep, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
 import { matchRules, ruleCallOf } from "./rules.ts";
 import type { RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
@@ -148,6 +148,17 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
   return found;
 }
 
+/**
+ * A child's own scratch dir in both spellings (the launch binding's and its deepest-existing-ancestor realpath), resolved once when the roots are read:
+ * a symlinked temp dir (macOS `/var` -> `/private/var`) makes a literal `cd /private/var/...` write-in. The literal spelling stays first (`$FOREMAN_SCRATCH`).
+ * The fence compares the target's real spelling inside the same root (`rootHolds`), so a link out of the dir is still outside.
+ */
+function withRealScratch(roots: GateRoots | undefined): GateRoots | undefined {
+  if (!roots?.child || !roots.scratch.length) return roots;
+  const scratch = [...new Set(roots.scratch.flatMap((d) => [d, realDeep(d) ?? d]))];
+  return scratch.length === roots.scratch.length ? roots : { ...roots, scratch };
+}
+
 /** What a gate evaluation found: the synchronous result, the dangerous-class entry when nothing decided, and the parse. */
 export interface GateOutcome {
   /** floor / selfmod / rule / built-in decision; undefined = nothing decided (the dangerous class and the mode step follow). */
@@ -182,7 +193,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const env = deps.env(cwd);
     const platform = env.platform ?? process.platform;
-    const roots = deps.roots?.(cwd);
+    const roots = withRealScratch(deps.roots?.(cwd));
     const facts = deps.facts ?? gitFacts;
     const home = env.home ?? os.homedir();
     const rules = deps.rules ?? { sets: { deny: [], ask: [], allow: [] }, env: { cwd, home, platform, checkout: cwd } };

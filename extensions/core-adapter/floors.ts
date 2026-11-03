@@ -841,7 +841,7 @@ const FLOOR_KEYS = /\b(?:permissions|policy[A-Za-z]*|gate)\b/;
 const foldFor = (env: FloorEnv): boolean => (env.platform ?? process.platform) === "win32" || (env.platform ?? process.platform) === "darwin";
 
 /** realpath of the deepest existing ancestor with the missing tail re-appended. */
-function realDeep(abs: string): string | null {
+export function realDeep(abs: string): string | null {
   const tail: string[] = [];
   let cur = abs;
   for (let n = 0; n < 64; n++) {

@@ -200,9 +200,8 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   return false;
 }
 
-/** win32 only: `abs` with its deepest existing ancestor through the native realpath (8.3 short names expanded), else null. */
+/** `abs` with its deepest existing ancestor through the native realpath (win32: 8.3 short names expanded; posix: a symlinked dir such as `/var` -> `/private/var`), else null. */
 function realSpelling(c: EffectCtx, abs: string): string | null {
-  if (plat(c) !== "win32") return null;
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
