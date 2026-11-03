@@ -311,3 +311,41 @@ test("foreman_session_open tool schema lists machine and trust", () => {
   assert.ok("error" in parseSessionArgs("open demo b.md --print-all"));
 });
 
+test("remoteReplier: every close.ts refusal reason becomes a fixed slug that `remote notice refused` accepts", async () => {
+  const { remoteReplier, refuseSlug } = await import("../session.ts");
+  const reasons: [string, string][] = [
+    ["2 child run(s) still active; let them finish (a close never cancels them), then close again", "runs-active"],
+    ['1 foreman_wait pending (w1 timer "n"); cancel or let them finish, then close again', "waits-pending"],
+    ["a close is already in progress", "in-progress"],
+    ["the close turn did not start within 30 s (a check or another handler stopped it); nothing was synced. Send the close again", "not-started"],
+    ["the close turn was stopped before it produced a reply (a check or another handler stopped it); nothing was synced. Send the close again", "stopped"],
+    ["close.from does not include herdr", "close-from"],
+    ["something free-form: with / odd chars", "refused"],
+  ];
+  const calls: string[][] = [];
+  const reply = remoteReplier({ python: "py", pkgRoot: "/pkg", agentDir: mk("agent"), cwd: "/w", env: {}, spawner: async (_c, args) => (calls.push(args), { code: 0, stdout: "{}", stderr: "", timedOut: false } as SpawnResult) });
+  for (const [reason, slug] of reasons) {
+    assert.equal(refuseSlug(reason), slug);
+    assert.match(slug, /^[a-z0-9-]{1,40}$/);
+    await reply("refused", reason);
+    assert.deepEqual(calls.at(-1)?.slice(-4), ["remote", "notice", "refused", `--reason=${slug}`]);
+  }
+  await reply("closed", "ready");
+  assert.deepEqual(calls.at(-1)?.slice(-5), ["remote", "notice", "closed", "--close", "ready"]);
+});
+
+test("remoteReplier: a failing `remote notice` is recorded as lastError of the own entry and thrown; the close flow notifies", async () => {
+  const { remoteReplier } = await import("../session.ts");
+  const agent = mk("agent");
+  const h = mk("h");
+  writeRegistry(agent, { version: 1, sessions: [{ label: "x", child: CHILD, status: "open", handoff: h }] });
+  const reply = remoteReplier({ python: "py", pkgRoot: "/pkg", agentDir: agent, cwd: "/w", env: { [HANDOFF_DIR_ENV]: h }, spawner: async () => ({ code: 1, stdout: '{"ok": false, "error": "not_hc"}', stderr: "", timedOut: false }) });
+  await assert.rejects(() => reply("refused", "a close is already in progress"), /refused notice failed: not_hc/);
+  assert.equal(readRegistry(agent).sessions[0].lastError, "refused notice failed: not_hc");
+  const seen: string[] = [];
+  const flow = new CloseFlow({ trace: () => undefined, notify: (t: string) => void seen.push(t), reply: () => undefined, remoteReply: reply } as unknown as CloseDeps);
+  flow.refuse("a close is already in progress", "remote-parent");
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(seen.some((t) => /refused notice failed: not_hc/.test(t)), seen.join("|"));
+});
+

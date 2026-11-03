@@ -16,6 +16,7 @@ Environment:
   FAKE_REMOTE_AGENT           the "remote" agent dir; FAKE_SCRIPTS the scripts dir holding foreman_session.py;
   FAKE_REMOTE_PATH, FAKE_CLI, FAKE_SSH_PROTOCOL (the remote's
   REMOTE_PROTOCOL) and FAKE_REMOTE_HC_DOWN (the remote's `server status` fails) configure the remote side of `exec`
+  FAKE_HC_EVENTS_FOLLOW       seconds `events` keeps following events.jsonl (default: print what is there and exit)
   FAKE_HC_FAIL                any non-empty value: every call exits 3 with `boom` on stderr
 
 Subcommands:
@@ -29,8 +30,10 @@ Subcommands:
   run [--on M] [--name N] [--label K=V]... [flags] -- ARGV...   prints {address, agent, cwd, name, parent, state, turn};
       the address is `tN` (`M/tN` with --on)
   get T [--json]                prints the terminal record
-  label T K=V...                sets labels, appends one event per label
-  events [--json] [--label K=V] prints the recorded label changes as JSON lines, then exits
+  label T K=V...                sets labels, appends one `labels` event per label (the real JSON-RPC shape, full label map)
+  events [--json] [--label K=V] prints the snapshot line {channel, seq, terminals[]}, then the recorded events (JSON-RPC
+      `event` lines) and exits; with FAKE_HC_EVENTS_FOLLOW=<seconds> it keeps printing new events and a `heartbeat`
+      every second until the deadline
   wait T [--json] [--timeout S] returns at once with the current record
   file read --on M PATH [--json] PATH relative to, and confined to, $FAKE_HC_STATE; --json prints {first, last, lines, text}
   kill T / rm T
@@ -86,6 +89,11 @@ def save_terminals(sd, terminals):
 def append_event(sd, event):
     with open(sd / "events.jsonl", "ab") as f:
         f.write((json.dumps(event) + "\n").encode("utf-8"))
+
+
+def next_seq(sd):
+    p = sd / "events.jsonl"
+    return 1000 + (len(p.read_bytes().splitlines()) if p.exists() else 0)
 
 
 def split_dashdash(args):
@@ -216,15 +224,15 @@ def cmd_run(args):
             k, v = head[i + 1].split("=", 1)
             labels[k] = v
     terminals[address] = {"address": address, "name": name, "machine": machine, "argv": argv,
-                          "labels": labels, "status": "working"}
+                          "labels": labels, "state": "live", "status": {"app": "pi", "state": "working"}}
     save_terminals(sd, terminals)
     emit({"address": address, "agent": None, "cwd": opt(head, "--cwd"), "name": name, "parent": None,
           "state": "working", "turn": 0})
 
 
 def find(terminals, address):
-    if address not in terminals:
-        die(f"no such terminal: {address}", 4)
+    if address not in terminals:  # the real hc: exit 3, {"error": {"kind": "not_found"}} on stderr
+        die(json.dumps({"error": {"hint": "see `hc ls --all`", "kind": "not_found", "message": f"no terminal \"{address}\""}}), 3)
     return terminals[address]
 
 
@@ -242,7 +250,7 @@ def cmd_label(args):
             die("label needs K=V: " + kv, 2)
         k, v = kv.split("=", 1)
         rec["labels"][k] = v
-        append_event(sd, {"terminal": rec["address"], "label": k, "value": v})
+        append_event(sd, {"jsonrpc": "2.0", "method": "event", "params": {"type": "labels", "terminal": rec["address"], "seq": next_seq(sd), "data": {"labels": dict(rec["labels"])}}})
     save_terminals(sd, terminals)
     emit({"address": rec["address"], "labels": rec["labels"]})
 
@@ -250,17 +258,29 @@ def cmd_label(args):
 def cmd_events(args):
     sd = state_dir()
     want = opt(args, "--label")
+    k, _, v = (want or "").partition("=")
     terminals = load_terminals(sd)
     p = sd / "events.jsonl"
-    if not p.exists():
-        return
-    for line in p.read_text("utf-8").splitlines():
-        ev = json.loads(line)
-        if want:
-            k, _, v = want.partition("=")
-            if terminals.get(ev["terminal"], {}).get("labels", {}).get(k) != v:
-                continue
-        sys.stdout.write(line + "\n")
+
+    def keep(address):
+        return not want or terminals.get(address, {}).get("labels", {}).get(k) == v
+
+    emit({"channel": None, "seq": next_seq(sd), "terminals": [t for t in terminals.values() if keep(t["address"])]})
+    sys.stdout.flush()
+    deadline = time.time() + float(os.environ.get("FAKE_HC_EVENTS_FOLLOW") or 0)
+    done = 0
+    while True:
+        lines = p.read_bytes().splitlines() if p.exists() else []
+        for line in lines[done:]:
+            if keep(json.loads(line)["params"]["terminal"]):
+                sys.stdout.write(line.decode("utf-8") + "\n")
+        sys.stdout.flush()
+        done = len(lines)
+        if time.time() >= deadline:
+            return
+        emit({"jsonrpc": "2.0", "method": "heartbeat", "params": {"seq": next_seq(sd)}})
+        sys.stdout.flush()
+        time.sleep(min(1.0, max(0.0, deadline - time.time())))
 
 
 def cmd_wait(args):
@@ -294,7 +314,9 @@ def cmd_file(args):
 def cmd_kill(args):
     sd = state_dir()
     terminals = load_terminals(sd)
-    find(terminals, args[0])["status"] = "finished"
+    rec = find(terminals, args[0])
+    rec["state"] = "finished"
+    rec["status"] = {"app": "pi", "state": "done"}
     save_terminals(sd, terminals)
 
 

@@ -4,7 +4,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { applyEvent, applyGet, commit, fail, fetchTimeoutMs, mapHcState, parseEvent, parseNoticeLabel, pollPlan, RemoteWatcher, remotePath, watchState } from "../remotewatch.ts";
+import { applyEvent, applyGet, commit, fail, fetchTimeoutMs, mapHcState, parseEvents, parseNoticeLabel, pollPlan, RemoteWatcher, remotePath, watchState } from "../remotewatch.ts";
 import type { HcResult, HcRun, WatchState } from "../remotewatch.ts";
 import { readRegistry, writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
@@ -24,18 +24,23 @@ function entry(over: Record<string, unknown> = {}, dir = root): SessionEntry {
   } as SessionEntry;
 }
 const label = (seq: number, kind: string, body: Buffer | string): string => `${seq}:${kind}:${sha(body)}:${Buffer.byteLength(body as string)}`;
-const ev = (value: string, terminal = "t7", key = "fm.notice") => ({ terminal, label: key, value });
+// the real `hc events --json` lines (see the comment block of remotewatch.ts)
+const rpc = (type: string, terminal: string, data: unknown) => ({ jsonrpc: "2.0", method: "event", params: { type, terminal, seq: 1, data } });
+const lab = (labels: Record<string, string>, terminal = "alpha/t7") => rpc("labels", terminal, { labels });
+const ev = (value: string, terminal = "alpha/t7") => lab({ "herdr.tab": "x", "fm.notice": value }, terminal);
+const stat = (state: string, terminal = "alpha/t7") => rpc("status", terminal, { status: { app: "pi", state } });
+const gotten = (state: string, labels: Record<string, string> = {}) => ({ address: "alpha/t7", labels, state: "live", status: { app: "pi", state } });
 
 function rig(entries: SessionEntry[] = [entry()]) {
   const dir = fs.mkdtempSync(path.join(root, "agent-"));
   writeRegistry(dir, { version: 1, sessions: entries.map((e) => ({ ...e, mirror: path.join(dir, "m", String(e.child)), handoff: path.join(dir, "m", String(e.child)) })) });
   const files = new Map<string, Buffer[]>(); // remote path -> successive reads
   const calls: string[][] = [];
-  const hcGet: { reply: unknown; code: number } = { reply: { labels: {}, state: "working" }, code: 0 };
+  const hcGet: { reply: unknown; code: number } = { reply: gotten("working"), code: 0 };
   const hc: HcRun = async (args) => {
     calls.push(args);
     const res = (over: Partial<HcResult>): HcResult => ({ code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, ...over });
-    if (args[0] === "get") return res({ code: hcGet.code, stdout: Buffer.from(JSON.stringify(hcGet.reply)), stderr: hcGet.code ? "no such terminal: x" : "" });
+    if (args[0] === "get") return res({ code: hcGet.code, stdout: Buffer.from(JSON.stringify(hcGet.reply)), stderr: hcGet.code ? JSON.stringify({ error: { hint: "see `hc ls --all`", kind: "not_found", message: "no terminal" } }) : "" });
     const q = files.get(args[4]);
     if (!q || !q.length) return res({ code: 4, stderr: "no such file\u0007: x" });
     return res({ stdout: q.length > 1 ? (q.shift() as Buffer) : q[0] });
@@ -46,6 +51,7 @@ function rig(entries: SessionEntry[] = [entry()]) {
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
   const w = new RemoteWatcher({
     agentDir: dir,
+    opener: () => "p",
     hc,
     events: (onLine, onEnd) => {
       const s = { onLine, onEnd, killed: false };
@@ -71,7 +77,7 @@ function rig(entries: SessionEntry[] = [entry()]) {
   return { dir, w, reg, send, put, calls, wakes, timers, streams, opened, hcGet, files };
 }
 
-const st = (over: Record<string, unknown> = {}): WatchState => watchState({ sessions: [entry(over)] });
+const st = (over: Record<string, unknown> = {}): WatchState => watchState({ sessions: [entry(over)] }, undefined, "p");
 
 test("parseNoticeLabel: the grammar of the child side", () => {
   const h = "a".repeat(64);
@@ -90,11 +96,13 @@ test("applyEvent: filters on the address, ignores duplicates and a seq that goes
   const s = st();
   const body = "plan\n";
   const v1 = label(1, "plan", body);
-  assert.deepEqual(applyEvent(s, ev(v1, "t9")), [], "another terminal");
-  assert.deepEqual(applyEvent(s, ev(v1, "t7"), "beta"), [], "another machine");
-  assert.equal(applyEvent(s, ev(v1, "alpha/t7")).length, 1, "the full address matches too");
+  assert.deepEqual(applyEvent(s, ev(v1, "alpha/t9")), [], "another terminal");
+  assert.deepEqual(applyEvent(s, ev(v1), "beta"), [], "another machine");
+  assert.equal(applyEvent(s, ev(v1)).length, 1, "the full address matches");
   assert.deepEqual(applyEvent(s, ev(v1)), [], "duplicate while pending");
-  fail(s, CHILD);
+  fail(s, CHILD, "older value");
+  assert.deepEqual(applyEvent(s, ev(v1)), [], "a failure of another value keeps the pending one");
+  fail(s, CHILD, v1);
   assert.equal(applyEvent(s, ev(v1)).length, 1, "failed fetch: the same value triggers again");
   commit(s, CHILD, 1);
   assert.deepEqual(applyEvent(s, ev(label(1, "result", "r"))), [], "seq not above the last applied");
@@ -106,13 +114,47 @@ test("applyEvent: filters on the address, ignores duplicates and a seq that goes
 
 test("applyEvent: close and state labels, refused slug, lost terminal; applyGet reads labels and state", () => {
   const s = st();
-  assert.deepEqual(applyEvent(s, { terminal: "t7", labels: { "fm.close": "ready" } }), [{ type: "close", child: CHILD, close: "ready" }]);
-  assert.deepEqual(applyEvent(s, { terminal: "t7", state: "blocked" }), [{ type: "live", child: CHILD, state: "blocked" }]);
-  assert.deepEqual(applyEvent(s, { type: "terminal.removed", terminal: "t7" }), [{ type: "live", child: CHILD, state: "lost" }]);
+  assert.deepEqual(applyEvent(s, lab({ "fm.close": "ready" })), [{ type: "close", child: CHILD, close: "ready" }]);
+  assert.deepEqual(applyEvent(s, stat("blocked")), [{ type: "live", child: CHILD, state: "blocked" }]);
+  assert.deepEqual(applyEvent(s, stat("error")), [{ type: "live", child: CHILD, state: "lost" }]);
   assert.deepEqual(applyEvent(s, ev("2:refused:running-wait")).map((a) => a.type), ["refused"]);
-  const g = applyGet(st(), CHILD, { labels: { "fm.notice": label(1, "ask", "q"), "fm.close": "open" }, state: "idle" });
+  const g = applyGet(st(), CHILD, gotten("idle", { "fm.notice": label(1, "ask", "q"), "fm.close": "open" }));
   assert.deepEqual(g.map((a) => a.type), ["close", "notice", "live"]);
-  assert.equal(parseEvent({ nothing: 1 }), null);
+  assert.deepEqual(applyGet(st(), CHILD, { state: "live", labels: {} }), [], "the lifecycle `live` is no agent state");
+  assert.deepEqual(applyGet(st(), CHILD, gotten("working")).map((a) => a.type === "live" && a.state), ["working"]);
+});
+
+test("parseEvents: the real snapshot and JSON-RPC lines; heartbeats, turn and unknown methods give nothing", () => {
+  const snap = { channel: null, seq: 8750, terminals: [{ address: "t3", labels: { k: "v" }, state: "live", status: { app: "pi", state: "done" }, records: {} }, { address: "alpha/t9", labels: {}, state: "live" }, { nope: 1 }] };
+  assert.deepEqual(parseEvents(snap), [{ address: "t3", labels: { k: "v" }, state: "done" }, { address: "alpha/t9", labels: {}, state: null }]);
+  assert.deepEqual(parseEvents(stat("done", "t3")), [{ address: "t3", state: "done" }]);
+  assert.deepEqual(parseEvents(lab({ a: "b" }, "t3")), [{ address: "t3", labels: { a: "b" }, state: null }]);
+  assert.deepEqual(parseEvents(rpc("labels", "t3", { label: "fm.close", value: "open" })), [{ address: "t3", labels: { "fm.close": "open" }, state: null }]);
+  assert.deepEqual(parseEvents(rpc("turn", "t3", { state: "done", turn: 112 })), []);
+  assert.deepEqual(parseEvents(rpc("records", "t3", { records: {} })), []);
+  assert.deepEqual(parseEvents({ jsonrpc: "2.0", method: "heartbeat", params: { seq: 8751 } }), []);
+  assert.deepEqual(parseEvents({ terminal: "t7", label: "fm.notice", value: "1:ask:-:0" }), [], "the old guessed shape is gone");
+  assert.deepEqual(parseEvents("x"), []);
+});
+
+test("applyEvent: a bare local terminal id never drives a remote entry; a bare id counts only with the entry's machine", () => {
+  const s = st();
+  assert.deepEqual(applyEvent(s, stat("blocked", "t7")), [], "local t7, remote alpha/t7");
+  assert.deepEqual(applyEvent(s, lab({ "fm.close": "ready" }, "t7")), []);
+  const snap = (machine?: string) => ({ channel: null, seq: 1, terminals: [{ address: "t7", ...(machine ? { machine } : {}), labels: { "fm.close": "ready" }, state: "live" }] });
+  assert.deepEqual(applyEvent(s, snap()), []);
+  assert.deepEqual(applyEvent(s, snap("beta")), []);
+  assert.deepEqual(applyEvent(s, snap("alpha")).map((a) => a.type), ["close"]);
+});
+
+test("fail: a failure of an older value keeps the newer pending one", () => {
+  const s = st();
+  const v1 = label(1, "plan", "a");
+  const v2 = label(2, "plan", "b");
+  assert.equal(applyEvent(s, ev(v1)).length, 1);
+  assert.equal(applyEvent(s, ev(v2)).length, 1);
+  fail(s, CHILD, v1);
+  assert.deepEqual(applyEvent(s, ev(v2)), [], "v2 is still pending");
 });
 
 test("pollPlan: 5 s with an open ask or a pending plan, else 60 s", () => {
@@ -125,7 +167,11 @@ test("pollPlan: 5 s with an open ask or a pending plan, else 60 s", () => {
 
 test("watchState: only open hc entries with a machine; remotePath uses the remote separator", () => {
   const reg = { sessions: [entry(), entry({ child: "c2", status: "closed" }), entry({ child: "c3", backend: undefined }), entry({ child: "c4", machine: undefined })] };
-  assert.deepEqual([...watchState(reg).keys()], [CHILD]);
+  assert.deepEqual([...watchState(reg, undefined, "p").keys()], [CHILD]);
+  const mixed = { sessions: [entry(), entry({ child: "c-other", parent: "someone-else" }), entry({ child: "c-none", parent: undefined })] };
+  assert.deepEqual([...watchState(mixed, undefined, "p").keys()], [CHILD], "only this session's own children");
+  assert.equal(watchState(mixed, undefined, undefined).size, 0, "no opener id: no listener");
+  assert.equal(watchState(mixed, undefined, "").size, 0);
   assert.equal(remotePath({ handoff: "C:\\h\\x\\", platform: "win32" }, "plan.md"), "C:\\h\\x\\plan.md");
   assert.equal(remotePath({ handoff: "/h/x/", platform: "posix" }, "ask.md"), "/h/x/ask.md");
 });
@@ -173,7 +219,7 @@ test("watcher: open → ask → open → closing → closed, the ask cleared by 
   writeRegistry(r.dir, again);
   r.w.refresh();
   await r.send(ev(label(4, "closed", "done\n")));
-  await r.send({ terminal: "t7", labels: { "fm.close": "ready" } });
+  await r.send(lab({ "fm.close": "ready" }));
   const e = r.reg();
   assert.equal(e.status, "closed");
   assert.equal(e.close, "ready");
@@ -188,7 +234,7 @@ test("watcher: closed without a result (-:0) fetches nothing; fm.close=open is r
   r.w.start();
   const before = r.calls.filter((c) => c[0] === "file").length;
   await r.send(ev("1:closed:-:0"));
-  await r.send({ terminal: "t7", labels: { "fm.close": "open" } });
+  await r.send(lab({ "fm.close": "open" }));
   assert.equal(r.calls.filter((c) => c[0] === "file").length, before);
   assert.equal(r.reg().status, "closed");
   assert.equal(r.reg().close, "open");
@@ -241,11 +287,11 @@ test("watcher: terminal state events set remoteLive; a lost terminal is lost; un
   const r = rig();
   r.w.start();
   await r.w.idle();
-  await r.send({ terminal: "t7", state: "blocked" });
+  await r.send(stat("blocked"));
   assert.deepEqual(r.reg().remoteLive, { state: "blocked", seenAt: "2026-11-03T12:00:00.000Z", address: "alpha/t7" });
-  await r.send({ terminal: "t7", state: "done" });
+  await r.send(stat("done"));
   assert.equal((r.reg().remoteLive as { state: string }).state, "done");
-  await r.send({ type: "terminal.removed", terminal: "t7" });
+  await r.send(stat("error"));
   assert.equal((r.reg().remoteLive as { state: string }).state, "lost");
 });
 
@@ -262,7 +308,7 @@ test("watcher: two machines get two listeners, each filtered to its own entries"
   assert.equal(r.wakes.length, 1);
 });
 
-test("watcher: ruling delivered (briefs up) clears the ask on refresh", async () => {
+test("watcher: a delivered ruling (rulings up) clears the ask on refresh; a plain brief does not", async () => {
   const r = rig();
   r.w.start();
   r.put("ask.md", "q");
@@ -272,11 +318,17 @@ test("watcher: ruling delivered (briefs up) clears the ask on refresh", async ()
   reg.sessions[0].briefs = 1;
   writeRegistry(r.dir, reg);
   r.w.refresh();
+  assert.ok(r.reg().ask, "a plain brief leaves the ask");
+  const ruled = readRegistry(r.dir);
+  ruled.sessions[0].briefs = 2;
+  ruled.sessions[0].rulings = 1;
+  writeRegistry(r.dir, ruled);
+  r.w.refresh();
   assert.equal(r.reg().ask, undefined);
 });
 
 test("watcher: when the events stream ends, hc get is polled every 5 s with an ask and 60 s without; the stream restarts after a minute", async () => {
-  const r = rig([entry({ ask: { seq: 1, briefs: 0 } })]);
+  const r = rig([entry({ ask: { seq: 1, rulings: 0 } })]);
   r.w.start();
   await r.w.idle();
   const gets = (): number => r.calls.filter((c) => c[0] === "get").length;
@@ -289,7 +341,7 @@ test("watcher: when the events stream ends, hc get is polled every 5 s with an a
   await r.w.idle();
   assert.equal(gets(), base + 1);
   assert.equal(r.timers.filter((t) => t.live && t.ms === 5_000).length, 1, "rescheduled");
-  r.hcGet.reply = { labels: { "fm.notice": label(1, "ask", "q") }, state: "blocked" };
+  r.hcGet.reply = gotten("blocked", { "fm.notice": label(1, "ask", "q") });
   r.hcGet.code = 0;
   r.put("ask.md", "q");
   r.timers.filter((t) => t.live && t.ms === 5_000)[0].fn();
@@ -306,7 +358,7 @@ test("watcher: a plain entry polls every 60 s and a stream restart replaces the 
   assert.equal(r.timers.filter((t) => t.live && t.ms === 5_000).length, 0);
   const restart = r.timers.filter((t) => t.live && t.ms === 60_000);
   assert.equal(restart.length, 2, "one poll, one restart");
-  r.hcGet.code = 4;
+  r.hcGet.code = 3;
   r.timers.filter((t) => t.live && t.ms === 60_000)[0].fn();
   restart[1].fn();
   await r.w.idle();
@@ -314,12 +366,97 @@ test("watcher: a plain entry polls every 60 s and a stream restart replaces the 
   assert.equal(r.timers.filter((t) => t.live && t.ms === 60_000).length, 0, "polls cancelled while the stream is up (restart timer consumed)");
 });
 
+test("watcher: heartbeats keep the stream healthy; 90 s of silence ends it and starts the poll fallback", async () => {
+  const r = rig();
+  r.w.start();
+  await r.w.idle();
+  const silence = (): { fn: () => void; ms: number; live: boolean }[] => r.timers.filter((t) => t.live && t.ms === 90_000);
+  assert.equal(silence().length, 1);
+  const first = silence()[0];
+  r.streams.get("s0")?.onLine(JSON.stringify({ jsonrpc: "2.0", method: "heartbeat", params: { seq: 9 } }));
+  assert.equal(first.live, false, "a heartbeat re-arms the watchdog");
+  assert.equal(silence().length, 1);
+  assert.equal(r.timers.filter((t) => t.live && t.ms === 60_000).length, 0, "no poll while heartbeats arrive");
+  silence()[0].fn();
+  assert.equal(r.streams.get("s0")?.killed, true);
+  assert.equal(r.timers.filter((t) => t.live && t.ms === 60_000).length, 2, "poll and restart");
+  r.hcGet.code = 3;
+  r.timers.filter((t) => t.live && t.ms === 60_000)[0].fn();
+  await r.w.idle();
+  assert.equal((r.reg().remoteLive as { state: string }).state, "lost", "hc get exit 3 {error:{kind:not_found}} is a lost terminal");
+});
+
+test("watcher: an hc get with another failure is not a lost terminal", async () => {
+  const r = rig([entry({ remoteLive: { state: "working", seenAt: "x", address: "alpha/t7" } })]);
+  r.w.start();
+  await r.w.idle();
+  r.streams.get("s0")?.onEnd();
+  r.hcGet.code = 1;
+  r.timers.filter((t) => t.live && t.ms === 60_000)[0].fn();
+  await r.w.idle();
+  assert.notEqual((r.reg().remoteLive as { state: string }).state, "lost");
+});
+
+test("watcher: entries of another parent are not watched, a session without an opener has no listener", async () => {
+  const r = rig([entry({ parent: "someone-else" })]);
+  r.w.start();
+  await r.w.idle();
+  assert.equal(r.opened.length, 0);
+  assert.deepEqual(r.calls, []);
+  r.w.stop();
+  const none = new RemoteWatcher({ agentDir: r.dir, opener: () => undefined, hc: async () => { throw new Error("unused"); }, events: () => { throw new Error("unused"); }, wake: () => undefined });
+  none.start();
+  await none.idle();
+  none.stop();
+});
+
+test("watcher: bytes that are not valid UTF-8 are mirrored exactly, not a false hash mismatch", async () => {
+  const r = rig();
+  r.w.start();
+  const body = Buffer.from([0x70, 0x6c, 0x61, 0x6e, 0x20, 0xe9, 0x0a]); // `plan \xe9\n`, Latin-1
+  r.put("plan.md", body);
+  await r.send(ev(label(1, "plan", body)));
+  assert.equal(r.reg().lastError, null);
+  assert.deepEqual(fs.readFileSync(path.join(r.dir, "m", CHILD, "plan.md")), body);
+  assert.equal(r.wakes.length, 1);
+});
+
+test("watcher: an older notice failing while a newer one is queued applies each notice once (deterministic race)", async () => {
+  const r = rig();
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((res) => (release = res));
+  const base = r.w as unknown as { hc: HcRun };
+  const inner = base.hc;
+  let firstRead = true;
+  base.hc = async (args, t) => {
+    if (args[0] === "file" && firstRead) {
+      firstRead = false;
+      await gate;
+      return { code: 1, stdout: Buffer.alloc(0), stderr: "gone", timedOut: false, overflow: false };
+    }
+    return inner(args, t);
+  };
+  r.w.start();
+  await r.w.idle();
+  r.put("plan.md", "a");
+  r.put("result.md", "b");
+  const stream = r.streams.get("s0");
+  stream?.onLine(JSON.stringify(ev(label(1, "plan", "a"))));
+  stream?.onLine(JSON.stringify(ev(label(2, "result", "b"))));
+  release(); // v1 fails after v2 is queued
+  await r.w.idle();
+  stream?.onLine(JSON.stringify(ev(label(2, "result", "b")))); // the same label again
+  await r.w.idle();
+  assert.equal(r.wakes.filter((w) => w.includes("result")).length, 1);
+  assert.equal(r.reg().noticeSeq, 2);
+});
+
 test("foreman_wait kind child: the watcher wake resolves a child wait with `child <label>: <kind> <path>`", async () => {
   const outcomes: Outcome[][] = [];
   const rt = new WaitRuntime({ timers: { set: () => 1, clear: () => undefined }, now: () => 0, limits: () => ({ batchWindowSeconds: 0, maxSeconds: 86400, maxActive: 4, ci: true }), stat: () => null, alive: () => true, gh: () => Promise.reject(new Error("unused")), wake: (o) => outcomes.push(o), trace: () => undefined });
   assert.ok("id" in rt.start({ kind: "child", label: "demo", note: "n" }));
   const r = rig();
-  const w = new RemoteWatcher({ agentDir: r.dir, hc: async (a) => ({ code: 0, stdout: a[0] === "get" ? Buffer.from("{}") : Buffer.from("r\n"), stderr: "", timedOut: false, overflow: false }), events: (onLine) => { onLine(JSON.stringify(ev(label(1, "result", "r\n")))); return { kill() {} }; }, wake: (l, k, t) => void rt.childNotice(l, k, t) });
+  const w = new RemoteWatcher({ agentDir: r.dir, opener: () => "p", hc: async (a) => ({ code: 0, stdout: a[0] === "get" ? Buffer.from("{}") : Buffer.from("r\n"), stderr: "", timedOut: false, overflow: false }), events: (onLine) => { onLine(JSON.stringify(ev(label(1, "result", "r\n")))); return { kill() {} }; }, wake: (l, k, t) => void rt.childNotice(l, k, t) });
   w.start();
   await w.idle();
   w.stop();

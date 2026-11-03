@@ -262,6 +262,62 @@ export function markOwnClosed(agentDir: string, env: Record<string, string | und
   return changed;
 }
 
+/** The fixed slug of a close refusal reason (`remote notice refused --reason` takes `[a-z0-9-]{1,40}`, free text is rejected). */
+export function refuseSlug(reason: string): string {
+  const rules: [RegExp, string][] = [
+    [/child run\(s\) still active/, "runs-active"],
+    [/foreman_wait pending/, "waits-pending"],
+    [/already in progress/, "in-progress"],
+    [/did not start within/, "not-started"],
+    [/stopped before it produced/, "stopped"],
+    [/close\.from does not include/, "close-from"],
+  ];
+  return rules.find(([re]) => re.test(reason))?.[1] ?? "refused";
+}
+
+/** The argv tail of `foreman_session.py remote notice` for a close reply: `closed [--close ready|open]` or `refused --reason <slug>`. */
+export function remoteNoticeArgs(kind: "closed" | "refused", arg?: string): string[] {
+  return kind === "refused" ? ["remote", "notice", "refused", `--reason=${refuseSlug(arg ?? "")}`] : ["remote", "notice", "closed", ...(arg ? ["--close", arg] : [])];
+}
+
+/** Records `message` as `lastError` of this child's own entry (matched by its handoff dir, as `markOwnClosed`). */
+export function markOwnError(agentDir: string, env: Record<string, string | undefined>, message: string): boolean {
+  const handoff = env.PI_FOREMAN_HANDOFF_DIR?.trim();
+  if (!handoff) return false;
+  const reg = readRegistry(agentDir);
+  let changed = false;
+  for (const s of reg.sessions) {
+    if (s.handoff && path.basename(s.handoff) === path.basename(handoff)) {
+      s.lastError = message;
+      changed = true;
+    }
+  }
+  if (changed) writeRegistry(agentDir, reg);
+  return changed;
+}
+
+/**
+ * The reply of a remote-parent close: runs `remote notice` (the label on this child's hc terminal). A non-zero exit becomes
+ * `lastError` of the own entry and is thrown, so the caller can notify.
+ */
+export function remoteReplier(o: { python: string | null; spawner: Spawner; pkgRoot: string; agentDir: string; cwd: string; env: Record<string, string | undefined> }): (kind: "closed" | "refused", arg?: string) => Promise<void> {
+  return async (kind, arg) => {
+    if (!o.python) return;
+    const r = await o.spawner(o.python, ["-E", "-s", path.join(o.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", o.agentDir, ...remoteNoticeArgs(kind, arg)], { timeoutMs: 60_000, cwd: o.cwd });
+    if (r.code === 0 && !r.error) return;
+    let why = r.error?.message ?? (r.stderr.trim() || `exit ${String(r.code)}`);
+    try {
+      const j = JSON.parse(r.stdout) as { error?: unknown };
+      if (typeof j.error === "string") why = j.error;
+    } catch {
+      // not JSON: keep the stderr text
+    }
+    const message = `${kind} notice failed: ${why.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200)}`;
+    markOwnError(o.agentDir, o.env, message);
+    throw new Error(message);
+  };
+}
+
 export function formatList(reg: Registry): string {
   if (!reg.sessions.length) return "pi-foreman sessions: none opened yet.";
   const rows = reg.sessions.map((s) => {

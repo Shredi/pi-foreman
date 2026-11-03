@@ -1349,7 +1349,8 @@ def cmd_notice(a):
     try:
         return notice_reply(dict(send_notice(adir, a), ok=True))
     except Refused as e:
-        return notice_reply({"ok": False, "code": e.code or "refused", "error": str(e)})
+        code = e.code or "refused"
+        return notice_reply({"ok": False, "error": code, "code": code, "detail": strip_control(e)[:200]})
     except NoticeFailed as e:
         return notice_reply(dict(e.reply, ok=False))
 
@@ -1363,14 +1364,35 @@ class NoticeFailed(Exception):
 def next_notice_seq(handoff):
     """The next notice number of this handoff dir: `notice-seq` holds the last one used; it is written before the label."""
     path = handoff / "notice-seq"
+    lock = str(handoff / "notice-seq.lock")
+    fd = None
+    for _ in range(100):  # O_EXCL is atomic on every platform; a lock older than 10 s is a dead holder's
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.stat(lock).st_mtime > 10:
+                    os.unlink(lock)
+            except OSError:
+                pass
+            time.sleep(0.05)
     try:
-        last = int(path.read_text("utf-8").strip())
-    except (OSError, ValueError):
-        last = 0
-    seq = max(last, 0) + 1
-    tmp = handoff / ("notice-seq.%d.tmp" % os.getpid())
-    tmp.write_text("%d\n" % seq, "utf-8")
-    os.replace(str(tmp), str(path))
+        try:
+            last = int(path.read_text("utf-8").strip())
+        except (OSError, ValueError):
+            last = 0
+        seq = max(last, 0) + 1
+        tmp = handoff / ("notice-seq.%d.tmp" % os.getpid())
+        tmp.write_text("%d\n" % seq, "utf-8")
+        os.replace(str(tmp), str(path))
+    finally:
+        if fd is not None:
+            os.close(fd)
+            try:
+                os.unlink(lock)
+            except OSError:
+                pass
     return seq
 
 
@@ -1725,6 +1747,8 @@ def remote_brief(a, adir, entry):
             s["lastError"] = None
             s["lastDeliverAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             ruling = re.fullmatch(r"ruling-(\d+)\.md", file_name)
+            if kind == "ruling":
+                s["rulings"] = int(s.get("rulings") or 0) + 1  # the watcher clears an ask on a ruling, not on a plain brief
             ask = s.get("ask")
             if ruling and isinstance(ask, dict) and isinstance(ask.get("n"), int) and int(ruling.group(1)) >= ask["n"]:
                 s["ask"] = None

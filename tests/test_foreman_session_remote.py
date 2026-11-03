@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1073,6 +1074,19 @@ class BriefTest(RemoteBase):
             self.assertEqual((sent["kind"], sent["name"], sent["content"]), (kind, name, "content of " + name))
             self.assertEqual((self.rh / name).read_text("utf-8"), "content of " + name)
 
+    def test_rulings_are_counted_apart_from_briefs(self):
+        reg = self.padir / "pi-foreman" / "state" / "sessions.json"
+
+        def counts():
+            e = [s for s in json.loads(reg.read_text("utf-8"))["sessions"] if s["child"] == self.entry["child"]][-1]
+            return e.get("briefs"), e.get("rulings")
+
+        for name, want in (("brief-7.md", (1, None)), ("steer-1.md", (2, None)), ("ruling.md", (3, 1)), ("ruling-2.md", (4, 2))):
+            f = self.tmp / name
+            f.write_text("x", "utf-8")
+            self.assertEqual(self.send(str(f))[0], 0, name)
+            self.assertEqual(counts(), want, name)
+
     def test_other_files_become_numbered_briefs(self):
         f = self.tmp / "notes.md"
         f.write_text("some notes", "utf-8")
@@ -1278,6 +1292,42 @@ class NoticeLabelTest(NoticeBase):
             self.assertEqual((code, r["code"]), (1, "bad_request"), bad)
         self.assertEqual(len(self.labels()), 1)
         self.assertEqual(self.notice("refused", "--reason", "x" * 40)[0], 0)
+
+    def test_failure_replies_share_one_shape(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        code, r = self.notice("refused", "--reason", "Not A Slug")
+        self.assertEqual((code, r["ok"], r["error"], r["code"]), (1, False, "bad_request", "bad_request"))
+        self.assertIn("detail", r)
+        code, r = self.notice("result", HC_TERMINAL_ID="")
+        self.assertEqual((code, r["ok"], r["error"]), (1, False, "not_hc"))
+
+    def test_notice_seq_is_locked_and_unique_under_parallel_callers(self):
+        import threading
+        got = []
+        errors = []
+
+        def take():
+            try:
+                got.append(fsn.next_notice_seq(self.dir))
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=take) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual((errors, sorted(got)), ([], list(range(1, 13))))
+        self.assertFalse((self.dir / "notice-seq.lock").exists())
+        self.assertEqual((self.dir / "notice-seq").read_text("utf-8").strip(), "12")
+
+    def test_a_stale_notice_seq_lock_is_broken(self):
+        lock = self.dir / "notice-seq.lock"
+        lock.write_text("", "utf-8")
+        old = time.time() - 60
+        os.utime(str(lock), (old, old))
+        self.assertEqual(fsn.next_notice_seq(self.dir), 1)
+        self.assertFalse(lock.exists())
 
     def test_not_hc(self):
         (self.dir / "result.md").write_text("r", "utf-8")

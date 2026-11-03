@@ -4,6 +4,22 @@
 // file with `hc file read --on <machine> <path>`, checks it against the label, mirrors it and feeds `applyRemoteNotice`.
 // The pure core (`watchState`, `applyEvent`, `applyGet`, `pollPlan`, `commit`, `fail`) never spawns; `RemoteWatcher` is the
 // process wrapper. Notices are data: they update the registry and the mirror and act on nothing.
+//
+// Shapes observed on a real `hc` (0.1.x), addresses and ids replaced by placeholders:
+//   `hc events --json`, line 1 (snapshot):  {"channel":null,"seq":8750,"terminals":[{"address":"t3","labels":{"k":"v"},"state":"live",
+//       "status":{"app":"pi","state":"done"},"records":{...},...}]}   (`state` is the lifecycle, `status.state` the agent state)
+//   later lines, JSON-RPC, the stream never ends:
+//       {"jsonrpc":"2.0","method":"event","params":{"type":"status","terminal":"t3","seq":8751,"data":{"status":{"app":"pi","state":"done"}}}}
+//       {"jsonrpc":"2.0","method":"event","params":{"type":"labels","terminal":"t3","seq":8748,"data":{"labels":{"k":"v"}}}}
+//           (a label change sends the FULL label map; removing the last probe label sent the map without it)
+//       {"jsonrpc":"2.0","method":"event","params":{"type":"turn","terminal":"t3","seq":8746,"data":{"state":"done","turn":112}}}
+//       {"jsonrpc":"2.0","method":"event","params":{"type":"records",...}}   (ignored, as is `turn`)
+//       {"jsonrpc":"2.0","method":"heartbeat","params":{"seq":8751}}   (about every 20 s)
+//   `hc get <addr> --json`: the terminal object above (`state:"live"`, `status:{app,state}`, `labels`).
+//   `hc get <missing> --json`: exit 3, stdout empty, stderr {"error":{"hint":"...","kind":"not_found","message":"no terminal \"t99\""}}.
+// Not observed (no remote terminal on this machine): how a remote terminal is named in the local stream (the entry address
+// `<machine>/<id>` is matched whole; a bare id counts only when the event names the machine in `machine`), the event of a
+// removed terminal, and a label event as `data.label`+`data.value` (accepted besides `data.labels`).
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -20,6 +36,8 @@ export type NoticeKind = "plan" | "result" | "update" | "ask" | "closed";
 export const FAST_POLL_MS = 5_000;
 export const SLOW_POLL_MS = 60_000;
 export const RESTART_MS = 60_000;
+/** No line (heartbeats arrive about every 20 s) for this long: the stream is dead and the poll fallback starts. */
+export const STREAM_SILENCE_MS = 90_000;
 const REFRESH_MS = 10_000;
 const GET_TIMEOUT_MS = 10_000;
 const MAX_FETCH_BYTES = 8 * 1024 * 1024;
@@ -95,9 +113,10 @@ export type Action =
 const OPEN = new Set(["open", "pending", "closing"]);
 
 /** The remote hc entries to watch: `backend: "hc"`, a machine, an address and a remote handoff, status open, pending or closing. */
-export function watchState(reg: { sessions: SessionEntry[] }, prev?: WatchState): WatchState {
+export function watchState(reg: { sessions: SessionEntry[] }, prev?: WatchState, opener?: string): WatchState {
   const out: WatchState = new Map();
   for (const e of reg.sessions) {
+    if (!opener || e.parent !== opener) continue; // only this session's own children (closechildren.ts)
     const hc = e.hc as { address?: unknown } | undefined;
     if (e.backend !== "hc" || typeof e.machine !== "string" || !hc || typeof hc.address !== "string" || typeof e.remoteHandoff !== "string") continue;
     if (!OPEN.has(String(e.status))) continue;
@@ -122,32 +141,54 @@ export function watchState(reg: { sessions: SessionEntry[] }, prev?: WatchState)
 
 export interface ParsedEvent {
   address: string;
-  labels: Record<string, string>;
+  /** The machine the event names (a field `machine` of a snapshot terminal), when it does. */
+  machine?: string;
+  labels?: Record<string, string>;
   state: LiveState | null;
-  gone: boolean;
 }
 
 const strOf = (v: unknown): v is string => typeof v === "string" && v !== "";
+const objOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 
-/** One `hc events --json` object; tolerant of the field names (`terminal`/`address`, `labels` or `label`+`value`, `state`/`status`). */
-export function parseEvent(raw: unknown): ParsedEvent | null {
-  if (!raw || typeof raw !== "object") return null;
-  const ev = raw as Record<string, unknown>;
-  const data = ev.data && typeof ev.data === "object" ? (ev.data as Record<string, unknown>) : {};
-  const t = ev.terminal ?? ev.address ?? data.terminal ?? data.address;
-  const address = strOf(t) ? t : t && typeof t === "object" && strOf((t as { address?: unknown }).address) ? (t as { address: string }).address : "";
-  if (!address) return null;
-  const labels: Record<string, string> = {};
-  const l = ev.labels ?? data.labels;
-  if (l && typeof l === "object") for (const [k, v] of Object.entries(l as Record<string, unknown>)) if (typeof v === "string") labels[k] = v;
-  const lk = ev.label ?? data.label;
-  const lv = ev.value ?? data.value;
-  if (strOf(lk) && typeof lv === "string") labels[lk] = lv;
-  const type = String(ev.type ?? ev.event ?? "");
-  return { address, labels, state: mapHcState(ev.state ?? ev.status ?? data.state ?? data.status), gone: /removed|closed|lost|gone/i.test(type) };
+function labelsOf(v: unknown): Record<string, string> | undefined {
+  const o = objOf(v);
+  if (!o) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, x] of Object.entries(o)) if (typeof x === "string") out[k] = x;
+  return out;
 }
 
-const sameTerminal = (w: Watched, address: string): boolean => address === w.address || `${w.machine}/${address}` === w.address;
+/** The agent state of a `status` object `{app, state}` (the terminal's own `state` is the lifecycle). */
+const agentState = (status: unknown): LiveState | null => mapHcState(objOf(status)?.state);
+
+/** One line of `hc events --json`: the snapshot (`terminals[]`), or a JSON-RPC `event` of type `status` or `labels`. Heartbeats and every other type give nothing. */
+export function parseEvents(raw: unknown): ParsedEvent[] {
+  const o = objOf(raw);
+  if (!o) return [];
+  if (Array.isArray(o.terminals)) {
+    const out: ParsedEvent[] = [];
+    for (const t of o.terminals) {
+      const r = objOf(t);
+      if (!r || !strOf(r.address)) continue;
+      const labels = labelsOf(r.labels);
+      out.push({ address: r.address, ...(strOf(r.machine) ? { machine: r.machine } : {}), ...(labels ? { labels } : {}), state: agentState(r.status) });
+    }
+    return out;
+  }
+  const p = o.method === "event" ? objOf(o.params) : undefined;
+  if (!p || !strOf(p.terminal)) return [];
+  const data = objOf(p.data) ?? {};
+  const machine = strOf(p.machine) ? { machine: p.machine } : {};
+  if (p.type === "status") return [{ address: p.terminal, ...machine, state: agentState(data.status) }];
+  if (p.type === "labels") {
+    const labels = labelsOf(data.labels) ?? (strOf(data.label) && typeof data.value === "string" ? { [data.label]: data.value } : undefined);
+    return labels ? [{ address: p.terminal, ...machine, labels, state: null }] : [];
+  }
+  return [];
+}
+
+/** The full address, or a bare id of an event that names the entry's machine; a bare local id (`t3`) never matches a remote entry. */
+const sameTerminal = (w: Watched, ev: ParsedEvent): boolean => ev.address === w.address || (!ev.address.includes("/") && ev.machine === w.machine && `${w.machine}/${ev.address}` === w.address);
 
 function ingest(w: Watched, labels: Record<string, string>, state: LiveState | null, out: Action[]): void {
   const close = labels["fm.close"];
@@ -166,26 +207,23 @@ function ingest(w: Watched, labels: Record<string, string>, state: LiveState | n
 
 /** The actions one event line asks for; only entries on `machine` (when given) whose address the event names. A seq not above the last applied one, a duplicate value and a malformed label do nothing. */
 export function applyEvent(state: WatchState, raw: unknown, machine?: string): Action[] {
-  const ev = parseEvent(raw);
   const out: Action[] = [];
-  if (!ev) return out;
-  for (const w of state.values()) {
-    if (machine !== undefined && w.machine !== machine) continue;
-    if (!sameTerminal(w, ev.address)) continue;
-    ingest(w, ev.labels, ev.gone ? "lost" : ev.state, out);
+  for (const ev of parseEvents(raw)) {
+    for (const w of state.values()) {
+      if (machine !== undefined && w.machine !== machine) continue;
+      if (sameTerminal(w, ev)) ingest(w, ev.labels ?? {}, ev.state, out);
+    }
   }
   return out;
 }
 
-/** The actions of an `hc get <address> --json` reply (`labels`, `state`). */
+/** The actions of an `hc get <address> --json` reply (`labels`, `status.state`). */
 export function applyGet(state: WatchState, child: string, reply: unknown): Action[] {
   const w = state.get(child);
   const out: Action[] = [];
-  if (!w || !reply || typeof reply !== "object") return out;
-  const r = reply as { labels?: unknown; state?: unknown; status?: unknown };
-  const labels: Record<string, string> = {};
-  if (r.labels && typeof r.labels === "object") for (const [k, v] of Object.entries(r.labels as Record<string, unknown>)) if (typeof v === "string") labels[k] = v;
-  ingest(w, labels, mapHcState(r.state ?? r.status), out);
+  const r = objOf(reply);
+  if (!w || !r) return out;
+  ingest(w, labelsOf(r.labels) ?? {}, agentState(r.status), out);
   return out;
 }
 
@@ -195,10 +233,10 @@ export function commit(state: WatchState, child: string, seq: number): void {
   if (w && seq > w.lastSeq) w.lastSeq = seq;
 }
 
-/** A notice could not be applied: the same label value triggers again. */
-export function fail(state: WatchState, child: string): void {
+/** A notice could not be applied: the same label value triggers again. A newer value already queued stays. */
+export function fail(state: WatchState, child: string, value: string): void {
   const w = state.get(child);
-  if (w) delete w.seen;
+  if (w && w.seen === value) delete w.seen;
 }
 
 export interface PollItem {
@@ -217,6 +255,15 @@ export function pollPlan(entries: Iterable<Watched>): PollItem[] {
 export function remotePath(w: Pick<Watched, "handoff" | "platform">, file: string): string {
   const sep = w.platform === "win32" ? "\\" : "/";
   return `${w.handoff.replace(/[\\/]+$/, "")}${sep}${file}`;
+}
+
+/** The stderr of `hc get` on a missing terminal: `{"error":{"kind":"not_found"}}`. */
+function notFound(stderr: string): boolean {
+  try {
+    return objOf(objOf(JSON.parse(stderr))?.error)?.kind === "not_found";
+  } catch {
+    return false;
+  }
 }
 
 const strip = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200);
@@ -312,6 +359,8 @@ export const spawnEvents: HcEvents = (onLine, onEnd) => {
 export type Cancel = () => void;
 export interface WatchDeps {
   agentDir: string;
+  /** This session's opener intercom id: only entries whose `parent` equals it are watched. */
+  opener: () => string | undefined;
   hc?: HcRun;
   events?: HcEvents;
   /** `sessions.remote.fetchTimeoutSeconds` (raw config value). */
@@ -327,6 +376,8 @@ interface MachineRun {
   stream?: { kill(): void };
   polls: Map<string, Cancel>;
   restart?: Cancel;
+  /** The silence watchdog of the stream. */
+  silence?: Cancel;
 }
 
 const defaultTimer = (fn: () => void, ms: number): Cancel => {
@@ -386,14 +437,14 @@ export class RemoteWatcher {
     const prev = this.state;
     let dirty = false;
     for (const e of reg.sessions) {
-      const a = e.ask as { briefs?: unknown } | undefined;
-      if (e.ask && typeof e.ask === "object" && typeof a?.briefs === "number" && typeof e.briefs === "number" && e.briefs > a.briefs) {
-        delete e.ask; // a ruling was delivered: the ask is answered
+      const a = e.ask as { rulings?: unknown } | undefined;
+      if (e.ask && typeof e.ask === "object" && typeof a?.rulings === "number" && (typeof e.rulings === "number" ? e.rulings : 0) > a.rulings) {
+        delete e.ask; // a ruling was delivered (a plain brief does not count): the ask is answered
         dirty = true;
       }
     }
     if (dirty) writeRegistry(this.d.agentDir, reg);
-    this.state = watchState(reg, prev);
+    this.state = watchState(reg, prev, this.d.opener());
     for (const w of this.state.values()) {
       if (!this.machines.has(w.machine)) this.startMachine(w.machine);
       if (!prev.has(w.child)) this.enqueue(() => this.pollOne(w.child));
@@ -424,8 +475,19 @@ export class RemoteWatcher {
     m.restart = undefined;
     for (const c of m.polls.values()) c();
     m.polls.clear();
+    // any line, a heartbeat too, shows the stream is alive; STREAM_SILENCE_MS without one ends it
+    const arm = (): void => {
+      m.silence?.();
+      m.silence = this.timer(() => {
+        if (m.stream !== stream || this.machines.get(machine) !== m) return;
+        m.stream = undefined;
+        stream.kill();
+        this.fallback(machine, m);
+      }, STREAM_SILENCE_MS);
+    };
     const stream = this.events(
       (line) => {
+        arm();
         let raw: unknown;
         try {
           raw = JSON.parse(line);
@@ -437,10 +499,12 @@ export class RemoteWatcher {
       () => {
         if (m.stream !== stream || this.machines.get(machine) !== m) return;
         m.stream = undefined;
+        m.silence?.();
         this.fallback(machine, m);
       },
     );
     m.stream = stream;
+    arm();
   }
 
   /** The stream ended or errored: poll `hc get` per entry and try the stream again in a minute. */
@@ -472,6 +536,7 @@ export class RemoteWatcher {
     this.machines.delete(machine);
     m.stream?.kill();
     m.stream = undefined;
+    m.silence?.();
     m.restart?.();
     for (const c of m.polls.values()) c();
     m.polls.clear();
@@ -493,7 +558,7 @@ export class RemoteWatcher {
         return;
       }
       this.run(applyGet(this.state, child, reply));
-    } else if (r.code === 4 || /no such terminal|not found/i.test(r.stderr)) {
+    } else if (r.code === 3 && notFound(r.stderr)) {
       this.run([{ type: "live", child, state: "lost" }]);
     }
   }
@@ -507,6 +572,7 @@ export class RemoteWatcher {
   private async handle(a: Action): Promise<void> {
     const w = this.state.get(a.child);
     if (!w) return;
+    if ((a.type === "notice" || a.type === "refused") && a.seq <= w.lastSeq) return; // applied meanwhile
     const at = new Date((this.d.now ?? Date.now)()).toISOString();
     if (a.type === "live") {
       this.update(a.child, (e) => {
@@ -560,7 +626,7 @@ export class RemoteWatcher {
         if (r.code !== 0 || r.timedOut || r.overflow) {
           const why = r.timedOut ? "timed out" : r.overflow ? "too large" : r.error ? r.error.message : r.stderr || `exit ${String(r.code)}`;
           this.setError(w.child, `fetch_failed: ${strip(why)}`);
-          fail(this.state, w.child);
+          fail(this.state, w.child, a.value);
           return;
         }
         if (r.stdout.length === a.bytes && crypto.createHash("sha256").update(r.stdout).digest("hex") === a.sha256) {
@@ -571,7 +637,7 @@ export class RemoteWatcher {
       if (!buf) {
         this.setError(w.child, "hash mismatch, not mirrored"); // the label stays pending: the same value triggers again
         this.d.notify?.(`remote notice from ${w.label}@${w.machine}: hash mismatch, not mirrored`, "warning");
-        fail(this.state, w.child);
+        fail(this.state, w.child, a.value);
         return;
       }
     }
@@ -593,7 +659,7 @@ export class RemoteWatcher {
         return false;
       }
       const reg = { version: 1, sessions: [{ ...e, originMachine: w.machine }] };
-      const hit = applyRemoteNotice(reg, { machine: w.machine, sessionId: w.child }, notice, (f) => writeBytes(f, buf as Buffer));
+      const hit = applyRemoteNotice(reg, { machine: w.machine, sessionId: w.child }, notice, (f) => writeBytes(f, buf as Buffer), undefined, a.kind !== "closed");
       if (!hit || !hit.changed) {
         problem = hit?.message ? hit.message.replace(/^remote notice from \S+: /, "") : "entry no longer open";
         return false;
@@ -602,14 +668,14 @@ export class RemoteWatcher {
       Object.assign(e, rest);
       e.noticeSeq = a.seq;
       e.lastError = null;
-      if (a.kind === "ask") e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, briefs: typeof e.briefs === "number" ? e.briefs : 0 };
+      if (a.kind === "ask") e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, rulings: typeof e.rulings === "number" ? e.rulings : 0 };
       else delete e.ask;
       wake = { kind: hit.kind, path: hit.path };
       return true;
     });
     if (!wake) {
       this.setError(w.child, problem);
-      fail(this.state, w.child);
+      fail(this.state, w.child, a.value);
       return;
     }
     commit(this.state, w.child, a.seq);

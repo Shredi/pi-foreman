@@ -82,8 +82,9 @@ export function writeMirror(file: string, data: string): void {
  * Apply a notice from a cross-machine sender to the registry entry it matches: `machine` set, `originMachine` equal to
  * the origin machine (case-insensitive), `child` equal to the origin session id, status open, pending or closing.
  * Returns null when nothing matches (silently ignored); a result with `changed: false` and a `message` is shown only.
+ * `checked`: the caller already compared the exact bytes with the hash and size, so the UTF-8 re-hash of the text is skipped.
  */
-export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: RemoteNotice, write: (file: string, data: string) => void = writeMirror, now: Date = new Date()): RemoteApplied | null {
+export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: RemoteNotice, write: (file: string, data: string) => void = writeMirror, now: Date = new Date(), checked = false): RemoteApplied | null {
   const entry = [...reg.sessions].reverse().find(
     (s) =>
       typeof s.machine === "string" &&
@@ -118,7 +119,7 @@ export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: R
   if (!MIRRORED.has(base) || !mirror || typeof entry.remoteHandoff !== "string" || norm(dir, win) !== norm(entry.remoteHandoff, win)) {
     return { entry, kind: notice.kind, path: "", message: `remote notice from ${who}: ${notice.kind} ignored (its path is not a file of the remote handoff dir)`, changed: false };
   }
-  if (!notice.truncated) {
+  if (!notice.truncated && !checked) {
     const bytes = Buffer.from(notice.content, "utf8");
     const hash = crypto.createHash("sha256").update(bytes).digest("hex");
     if (hash !== notice.sha256 || bytes.length !== notice.bytes) {
