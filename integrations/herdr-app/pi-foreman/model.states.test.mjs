@@ -49,7 +49,7 @@ test("nodeStatus: no join falls back to the radar state", () => {
 });
 
 test("glyphSpec: new states", () => {
-  assert.deepEqual(glyphSpec("agents"), { kind: "spin", tone: "working", hollow: true, ms: 1800 });
+  assert.deepEqual(glyphSpec("agents"), { kind: "spin", tone: "working", hollow: false });
   assert.deepEqual(glyphSpec("bg"), { kind: "square", tone: "working", hollow: false });
   assert.deepEqual(glyphSpec("waiting"), { kind: "dot", tone: "muted", hollow: true });
   assert.deepEqual(glyphSpec("nope"), { kind: "dot", tone: "dim", hollow: false });

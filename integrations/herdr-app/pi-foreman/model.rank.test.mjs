@@ -34,7 +34,7 @@ test("working and blocked still outrank agents", () => {
   assert.equal(nodeStatus(withAgents(), "blocked"), "blocked");
 });
 
-test("agents glyph is the hollow spinner, done the filled dot", () => {
-  assert.deepEqual([glyphSpec("agents").kind, glyphSpec("agents").hollow], ["spin", true]);
+test("agents glyph is the same filled spinner as working, done the filled dot", () => {
+  assert.deepEqual([glyphSpec("agents").kind, glyphSpec("agents").hollow], ["spin", false]);
   assert.deepEqual([glyphSpec("done").kind, glyphSpec("done").hollow], ["dot", false]);
 });

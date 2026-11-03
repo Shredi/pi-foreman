@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, prDotState, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
 } from "./model.js";
 
@@ -19,7 +19,8 @@ const WATCHDOG_MS = 35000; // a radar exec older than this is given up
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 const RING = "mods/pi-foreman/ring.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
-const AGENT_ICON = "mods/pi-foreman/agent.svg";
+const AGENT_GLYPH = "🤖"; // the mark of an agent row, an emoji like the ⏳ / ⚙ of the status lines
+const CARD = 5; // inset of a session card: 4px margin and its 1px border
 const LINE = 14; // width of one connector cell
 
 // Pi is the only harness: its logo and a leading "π - " in a terminal title say nothing, so sessions carry neither. Only agent
@@ -222,9 +223,11 @@ export default class ForemanAgents extends View {
   }
 
   // A PR line: every chip, wrapping onto further lines; a summary after them.
-  prLine(t, node, prs, summary, key, indent) {
+  prLine(t, node, prs, withSummary, key, indent) {
+    const shown = this.enrich(prs); // the summary counts the enriched PRs, the ones the chips are drawn from
+    const summary = withSummary ? guard(() => prSummary(shown), "") : "";
     return h_flex().pl(indent).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
-      .children(this.enrich(prs).map((p) => this.prChip(t, p, prUrl(node, p), key)))
+      .children(shown.map((p) => this.prChip(t, p, prUrl(node, p), key)))
       .when(Boolean(summary), (el) => el.child(div().text_color(t.dim).child(summary)));
   }
 
@@ -254,9 +257,9 @@ export default class ForemanAgents extends View {
   // A child with its connector column. The head cell is as tall as the row (tee: line through plus the stub to the icon;
   // elbow: line to the middle, rounded corner, stub); below it, the pass cell carries the line past the child's own extras and
   // descendants when later siblings follow. Drawn with divs: the lines stay 1px and meet the next row, no stretched svg.
-  link(t, item, last) {
-    const h = item.type === "session" ? 26 : 20;
-    const mid = Math.floor(h / 2);
+  link(t, item, last, carded = false) {
+    const h = item.type === "session" ? 26 + CARD : 20; // a session's row sits in its card: CARD of margin, border and padding above it
+    const mid = item.type === "session" ? CARD + 13 : 10;
     const ink = t.dim + "66";
     const head = div().id(`conn:${last ? "elbow" : "tee"}:${item.id}`).relative().flex_none().w(LINE).h(h)
       .when(!last, (el) => el.child(div().absolute().top(0).left(6).w(1).h(h).bg(ink)).child(div().absolute().top(mid).left(7).w(LINE - 7).h(1).bg(ink)))
@@ -264,25 +267,36 @@ export default class ForemanAgents extends View {
     const pass = div().id(`conn:pass:${item.id}`).relative().flex_1().w(LINE)
       .child(div().absolute().top(0).bottom(0).left(6).w(1).bg(ink));
     const column = v_flex().flex_none().w(LINE).self_stretch().child(head).when(!last, (el) => el.child(pass));
-    return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0).flex_1().min_w(0));
+    return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0, carded).flex_1().min_w(0));
   }
 
   // Under a session row: the ask / background / wait line of its node and its PR chips (all on a line at the top, more than
   // two on a line below for the others).
-  extras(t, item, ind) {
+  // `x` is the left of the connector line when children follow (see rail): every extras row then carries it, so the line runs
+  // unbroken from the row's chevron through these rows to the first child.
+  extras(t, item, ind, x = null) {
     if (item.type !== "session") return [];
     const root = item.top === true;
-    const line = detailLine(item.node);
+    const detail = detailLine(item.node);
+    const line = statusLine(detail);
+    const blocked = detail.blocked;
     const prs = root ? item.prs : item.below;
-    return [
-      ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(20).flex_none().items_center().text_size(11.5)
-        .child(div().truncate().text_color(line.blocked ? t.blocked : t.muted).child(line.text))] : []),
-      ...(prs.length ? [this.prLine(t, item.node, prs, root ? item.summary : "", item.id, ind + 20)] : []),
+    const rows = [
+      ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
+        .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : line.icon ? t.dim : t.muted).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
+      ...(prs.length ? [this.prLine(t, item.node, prs, root, item.id, ind + 20)] : []),
     ];
+    return x === null ? rows : rows.map((r, i) => div().relative().flex_none().child(r).child(this.rail(t, `${item.id}/x${i}`, x)));
+  }
+
+  // The vertical connector: a 1px line `x` from the left, from `top` to the bottom of its (relatively placed) parent.
+  rail(t, id, x, top = 0) {
+    return div().id(`rail:${id}`).absolute().top(top).bottom(0).left(x).w(1).bg(t.dim + "66");
   }
 
   // One tree row: fold slot (svg chevron), label, cost, PR chips, status glyph; folded, the glyph is the most urgent below.
-  nodeRow(t, item, ind) {
+  // `x` (left of the connector line) is set when the children below are shown: the line starts under the chevron.
+  nodeRow(t, item, ind, x = null, carded = false) {
     const root = item.top === true;
     const kids = item.children.length > 0;
     const slot = this.foldSlot(t, item.id, kids);
@@ -291,33 +305,48 @@ export default class ForemanAgents extends View {
       .text_size(session ? 12.5 : 11)
       .child(slot);
     if (item.type === "more") return row.child(div().flex_1().truncate().text_color(t.dim).child(item.label));
-    const glyphRight = statusGlyph(t, displayStatus(item, this.folded));
-    if (!session) {
-      return row.child(svg(AGENT_ICON).flex_none().size(12).text_color(t.dim))
+    if (!session) { // in a card the card's header row shows the state; an agent outside one (under the root) keeps its glyph
+      return row.child(div().flex_none().text_size(11).child(AGENT_GLYPH))
         .child(div().flex_1().min_w(0).truncate().text_color(item.status === "blocked" ? t.blocked : t.muted).child(item.label))
-        .child(glyphRight);
+        .when(!carded, (el) => el.child(statusGlyph(t, displayStatus(item, this.folded))));
     }
+    const glyphRight = statusGlyph(t, displayStatus(item, this.folded));
     const active = item.address !== undefined && item.address === this.shown;
     const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
     return row
-      .when(active, (el) => el.bg(t.raised).rounded(6))
+      .when(active && root, (el) => el.bg(t.raised).rounded(6)) // a card carries the selection itself (see node)
       .child(item.address === undefined ? name : name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }))))
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))
       .children(root ? [] : this.enrich(item.inline).map((p) => this.prChip(t, p, prUrl(item.node, p), item.id).mr(3)))
-      .child(glyphRight);
+      .child(glyphRight)
+      .when(x !== null, (el) => el.relative().child(this.rail(t, `${item.id}/row`, x, Math.floor(((root ? 22 : 26) + 16) / 2))));
   }
 
-  // A tree node: its row, its extras, and the children in a Collapsible.
-  node(t, item, ind) {
+  // A tree node: a session is a small bordered card holding its row, extras and its own agent rows (connector inside the card);
+  // its child sessions follow the card in a Collapsible, outside: a card inside a card would cost the nested rows another inset
+  // of width per level in a narrow sidebar. With child sessions shown, the connector runs on through the card's bottom border
+  // via a stub below it, and their connector column sits CARD further right to stay on the chevron's line.
+  node(t, item, ind, carded = false) {
     const kids = item.children.length > 0;
-    const body = this.childBody(t, item.children, ind);
-    return Collapsible.new().flex().flex_col().flex_none().open(kids && !this.folded.has(item.id))
-      .child(this.nodeRow(t, item, ind))
-      .children(this.extras(t, item, ind))
-      .when(kids, (el) => el.content(body));
+    const open = kids && !this.folded.has(item.id);
+    const x = open ? ind + 8 : null;
+    const node = Collapsible.new().flex().flex_col().flex_none().open(open);
+    if (item.type !== "session") return node.child(this.nodeRow(t, item, ind, null, carded)).when(kids, (el) => el.content(this.childBody(t, item.children, ind)));
+    const agents = item.children.filter((c) => c.type !== "session");
+    const sessions = item.children.filter((c) => c.type === "session");
+    const after = open && sessions.length > 0; // the line leaves the card at the bottom
+    const active = item.address !== undefined && item.address === this.shown;
+    const card = v_flex().id(`card:${item.id}`).flex_none().mx(4).mt(2).mb(after ? 0 : 2).pt(2).pb(after ? 0 : 2).rounded(6).border(1).border_color(active ? t.working : t.border)
+      .when(active, (el) => el.bg(t.raised))
+      .child(this.nodeRow(t, item, ind, x)).children(this.extras(t, item, ind, x))
+      .when(open && agents.length > 0, (el) => el.child(v_flex().flex_none().ml(ind + 2).children(agents.map((c, i) => this.link(t, c, !after && i === agents.length - 1, true)))));
+    return node.child(card)
+      // top -1: the stub overlaps the card's 1px bottom border, so the line has no gap there
+      .when(after, (el) => el.child(div().relative().flex_none().h(2).child(this.rail(t, `${item.id}/gap`, x + CARD, -1))))
+      .when(sessions.length > 0, (el) => el.content(this.childBody(t, sessions, ind + CARD)));
   }
 
   // One agent of the list: name, machine tag, time in this status, status.
@@ -333,6 +362,7 @@ export default class ForemanAgents extends View {
     const row = h_flex().id(`agent:${a.address}`).flex_none().h(30).px(8).gap(5).items_center().rounded(8).cursor_pointer();
     const shownStatus = kids && this.folded.has(fid) ? urgentStatus([status, ...items.map((c) => c.urgent)]) : status;
     return row
+      .when(kids && !this.folded.has(fid), (el) => el.relative().child(this.rail(t, `${fid}/row`, 16, 23)))
       .child(this.foldSlot(t, fid, kids))
       .when(a.focused === true, (el) => el.bg(t.selected))
       .hover((el) => el.bg(t.hover))
@@ -352,7 +382,7 @@ export default class ForemanAgents extends View {
     const kids = items.length > 0;
     return Collapsible.new().flex().flex_col().flex_none().open(kids && !this.folded.has(`agent:${a.address}`))
       .child(this.agentLine(t, a, now, status, items, root))
-      .children(root ? this.extras(t, root, 8) : [])
+      .children(root ? this.extras(t, root, 8, kids && !this.folded.has(`agent:${a.address}`) ? 16 : null) : [])
       .when(kids, (el) => el.content(this.childBody(t, items, 8)));
   }
 
