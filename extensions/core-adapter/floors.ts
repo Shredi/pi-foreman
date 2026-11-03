@@ -594,7 +594,20 @@ function publishFloor(prog: string, a: string[]): string | null {
 }
 
 const SECRET_DIRS = /(^|\/)(\.ssh|\.gnupg|\.aws|\.azure|\.config\/gcloud|\.config\/gh|\.kube\/config|\.docker\/config\.json|\.git-credentials|\.netrc|_netrc|\.npmrc|\.pypirc)(\/|$)/i;
-const SECRET_FILE = /(^|\/)(id_(rsa|dsa|ecdsa|ed25519)(_[\w-]+)?|[^/]+\.(pem|key|p12|pfx|jks|keystore))$/i;
+/** The key-file name globs (`config/secret-paths.json`, also read by scripts/foreman_sync.py); unreadable: the inline list, which fails closed. */
+export const SECRET_PATHS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "config", "secret-paths.json");
+const SECRET_GLOBS_INLINE = ["*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.kdbx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*"];
+function loadSecretGlobs(): string[] {
+  try {
+    const v = JSON.parse(fs.readFileSync(SECRET_PATHS_FILE, "utf8")) as unknown;
+    if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && x !== "")) return v as string[];
+  } catch {
+    // fall through to the inline list
+  }
+  return SECRET_GLOBS_INLINE;
+}
+export const SECRET_GLOBS: readonly string[] = loadSecretGlobs();
+const SECRET_FILE = new RegExp(`(^|/)(${SECRET_GLOBS.map((g) => g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})$`, "i");
 
 /** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
 const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|credentials(\.[^/]*)?)(\/|$)/i;
