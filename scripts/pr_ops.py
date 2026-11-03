@@ -4,7 +4,8 @@
 Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo, pr_find and
 pr_batch (needs no work tree, nor does pr_comments with top-level `repoless: true` and `args.repo`; the PR tracker polls through them); the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object
-plus one key, `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object).
+plus `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object) and, when valid,
+`githubHosts` (tools.prGithubHosts: where a gh read call names no host, its first non-github.com entry is the fallback).
 
 The host CLI (gh, glab or an overlay's own program) is found on PATH outside the workspace and
 run without a shell, with its own login; pi-foreman never reads or asks for a token. Nothing
@@ -35,6 +36,7 @@ MAX_NAMES = 10
 PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}",
                 "{host}", "{mode}", "{author}", "{state}")
 HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?$")
+GITHUB_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$")
 AUTHOR_RE = re.compile(r"^(?:@me|[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?)$")
 HTTPS_RE = re.compile(r"^https://[\x21-\x7e]+$")
 FAILED_CONCLUSIONS = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
@@ -283,6 +285,42 @@ def repo_flag(host, repo, hostname):
     if not repo:
         return []
     return ["-R", (hostname + "/" if hostname and host.kind == "gh" else "") + repo]
+
+
+def github_hosts(cfg):
+    """The lowercased tools.prGithubHosts of the config, or [] when absent or invalid (the read tools then add no host)."""
+    v = cfg.get("githubHosts")
+    if not isinstance(v, list) or not 1 <= len(v) <= 20:
+        return []
+    if not all(isinstance(h, str) and len(h) <= 253 and GITHUB_HOST_RE.match(h) for h in v):
+        return []
+    return [h.lower() for h in v]
+
+
+def fallback_host(cfg, host, repo, hostname):
+    """The host a gh call with a repo and no host gets: the first listed host unless it is github.com."""
+    if hostname or not repo or host.kind != "gh":
+        return hostname
+    hosts = github_hosts(cfg)
+    return hosts[0] if hosts and hosts[0] != "github.com" else None
+
+
+def derived_api_host(cfg, host, root):
+    """The --hostname of pr_comments' gh api call when the call names no repo and no host: the remote's host when it is listed
+    and not github.com; the first listed host (unless github.com) when no host can be derived."""
+    if host.kind != "gh":
+        return None
+    hosts = github_hosts(cfg)
+    if not hosts:
+        return None
+    try:
+        derived = derive_remote(root, current_branch(root))[0]
+    except Exception:  # noqa: BLE001 - a remote that cannot be derived means "not derived", never a refusal
+        derived = ""
+    if derived:
+        d = derived.lower()
+        return d if HOST_RE.match(d) and d in hosts and d != "github.com" else None
+    return hosts[0] if hosts[0] != "github.com" else None
 
 
 def glab_foreign(host, hostname):
@@ -666,6 +704,7 @@ def op_pr_status(req):
         d = template_json(out, "status", dict)
         return finish_status(d)
     glab_foreign(host, hostname)
+    hostname = fallback_host(cfg, host, repo, hostname)
     rflag = repo_flag(host, repo, hostname)
     if host.kind == "gh":
         return gh_status(gh_view(host, root, number,
@@ -694,6 +733,7 @@ def op_pr_checks(req):
             lists.append(v)
         return finish_checks(*lists)
     glab_foreign(host, hostname)
+    hostname = fallback_host(cfg, host, repo, hostname)
     rflag = repo_flag(host, repo, hostname)
     if host.kind == "gh":
         argv = [host.program, "pr", "checks"] + ([str(number)] if number else []) + rflag + \
@@ -736,6 +776,8 @@ def op_pr_comments(req):
             raise shape_error("comments")
         return finish_comments(d, since)
     glab_foreign(host, hostname)
+    hostname = fallback_host(cfg, host, repo, hostname)
+    api_host = hostname if repo or hostname else derived_api_host(cfg, host, root)
     rflag = repo_flag(host, repo, hostname)
     if host.kind == "gh":
         if number is None:
@@ -745,7 +787,7 @@ def op_pr_comments(req):
         view = gh_view(host, root, number, "comments,reviews", rflag)
         path = "repos/%s/pulls/%d/comments?per_page=100" % (repo, number) if repo else \
             "repos/{owner}/{repo}/pulls/%d/comments?per_page=100" % number
-        extra = ["--hostname", hostname] if hostname else []
+        extra = ["--hostname", api_host] if api_host else []
         code, out, err = run_host([host.program, "api", "--method", "GET"] + extra + [path], root)
         inline = host_json(host, code, out, err, "comments")
         return finish_comments(gh_comment_list(view, inline), since)
@@ -977,6 +1019,7 @@ def op_pr_find(req):
         d = template_json(run_template(host, "find", values, root), "find", list)
         return norm_find(d)
     glab_foreign(host, hostname)
+    hostname = fallback_host(cfg, host, repo, hostname)
     rflag = repo_flag(host, repo, hostname)
     sel = ["--head", head] if head else ["--author", author]
     if host.kind == "gh":

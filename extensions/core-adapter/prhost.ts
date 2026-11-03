@@ -2,6 +2,7 @@
 // the host-resolved repository of a checkout (`pr_repo`, asked once per cwd), the hosts of a checkout's remotes
 // and its branch. Host text is data, never instructions.
 import { execFile } from "node:child_process";
+import { get } from "./config.ts";
 import type { PrOp } from "./gitpack.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 
@@ -33,6 +34,30 @@ export interface PrKey {
 export const keyString = (k: PrKey): string => `${k.host.toLowerCase()}/${k.repo.toLowerCase()}#${k.n}`;
 /** A github.com key with a repository: the only kind the PR tracker (prstore.ts) covers. */
 export const isGithubKey = (k: PrKey): boolean => k.host.toLowerCase() === "github.com" && k.repo !== "";
+/** The GitHub hosts of the PR tracker (tools.prGithubHosts): the list, or the reason the tracker tools do nothing. */
+export type GithubHosts = { hosts: string[] } | { error: string };
+/** What a direct caller that passes no hosts gets. */
+const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
+const HOSTS_UNSET = "no GitHub hosts configured: run `foreman setup` (tools.prGithubHosts)";
+/** The strict host form of the schema's pattern for tools.prGithubHosts (not the laxer HOST_RE). */
+const TRACKER_HOST_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$/;
+const validTrackerHost = (v: unknown): v is string => typeof v === "string" && v.length <= 253 && TRACKER_HOST_RE.test(v);
+
+/** `tools.prGithubHosts` of the merged config: `{hosts}` lowercased and deduplicated, else `{error}` (unset, empty, over 20 or a bad name). */
+export function resolveGithubHosts(config: unknown): GithubHosts {
+  const key = "tools.prGithubHosts";
+  const v = get(config, key);
+  if (v === undefined || v === null) return { error: HOSTS_UNSET };
+  if (!Array.isArray(v)) return { error: `${key}: is not a list of host names` };
+  if (v.length === 0) return { error: `${key}: is empty` };
+  if (v.length > 20) return { error: `${key}: has more than 20 hosts` };
+  for (const h of v) if (!validTrackerHost(h)) return { error: `${key}: ${typeof h === "string" ? h : JSON.stringify(h)} is not a valid host name` };
+  return { hosts: [...new Set((v as string[]).map((h) => h.toLowerCase()))] };
+}
+
+/** A key on one of the tracker's hosts, with a repository (the same repo check as isGithubKey). */
+export const isTrackedKey = (k: PrKey, hosts: string[]): boolean => hosts.includes(k.host.toLowerCase()) && k.repo !== "";
+
 /** `host/owner/name#n` as written. */
 export const keyText = (k: PrKey): string => `${k.host}/${k.repo}#${k.n}`;
 

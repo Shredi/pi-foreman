@@ -51,7 +51,7 @@ setup from the clone once: `node <agentDir>/git/github.com/Shredi/pi-foreman/set
 Flags: `--dry-run`, `--project` (project-local settings), `--overlay npm:<pkg>@<exact-version>` (organisation overlay;
 ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `--develop` (see
 [Developing](#developing)), `--remove`, `--agent-dir <dir>` (overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`),
-`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>` and `--pick` (see
+`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--github-hosts <host>[,<host>]` and `--pick` (see
 [Profiles, features and add-ons](#profiles-features-and-add-ons)).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
 
@@ -69,12 +69,13 @@ Setup has a feature axis next to the model-map presets ([presets](presets.md)): 
 - `--enable <id>[,<id>]` and `--disable <id>[,<id>]`: switch toggleable features after the profile; both are repeatable.
   On Windows repeat the flag instead of using a comma list, because `cmd` splits arguments on commas.
 - `--addon <id>`: install an add-on (repeatable). This flag is the consent; nothing is installed without it or a picker "yes".
+- `--github-hosts <host>[,<host>]`: the GitHub hosts the PR tracker covers (`tools.prGithubHosts`, see [GitHub hosts for PR tracking](#github-hosts-for-pr-tracking)); 1 to 20 host names, lowercased and deduplicated. Counts as a flag (the picker does not open); refused with `--remove`, `--preview` and `--pick`.
 - `--pick`: open the picker again.
 - `--preview [screen]`: draw one setup screen (`home`, `plan`, `updates`, `config`, `models`, `workfolders`, `apply`; default `home`) from built-in sample data. On a terminal it opens the full-screen view (`1`-`7` or Tab switch screens, arrows move, `q` quits; the footer shows other keys, but they are inactive); without a terminal it prints one 100x30 frame. It reads and writes nothing of yours, exits 2 for an unknown screen, and cannot be combined with any other flag. Needs Node 22.19+.
 
 Setup exits 2 and prints the valid ids or the rule for: an unknown profile, feature or add-on id; a feature that is not
 toggleable (the message names the doc link and the enable snippet); the same id in `--enable` and `--disable`; `--remove`
-combined with any of `--profile/--enable/--disable/--addon/--pick`; and `--pick` when a picker precondition fails. `--pick`
+combined with any of `--profile/--enable/--disable/--addon/--github-hosts/--pick`; and `--pick` when a picker precondition fails. `--pick`
 needs every picker precondition below except "no profile recorded"; the message names the one that failed.
 
 ### The picker
@@ -92,8 +93,14 @@ it stays flag-driven. A run that never prompts and has no recorded profile print
 Steps: (1) pick a profile, with its summary and off-list; the recorded or `standard` one is preselected and Enter keeps it;
 (2) "Adjust features?" (default no): per area, one checkbox list each (space flips; the readline menu flips by number), safety relaxations in a last group with a warning;
 (3) add-ons not yet installed: purpose, exact spec, clash notes, `y/N` (default no); (4) summary with the `foreman.json` diff,
-the planned `pi install` lines and the equivalent flag line, then `y/N`. Ctrl-C, end of input or "no" prints "nothing
+the planned `pi install` lines and the equivalent flag line, then `y/N`; (5) after "yes", the GitHub hosts step below. Ctrl-C, end of input or "no" prints "nothing
 written" and exits 0.
+
+### GitHub hosts for PR tracking
+
+The PR tracker (`pr_follow`, `pr_watch`, `foreman prs poll`, the open-PR search) covers the hosts of `tools.prGithubHosts` and has no built-in default; unset, those tools do nothing and say `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`, while `pr_create`, `pr_status`, `pr_checks` and `pr_comments` keep working. Setup asks for the list after the picker's "Apply?" yes. It is prefilled with the merged list when that is valid, else `github.com`. The arrow-key picker shows a checkbox of the prefill (uncheck removes an entry) and an "add host (empty to finish)" input that repeats until you stop; it will not finish with no host. The readline menu asks one line, `GitHub hosts (comma-separated) [<prefill>]`: Enter or end of input keeps the prefill, an invalid answer asks again, Ctrl-C writes nothing. A host is a name with an optional `:port`; at most 20.
+
+Without a terminal use `--github-hosts a,b` (an invalid value exits 2). What gets written to the user `foreman.json`: your answer when it differs from the merged value; `["github.com"]` on a fresh install (no `foreman.json`) when no layer sets the key; otherwise nothing. A list an overlay sets is never copied into your file, and a value you already have (any letter case) is not rewritten. A run without flags on an existing file leaves it alone and prints a hint naming `--github-hosts` or `--pick` when the key is unset or invalid. When the written list differs from what the summary showed, setup prints `GitHub hosts: <list> (equivalent: foreman setup ... --github-hosts <list>)`.
 
 ### Write order
 

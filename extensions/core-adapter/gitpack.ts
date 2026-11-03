@@ -11,13 +11,15 @@ import { PrWatches, TRACKER_DOWN, countRuns, oneLine } from "./prwatch.ts";
 import type { WatchSnapshot } from "./prwatch.ts";
 import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
-import { isGithubKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
-import type { PrKey } from "./prhost.ts";
+import { isTrackedKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
+import type { GithubHosts, PrKey } from "./prhost.ts";
 import { prGateRefusal } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import type { Spawner } from "./spawn.ts";
 import { resolveBin } from "./wait.ts";
+
+const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
 export const GIT_PACK = "git";
 export const PACK_ENV = "PI_FOREMAN_TOOL_PACKS";
@@ -222,7 +224,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     op: "pr_unwatch",
     label: "Unwatch PR",
     description: "End the watch of a pull request without a message.",
-    parameters: { type: "object", properties: { number: num("PR number."), repo: { type: "string", description: "Repository owner/name (default: the current repository's watch if there is one, else every watch with that number)." } }, required: ["number"], additionalProperties: false },
+    parameters: { type: "object", properties: { number: num("PR number."), repo: { type: "string", description: "Repository owner/name (default: the current repository's watch if there is one, else every watch with that number)." }, host: { type: "string", description: "A host of tools.prGithubHosts (default: every host)." } }, required: ["number"], additionalProperties: false },
     foremanOnly: true,
   },
 ];
@@ -277,7 +279,9 @@ export interface PrPackSession {
   /** The host rule for `host` arguments and the repository of a checkout (prhost.ts). */
   tracker?: PrTracker;
   /** Adds a PR to the tracked list (prstore.ts addTracked), or says `off` when the PR feed is off. Absent: nothing is added. */
-  track?(repo: string, n: number): Promise<TrackOutcome>;
+  track?(repo: string, n: number, host?: string): Promise<TrackOutcome>;
+  /** The PR tracker's GitHub hosts (tools.prGithubHosts). Absent: github.com only. */
+  githubHosts?(): GithubHosts;
 }
 
 export type TrackOutcome = AddOutcome | "off";
@@ -356,7 +360,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (o.kind === "precondition") return failure(`${t.name}: ${o.message}. Nothing was changed.`, { decision: "precondition_failed", precondition: o.precondition });
           return failure(`${t.name}: ${o.message}`, { decision: "error" });
         };
-        if (typeof params.host === "string") {
+        if (typeof params.host === "string" && t.op !== "pr_unwatch") {
           const early = await hostRule(s, ctx, t.name, params);
           if (early) return early;
         }
@@ -364,8 +368,16 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         if (t.op === "pr_unwatch") {
           if (!validNumber(params.number)) return failure(`${t.name}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
           if (params.repo !== undefined && !validRepo(params.repo)) return failure(`${t.name}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
+          let host: string | undefined;
+          if (params.host !== undefined) {
+            const hosts = hostsOf(s);
+            if (!validHost(params.host)) return failure(`${t.name}: bad arguments (host a host name); nothing was done.`, { decision: "bad_request" });
+            host = params.host.toLowerCase();
+            if ("hosts" in hosts && !hosts.hosts.includes(host)) return failure(`${t.name}: ${notListed(host, hosts.hosts)}; nothing was done.`, { decision: "host_unsupported" });
+          }
           let ended: boolean;
-          if (typeof params.repo === "string") ended = s.watches.unwatch(params.number, params.repo) > 0;
+          if (typeof params.repo === "string") ended = s.watches.unwatch(params.number, params.repo, host) > 0;
+          else if (host !== undefined) ended = s.watches.unwatch(params.number, undefined, host) > 0;
           else {
             const cur = await s.tracker?.repoFor?.(ctx.cwd).catch(() => null);
             ended = (cur ? s.watches.unwatch(params.number, cur.repo) : 0) > 0 || s.watches.unwatch(params.number) > 0;
@@ -413,8 +425,8 @@ export function registerPrFollow(pi: Pick<ExtensionAPI, "registerTool">, deps: P
   pi.registerTool({
     name: PR_FOLLOW,
     label: "Follow PR",
-    description: "Follow a GitHub pull request: adds it to the tracked list that herdr-app's `foreman prs poll` polls for its checks, and drops once it is merged or closed (pr_create and pr_watch add theirs automatically). GitHub (github.com) only. Makes no GitHub call. Needs radar.openPrs on.",
-    parameters: { type: "object", properties: { repo: str(200, "Repository as owner/name on github.com."), number: num("PR number.") }, required: ["repo", "number"], additionalProperties: false } as never,
+    description: "Follow a GitHub pull request: adds it to the tracked list that herdr-app's `foreman prs poll` polls for its checks, and drops once it is merged or closed (pr_create and pr_watch add theirs automatically). GitHub only, on a host of `tools.prGithubHosts` (default: its first entry). Makes no GitHub call. Needs radar.openPrs on.",
+    parameters: { type: "object", properties: { repo: str(200, "Repository as owner/name."), number: num("PR number."), host: str(253, "A host of tools.prGithubHosts (default: its first entry).") }, required: ["repo", "number"], additionalProperties: false } as never,
     defaultActive: false,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       let s: PrPackSession;
@@ -430,10 +442,15 @@ export function registerPrFollow(pi: Pick<ExtensionAPI, "registerTool">, deps: P
       }
       if (!validNumber(params.number)) return failure(`${PR_FOLLOW}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
       if (!validRepo(params.repo)) return failure(`${PR_FOLLOW}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
+      if (params.host !== undefined && !validHost(params.host)) return failure(`${PR_FOLLOW}: bad arguments (host a host name); nothing was done.`, { decision: "bad_request" });
+      const hosts = hostsOf(s);
+      if ("error" in hosts) return failure(`${PR_FOLLOW}: ${hosts.error}; nothing was done.`, { decision: "hosts_unconfigured" });
+      const host = (typeof params.host === "string" ? params.host : hosts.hosts[0]).toLowerCase();
+      if (!hosts.hosts.includes(host)) return failure(`${PR_FOLLOW}: ${notListed(host, hosts.hosts)}; nothing was done.`, { decision: "host_unsupported" });
       const { repo, number } = params;
-      const tracked: TrackOutcome = s.track ? await s.track(repo, number).catch((): TrackOutcome => "unavailable") : "off";
-      const details = { repo, number, tracked };
-      const at = `${repo}#${number}`;
+      const tracked: TrackOutcome = s.track ? await s.track(repo, number, host).catch((): TrackOutcome => "unavailable") : "off";
+      const details = { repo, number, tracked, ...(host !== "github.com" ? { host } : {}) };
+      const at = `${host !== "github.com" ? `${host}/` : ""}${repo}#${number}`;
       switch (tracked) {
         case "off": return failure(`${PR_FOLLOW}: the PR feed is off (radar.openPrs.enabled false, or tools.prHost not auto/gh); nothing was done.`, { decision: "feed_off", ...details });
         case "full": return failure(`${PR_FOLLOW}: ${FULL_TEXT}`, { decision: "tracked_full", ...details });
@@ -470,8 +487,12 @@ async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url:
 
 export const NOT_GITHUB = "only github.com PRs can be watched (the PR tracker covers github.com)";
 
+const hostsOf = (s: PrPackSession): GithubHosts => s.githubHosts?.() ?? DEFAULT_HOSTS;
+const notTracked = (hosts: string[]): string => `only ${hosts.join(", ")} PRs can be watched (the PR tracker covers ${hosts.join(", ")})`;
+const notListed = (host: string, hosts: string[]): string => `host ${host} is not one of the hosts of tools.prGithubHosts (${hosts.join(", ")})`;
+
 type Armed =
-  | { error: string; hostUnsupported?: true; tracked?: TrackOutcome }
+  | { error: string; hostUnsupported?: true; hostsError?: true; tracked?: TrackOutcome }
   | { duplicate: true; tracked?: TrackOutcome }
   /** `snap`: the stored snap the watch started from; null: the tracker has none yet. `down`: no tracker runs. */
   | { key: PrKey; snap: WatchSnapshot | null; down: boolean; tracked?: TrackOutcome };
@@ -487,9 +508,11 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * first poll decides.
  */
 async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false): Promise<Armed> {
+  const hosts = hostsOf(s);
+  if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = await watchKey(s, ctx, n, url);
-  if (!isGithubKey(key)) return { error: NOT_GITHUB, hostUnsupported: true };
-  const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n).catch((): TrackOutcome => "unavailable") : undefined);
+  if (!isTrackedKey(key, hosts.hosts)) return { error: notTracked(hosts.hosts), hostUnsupported: true };
+  const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n, key.host).catch((): TrackOutcome => "unavailable") : undefined);
   let tracked = created ? await track() : undefined;
   if (!s.watches.reserve(key)) return { duplicate: true, tracked: tracked ?? (await track()) };
   try {
@@ -516,6 +539,8 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
 async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<string, unknown>, run: PrRun, report: (o: SafeOpOutcome) => unknown, tool: string) {
   if (params.until !== undefined || params.timeoutSeconds !== undefined) return failure(`${tool}: until and timeoutSeconds are gone: a watch lasts until the PR is merged or closed (pr_unwatch ends it); nothing was done.`, { decision: "bad_request" });
   if (params.number !== undefined && !validNumber(params.number)) return failure(`${tool}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
+  const hosts = hostsOf(s);
+  if ("error" in hosts) return failure(`${tool}: ${hosts.error}; nothing was done.`, { decision: "hosts_unconfigured" });
   let n = params.number as number | undefined;
   let url: unknown;
   if (n === undefined) {
@@ -529,7 +554,7 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
   const tracked = armed.tracked ? { tracked: armed.tracked } : {};
   if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate", ...tracked });
   if ("error" in armed) {
-    if (armed.hostUnsupported) return failure(`pr_watch: ${armed.error}; nothing was done.`, { decision: "host_unsupported" });
+    if (armed.hostUnsupported || armed.hostsError) return failure(`pr_watch: ${armed.error}; nothing was done.`, { decision: armed.hostsError ? "hosts_unconfigured" : "host_unsupported" });
     return failure(`${tool}: ${armed.error}`, { decision: "error", ...tracked });
   }
   const base = { watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() };

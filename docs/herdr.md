@@ -579,7 +579,7 @@ waits; one two-part dot per PR (see Open PRs below), wrapping, then a summary th
 tree row "🤖 role model" (no status circle inside a card). An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
 session shows. The mod is the only PR and run display: Pi itself draws no PR or run widget and no PR or run parts in its footer,
 and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
-only (through `gh`), so GitLab users get no PR display.
+only (through `gh`, one search per host of `tools.prGithubHosts`), so GitLab users get no PR display.
 
 The mod reads `foreman radar --json` (every 3 s locally, 15 s per remote space) and, per agent terminal, `hc get <terminal> --json`
 (prop `hc` names the binary like `foreman`, default `hc`; failures are ignored) for the `pi-subagents` child records in state working or
@@ -637,18 +637,20 @@ radar --json` reads the file and never calls the network, so its 3 s polls cost 
 logged in or rate limited, the last file stays and carries `error` and `errorAt` (when only some queries fail, the others' PRs are kept and `error` counts the failed ones); radar and the sessions go on. Only `tools.prHost`
 `auto` or `gh` is searched. Remote spaces: the radar on that machine reads its own file.
 
-**Tracked PRs and the PR tracker.** `pr_follow {repo, number}` (github.com only), `pr_create` and `pr_watch` add a PR to the tracked list; no tool removes one. `foreman prs poll [--json]` is the tracker: herdr-app runs it per machine, 30 s after its previous run ended (run it by hand or from a scheduler without herdr-app; without a tracker, `pr_watch` watches stay armed and say `no PR tracker running`). One run polls up to 50 tracked PRs with `pr_batch` through `gh` and then calls the search refresh (`refreshOpenPrs`, the same throttle), so a Pi session is not needed. A merged or closed PR is written to the state file and dropped from the list; the ended entry stays 15 minutes so every session sees the ending. Gone and failed PRs stay with an `error`. Four files under `<agent dir>/pi-foreman/state/`:
+**Tracked PRs and the PR tracker.** `pr_follow {repo, number, host?}` (a host of `tools.prGithubHosts`, default the first entry), `pr_create` and `pr_watch` add a PR to the tracked list; no tool removes one. `foreman prs poll [--json]` is the tracker: herdr-app runs it per machine, 30 s after its previous run ended (run it by hand or from a scheduler without herdr-app; without a tracker, `pr_watch` watches stay armed and say `no PR tracker running`). One run polls up to 50 tracked PRs with `pr_batch` through `gh` and then calls the search refresh (`refreshOpenPrs`, the same throttle), so a Pi session is not needed. A merged or closed PR is written to the state file and dropped from the list; the ended entry stays 15 minutes so every session sees the ending. Gone and failed PRs stay with an `error`. Four files under `<agent dir>/pi-foreman/state/`:
 
 | File | Writer |
 |---|---|
 | `open-prs.json` | `refreshOpenPrs` (a Pi session or `foreman prs poll`), under `open-prs.json.lock` |
-| `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt}]}` (at most 200 lines) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
+| `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt, host?}]}` (at most 200 lines; `host` is absent for `github.com`) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
 | `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt` per PR; `trackedAt`; `off`) | the poll only |
 | `tracked-prs-comments.json` | the poll only |
 
 `foreman radar --json` merges the tracked PRs into `openPrs`, sorted by repo (case-insensitive) and number, independent of session nodes: every search entry is listed; a tracked entry with a search twin replaces it while it is display-fresh (`okAt` within 15 minutes) and keeps the twin's `author` and `bodyText`; a tracked entry without a twin is listed whatever its age and carries `tracked: true`. A tracked-only entry never makes its repository "covered" in the mod, so it cannot drop a session chip the search alone would have kept. `openPrsAt` stays the search's success time. Merged and closed (ended) PRs are not listed; neither are tracked PRs while the state file's `off` is true (they show again once the feed is back on). The mod itself only runs the CLI and the radar; it never writes.
 
 When the list is full (200), `pr_follow` says so; remove a stuck or unwanted line by editing `tracked-prs.json` by hand, and the next poll prunes its state. `radar.openPrs.enabled: false`, or a `tools.prHost` other than `auto`/`gh`, switches tracking and `pr_follow` off too (the state file gets `off: true`).
+
+`tools.prGithubHosts` (user or overlay config, set by `foreman setup`; no built-in default) names the GitHub hosts the tracker and the search cover, for example `github.com` and a GitHub Enterprise host. The poll makes one `pr_batch` per host; the search runs its queries (at most 20 in all, shared round-robin) for each listed host, `github.com` with the unchanged command and another host with `--hostname <host>`, and `open-prs.json` entries of another host carry `host`. A host whose search fails keeps its previous entries and does not hide the others. Unset, the poll and the search make no `gh` call and record the one error `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`; an invalid list records an error naming the key. A tracked line whose host has left the list is skipped by the poll and pruned. `foreman radar --json` joins a tracked PR to its search twin by host, repository and number, so the same `owner/name#N` on two hosts stays two entries.
 
 **Renovate.** The Renovate GitHub App opens PRs as `renovate[bot]`: list it under `authors` with the owners or repositories in
 `scope`. A self-hosted Renovate that uses a personal token opens them as that user, which `mine` already covers.
@@ -672,6 +674,7 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 
 ## Known limits
 
+- The herdr-app mod's PR row ids are host-blind: two PRs with the same `owner/name#N` on two GitHub hosts get the same row id in the mod and can collide there. The feed and the tracker keep them apart; the mod's ids are to follow.
 - Subagent runs inside a Pi session are text on that session's row, not rows: Herdr has rows only for real panes.
   Nested sessions opened in their own panes (`foreman session open`) are rows of their own, indented under the parent.
 - Row templates are static config: the plugin cannot add or remove rows; empty tokens leave their cells empty.

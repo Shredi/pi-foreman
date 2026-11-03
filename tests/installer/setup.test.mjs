@@ -1315,7 +1315,7 @@ test("a non-interactive run prints the no-profile hint and never prompts, even w
   assert.equal(r.code, 0, r.out);
   assert.ok(r.out.includes(HINT), r.out);
   assert.doesNotMatch(r.out, /Profiles:|Adjust features/);
-  assert.deepEqual(foremanJson(env), { version: 1, providers: {} });
+  assert.deepEqual(foremanJson(env), { version: 1, providers: {}, tools: { prGithubHosts: ["github.com"] } });
   const off = run(env, [], { PI_FOREMAN_PICKER: "off" });
   assert.ok(off.out.includes(HINT));
   assert.doesNotMatch(off.out, /Profiles:/);

@@ -11,6 +11,8 @@ import { openPrsConfig, openPrsFile, realGh, refreshOpenPrs, MAX_BODY } from "./
 import type { OpenPrsConfig, RefreshResult } from "./openprs.ts";
 import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
+import { resolveGithubHosts } from "./prhost.ts";
+import type { GithubHosts } from "./prhost.ts";
 import { pollWatchBatch } from "./prwatch.ts";
 import type { CommentEntry, RunOp, WatchPoll } from "./prwatch.ts";
 import { runSafeOp } from "./safeops.ts";
@@ -19,6 +21,8 @@ import { defaultSpawner } from "./spawn.ts";
 import { ENDED_KEEP_MS, STATE_LOCK_STALE_MS, readTracked, storeKey, trackedCommentsFile, trackedStateFile, usableLine, withTrackedLock, writeTracked } from "./prstore.ts";
 import type { CommentsDoc, StateDoc, StateEntry, StateMeta, TrackedPr } from "./prstore.ts";
 import { dropLock, ownsLock, takeLock, writeAtomic } from "./statefile.ts";
+
+const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = path.resolve(HERE, "..", "..");
@@ -50,7 +54,9 @@ export interface PollDeps {
   loadConfig(python: string | null): Promise<MergedConfig>;
   /** The RunOp over safe_ops.py with config `{prHost:"gh"}`; `pr_comments` gets the top-level `repoless`. */
   runOp(python: string): RunOp;
-  refresh(config: OpenPrsConfig): Promise<RefreshResult>;
+  refresh(config: OpenPrsConfig, hosts?: GithubHosts): Promise<RefreshResult>;
+  /** tools.prGithubHosts of the loaded config; absent: github.com only. */
+  githubHosts?(config: Json): GithubHosts;
   deadlineMs?: number;
 }
 
@@ -129,16 +135,18 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
       return { ...res, skipped: "off" };
     }
     setOff(deps.agentDir, deps.now(), false);
-    if (!py.ok) res.error = `no Python >= 3.13 found (${py.rejected.join("; ") || "none tried"}). ${NO_PYTHON_FIX}`;
+    const hosts = deps.githubHosts ? deps.githubHosts(config.config) : DEFAULT_HOSTS;
+    if ("error" in hosts) res.error = hosts.error;
+    else if (!py.ok) res.error = `no Python >= 3.13 found (${py.rejected.join("; ") || "none tried"}). ${NO_PYTHON_FIX}`;
     else {
       try {
-        await trackedStep(deps, py.info.executable, res);
+        await trackedStep(deps, py.info.executable, res, hosts.hosts);
       } catch (err) {
         res.error = msg(err);
       }
     }
     try {
-      res.searched = (await deps.refresh(oc)) === "refreshed";
+      res.searched = (await deps.refresh(oc, hosts)) === "refreshed";
     } catch (err) {
       res.error ??= msg(err);
     }
@@ -148,7 +156,7 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
   return res;
 }
 
-async function trackedStep(deps: PollDeps, python: string, res: PollResult): Promise<void> {
+async function trackedStep(deps: PollDeps, python: string, res: PollResult, hosts: string[]): Promise<void> {
   const { agentDir } = deps;
   const start = deps.now();
   const pre = readState(agentDir);
@@ -167,13 +175,13 @@ async function trackedStep(deps: PollDeps, python: string, res: PollResult): Pro
     return;
   }
   try {
-    await locked_step(deps, python, res, lock, token);
+    await locked_step(deps, python, res, lock, token, hosts);
   } finally {
     dropLock(lock, token);
   }
 }
 
-async function locked_step(deps: PollDeps, python: string, res: PollResult, lock: string, token: string): Promise<void> {
+async function locked_step(deps: PollDeps, python: string, res: PollResult, lock: string, token: string, hosts: string[]): Promise<void> {
   const { agentDir } = deps;
   const t0 = deps.now();
   const state = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
@@ -186,14 +194,20 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const lines = listed.kind === "ok" ? listed.lines : [];
   const seenKeys = new Set<string>();
   const usable: TrackedPr[] = [];
+  let unlisted = false;
   for (const l of lines) {
     const u = usableLine(l);
     if (!u) continue;
-    const k = storeKey(u.repo, u.number);
+    if (!hosts.includes(u.host ?? "github.com")) {
+      unlisted = true;
+      continue;
+    }
+    const k = storeKey(u.repo, u.number, u.host);
     if (seenKeys.has(k)) continue;
     seenKeys.add(k);
     usable.push(u);
   }
+  if (unlisted) res.error ??= `tracked PRs on a host outside tools.prGithubHosts are skipped (${hosts.join(", ")})`;
   const comments = readComments(agentDir);
   // Prune: keys no longer in the list, except ended entries younger than ENDED_KEEP_MS.
   const prs: Record<string, StateEntry> = {};
@@ -206,8 +220,8 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
 
   const pick = [...usable]
     .sort((a, b) => {
-      const ea = prs[storeKey(a.repo, a.number)];
-      const eb = prs[storeKey(b.repo, b.number)];
+      const ea = prs[storeKey(a.repo, a.number, a.host)];
+      const eb = prs[storeKey(b.repo, b.number, b.host)];
       if (!ea !== !eb) return ea ? 1 : -1;
       return (ea?.at ?? 0) - (eb?.at ?? 0);
     })
@@ -221,29 +235,31 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
     const startedAt = deps.now();
     const out = await inner(op, args);
     if (op === "pr_batch" && out.kind === "ran" && Array.isArray(out.result.prs)) {
-      for (const r of out.result.prs) if (isObj(r)) rows.set(`${String(r.repo).toLowerCase()}#${String(r.number)}`, { row: r, startedAt });
+      const host = typeof args.host === "string" ? args.host.toLowerCase() : "github.com";
+      for (const r of out.result.prs) if (isObj(r)) rows.set(rowKey(host, String(r.repo), String(r.number)), { row: r, startedAt });
     }
     return out;
   };
 
-  const items = pick.map((p) => ({ key: { host: "github.com", repo: p.repo, n: p.number }, seen: { updatedAt: String(cprs[storeKey(p.repo, p.number)]?.updatedAt ?? "") } }));
+  const items = pick.map((p) => ({ key: { host: p.host ?? "github.com", repo: p.repo, n: p.number }, seen: { updatedAt: String(cprs[storeKey(p.repo, p.number, p.host)]?.updatedAt ?? "") } }));
   const polls: WatchPoll[] = items.length ? await pollWatchBatch(run, items) : [];
   const drop = new Set<string>();
   const now = deps.now();
   const newComments: CommentsDoc["prs"] = { ...cprs };
   pick.forEach((p, i) => {
-    const k = storeKey(p.repo, p.number);
+    const k = storeKey(p.repo, p.number, p.host);
+    const rk = rowKey(p.host ?? "github.com", p.repo, String(p.number));
     const r = polls[i];
     const prev = prs[k];
     if ("snap" in r) {
       const { comments: fetched, ...snap } = r.snap;
       if (snap.state !== "open") {
-        prs[k] = { repo: p.repo, number: p.number, snap, okAt: rows.get(k)?.startedAt ?? now, endedAt: prev?.endedAt ?? now, at: now };
+        prs[k] = { repo: p.repo, number: p.number, snap, okAt: rows.get(rk)?.startedAt ?? now, endedAt: prev?.endedAt ?? now, at: now };
         delete newComments[k];
         drop.add(k);
         return;
       }
-      const row = rows.get(k);
+      const row = rows.get(rk);
       const meta = row ? metaOf(row.row) : prev?.meta;
       prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, at: now };
       if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(-MAX_COMMENTS).map(cap) };
@@ -266,7 +282,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       if (cur.kind !== "ok") return 0;
       const keep = cur.lines.filter((l) => {
         const u = usableLine(l);
-        return !(u && drop.has(storeKey(u.repo, u.number)));
+        return !(u && drop.has(storeKey(u.repo, u.number, u.host)));
       });
       if (keep.length === cur.lines.length) return 0;
       writeTracked(agentDir, keep);
@@ -275,6 +291,9 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
     res.dropped = done?.value ?? 0;
   }
 }
+
+/** Key of a pr_batch row: the same `o/r#n` on two hosts keeps its own row. */
+const rowKey = (host: string, repo: string, n: string): string => `${host}|${repo.toLowerCase()}#${n}`;
 
 function metaOf(row: Record<string, unknown>): StateMeta {
   const s = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
@@ -293,7 +312,8 @@ export function realDeps(env: NodeJS.ProcessEnv = process.env): PollDeps {
     loadConfig: (python) => loadMergedConfig({ python, pkgRoot: PKG_ROOT, agentDir, projectDir: agentDir, trusted: false, spawner }),
     runOp: (python) => (op, args) =>
       runSafeOp({ python, script: path.join(PKG_ROOT, "scripts", "safe_ops.py"), op, args, cwd: agentDir, config: { prHost: "gh" }, env: penv, spawner, timeoutMs: OP_TIMEOUT_MS, repoless: true }),
-    refresh: (config) => refreshOpenPrs({ file: openPrsFile(agentDir), config, gh: realGh(agentDir, env) }),
+    refresh: (config, hosts) => refreshOpenPrs({ file: openPrsFile(agentDir), config, gh: realGh(agentDir, env), ...(hosts ? { hosts } : {}) }),
+    githubHosts: resolveGithubHosts,
   };
 }
 

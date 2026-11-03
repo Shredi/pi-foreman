@@ -102,7 +102,7 @@ import type { PrPackSession } from "./gitpack.ts";
 import { addTracked, readStoreEntry } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, watchIntervalMs } from "./prwatch.ts";
-import { PrHost, branchOf, isGithubKey } from "./prhost.ts";
+import { PrHost, branchOf, isTrackedKey, resolveGithubHosts } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
 import { ExtStatus } from "./extstatus.ts";
@@ -708,9 +708,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prPack: false,
       prCtx: null,
       prWatches: new PrWatches({
-        storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s)),
+        storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s), resolveGithubHosts(s.config.config)),
+        githubHosts: () => resolveGithubHosts(s.config.config),
         retrack: async (key) => {
-          if (isGithubKey(key) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n);
+          const hosts = resolveGithubHosts(s.config.config);
+          if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);
         },
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
@@ -884,7 +886,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       const where = new Where({ cwd: () => s.cwd, repo: originRepo, branch: branchOf, changed: () => s.live?.touch() });
       if (s.live) s.live.where = () => where.read();
-      s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd) });
+      s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(s.config.config) });
       s.openPrs.start();
       const live = s.live;
       waits.onChange(id, () => live?.touch());
@@ -1227,10 +1229,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return openPrsConfig(get(s.config.config, "radar.openPrs")).enabled && (h === "auto" || h === "gh");
   }
 
-  /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost. */
+  /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost and, when set, tools.prGithubHosts (only a valid list; unset or invalid means the read tools add no host). */
   function prOpsConfig(s: Session): Record<string, unknown> {
     const ops = get(s.config.config, "safety.ops");
-    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto" };
+    const hosts = get(s.config.config, "tools.prGithubHosts");
+    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto", ...(Array.isArray(hosts) && hosts.length >= 1 && hosts.length <= 20 && hosts.every((h) => typeof h === "string" && h.length <= 253 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::\d{1,5})?$/.test(h)) ? { githubHosts: hosts } : {}) };
   }
 
   function prRun(s: Session, cwd: string, op: PrOp, args: Record<string, unknown>, timeoutMs?: number) {
@@ -4154,7 +4157,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       watches: s.prWatches,
       trace: (r) => s.trace?.emit(r),
       tracker: s.prHost,
-      track: s.isChild ? undefined : async (repo, n) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n) : "off"),
+      track: s.isChild ? undefined : async (repo, n, host) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n, undefined, host) : "off"),
+      githubHosts: () => resolveGithubHosts(s.config.config),
     };
   };
   registerPrFollow(pi, { isChild: process.env.PI_SUBAGENT_CHILD === "1", session: prSession });

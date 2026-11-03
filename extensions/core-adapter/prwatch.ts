@@ -6,8 +6,10 @@
 // so (status line and one notice per outage). Timers are unref'd; clear() (session shutdown) stops everything. The PR number is
 // never traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
-import { isGithubKey, keyString } from "./prhost.ts";
-import type { PrKey } from "./prhost.ts";
+import { isTrackedKey, keyString } from "./prhost.ts";
+import type { GithubHosts, PrKey } from "./prhost.ts";
+
+const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
 export const PR_MESSAGE_TYPE = "pi-foreman-pr";
 export const MAX_CONTENT = 4096;
@@ -457,6 +459,8 @@ export interface MergedInfo {
 export interface PrWatchesDeps {
   /** What the PR tracker stored for a watched PR (prstore.ts readStoreEntry); absent: no tracker, every watch says so. Never a GitHub call. */
   storeEntry?(key: PrKey): StoreRead | Promise<StoreRead>;
+  /** The tracker's GitHub hosts (tools.prGithubHosts); absent: github.com only. Read on every use, so a config reload applies. */
+  githubHosts?(): GithubHosts;
   /** Put the key back on the tracker's list when it is not there (a restored watch, a failed add, a hand-removed line). Never a GitHub call. */
   retrack?(key: PrKey): void | Promise<void>;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
@@ -504,6 +508,8 @@ export class PrWatches {
   private reserved: PrKey[] = [];
   /** The one "no PR tracker running" notice of the current outage was sent. */
   private trackerDown = false;
+  /** The one notice of the current tools.prGithubHosts error was sent. */
+  private hostsNoticed = false;
   private deps: PrWatchesDeps;
   private timers: Timers;
   constructor(deps: PrWatchesDeps) {
@@ -615,11 +621,11 @@ export class PrWatches {
     }
   }
 
-  /** pr_unwatch: end the watches of PR number `n` (of repository `repo` owner/name when given) without a message; the count ended. */
-  unwatch(n: number, repo?: string): number {
+  /** pr_unwatch: end the watches of PR number `n` (of repository `repo` owner/name and host `host` when given) without a message; the count ended. */
+  unwatch(n: number, repo?: string, host?: string): number {
     let count = 0;
     for (const [id, w] of [...this.watches]) {
-      if (w.key.n !== n || (repo !== undefined && w.key.repo !== repo)) continue;
+      if (w.key.n !== n || (repo !== undefined && w.key.repo !== repo) || (host !== undefined && w.key.host.toLowerCase() !== host.toLowerCase())) continue;
       w.ended = true;
       this.timers.clear(w.poller);
       this.watches.delete(id);
@@ -644,9 +650,12 @@ export class PrWatches {
     if (r.status === "malformed") lost.push([null, "the stored watch state is unreadable; start the watch again with pr_watch"]);
     else {
       for (let i = 0; i < r.bad; i++) lost.push([null, "a stored watch is unreadable; start the watch again with pr_watch"]);
+      const hosts = this.deps.githubHosts?.() ?? DEFAULT_HOSTS;
       for (const x of r.watches) {
-        // the tracker serves github.com keys only: an older record (another host, or a number-only key) could never end
-        if (!isGithubKey(x.key)) lost.push([x.key.n, `the PR tracker covers github.com only; this watch from an earlier version ended. Re-arm it with pr_watch.`]);
+        // the tracker serves the listed hosts only: an older record (another host, or a number-only key) could never end.
+        // With the host list in error nothing can be judged: a keyed watch stays armed and shows the error.
+        const kept = "error" in hosts ? x.key.repo !== "" : isTrackedKey(x.key, hosts.hosts);
+        if (!kept) lost.push([x.key.n, `the PR tracker covers ${"error" in hosts ? "GitHub hosts" : hosts.hosts.join(", ")} only; this watch from an earlier version ended. Re-arm it with pr_watch.`]);
         else if (!this.has(x.key)) live.push(this.register(x));
       }
     }
@@ -729,6 +738,18 @@ export class PrWatches {
       return this.arm(w);
     }
     this.trackerDown = false;
+    const hosts = this.deps.githubHosts?.();
+    if (!hosts || !("error" in hosts)) this.hostsNoticed = false;
+    else if (r.kind === "error") {
+      // tools.prGithubHosts is unset or invalid: the watch stays armed and says so (the text is the notice, no "last poll failed" prefix)
+      this.setStatus(w, oneLine(hosts.error));
+      if (!this.hostsNoticed) {
+        this.hostsNoticed = true;
+        this.deps.send(noticeMessage(null, `watch: ${oneLine(hosts.error)} (the watch stays armed)`, "tracker_hosts"), this.idle());
+        this.deps.trace({ event: "pr_watch", outcome: "tracker_hosts" });
+      }
+      return this.arm(w);
+    }
     if (r.kind === "waiting") {
       this.retrack(w);
       this.setStatus(w, "waiting for the tracker's first poll");
