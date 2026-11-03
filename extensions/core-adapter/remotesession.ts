@@ -1,7 +1,8 @@
-// Inbound notices of a remote child session (round 40): `foreman session open --machine NAME` children report with
-// `foreman session remote notice`, which sends pi-intercom's `send --to <uuid>@<machine>`; pi-intercom relays it with a
-// structured `crossMachine` origin. This module is pure matching and mirroring, no authentication: the broker checks
-// only the shape of `crossMachine`, so a notice is data (a registry update and a mirror file), never acted on.
+// Notices of a remote child session (`foreman session open --machine NAME`): the child sets labels on its hc terminal
+// (`foreman session remote notice`) and the parent's hc events watcher (remotewatch.ts) fetches and checks the named file,
+// then calls `applyRemoteNotice` here. A message that pi-intercom relays with a structured `crossMachine` origin is matched
+// the same way. This module is pure matching and mirroring, no authentication: a notice is data (a registry update and a
+// mirror file), never acted on.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -17,7 +18,7 @@ export interface RemoteOrigin {
 
 const str = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
 
-/** The structured origin of a relayed message (`details.message.crossMachine`); null without it (a hard stop, never parsed from text). */
+/** The structured origin of a message relayed by pi-intercom (`details.message.crossMachine`); null without it (a hard stop, never parsed from text). */
 export function remoteOrigin(details: unknown): RemoteOrigin | null {
   const m = (details as { message?: { crossMachine?: unknown } } | null | undefined)?.message;
   const x = m && typeof m === "object" ? (m.crossMachine as Record<string, unknown> | null | undefined) : undefined;

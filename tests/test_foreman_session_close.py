@@ -385,9 +385,9 @@ class RadarRemoteTest(unittest.TestCase):
         self.assertEqual((k["glyph"], k["state"]), ("lost", "lost"))  # open, nothing reaches this machine, window over
         k = self.kid(remote_entry(status="pending", opened=local_iso(1000)))
         self.assertEqual((k["glyph"], k["state"]), ("starting", "pending"))
-        for stale in ({"pulledAt": iso(10)}, {"remoteLive": {"state": "working", "heartbeatAgeSeconds": 1}}):
-            k = self.kid(remote_entry(opened=local_iso(1000), **stale))
-            self.assertEqual((k["glyph"], k["state"]), ("lost", "lost"), stale)  # the removed pull fields change nothing
+        k = self.kid(remote_entry(opened=local_iso(1000), pulledAt=iso(10)))
+        self.assertEqual((k["glyph"], k["state"]), ("lost", "lost"))  # the removed pull field changes nothing
+        # `remoteLive` (the hc watcher's terminal state, PR 4) now decides: tests/test_foreman_radar_remote_live.py
 
     def test_an_open_ask_shows_the_asking_glyph(self):
         k = self.kid(remote_entry(ask={"n": 1, "topic": "which db"}, opened=local_iso(1000)))

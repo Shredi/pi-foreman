@@ -151,6 +151,7 @@ import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource }
 import { symbolSet } from "./symbols.ts";
 import { blockedConfirm, installBlockedShim, withBlocked } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
+import { RemoteWatcher } from "./remotewatch.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
@@ -460,7 +461,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       deferred.trace({ event: "tool_found", ...hit });
     },
   }) as never);
+  let remoteWatch: RemoteWatcher | null = null; // hc events watcher of the remote children (remotewatch.ts), a foreman session only
   pi.on("session_shutdown", async () => {
+    remoteWatch?.stop();
+    remoteWatch = null;
     core.release();
   });
   // Before any session_start (pi-intercom reads PI_INTERCOM_STABLE_ID when it connects): review S6.
@@ -1251,6 +1255,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const w of familyWarnings(s.config.roles, provider, registry)) notifyOnce(s, ctx, `family:${w}`, w);
     }
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
+    remoteWatch?.stop();
+    remoteWatch = null;
+    if (!s.isChild) {
+      remoteWatch = new RemoteWatcher({
+        agentDir: s.agentDir,
+        fetchTimeoutSeconds: () => get(s.config.config, "sessions.remote.fetchTimeoutSeconds"),
+        wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
+        notify: (msg, level) => ctx.ui.notify(msg, level),
+      });
+      remoteWatch.start();
+    }
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
     if (!s.isChild && s.live) {
       s.extStatus.start();
