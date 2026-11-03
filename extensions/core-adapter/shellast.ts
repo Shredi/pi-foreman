@@ -19,7 +19,8 @@
 import { forEachChild, parse } from "unbash";
 import type { Assignment, Command, CommandNode, CompoundList, ParsedScript as Script, Redirection, Statement, SyntaxNode, Word } from "unbash";
 import { RUNNERS } from "./effects.ts";
-import { cdTarget, grammarStatements, headerOf, resolveVars } from "./shellvars.ts";
+import { cdTarget, childAssignValues, grammarStatements, headerOf, resolveVars } from "./shellvars.ts";
+import type { ChildAssign } from "./shellvars.ts";
 
 export type OpaqueReason =
   | "unresolved_var" // a variable outside the closed grammar, `$(...)` in a word, `~`, arithmetic
@@ -658,6 +659,50 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   }
 }
 
+/** The line holds a function definition, or a command that runs code or text (`eval`, `source`, `.`, a runner, a computed program name). */
+function runsCode(node: SyntaxNode): boolean {
+  let found = false;
+  const visit = (n: SyntaxNode): void => {
+    if (found) return;
+    const x = n as any;
+    if (x.type === "Function") found = true;
+    else if (x.type === "Command" && x.name && (/[$`]/.test(x.name.text) || RUNNERS.has(baseName(x.name.value ?? x.name.text)))) found = true;
+    else forEachChild(n, visit);
+  };
+  visit(node);
+  return found;
+}
+
+/**
+ * A7, children only (a child scratch binding in `env`): the sole literal assignments of a flat script that stand at a top-level unconditional statement
+ * position, name -> [value, end offset, the assignment command]. The position rule is here (the AST), the form and mention rules are shellvars.ts
+ * `childAssignValues`. A line that runs code or text (`runsCode`) gets none.
+ */
+function childAssigns(script: Script, src: string, rn: Run): Map<string, [string, number, Command]> {
+  const out = new Map<string, [string, number, Command]>();
+  if (!rn.env.FOREMAN_SCRATCH || runsCode(script)) return out;
+  const plain = (n: any): boolean => n.type === "Command" && !n.name && n.prefix.length === 1 && n.prefix[0].type === "Assignment" && n.suffix.length === 0;
+  const cands: ChildAssign[] = [];
+  const cmdAt = new Map<number, Command>();
+  for (const st of script.commands) {
+    if (st.background) continue;
+    const node: any = st.command;
+    const parts: any[] = node.type === "AndOr" ? node.commands : [node];
+    // line start or after `;` / newline (a statement of its own), and after `&&` only following another such assignment
+    for (let k = 0; k < parts.length && plain(parts[k]); k++) {
+      const a = parts[k].prefix[0] as Assignment;
+      cands.push({ name: a.name, pos: a.pos, end: a.end });
+      cmdAt.set(a.pos, parts[k]);
+      if (node.operators?.[k] !== "&&") break;
+    }
+  }
+  for (const [name, [value, end]] of childAssignValues(src, cands, rn.env, rn.platform)) {
+    const c = cands.find((x) => x.name === name)!;
+    out.set(name, [value, end, cmdAt.get(c.pos)!]);
+  }
+  return out;
+}
+
 /** The variable pre-pass for a flat script: `resolveVars` values per command, and the assignments the closed grammar accepts. */
 function prepare(script: Script, src: string, sc: Scope): void {
   const rn = sc.run;
@@ -677,14 +722,24 @@ function prepare(script: Script, src: string, sc: Scope): void {
       else if (p.type === "ParameterExpansion" && p.parameter) names.add(p.parameter);
       else if (p.type === "DoubleQuoted") p.parts.forEach(part);
     };
-    for (const w of [...(cmd.name ? [cmd.name] : []), ...cmd.suffix.filter((s): s is Word => s.type === "Word")]) w.parts?.forEach(part);
+    for (const w of [...(cmd.name ? [cmd.name] : []), ...cmd.suffix.filter((s): s is Word => s.type === "Word"), ...cmd.redirects.flatMap((r) => (r.type !== "HereDoc" && r.target ? [r.target] : []))]) w.parts?.forEach(part);
     return [...names];
   };
   for (const st of script.commands) {
     const node: any = st.command;
     for (const pn of node.type === "AndOr" ? node.commands : [node]) {
       if (pn.type === "Pipeline") {
-        pipes.push(pn.commands.map(unitOf));
+        const pipe = pn.commands.map(unitOf);
+        // a pipeline stage is probed like a statement: only the child assignment substitution (A7) resolves anything in it
+        for (const stage of pn.commands) {
+          const names = stage.type === "Command" ? namesOf(stage as Command) : [];
+          if (names.length) {
+            const unit = names.map((n) => `$${n}`);
+            pipe.push(unit);
+            probes.push({ cmd: stage as Command, names, unit });
+          }
+        }
+        pipes.push(pipe);
         cmds.push(null);
       } else {
         const pipe = [unitOf(pn)];
@@ -703,9 +758,15 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const env = { ...rn.env };
   if (sc.cwd) env.PWD = sc.cwd;
   const res = resolveVars(pipes, [], env, () => false, src, rn.platform);
+  const child = childAssigns(script, src, rn);
+  for (const [, , cmd] of child.values()) rn.assignOk.add(cmd);
   for (const pr of probes) {
     const got = res.get(pr.unit);
-    rn.vars.set(pr.cmd, new Map(pr.names.map((n, k) => [n, got && got[k] !== `$${n}` ? got[k] : undefined])));
+    const later = (n: string): string | undefined => {
+      const c = child.get(n);
+      return c && c[1] <= pr.cmd.pos ? c[0] : undefined;
+    };
+    rn.vars.set(pr.cmd, new Map(pr.names.map((n, k) => [n, got && got[k] !== `$${n}` ? got[k] : later(n)])));
   }
   const stmts = grammarStatements(headerOf(src), rn.platform);
   cmds.forEach((cmd, i) => {

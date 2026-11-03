@@ -148,6 +148,45 @@ function certain(raw: string, env: Record<string, string>, cwd: string | undefin
   return undefined;
 }
 
+/** A sole assignment statement the caller found at a top-level unconditional position (`pos`/`end` are offsets of `NAME=value` in the line). */
+export interface ChildAssign {
+  name: string;
+  pos: number;
+  end: number;
+}
+
+// the two forms of a child-only assignment: `NAME=/abs/path` and `NAME=$FOREMAN_SCRATCH[/sub]` (never `$PWD`, `~`, `$HOME`: outside the closed grammar the tracked cwd is not trustworthy)
+const CHILD_ASSIGN = new RegExp(`^(${NAME})=(/[${GRAMMAR.literalChars}]*|\\$FOREMAN_SCRATCH(?:/[${GRAMMAR.literalChars}]*)?)$`);
+
+/**
+ * Child-only single literal assignment substitution (A7), for a line the closed grammar does not cover (a pipe, `rsync`, many statements). Runs only with
+ * a child scratch binding (`env.FOREMAN_SCRATCH`). The caller has checked the line for `eval`, `source`, a function definition and a runner, and found the
+ * candidates at statement position (line start, after `;` or a newline, or after `&&` following another such assignment: never a pipeline stage, subshell,
+ * group, loop or function body, `$(...)` or after `||`/`&&` of a command). A name is kept when it is assigned exactly once, by one of the two forms, and
+ * the line mentions it only as `$NAME` / `${NAME}` after the assignment (every rebinding form, `export`, `read`, `for NAME`, `${NAME:-x}`, a use before the
+ * assignment, is another mention). Returns name -> [value, offset of the end of the assignment]; a use at or after that offset may be substituted.
+ */
+export function childAssignValues(src: string, cands: ChildAssign[], env: Record<string, string>, platform: string = process.platform): Map<string, [string, number]> {
+  const out = new Map<string, [string, number]>();
+  if (!env.FOREMAN_SCRATCH) return out;
+  for (const c of cands) {
+    if (cands.filter((x) => x.name === c.name).length !== 1 || !nameOk(c.name)) continue;
+    const m = src.slice(c.pos, c.end).match(CHILD_ASSIGN);
+    if (!m || m[1] !== c.name) continue;
+    const value = certain(m[2], env, undefined, platform === "win32");
+    if (value === undefined) continue;
+    let ok = true;
+    for (const hit of src.matchAll(new RegExp(`(?<![A-Za-z0-9_])${c.name}(?![A-Za-z0-9_])`, "g"))) {
+      const i = hit.index!;
+      if (i === c.pos) continue;
+      const brace = src.slice(Math.max(0, i - 2), i) === "${";
+      if (i < c.end || !(brace ? src[i + c.name.length] === "}" : src[i - 1] === "$")) ok = false;
+    }
+    if (ok) out.set(c.name, [value, c.end]);
+  }
+  return out;
+}
+
 /** The text up to the end of the line holding the first heredoc opener (the whole text without one). */
 export function headerOf(text: string): string {
   const at = text.indexOf("<<");

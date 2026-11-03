@@ -1177,12 +1177,32 @@ def stdin_write_problem(name, args, seg, ctx):
             return deny(STDIN_WRITE_REASON + ".")
         return None
     if name == "cat" and seg.outs and (seg.heredocs or seg.herestrings):
-        return deny(STDIN_WRITE_REASON + ".")
+        if not in_child_scratch(seg.outs, seg, ctx):
+            return deny(STDIN_WRITE_REASON + ".")
     if name == "tee" and (seg.heredocs or seg.herestrings or (seg.pipe_in and ctx.root and "<<" in ctx.root[0])):
         files = [w for w in args if not w.text.startswith("-") and w.text != "/dev/null"]
-        if files:
+        if files and not in_child_scratch(files, seg, ctx):
             return deny(STDIN_WRITE_REASON + ".")
     return None
+
+
+def in_child_scratch(targets, seg, ctx):
+    """A7: every target word resolves (literal absolute, `$FOREMAN_SCRATCH/..`, or a sole literal assignment's `$NAME/..`) to a path strictly
+    inside the running child's own scratch dir, realpath on both sides."""
+    root = child_scratch_root(ctx)
+    if root is None:
+        return False
+    for w in targets:
+        p = child_scratch_word(w, ctx, seg) if w.dynamic else w.text
+        if p is None or not os.path.isabs(p):
+            return False
+        real = os.path.realpath(p)
+        try:
+            if real == root or os.path.commonpath([root, real]) != root:
+                return False
+        except ValueError:
+            return False
+    return True
 
 
 def shell_call(args, seg, flavor, ctx, depth, envs):
@@ -2289,13 +2309,89 @@ def child_scratch_root(ctx):
     return real
 
 
-def child_scratch_word(w, ctx):
+# A7: the two forms of a child-only assignment, `NAME=/abs/path` and `NAME=$FOREMAN_SCRATCH[/sub]` (never `$PWD`, `~`, `$HOME`)
+_CHILD_LIT = r"[^\s$`\\*?\[\]{}~\"'<>|&;()]"
+CHILD_ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(/%s*|\$FOREMAN_SCRATCH(?:/%s*)?)$" % (_CHILD_LIT, _CHILD_LIT))
+CHILD_NAME_USE = re.compile(r'^"?\$(?:([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})(/%s*)?"?$' % _CHILD_LIT)
+# effects.ts RUNNERS plus `function`: a line that runs code or text gets no substitution
+CHILD_RUNNERS = frozenset(("eval exec source . xargs sh bash zsh dash ksh fish csh tcsh env sudo doas su nohup nice ionice time command "
+                           "builtin stdbuf setsid chroot script watch parallel busybox pwsh powershell cmd unbuffer trap function").split())
+
+
+def child_assign_values(ctx):
+    """A7, children only: name -> (value, index of its segment) for the sole literal assignments of the whole command line that stand at a
+    top-level unconditional statement position (line start, after `;` / newline, or after `&&` following another such assignment; never in a
+    pipeline stage, background, subshell, group, loop, function body or substitution, which are other segments or other lexers). A name is
+    kept when it is assigned once by one of the two CHILD_ASSIGN forms and the line mentions it only as `$NAME` / `${NAME}` after the
+    assignment (any other mention is a rebinding form or a use before it). Nothing when the line has `eval`, `source`, a function definition
+    or any RUNNERS program, or when the launch environment carries no child scratch dir."""
+    if ctx.mode != "child" or not ctx.root or child_scratch_root(ctx) is None or ctx.root[1] != "bash":
+        return {}
+    text = ctx.root[0]
+    cached = getattr(ctx, "_child_assigns", None)
+    if cached is not None and cached[0] == text:
+        return cached[1]
+    out = {}
+    try:
+        segs = lex(text, "bash").segs
+    except LexError:
+        segs = None
+    if segs is not None and not any(s.after == "(" or (s.words and prog_name(s.words[0].raw) in CHILD_RUNNERS) for s in segs):
+        cands = []
+        prev = False
+        for k, s in enumerate(segs):
+            ok = len(s.words) == 1 and not (s.heredocs or s.herestrings or s.ins or s.redirs or s.pipe_in or s.group) and \
+                s.after in (None, ";", "&&", "||") and s.before in (None, ";", "&&") and (s.before != "&&" or prev) and \
+                CHILD_ASSIGN.match(s.words[0].raw) is not None
+            prev = ok
+            if ok:
+                cands.append(k)
+        names = [CHILD_ASSIGN.match(segs[k].words[0].raw).group(1) for k in cands]
+        for k, name in zip(cands, names):
+            if names.count(name) != 1:
+                continue
+            m = CHILD_ASSIGN.match(segs[k].words[0].raw)
+            value = m.group(2)
+            if value.startswith("$FOREMAN_SCRATCH"):
+                value = ctx.env["FOREMAN_SCRATCH"] + value[len("$FOREMAN_SCRATCH"):]
+            # the assignment's own text ends at its first occurrence of `NAME=value`; every other mention must be a later $NAME / ${NAME}
+            at = text.find(segs[k].words[0].raw)
+            end = at + len(segs[k].words[0].raw)
+            good = at >= 0
+            for hit in re.finditer(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name), text):
+                i = hit.start()
+                if i == at:
+                    continue
+                brace = text[max(0, i - 2):i] == "${"
+                if i < end or not (text[i + len(name)] == "}" if brace else text[i - 1] == "$"):
+                    good = False
+                    break
+                if brace and text[i + len(name):i + len(name) + 1] != "}":
+                    good = False
+                    break
+            if good:
+                out[name] = (value, k)
+    ctx._child_assigns = (text, out)
+    return out
+
+
+def child_scratch_word(w, ctx, seg=None):
     """R14 item 2: the path a whole `$FOREMAN_SCRATCH/<rest>` word (optionally double-quoted, no other expansion) names, with the
     launch environment's value; None when the scratch root is unset or the line names FOREMAN_SCRATCH other than as `$FOREMAN_SCRATCH`
-    (an inline `FOREMAN_SCRATCH=...`, export, read, unset: a rebound name is never trusted)."""
+    (an inline `FOREMAN_SCRATCH=...`, export, read, unset: a rebound name is never trusted). A7: with `seg` (the word's segment) a whole
+    `$NAME[/rest]` word of a later segment names the value of the line's sole literal assignment of NAME (child_assign_values)."""
+    if not ctx.root or child_scratch_root(ctx) is None:
+        return None
     m = CHILD_SCRATCH_WORD.match(w.raw or "")
-    if not m or child_scratch_root(ctx) is None or not ctx.root or \
-            re.search(r"(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])", ctx.root[0]):
+    if not m:
+        u = CHILD_NAME_USE.match(w.raw or "") if seg is not None and seg.lexer is not None else None
+        if not u:
+            return None
+        hit = child_assign_values(ctx).get(u.group(1) or u.group(2))
+        if hit is None or seg.lexer.segs.index(seg) <= hit[1]:
+            return None
+        return hit[0] + (u.group(3) or "")
+    if re.search(r"(?<![\w$])FOREMAN_SCRATCH(?![A-Za-z0-9_])", ctx.root[0]):
         return None
     return ctx.env["FOREMAN_SCRATCH"] + m.group(1)
 
@@ -2354,7 +2450,7 @@ def child_message_line_problem(seg, ctx, call, envs):
         if s.heredocs or s.herestrings or s.ins or s.redirs or s.pipe_in or s.group or \
                 s.before not in CHILD_F_OPS or s.after not in CHILD_F_OPS:
             return "`%s` has a redirection, heredoc, pipe, group or an operator other than `;` / `&&`; %s" % (shown, CHILD_F_FIX)
-        if len(words) < 2 or any(w.dynamic and not (s is seg and child_scratch_word(w, ctx)) for w in words) or words[0].glob or words[1].glob:
+        if len(words) < 2 or any(w.dynamic and not (s is seg and child_scratch_word(w, ctx, s)) for w in words) or words[0].glob or words[1].glob:
             return "`%s` is not a plain cd or git command; %s" % (shown, CHILD_F_FIX)
         prog, sub = words[0].text, words[1].text
         if prog == "cd":
@@ -2449,7 +2545,7 @@ def commit_lint(rest, ctx, call, envs, pattern_only=False, seg=None):
                 parts.append(src[2])
                 continue
             child = pattern_only and ctx.mode == "child"
-            scratch_path = child_scratch_word(v, ctx) if child and v.dynamic else None
+            scratch_path = child_scratch_word(v, ctx, seg) if child and v.dynamic else None
             if scratch_path is not None:
                 v = Word(scratch_path)  # R14 item 2: `$FOREMAN_SCRATCH/<file>` with the launch environment's value
             if v.dynamic:

@@ -1,0 +1,32 @@
+{
+  "_doc": "A7: child-only single literal assignment substitution. `@SCRATCH@` is the child's FOREMAN_SCRATCH. `resolved` is what the operand of the `probe` command becomes for a child (null: stays unresolved); a foreman or round session (no child scratch binding) never substitutes, so every case is null there. Read by shellvars-child-cases.test.ts and tests/test_shellvars_child_cases.py.",
+  "cases": [
+    { "line": "S=$FOREMAN_SCRATCH; ls | probe $S", "resolved": "@SCRATCH@" },
+    { "line": "S=$FOREMAN_SCRATCH/sub && probe \"$S/x\" | cat", "resolved": "@SCRATCH@/sub/x" },
+    { "line": "S=/abs/dir; ls | probe ${S}/f", "resolved": "/abs/dir/f" },
+    { "line": "S=/abs/dir\nls | probe \"$S\"", "resolved": "/abs/dir" },
+    { "line": "S=/abs/dir && T=$FOREMAN_SCRATCH; ls | probe $S/f $T", "resolved": "/abs/dir/f" },
+    { "line": "S=$FOREMAN_SCRATCH; ls | cat > $S/o; ls | probe $S/o", "resolved": "@SCRATCH@/o" },
+    { "line": "S=$FOREMAN_SCRATCH; S=/etc; ls | probe $S", "resolved": null },
+    { "line": "S=$FOREMAN_SCRATCH; S+=/x; ls | probe $S", "resolved": null },
+    { "line": "ls | probe $S; S=/abs", "resolved": null },
+    { "line": "S=/abs; export S; ls | probe $S", "resolved": null },
+    { "line": "S=/abs; read S; ls | probe $S", "resolved": null },
+    { "line": "S=/abs; ls | probe ${S:-q}", "resolved": null },
+    { "line": "S=$HOME/x; ls | probe $S", "resolved": null },
+    { "line": "S=$PWD/x; ls | probe $S", "resolved": null },
+    { "line": "S=~/x; ls | probe $S", "resolved": null },
+    { "line": "true || S=/abs; ls | probe $S", "resolved": null },
+    { "line": "ls && S=/abs; ls | probe $S", "resolved": null },
+    { "line": "ls | S=/abs; probe $S", "resolved": null },
+    { "line": "(S=/abs); ls | probe $S", "resolved": null },
+    { "line": "{ S=/abs; }; ls | probe $S", "resolved": null },
+    { "line": "S=/abs & ls | probe $S", "resolved": null },
+    { "line": "for S in a; do ls | probe $S; done", "resolved": null },
+    { "line": "echo $(S=/abs); ls | probe $S", "resolved": null },
+    { "line": "S=/abs; eval ls; ls | probe $S", "resolved": null },
+    { "line": "S=/abs; source x; ls | probe $S", "resolved": null },
+    { "line": "S=/abs; f() { :; }; ls | probe $S", "resolved": null },
+    { "line": "S=/abs; env ls | probe $S", "resolved": null }
+  ]
+}
