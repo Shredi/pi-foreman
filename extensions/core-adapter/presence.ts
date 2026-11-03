@@ -1,10 +1,11 @@
 // Presence gate (docs/cache.md): is the owner at the keyboard? Probes the seconds since the last input event
 // (darwin ioreg HIDIdleTime, Windows and WSL powershell GetLastInputInfo, Linux xprintidle, or the
-// `presence.command` override). Every probe is a detached child with a short timeout and never runs inside the
+// `presence.command` override). Every probe is a child (detached on posix, attached on win32) with a short timeout and never runs inside the
 // synchronous `cache_warming_decision` hook: a background timer refreshes the cached sample shortly before a warm is due
 // and the hook and the self-warm read the cache. A failed, timed-out or missing probe is `unknown`, which counts as present.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import { bgSpawnFlags } from "./bg.ts";
 import type { Timers } from "./prwatch.ts";
 
 export type PresenceOutcome = "present" | "away" | "unknown";
@@ -70,7 +71,7 @@ export async function probeIdleSeconds(env: ProbeEnv, command: string | null): P
   return null;
 }
 
-/** Detached child with a hard timeout; never throws. */
+/** Child (detached on posix, attached on win32) with a hard timeout; never throws. The promise never waits on an orphan grandchild holding the pipe. */
 export const runProbe: RunProbe = (cmd, args, timeoutMs, shell) =>
   new Promise((resolve) => {
     let done = false;
@@ -84,7 +85,10 @@ export const runProbe: RunProbe = (cmd, args, timeoutMs, shell) =>
     let child: ReturnType<typeof spawn> | undefined;
     const timer = setTimeout(() => {
       try {
-        if (child?.pid !== undefined) process.kill(-child.pid); // detached: the shell and its children share the group
+        if (child?.pid !== undefined) {
+          if (process.platform === "win32") spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { windowsHide: true, stdio: "ignore" });
+          else process.kill(-child.pid); // detached on posix: the shell and its children share the group
+        }
       } catch {
         try {
           child?.kill();
@@ -92,17 +96,23 @@ export const runProbe: RunProbe = (cmd, args, timeoutMs, shell) =>
           // already gone
         }
       }
+      child?.stdout?.destroy();
       finish(null);
     }, timeoutMs);
     (timer as { unref?: () => void }).unref?.();
     try {
-      child = spawn(cmd, args, { detached: process.platform !== "win32", shell, stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+      child = spawn(cmd, args, { ...bgSpawnFlags(), shell, stdio: ["ignore", "pipe", "ignore"] });
       child.unref();
       child.stdout?.on("data", (d: Buffer) => {
         out += d.toString();
       });
       child.on("error", () => finish(null));
       child.on("close", (code) => finish(code === 0 ? out : null));
+      child.on("exit", (code) => {
+        // a grandchild may keep the pipe open past the exit: give the stream a moment to drain, then settle
+        const grace = setTimeout(() => finish(code === 0 ? out : null), 200);
+        (grace as { unref?: () => void }).unref?.();
+      });
     } catch {
       finish(null);
     }

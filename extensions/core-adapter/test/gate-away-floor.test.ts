@@ -48,7 +48,7 @@ for (const child of [false, true]) {
 test("away (owner): a real ask probes, and the away text is its deny", async (t) => {
   const { r, probes } = await awayRig(t, false);
   const before = probes();
-  const keepAlive = setInterval(() => undefined, 50); // the probe child is detached and unref'd: hold the loop while the dialog awaits it
+  const keepAlive = setInterval(() => undefined, 50); // the probe child is detached on posix, attached on win32, and unref'd: hold the loop while the dialog awaits it
   const res = await r.call("bash", { command: "npm install left-pad" }).finally(() => clearInterval(keepAlive));
   assert.equal(res?.block, true);
   assert.equal(res?.reason, OWNER_AWAY_TEXT);
