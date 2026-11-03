@@ -57,6 +57,7 @@ import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.t
 import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
+import { missingFloorTools } from "./toolfloor.ts";
 import { DEFERRED_ENTRY, DEFERRED_SECTION, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
@@ -1226,6 +1227,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
     initDeferred(s, ctx);
+    restoreToolFloor(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
     if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1") {
@@ -1303,6 +1305,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const refs = await childSkillRefs(get(s.config.config, "roles"), s.usage.line.role, s.cwd);
     skillState.hidden = splitSkills(refs, skillState.rules).hidden;
     skillState.split = true;
+  }
+
+  /** Re-activates the registered floor tools another extension's tool reset left inactive (toolfloor.ts): append only. */
+  function restoreToolFloor(s: Session, ctx: ExtensionContext): void {
+    try {
+      const missing = missingFloorTools({ all: pi.getAllTools().map((t) => t.name), active: pi.getActiveTools(), isChild: s.isChild, planMode: planModeOn((ctx.sessionManager.getBranch?.() ?? []) as unknown[]) });
+      if (!missing.length) return;
+      pi.setActiveTools([...pi.getActiveTools(), ...missing]);
+      s.trace?.emit({ event: "tools_floor_restored", names: missing.join(",") });
+    } catch {
+      // a host without the tool api restores nothing
+    }
   }
 
   /** The hidden set, once per session start from the merged config, the recorded un-hidden names and the plan-mode decision. */
@@ -1521,6 +1535,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("before_agent_start", async (event, ctx) => {
     const s = await ensureSession(ctx);
     s.stopContinued = false;
+    restoreToolFloor(s, ctx);
     if (deferred.hidden.length) {
       let codemode = false;
       try {
