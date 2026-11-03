@@ -297,7 +297,7 @@ export function ruleProblem(rule: unknown): string | null {
   const words = p.rule.pattern.slice(0, -2).split(" ");
   if (words.some((w) => w === "" || /[*?()\n]/.test(w))) return "the rule carries a glob character or empty words before the final wildcard";
   if (words.some((w, i) => EXEC_FLAG.test(w) || (w === "-o" && /^ProxyCommand/i.test(words[i + 1] ?? "")))) return "the rule carries an exec flag";
-  if (words.length > 2 || (words[1] ?? "-").startsWith("-")) return "the rule is not of the form <program> [<subcommand>] *";
+  if (words.length > 2 || (words[1] ?? "x").startsWith("-")) return "the rule is not of the form <program> [<subcommand>] *";
   return null;
 }
 

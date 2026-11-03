@@ -50,7 +50,7 @@ async function rig(t: Parameters<typeof r11Rig>[0], replies: Reply[], o: { answe
 
 const CMD = { command: "pip install requests" };
 
-test("owner ask: the dialog shows the cause and the command and offers the four options; allow once continues", async (t) => {
+test("owner ask: the dialog shows the cause and the command and offers the five options; allow once continues", async (t) => {
   const r = await rig(t, [ESCALATE], { answers: ["allow once"] });
   assert.equal(await r.call("bash", CMD), undefined);
   // B2.3: a readable, glob-free command also offers the exact-command option next to "allow and remember"

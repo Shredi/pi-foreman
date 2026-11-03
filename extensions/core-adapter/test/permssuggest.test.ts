@@ -88,8 +88,7 @@ test("replay: would-allow counts, conflicts on a shape an owner denied, the revi
 test("runSuggest writes the scratch report and a table, and no permissions file", (t) => {
   const w = world(t);
   const r = runSuggest(w.agentDir, w.cwd, [], NOW);
-  assert.ok(r.ok);
-  if (r.ok === false) return;
+  if (!("file" in r)) assert.fail("runSuggest failed");
   assert.equal(r.file, path.join(w.cwd, ".workflow", "scratch", "perms-suggest-2026-11-02.md"));
   const md = fs.readFileSync(r.file, "utf8");
   assert.match(md, /lower bound/);
@@ -167,6 +166,17 @@ test("adopt: confirm per entry, user file gets the rule (key order kept), sideca
   assert.equal(typeof parsePicks(["x"]), "string");
 });
 
+test("adopt accepts the one-word rule Bash(date *) through entriesFromReport and adopt", async (t) => {
+  const w = world(t);
+  const text = reportText(w);
+  const e = entriesFromReport(text, [{ n: 7, as: "rule" }]);
+  if (!("entries" in e)) assert.fail("entriesFromReport failed");
+  assert.deepEqual(e.entries.map((x) => [x.kind, x.text]), [["rule", "Bash(date *)"]]);
+  const r = await adopt(w.agentDir, text, [{ n: 7, as: "rule" }], async () => true, NOW);
+  assert.ok(r.ok, r.lines.join("\n"));
+  assert.deepEqual(JSON.parse(fs.readFileSync(w.userFile, "utf8")).allow, ["Bash(date *)"]);
+});
+
 test("writeUserAllow: atomic append, order kept, dedupe, all-or-nothing validation", (t) => {
   const w = world(t, false);
   assert.equal(writeUserAllow(w.agentDir, { rules: ["Bash(git status *)"] }).ok, true);
@@ -239,7 +249,9 @@ test("exactRules: one wildcard-free rule per segment, null when a segment cannot
   assert.ok(exactRules(segs("cat x > /dev/null")) !== null);
   // the rule matches its own segment and nothing longer or shorter
   const env = { cwd: "/w/repo", home: "/h", platform: "linux", checkout: "/w/repo" };
-  const allow = [parseRule("Bash(git status --short)")].map((p) => (p as { rule: never }).rule);
+  const parsed = parseRule("Bash(git status --short)");
+  if ("error" in parsed) assert.fail(parsed.error);
+  const allow = [parsed.rule];
   const verdict = (line: string) => matchRules({ deny: [], ask: [], allow }, ruleCallOf("bash", { command: line }, { cwd: env.cwd, home: env.home, platform: "linux", segments: segs(line) }), env).verdict;
   assert.equal(verdict("git status --short"), "allow");
   assert.equal(verdict("git status --short && git status --short"), "allow", "the segment is allowed inside other lines");

@@ -259,7 +259,7 @@ A command of up to 60 lines is shown whole. A longer one shows its first 40 and 
 |---|---|
 | allow once | the call runs; nothing is stored |
 | allow and remember | the call runs and the owner may store a sentence (and a pattern rule); offered for dangerous-class escalations only |
-| allow and remember this exact command | the call runs and one exact rule per segment, `Bash(<program> <args>)` without a wildcard, goes into the project file's `allow`; no sentence is written. Offered next to *allow and remember* only when every segment is readable (no opaque segment), no segment redirects output and no word carries a glob character (`*`, `?`, parentheses) |
+| allow and remember this exact command | the call runs and one exact rule per segment, `Bash(<program> <args>)` without a wildcard, goes into the project file's `allow`; no sentence is written. Offered next to *allow and remember* only when every segment is readable (no opaque segment), no segment redirects output except to `/dev/null` (that redirect is dropped from the rule) and no word carries a glob character (`*`, `?`, parentheses) |
 | deny with comment | the call is denied with `pi-foreman: denied by the user: <your text>`, which the agent reads |
 | deny and stop | the call is denied and the agent is told to stop and ask what to do next |
 
