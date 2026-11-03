@@ -92,6 +92,10 @@ class FeatureMap(unittest.TestCase):
         self.assertTrue(fd.layer_rule(("retro", "repoBacklog")).startswith("not in project/session"))
         self.assertEqual(fd.layer_rule(("quiet",)), "any layer")
 
+    def test_user_only_gate_keys_are_not_any_layer(self):
+        self.assertEqual(fd.layer_rule(("gate", "readTools")), "not in project/session (user or overlay config only)")
+        self.assertTrue(fd.layer_rule(("gate", "childAsk")).startswith("tighten-only"))
+
     def test_json_enable_snippets_validate_and_flip_the_switch(self):
         schema = json.loads(fd.read(fc.SCHEMA_PATH))
         bad = []

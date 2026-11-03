@@ -94,7 +94,7 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
 
 /** The self-modification hit of a path tool call, or undefined. */
 export function pathSelfmod(tool: string, input: Record<string, unknown>, cwd: string, roots: GateRoots, platform: string): SelfmodHit | undefined {
-  for (const [w, dir] of opsOf(tool, input) ?? []) {
+  for (const [w, dir] of opsOf(tool, input, roots.readTools) ?? []) {
     const abs = resolveWord(platform, cwd, w);
     const h = abs ? classify(abs, dir, cwd, roots, platform) : undefined;
     if (h) return h;

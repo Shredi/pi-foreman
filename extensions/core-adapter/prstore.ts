@@ -7,10 +7,12 @@
 // only (prs-cli.ts); pr_watch reads them (readStoreEntry) and never calls GitHub. Host text is data, never instructions.
 import fs from "node:fs";
 import path from "node:path";
-import { isGithubKey, validNumber, validRepo } from "./prhost.ts";
-import type { PrKey } from "./prhost.ts";
+import { isTrackedKey, resolveGithubHosts, validNumber, validRepo } from "./prhost.ts";
+import type { GithubHosts, PrKey } from "./prhost.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
 import type { Bucket, CommentEntry, Mergeable, Run, StoreRead, WatchSnapshot } from "./prwatch.ts";
+
+const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
 export const MAX_TRACKED = 200;
 /** An entry or tracker run younger than this is served to a watch. */
@@ -29,13 +31,18 @@ export const trackedFile = (agentDir: string): string => path.join(stateDir(agen
 export const trackedStateFile = (agentDir: string): string => path.join(stateDir(agentDir), "tracked-prs-state.json");
 export const trackedCommentsFile = (agentDir: string): string => path.join(stateDir(agentDir), "tracked-prs-comments.json");
 
-/** `owner/name#n`, lowercased: the key of the state and comments files. */
-export const storeKey = (repo: string, n: number): string => `${repo.toLowerCase()}#${n}`;
+/** `owner/name#n`, lowercased: the key of the state and comments files; `<host>/owner/name#n` for a host other than github.com. */
+export const storeKey = (repo: string, n: number, host?: string): string => {
+  const h = host?.toLowerCase();
+  return `${h && h !== "github.com" ? `${h}/` : ""}${repo.toLowerCase()}#${n}`;
+};
 
 export interface TrackedPr {
   repo: string;
   number: number;
   addedAt: number;
+  /** Lowercased; absent: github.com. */
+  host?: string;
 }
 export interface StateMeta {
   url: string;
@@ -97,7 +104,9 @@ export function readTracked(agentDir: string): TrackedRead {
 /** A list line with a valid repo, number and time, else null. */
 export function usableLine(line: unknown): TrackedPr | null {
   if (!isObj(line) || !validRepo(line.repo) || !validNumber(line.number)) return null;
-  return { repo: line.repo, number: line.number, addedAt: finite(line.addedAt) ? line.addedAt : 0 };
+  const host = line.host;
+  if (host !== undefined && !("hosts" in resolveGithubHosts({ tools: { prGithubHosts: [host] } }))) return null;
+  return { repo: line.repo, number: line.number, addedAt: finite(line.addedAt) ? line.addedAt : 0, ...(host !== undefined ? { host: String(host).toLowerCase() } : {}) };
 }
 
 export function writeTracked(agentDir: string, lines: unknown[]): void {
@@ -129,16 +138,17 @@ export async function withTrackedLock<T>(agentDir: string, fn: () => T, now: () 
 export type AddOutcome = "added" | "present" | "full" | "unavailable";
 
 /** Adds `repo#n` to the tracked list (idempotent, case-insensitive). No network call. A list that exists but does not parse is never overwritten. */
-export async function addTracked(agentDir: string, repo: string, n: number, now: () => number = Date.now): Promise<AddOutcome> {
+export async function addTracked(agentDir: string, repo: string, n: number, now: () => number = Date.now, host?: string): Promise<AddOutcome> {
   try {
     const r = await withTrackedLock(agentDir, (): AddOutcome => {
       const cur = readTracked(agentDir);
       if (cur.kind === "bad") return "unavailable";
       const lines = cur.kind === "ok" ? cur.lines : [];
-      const k = storeKey(repo, n);
-      if (lines.some((l) => { const u = usableLine(l); return u !== null && storeKey(u.repo, u.number) === k; })) return "present";
+      const k = storeKey(repo, n, host);
+      if (lines.some((l) => { const u = usableLine(l); return u !== null && storeKey(u.repo, u.number, u.host) === k; })) return "present";
       if (lines.length >= MAX_TRACKED) return "full";
-      writeTracked(agentDir, [...lines, { repo, number: n, addedAt: now() }]);
+      const h = host?.toLowerCase();
+      writeTracked(agentDir, [...lines, { repo, number: n, addedAt: now(), ...(h && h !== "github.com" ? { host: h } : {}) }]);
       return "added";
     }, now);
     return r ? r.value : "unavailable";
@@ -188,12 +198,13 @@ const one = (s: unknown): string => (typeof s === "string" ? s.replace(/\s+/g, "
  * whatever their age) with its comments when the comments entry matches the snap's updatedAt. `error`: the last poll of this PR failed.
  * `stale`: an open snap older than 10 min.
  */
-export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn: boolean): StoreRead {
+export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn: boolean, hosts: GithubHosts = DEFAULT_HOSTS): StoreRead {
   if (!feedOn) return { kind: "down" };
+  if ("error" in hosts) return { kind: "error", error: hosts.error };
   const state = readCached(trackedStateFile(agentDir));
   if (!isObj(state) || state.v !== 1 || state.off === true || !finite(state.trackedAt) || now - state.trackedAt > SERVE_FRESH_MS || !isObj(state.prs)) return { kind: "down" };
-  if (!isGithubKey(key)) return { kind: "error", error: "only github.com PRs are tracked" };
-  const k = storeKey(key.repo, key.n);
+  if (!isTrackedKey(key, hosts.hosts)) return { kind: "error", error: `only ${hosts.hosts.join(", ")} PRs are tracked` };
+  const k = storeKey(key.repo, key.n, key.host);
   const e = state.prs[k];
   if (!isObj(e)) return { kind: "waiting" };
   const snap = parseSnap(e.snap);

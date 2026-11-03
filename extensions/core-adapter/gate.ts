@@ -4,12 +4,13 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesOutside } from "./defaults.ts";
+import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
+import { lineFloors, opaqueTextFloors, pathFloors, rawFloors, realDeep, secretPath, type FloorEnv, type FloorHit } from "./floors.ts";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
-import { matchRules, ruleCallOf } from "./rules.ts";
-import type { RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
+import { relaxPatternWords } from "./permoverlay.ts";
+import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
+import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { parseShell } from "./shellast.ts";
@@ -25,6 +26,8 @@ export interface GateDeps {
   facts?: GitFacts;
   /** The merged pattern rules and their environment (permconfig `Resolved.rules`); absent: no pattern rules. */
   rules?: { sets: RuleSets; env: RuleEnv };
+  /** `gate.readTools`: extension tool name -> path field (null: none); judged like read/grep (Read rules, path floors, owned-path allows). */
+  readTools?: ReadToolMap;
 }
 
 /** What asks the owner before the mode step: a self-modification rule, an ask-kind floor hit (opaque text), a pattern `ask` rule. */
@@ -62,6 +65,7 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
   if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
+  if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
   if (writesOutside(call, env)) return deny("child-write-outside", "Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories.");
   return undefined;
 }
@@ -148,6 +152,19 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
   return found;
 }
 
+/**
+ * A child's own scratch dir in both spellings (the launch binding's and its deepest-existing-ancestor realpath), resolved once when the roots are read:
+ * a symlinked temp dir (macOS `/var` -> `/private/var`) makes a literal `cd /private/var/...` write-in. The literal spelling stays first (`$FOREMAN_SCRATCH`).
+ * The fence compares the target's real spelling inside the same root (`rootHolds`), so a link out of the dir is still outside. The foreman's checkout
+ * (`roots.checkout`, A9) is resolved the same way.
+ */
+function withRealScratch(roots: GateRoots | undefined): GateRoots | undefined {
+  if (!roots?.child) return roots;
+  const scratch = [...new Set(roots.scratch.flatMap((d) => [d, realDeep(d) ?? d]))];
+  const checkout = roots.checkout ? (realDeep(roots.checkout) ?? roots.checkout) : undefined;
+  return scratch.length === roots.scratch.length && checkout === roots.checkout ? roots : { ...roots, scratch, ...(checkout ? { checkout } : {}) };
+}
+
 /** What a gate evaluation found: the synchronous result, the dangerous-class entry when nothing decided, and the parse. */
 export interface GateOutcome {
   /** floor / selfmod / rule / built-in decision; undefined = nothing decided (the dangerous class and the mode step follow). */
@@ -182,11 +199,14 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const env = deps.env(cwd);
     const platform = env.platform ?? process.platform;
-    const roots = deps.roots?.(cwd);
+    const readTools = deps.readTools;
+    const rootsBase = withRealScratch(deps.roots?.(cwd));
+    const roots = rootsBase && readTools ? { ...rootsBase, readTools } : rootsBase;
     const facts = deps.facts ?? gitFacts;
     const home = env.home ?? os.homedir();
-    const rules = deps.rules ?? { sets: { deny: [], ask: [], allow: [] }, env: { cwd, home, platform, checkout: cwd } };
-    const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}) });
+    const rules0 = deps.rules ?? { sets: { deny: [], ask: [], allow: [] }, env: { cwd, home, platform, checkout: cwd } };
+    const rules = readTools ? { sets: rules0.sets, env: { ...rules0.env, readTools } } : rules0;
+    const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
     /** deny rules and ask rules, then a pending floor ask, then allow rules and the built-in allow `builtin`. */
     const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null): GateResult => {
@@ -200,8 +220,10 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     if (cmd !== null) {
       // a child's $FOREMAN_SCRATCH is its own scratch dir (set in its process env); without the binding the variable would make every scratch write opaque
       const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0] } } : {};
-      const segs = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar });
-      const h = lineFloors(cmd, segs, env);
+      const parsed = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar });
+      const h = lineFloors(cmd, parsed, env);
+      // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
+      const segs = parsed.map(relaxPatternWords);
       if (h && h.kind === "deny") return decided(blocked(h));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       if (toolName !== "powershell") {
@@ -226,8 +248,12 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       if (result) return { result, danger: null, segments: segs };
       return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp, segments: segs, text: cmd }, { roots, platform, cwd, facts }), segments: segs };
     }
-    if (PATH_TOOLS.has(toolName)) {
-      const h = pathFloors(inp, env, toolName);
+    const readField = readFieldOf(readTools, toolName);
+    if (PATH_TOOLS.has(toolName) || readField !== undefined) {
+      // a mapped tool keeps the payload floors on every other path field (arrays included); `pattern`/`patterns` stay search patterns
+      const ph0 = pathFloors(inp, env, toolName, readField);
+      const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(inp, "", env, false) : null;
+      const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
       if (h && h.kind === "deny") return decided(blocked(h));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, roots, platform), roots.child);

@@ -1,7 +1,8 @@
 // Presence gate (presence.ts): fake probe, fake clock, fake timers; parsers; the hook path never probes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Presence, parseIoreg, probeIdleSeconds, type PresenceConfig } from "../presence.ts";
+import { spawnSync } from "node:child_process";
+import { Presence, parseIoreg, probeIdleSeconds, runProbe, type PresenceConfig } from "../presence.ts";
 
 interface Slot {
   fn: () => void;
@@ -126,4 +127,15 @@ test("parsers and platform dispatch", async () => {
     ["my-idle-tool", "2000", "true"],
     ["xprintidle", "2000", "false"],
   ]);
+});
+
+test("runProbe returns null at the timeout and kills a grandchild that holds stdout", { skip: process.platform === "win32" ? "posix shell probe; the win32 tree kill is taskkill /T /F" : false }, async () => {
+  const marker = `sleep ${30 + (process.pid % 1000) / 1000}`;
+  const t0 = Date.now();
+  const out = await runProbe(`${marker} & ${marker}`, [], 300, true);
+  assert.equal(out, null);
+  assert.ok(Date.now() - t0 < 800, `took ${Date.now() - t0} ms`);
+  await new Promise((r) => setTimeout(r, 200));
+  const left = spawnSync("pgrep", ["-f", marker], { encoding: "utf8" }).stdout.trim();
+  assert.equal(left, "");
 });

@@ -25,6 +25,7 @@ import { folderRelaxes } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
+import { readToolsOf, warnUnknownReadTools } from "./readtools.ts";
 import { adopt as adoptSuggested, entriesFromReport, parsePicks, review as reviewAdopted, runSuggest, suggestHint } from "./permssuggest.ts";
 import type { AdoptPick } from "./permssuggest.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
@@ -102,7 +103,7 @@ import type { PrPackSession } from "./gitpack.ts";
 import { addTracked, readStoreEntry } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, watchIntervalMs } from "./prwatch.ts";
-import { PrHost, branchOf, isGithubKey } from "./prhost.ts";
+import { PrHost, branchOf, isTrackedKey, resolveGithubHosts } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
 import { ExtStatus } from "./extstatus.ts";
@@ -708,9 +709,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prPack: false,
       prCtx: null,
       prWatches: new PrWatches({
-        storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s)),
+        storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s), resolveGithubHosts(s.config.config)),
+        githubHosts: () => resolveGithubHosts(s.config.config),
         retrack: async (key) => {
-          if (isGithubKey(key) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n);
+          const hosts = resolveGithubHosts(s.config.config);
+          if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);
         },
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
@@ -885,7 +888,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const where = new Where({ cwd: () => s.cwd, repo: originRepo, branch: branchOf, changed: () => s.live?.touch() });
       if (s.live) s.live.where = () => where.read();
       s.live?.setAwayGetter(() => (s.idleCache.state() === "watching" || s.selfWarm.state() === "watching") && s.presence.away());
-      s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd) });
+      s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(s.config.config) });
       s.openPrs.start();
       const live = s.live;
       waits.onChange(id, () => live?.touch());
@@ -939,7 +942,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.13 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
     for (const e of config.errors) ctx.ui.notify(e, "error");
-    if (config.safetyFallback && config.source === "cli") ctx.ui.notify("pi-foreman: invalid safety config; L1 safety values apply.", "warning");
+    if (config.source === "defaults") s.trace?.emit({ event: "config_fallback", reason: config.fallbackReason ?? "unknown", source: config.source });
+    if (config.safetyFallback) ctx.ui.notify(config.source === "cli" ? "pi-foreman: invalid safety config; L1 safety values apply." : "pi-foreman: config CLI unavailable; L1 defaults apply and presence stays off.", "warning");
     for (const w of config.warnings) ctx.ui.notify(`pi-foreman config: ${w}`, "warning");
     const firstRun = firstRunNotice({ mode: ctx.mode, isChild: s.isChild, config: config.config, presets: presetNames(PKG_ROOT) });
     if (firstRun) ctx.ui.notify(firstRun, "info");
@@ -1228,10 +1232,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return openPrsConfig(get(s.config.config, "radar.openPrs")).enabled && (h === "auto" || h === "gh");
   }
 
-  /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost. */
+  /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost and, when set, tools.prGithubHosts (only a valid list; unset or invalid means the read tools add no host). */
   function prOpsConfig(s: Session): Record<string, unknown> {
     const ops = get(s.config.config, "safety.ops");
-    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto" };
+    const h = resolveGithubHosts(s.config.config);
+    return { ...(ops && typeof ops === "object" ? (ops as Record<string, unknown>) : {}), prHost: get(s.config.config, "tools.prHost") ?? "auto", ...("hosts" in h ? { githubHosts: h.hosts } : {}) };
   }
 
   function prRun(s: Session, cwd: string, op: PrOp, args: Record<string, unknown>, timeoutMs?: number) {
@@ -2234,6 +2239,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
+      ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
       agentDir: s.agentDir,
       ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",
@@ -2253,6 +2259,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const gateRuntimes = new Map<string, GateRuntime>();
   /** Tool calls the gate decided (allow); the old overlay skips them. */
   const gateDecided = new Set<string>();
+  const readToolsWarned = new Set<string>();
   /** Sessions whose owner answered "deny and stop" (until the next user prompt), and per-session allows keyed `tool\0payload`. */
   const gateStopped = new Set<string>();
   /** The owner's prompts of a session, newest first. */
@@ -2302,7 +2309,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionFacts: GitFacts | undefined = gs && roots
       ? sessionGitFacts({ ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] }, ownWorktreeCheck([roots.worktree, ...roundWorktrees(path.join(gs.agentDir, "pi-foreman", "state"), gs.usage.line.foremanSession, platform)], platform))
       : undefined;
+    const readTools = gs ? readToolsOf(gs.config.config) : undefined;
+    if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
+      ...(readTools ? { readTools } : {}),
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
       ...(roots ? { roots: () => roots, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
@@ -2423,6 +2433,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return {
       ui: ctx.ui as unknown as OwnerDeps["ui"],
       presence: s.presence,
+      presenceEnabled: get(s.config.config, "presence.enabled") !== false,
       stateDir: path.join(s.agentDir, "pi-foreman", "state"),
       remember: { store: rt.store, afterWrite: () => { rt.store.reload(); rt.classifier.clearCache(); } },
     };
@@ -4155,7 +4166,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       watches: s.prWatches,
       trace: (r) => s.trace?.emit(r),
       tracker: s.prHost,
-      track: s.isChild ? undefined : async (repo, n) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n) : "off"),
+      track: s.isChild ? undefined : async (repo, n, host) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n, undefined, host) : "off"),
+      githubHosts: () => resolveGithubHosts(s.config.config),
     };
   };
   registerPrFollow(pi, { isChild: process.env.PI_SUBAGENT_CHILD === "1", session: prSession });

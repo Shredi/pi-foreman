@@ -192,6 +192,7 @@ def config_open_prs(adir):
 
 
 OPEN_PR_STATES = ("fail", "run", "ok", "none")
+RADAR_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?$")  # pr_ops.py HOST_RE
 
 
 def read_open_prs(adir):
@@ -218,6 +219,9 @@ def read_open_prs(adir):
         state = p.get("state") if p.get("state") in ("open", "draft") else "open"
         out.append({"repo": repo[:140], "number": num_, "title": title[:200], "url": p["url"], "state": state,
                     "author": author[:60], "checks": checks})
+        host = p.get("host")
+        if isinstance(host, str) and RADAR_HOST_RE.match(host.lower()):
+            out[-1]["host"] = host.lower()
         head, body, mergeable = p.get("headRefName"), p.get("bodyText"), p.get("mergeable")
         if isinstance(head, str) and head:
             out[-1]["headRefName"] = head[:255]
@@ -236,7 +240,7 @@ def read_open_prs(adir):
 
 TRACKED_DISPLAY_FRESH_S = 15 * 60
 TRACKED_BUCKET = {"failed": "fail", "pending": "run", "passed": "ok", "missing": "run"}
-PR_URL_REPO = re.compile(r"https://github\.com/([A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+)/pull/\d+")
+PR_URL_REPO = re.compile(r"https://[^/\s]+/([A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+)/pull/\d+")
 
 
 def _tracked_entries(adir):
@@ -246,7 +250,7 @@ def _tracked_entries(adir):
     if not isinstance(d, dict) or d.get("v") != 1 or d.get("off") is True or not isinstance(d.get("prs"), dict):
         return []
     out = []
-    for e in d["prs"].values():
+    for skey, e in d["prs"].items():
         if not isinstance(e, dict) or "endedAt" in e:
             continue
         snap, meta, number = e.get("snap"), e.get("meta"), e.get("number")
@@ -274,6 +278,10 @@ def _tracked_entries(adir):
             v = src.get(key)
             if isinstance(v, str) and v:
                 ent[dst] = v[:255]
+        # the host is the store key's prefix (`<host>/o/r#n`); a key without one is github.com
+        kparts = skey.split("#")[0].split("/") if isinstance(skey, str) else []
+        if len(kparts) == 3 and RADAR_HOST_RE.match(kparts[0].lower()) and kparts[0].lower() != "github.com":
+            ent["host"] = kparts[0].lower()
         ok = e.get("okAt")
         out.append((ent, ok if isinstance(ok, (int, float)) and not isinstance(ok, bool) else None))
     return out
@@ -289,9 +297,9 @@ def read_pr_feed(adir, now):
         return None
     entries = list(search[0]) if search else []
     at = search[1] if search else None
-    index = {(p["repo"].lower(), p["number"]): i for i, p in enumerate(entries)}
+    index = {(p.get("host", "github.com"), p["repo"].lower(), p["number"]): i for i, p in enumerate(entries)}
     for ent, ok in tracked:
-        k = (ent["repo"].lower(), ent["number"])
+        k = (ent.get("host", "github.com"), ent["repo"].lower(), ent["number"])
         i = index.get(k)
         if i is None:
             ent["tracked"] = True

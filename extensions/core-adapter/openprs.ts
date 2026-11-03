@@ -7,11 +7,14 @@
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import type { GithubHosts } from "./prhost.ts";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
 import { resolveGh } from "./wait.ts";
 import { redactCommand } from "./trace.ts";
+
+const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
 export type OpenPrState = "fail" | "run" | "ok" | "none";
 export interface OpenPrCheck {
@@ -36,6 +39,8 @@ export interface OpenPr {
   /** The description, secret-shaped tokens redacted, cut to 500 characters; absent when empty. */
   bodyText?: string;
   mergeable?: OpenPrMergeable;
+  /** The GitHub host the PR was found on; written only for a host other than github.com (absent: github.com). */
+  host?: string;
 }
 export type OpenPrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 export interface OpenPrsFile {
@@ -202,6 +207,8 @@ export interface RefreshOptions {
   force?: boolean;
   /** Aborted by `stop()`: a refresh in flight then writes nothing and only drops the lock it holds. */
   signal?: AbortSignal;
+  /** tools.prGithubHosts: one search per listed host. Absent: github.com only. `{error}`: no gh call, the error is recorded. */
+  hosts?: GithubHosts;
 }
 export type RefreshResult = "off" | "fresh" | "locked" | "refreshed" | "failed";
 
@@ -211,6 +218,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
   try {
     const queries = o.config.enabled ? openPrsQueries(o.config) : [];
     if (queries.length === 0) return "off";
+    const hostSet = o.hosts ?? DEFAULT_HOSTS;
     if (o.signal?.aborted) return "failed";
     const now = o.now ?? Date.now;
     const prev = readFile(o.file);
@@ -222,29 +230,52 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
     try {
       const stamp = (): string => new Date(now()).toISOString();
       try {
+        if ("error" in hostSet) {
+          // tools.prGithubHosts is unset or invalid: no search, the previous entries stay
+          const t = stamp();
+          writeAtomic(o.file, { v: 1, ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), checkedAt: t, openPrs: prev?.openPrs ?? [], error: clean(hostSet.error, 200), errorAt: t });
+          return "failed";
+        }
+        const hosts = hostSet.hosts;
+        // The query budget is shared round-robin: every listed host gets its first query before any gets its second.
+        const jobs: [string, string][] = [];
+        for (const q of queries) for (const h of hosts) jobs.push([h, q]);
+        jobs.length = Math.min(jobs.length, MAX_QUERIES);
         const seen = new Set<string>();
         const all: OpenPr[] = [];
+        const tried = new Map<string, number>();
+        const missed = new Map<string, number>();
         let failed = 0;
         let firstError = "";
-        for (const q of queries) {
+        for (const [h, q] of jobs) {
           if (o.signal?.aborted) return "failed";
+          tried.set(h, (tried.get(h) ?? 0) + 1);
+          const host = h === "github.com" ? [] : ["--hostname", h];
           try {
-            for (const p of parseSearch(await o.gh(["api", "graphql", "-f", `query=${GRAPHQL}`, "-f", `q=${q}`]))) {
+            for (const p of parseSearch(await o.gh(["api", "graphql", ...host, "-f", `query=${GRAPHQL}`, "-f", `q=${q}`]))) {
               if (seen.has(p.url)) continue;
               seen.add(p.url);
-              all.push(p);
+              all.push(h === "github.com" ? p : { ...p, host: h });
             }
           } catch (err) {
-            if (failed++ === 0) firstError = clean((err as Error)?.message ?? String(err), 160);
+            missed.set(h, (missed.get(h) ?? 0) + 1);
+            if (failed++ === 0) firstError = clean(`${hosts.length > 1 ? `${h}: ` : ""}${(err as Error)?.message ?? String(err)}`, 160);
           }
         }
         if (o.signal?.aborted) return "failed";
         const t = stamp();
-        const error = failed > 0 ? clean(`${failed} of ${queries.length} queries failed: ${firstError}`, 200) : undefined;
-        if (failed === queries.length) {
+        const error = failed > 0 ? clean(`${failed} of ${jobs.length} queries failed: ${firstError}`, 200) : undefined;
+        if (failed === jobs.length) {
           // Every query failed: keep the previous entries (and its fetchedAt, if any).
           writeAtomic(o.file, { v: 1, ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), checkedAt: t, openPrs: prev?.openPrs ?? [], error, errorAt: t });
           return "failed";
+        }
+        // A host whose every query failed keeps its previous entries; the other hosts' results are not hidden.
+        const lost = new Set([...tried].filter(([h, n]) => missed.get(h) === n).map(([h]) => h));
+        for (const p of prev?.openPrs ?? []) {
+          if (!lost.has(p.host ?? "github.com") || seen.has(p.url)) continue;
+          seen.add(p.url);
+          all.push(p);
         }
         writeAtomic(o.file, { v: 1, fetchedAt: t, checkedAt: t, openPrs: all.slice(0, MAX_OPEN_PRS), ...(error ? { error, errorAt: t } : {}) });
         return "refreshed";
@@ -268,6 +299,8 @@ export interface OpenPrsDeps {
   gh: GhRunner;
   timers?: Timers;
   now?: () => number;
+  /** tools.prGithubHosts, read on every tick; absent: github.com only. */
+  hosts?(): GithubHosts;
 }
 
 /** Ticks once a minute (first tick after a few seconds); each tick refreshes only when the file is older than refreshSeconds. */
@@ -303,7 +336,7 @@ export class OpenPrsRefresher {
     this.busy = true;
     try {
       if (this.deps.ghHost && !this.deps.ghHost()) return "off";
-      return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal });
+      return await refreshOpenPrs({ file: openPrsFile(this.deps.agentDir), config: openPrsConfig(this.deps.config()), gh: this.deps.gh, now: this.deps.now, signal: this.ctl.signal, ...(this.deps.hosts ? { hosts: this.deps.hosts() } : {}) });
     } catch {
       return "failed";
     } finally {

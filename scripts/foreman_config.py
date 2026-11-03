@@ -68,6 +68,7 @@ Keys outside safety that the project and session layers cannot loosen either
     skills.visible                   ignored (it hides every other skill: user or overlay config only)
     roles.*.searchable               intersect only, and a name dropped from roles.*.tools cannot come back through it
     tools.prHost                     ignored (it picks the program the PR tools run)
+    tools.prGithubHosts              ignored (it names the hosts the PR tracker polls: user or overlay config only)
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
     childMaxThinking                 lower only (off < ... < max)
@@ -228,6 +229,7 @@ IGNORED_KEYS = [
     (("roles", "*", "skills"), "the skills a role gets come from the user or overlay config"),
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
+    (("tools", "prGithubHosts"), "the GitHub hosts of the PR tracker come from the user or overlay config"),
     (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),
@@ -852,6 +854,7 @@ def semantic_issues(cfg):
                         path = "safety.git.commit." + key
                         issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
     issues.extend(pr_host_issues((cfg.get("tools") or {}).get("prHost")))
+    issues.extend(pr_github_hosts_issues((cfg.get("tools") or {}).get("prGithubHosts")))
     issues.extend(mcp_deny_issues(cfg))
     sessions = cfg.get("sessions")
     issues.extend(machine_issues(sessions.get("machines") if isinstance(sessions, dict) else None))
@@ -893,6 +896,24 @@ def mcp_deny_issues(cfg):
 PR_HOST_KEYS = ("create", "status", "checks", "comments", "find", "search")
 PR_PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}",
                    "{host}", "{mode}", "{author}", "{state}")
+
+
+GITHUB_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?$")
+
+
+def pr_github_hosts_issues(hosts):
+    """tools.prGithubHosts checks the schema cannot express: 1 to 20 items, each a valid host name."""
+    path = "tools.prGithubHosts"
+    if not isinstance(hosts, list):
+        return []
+    if not hosts:
+        return [("error", path, "%s: is empty" % path)]
+    if len(hosts) > 20:
+        return [("error", path, "%s: has more than 20 hosts" % path)]
+    for h in hosts:
+        if not isinstance(h, str) or len(h) > 253 or not GITHUB_HOST_RE.fullmatch(h):
+            return [("error", path, "%s: %s is not a valid host name" % (path, h))]
+    return []
 
 
 def pr_host_issues(host):

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependency is @inquirer/prompts (picker), loaded lazily; --preview needs @earendil-works/pi-tui, a Pi-provided peer that a checkout installs as a devDependency.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
-//                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]
+//                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--github-hosts <host>[,<host>]] [--pick]
 // pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents
 // and pi-intercom as dependencies); this script writes the config around it.
 import * as fs from "node:fs";
@@ -39,7 +39,7 @@ const FOREMAN_INSTALL = "pi install git:github.com/Shredi/pi-foreman";
 const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
 const USAGE = [
   "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]",
-  "                       [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]",
+  "                       [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--github-hosts <host>[,<host>]] [--pick]",
   "                       [--intercom-hc [--machine-name <name>]] [--preview [screen]]",
   `  Install pi-foreman first: ${FOREMAN_INSTALL}  (this script is also reachable as \`foreman setup\`).`,
   "  --no-intercom  filter pi-intercom out of the pi-foreman package entry and do not write its config",
@@ -52,6 +52,7 @@ const USAGE = [
   "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
   "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
   "  --addon        install an optional Pi add-on from config/addons.json (repeatable; installed only on this consent)",
+  "  --github-hosts the GitHub hosts the PR tracker covers (tools.prGithubHosts, 1-20 host names, comma list); the picker asks for them, a fresh install without the flag writes github.com",
   "  --pick         open the terminal picker again (needs a terminal; PI_FOREMAN_PICKER=off disables it, =force is a test aid)",
   "  --preview      draw a setup screen (home, plan, updates, config, models, workfolders, apply) from sample data; changes nothing and cannot be combined with other flags",
   "  --dry-run      show what would change, write nothing",
@@ -86,8 +87,43 @@ const say = (s = "") => console.log(s);
 
 const csv = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
 
+// tools.prGithubHosts: the same host pattern as the schema (config/foreman.schema.json), 1 to 20 items.
+const HOST_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?::[0-9]{1,5})?$/;
+const MAX_HOSTS = 20;
+const DEFAULT_HOST = "github.com";
+
+/** A host list as { hosts } (lowercased, deduped, order kept) or { error } (a short reason). */
+function validateHosts(list) {
+  if (!Array.isArray(list)) return { error: "it must be a list of host names" };
+  if (list.length === 0) return { error: "the list is empty" };
+  if (list.length > MAX_HOSTS) return { error: `the list has more than ${MAX_HOSTS} hosts` };
+  const bad = list.find((h) => typeof h !== "string" || h.length > 253 || !HOST_RE.test(h));
+  if (bad !== undefined) return { error: `${JSON.stringify(bad)} is not a valid host name` };
+  return { hosts: [...new Set(list.map((h) => h.toLowerCase()))] };
+}
+
+const sameHosts = (a, b) => !!a && !!b && a.length === b.length && a.every((h, i) => h === b[i]);
+
+/**
+ * The tools.prGithubHosts list setup writes to the user file, or null. `merged` is the merged value (undefined when unset in every layer,
+ * valid or not), `answer` the --github-hosts list or the host step's answer (or null), `fresh` whether foreman.json is absent.
+ * The answer when it differs from the merged value; github.com on a fresh install with the key unset; otherwise nothing, so an overlay's
+ * value is never copied and an invalid value is not overridden without an answer.
+ */
+function hostsToWrite(merged, answer, fresh) {
+  if (answer) {
+    const a = validateHosts(answer);
+    if (!a.hosts) return null;
+    return sameHosts(merged === undefined ? null : validateHosts(merged).hosts, a.hosts) ? null : a.hosts;
+  }
+  return fresh && merged === undefined ? [DEFAULT_HOST] : null;
+}
+
+/** `cfg` with tools.prGithubHosts set, or `cfg` itself when there is nothing to write. */
+const withGithubHosts = (cfg, hosts) => (hosts ? { ...cfg, tools: { ...(isObj(cfg.tools) ? cfg.tools : {}), prGithubHosts: hosts } } : cfg);
+
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], pick: false, preview: null };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], githubHosts: null, pick: false, preview: null };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -113,13 +149,18 @@ function parseArgs(argv) {
     else if (flag === "--enable") o.enable.push(...csv(value()));
     else if (flag === "--disable") o.disable.push(...csv(value()));
     else if (flag === "--addon") o.addon.push(...csv(value()));
+    else if (flag === "--github-hosts") {
+      const r = validateHosts(csv(value()));
+      if (!r.hosts) throw new Fatal(`${flag}: ${r.error}.\n${USAGE}`, 2);
+      o.githubHosts = r.hosts;
+    }
     else if (flag === "--pick") o.pick = true;
     else if (flag === "--preview") o.preview = inline ?? (argv[i + 1] !== undefined && !argv[i + 1].startsWith("-") ? argv[++i] : "");
     else if (flag === "--help" || flag === "-h") throw new Fatal(USAGE, 0);
     else throw new Fatal(`Unknown argument: ${argv[i]}\n${USAGE}`, 2);
   }
   if (o.preview !== null) {
-    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.pick && "--pick"].filter(Boolean);
+    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.githubHosts && "--github-hosts", o.pick && "--pick"].filter(Boolean);
     if (others.length) throw new Fatal(`--preview cannot be combined with ${others.join(", ")}.`, 2);
     return o;
   }
@@ -130,7 +171,7 @@ function parseArgs(argv) {
   if (o.machineName !== null && !o.intercomHc) throw new Fatal("--machine-name needs --intercom-hc.", 2);
   if (o.intercomHc && (o.noIntercom || o.remove)) throw new Fatal("--intercom-hc cannot be combined with --no-intercom or --remove.", 2);
   if (o.develop && (o.remove || o.project)) throw new Fatal("--develop cannot be combined with --remove or --project.", 2);
-  const named = [o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon"].filter(Boolean);
+  const named = [o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.githubHosts && "--github-hosts"].filter(Boolean);
   if (o.remove && (named.length || o.pick)) throw new Fatal(`${[...named, o.pick && "--pick"].filter(Boolean).join(", ")} cannot be combined with --remove.`, 2);
   if (o.pick && named.length) throw new Fatal(`--pick cannot be combined with ${named.join(", ")}: the picker opens only without feature or add-on flags.`, 2);
   const plan = planChanges({}, { profile: o.profile ?? undefined, enable: o.enable, disable: o.disable });
@@ -522,8 +563,9 @@ function describeAddon(a, have) {
 }
 
 /** The summary both pickers print before the final confirm: line-level diff, planned installs, relaxations, equivalent flag line. */
-function printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project }) {
+function printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project, hosts = null }) {
   const plan = planChanges(currentConfig, { profile, enable, disable });
+  plan.config = withGithubHosts(plan.config, hosts);
   say("Summary:");
   say(`  profile: ${profile}`);
   say(canonical(plan.config) === canonical(currentConfig) && currentText !== null ? "  foreman.json: no change" : unifiedDiff("foreman.json", currentText, toJson(plan.config)));
@@ -550,8 +592,11 @@ export function pickerKind({ tty }) {
 
 export const INQUIRER_MISSING_NOTE = "picker: @inquirer/prompts missing, run npm ci (checkout) or reinstall the package; using the basic menu";
 
-/** The picker dispatch. `load` is the dynamic import (replaceable in tests). Same result shape either way. */
-export async function runPicker(ctx, { tty = !!(process.stdin.isTTY && process.stdout.isTTY), load = () => import("@inquirer/prompts") } = {}) {
+/**
+ * The picker dispatch. `load` is the dynamic import (replaceable in tests). Same result shape either way.
+ * `githubHosts` ({ prefill, pending }, only install() passes it) adds the GitHub-hosts step after "Apply?" yes and the field `githubHosts` to the result.
+ */
+export async function runPicker(ctx, { tty = !!(process.stdin.isTTY && process.stdout.isTTY), load = () => import("@inquirer/prompts") } = {}, { githubHosts = null } = {}) {
   if (pickerKind({ tty }) === "inquirer") {
     let prompts;
     try {
@@ -559,16 +604,38 @@ export async function runPicker(ctx, { tty = !!(process.stdin.isTTY && process.s
     } catch {
       say(INQUIRER_MISSING_NOTE);
     }
-    if (prompts) return runPickerInquirer(ctx, prompts);
+    if (prompts) return runPickerInquirer(ctx, prompts, githubHosts);
   }
-  return runPickerReadline(ctx);
+  return runPickerReadline(ctx, githubHosts);
+}
+
+/** The GitHub-hosts step of the arrow-key picker: a checkbox of the prefill (uncheck removes), then an add-host input loop; never ends with 0 hosts. */
+async function askHostsInquirer(prefill, { checkbox, input }) {
+  for (;;) {
+    const hosts = await checkbox({
+      message: "GitHub hosts for PR tracking (uncheck to remove)",
+      choices: prefill.map((h) => ({ name: h, value: h, checked: true })),
+    });
+    for (;;) {
+      const entry = String(await input({ message: "add host (empty to finish)" })).trim();
+      if (!entry) break;
+      const one = validateHosts([entry]);
+      if (!one.hosts) say(`  ${one.error}`);
+      else if (!hosts.includes(one.hosts[0])) {
+        if (hosts.length >= MAX_HOSTS) say(`  at most ${MAX_HOSTS} hosts`);
+        else hosts.push(one.hosts[0]);
+      }
+    }
+    if (hosts.length) return hosts;
+    say("  at least one GitHub host is required");
+  }
 }
 
 /**
  * The arrow-key picker on @inquirer/prompts: select (profile), confirm (adjust), checkbox per area, confirm per add-on, summary, confirm.
  * Resolves like runPickerReadline; Ctrl-C (ExitPromptError) and a declined confirm give null.
  */
-async function runPickerInquirer({ currentText, currentConfig, recorded, installed, project }, { select, checkbox, confirm }) {
+async function runPickerInquirer({ currentText, currentConfig, recorded, installed, project }, { select, checkbox, confirm, input }, githubHosts = null) {
   const features = loadFeatures();
   const profiles = loadProfiles().profiles;
   const names = Object.keys(profiles);
@@ -598,8 +665,9 @@ async function runPickerInquirer({ currentText, currentConfig, recorded, install
       for (const l of describeAddon(a, have)) say(l);
       if (!have && (await confirm({ message: `Install ${a.id}?`, default: false }))) addons.push(a.id);
     }
-    printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project });
+    printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project, hosts: githubHosts?.pending });
     if (!(await confirm({ message: "Apply?", default: false }))) return null;
+    if (githubHosts) return { profile, enable, disable, addons, githubHosts: await askHostsInquirer(githubHosts.prefill, { checkbox, input }) };
     return { profile, enable, disable, addons };
   } catch (err) {
     if (err && err.name === "ExitPromptError") {
@@ -614,12 +682,16 @@ async function runPickerInquirer({ currentText, currentConfig, recorded, install
  * The fallback picker (plain readline, numbered ASCII menus): profile, optional per-area toggles, add-on consent, summary, confirm.
  * Resolves to { profile, enable, disable, addons } (enable/disable relative to the profile), or null on "no", EOF or Ctrl-C.
  */
-async function runPickerReadline({ currentText, currentConfig, recorded, installed, project }) {
+async function runPickerReadline({ currentText, currentConfig, recorded, installed, project }, githubHosts = null) {
   const features = loadFeatures();
   const profiles = loadProfiles().profiles;
   const names = Object.keys(profiles);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  rl.on("SIGINT", () => rl.close());
+  let interrupted = false;
+  rl.on("SIGINT", () => {
+    interrupted = true;
+    rl.close();
+  });
   const lines = rl[Symbol.asyncIterator]();
   const ask = async (question) => {
     rl.setPrompt(question);
@@ -668,8 +740,30 @@ async function runPickerReadline({ currentText, currentConfig, recorded, install
       for (const l of describeAddon(a, have)) say(l);
       if (!have && (await yes(`Install ${a.id}? [y/N]: `))) addons.push(a.id);
     }
-    printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project });
+    printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project, hosts: githubHosts?.pending });
     if (!(await yes("Apply? [y/N]: "))) return null;
+    if (githubHosts) {
+      // Own reader: a real EOF keeps the prefill, Ctrl-C (the SIGINT flag) aborts like every other prompt.
+      let answer = null;
+      while (!answer) {
+        rl.setPrompt(`GitHub hosts (comma-separated) [${githubHosts.prefill.join(",")}]: `);
+        rl.prompt();
+        const { value, done } = await lines.next();
+        if (done) {
+          if (interrupted) throw new Aborted();
+          answer = githubHosts.prefill;
+          break;
+        }
+        const text = String(value).trim();
+        if (!text) answer = githubHosts.prefill;
+        else {
+          const r = validateHosts(csv(text));
+          if (r.hosts) answer = r.hosts;
+          else say(`  ${r.error}`);
+        }
+      }
+      return { profile, enable, disable, addons, githubHosts: answer };
+    }
     return { profile, enable, disable, addons };
   } catch (err) {
     if (err instanceof Aborted) {
@@ -887,7 +981,8 @@ async function main(argv) {
 
     // The recorded profile is the merged user-plus-overlay value (no project layer).
     const knownProfiles = Object.keys(loadProfiles().profiles);
-    const mergedProfile = runConfigCli(py, ["merged", "--json", "--agent-dir", agentDir], projectDir).data?.config?.profile;
+    const mergedConfig = runConfigCli(py, ["merged", "--json", "--agent-dir", agentDir], projectDir).data?.config;
+    const mergedProfile = mergedConfig?.profile;
     const recorded = typeof mergedProfile === "string" && mergedProfile ? mergedProfile : null;
     if (recorded && !knownProfiles.includes(recorded)) {
       say(`WARN profile ${recorded} unknown (valid: ${knownProfiles.join(", ")}); fix with: foreman setup --profile <name>`);
@@ -904,33 +999,50 @@ async function main(argv) {
       }
     }
 
+    // tools.prGithubHosts: the merged value (user plus overlay), what a fresh install or the picker would write, and the picker's prefill
+    const mergedHosts = mergedConfig?.tools?.prGithubHosts;
+    const mergedState = mergedHosts === undefined ? null : validateHosts(mergedHosts);
+    const freshInstall = curText === null;
+    const pendingHosts = hostsToWrite(mergedHosts, null, freshInstall);
+    let hostsAnswer = opts.githubHosts;
+
     // choices: flags, or the picker (terminal only, first run or --pick)
     const st = pickerState();
-    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length);
+    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length || opts.githubHosts);
     let request = { profile: opts.profile, enable: opts.enable, disable: opts.disable };
     let addonIds = [...opts.addon];
     let diffShown = false;
     if (st.allowed && !hasFlags && (recorded === null || opts.pick)) {
       if (parseErr) throw parseErr;
-      const picked = await runPicker({ currentText: curText, currentConfig: curCfg, recorded, installed: addonsInstalled(), project: opts.project });
+      const picked = await runPicker({ currentText: curText, currentConfig: curCfg, recorded, installed: addonsInstalled(), project: opts.project }, undefined, { githubHosts: { prefill: mergedState?.hosts ?? [DEFAULT_HOST], pending: pendingHosts } });
       if (!picked) {
         say("nothing written");
         return;
       }
       request = { profile: picked.profile, enable: picked.enable, disable: picked.disable };
       addonIds = picked.addons;
+      hostsAnswer = picked.githubHosts ?? null;
       diffShown = true;
     } else if (!request.profile && recorded === null) say(NO_PROFILE_HINT);
 
     // foreman.json first, so the generator below sees it (on --dry-run nothing is written, so they
     // reflect the file on disk, one run behind the diff shown here)
-    if (!request.profile && !request.enable.length && !request.disable.length) {
+    const hostsOut = hostsToWrite(mergedHosts, hostsAnswer, freshInstall);
+    if (diffShown && hostsOut && !sameHosts(hostsOut, pendingHosts)) {
+      say(`GitHub hosts: ${hostsOut.join(",")} (equivalent: foreman setup ... --github-hosts ${hostsOut.join(",")})`);
+    }
+    if (!request.profile && !request.enable.length && !request.disable.length && !(curText !== null && hostsOut)) {
       if (curText === null) {
         anyChange = true;
+        const templateText = toJson(withGithubHosts({ version: 1, providers: {} }, hostsOut));
         say(`foreman.json: absent, ${dry ? "would create" : "creating"} a template`);
-        if (dry) say(unifiedDiff("foreman.json", null, template));
-        else writeFile(foremanFile, template);
-      } else say("foreman.json: present, left alone");
+        if (dry) say(unifiedDiff("foreman.json", null, templateText));
+        else writeFile(foremanFile, templateText);
+      } else {
+        say("foreman.json: present, left alone");
+        if (mergedState === null) say(`GitHub hosts not set: run foreman setup --github-hosts ${DEFAULT_HOST} (or foreman setup --pick)`);
+        else if (mergedState.error) say(`tools.prGithubHosts is invalid: ${mergedState.error}; run foreman setup --github-hosts <hosts> (or foreman setup --pick)`);
+      }
     } else {
       if (parseErr) throw parseErr;
       const plan = planChanges(curCfg, request);
@@ -940,8 +1052,9 @@ async function main(argv) {
         say(`  feature ${c.feature} -> ${c.state}${leaves ? ` (${leaves})` : ""}${c.notes.length ? `: ${c.notes.join("; ")}` : ""}`);
       }
       if (plan.relaxations.length) say(`WARN safety relaxations on: ${plan.relaxations.join(", ")}`);
-      const nextText = toJson(plan.config);
-      if (curText !== null && canonical(plan.config) === canonical(curCfg)) say(`foreman.json: up to date${request.profile ? ` (profile ${request.profile})` : ""}`);
+      const nextConfig = withGithubHosts(plan.config, hostsOut);
+      const nextText = toJson(nextConfig);
+      if (curText !== null && canonical(nextConfig) === canonical(curCfg)) say(`foreman.json: up to date${request.profile ? ` (profile ${request.profile})` : ""}`);
       else {
         say(`foreman.json: ${dry ? "would write" : "writing"} ${curText === null ? "a new file" : "changes"}`);
         if (!diffShown) say(unifiedDiff("foreman.json", curText, nextText));
