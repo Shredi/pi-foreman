@@ -338,7 +338,26 @@ dependencies so a tool could call them; none is registered.
 
 **Permission ask.** The footer's notice command is not a built-in allow ([permissions](permissions.md#built-in-allows)), so in the remote pane it can raise a permission ask when it falls in the dangerous class; with nobody at that pane the call is denied at once. Add an `allow` rule for that exact command to the remote machine's user `permissions.json`.
 
-**Windows.** The remote needs hc, `pi` (found as `pi.cmd` there) and a running herdr-core. Set `foremanArgv` to the PowerShell form above (`powershell.exe -NoProfile -ExecutionPolicy Bypass -File <foreman root>/bin/foreman.ps1`). `hc.exe` at `%LOCALAPPDATA%\Programs\herdr-core\hc.exe` is not on the desktop PATH, so the logon task uses the full path. An elevated user with a desktop session starts the core from a desktop terminal or the Herdr app, never over SSH.
+### Windows remotes
+
+A Windows machine works as a remote with the setup below. `<root>` is the folder of the pi-foreman checkout on that machine.
+
+- **Core and hc.** The remote needs herdr-core running and `hc.exe`. `hc.exe` at `%LOCALAPPDATA%\Programs\herdr-core\hc.exe` is not on the PATH of a non-interactive session, so use that full path in every remote `hc` invocation (the child's notice command honours `HC_BIN` for it).
+- **Starting the core.** Start it from a desktop session of the user that owns the machine, never over SSH. An elevated user with a desktop session starts it from a desktop terminal or the Herdr app. To start it at every logon, create a Task Scheduler task: trigger "At log on" of that user, action "Start a program" with the full `hc.exe` path above and the argument `server start`, "Run only when user is logged on".
+- **Git for Windows.** Pi's bash tool needs it, and the remote brief's notice command is a POSIX command line run through that tool. Install Git for Windows on the remote.
+- **Pi.** The Pi CLI is found as `pi.cmd` there; `remote_missing` means it is not on the PATH of the hc environment.
+- **foremanArgv.** Use the PowerShell form `["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "<root>/bin/foreman.ps1"]`. A word may hold only ASCII letters, digits and the characters `. _ : / \`, space and `-` (1 to 200 characters). Parentheses, `+`, `@`, quotes and non-ASCII letters are refused (`machine_not_allowed`), so a root under `C:/Program Files (x86)` or a profile path with a non-ASCII letter does not work. Keep the checkout at a plain path such as `C:/pi-foreman`. The rule is kept on purpose: widening the word class would change the validator on both sides of the hc call.
+- **Machine names.** `sessions.machines.<name>` is compared with `hc machine ls` exactly, case included.
+- **Line endings.** A file fetched from the remote keeps its CRLF bytes; its sha256 and size are taken over the exact bytes, so the label matches and the mirror is byte-identical.
+
+**Live check (owner, once per Windows machine).** Run in order and stop at the first failure:
+
+1. `foreman session open <label> <brief> --machine <machine> --cwd <dir> --dry-run` succeeds (the probe reports platform `win32` and finds `pi`).
+2. Run the same command without `--dry-run`.
+3. The radar shows `<label>@<machine>` and the herdr-app sidebar shows its row in the machine's space.
+4. A plan, an ask and a ruling make a round trip: the notice arrives (`foreman session list` shows the mirror path), `foreman session brief <label> <file>` reaches the child, and the child continues.
+5. The child's result arrives and the entry shows `closed` after `foreman:close` (`foreman session close-remote <label>`).
+6. `close-remote` on a finished entry is refused with `not_open`, and the mirror holds `result.md`.
 
 ## Commands
 
