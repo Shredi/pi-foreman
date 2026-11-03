@@ -200,13 +200,17 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   return false;
 }
 
-/** `abs` with its deepest existing ancestor through the native realpath (win32: 8.3 short names expanded; posix: a symlinked dir such as `/var` -> `/private/var`), else null. */
+/**
+ * `abs` with its deepest existing ancestor through the native realpath (win32: 8.3 short names expanded; posix: a symlinked dir such as `/var` -> `/private/var`), else null.
+ * posix never resolves the final component: it may be a link an `rm` / `mv` acts on (`OUT/lnk` -> `WT/file` is still a write outside); realInside judges what a write goes through.
+ */
 function realSpelling(c: EffectCtx, abs: string): string | null {
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
   const tail: string[] = [];
-  let e = abs;
+  let e = plat(c) === "win32" ? abs : x.dirname(abs);
+  if (e !== abs) tail.push(x.basename(abs));
   while (!exists(e)) {
     const d = x.dirname(e);
     if (d === e) return null;
