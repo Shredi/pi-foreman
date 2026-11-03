@@ -340,7 +340,9 @@ test("bin wrappers run permssuggest-cli.ts for 'perms' (sh, cmd, PowerShell)", (
   assert.equal(sug.status, 0, sug.stderr);
   assert.match(sug.stdout, /no candidates/);
   assert.ok(fs.readdirSync(path.join(w.cwd, ".workflow", "scratch")).some((f) => /^perms-suggest-\d{4}-\d{2}-\d{2}\.md$/.test(f)));
-  assert.match(run("sh", [sh, "perms", "review"]).stdout, /no adopted entries/);
+  const rev = run("sh", [sh, "perms", "review"]);
+  assert.equal(rev.status, 0, `status ${rev.status} signal ${rev.signal} error ${rev.error?.message} stderr ${rev.stderr}`);
+  assert.match(rev.stdout, /no adopted entries/, `stderr ${rev.stderr}`);
   const ad = run("sh", [sh, "perms", "adopt", path.join(w.cwd, "r.md"), "1"]);
   assert.equal(ad.status, 1);
   assert.match(ad.stderr, /needs you at a terminal/);
