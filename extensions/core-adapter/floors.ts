@@ -736,11 +736,6 @@ function runsText(s: ShellSegment): boolean {
   return s.argv.some((a) => a === "-exec" || a === "-execdir" || a === "-ok" || a === "-okdir");
 }
 
-/** A program that runs a script or code: a runner, an interpreter, or a shell fed through stdin. */
-function runsCode(s: ShellSegment): boolean {
-  return runsText(s) || INTERP_E.has(base(s.program)) || s.opaque === "stdin_fed";
-}
-
 /** `text` with the bodies of heredocs blanked (the delimiter lines stay). */
 function maskHeredocs(text: string): string {
   const lines = text.split("\n");
@@ -762,14 +757,14 @@ function maskHeredocs(text: string): string {
 
 /**
  * The text the raw and opaque-text floors scan (A1): quoted strings and the bodies of `cat`/`tee`/redirect-only heredocs are blanked.
- * Unchanged when a segment runs text, and the heredoc bodies stay visible when any segment of the line runs code.
+ * A `cat`/`tee` data heredoc body is masked even when a later segment runs the written file (that segment is judged by the runner rules);
+ * a body fed to a shell or interpreter stays visible. Quoted strings stay visible when a segment runs text.
  */
 export function maskLine(text: string, segments: ShellSegment[]): string {
-  if (segments.some(runsText)) return text;
   const bodies = segments.filter((s) => s.heredoc);
   const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
-  const t = bodies.length > 0 && data && !segments.some(runsCode) ? maskHeredocs(text) : text;
-  return maskQuoted(t);
+  const t = bodies.length > 0 && data && !segments.some((s) => s.opaque === "stdin_fed") ? maskHeredocs(text) : text;
+  return segments.some(runsText) ? t : maskQuoted(t);
 }
 
 const LOOP_WORDS = new Set(["for", "while", "until", "if", "select", "case"]);
