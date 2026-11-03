@@ -43,6 +43,8 @@ class TestToolFloor(ReplayCase):
         events = [r for recs in rig.traces().values() for r in recs]
         restored = [r for r in events if r.get("event") == "tools_floor_restored"]
         self.assertTrue(restored, "no tools_floor_restored trace")
+        names = set(restored[0].get("names", "").split(","))
+        self.assertTrue({"foreman_triage", "subagent"} <= names, restored)
 
 
 if __name__ == "__main__":

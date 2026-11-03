@@ -73,6 +73,14 @@ test("nothing missing means no call; a reset between turns is repaired at before
   assert.equal(r.rig.events("tools_floor_restored").length, 1);
 });
 
+test("a floor tool that is also deferred is active before the hidden set is built, so it is hidden and listed", async (t) => {
+  const all = ["read", "tool_search", "foreman_session_open", "subagent"];
+  const r = await rigWith(t, { active: ["read", "tool_search"], all });
+  assert.ok(r.active().includes("foreman_session_open"));
+  const names = String(r.rig.events("tools_deferred")[0]?.names ?? "").split(",");
+  assert.ok(names.includes("foreman_session_open"), `tools_deferred names: ${names}`);
+});
+
 test("a child and plan mode leave the active set alone", async (t) => {
   const child = await rigWith(t, { child: true, active: ["read"], all: ALL });
   assert.equal(floorSets(child.sets).length, 0);
