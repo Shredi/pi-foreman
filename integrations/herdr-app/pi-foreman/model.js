@@ -55,24 +55,6 @@ function cleanRepoUrl(v) {
   return isSafeHttpsUrl(s) && !/[?#]/.test(s) ? s : "";
 }
 
-const MAX_CHECK_DOTS = 12;
-const CHECK_ORDER = { fail: 0, pending: 1, ok: 2 };
-
-// One chip dot per check, failing first, then running, then green; `counts` (a PR above the cap) expands the same way
-// up to the cap; no usable `checks` falls back to the overall `state`.
-function dotChecks(d) {
-  let list = [];
-  if (Array.isArray(d.checks)) list = d.checks.filter((c) => isObj(c) && Object.hasOwn(CHECK, c.state) && c.state !== "none").map((c) => CHECK[c.state]);
-  else if (isObj(d.counts)) {
-    for (const k of ["fail", "run", "ok"]) {
-      const n = Math.min(int(d.counts[k]) ?? 0, MAX_CHECK_DOTS);
-      for (let i = 0; i < n; i++) list.push(CHECK[k]);
-    }
-  }
-  if (!list.length) return [CHECK[d.state]];
-  return list.sort((a, b) => CHECK_ORDER[a] - CHECK_ORDER[b]).slice(0, MAX_CHECK_DOTS);
-}
-
 function normDots(raw, repoUrl) {
   const byN = new Map();
   if (!Array.isArray(raw)) return [];
@@ -84,9 +66,9 @@ function normDots(raw, repoUrl) {
       pr = { number: d.n, checks: [], jobs: [], url: "", repo: "", ...prExtras(d) };
       byN.set(id, pr);
     }
-    const states = dotChecks(d);
-    pr.checks.push(...states);
-    pr.jobs.push(...states.map((state) => ({ name: states.length === 1 ? str(d.name) : "", state })));
+    const state = CHECK[d.state];
+    pr.checks.push(state);
+    pr.jobs.push({ name: str(d.name), state });
     if (!pr.url && isSafeHttpsUrl(d.url)) pr.url = d.url;
     if (!pr.repo) pr.repo = cleanRepoUrl(d.repo) || repoUrl;
   }

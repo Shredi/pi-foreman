@@ -1,8 +1,8 @@
 // pr_watch (docs/tools.md#pr-tools): a persistent background watch of one pull request. It ends only when the PR is merged or
 // closed, is not found, or pr_unwatch ends it; every tick that finds something new sends ONE pi-foreman-pr message (the watch
 // stays armed). Events: a failed check run (per run id: a rerun or a new head is a new run), the CI result once all checks
-// settled, new comments or reviews, a mergeable change, a head without checks, merged or closed. A poll error backs off like
-// the dots and never ends the watch. Timers are unref'd; clear() (session shutdown) stops everything. The PR number is never
+// settled, new comments or reviews, a mergeable change, a head without checks, merged or closed. A poll error backs off
+// and never ends the watch. Timers are unref'd; clear() (session shutdown) stops everything. The PR number is never
 // traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
 import { keyString } from "./prhost.ts";
@@ -16,7 +16,7 @@ export const MAX_BACKOFF_MS = 600_000;
 export const MIN_WATCH_SECONDS = 30;
 const MAX_IDS = 300;
 
-/** tools.prWatchSeconds as the watch (and the dots) poll it: default 60 s, floored at 30 s (the schema minimum stays 5). */
+/** tools.prWatchSeconds as the watch polls it: default 60 s, floored at 30 s (the schema minimum stays 5). */
 export function watchIntervalMs(seconds: unknown): number {
   return Math.max(MIN_WATCH_SECONDS, typeof seconds === "number" && Number.isFinite(seconds) ? seconds : 60) * 1000;
 }
@@ -62,8 +62,6 @@ export interface WatchSnapshot {
   runs: Run[];
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
   comments?: CommentEntry[];
-  /** pr_status-like display data for the dots: url, title, state, draft, mergeable, reviewDecision, headRefName. */
-  status: Record<string, unknown>;
 }
 export type WatchPoll = { snap: WatchSnapshot } | { error: string } | { gone: true };
 
@@ -81,13 +79,6 @@ export function countRuns(runs: Run[]): Counts {
   const c: Counts = { passed: 0, failed: 0, pending: 0, missing: 0 };
   for (const r of runs) c[r.bucket] += 1;
   return c;
-}
-
-/** The dots' checks answer (pr_checks / pr_batch shape) from the runs of a snapshot. */
-export function checksOfRuns(runs: Run[]): Record<string, unknown> {
-  const names = (b: Bucket) => runs.filter((r) => r.bucket === b).map((r) => r.name);
-  const c = countRuns(runs);
-  return { pending: names("pending"), failed: names("failed"), passed: names("passed"), missing: names("missing"), counts: c, truncated: false };
 }
 
 // ---------------------------------------------------------------- state and events
@@ -108,7 +99,7 @@ export interface WatchState {
   noCiHead: string;
   /** Child sessions: the head the ready-to-merge line was reported for. */
   readyHead: string;
-  /** The last event text (widget row). */
+  /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
 }
 
@@ -274,7 +265,7 @@ const bucketOf = (v: unknown): Bucket => (v === "pending" || v === "failed" || v
 function fromBatch(p: Record<string, unknown>): Omit<WatchSnapshot, "comments"> {
   const runs = list<Record<string, unknown>>(p.runs).map((r): Run => ({ id: text(r.id), name: text(r.name), bucket: bucketOf(r.bucket), url: text(r.url) }));
   const state = p.state === "merged" || p.state === "closed" ? p.state : "open";
-  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs, status: { url: p.url, title: p.title, state, draft: p.draft, mergeable: p.mergeable, reviewDecision: p.reviewDecision, headRefName: p.headRefName } };
+  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs };
 }
 
 /**
@@ -285,6 +276,9 @@ function fromBatch(p: Record<string, unknown>): Omit<WatchSnapshot, "comments"> 
 export async function pollWatch(run: RunOp, key: PrKey, seen: { updatedAt: string }): Promise<WatchPoll> {
   return (await pollWatchBatch(run, [{ key, seen }]))[0];
 }
+
+/** pr_ops refuses a pr_batch of more than this many PRs (bad_request). */
+const MAX_BATCH = 50;
 
 /**
  * One poll of several watched PRs: the gh PRs of one host share one pr_batch (watch fields), the others (and a host that answers
@@ -298,7 +292,9 @@ export async function pollWatchBatch(run: RunOp, items: { key: PrKey; seen: { up
     if (it.key.repo) byHost.set(it.key.host, [...(byHost.get(it.key.host) ?? []), i]);
   });
   const single: number[] = items.flatMap((it, i) => (it.key.repo ? [] : [i]));
-  for (const [host, idx] of byHost) {
+  const chunks: [string, number[]][] = [];
+  for (const [host, all] of byHost) for (let at = 0; at < all.length; at += MAX_BATCH) chunks.push([host, all.slice(at, at + MAX_BATCH)]);
+  for (const [host, idx] of chunks) {
     const r = await run("pr_batch", { ...(host ? { host } : {}), prs: idx.map((i) => ({ repo: items[i].key.repo, n: items[i].key.n })), watch: true });
     if (r.kind !== "ran") {
       if (r.kind === "precondition" && r.precondition === "pr_unsupported") single.push(...idx);
@@ -339,7 +335,7 @@ async function pollOne(run: RunOp, key: PrKey, seen: { updatedAt: string }): Pro
     // a failed run keeps its place; a repeated name with the same startedAt is one run
     runs = runs.filter((r, i) => runs.findIndex((x) => x.id === r.id) === i);
   }
-  const base: Omit<WatchSnapshot, "comments"> = { state, mergeable: mergeableOf(st.result.mergeable), head: text(st.result.headSha), base: text(st.result.baseRef), updatedAt: text(st.result.updatedAt), runs, status: { url: st.result.url, title: st.result.title, state, draft: st.result.draft, mergeable: st.result.mergeable, reviewDecision: st.result.reviewDecision } };
+  const base: Omit<WatchSnapshot, "comments"> = { state, mergeable: mergeableOf(st.result.mergeable), head: text(st.result.headSha), base: text(st.result.baseRef), updatedAt: text(st.result.updatedAt), runs };
   return withComments(run, key, base, seen);
 }
 
@@ -481,7 +477,6 @@ interface Watch {
   ended: boolean;
   started: number;
   cwd: string;
-  last: { at: number; snap: WatchSnapshot } | null;
 }
 
 /** The same PR: equal keys, or one of them has no repository (resolution failed) and the numbers match. */
@@ -524,16 +519,9 @@ export class PrWatches {
     return [...this.watches.values()].map((w) => ({ key: w.key, n: w.key.n, event: w.state.last, startedAt: w.started }));
   }
 
-  /** The latest successful snapshot of watch `key` and its age in ms, or null (no watch, no poll yet). */
-  lastSnapshot(key: PrKey): { snap: WatchSnapshot; ageMs: number } | null {
-    const w = this.find(key);
-    return w?.last ? { snap: w.last.snap, ageMs: this.deps.now() - w.last.at } : null;
-  }
-
   /** Arm a watch from its first (baseline) poll: what the PR shows now counts as reported. */
   start(key: PrKey, snap: WatchSnapshot): void {
     const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: baselineOf(snap) });
-    w.last = { at: this.deps.now(), snap };
     this.arm(w);
     this.persist();
     this.deps.changed?.();
@@ -544,7 +532,7 @@ export class PrWatches {
    * poll seeds comments and mergeable, and reports CI like any other poll.
    */
   startPending(key: PrKey, error: string): void {
-    const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [], status: {} };
+    const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
     const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming" } });
     w.errors = 1;
     w.lastError = error;
@@ -554,7 +542,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, errors: 0, lastError: "", failing: false, ended: false, last: null };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, errors: 0, lastError: "", failing: false, ended: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
     return w;
@@ -713,7 +701,6 @@ export class PrWatches {
     w.failing = false;
     if ("gone" in r) return this.end(w, { events: ["not found"], head: "", base: "", mergeable: "", counts: null, failed: [], missing: [], newComments: [], moreComments: 0, final: "gone" });
     const snap = r.snap;
-    w.last = { at: this.deps.now(), snap };
     if (wasFailing) {
       this.deps.send(noticeMessage(w.key.n, "polling recovered", "recovered"), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "recovered" });

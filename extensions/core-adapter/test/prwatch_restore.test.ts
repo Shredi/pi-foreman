@@ -7,7 +7,7 @@ import { r11Rig } from "./_r11rig.ts";
 
 const SID = "sess-1";
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
-const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abcdef0123", base: "main", updatedAt: "t0", runs: [], status: {}, ...o });
+const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abcdef0123", base: "main", updatedAt: "t0", runs: [], ...o });
 
 function harness(poll: (key: PrKey, cwd?: string) => Promise<WatchPoll>) {
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];

@@ -556,15 +556,6 @@ def build(data, now):
             dot = {"n": dn, "state": x["state"], "label": label[:20], "src": x["src"]}
             if safe_https_url(x.get("url")):
                 dot["url"] = x["url"]
-            checks = [{"name": str(c.get("name"))[:60], "state": c["state"]} for c in (x.get("checks") or [])[:12]
-                      if isinstance(c, dict) and isinstance(c.get("name"), str) and c.get("state") in ("fail", "run", "ok")] \
-                if isinstance(x.get("checks"), list) else []
-            counts = x.get("counts")
-            if x["src"] == "pr" and checks:
-                dot["checks"] = checks
-            elif x["src"] == "pr" and isinstance(counts, dict):
-                dot["counts"] = {k: counts[k] if isinstance(counts.get(k), int) and not isinstance(counts.get(k), bool) and counts[k] >= 0 else 0
-                                 for k in ("fail", "run", "ok")}
             dots.append(dot)
         if dots:
             n["dots"] = dots

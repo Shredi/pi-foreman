@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baselineOf, countRuns, PR_MESSAGE_TYPE, prDelta, prMessage, PrWatches, pollWatch, watchIntervalMs } from "../prwatch.ts";
+import { baselineOf, countRuns, PR_MESSAGE_TYPE, prDelta, prMessage, PrWatches, pollWatch, pollWatchBatch, watchIntervalMs } from "../prwatch.ts";
 import type { Bucket, CommentEntry, Run, Timers, WatchPoll, WatchSnapshot } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { PrKey } from "../prhost.ts";
@@ -10,7 +10,7 @@ const SHA = "abcdef0123456789";
 
 const run = (name: string, bucket: Bucket, id = name, url = `https://h.invalid/${name}`): Run => ({ id, name, bucket, url });
 const comment = (id: string, kind = "issue"): CommentEntry => ({ id, kind, author: "bob", body: `body ${id}` });
-const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: SHA, base: "main", updatedAt: "t0", runs: [], status: {}, ...o });
+const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: SHA, base: "main", updatedAt: "t0", runs: [], ...o });
 
 const step = (b: ReturnType<typeof baselineOf>, s: WatchSnapshot, child = false) => prDelta(b, s, child);
 
@@ -310,13 +310,12 @@ test("pr_watch: reserve is one-per-PR until released (a number-only key matches 
   assert.equal(h.w.reserve(K), true);
 });
 
-test("pr_watch: the last event feeds the widget row and the snapshot feeds the dots", async () => {
+test("pr_watch: list() reports the last event of the watch", async () => {
   const h = harness(async () => ({ snap: snap({ runs: [run("b", "failed")] }) }));
   h.w.start(K, snap({ runs: [run("b", "pending")] }));
-  assert.equal(h.w.lastSnapshot(K)?.snap.runs[0].bucket, "pending");
+  assert.equal(h.w.list()[0].event, "watching");
   await h.fire();
   assert.equal(h.w.list()[0].event, "checks finished: fail");
-  assert.equal(h.w.lastSnapshot(K)?.snap.runs[0].bucket, "failed");
 });
 
 // ---------------------------------------------------------------- pollWatch
@@ -343,6 +342,24 @@ test("pollWatch: gh with a repository: one pr_batch with watch fields, comments 
   calls.length = 0;
   await pollWatch(r as never, K, { updatedAt: "t0" });
   assert.deepEqual(calls.map((c) => c.op), ["pr_batch", "pr_comments"]);
+});
+
+test("pollWatchBatch: more than 50 PRs on one host go out in several pr_batch calls of at most 50, every PR polled", async () => {
+  const items = Array.from({ length: 120 }, (_, i) => ({ key: { host: "github.com", repo: "acme/app", n: i + 1 } as PrKey, seen: { updatedAt: "t0" } }));
+  const sizes: number[] = [];
+  const polled: number[] = [];
+  const r = async (op: string, args: Record<string, unknown>) => {
+    if (op !== "pr_batch") return ran({ comments: [] });
+    const prs = args.prs as { repo: string; n: number }[];
+    sizes.push(prs.length);
+    polled.push(...prs.map((p) => p.n));
+    return ran({ prs: prs.map((p) => ({ repo: p.repo, number: p.n, state: "open", mergeable: "mergeable", headSha: SHA, baseRef: "main", updatedAt: "t0", runs: [] })), errors: [] });
+  };
+  const out = await pollWatchBatch(r as never, items);
+  assert.deepEqual(sizes, [50, 50, 20]);
+  assert.deepEqual(polled.sort((a, b) => a - b), items.map((i) => i.key.n));
+  assert.equal(out.length, 120);
+  assert.ok(out.every((o) => "snap" in o));
 });
 
 test("pollWatch: not found, errors and an unsupported host", async () => {

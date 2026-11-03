@@ -17,7 +17,7 @@ import type { SelfFinishDeps } from "../selffinish.ts";
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
-const openSnap = (state: WatchSnapshot["state"] = "open"): WatchSnapshot => ({ state, mergeable: "mergeable", head: "abcdef0123456789", base: "main", updatedAt: "t0", runs: [], status: {} });
+const openSnap = (state: WatchSnapshot["state"] = "open"): WatchSnapshot => ({ state, mergeable: "mergeable", head: "abcdef0123456789", base: "main", updatedAt: "t0", runs: [] });
 
 // ---------------------------------------------------------------- the close sequence (fakes)
 

@@ -8,7 +8,7 @@ import type { Timers, WatchSnapshot } from "../prwatch.ts";
 import type { PrKey } from "../prhost.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
-const snap = (): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abcdef0123456789", base: "main", updatedAt: "t0", runs: [], status: {} });
+const snap = (): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abcdef0123456789", base: "main", updatedAt: "t0", runs: [] });
 const REFUSED = "pi-foreman: close refused: PR #7 open and watched (merge it, or pr_unwatch)";
 
 /** A real PrWatches (fake timers, a controllable pr_status) wired into a CloseFlow like index.ts does. */

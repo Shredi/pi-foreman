@@ -16,18 +16,6 @@ const WRITE_GAP_MS = 1000;
 const MAX_RUNS = 20;
 const MAX_WAITS = 20;
 const MAX_DOTS = 14;
-const MAX_DOT_CHECKS = 12;
-
-/** The per-check fields of a pr dot, validated; nothing when absent or malformed. */
-function dotCheckFields(d: LiveDot): Pick<LiveDot, "checks" | "counts"> {
-  const cnt = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0);
-  if (Array.isArray(d.checks)) {
-    const checks = d.checks.filter((c) => c && typeof c.name === "string" && ["fail", "run", "ok"].includes(c.state)).slice(0, MAX_DOT_CHECKS).map((c) => ({ name: short(c.name, 60), state: c.state }));
-    if (checks.length) return { checks };
-  }
-  if (d.counts && typeof d.counts === "object") return { counts: { fail: cnt(d.counts.fail), run: cnt(d.counts.run), ok: cnt(d.counts.ok) } };
-  return {};
-}
 /** An https URL of URL characters only: no whitespace, control characters or `" ' < > ^ | & \` and backtick. */
 const SAFE_DOT_URL = /^https:\/\/[A-Za-z0-9][A-Za-z0-9\-._~:/?#[\]@!$()*+,;=%]*$/;
 
@@ -61,10 +49,6 @@ export interface LiveDot {
   src: "pr" | "ext";
   /** The https PR page URL of a `pr` dot; omitted when unknown or not https. */
   url?: string;
-  /** Per-check states of a `pr` dot (capped); `state` is the overall value for older readers. */
-  checks?: { name: string; state: "fail" | "run" | "ok" }[];
-  /** Check counts instead of `checks` above the cap. */
-  counts?: { fail: number; run: number; ok: number };
 }
 
 export interface LiveRun {
@@ -297,7 +281,7 @@ export class LiveState {
   private dotList(): LiveDot[] {
     try {
       const states = ["fail", "run", "ok", "none"];
-      return (this.dotsOf?.() ?? []).filter((d) => states.includes(d.state)).slice(0, MAX_DOTS).map((d) => ({ n: d.src === "pr" && Number.isInteger(d.n) ? d.n : null, state: d.state, label: short(String(d.label), 20), src: d.src === "pr" ? "pr" : "ext", ...(d.src === "pr" && typeof d.url === "string" && d.url.length <= 2048 && SAFE_DOT_URL.test(d.url) ? { url: d.url } : {}), ...(d.src === "pr" ? dotCheckFields(d) : {}) }));
+      return (this.dotsOf?.() ?? []).filter((d) => states.includes(d.state)).slice(0, MAX_DOTS).map((d) => ({ n: d.src === "pr" && Number.isInteger(d.n) ? d.n : null, state: d.state, label: short(String(d.label), 20), src: d.src === "pr" ? "pr" : "ext", ...(d.src === "pr" && typeof d.url === "string" && d.url.length <= 2048 && SAFE_DOT_URL.test(d.url) ? { url: d.url } : {}) }));
     } catch {
       return []; // dots are best effort
     }

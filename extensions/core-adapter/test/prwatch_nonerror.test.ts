@@ -25,7 +25,7 @@ test("pr_create: a non-Error throw while arming still returns the created PR and
   assert.match(r.content[0].text, /\npr_watch: not armed \(.*plain string.*\)$/);
 });
 
-const snap = (over: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abc1234567", base: "main", updatedAt: "t1", runs: [{ id: "1", name: "ci", bucket: "pending", url: "u" }], status: {}, ...over });
+const snap = (over: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abc1234567", base: "main", updatedAt: "t1", runs: [{ id: "1", name: "ci", bucket: "pending", url: "u" }], ...over });
 
 test("prDelta: an UNKNOWN baseline followed by CONFLICTING sends the conflict; a known baseline and UNKNOWN stay quiet", () => {
   const b = baselineOf(snap({ mergeable: "unknown" }));

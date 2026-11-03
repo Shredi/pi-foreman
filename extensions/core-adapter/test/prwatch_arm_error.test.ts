@@ -8,7 +8,7 @@ import type { Spawner } from "../spawn.ts";
 
 type Tool = { execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
-const snap = (over: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abc1234567", base: "main", updatedAt: "t1", runs: [{ id: "1", name: "ci", bucket: "failed", url: "u" }], comments: [], status: {}, ...over });
+const snap = (over: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: "abc1234567", base: "main", updatedAt: "t1", runs: [{ id: "1", name: "ci", bucket: "failed", url: "u" }], comments: [], ...over });
 
 function setup(firstPoll: "error" | "not_found" | "ok") {
   const tools = new Map<string, Tool>();
