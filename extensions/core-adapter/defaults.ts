@@ -7,6 +7,7 @@ import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
 import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { nullDevice } from "./pathnorm.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -136,7 +137,7 @@ export function folderRelaxes(call: DangerCall, env: DangerEnv): boolean {
 export function folderShellRelaxes(c: DangerCall, env: DangerEnv): boolean {
   const fa = folderAware(c, env);
   if (!fa) return false;
-  return (c.segments ?? []).some((s) => s.opaque === null && s.program !== "" && writeTargets(s).some((w) => !SINK.has(w) && s.cwd !== null && inAutoFolder(env, w, s.cwd)));
+  return (c.segments ?? []).some((s) => s.opaque === null && s.program !== "" && writeTargets(s).some((w) => !SINK.has(w) && !nullDevice(env.platform, w) && s.cwd !== null && inAutoFolder(env, w, s.cwd)));
 }
 
 const NAME = /^[A-Za-z0-9._\/-]+$/;
@@ -844,7 +845,7 @@ const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
 
 /** The write target `w` (run from `cwd`) lies where the path rules allow a write: the worktree, scratch, and (outside children) the OS temp dir. */
 function writable(w: string, cwd: string | null, env: DangerEnv, folders = false): boolean {
-  if (SINK.has(w)) return true;
+  if (SINK.has(w) || nullDevice(env.platform, w)) return true;
   if (cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) return false;
   return pathDecide("write", { path: w }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
 }

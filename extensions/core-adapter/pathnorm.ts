@@ -64,6 +64,11 @@ export function foldCase(platform: string, s: string): string {
   return platform === "win32" ? s.toLowerCase() : s;
 }
 
+/** The null device: `/dev/null` everywhere, `NUL` (any case) on win32 only (on POSIX `> NUL` creates a file). */
+export function nullDevice(platform: string, target: string): boolean {
+  return target === "/dev/null" || (platform === "win32" && target.toLowerCase() === "nul");
+}
+
 /** `comparable` for permission rules and floors: darwin's default file system is case-insensitive too, so it folds like win32 (the floors' own rule). */
 export function comparableFs(platform: string, p: string): string {
   const s = slashForm(platform, p);

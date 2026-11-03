@@ -16,7 +16,7 @@
 // when EVERY unit is non-opaque and matches an allow rule or a built-in allow (the caller's callback); else `none`.
 import * as path from "node:path";
 import type { ShellSegment } from "./shellast.ts";
-import { comparableFs, slashForm } from "./pathnorm.ts";
+import { comparableFs, nullDevice, slashForm } from "./pathnorm.ts";
 
 export type RuleFamily = "bash" | "read" | "edit" | "write" | "named";
 
@@ -124,7 +124,7 @@ export interface RuleSegment {
   /** The normalised text (normaliseSegment). */
   text: string;
   opaque: boolean;
-  /** The segment redirects output somewhere other than /dev/null. */
+  /** The segment redirects output somewhere other than the null device (/dev/null; NUL on win32). */
   writesRedirect: boolean;
 }
 
@@ -164,7 +164,7 @@ export function ruleCallOf(tool: string, input: unknown, ctx: CallCtx): RuleCall
     return {
       tool,
       segments: segs.length
-        ? segs.map((s) => ({ text: normaliseSegment(s, ctx.platform), opaque: s.opaque !== null, writesRedirect: s.redirects.some((r) => r.op !== "<" && r.op !== "dup" && r.target !== "/dev/null") }))
+        ? segs.map((s) => ({ text: normaliseSegment(s, ctx.platform), opaque: s.opaque !== null, writesRedirect: s.redirects.some((r) => r.op !== "<" && r.op !== "dup" && !nullDevice(ctx.platform, r.target)) }))
         : [{ text: cmd, opaque: true, writesRedirect: false }],
     };
   }

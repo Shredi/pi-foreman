@@ -721,6 +721,8 @@ class Scope(object):
             text = word
         if text in ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"):
             return False
+        if _NT and text.lower() == "nul":
+            return False
         if text == "":
             return False
         return self.project_path(absolute(text, cwd, lexical=False))

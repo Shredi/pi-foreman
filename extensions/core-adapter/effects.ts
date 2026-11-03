@@ -28,7 +28,7 @@ import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
 import { netReadSegment } from "./netread.ts";
-import { foldCase } from "./pathnorm.ts";
+import { foldCase, nullDevice } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
 /** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
@@ -659,7 +659,7 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
 /** A redirect the deterministic allow accepts: an fd dup, /dev/null, output into a scratch dir or /tmp, input from a contained path. */
 export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null, scratch: string[], platform: string): boolean {
   if (r.op === "dup") return /^\d+$/.test(r.target);
-  if (r.target === "/dev/null") return true;
+  if (nullDevice(platform, r.target)) return true;
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;
   return platform !== "win32" && !c?.noTmp && tmpDest(r.target);
