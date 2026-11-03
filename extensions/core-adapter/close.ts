@@ -559,7 +559,7 @@ export async function outboxSend(events: Bus, to: string, message: string, kind:
 export function registerClose(
   pi: ExtensionAPI,
   deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; activeRuns: (sessionId: string) => number; cancelWaits?: (sessionId: string) => string[]; platform: string },
-): { command: (args: string, ctx: ExtensionContext) => Promise<void> } {
+): { command: (args: string, ctx: ExtensionContext) => Promise<void>; closing: (sessionId: string) => boolean } {
   const flows = new Map<string, { flow: CloseFlow; ctx: ExtensionContext }>();
   const flowFor = (s: CloseSession, ctx: ExtensionContext): CloseFlow => {
     const slot = flows.get(s.id);
@@ -646,13 +646,12 @@ export function registerClose(
   pi.on("before_agent_start", async (event, ctx) => {
     const e = event as { messageType?: unknown; message?: unknown };
     const hit = intercomInbound({ hook: "before_agent_start", messageType: e.messageType, message: e.message });
-    if (!hit || process.env.PI_SUBAGENT_CHILD === "1") return undefined;
+    // a message without an id cannot be deduped against its message_end: it is left to message_end (a close prompt follow-up)
+    if (!hit || !hit.id || process.env.PI_SUBAGENT_CHILD === "1") return undefined;
     const s = await deps.session(ctx);
     if (s.isChild || flows.get(s.id)?.flow.active) return undefined;
-    if (hit.id) {
-      inRunSeen.add(hit.id);
-      if (inRunSeen.size > 64) inRunSeen.delete(inRunSeen.values().next().value!);
-    }
+    inRunSeen.add(hit.id);
+    if (inRunSeen.size > 64) inRunSeen.delete(inRunSeen.values().next().value!);
     fromIntercom(s, ctx, hit.details, false, true);
     const flow = flows.get(s.id)?.flow;
     return flow?.active ? { message: { customType: CLOSE_MESSAGE_TYPE, content: flow.closeText(), display: true } } : undefined;
@@ -681,6 +680,8 @@ export function registerClose(
   });
 
   return {
+    /** True while this session's close flow is active (a triggered run was claimed as the close turn). */
+    closing: (sessionId) => flows.get(sessionId)?.flow.active === true,
     command: async (args, ctx) => {
       const s = await deps.session(ctx);
       if (s.isChild) {

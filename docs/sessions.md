@@ -290,7 +290,7 @@ means the bridge is not loaded or has not registered yet.
 
 ### Opener intercom id
 
-The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom 0.17.0 resolved and
+The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom resolved and
 published, which also covers an id claimed through `intercom:session-identity`), `PI_INTERCOM_STABLE_ID`,
 `stableId` in `<agent dir>/intercom/config.json`, then the Pi session id. The CLI cannot know the Pi session id
 and takes `--parent-id` instead.

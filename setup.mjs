@@ -57,7 +57,7 @@ const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
 // pi-subagents spawns the hook without a shell, so a script cannot run on Windows (docs/safety.md, known limits).
 const WORKTREE_HOOK_TIMEOUT_MS = 600000;
-// Written once when absent (never overwritten): wake on every inbound message, the human's input first.
+// Defaults for pi-intercom's config.json when it is absent: wake on every inbound message, the human's input first.
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
 const intercomHcKeys = (o) => ({ transport: "hc", ...(o.machineName ? { machineName: o.machineName } : {}) });
 // Keys that change the program pi-intercom starts or enable sends over SSH or hc: trusted overrides, warned about.

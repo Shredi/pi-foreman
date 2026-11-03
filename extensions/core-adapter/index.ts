@@ -1611,12 +1611,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) {
       // Idle downshift: a custom message has not passed message_end yet, so its cause is read here; a user message carries the input handler's.
       idleBind = { s, ctx };
-      // Pi 1.2+: an inbound intercom message starts an idle run through triggerTurn (no input event, and agent_start
-      // fires before the message_end), so the cause and the sender for the turn notice are set here.
-      const inbound = intercomInbound({ hook: "before_agent_start", messageType: (event as { messageType?: unknown }).messageType, message: (event as { message?: unknown }).message });
-      if (inbound) (s.turn.cause = "intercom"), (s.turn.intercomFrom = intercomSender(inbound.details));
+      // An inbound intercom message (Pi 1.2+ triggerTurn run) gets its cause and downshift in the handler registered
+      // after registerClose (close claims a foreman:close run first); every other run is handled here.
       const customType = (event as { message?: { customType?: unknown } }).message?.customType;
-      await idleModel.beforeTurn((event as { messageType?: string }).messageType === "custom" ? causeOfCustom(customType) : s.turn.cause);
+      const inbound = intercomInbound({ hook: "before_agent_start", messageType: (event as { messageType?: unknown }).messageType, message: (event as { message?: unknown }).message });
+      if (!inbound) await idleModel.beforeTurn((event as { messageType?: string }).messageType === "custom" ? causeOfCustom(customType) : s.turn.cause);
     }
     // Pi 1.2: a wake or child-notice run (messageType "custom") also lands here, without a prompt.
     // Only a user run sets the review intent and triages; the section below is built for every run.
@@ -3169,7 +3168,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (opened) s.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
     if (s.isChild) return;
     const cause = causeOfCustom(m.customType);
-    if (cause) s.turn.cause = cause;
+    // the starting intercom message of a close turn arrives after close claimed the run: the cause stays "close"
+    if (cause && !(cause === "intercom" && s.turn.cause === "close")) s.turn.cause = cause;
     if (cause) {
       s.idleCache.onActivity();
       s.selfWarm.onActivity();
@@ -4116,6 +4116,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const s = await ensureSession(ctx);
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: async (kind, arg) => { const py = pyPath(s); if (py) await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", "foreman_session.py"), "--agent-dir", s.agentDir, "remote", "notice", kind, ...(kind === "refused" ? [`--reason=${arg ?? ""}`] : arg ? ["--close", arg] : [])], { timeoutMs: 60_000, cwd: s.cwd }); }, closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
     },
+  });
+
+  // Pi 1.2+: an inbound intercom message starts an idle run through triggerTurn (no input event, and agent_start fires
+  // before the message_end). Registered after registerClose so a foreman:close run is claimed first: it keeps cause "close"
+  // (no idle downshift of the close turn); any other intercom run is cause "intercom" with the sender for the turn notice.
+  pi.on("before_agent_start", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild) return;
+    const inbound = intercomInbound({ hook: "before_agent_start", messageType: (event as { messageType?: unknown }).messageType, message: (event as { message?: unknown }).message });
+    if (!inbound) return;
+    s.turn.cause = close.closing(s.id) ? "close" : "intercom";
+    s.turn.intercomFrom = intercomSender(inbound.details);
+    await idleModel.beforeTurn(s.turn.cause);
   });
 
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
