@@ -234,6 +234,81 @@ def read_open_prs(adir):
     return out, datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+TRACKED_DISPLAY_FRESH_S = 15 * 60
+TRACKED_BUCKET = {"failed": "fail", "pending": "run", "passed": "ok", "missing": "run"}
+PR_URL_REPO = re.compile(r"https://github\.com/([A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+)/pull/\d+")
+
+
+def _tracked_entries(adir):
+    """Open PRs of `foreman prs poll` (state/tracked-prs-state.json) as (radar entry, okAt ms or None); [] while the file's `off` is true.
+    Ended (merged/closed) entries are not open and are skipped. Reads files only."""
+    d = read_json(Path(adir) / "pi-foreman" / "state" / "tracked-prs-state.json")
+    if not isinstance(d, dict) or d.get("v") != 1 or d.get("off") is True or not isinstance(d.get("prs"), dict):
+        return []
+    out = []
+    for e in d["prs"].values():
+        if not isinstance(e, dict) or "endedAt" in e:
+            continue
+        snap, meta, number = e.get("snap"), e.get("meta"), e.get("number")
+        if not isinstance(snap, dict) or snap.get("state") != "open" or not isinstance(meta, dict):
+            continue
+        title, url = meta.get("title"), meta.get("url")
+        if isinstance(number, bool) or not isinstance(number, int) or not isinstance(title, str) or not safe_https_url(url):
+            continue
+        m = PR_URL_REPO.match(url)
+        repo = m.group(1) if m else e.get("repo")
+        if not isinstance(repo, str) or not repo:
+            continue
+        checks = []
+        for r in (snap.get("runs") if isinstance(snap.get("runs"), list) else [])[:20]:
+            if isinstance(r, dict) and isinstance(r.get("name"), str):
+                checks.append({"n": r["name"][:120], "state": TRACKED_BUCKET.get(r.get("bucket"), "run"), "label": r["name"][:20]})
+        ent = {"repo": repo[:140], "number": number, "title": title[:200], "url": url,
+               "state": "draft" if meta.get("draft") is True else "open", "author": "", "checks": checks}
+        if isinstance(snap.get("updatedAt"), str) and snap["updatedAt"]:
+            ent["updated"] = snap["updatedAt"][:40]
+        mergeable = snap.get("mergeable")
+        if isinstance(mergeable, str) and mergeable.upper() in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
+            ent["mergeable"] = mergeable.upper()
+        for src, key, dst in ((meta, "headRefName", "headRefName"), (meta, "headRepo", "headRepo"), (snap, "base", "baseRefName")):
+            v = src.get(key)
+            if isinstance(v, str) and v:
+                ent[dst] = v[:255]
+        ok = e.get("okAt")
+        out.append((ent, ok if isinstance(ok, (int, float)) and not isinstance(ok, bool) else None))
+    return out
+
+
+def read_pr_feed(adir, now):
+    """(entries, search fetched-at stamp or None), or None when neither source has anything.
+    All search entries are listed; a tracked entry replaces its search twin only while display-fresh (okAt within 15 min), keeping the twin's
+    author and bodyText. A tracked entry without a twin is listed whatever its age, with `tracked: true`. Sorted by repo (case-insensitive), number."""
+    search = read_open_prs(adir)
+    tracked = _tracked_entries(adir)
+    if search is None and not tracked:
+        return None
+    entries = list(search[0]) if search else []
+    at = search[1] if search else None
+    index = {(p["repo"].lower(), p["number"]): i for i, p in enumerate(entries)}
+    for ent, ok in tracked:
+        k = (ent["repo"].lower(), ent["number"])
+        i = index.get(k)
+        if i is None:
+            ent["tracked"] = True
+            index[k] = len(entries)
+            entries.append(ent)
+        elif ok is not None and now - ok / 1000.0 <= TRACKED_DISPLAY_FRESH_S:
+            twin = entries[i]
+            ent["author"] = twin.get("author", "")
+            if twin.get("bodyText"):
+                ent["bodyText"] = twin["bodyText"]
+            if "headRepo" not in ent and twin.get("headRepo"):
+                ent["headRepo"] = twin["headRepo"]
+            entries[i] = ent
+    entries.sort(key=lambda p: (p["repo"].lower(), p["number"]))
+    return entries, at
+
+
 def config_symbols(adir):
     """ui.symbols of the merged config: one of SYMBOL_SETS ("unicode" is the default, also for any unknown value or failure)."""
     try:
@@ -958,7 +1033,9 @@ def json_doc(roots, now, sym_name, symbols, recent=RECENT_RUN_SECONDS, open_prs=
     doc = {"v": 1, "now": stamp, "symbols": sym_name, "recentRunSeconds": recent,
            "roots": [to_json_node(r, now, symbols) for r in roots]}
     if open_prs is not None:
-        doc["openPrs"], doc["openPrsAt"] = open_prs
+        doc["openPrs"] = open_prs[0]
+        if open_prs[1] is not None:
+            doc["openPrsAt"] = open_prs[1]
     return doc
 
 
@@ -974,7 +1051,7 @@ def follow(adir, interval, since_h, done_ttl, sym_name, symbols, max_ticks=None,
         while max_ticks is None or tick < max_ticks:
             now = time.time()
             print(json_line(snapshot(adir, now, since_h, cache, done_ttl, closed=closed), now, sym_name, symbols, recent,
-                            read_open_prs(adir) if open_prs else None))
+                            read_pr_feed(adir, now) if open_prs else None))
             sys.stdout.flush()
             tick += 1
             if max_ticks is None or tick < max_ticks:
@@ -1075,7 +1152,7 @@ def main(argv=None):
     if a.json:
         now = time.time()
         print(json_line(snapshot(adir, now, a.since, None, ttl, closed=provably_closed), now, sym_name, symbols, recent,
-                        read_open_prs(adir) if with_prs else None))
+                        read_pr_feed(adir, now) if with_prs else None))
         return 0
     if a.once or not sys.stdout.isatty():
         now = time.time()

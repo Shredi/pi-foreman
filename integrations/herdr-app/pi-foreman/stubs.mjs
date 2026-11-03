@@ -24,7 +24,7 @@ export const v_flex = () => element("v_flex");
 export const Collapsible = { new: () => element("Collapsible") };
 export const HoverCard = { new: (id) => { const e = element("HoverCard"); e.cardId = id; return e; } };
 
-export const world = { agents: [], terminals: [] };
+export const world = { agents: [], terminals: [], execCalls: [] };
 const palette = new Proxy({}, { get: (_t, k) => (typeof k === "string" ? `#${k}` : undefined) });
 export const agents = () => world.agents;
 export const terminals = () => world.terminals;
@@ -33,6 +33,6 @@ export const spaces = () => [];
 export const run = () => {};
 export const theme = () => palette;
 export const setAgentOrder = () => {};
-export const exec = async () => ({ code: 1, stdout: "" });
+export const exec = async (...call) => { world.execCalls.push(call); return { code: 1, stdout: "" }; };
 export const props = () => ({});
 export const window = {};

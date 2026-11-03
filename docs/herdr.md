@@ -646,6 +646,8 @@ logged in or rate limited, the last file stays and carries `error` and `errorAt`
 | `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt` per PR; `trackedAt`; `off`) | the poll only |
 | `tracked-prs-comments.json` | the poll only |
 
+`foreman radar --json` merges the tracked PRs into `openPrs`, sorted by repo (case-insensitive) and number, independent of session nodes: every search entry is listed; a tracked entry with a search twin replaces it while it is display-fresh (`okAt` within 15 minutes) and keeps the twin's `author` and `bodyText`; a tracked entry without a twin is listed whatever its age and carries `tracked: true`. A tracked-only entry never makes its repository "covered" in the mod, so it cannot drop a session chip the search alone would have kept. `openPrsAt` stays the search's success time. Merged and closed (ended) PRs are not listed; neither are tracked PRs while the state file's `off` is true (they show again once the feed is back on). The mod itself only runs the CLI and the radar; it never writes.
+
 When the list is full (200), `pr_follow` says so; remove a stuck or unwanted line by editing `tracked-prs.json` by hand, and the next poll prunes its state. `radar.openPrs.enabled: false`, or a `tools.prHost` other than `auto`/`gh`, switches tracking and `pr_follow` off too (the state file gets `off: true`).
 
 **Renovate.** The Renovate GitHub App opens PRs as `renovate[bot]`: list it under `authors` with the owners or repositories in

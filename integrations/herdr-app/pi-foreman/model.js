@@ -115,12 +115,12 @@ export function jobOf(c) {
 function normOpenPrs(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
-  for (const p of raw.slice(0, 200)) {
+  for (const p of raw.slice(0, 300)) {
     if (!isObj(p) || int(p.number) === null) continue;
     const jobs = (Array.isArray(p.checks) ? p.checks : Array.isArray(p.jobs) ? p.jobs : []).map(jobOf).filter(Boolean);
     out.push({
       number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
-      state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p),
+      state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p), ...(p.tracked === true ? { tracked: true } : {}),
     });
   }
   return out;
@@ -151,7 +151,7 @@ const FEED_FRESH_MS = 30 * 60 * 1000;
 export function dropClosedPrs(nodes, feed, at, now, depth = 0) {
   if (depth > MAX_DEPTH) return;
   const fresh = Number.isFinite(at) && Number.isFinite(now) && now - at <= FEED_FRESH_MS;
-  const covered = new Set(listOf(feed).filter(isObj).map((f) => nameOf(f.repo).toLowerCase()).filter(Boolean));
+  const covered = new Set(listOf(feed).filter((f) => isObj(f) && f.tracked !== true).map((f) => nameOf(f.repo).toLowerCase()).filter(Boolean));
   for (const n of listOf(nodes)) {
     if (!isObj(n)) continue;
     n.prs = listOf(n.prs).filter((p) => {

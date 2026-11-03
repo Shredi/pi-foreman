@@ -49,7 +49,13 @@ key `local` for this computer (`{ "local": "/abs/path/foreman", "alpha": "/other
 is ignored), every 3 s for this computer and every 15 s per remote space (`exec` with `on` set to the space's machine). A poll
 that has not come back after 45 s is dropped and started again, and a radar `exec` is given up after 35 s. A failed or garbled
 read keeps the last good data for up to 5 polls; if a machine then still has no `foreman`, exits non-zero or prints bad JSON, the space shows one dim line "No foreman radar on
-<machine> (set props.foreman)" and the mod retries every 30 s. The mod calls only `hc get`, never writes a file and never fetches.
+<machine> (set props.foreman)" and the mod retries every 30 s. The mod runs `foreman radar --json`, `foreman prs poll --json`, `hc get` and the opener; it never writes a file, and `foreman prs poll` fetches.
+
+`foreman prs poll --json` (the PR tracker) runs per machine 30 s after its previous run ended and is given up after 20 min. It polls the
+tracked PRs and the PR search and writes the files the radar reads, so the PR chips and dots follow GitHub even when no Pi session runs;
+a PR leaves the list only when GitHub reports it merged or closed. `pr_watch` gets its news only from this tracker: without it
+(herdr-app, or `foreman prs poll` run by hand or a scheduler) watches stay armed and say so. Tracked PRs show in the Open PRs list
+without an age label until a PR search succeeded.
 
 A radar node joins an agent when its `hcTerminal` equals the agent's terminal address (`machine/` prefix for a remote space),
 the node is not done, and, when both sides carry a pid, the pids match. The agent's pid is the terminal's foreground pid from herdr
