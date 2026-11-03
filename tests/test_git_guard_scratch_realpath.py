@@ -50,6 +50,16 @@ class ScratchRealpathTest(unittest.TestCase):
                 with self.subTest(root=root, cmd=cmd):
                     self.assertEqual(self.level(root, cmd), 0)
 
+    def test_git_clone_targets_with_a_foreman_checkout_set(self):
+        co = os.path.join(self.base, "checkout")
+        os.makedirs(os.path.join(co, ".git"))
+        root = os.path.join(self.link, "pi-foreman-scratch", "s1", "L1")
+        u = "git clone https://example.invalid/r.git "
+        for cmd in (u + "$FOREMAN_SCRATCH/r", u + '"$FOREMAN_SCRATCH/r"', "S=$FOREMAN_SCRATCH/w; " + u + "$S/r"):
+            with self.subTest(cmd=cmd):
+                d = gg.decide(cmd, "child", cwd=self.base, env={"FOREMAN_SCRATCH": root, "FOREMAN_CHECKOUT": co})
+                self.assertEqual(d.level, 0, d.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

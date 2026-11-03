@@ -67,6 +67,28 @@ class ForemanCheckoutFenceTest(unittest.TestCase):
         os.symlink(self.checkout, link)
         self.assertTrue(self.fenced("git -C %s add ." % link))
 
+    def test_dynamic_dash_c_word_never_crashes(self):
+        scratch = os.path.join(self.base, "pi-foreman-scratch", "s1", "L1")
+        os.makedirs(scratch)
+        env = {"FOREMAN_CHECKOUT": self.checkout, "FOREMAN_SCRATCH": scratch}
+        for cmd in ("git -C $FOREMAN_SCRATCH/r add .", "git -C $FOREMAN_SCRATCH/r commit -m 'fix: x'", "git -C $FOREMAN_SCRATCH/r commit -m x",
+                    "git -C $FOREMAN_SCRATCH/r fetch", 'git -C "$PWD" add x'):
+            with self.subTest(cmd=cmd):
+                d = gg.decide(cmd, "child", cwd=self.wt, env=env)
+                self.assertNotIn("child-write-foreman-checkout", d.reason)
+                self.assertNotIn("internal error", d.reason)
+                if "commit -m x" not in cmd:
+                    self.assertEqual(d.level, 0, d.reason)
+        d = gg.decide("git -C %s add ." % self.checkout, "child", cwd=self.wt, env=env)
+        self.assertTrue(d.level == 2 and "child-write-foreman-checkout" in d.reason)
+
+    def test_scratch_target_inside_the_checkout_is_fenced(self):
+        scratch = os.path.join(self.checkout, "pi-foreman-scratch", "s1", "L1")
+        os.makedirs(scratch)
+        env = {"FOREMAN_CHECKOUT": self.checkout, "FOREMAN_SCRATCH": scratch}
+        d = gg.decide("git -C $FOREMAN_SCRATCH/r add .", "child", cwd=self.wt, env=env)
+        self.assertTrue(d.level == 2 and "child-write-foreman-checkout" in d.reason, d.reason)
+
 
 if __name__ == "__main__":
     unittest.main()

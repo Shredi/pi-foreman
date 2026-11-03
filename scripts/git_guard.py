@@ -1484,6 +1484,8 @@ def git_args(args, seg, flavor, ctx, depth, envs, via_xargs=False, xargs_repl=No
             else:
                 i += 1
             if key == "-C":
+                if not eq and vw.dynamic and ctx.mode == "child":
+                    val = child_scratch_word(vw, ctx, seg) or val  # a FOREMAN_SCRATCH spelling names the launch value
                 call.cwd = os.path.join(call.cwd, val)
             elif key in ("--git-dir", "--work-tree"):
                 call.passthrough.append("%s=%s" % (key, os.path.join(call.cwd, val)))
@@ -1967,6 +1969,8 @@ def foreman_checkout_problem(s, rest, ctx, call):
         if ops and (s == "init" or len(ops) >= 2):
             cands.append(os.path.join(call.cwd, ops[-1].text))
     for c in cands:
+        if "\0" in c:  # a computed path that stays opaque: undecidable here, never a crash
+            continue
         real = os.path.realpath(c)
         if (real == checkout or real.startswith(checkout.rstrip(os.sep) + os.sep)) and worktree_top(real) != own:
             return deny("child-write-foreman-checkout: children never write the foreman's checkout (git %s reaches %s). "
