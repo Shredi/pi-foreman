@@ -491,6 +491,14 @@
             }
           }
         },
+        "remote": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Settings of the return path of remote child sessions. User or overlay config only.",
+          "properties": {
+            "fetchTimeoutSeconds": { "type": "integer", "minimum": 5, "maximum": 600, "description": "Timeout in seconds of one `hc file read` fetch of a remote child's notice file (default 30)." }
+          }
+        },
         "worktree": {
           "type": "object",
           "additionalProperties": false,

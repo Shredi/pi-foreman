@@ -129,7 +129,7 @@ PROBE_TIMEOUT, OPEN_TIMEOUT, DELIVER_TIMEOUT, CLOSE_TIMEOUT = 15, 60, 20, 20
 HC_EXEC_SLACK = 10  # seconds the local process waits beyond hc's own `--timeout`
 CLOSE_FILE = "close.json"
 RESULT_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}\Z")  # as close.ts RESULT_PATH_RE
-REFUSED_REASON_MAX = 200
+REFUSE_SLUG_RE = re.compile(r"^[a-z0-9-]{1,40}\Z")
 DISCOVERY_TIMEOUT = 15
 OPENER_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,120}\Z")
 MACHINE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
@@ -143,6 +143,7 @@ DELIVER_NAMES = {"ruling": re.compile(r"^(ruling|ruling-plan|ruling-[1-9]\d{0,2}
                  "brief": re.compile(r"^brief-[1-9]\d{0,2}\.md\Z")}
 NOTICE_FILES = {"plan": "plan.md", "result": "result.md", "update": "result.md", "ask": "ask.md"}
 NOTICE_HEADS = {"plan": "Plan", "result": "Result", "update": "Update", "ask": "Ask"}
+HC_LABEL_TIMEOUT = 30
 FIRST_MAX = 4
 FIRST_LEN = 200
 PLAN_COMMAND = "/plan"
@@ -299,8 +300,8 @@ def remote_footer(label, plan_first):
         "",
         "A pi-foreman session on another machine (the parent) opened this one. The directory of this brief is the",
         "handoff dir. You cannot reach the parent with the intercom tool: report with the commands below, run through",
-        "your bash tool. Each prints one JSON line and exits 1 when the notice was not recorded. A notice names the file by",
-        "its sha256 and size; the parent fetches the file itself.",
+        "your bash tool. Each prints one JSON line and exits 1 when the notice was not recorded. A notice is a label on your",
+        "own hc terminal that names the file by its sha256 and size; the parent fetches the file itself.",
         "",
     ]
     n = 1
@@ -1337,25 +1338,40 @@ def cmd_remote(a):
     return 0 if reply["ok"] else 1
 
 
-def clean_reason(raw):
-    """A refusal reason as one line of text: the first non-blank line, control characters stripped, cut to 200."""
-    lines = [l for l in (raw or "").splitlines() if l.strip()]
-    first = "".join(ch for ch in (lines[0] if lines else "") if ord(ch) >= 0x20 and not 0x7f <= ord(ch) <= 0x9f)
-    return first.strip()[:REFUSED_REASON_MAX]
-
-
 def notice_reply(reply):
     print_json(reply)
     return 0 if reply["ok"] else 1
 
 
 def cmd_notice(a):
-    """`remote notice <kind>`: the child's report to its remote parent (the hc label return path lands in a later release)."""
+    """`remote notice <kind>`: the child's report to its remote parent, as the `fm.notice` label of its own hc terminal."""
     adir = agent_dir(a.agent_dir)
     try:
         return notice_reply(dict(send_notice(adir, a), ok=True))
     except Refused as e:
         return notice_reply({"ok": False, "code": e.code or "refused", "error": str(e)})
+    except NoticeFailed as e:
+        return notice_reply(dict(e.reply, ok=False))
+
+
+class NoticeFailed(Exception):
+    def __init__(self, reply):
+        super().__init__(reply.get("error"))
+        self.reply = reply
+
+
+def next_notice_seq(handoff):
+    """The next notice number of this handoff dir: `notice-seq` holds the last one used; it is written before the label."""
+    path = handoff / "notice-seq"
+    try:
+        last = int(path.read_text("utf-8").strip())
+    except (OSError, ValueError):
+        last = 0
+    seq = max(last, 0) + 1
+    tmp = handoff / ("notice-seq.%d.tmp" % os.getpid())
+    tmp.write_text("%d\n" % seq, "utf-8")
+    os.replace(str(tmp), str(path))
+    return seq
 
 
 def send_notice(adir, a):
@@ -1373,13 +1389,12 @@ def send_notice(adir, a):
     target = read_small(handoff / "parent")
     if not target or not ADDRESS_RE.match(target):
         raise Refused("the parent file does not hold <opener id>@<machine>", "bad_parent")
-    reply = {}
+    digest = None
     if a.kind == "refused":
-        reply["reason"] = clean_reason(a.reason)
-    elif a.kind == "closed":
-        reply["close"] = a.close
+        if not a.reason or not REFUSE_SLUG_RE.match(a.reason):
+            raise Refused("--reason takes a slug of [a-z0-9-], 1 to 40 characters", "bad_request")
     else:
-        name = NOTICE_FILES[a.kind]
+        name = "result.md" if a.kind == "closed" else NOTICE_FILES[a.kind]
         want = handoff / name
         given = Path(a.file) if a.file else want
         given = given if given.is_absolute() else handoff / given
@@ -1391,12 +1406,31 @@ def send_notice(adir, a):
                 data = want.read_bytes()
         except OSError:
             pass
-        if data is None:
+        if data is None and a.kind != "closed":
             raise Refused("%s is not a regular file" % want, "bad_name")
-        reply.update(sha256=hashlib.sha256(data).hexdigest(), bytes=len(data))
-    # The hc label return path (`fm.notice`) is not wired yet: the notice was checked but reaches nobody.
-    raise Refused("the notice was not delivered: the return path over hc labels is not available in this version",
-                  "no_return_path")
+        if data is not None:
+            digest = (hashlib.sha256(data).hexdigest(), len(data))
+    binary = hc_bin()
+    terminal = os.environ.get("HC_TERMINAL_ID", "").strip()
+    if not binary or not terminal:
+        raise NoticeFailed({"error": "not_hc"})
+    seq = next_notice_seq(handoff)
+    if a.kind == "refused":
+        value = "%d:refused:%s" % (seq, a.reason)
+    else:
+        value = "%d:%s:%s:%d" % (seq, a.kind, digest[0] if digest else "-", digest[1] if digest else 0)
+    words = ["fm.notice=" + value]
+    if a.kind == "closed" and a.close:
+        words.append("fm.close=" + a.close)
+    try:
+        r = subprocess.run([binary, "label", terminal] + words, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, timeout=HC_LABEL_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise NoticeFailed({"error": "label_failed", "detail": strip_control(e)[:200]})
+    if r.returncode != 0:
+        detail = strip_control(r.stderr.decode("utf-8", "replace").strip()[:200])
+        raise NoticeFailed({"error": "label_failed", "detail": detail})
+    return {"seq": seq, "label": value}
 
 
 # ---------------------------------------------------------------- remote sessions: the parent side
@@ -1472,7 +1506,7 @@ def hc_exec_verb(binary, name, argv, verb, payload, timeout):
     except subprocess.TimeoutExpired:
         raise Unreachable("remote %s unreachable: no answer within %d s" % (name, timeout))
     except OSError as e:
-        raise Unreachable("remote %s unreachable: %s" % (name, e))
+        raise Unreachable("remote %s unreachable: %s" % (name, strip_control(e)))
     try:
         env = json.loads(r.stdout.decode("utf-8", "replace"))
     except ValueError:
@@ -1480,7 +1514,7 @@ def hc_exec_verb(binary, name, argv, verb, payload, timeout):
     if isinstance(env, dict) and env.get("timed_out") is True:
         raise Unreachable("remote %s unreachable: no answer within %d s" % (name, timeout))
     if r.returncode != 0 or not isinstance(env, dict) or isinstance(env.get("code"), bool) or not isinstance(env.get("code"), int):
-        err = r.stderr.decode("utf-8", "replace").strip()[:2048]
+        err = strip_control(r.stderr.decode("utf-8", "replace").strip()[:2048])
         raise Unreachable("remote %s unreachable: %s" % (name, err or "hc exec exited %d without a result" % r.returncode))
     lines = [l for l in decode_hc_text(env.get("stdout")).splitlines() if l.strip()]
     reply = None
@@ -1490,7 +1524,7 @@ def hc_exec_verb(binary, name, argv, verb, payload, timeout):
         except ValueError:
             pass
     if not isinstance(reply, dict) or "ok" not in reply:
-        err = decode_hc_text(env.get("stderr")).strip()[:2048]
+        err = strip_control(decode_hc_text(env.get("stderr")).strip()[:2048])
         raise Unreachable("remote %s unreachable: %s" % (name, err or "no usable reply (exit %d)" % env["code"]))
     if reply["ok"] is not True:
         raise Refused("remote %s: %s" % (name, strip_control(reply.get("error") or "refused")),
@@ -1604,7 +1638,7 @@ def cmd_open_remote(a):
             or status not in ("open", "pending", "failed", "dryRun")):
         raise Unreachable("remote %s unreachable: its open reply is malformed" % name)
     print("remote: %s" % name)
-    print("handoff on %s: %s" % (name, reply["handoff"]))
+    print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
     print("child intercom id: %s" % child)
     for note in notes:
         print("warning: %s" % note)
@@ -1634,7 +1668,7 @@ def cmd_open_remote(a):
             print("not shown: no herdr-app space")
     else:
         print("%s: run this on %s in %s:\n  %s" % ("hc failed" if status == "failed" else "Not started",
-                                                 name, a.cwd, reply.get("launch") or "(see the handoff dir's launch.txt)"))
+                                                 name, a.cwd, strip_control(reply.get("launch") or "(see the handoff dir's launch.txt)")))
     return 2 if status == "failed" else 0
 
 
@@ -1912,7 +1946,7 @@ def main(argv=None):
         if a.cmd == "remote" and a.verb:
             return cmd_remote(a)
     except Unreachable as e:
-        sys.stderr.write("pi-foreman session: %s\n" % e)
+        sys.stderr.write("pi-foreman session: %s\n" % strip_control(e))
         return 1
     except Refused as e:
         sys.stderr.write("pi-foreman session: refused%s: %s\n" % (" [%s]" % e.code if e.code else "", e))
