@@ -190,9 +190,9 @@ const one = (s: unknown): string => (typeof s === "string" ? s.replace(/\s+/g, "
  */
 export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn: boolean): StoreRead {
   if (!feedOn) return { kind: "down" };
-  if (!isGithubKey(key)) return { kind: "error", error: "only github.com PRs are tracked" };
   const state = readCached(trackedStateFile(agentDir));
   if (!isObj(state) || state.v !== 1 || state.off === true || !finite(state.trackedAt) || now - state.trackedAt > SERVE_FRESH_MS || !isObj(state.prs)) return { kind: "down" };
+  if (!isGithubKey(key)) return { kind: "error", error: "only github.com PRs are tracked" };
   const k = storeKey(key.repo, key.n);
   const e = state.prs[k];
   if (!isObj(e)) return { kind: "waiting" };

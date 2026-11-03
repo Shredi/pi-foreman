@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -32,12 +33,22 @@ function shimDir(python: string): string {
   return d;
 }
 
-async function run(inGitRepo: boolean): Promise<void> {
+async function run(t: TestContext, inGitRepo: boolean): Promise<void> {
   clearStoreCache();
   const res = await resolvePython({ configPath: null, envPath: process.env.PI_FOREMAN_PYTHON, platform: process.platform, spawner: defaultSpawner });
-  if (!res.ok) return; // no Python >= 3.13 here: nothing to run the real safe_ops.py with
+  if (!res.ok) return void t.skip("no Python >= 3.13 here: nothing to run the real safe_ops.py with");
+  const dirs: string[] = [];
+  try {
+    await runIn(res, inGitRepo, dirs);
+  } finally {
+    for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
+  }
+}
+
+async function runIn(res: Extract<Awaited<ReturnType<typeof resolvePython>>, { ok: true }>, inGitRepo: boolean, dirs: string[]): Promise<void> {
   const python = res.info.executable;
   const host = fs.mkdtempSync(path.join(os.tmpdir(), "pf-fakehost-"));
+  dirs.push(host);
   fs.writeFileSync(
     path.join(host, "scenario.json"),
     j({
@@ -47,12 +58,15 @@ async function run(inGitRepo: boolean): Promise<void> {
     }),
   );
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "pf-fakehost-agent-"));
+  dirs.push(base);
+  const shims = shimDir(python);
+  dirs.push(shims);
   if (inGitRepo) execFileSync("git", ["init", "-q", base]);
   const agentDir = path.join(base, "agent");
   fs.mkdirSync(agentDir);
   await addTracked(agentDir, "acme/lib", 1);
   await addTracked(agentDir, "acme/lib", 2);
-  const env = Object.fromEntries(Object.entries({ ...process.env, FAKE_PR_HOST_DIR: host, PATH: `${shimDir(python)}${path.delimiter}${process.env.PATH ?? ""}` }).filter((e): e is [string, string] => typeof e[1] === "string"));
+  const env = Object.fromEntries(Object.entries({ ...process.env, FAKE_PR_HOST_DIR: host, PATH: `${shims}${path.delimiter}${process.env.PATH ?? ""}` }).filter((e): e is [string, string] => typeof e[1] === "string"));
   const deps: PollDeps = {
     agentDir,
     pkgRoot: PKG,
@@ -82,10 +96,10 @@ async function run(inGitRepo: boolean): Promise<void> {
   assert.ok(win || fs.existsSync(path.join(host, "calls.jsonl")));
 }
 
-test("end to end through safe_ops.py and the fake gh: one open and one merged PR, comments stored, one drop (agent dir outside a repo)", async () => {
-  await run(false);
+test("end to end through safe_ops.py and the fake gh: one open and one merged PR, comments stored, one drop (agent dir outside a repo)", async (t) => {
+  await run(t, false);
 });
 
-test("the same inside a git work tree", async () => {
-  await run(true);
+test("the same inside a git work tree", async (t) => {
+  await run(t, true);
 });

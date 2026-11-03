@@ -6,7 +6,7 @@
 // so (status line and one notice per outage). Timers are unref'd; clear() (session shutdown) stops everything. The PR number is
 // never traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
-import { keyString } from "./prhost.ts";
+import { isGithubKey, keyString } from "./prhost.ts";
 import type { PrKey } from "./prhost.ts";
 
 export const PR_MESSAGE_TYPE = "pi-foreman-pr";
@@ -644,7 +644,11 @@ export class PrWatches {
     if (r.status === "malformed") lost.push([null, "the stored watch state is unreadable; start the watch again with pr_watch"]);
     else {
       for (let i = 0; i < r.bad; i++) lost.push([null, "a stored watch is unreadable; start the watch again with pr_watch"]);
-      for (const x of r.watches) if (!this.has(x.key)) live.push(this.register(x));
+      for (const x of r.watches) {
+        // the tracker serves github.com keys only: an older record (another host, or a number-only key) could never end
+        if (!isGithubKey(x.key)) lost.push([x.key.n, `the PR tracker covers github.com only; this watch from an earlier version ended. Re-arm it with pr_watch.`]);
+        else if (!this.has(x.key)) live.push(this.register(x));
+      }
     }
     this.persist();
     this.deps.changed?.();
@@ -658,14 +662,14 @@ export class PrWatches {
     }
   }
 
-  /** Ask `retrack` for `w`, at most once per RETRACK_MS; a failure is retried on the next due tick. */
+  /** Ask `retrack` for `w`, at most once per RETRACK_MS; a failed attempt waits the full RETRACK_MS too. */
   private retrack(w: Watch): void {
     if (!this.deps.retrack || (w.retrackedAt !== null && this.deps.now() - w.retrackedAt < RETRACK_MS)) return;
     w.retrackedAt = this.deps.now();
     try {
       void Promise.resolve(this.deps.retrack(w.key)).catch(() => {});
     } catch {
-      // the list is not writable now: the next due tick tries again
+      // the list is not writable now: the next try is after RETRACK_MS
     }
   }
 

@@ -66,17 +66,16 @@ test("restore: a v2 watch resumes without a deadline; a check that failed while 
   assert.deepEqual(h.persisted.at(-1)?.map((r) => r.key.n), [7]);
 });
 
-test("restore: a v1 record converts to a number-only key and keeps polling", async () => {
+test("restore: a v1 record converts to a number-only key, which the github-only tracker cannot serve: it ends once with a lost message", async () => {
   const h = harness(async () => ({ snap: snap({ runs: [{ id: "1", name: "b", bucket: "pending", url: "" }] }) }));
   const v1 = { n: 3, until: "any", checks: [["b", "pending:"]], commentIds: ["c1"], deadline: h.now() + 90_000, timeoutMs: 600_000, startedAt: h.now() - 510_000, cwd: "/w" };
   const r = latestWatches(entry([v1], SID, 1), SID);
   assert.equal(r.status, "ok");
   h.w.restore(r);
-  assert.equal(h.w.has({ host: "", repo: "", n: 3 }), true);
   await h.settle();
-  assert.equal(h.w.size(), 1);
-  assert.equal(h.persisted.at(-1)?.[0].state.commentIds[0], "c1");
-  assert.equal(h.persisted.at(-1)?.[0].startedAt, h.now() - 510_000);
+  assert.equal(h.w.size(), 0);
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0].msg.content, /PR #3 watch lost on restart: the PR tracker covers github.com only/);
 });
 
 test("restore: a malformed entry and a malformed record each give a lost notice without a number", async () => {
