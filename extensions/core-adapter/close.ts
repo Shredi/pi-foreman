@@ -125,6 +125,9 @@ export function intercomClose(details: unknown, parentId: string | undefined, fr
 /** Set to 1 in a session opened by a remote parent (`foreman session open --machine`). */
 export const REMOTE_PARENT_ENV = "PI_FOREMAN_REMOTE_PARENT";
 export const CLOSE_ORDER_FILE = "close.json";
+/** The fixed parts of two refusal reasons; `refuseSlug` (session.ts) maps them to `pr-watched` and `not-started`. */
+export const PR_WATCHED_REASON = "open and watched (merge it, or pr_unwatch)";
+export const CLOSE_START_FAILED_REASON = "the close turn failed to start:";
 /** A close order older than this is stale and refused. */
 export const CLOSE_ORDER_MAX_AGE_MS = 15 * 60_000;
 
@@ -332,7 +335,7 @@ export class CloseFlow {
     }
     const prs = this.d.watchedPrs?.() ?? [];
     if (prs.length > 0) {
-      this.refuse(`PR #${prs.join(", #")} open and watched (merge it, or pr_unwatch)`, source, replyTo);
+      this.refuse(`PR #${prs.join(", #")} ${PR_WATCHED_REASON}`, source, replyTo);
       return true;
     }
     let waits = this.d.activeWaits();
@@ -393,7 +396,7 @@ export class CloseFlow {
     if (inRun || ctx.isIdle()) {
       this.closeTurn(refreshed, inRun).catch((e) => {
         this.reset();
-        this.refuse(`the close turn failed to start: ${e instanceof Error ? e.message : String(e)}`, req.source, req.replyTo);
+        this.refuse(`${CLOSE_START_FAILED_REASON} ${e instanceof Error ? e.message : String(e)}`, req.source, req.replyTo);
       });
     }
     else this.phase = "idle-wait";
@@ -553,7 +556,7 @@ export class CloseFlow {
       } catch {
         // the ack is best effort; the close itself is done
       }
-    } else if (req.source === "remote-parent") {
+    } else if (req.source === "remote-parent" || (req.source === "pr-merged" && process.env[REMOTE_PARENT_ENV] === "1")) {
       try {
         await this.d.remoteReply?.("closed", report ? (report.ready ? "ready" : "open") : undefined);
       } catch (e) {
