@@ -239,6 +239,8 @@ def layer_rule(leaf):
     for keys, rule in fc.LAYER_TIGHTEN:
         if _keys_match(keys, leaf):
             return "tighten-only (%s)" % _rule_text(rule, keys)
+    if leaf[0] == "gate" and len(leaf) >= 2 and leaf[1] not in fc.GATE_LAYER_KEYS:
+        return "not in project/session (user or overlay config only)"
     if leaf in CEREMONY_RULES:
         return "tighten-only (%s)" % CEREMONY_RULES[leaf]
     if leaf[0] == "roles" and len(leaf) == 3 and fc.ROLE_RULES.get(leaf[2]):
