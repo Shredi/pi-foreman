@@ -328,6 +328,8 @@ class PiRpc:
         self.records = queue.Queue()
         self.stderr = []
         self.seen = []
+        self.bad_lines = 0  # stdout lines that were not JSON records
+        self.bad_tail = []
         self._n = 0
         self._threads = [threading.Thread(target=self._read_out, daemon=True),
                          threading.Thread(target=self._read_err, daemon=True)]
@@ -348,7 +350,8 @@ class PiRpc:
                     try:
                         self.records.put(json.loads(line.decode("utf-8")))
                     except ValueError:
-                        pass
+                        self.bad_lines += 1
+                        self.bad_tail = (self.bad_tail + [line.decode("utf-8", "replace")[:300]])[-5:]
         self.records.put(None)
 
     def _read_err(self):
@@ -363,14 +366,23 @@ class PiRpc:
         self._n += 1
         return "req-%d" % self._n
 
+    def _diagnostics(self):
+        """The last 25 records seen (type, customType, role) and the unparseable stdout lines, for a timeout message."""
+        tail = []
+        for r in self.seen[-25:]:
+            msg = r.get("message") if isinstance(r.get("message"), dict) else {}
+            tail.append((r.get("type"), msg.get("customType"), msg.get("role")))
+        return "stderr tail: %s\nlast %d of %d records (type, customType, role): %s\nunparseable stdout lines: %d, last: %s" % (
+            "\n".join(self.stderr[-15:]), len(tail), len(self.seen), tail, self.bad_lines, self.bad_tail)
+
     def _next(self, deadline):
         left = deadline - time.time()
         if left <= 0:
-            raise TimeoutError("no RPC record in time; stderr tail: %s" % "\n".join(self.stderr[-15:]))
+            raise TimeoutError("no RPC record in time; %s" % self._diagnostics())
         try:
             rec = self.records.get(timeout=left)
         except queue.Empty:
-            raise TimeoutError("no RPC record in time; stderr tail: %s" % "\n".join(self.stderr[-15:]))
+            raise TimeoutError("no RPC record in time; %s" % self._diagnostics())
         if rec is None:
             raise EOFError("pi exited (code %s); stderr tail: %s" % (self.proc.poll(), "\n".join(self.stderr[-15:])))
         self.seen.append(rec)
