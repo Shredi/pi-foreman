@@ -13,9 +13,10 @@ async function awayRig(t: { after(fn: () => void | Promise<void>): void }, child
   const dir = fs.realpathSync(mkTestTmp("pf-away-"));
   t.after(() => rmTestTmp(dir));
   const log = path.join(dir, "probes.log");
-  const script = path.join(dir, "probe.sh");
-  fs.writeFileSync(script, `#!/bin/sh\necho probe >> "${log}"\necho 99999\n`, { mode: 0o755 });
-  const r = await r11Rig(t, {}, { child, config: { presence: { enabled: true, awayAfterMinutes: 1, command: script } } });
+  const script = path.join(dir, "probe.cjs"); // node, not sh: the probe also has to run under cmd.exe
+  fs.writeFileSync(script, `require("node:fs").appendFileSync(${JSON.stringify(log)}, "probe\\n");\nconsole.log(99999);\n`);
+  const command = `"${process.execPath}" "${script}"`;
+  const r = await r11Rig(t, {}, { child, config: { presence: { enabled: true, awayAfterMinutes: 1, command } } });
   const probes = (): number => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0);
   return { r, probes };
 }

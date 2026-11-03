@@ -19,7 +19,8 @@ const run = (command: string, child = true) => gateEvaluate("bash", { command },
 const isAsk = (o: ReturnType<typeof run>): boolean => typeof o.result === "object" && o.result !== null && "ask" in o.result && o.result.ask === true;
 
 test("child: a heredoc into the scratch dir naming git config, then echo and ls of it, is a write-in allow with no ask", () => {
-  const out = run(`cat > ${scr}/notes.md <<'EOF'\nrun git config user.email x@example.org first\nEOF\necho done && ls ${scr}`);
+  const s = scr.replaceAll("\\", "/"); // a backslash spelling is an escape in the shell text
+  const out = run(`cat > ${s}/notes.md <<'EOF'\nrun git config user.email x@example.org first\nEOF\necho done && ls ${s}`);
   assert.equal(isAsk(out), false, JSON.stringify(out.result));
   assert.equal(out.danger, null, JSON.stringify(out.danger));
   // no result and no danger: a write inside the child's scratch dir, which the mode step lets run
