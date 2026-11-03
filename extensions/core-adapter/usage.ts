@@ -513,3 +513,41 @@ export function keepSection<M>(messages: readonly M[], name: string, fallback?: 
   out[i] = { ...head, sections: { ...(head.sections ?? {}), [name]: fallback } } as M;
   return out;
 }
+
+/**
+ * Pi renders the provider's leading prompt by replaying every system message (contents joined with
+ * blank lines, then the sections in Map order: a patch keeps an old key in place and appends a new
+ * key at the end). `ctx.getSystemPrompt()` is a fresh build with the sections in insertion order.
+ * Both hold the same texts when a section first appears mid-session, but in another order, and a
+ * client that compares the two byte for byte (pi-claude-bridge) refuses the turn. When the replay
+ * differs from `canonical` only in section order, the first system message gets every current
+ * section in the canonical order and the later system messages lose their sections (contents stay).
+ * Returns null when nothing needs to change or the texts differ in any other way.
+ */
+export function alignSections<M>(messages: readonly M[], canonical: string): M[] | null {
+  type Sys = { role?: unknown; content?: unknown; sections?: Record<string, unknown> };
+  const sys = messages.map((m, i) => ({ m: m as Sys, i })).filter((x) => x.m.role === "system");
+  if (!sys.length) return null;
+  const text = (c: unknown): string => (typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b?.type === "text").map((b) => b.text).join("\n") : "");
+  const content = sys.map((x) => text(x.m.content)).filter((t) => t.length > 0).join("\n\n");
+  const merged = new Map<string, string>();
+  for (const { m } of sys) {
+    for (const [name, v] of Object.entries(m.sections ?? {})) {
+      if (v === null) merged.delete(name);
+      else if (typeof v === "string") merged.set(name, v);
+    }
+  }
+  const render = (entries: [string, string][]): string => [content, ...entries.map((e) => e[1])].filter((p) => p.length > 0).join("\n\n");
+  const current = [...merged];
+  if (render(current) === canonical) return null;
+  if (current.some(([, t]) => t.length === 0 || !canonical.includes(t))) return null;
+  const ordered = [...current].sort((a, b) => canonical.indexOf(a[1]) - canonical.indexOf(b[1]));
+  if (render(ordered) !== canonical) return null;
+  const first = sys[0].i;
+  return messages.map((m, i) => {
+    if (i === first) return { ...(m as object), sections: Object.fromEntries(ordered) } as M;
+    if (!sys.some((x) => x.i === i) || !(m as Sys).sections) return m;
+    const { sections: _drop, ...rest } = m as Sys & object;
+    return rest as M;
+  });
+}

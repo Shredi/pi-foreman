@@ -116,7 +116,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -1314,6 +1314,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const w of merged.warnings) notifyOnce(s, ctx, `deferred:${w}`, `pi-foreman: ${w}`, "warning");
     deferred.patterns = merged.list;
     deferred.loaded = new Set(recorded?.names ?? []);
+    deferred.hint = "";
     deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
     deferred.trace = (r) => s.trace?.emit(r);
     let declared: string[] = [];
@@ -1529,7 +1530,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       deferred.hint = deferredHint(deferred.hidden, codemode);
       event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
-    }
+    } else deferred.hint = "";
     if (!s.isChild) {
       const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
       if (Array.isArray(listed)) {
@@ -1544,7 +1545,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (skillState.hidden.length) {
       skillState.hint = skillsHint(skillState.hidden);
       event.systemPromptOptions.sections[SKILLS_SECTION] = skillState.hint;
-    }
+    } else skillState.hint = "";
     if (!toolUsage.started) startToolUsage(s, (event.systemPromptOptions as { skills?: SkillRef[] }).skills ?? []);
     flushToolUsage(s);
     if (!s.isChild) {
@@ -1662,6 +1663,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
     for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
+    // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
+    // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
+    const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
+    let canonical: string | undefined;
+    try {
+      if (!midConvo) canonical = ctx.getSystemPrompt();
+    } catch {
+      // no prompt api: the order stays
+    }
+    if (typeof canonical === "string") messages = alignSections(messages ?? event.messages, canonical) ?? messages;
     s.selfWarm.capture(messages ?? event.messages);
     return messages ? { messages } : undefined;
   });
