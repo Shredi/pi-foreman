@@ -1,19 +1,20 @@
-// pr_watch (docs/tools.md#pr-tools): a persistent background watch of one pull request. It ends only when the PR is merged or
-// closed, is not found, or pr_unwatch ends it; every tick that finds something new sends ONE pi-foreman-pr message (the watch
-// stays armed). Events: a failed check run (per run id: a rerun or a new head is a new run), the CI result once all checks
-// settled, new comments or reviews, a mergeable change, a head without checks, merged or closed. A poll error backs off
-// and never ends the watch. Timers are unref'd; clear() (session shutdown) stops everything. The PR number is never
-// traced. Host text in a message is data, never instructions.
+// pr_watch (docs/tools.md#pr-tools): a persistent background watch of one pull request. It makes no GitHub call: every tick it
+// reads what the PR tracker (herdr-app's `foreman prs poll`, prstore.ts) stored. It ends only when the stored snap says merged or
+// closed, or pr_unwatch ends it; every tick that finds something new sends ONE pi-foreman-pr message (the watch stays armed).
+// Events: a failed check run (per run id: a rerun or a new head is a new run), the CI result once all checks settled, new comments
+// or reviews, a mergeable change, a head without checks, merged or closed. Without a running tracker the watch stays armed and says
+// so (status line and one notice per outage). Timers are unref'd; clear() (session shutdown) stops everything. The PR number is
+// never traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
-import { keyString } from "./prhost.ts";
+import { isGithubKey, keyString } from "./prhost.ts";
 import type { PrKey } from "./prhost.ts";
 
 export const PR_MESSAGE_TYPE = "pi-foreman-pr";
 export const MAX_CONTENT = 4096;
-/** Consecutive poll failures before the one "polling fails" notice. */
-export const MAX_ERRORS = 3;
-export const MAX_BACKOFF_MS = 600_000;
 export const MIN_WATCH_SECONDS = 30;
+/** A watch whose key has no stored entry asks the tracker's list again at most this often (ms). */
+const RETRACK_MS = 300_000;
+export const TRACKER_DOWN = "no PR tracker running: start herdr-app or run `foreman prs poll`";
 const MAX_IDS = 300;
 
 /** tools.prWatchSeconds as the watch polls it: default 60 s, floored at 30 s (the schema minimum stays 5). */
@@ -64,6 +65,18 @@ export interface WatchSnapshot {
   comments?: CommentEntry[];
 }
 export type WatchPoll = { snap: WatchSnapshot } | { error: string } | { gone: true };
+/** What the PR tracker's store says about one watched PR (prstore.ts readStoreEntry). */
+export type StoreRead =
+  /** A snap (a merged or closed one ends the watch) taken at `okAt` (epoch ms). */
+  | { kind: "entry"; snap: WatchSnapshot; okAt: number }
+  /** The tracker's last poll of this PR failed. */
+  | { kind: "error"; error: string; gone?: boolean }
+  /** The tracker runs, but its open snap of this PR is older than 10 minutes. */
+  | { kind: "stale" }
+  /** The tracker runs and has no snap of this PR yet. */
+  | { kind: "waiting" }
+  /** No tracker runs (no or old state file, or the feed is off). */
+  | { kind: "down" };
 
 const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 const text = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -316,7 +329,8 @@ export async function pollWatchBatch(run: RunOp, items: { key: PrKey; seen: { up
   for (const i of single) out[i] = (await pollOne(run, items[i].key, items[i].seen)) ?? out[i];
   for (let i = 0; i < items.length; i++) {
     const base = bases[i];
-    if (base) out[i] = await withComments(run, items[i].key, base, items[i].seen);
+    const k = items[i].key;
+    if (base) out[i] = await withComments(run, k, base, items[i].seen, { repo: k.repo, ...(k.host ? { host: k.host } : {}) });
   }
   return out;
 }
@@ -339,11 +353,11 @@ async function pollOne(run: RunOp, key: PrKey, seen: { updatedAt: string }): Pro
   return withComments(run, key, base, seen);
 }
 
-/** The snapshot of a base poll with the comments, fetched when the PR's updatedAt moved. */
-async function withComments(run: RunOp, key: PrKey, base: Omit<WatchSnapshot, "comments">, seen: { updatedAt: string }): Promise<WatchPoll> {
+/** The snapshot of a base poll with the comments, fetched when the PR's updatedAt moved. `ref`: the repository (and host) the comments are asked of; none: the checkout's own. */
+async function withComments(run: RunOp, key: PrKey, base: Omit<WatchSnapshot, "comments">, seen: { updatedAt: string }, ref?: { repo: string; host?: string }): Promise<WatchPoll> {
   const snap: WatchSnapshot = base;
   if (snap.state === "open" && (snap.updatedAt === "" || snap.updatedAt !== seen.updatedAt)) {
-    const c = await run("pr_comments", { number: key.n });
+    const c = await run("pr_comments", { number: key.n, ...(ref ? { repo: ref.repo, ...(ref.host ? { host: ref.host } : {}) } : {}) });
     if (c.kind !== "ran") return gone(c) ? { gone: true } : { error: c.message };
     snap.comments = list<CommentEntry>(c.result.comments);
   }
@@ -441,10 +455,10 @@ export interface MergedInfo {
 }
 
 export interface PrWatchesDeps {
-  /** One poll of a watched PR (pollWatch); `cwd` is the arming directory. */
-  poll(key: PrKey, cwd: string | undefined, seen: { updatedAt: string }): Promise<WatchPoll>;
-  /** Several watches of one host and directory in one call (pollWatchBatch); absent: `poll` once per watch. */
-  pollMany?(items: { key: PrKey; seen: { updatedAt: string } }[], cwd: string | undefined): Promise<WatchPoll[]>;
+  /** What the PR tracker stored for a watched PR (prstore.ts readStoreEntry); absent: no tracker, every watch says so. Never a GitHub call. */
+  storeEntry?(key: PrKey): StoreRead | Promise<StoreRead>;
+  /** Put the key back on the tracker's list when it is not there (a restored watch, a failed add, a hand-removed line). Never a GitHub call. */
+  retrack?(key: PrKey): void | Promise<void>;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set or a watch's state changed: write the session entry. */
@@ -471,12 +485,15 @@ interface Watch {
   state: WatchState;
   poller: unknown;
   busy: boolean;
-  errors: number;
-  lastError: string;
-  failing: boolean;
   ended: boolean;
   started: number;
   cwd: string;
+  /** The `okAt` of the stored data the watch last settled; null until the first one (a restored or new watch). */
+  seenAt: number | null;
+  /** When the watch last asked `retrack` (ms; null = never). */
+  retrackedAt: number | null;
+  /** The status line while the store has no news ("" = nothing to say). */
+  status: string;
 }
 
 /** The same PR: equal keys, or one of them has no repository (resolution failed) and the numbers match. */
@@ -485,6 +502,8 @@ export const samePr = (a: PrKey, b: PrKey): boolean => a.n === b.n && (!a.repo |
 export class PrWatches {
   private watches = new Map<string, Watch>();
   private reserved: PrKey[] = [];
+  /** The one "no PR tracker running" notice of the current outage was sent. */
+  private trackerDown = false;
   private deps: PrWatchesDeps;
   private timers: Timers;
   constructor(deps: PrWatchesDeps) {
@@ -507,6 +526,10 @@ export class PrWatches {
   release(key: PrKey): void {
     this.reserved = this.reserved.filter((k) => k !== key);
   }
+  /** What the tracker's store says about `key` now (`down` without a store). Throws when the store reader does. */
+  async stored(key: PrKey): Promise<StoreRead> {
+    return this.deps.storeEntry ? await this.deps.storeEntry(key) : { kind: "down" };
+  }
   intervalSeconds(): number {
     return Math.round(this.deps.intervalMs() / 1000);
   }
@@ -516,33 +539,32 @@ export class PrWatches {
 
   /** The active watches (shown as one wait entry in the live file): key, number, the last event text and the start time (ms). */
   list(): { key: PrKey; n: number; event: string; startedAt: number }[] {
-    return [...this.watches.values()].map((w) => ({ key: w.key, n: w.key.n, event: w.state.last, startedAt: w.started }));
+    return [...this.watches.values()].map((w) => ({ key: w.key, n: w.key.n, event: w.status || w.state.last, startedAt: w.started }));
   }
 
-  /** Arm a watch from its first (baseline) poll: what the PR shows now counts as reported. */
-  start(key: PrKey, snap: WatchSnapshot): void {
+  /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
+  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null): void {
     const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: baselineOf(snap) });
+    w.seenAt = okAt;
     this.arm(w);
     this.persist();
     this.deps.changed?.();
   }
 
   /**
-   * Arm a watch whose first poll failed: an empty baseline (`last` "arming") and one error on the backoff; the first successful
-   * poll seeds comments and mergeable, and reports CI like any other poll.
+   * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
+   * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, error: string): void {
+  startPending(key: PrKey, _error?: string): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
     const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming" } });
-    w.errors = 1;
-    w.lastError = error;
     this.arm(w);
     this.persist();
     this.deps.changed?.();
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, errors: 0, lastError: "", failing: false, ended: false };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "" };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
     return w;
@@ -622,7 +644,11 @@ export class PrWatches {
     if (r.status === "malformed") lost.push([null, "the stored watch state is unreadable; start the watch again with pr_watch"]);
     else {
       for (let i = 0; i < r.bad; i++) lost.push([null, "a stored watch is unreadable; start the watch again with pr_watch"]);
-      for (const x of r.watches) if (!this.has(x.key)) live.push(this.register(x));
+      for (const x of r.watches) {
+        // the tracker serves github.com keys only: an older record (another host, or a number-only key) could never end
+        if (!isGithubKey(x.key)) lost.push([x.key.n, `the PR tracker covers github.com only; this watch from an earlier version ended. Re-arm it with pr_watch.`]);
+        else if (!this.has(x.key)) live.push(this.register(x));
+      }
     }
     this.persist();
     this.deps.changed?.();
@@ -630,7 +656,21 @@ export class PrWatches {
       this.deps.send(lostMessage(n, reason), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "lost" });
     }
-    for (const w of live) void this.tick(w);
+    for (const w of live) {
+      this.retrack(w);
+      void this.tick(w);
+    }
+  }
+
+  /** Ask `retrack` for `w`, at most once per RETRACK_MS; a failed attempt waits the full RETRACK_MS too. */
+  private retrack(w: Watch): void {
+    if (!this.deps.retrack || (w.retrackedAt !== null && this.deps.now() - w.retrackedAt < RETRACK_MS)) return;
+    w.retrackedAt = this.deps.now();
+    try {
+      void Promise.resolve(this.deps.retrack(w.key)).catch(() => {});
+    } catch {
+      // the list is not writable now: the next try is after RETRACK_MS
+    }
   }
 
   clear(): void {
@@ -640,6 +680,7 @@ export class PrWatches {
     }
     this.watches.clear();
     this.reserved = [];
+    this.trackerDown = false;
     this.deps.changed?.();
   }
 
@@ -651,60 +692,64 @@ export class PrWatches {
     }
   }
 
-  private delayMs(w: Watch): number {
-    const base = this.deps.intervalMs();
-    return w.errors === 0 ? base : Math.max(base, Math.min(base * 2 ** w.errors, MAX_BACKOFF_MS));
-  }
-
   private arm(w: Watch): void {
-    w.poller = this.timers.set(() => void this.tick(w), this.delayMs(w));
+    w.poller = this.timers.set(() => void this.tick(w), this.deps.intervalMs());
   }
 
-  /**
-   * One tick: the watch and the idle watches of its host and directory are polled together (pr_batch calls of up to 50 PRs per host and
-   * tick); the others' own timers are cleared and re-armed by their result, so they stay on one beat.
-   */
+  /** One tick: read the store entry of the watch (never a GitHub call) and settle it. */
   private async tick(w: Watch): Promise<void> {
     if (w.ended || w.busy) return;
-    const group = this.deps.pollMany && w.key.repo ? [...this.watches.values()].filter((x) => x === w || (!x.ended && !x.busy && x.key.repo && x.key.host === w.key.host && x.cwd === w.cwd)) : [w];
-    for (const x of group) {
-      x.busy = true;
-      if (x !== w) this.timers.clear(x.poller);
-    }
-    let rs: WatchPoll[];
+    w.busy = true;
+    let r: StoreRead;
     try {
-      const items = group.map((x) => ({ key: x.key, seen: { updatedAt: x.state.updatedAt } }));
-      rs = this.deps.pollMany && w.key.repo ? await this.deps.pollMany(items, w.cwd || undefined) : [await this.deps.poll(w.key, w.cwd || undefined, items[0].seen)];
-    } catch (err) {
-      rs = group.map(() => ({ error: (err as Error).message }));
+      r = this.deps.storeEntry ? await this.deps.storeEntry(w.key) : { kind: "down" };
+    } catch {
+      r = { kind: "down" };
     }
-    for (let i = 0; i < group.length; i++) {
-      group[i].busy = false;
-      this.settle(group[i], rs[i] ?? { error: "no answer" });
-    }
+    w.busy = false;
+    this.settle(w, r);
   }
 
-  private settle(w: Watch, r: WatchPoll): void {
+  private setStatus(w: Watch, status: string): void {
+    if (w.status === status) return;
+    w.status = status;
+    this.deps.changed?.();
+  }
+
+  private settle(w: Watch, r: StoreRead): void {
     if (w.ended) return;
-    if ("error" in r) {
-      w.errors += 1;
-      w.lastError = r.error;
-      if (w.errors === MAX_ERRORS) {
-        w.failing = true;
-        this.deps.send(noticeMessage(w.key.n, `polling fails: ${oneLine(w.lastError)}; retrying`, "polling_failed"), this.idle());
-        this.deps.trace({ event: "pr_watch", outcome: "polling_failed" });
+    // `down` is a fact about the tracker, the same for every watch: the notice goes out on the up -> down transition only
+    if (r.kind === "down") {
+      this.setStatus(w, TRACKER_DOWN);
+      if (!this.trackerDown) {
+        this.trackerDown = true;
+        this.deps.send(noticeMessage(null, `watch: ${TRACKER_DOWN} (the watch stays armed)`, "tracker_down"), this.idle());
+        this.deps.trace({ event: "pr_watch", outcome: "tracker_down" });
       }
       return this.arm(w);
     }
-    const wasFailing = w.failing;
-    w.errors = 0;
-    w.failing = false;
-    if ("gone" in r) return this.end(w, { events: ["not found"], head: "", base: "", mergeable: "", counts: null, failed: [], missing: [], newComments: [], moreComments: 0, final: "gone" });
-    const snap = r.snap;
-    if (wasFailing) {
-      this.deps.send(noticeMessage(w.key.n, "polling recovered", "recovered"), this.idle());
-      this.deps.trace({ event: "pr_watch", outcome: "recovered" });
+    this.trackerDown = false;
+    if (r.kind === "waiting") {
+      this.retrack(w);
+      this.setStatus(w, "waiting for the tracker's first poll");
+      return this.arm(w);
     }
+    if (r.kind === "stale") {
+      this.setStatus(w, "waiting for the tracker's next poll of this PR (its data is more than 10 minutes old)");
+      return this.arm(w);
+    }
+    if (r.kind === "error") {
+      this.setStatus(w, `${r.gone ? "not found" : "the tracker's last poll failed"}: ${oneLine(r.error)}`);
+      return this.arm(w);
+    }
+    if (w.seenAt !== null && r.okAt <= w.seenAt) {
+      // nothing newer than what the watch holds: re-arm only (no settle, so the baseline and the no-CI count stay)
+      this.setStatus(w, "");
+      return this.arm(w);
+    }
+    this.setStatus(w, "");
+    w.seenAt = r.okAt;
+    const snap = r.snap;
     const child = this.deps.child?.() ?? false;
     if (snap.state !== "open") {
       const d: Delta = { events: [snap.state], head: snap.head, base: snap.base, mergeable: snap.mergeable, counts: countRuns(snap.runs), failed: [], missing: [], newComments: [], moreComments: 0, final: snap.state };

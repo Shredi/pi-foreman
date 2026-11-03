@@ -1,10 +1,10 @@
 """Replay: pr_checks and pr_watch through the real Pi tool path against a fake gh (PR tools, ledger item 24).
 
 The fake gh (tests/fixtures/fake_pr_host.py behind sh and .cmd shims, first on PATH) reports one pending
-check. The foreman reads it with pr_checks, then starts pr_watch (tools.prWatchSeconds 5, floored to 30 at
-runtime). The persistent watch polls the host again while the session lives, and session shutdown clears it:
-the host sees no call afterwards.
-The trace holds `tool_pack` for both tools and `pr_watch` outcome `started`, and never the PR number.
+check. The foreman reads it with pr_checks, then starts pr_watch (no number: the PR comes from gh pr view, a github.com URL).
+Arming the watch calls `gh pr view` once; while the session stays live the watch is store-only and the host sees
+no further call (the wait exceeds the 30 s tick floor). The trace holds `tool_pack` for both tools and `pr_watch`
+outcomes `started` and `tracker_down` (the watch stays armed), and never the PR number.
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
@@ -25,14 +25,14 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 KEYS = ("event", "pack", "op", "outcome")
 CHECKS = [{"name": "build", "state": "PENDING", "bucket": "pending", "link": "https://example.com/run/1",
            "startedAt": "2026-10-11T10:00:00Z", "completedAt": None}]
-VIEW = {"number": 7, "url": "https://example.com/acme/app/pull/7", "title": "t", "state": "OPEN", "isDraft": False,
+VIEW = {"number": 7, "url": "https://github.com/acme/app/pull/7", "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE", "reviewDecision": "", "headRefOid": "0123456789abcdef", "baseRefName": "main",
         "updatedAt": "2026-10-11T10:00:00Z", "comments": [], "reviews": []}
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestPrOps(ReplayCase):
-    def test_checks_then_watch_and_shutdown_clears(self):
+    def test_checks_then_watch_makes_no_host_call_while_live(self):
         rig = self.rig("props", load_fixture("pr_ops"), config={"tools": {"prWatchSeconds": 5}})
         host = rig.root / "host"
         host.mkdir()
@@ -50,15 +50,11 @@ class TestPrOps(ReplayCase):
         def count():
             return len(calls.read_text("utf-8").splitlines()) if calls.exists() else 0
 
-        deadline = time.time() + 60
-        before = count()
-        while count() <= before and time.time() < deadline:
-            time.sleep(0.5)
-        self.assertGreater(count(), before, "the watch never polled the host")
+        # pr_watch is store-only: it never polls the host itself (the PR tracker does); outwait the 30 s tick floor
+        armed = count()
+        time.sleep(32)
+        self.assertEqual(count(), armed, "the host was called while the watch lived")
         pi.close()
-        after = count()
-        time.sleep(35)  # longer than the 30 s watch interval floor
-        self.assertEqual(count(), after, "the watch kept polling after shutdown")
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
         ev = [r for r in trace if r.get("event") in ("tool_pack", "pr_watch")]
@@ -66,6 +62,7 @@ class TestPrOps(ReplayCase):
             {"event": "tool_pack", "pack": "git", "op": "pr_checks"},
             {"event": "tool_pack", "pack": "git", "op": "pr_watch"},
             {"event": "pr_watch", "outcome": "started"},
+            {"event": "pr_watch", "outcome": "tracker_down"},
         ])
         self.assertNotIn('"number"', json.dumps(ev))
         self.golden("pr_ops", {"session": shape(ev, KEYS)})

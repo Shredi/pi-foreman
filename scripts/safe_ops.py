@@ -6,7 +6,7 @@ CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
     request  {"op": "worktree_remove" | "move" | "copy" | "status" | "log" | "diff_stat" |
               "branch_state" (the last four are read-only, capped to 200 entries / 16 KB),
               "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" |
-              "pr_batch" (scripts/pr_ops.py, run a host CLI; pr_batch needs no work tree, `cwd` only the process cwd), "args": {...}, "cwd": "<dir>",
+              "pr_batch" (scripts/pr_ops.py, run a host CLI; pr_batch needs no work tree, `cwd` only the process cwd; nor does pr_comments with top-level `repoless: true` and `args.repo`), "args": {...}, "cwd": "<dir>",
               "config": {"copyMaxBytes": ..., "worktreeDisposable": [...], "baseBranch": ...}}
     answer   {"ok": true, "action": "<what was done>", ...}
           or {"ok": false, "precondition": "<name>", "message": "precondition failed: <name> (<detail>)"}

@@ -13,6 +13,10 @@
   {
    "event": "pr_watch",
    "outcome": "started"
+  },
+  {
+   "event": "pr_watch",
+   "outcome": "tracker_down"
   }
  ]
 }

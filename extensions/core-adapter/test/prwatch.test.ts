@@ -4,6 +4,7 @@ import { baselineOf, countRuns, PR_MESSAGE_TYPE, prDelta, prMessage, PrWatches, 
 import type { Bucket, CommentEntry, Run, Timers, WatchPoll, WatchSnapshot } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import type { PrKey } from "../prhost.ts";
+import { storeFromPoll } from "./_storefake.ts";
 
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
 const SHA = "abcdef0123456789";
@@ -144,7 +145,7 @@ function harness(poll: (key: PrKey, seen: { updatedAt: string }) => Promise<Watc
   const traces: Record<string, unknown>[] = [];
   let idle = true;
   const w = new PrWatches({
-    poll: async (key, _cwd, seen) => poll(key, seen),
+    storeEntry: storeFromPoll((key) => poll(key, { updatedAt: "" })),
     send: (msg, i) => void sent.push({ msg, idle: i }),
     idle: () => idle,
     trace: (r) => void traces.push(r),
@@ -213,48 +214,33 @@ test("pr_watch: merged and closed end it with one message; merged calls the hook
   assert.ok(!t.sent[0].msg.content.includes("report to the parent"));
 });
 
-test("pr_watch: pr_not_found ends it with a message", async () => {
+test("pr_watch: a tracker 'not found' keeps it armed and says so in the status (R1: only a merged or closed snap ends a watch)", async () => {
   const h = harness(async () => ({ gone: true }));
   h.w.start(K, snap());
   await h.fire();
-  assert.equal(h.sent.length, 1);
-  assert.match(h.sent[0].msg.content, /^pi-foreman-pr: PR #7 not found /);
-  assert.equal(h.w.size(), 0);
-  assert.deepEqual(h.traces, [{ event: "pr_watch", outcome: "gone" }]);
+  assert.equal(h.sent.length, 0);
+  assert.equal(h.w.size(), 1);
+  assert.match(h.w.list()[0].event, /^not found: /);
 });
 
-test("pr_watch: poll errors back off, one notice after three, one recovered line, and it never ends", async () => {
+test("pr_watch: tracker errors keep it armed at the usual interval, with a status and no message, and it never ends", async () => {
   let fail = true;
   const h = harness(async () => (fail ? { error: "host down" } : { snap: snap({ runs: [run("a", "passed")] }) }));
   h.w.start(K, snap({ runs: [run("a", "passed")] }));
-  const delays: number[] = [];
   for (let i = 0; i < 4; i++) {
     await h.fire();
-    delays.push([...h.timers].reverse().find((t) => t.live)!.ms);
+    assert.equal([...h.timers].reverse().find((t) => t.live)!.ms, 5000);
   }
-  assert.deepEqual(delays, [10_000, 20_000, 40_000, 80_000]);
-  assert.equal(h.sent.length, 1);
-  assert.match(h.sent[0].msg.content, /^pi-foreman-pr: PR #7 polling fails: host down; retrying$/);
+  assert.equal(h.sent.length, 0);
   assert.equal(h.w.has(K), true);
+  assert.match(h.w.list()[0].event, /^the tracker's last poll failed: host down$/);
   fail = false;
   await h.fire();
-  assert.equal(h.sent.length, 2);
-  assert.match(h.sent[1].msg.content, /PR #7 polling recovered$/);
-  assert.equal([...h.timers].reverse().find((t) => t.live)!.ms, 5000);
-  await h.fire();
-  assert.equal(h.sent.length, 2);
-  fail = true;
-  for (let i = 0; i < 12; i++) await h.fire();
-  assert.equal([...h.timers].reverse().find((t) => t.live)!.ms, 600_000);
+  assert.equal(h.sent.length, 0);
+  assert.doesNotMatch(h.w.list()[0].event, /failed/);
 });
 
-test("pr_watch: the poll gets the stored updatedAt; a thrown poll counts as an error", async () => {
-  const seen: string[] = [];
-  const h = harness(async (_k, s) => (seen.push(s.updatedAt), { snap: snap({ updatedAt: "t9" }) }));
-  h.w.start(K, snap({ updatedAt: "t0" }));
-  await h.fire();
-  await h.fire();
-  assert.deepEqual(seen, ["t0", "t9"]);
+test("pr_watch: a store reader that throws counts as no tracker, with one notice per outage", async () => {
   const t = harness(async () => {
     throw new Error("boom");
   });
@@ -262,7 +248,8 @@ test("pr_watch: the poll gets the stored updatedAt; a thrown poll counts as an e
   await t.fire();
   await t.fire();
   await t.fire();
-  assert.match(t.sent[0].msg.content, /polling fails: boom/);
+  assert.equal(t.sent.length, 1);
+  assert.match(t.sent[0].msg.content, /no PR tracker running: start herdr-app or run `foreman prs poll`/);
 });
 
 test("pr_watch: clear() stops everything and sends nothing; pr_unwatch ends one silently", async () => {

@@ -13,10 +13,10 @@ function setup(opts: { packOn?: boolean; isChild?: boolean; reply?: Partial<Spaw
   const calls: { input: string }[] = [];
   const spawner: Spawner = async (_c, _a, o) => {
     calls.push({ input: o.input ?? "" });
-    return { code: 0, stdout: JSON.stringify({ ok: true, action: "pr_create", number: 5, url: "https://h.invalid/pull/5" }) + "\n", stderr: "", timedOut: false, ...opts.reply };
+    return { code: 0, stdout: JSON.stringify({ ok: true, action: "pr_create", number: 5, url: "https://github.com/acme/app/pull/5" }) + "\n", stderr: "", timedOut: false, ...opts.reply };
   };
-  const watches = new PrWatches({ poll: async () => ({ error: "x" }), send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 5000, now: () => 0 });
-  const session: PrPackSession = { python: "/py", isChild: opts.sessionChild ?? opts.isChild ?? false, packOn: opts.packOn ?? true, config: { baseBranch: "x", prHost: "auto" }, gateOn: opts.gateOn ?? true, reviewed: async () => opts.reviewed ?? [], watches, trace: (r) => void traces.push(r) };
+  const watches = new PrWatches({ send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 5000, now: () => 0 });
+  const session: PrPackSession = { python: "/py", isChild: opts.sessionChild ?? opts.isChild ?? false, packOn: opts.packOn ?? true, config: { baseBranch: "x", prHost: "auto" }, gateOn: opts.gateOn ?? true, reviewed: async () => opts.reviewed ?? [], watches, trace: (r) => void traces.push(r), tracker: { hostAllowed: async () => true, repoFor: async () => ({ host: "github.com", repo: "acme/app" }) } }; // R1: only github.com PRs are watched
   const names = registerPrPack({ registerTool: (t: unknown) => void tools.set((t as Tool).name, t as Tool) } as never, {
     isChild: opts.isChild ?? false,
     session: async () => session,
@@ -93,7 +93,7 @@ test("prpack: pr_create order, gate refusal traced, push refusal, upstream stale
   const ok = setup({ gateOn: false });
   const r3 = await ok.call("pr_create", { title: "t", body: "b" });
   assert.equal(r3.details.decision, "ran");
-  assert.match(r3.content[0].text, /^pr_create: \{"action":"pr_create","number":5,"url":"https:\/\/h\.invalid\/pull\/5"\}\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\)$/);
+  assert.match(r3.content[0].text, /^pr_create: \{"action":"pr_create","number":5,"url":"https:\/\/github\.com\/acme\/app\/pull\/5"\}\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\); no PR tracker running: start herdr-app or run `foreman prs poll`$/);
   assert.equal(ok.watches.size(), 1);
 });
 

@@ -1,7 +1,7 @@
 // pi-foreman mod for herdr-app: an Agents view with the foreman rows built in under each agent that is a foreman session.
 // Reads `foreman radar --json` and, per agent terminal, `hc get <terminal> --json` (exec, argv only; the child records of
-// pi-subagents), joins on hcTerminal, never writes, never fetches.
-// The only other exec is the platform opener on a PR chip click, after the URL passed the https rule (model.js).
+// pi-subagents), joins on hcTerminal, never writes; `foreman prs poll` fetches.
+// The other execs are `foreman prs poll --json` per machine and the platform opener on a PR chip click, after the URL passed the https rule (model.js).
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
@@ -16,6 +16,9 @@ const REMOTE_MS = 15000;
 const RETRY_MS = 30000;
 const STUCK_MS = 45000; // a poll older than this is taken as lost
 const WATCHDOG_MS = 35000; // a radar exec older than this is given up
+const PRS_EVERY_MS = 30000; // `foreman prs poll` starts this long after its previous run ended
+const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given up
+const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 const RING = "mods/pi-foreman/ring.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
@@ -92,7 +95,8 @@ export default class ForemanAgents extends View {
     this.recs = new Map(); // agent address -> {recs, tried}
     this.childPi = new Set(); // pane-less pi child terminals (set by render), polled for records too
     this.poll(cx);
-    cx.timer.every(1000, (cx) => this.poll(cx));
+    this.pollPrs(cx, Date.now());
+    cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); });
   }
 
   machines() {
@@ -129,6 +133,29 @@ export default class ForemanAgents extends View {
       });
     }
     this.pollRecords(cx, now);
+  }
+
+  // `foreman prs poll --json` per machine, 30 s after its previous run ended: it polls the tracked PRs and the PR search and writes
+  // the store files the radar reads. The mod only runs it; a failure is ignored (the next round tries again).
+  pollPrs(cx, now) {
+    this.prsRan ??= new Map();
+    for (const machine of this.machines()) {
+      const key = `prs:${machine ?? "local"}`;
+      if (this.busy.has(key) && now - this.busy.get(key) > PRS_STUCK_MS) this.busy.delete(key);
+      const ended = this.prsRan.get(key);
+      if (this.busy.has(key) || (ended !== undefined && now - ended < PRS_EVERY_MS)) continue;
+      this.busy.set(key, now);
+      cx.spawn(async (cx) => {
+        try {
+          await Promise.race([
+            exec(radarBinary(this.foremanProp, machine), ["prs", "poll", "--json"], { on: machine }),
+            cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
+          ]);
+        } catch { /* no foreman here, or the run failed: the next round tries again */ }
+        this.prsRan.set(key, Date.now());
+        this.busy.delete(key);
+      });
+    }
   }
 
   // One `hc get` per agent terminal per interval; a failure leaves no records.

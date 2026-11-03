@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { CloseFlow, prMergedPrompt } from "../close.ts";
 import type { CloseDeps, SelfFinish } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
+import { storeFromPoll } from "./_storefake.ts";
 import type { Timers, WatchSnapshot } from "../prwatch.ts";
 import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
@@ -96,7 +97,7 @@ test("pr-merged: a PR closed unmerged starts no close and no cleanup", async () 
   const merged: unknown[] = [];
   const timers: Timers = { set: () => 0, clear: () => undefined };
   const w = new PrWatches({
-    poll: async () => ({ snap: openSnap("closed") }),
+    storeEntry: storeFromPoll(async () => ({ snap: openSnap("closed") })),
     send: () => undefined,
     idle: () => true,
     trace: () => undefined,
