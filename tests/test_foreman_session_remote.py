@@ -1240,10 +1240,13 @@ class NoticeLabelTest(NoticeBase):
     def sha(self, text):
         return hashlib.sha256(text.encode("utf-8")).hexdigest(), len(text.encode("utf-8"))
 
+    def sha_bytes(self, data):
+        return hashlib.sha256(data).hexdigest(), len(data)
+
     def test_file_kinds(self):
         for name, text in (("plan.md", "plan \u6f22"), ("result.md", "done\n"), ("ask.md", "# Ask 1: x")):
             (self.dir / name).write_text(text, "utf-8")
-        sha = {n: self.sha((self.dir / n).read_text("utf-8")) for n in ("plan.md", "result.md", "ask.md")}
+        sha = {n: self.sha_bytes((self.dir / n).read_bytes()) for n in ("plan.md", "result.md", "ask.md")}
         out = []
         for kind, name in (("plan", "plan.md"), ("result", "result.md"), ("update", "result.md"), ("ask", "ask.md")):
             code, r = self.notice(kind)
