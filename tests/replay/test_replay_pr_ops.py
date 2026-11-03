@@ -2,8 +2,9 @@
 
 The fake gh (tests/fixtures/fake_pr_host.py behind sh and .cmd shims, first on PATH) reports one pending
 check. The foreman reads it with pr_checks, then starts pr_watch (no number: the PR comes from gh pr view, a github.com URL).
-The watch is store-only and makes no host call of its own; after shutdown the host sees no call either.
-The trace holds `tool_pack` for both tools and `pr_watch` outcome `started`, and never the PR number.
+Arming the watch calls `gh pr view` once; while the session stays live the watch is store-only and the host sees
+no further call (the wait exceeds the 30 s tick floor). The trace holds `tool_pack` for both tools and `pr_watch`
+outcomes `started` and `tracker_down` (the watch stays armed), and never the PR number.
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
@@ -31,7 +32,7 @@ VIEW = {"number": 7, "url": "https://github.com/acme/app/pull/7", "title": "t", 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestPrOps(ReplayCase):
-    def test_checks_then_watch_and_shutdown_clears(self):
+    def test_checks_then_watch_makes_no_host_call_while_live(self):
         rig = self.rig("props", load_fixture("pr_ops"), config={"tools": {"prWatchSeconds": 5}})
         host = rig.root / "host"
         host.mkdir()
@@ -49,11 +50,11 @@ class TestPrOps(ReplayCase):
         def count():
             return len(calls.read_text("utf-8").splitlines()) if calls.exists() else 0
 
-        # pr_watch is store-only: it never polls the host itself (the PR tracker does)
+        # pr_watch is store-only: it never polls the host itself (the PR tracker does); outwait the 30 s tick floor
+        armed = count()
+        time.sleep(32)
+        self.assertEqual(count(), armed, "the host was called while the watch lived")
         pi.close()
-        after = count()
-        time.sleep(2)
-        self.assertEqual(count(), after, "the host was called after shutdown")
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
         ev = [r for r in trace if r.get("event") in ("tool_pack", "pr_watch")]
@@ -61,6 +62,7 @@ class TestPrOps(ReplayCase):
             {"event": "tool_pack", "pack": "git", "op": "pr_checks"},
             {"event": "tool_pack", "pack": "git", "op": "pr_watch"},
             {"event": "pr_watch", "outcome": "started"},
+            {"event": "pr_watch", "outcome": "tracker_down"},
         ])
         self.assertNotIn('"number"', json.dumps(ev))
         self.golden("pr_ops", {"session": shape(ev, KEYS)})
