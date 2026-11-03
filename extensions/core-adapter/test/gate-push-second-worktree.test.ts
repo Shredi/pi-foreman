@@ -10,6 +10,7 @@ import type { GitFacts } from "../defaults.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "../ownworktree.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
+import { shPath } from "./_shpath.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf-pushwt2-"));
 const main = path.join(base, "main");
@@ -30,7 +31,7 @@ const roots = (): GateRoots => ({
 });
 /** The session facts: only the worktrees in `created` count as own (what index.ts does with the session manifest). */
 const factsWith = (created: string[]): GitFacts => sessionGitFacts(gitFacts, ownWorktreeCheck([wtA, ...created]));
-const run = (line: string, created: string[]): GateResult => gateDecide("bash", { command: line }, wtA, { env: (c) => baseFloorEnv(c), roots, facts: factsWith(created) });
+const run = (line: string, created: string[]): GateResult => gateDecide("bash", { command: shPath(line) }, wtA, { env: (c) => baseFloorEnv(c), roots, facts: factsWith(created) });
 const rule = (r: GateResult): string | null => (r && "allow" in r ? r.rule.replace(/^default-read\+/, "") : null); // `cd <wt> && git push` joins the cd's rule
 
 test("cd into the own second worktree: plain push of its branch is routine", () => {
