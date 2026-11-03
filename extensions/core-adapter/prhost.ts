@@ -18,6 +18,34 @@ export function validHost(v: unknown): v is string {
   return typeof v === "string" && HOST_RE.test(v);
 }
 
+export function validNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 1e9;
+}
+
+/** Host, `owner/name` and number of a pull request: the identity of a watch. */
+export interface PrKey {
+  host: string;
+  /** `owner/name` */
+  repo: string;
+  n: number;
+}
+/** Identity for maps and sets (case-insensitive). */
+export const keyString = (k: PrKey): string => `${k.host.toLowerCase()}/${k.repo.toLowerCase()}#${k.n}`;
+/** `host/owner/name#n` as written. */
+export const keyText = (k: PrKey): string => `${k.host}/${k.repo}#${k.n}`;
+
+const PR_URL = new RegExp(`^https://([A-Za-z0-9.-]+(?::\\d{1,5})?)/(${SEG})/(${SEG})/(?:pull|-/merge_requests|merge_requests)/(\\d{1,10})(?:[/?#]|$)`);
+
+/** The identity in a PR page URL (`https://<host>/<owner>/<name>/(pull|-/merge_requests|merge_requests)/<n>`), else null. */
+export function parsePrUrl(url: unknown): PrKey | null {
+  if (typeof url !== "string") return null;
+  const m = PR_URL.exec(url);
+  if (!m) return null;
+  const n = Number(m[4]);
+  if (badSeg(m[2]) || badSeg(m[3]) || !validNumber(n)) return null;
+  return { host: m[1], repo: `${m[2]}/${m[3]}`, n };
+}
+
 /** `git remote -v` hosts of a checkout (`[]` on any failure). */
 export function remoteHostsOf(cwd: string): Promise<string[]> {
   return new Promise((resolve) => {

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.13+.
 
-Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo and pr_find; the
+Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo, pr_find and
+pr_batch (needs no work tree; the persistent PR watch polls through it); the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object
 plus one key, `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object).
 
@@ -29,11 +30,14 @@ PR_TIMEOUT = 30
 BODY_CUT = 500
 MAX_LIST = 200
 MAX_FIND = 50
+MAX_BATCH = 50
+MAX_NAMES = 10
 PLACEHOLDERS = ("{repo}", "{number}", "{since}", "{base}", "{head}", "{title}", "{bodyFile}", "{draft}",
                 "{host}", "{mode}", "{author}", "{state}")
 HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?(?::\d{1,5})?$")
 AUTHOR_RE = re.compile(r"^(?:@me|[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\[bot\])?)$")
 HTTPS_RE = re.compile(r"^https://[\x21-\x7e]+$")
+FAILED_CONCLUSIONS = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
 CMD_SAFE = re.compile(r"^[A-Za-z0-9 ._/:@+,=#~-]*$")
 SINCE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$")
 REPO_PATH_RE = re.compile(r"^(?!-)[A-Za-z0-9._-]+(/(?!-)[A-Za-z0-9._-]+)+$")
@@ -403,7 +407,7 @@ def finish_comments(items, since):
     return safe_ops.cap({"action": "pr_comments", "comments": cs}, "comments")
 
 
-STATUS_KEYS = ("number", "url", "state", "draft", "mergeable", "reviewDecision", "headSha", "baseRef", "updatedAt")
+STATUS_KEYS = ("number", "url", "state", "draft", "mergeable", "reviewDecision", "headSha", "headRefName", "baseRef", "updatedAt")
 
 
 def finish_status(d):
@@ -419,6 +423,7 @@ def finish_status(d):
     out["mergeable"] = enum(d.get("mergeable"), ("mergeable", "conflicting", "unknown"))
     out["reviewDecision"] = enum(d.get("reviewDecision"), ("approved", "changes_requested", "review_required"))
     out["headSha"] = s_or_none(d.get("headSha"), 64)
+    out["headRefName"] = s_or_none(d.get("headRefName"), 200)
     out["baseRef"] = s_or_none(d.get("baseRef"), 200)
     out["updatedAt"] = s_or_none(d.get("updatedAt"), 40)
     return out
@@ -431,7 +436,8 @@ def gh_status(d):
         "draft": d.get("isDraft"),
         "mergeable": "mergeable" if mer == "MERGEABLE" else "conflicting" if mer == "CONFLICTING" else "unknown",
         "reviewDecision": str(d.get("reviewDecision") or "").lower() or None,
-        "headSha": d.get("headRefOid"), "baseRef": d.get("baseRefName"), "updatedAt": d.get("updatedAt")})
+        "headSha": d.get("headRefOid"), "headRefName": d.get("headRefName"), "baseRef": d.get("baseRefName"),
+        "updatedAt": d.get("updatedAt")})
 
 
 def glab_status(d):
@@ -443,7 +449,8 @@ def glab_status(d):
         "draft": d.get("draft"),
         "mergeable": "mergeable" if ds == "mergeable" else "conflicting" if ds == "conflict" else "unknown",
         "reviewDecision": "review_required" if ds == "not_approved" else None,
-        "headSha": d.get("sha"), "baseRef": d.get("target_branch"), "updatedAt": d.get("updated_at")})
+        "headSha": d.get("sha"), "headRefName": d.get("source_branch"), "baseRef": d.get("target_branch"),
+        "updatedAt": d.get("updated_at")})
 
 
 def gh_check(e):
@@ -662,7 +669,7 @@ def op_pr_status(req):
     rflag = repo_flag(host, repo, hostname)
     if host.kind == "gh":
         return gh_status(gh_view(host, root, number,
-                                 "number,url,title,state,isDraft,mergeable,reviewDecision,headRefOid,baseRefName,updatedAt",
+                                 "number,url,title,state,isDraft,mergeable,reviewDecision,headRefOid,headRefName,baseRefName,updatedAt",
                                  rflag))
     return glab_status(glab_view(host, root, number, rflag))
 
@@ -988,5 +995,190 @@ def op_pr_find(req):
     return norm_find(d)
 
 
+def _repoless_root(req):
+    """The process cwd of an op that needs no work tree: realpath of an existing directory."""
+    cwd = req.get("cwd")
+    if not isinstance(cwd, str) or not cwd or not os.path.isdir(cwd):
+        raise _bad("cwd is not a directory")
+    return os.path.realpath(cwd)
+
+
+def _gh_only(pr_host, root, key):
+    if isinstance(pr_host, dict):
+        raise Precondition("pr_unsupported", "%s needs gh; tools.prHost templates have no '%s' key" % (key, key))
+    host = resolve_host(pr_host, key, root)
+    if host.kind != "gh":
+        raise Precondition("pr_unsupported", "%s needs gh; %s is not supported" % (key, host.label))
+    return host
+
+
+ZERO_TIME = ("0001-01-01T00:00:00Z", "0001-01-01T00:00:00")
+
+
+def _node_group(nd):
+    """(name, group) of one rollup node: group is pending, failed, passed or missing."""
+    if nd.get("__typename") == "StatusContext":
+        name, st = nd.get("context"), str(nd.get("state") or "").upper()
+        group = "failed" if st in ("FAILURE", "ERROR") else "missing" if st == "EXPECTED" else \
+            "passed" if st == "SUCCESS" else "pending"
+    else:
+        name, st = nd.get("name"), str(nd.get("status") or "").upper()
+        concl = str(nd.get("conclusion") or "").upper()
+        if concl in FAILED_CONCLUSIONS:
+            group = "failed"
+        elif st != "COMPLETED":
+            group = "missing" if nd.get("isRequired") is True and (not nd.get("startedAt") or nd.get("startedAt") in ZERO_TIME) else "pending"
+        else:
+            group = "passed"
+    return name, group
+
+
+def _rollup_nodes(roll):
+    ctx = roll.get("contexts") if isinstance(roll, dict) else None
+    nodes = ctx.get("nodes") if isinstance(ctx, dict) else None
+    return [nd for nd in nodes if isinstance(nd, dict)] if isinstance(nodes, list) else []
+
+
+def watch_runs(roll):
+    """One entry {id, name, bucket, url} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
+    or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run."""
+    out = []
+    for nd in _rollup_nodes(roll):
+        name, group = _node_group(nd)
+        if nd.get("__typename") == "StatusContext":
+            rid, url = "%s@%s" % (nd.get("context"), nd.get("createdAt")), nd.get("targetUrl")
+        else:
+            rid, url = nd.get("databaseId"), nd.get("detailsUrl")
+        out.append({"id": s_or_none(str(rid), 200) if rid is not None else "", "name": title_or_none(name) or "?",
+                    "bucket": group, "url": s_or_none(url, 300)})
+    order = ("failed", "missing", "pending", "passed")
+    out.sort(key=lambda r: order.index(r["bucket"]))
+    while len(out) > 1 and len(json.dumps(out)) > 12000:   # the answer stays under the 16 KB cap; passed runs go first
+        out.pop()
+    return out
+
+
+def map_rollup(roll):
+    """{pending, failed, passed, missing (names, <= 10 each), counts, truncated} of one statusCheckRollup."""
+    names = {"pending": [], "failed": [], "passed": [], "missing": []}
+    counts = dict.fromkeys(names, 0)
+    ctx = roll.get("contexts") if isinstance(roll, dict) else None
+    total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
+    for nd in _rollup_nodes(roll):
+        name, group = _node_group(nd)
+        counts[group] += 1
+        if len(names[group]) < MAX_NAMES:
+            names[group].append(title_or_none(name) or "?")
+    out = dict(names)
+    out["counts"] = counts
+    out["truncated"] = isinstance(total, int) and not isinstance(total, bool) and total > 100
+    return out
+
+
+def _pr_query(count, watch=False):
+    # watch: the extra fields pr_watch reads (head, base, updatedAt, run identity and link)
+    pr_extra = "headRefOid baseRefName updatedAt " if watch else ""
+    run_extra = "databaseId detailsUrl " if watch else ""
+    ctx_extra = "createdAt targetUrl " if watch else ""
+    decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
+    parts = []
+    for i in range(count):
+        parts.append(
+            "r%d: repository(owner: $owner%d, name: $name%d) { pullRequest(number: $n%d) { number url title state "
+            "isDraft mergeable reviewDecision headRefName %s commits(last: 1) { nodes { commit { statusCheckRollup { state "
+            "contexts(first: 100) { totalCount nodes { __typename ... on CheckRun { name status conclusion startedAt %s"
+            "isRequired(pullRequestNumber: $n%d) } ... on StatusContext { context state %s"
+            "isRequired(pullRequestNumber: $n%d) } } } } } } } } }" % (i, i, i, i, pr_extra, run_extra, i, ctx_extra, i))
+    return "query(%s) { %s }" % (decl, " ".join(parts))
+
+
+def _batch_args(args):
+    prs = args.get("prs")
+    if not isinstance(prs, list) or not 1 <= len(prs) <= MAX_BATCH:
+        raise _bad("prs must be a list of 1 to %d entries" % MAX_BATCH)
+    out = []
+    for e in prs:
+        if not isinstance(e, dict) or set(e) != {"repo", "n"}:
+            raise _bad("each pr is {repo, n}")
+        repo, n = e["repo"], e["n"]
+        if not isinstance(repo, str) or len(repo) > 200 or not REPO_PATH_RE.match(repo) \
+                or any(s in (".", "..") for s in repo.split("/")) or two_part(repo) is None:
+            raise _bad("repo must be owner/name")
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 10 ** 9:
+            raise _bad("n must be an integer from 1 to 1000000000")
+        out.append((repo, n))
+    return out
+
+
+def _enum(v, allowed):
+    v = str(v or "").lower()
+    return v if v in allowed else None
+
+
+def op_pr_batch(req):
+    args, cfg, pr_host = _setup(req, ("host", "prs", "watch"))
+    hostname = arg_host(args)
+    entries = _batch_args(args)
+    watch = args.get("watch", False)
+    if not isinstance(watch, bool):
+        raise _bad("watch must be true or false")
+    root = _repoless_root(req)
+    host = _gh_only(pr_host, root, "batch")
+    variables = {}
+    for i, (repo, n) in enumerate(entries):
+        owner, name = two_part(repo)
+        variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
+    path = _body_file(json.dumps({"query": _pr_query(len(entries), watch), "variables": variables}))
+    try:   # the body goes through a file: 50 queries overflow the Windows command line
+        argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
+            ["--input", _argpath(path)]
+        code, out, err = run_host(argv, root, [_argpath(path)])
+    finally:
+        _unlink(path)
+    try:
+        d = json.loads(out)
+    except ValueError:
+        d = None
+    if not isinstance(d, dict):
+        if code != 0:
+            host_error(host, "batch", code, err)
+        raise ActionError("pr_host_failed", "gh: printed no JSON")
+    errs = [x for x in d.get("errors") if isinstance(x, dict)] if isinstance(d.get("errors"), list) else []
+    if any(x.get("type") == "RATE_LIMITED" for x in errs):
+        raise ActionError("pr_host_failed", "gh: GraphQL RATE_LIMITED")
+    data = d.get("data")
+    if not isinstance(data, dict):
+        if code != 0:
+            host_error(host, "batch", code, err)
+        msg = first_line(str(errs[0].get("message"))) if errs else "no data"
+        raise ActionError("pr_host_failed", "gh: %s" % msg)
+    prs, errors = [], []
+    for i, (repo, n) in enumerate(entries):
+        alias = "r%d" % i
+        node = data.get(alias)
+        pr = node.get("pullRequest") if isinstance(node, dict) else None
+        if not isinstance(pr, dict):
+            mine = [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]]
+            kind = "pr_host_failed" if mine and not any(x.get("type") == "NOT_FOUND" for x in mine) else "pr_not_found"
+            errors.append({"repo": repo, "number": n, "kind": kind})
+            continue
+        commits = pr.get("commits")
+        nodes = commits.get("nodes") if isinstance(commits, dict) else None
+        commit = nodes[0].get("commit") if isinstance(nodes, list) and nodes and isinstance(nodes[0], dict) else None
+        roll = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
+        mer = str(pr.get("mergeable") or "").upper()
+        item = {"repo": repo, "number": n, "url": s_or_none(pr.get("url"), 1024), "title": title_or_none(pr.get("title")),
+                    "state": _enum(pr.get("state"), ("open", "closed", "merged")),
+                    "draft": pr.get("isDraft") if isinstance(pr.get("isDraft"), bool) else None,
+                    "mergeable": "mergeable" if mer == "MERGEABLE" else "conflicting" if mer == "CONFLICTING" else "unknown",
+                    "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
+                    "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)}
+        if watch:
+            item.update({"headSha": s_or_none(pr.get("headRefOid"), 64), "baseRef": s_or_none(pr.get("baseRefName"), 200),
+                         "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": watch_runs(roll)})
+        prs.append(item)
+    return {"action": "pr_batch", "prs": prs, "errors": errors}
+
+
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
-       "pr_repo": op_pr_repo, "pr_find": op_pr_find}
+       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch}

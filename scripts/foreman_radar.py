@@ -551,7 +551,10 @@ def build(data, now):
         if asks:
             n["asks"] = asks
         dots = []
-        for x in d.get("dots") or []:
+        # a live file nobody refreshes (heartbeat older than LOST_AFTER, the lost rule) or of a finished session keeps
+        # PR dots from before a merge: its dots are not trusted
+        dots_fresh = d.get("state") != "done" and live_glyph(d, now)[0] != "lost"
+        for x in (d.get("dots") or []) if dots_fresh else []:
             if not isinstance(x, dict) or len(dots) >= 14:
                 continue
             dn, label = x.get("n"), x.get("label")

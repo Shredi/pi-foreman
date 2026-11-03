@@ -21,7 +21,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CLOSE_TEXT, CLOSED_TEXT, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
+import { CLOSE_START_FAILED_REASON, CLOSE_TEXT, CLOSED_TEXT, PR_WATCHED_REASON, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
 import type { ManifestEntry } from "./manifest.ts";
@@ -272,6 +272,8 @@ export function refuseSlug(reason: string): string {
     [/stopped before it produced/, "stopped"],
     [/close\.from does not include/, "close-from"],
   ];
+  if (reason.endsWith(PR_WATCHED_REASON)) return "pr-watched";
+  if (reason.startsWith(CLOSE_START_FAILED_REASON)) return "not-started";
   return rules.find(([re]) => re.test(reason))?.[1] ?? "refused";
 }
 

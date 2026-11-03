@@ -95,7 +95,7 @@ import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
 import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack } from "./gitpack.ts";
 import type { PrOp } from "./gitpack.ts";
-import { PRWATCH_ENTRY, PrWatches, latestWatches, pollSnapshot } from "./prwatch.ts";
+import { PRWATCH_ENTRY, PrWatches, latestWatches, pollWatch, pollWatchBatch, watchIntervalMs } from "./prwatch.ts";
 import { PrHost, branchOf } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
@@ -168,7 +168,8 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAd
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { closeReportArgs, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { selfFinish, spawnDetached } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -701,13 +702,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prPack: false,
       prCtx: null,
       prWatches: new PrWatches({
-        poll: (n, until, cwd) => pollSnapshot((op, args) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, { ...args, number: n }), n, until),
+        poll: (key, cwd, seen) => pollWatch((op, args) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, args), key, seen),
+        pollMany: (items, cwd) => pollWatchBatch((op, args) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, args), items),
         cwd: () => s.prCtx?.cwd ?? s.cwd,
-        persist: (watches) => pi.appendEntry(PRWATCH_ENTRY, { v: 1, piSessionId: s.id, watches }),
+        child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
+        fresh: async (key, cwd) => {
+          const o = await prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, "pr_status", { number: key.n, ...(key.repo ? { repo: key.repo, ...(key.host ? { host: key.host } : {}) } : {}) });
+          const st = o.kind === "ran" ? o.result.state : null;
+          return st === "open" || st === "merged" || st === "closed" ? st : "unknown";
+        },
+        // A child foreman session (handoff dir set) whose PR was merged closes itself (close.ts `pr-merged`, selffinish.ts).
+        onMerged: (info) => {
+          const handoff = process.env[HANDOFF_DIR_ENV]?.trim();
+          const ctx = s.prCtx;
+          if (!handoff || !ctx) return;
+          const label = path.basename(handoff).replace(/^\d{8}-\d{6}-/, "");
+          const file = path.join(handoff, "result.md");
+          void close.start(ctx, { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, info.key.n), pr: { n: info.key.n, parent: parentIntercomId(process.env), label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } }).catch(() => undefined);
+        },
+        persist: (watches) => pi.appendEntry(PRWATCH_ENTRY, { v: 2, piSessionId: s.id, watches }),
         send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
         idle: () => s.prCtx?.isIdle() ?? true,
         trace: (r) => s.trace?.emit(r),
-        intervalMs: () => (typeof get(s.config.config, "tools.prWatchSeconds") === "number" ? (get(s.config.config, "tools.prWatchSeconds") as number) : 60) * 1000,
+        intervalMs: () => watchIntervalMs(get(s.config.config, "tools.prWatchSeconds")),
         now: () => Date.now(),
         changed: () => s.live?.touch(),
       }),
@@ -4128,7 +4145,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     activeRuns: (id) => sessions.get(id)?.activeRuns.size ?? 0,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: (kind, arg) => remoteReplier({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, env: process.env })(kind, arg), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, config: () => s.config.config, trace: (r) => s.trace?.emit(r), markCause: () => void (s.turn.cause = "close"), ceremonyNote: () => closeCeremonyNote(s), watchedPrs: () => s.prWatches.numbers(), refreshWatched: () => s.prWatches.refresh(), selfFinish: async (c, req) => {
+        const handoff = process.env[HANDOFF_DIR_ENV]?.trim() ?? "";
+        const py = pyPath(s);
+        const script = path.join(PKG_ROOT, "scripts", "foreman_close.py");
+        if (!handoff || !py || !req.pr) return { lines: ["cleanup: not started (no handoff dir or no usable Python)"] };
+        return selfFinish({ cwd: s.cwd, handoff, sessionId: s.id, stateDir: path.join(s.agentDir, "pi-foreman", "state"), trusted: safeTrusted(c), pid: process.pid, status: (n) => prRun(s, s.cwd, "pr_status", { number: n }), git: async (args) => (await git(s.cwd, args))?.trim() ?? null, closeScript: async (args) => (await runScript(s, "foreman_close.py", args, 120_000)).text, spawnCleanup: (args) => spawnDetached(py, ["-E", "-s", script, ...args], handoff) }, req.pr.n);
+      }, pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: (kind, arg) => remoteReplier({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir, cwd: s.cwd, env: process.env })(kind, arg), closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
     },
   });
 

@@ -372,7 +372,7 @@ class ConfigTest(unittest.TestCase):
         cfg["roles"]["extra"] = {"tools": ["read", "bash"]}
         self.assertEqual(fc.with_pr_pack(cfg, "extra", ["bash"]), ["bash"] + list(fc.PR_READ_TOOLS))
         cfg["roles"]["builder"]["tools"] += ["pr_create", "pr_watch"]
-        for t in ("pr_create", "pr_watch"):
+        for t in ("pr_create", "pr_watch", "pr_unwatch"):
             self.assertIn(t, fc.CHILD_DENIED_TOOLS)
             self.assertNotIn(t, fc.generate_subagents(cfg)["subagents"]["agentOverrides"]["builder"]["tools"])
             self.assertNotIn(t, fc.resolve_role(cfg, "builder", "p1")["tools"])

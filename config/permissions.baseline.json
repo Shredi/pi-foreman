@@ -21,6 +21,7 @@
     "pr_checks": "allow",
     "pr_comments": "allow",
     "pr_watch": "allow",
+    "pr_unwatch": "allow",
     "foreman_triage": "allow",
     "foreman_dialogs": "allow",
     "ask_user_question": "allow",

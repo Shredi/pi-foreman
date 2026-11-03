@@ -25,6 +25,12 @@ ROLE_PAIRS = [
     ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
     ("- Launch only the roles `explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`. Other agents are refused. `planner` only as a single launch, never in `tasks`, `chain` or `resume`; it writes only under `.workflow/`.",
      "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
+    # persistent PR watch: the watch is armed by pr_create and stays until merge or close; a child closes itself on merge
+    ("After you open a PR, call `pr_watch`; on its message fix failing checks or answer the comments, then get a reviewer PASS on the new head and ask for review again.",
+     "`pr_create` arms a watch that stays until the PR is merged or closed and reports each CI result, failing job, comment, review, conflict and missing CI. Act on each message; do not re-arm. You own the PR you opened: fix its CI yourself, then get a reviewer PASS on the new head and ask for review again. A child session reports to its parent only `PR #n green on <sha>, mergeable, ready to merge` or that it is stuck and why. A session cannot close while its PR is open and watched (`close refused: PR #n open and watched`: merge it, or `pr_unwatch`). A child session closes itself when its PR is merged: it writes `result.md` (PR number, merge commit, anything left open), and its worktree and local branch are removed after it exits."),
+    # fast merge policy
+    ("removed after it exits.\n",
+     "removed after it exits. Merge fast: merge a PR that is green and mergeable without merging the base into it or rerunning CI, even if the base moved. After each merge check the base's CI on the merge commit; if it is red, fix forward with a small PR. Merge the base into a branch only when the PR is CONFLICTING, or when the base fix is needed for that branch's own CI.\n"),
 ]
 
 

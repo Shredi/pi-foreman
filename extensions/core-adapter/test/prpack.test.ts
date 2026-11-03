@@ -93,7 +93,8 @@ test("prpack: pr_create order, gate refusal traced, push refusal, upstream stale
   const ok = setup({ gateOn: false });
   const r3 = await ok.call("pr_create", { title: "t", body: "b" });
   assert.equal(r3.details.decision, "ran");
-  assert.match(r3.content[0].text, /^pr_create: \{"action":"pr_create","number":5,"url":"https:\/\/h\.invalid\/pull\/5"\}$/);
+  assert.match(r3.content[0].text, /^pr_create: \{"action":"pr_create","number":5,"url":"https:\/\/h\.invalid\/pull\/5"\}\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\)$/);
+  assert.equal(ok.watches.size(), 1);
 });
 
 test("prpack: a child session refuses pr_create and pr_watch with the child text", async () => {
@@ -113,12 +114,23 @@ test("prHostLabel: templates, explicit, none", () => {
 
 test("prpack: two same-turn pr_watch calls for one PR give one watch and one refusal; shutdown clears", async () => {
   const h = setup();
-  const [a, b] = await Promise.all([h.call("pr_watch", { number: 7, until: "checks" }), h.call("pr_watch", { number: 7, until: "checks" })]);
+  const [a, b] = await Promise.all([h.call("pr_watch", { number: 7 }), h.call("pr_watch", { number: 7 })]);
   assert.deepEqual([a.details.decision, b.details.decision].sort(), ["duplicate", "watching"]);
   assert.equal(h.watches.size(), 1);
   h.watches.clear();
   assert.equal(h.watches.size(), 0);
-  assert.equal(h.watches.has(7), false);
+  assert.equal(h.watches.has({ host: "", repo: "", n: 7 }), false);
+});
+
+test("prpack: pr_watch refuses until and timeoutSeconds with bad_request; pr_unwatch ends the watch", async () => {
+  const h = setup();
+  for (const extra of [{ until: "checks" }, { timeoutSeconds: 60 }]) assert.equal((await h.call("pr_watch", { number: 7, ...extra })).details.decision, "bad_request");
+  assert.equal(h.watches.size(), 0);
+  assert.equal((await h.call("pr_watch", { number: 7 })).details.decision, "watching");
+  assert.equal(h.watches.size(), 1);
+  assert.equal((await h.call("pr_unwatch", { number: 7 })).details.decision, "ran");
+  assert.equal(h.watches.size(), 0);
+  assert.match((await h.call("pr_unwatch", { number: 7 })).content[0].text, /"unwatched":false/);
 });
 
 test("isOwnTool: only a pr_create from this extension's own path skips the hook gate", () => {

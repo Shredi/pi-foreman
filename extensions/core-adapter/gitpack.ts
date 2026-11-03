@@ -7,9 +7,10 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
-import { PrWatches, baselineOf, pollSnapshot } from "./prwatch.ts";
-import type { WatchUntil } from "./prwatch.ts";
-import { validHost, validRepo } from "./prhost.ts";
+import { PrWatches, countRuns, oneLine, pollWatch } from "./prwatch.ts";
+import type { WatchSnapshot } from "./prwatch.ts";
+import { keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
+import type { PrKey } from "./prhost.ts";
 import { prGateRefusal } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
@@ -19,7 +20,7 @@ import { resolveBin } from "./wait.ts";
 export const GIT_PACK = "git";
 export const PACK_ENV = "PI_FOREMAN_TOOL_PACKS";
 export const PR_PACK = "pr";
-export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find";
+export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch";
 export type GitReadOp = "status" | "log" | "diff_stat" | "branch_state";
 
 const str = (max: number, description: string) => ({ type: "string", minLength: 1, maxLength: max, description });
@@ -168,12 +169,12 @@ const where = {
   host: str(253, "Host name; only the current repository's host or a git remote's host."),
 };
 
-export const PR_TOOLS: { name: string; op: PrOp | "pr_watch"; label: string; description: string; parameters: Record<string, unknown>; foremanOnly: boolean }[] = [
+export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; label: string; description: string; parameters: Record<string, unknown>; foremanOnly: boolean }[] = [
   {
     name: "pr_create",
     op: "pr_create",
     label: "Create PR",
-    description: "Open a pull request for a branch that is already pushed (never pushes). Needs a reviewer PASS on the head. Answer: number, url, head, base.",
+    description: "Open a pull request for a branch that is already pushed (never pushes). Needs a reviewer PASS on the head. Arms a watch of the new PR in this session (see pr_watch). Answer: number, url, head, base.",
     parameters: {
       type: "object",
       properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown)." }, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." } },
@@ -210,12 +211,16 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch"; label: string; des
     name: "pr_watch",
     op: "pr_watch",
     label: "Watch PR",
-    description: "Watch a pull request in the background and get ONE pi-foreman-pr message when its checks finish or fail or a new comment lands (or on timeout). Returns at once; one watch per PR.",
-    parameters: {
-      type: "object",
-      properties: { number: num("PR number (default: the current branch's PR)."), until: { type: "string", enum: ["checks", "comment", "any"], description: "What ends the watch (default any)." }, timeoutSeconds: { type: "integer", minimum: 1, maximum: 3600, description: "Give up after this many seconds (default 3600)." } },
-      additionalProperties: false,
-    },
+    description: "Watch a pull request in the background until it is merged or closed (pr_create arms this for the PR it opens; use this for one opened elsewhere). Each tick that finds something new sends a pi-foreman-pr message (a failed check, the CI result once all checks settled, a new comment or review, a mergeable change, no CI, merged, closed); the watch stays armed, do not re-arm. Returns at once; one watch per PR; pr_unwatch ends it.",
+    parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR).") }, additionalProperties: false },
+    foremanOnly: true,
+  },
+  {
+    name: "pr_unwatch",
+    op: "pr_unwatch",
+    label: "Unwatch PR",
+    description: "End the watch of a pull request without a message.",
+    parameters: { type: "object", properties: { number: num("PR number."), repo: { type: "string", description: "Repository owner/name (default: the current repository's watch if there is one, else every watch with that number)." } }, required: ["number"], additionalProperties: false },
     foremanOnly: true,
   },
 ];
@@ -267,12 +272,13 @@ export interface PrPackSession {
   headless?(): Promise<string | null>;
   watches: PrWatches;
   trace(rec: Record<string, unknown>): void;
-  /** The host rule for `host` arguments (prhost.ts). */
+  /** The host rule for `host` arguments and the repository of a checkout (prhost.ts). */
   tracker?: PrTracker;
 }
 
 export interface PrTracker {
   hostAllowed(host: string, cwd: string): Promise<boolean>;
+  repoFor?(cwd: string): Promise<{ host: string; repo: string } | null>;
 }
 
 export interface PrPackDeps {
@@ -286,8 +292,6 @@ export interface PrPackDeps {
   /** The git guard's verdict on a bare `git push` of the current branch: a reason to refuse, else null. */
   pushRefusal(ctx: ExtensionContext): Promise<string | null>;
 }
-
-const DEFAULT_WATCH_SECONDS = 3600;
 
 /**
  * True when the registered tool `name` comes from this extension itself: its `sourceInfo.path`
@@ -350,7 +354,18 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           const early = await hostRule(s, ctx, t.name, params);
           if (early) return early;
         }
-        if (t.op === "pr_watch") return watch(s, params, run, report, t.name);
+        if (t.op === "pr_watch") return watch(s, ctx, params, run, report, t.name);
+        if (t.op === "pr_unwatch") {
+          if (!validNumber(params.number)) return failure(`${t.name}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
+          if (params.repo !== undefined && !validRepo(params.repo)) return failure(`${t.name}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
+          let ended: boolean;
+          if (typeof params.repo === "string") ended = s.watches.unwatch(params.number, params.repo) > 0;
+          else {
+            const cur = await s.tracker?.repoFor?.(ctx.cwd).catch(() => null);
+            ended = (cur ? s.watches.unwatch(params.number, cur.repo) : 0) > 0 || s.watches.unwatch(params.number) > 0;
+          }
+          return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}` }], details: { decision: "ran" } };
+        }
         if (t.op === "pr_create") {
           const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head } });
           if (refusal) {
@@ -360,7 +375,16 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           const push = await deps.pushRefusal(ctx);
           if (push) return failure(`pr_create: the git guard would refuse pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
-        return report(await run(t.op as PrOp, params));
+        const outcome = await run(t.op as PrOp, params);
+        const res = report(outcome);
+        if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
+        // the session that opened the PR watches it; a failed arm never fails the create
+        const armed = await armWatch(s, ctx, run, outcome.result.number, outcome.result.url).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        if ("duplicate" in armed) return res;
+        const r = res as { content: { type: "text"; text: string }[] };
+        if ("error" in armed) return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };
+        const note = "retry" in armed ? `; the first poll failed (${oneLine(armed.retry)}), it will retry` : "";
+        return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${note}` }] };
       },
     } as never);
   }
@@ -379,32 +403,61 @@ async function hostRule(s: PrPackSession, ctx: ExtensionContext, tool: string, p
   return undefined;
 }
 
-async function watch(s: PrPackSession, params: Record<string, unknown>, run: (op: PrOp, args: Record<string, unknown>) => Promise<SafeOpOutcome>, report: (o: SafeOpOutcome) => unknown, tool: string) {
-  const until = (params.until ?? "any") as WatchUntil;
-  const seconds = params.timeoutSeconds === undefined ? DEFAULT_WATCH_SECONDS : params.timeoutSeconds;
-  const intOk = (v: unknown, max: number): v is number => typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= max;
-  if (!["checks", "comment", "any"].includes(until) || !intOk(seconds, 3600) || (params.number !== undefined && !intOk(params.number, 1e9))) return failure(`${tool}: bad arguments (number 1..1000000000, until checks|comment|any, timeoutSeconds 1..3600); nothing was done.`, { decision: "bad_request" });
+type PrRun = (op: PrOp, args: Record<string, unknown>) => Promise<SafeOpOutcome>;
+
+/** The watch key of PR `n`: the repository of its URL, else the current one (pr_repo), else number-only (the per-PR ops pick the host from the directory). */
+async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown): Promise<PrKey> {
+  const k = parsePrUrl(url);
+  if (k && k.n === n) return k;
+  const at = await s.tracker?.repoFor?.(ctx.cwd).catch(() => null);
+  return at ? { host: at.host, repo: at.repo, n } : { host: "", repo: "", n };
+}
+
+/** Reserve the slot, take the baseline poll and start the watch; `snap` is that first poll. */
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, run: PrRun, n: number, url: unknown): Promise<{ key: PrKey; snap: WatchSnapshot } | { key: PrKey; retry: string } | { duplicate: true } | { error: string }> {
+  const key = await watchKey(s, ctx, n, url);
+  if (!s.watches.reserve(key)) return { duplicate: true };
+  try {
+    const p = await pollWatch(run, key, { updatedAt: "" });
+    if ("error" in p) {
+      s.watches.startPending(key, p.error);
+      s.trace({ event: "pr_watch", outcome: "started" });
+      return { key, retry: p.error };
+    }
+    if (!("snap" in p)) {
+      s.watches.release(key);
+      return { error: "the pull request was not found" };
+    }
+    if (p.snap.state !== "open") {
+      s.watches.release(key);
+      return { error: `the pull request is ${p.snap.state}; there is nothing to watch` };
+    }
+    s.watches.start(key, p.snap);
+    s.trace({ event: "pr_watch", outcome: "started" });
+    return { key, snap: p.snap };
+  } catch (err) {
+    s.watches.release(key);
+    throw err;
+  }
+}
+
+async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<string, unknown>, run: PrRun, report: (o: SafeOpOutcome) => unknown, tool: string) {
+  if (params.until !== undefined || params.timeoutSeconds !== undefined) return failure(`${tool}: until and timeoutSeconds are gone: a watch lasts until the PR is merged or closed (pr_unwatch ends it); nothing was done.`, { decision: "bad_request" });
+  if (params.number !== undefined && !validNumber(params.number)) return failure(`${tool}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
   let n = params.number as number | undefined;
+  let url: unknown;
   if (n === undefined) {
     const st = await run("pr_status", {});
     if (st.kind !== "ran") return report(st);
     n = typeof st.result.number === "number" ? st.result.number : undefined;
+    url = st.result.url;
     if (n === undefined) return failure(`${tool}: the host gave no PR number; nothing was done.`, { decision: "error" });
   }
-  if (!s.watches.reserve(n)) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate" });
-  let snap: Awaited<ReturnType<typeof pollSnapshot>>;
-  try {
-    snap = await pollSnapshot(run, n, until);
-  } catch (err) {
-    s.watches.release(n);
-    throw err;
-  }
-  if ("error" in snap) {
-    s.watches.release(n);
-    return failure(`${tool}: ${snap.error}`, { decision: "error" });
-  }
-  s.watches.start(n, until, baselineOf(snap), seconds * 1000);
-  s.trace({ event: "pr_watch", outcome: "started" });
-  const interval = s.watches.intervalSeconds();
-  return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, until, timeoutSeconds: seconds, intervalSeconds: interval })}` }], details: { decision: "watching", number: n } };
+  const armed = await armWatch(s, ctx, run, n, url);
+  if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate" });
+  if ("error" in armed) return failure(`${tool}: ${armed.error}`, { decision: "error" });
+  if ("retry" in armed) return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() })}; armed, but the first poll failed (${oneLine(armed.retry)}); it will retry` }], details: { decision: "watching", number: n } };
+  const { snap } = armed;
+  const state = { head: snap.head.slice(0, 7), checks: countRuns(snap.runs), mergeable: snap.mergeable };
+  return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, intervalSeconds: s.watches.intervalSeconds(), ...state })}` }], details: { decision: "watching", number: n } };
 }

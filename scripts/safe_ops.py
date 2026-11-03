@@ -5,8 +5,8 @@ CLI: one JSON request on stdin, one JSON answer on stdout, exit 0.
 
     request  {"op": "worktree_remove" | "move" | "copy" | "status" | "log" | "diff_stat" |
               "branch_state" (the last four are read-only, capped to 200 entries / 16 KB),
-              "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find"
-              (scripts/pr_ops.py, run a host CLI), "args": {...}, "cwd": "<dir>",
+              "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" |
+              "pr_batch" (scripts/pr_ops.py, run a host CLI; pr_batch needs no work tree, `cwd` only the process cwd), "args": {...}, "cwd": "<dir>",
               "config": {"copyMaxBytes": ..., "worktreeDisposable": [...], "baseBranch": ...}}
     answer   {"ok": true, "action": "<what was done>", ...}
           or {"ok": false, "precondition": "<name>", "message": "precondition failed: <name> (<detail>)"}
@@ -440,10 +440,13 @@ def resolve_base(cwd, configured):
     raise Precondition("base_branch_unknown", "no origin HEAD, main or master; set safety.ops.baseBranch")
 
 
-def check_worktree(cwd, raw, cfg):
+def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     """Every worktree_remove precondition for `raw` (relative to `cwd`); raises Precondition.
 
     `cfg` is an ops_config() result. Returns {target, main_dir, branch, head} for remove_worktree.
+    `verified_merged`: the caller verified (host PR MERGED, head ref and tip equal) that HEAD is merged, so
+    `not_merged` does not apply (a squash merge leaves the tip outside the base); every other check stays.
+    `top_level`: names of ignored paths that count as disposable only at the worktree's top level (not as any component).
     """
     workspace_root(cwd)
     if not isinstance(raw, str) or not raw.strip() or "\0" in raw:
@@ -470,7 +473,7 @@ def check_worktree(cwd, raw, cfg):
     if code != 0:
         raise Precondition("worktree_dirty", "git status --ignored failed")
     for rec in out.split("\0"):
-        if rec.startswith("!! ") and not disposable(rec[3:], cfg["worktreeDisposable"]):
+        if rec.startswith("!! ") and not disposable(rec[3:], cfg["worktreeDisposable"]) and not (("/" in rec[3:]) and rec[3:].split("/", 1)[0] in top_level):
             raise Precondition("ignored_files", "ignored file outside safety.ops.worktreeDisposable: %s" % rec[3:])
 
     code, head, _ = git(["rev-parse", "--verify", "HEAD"], target)
@@ -486,7 +489,7 @@ def check_worktree(cwd, raw, cfg):
         code, up, _ = git(["rev-parse", "--verify", "--quiet", "--symbolic-full-name", branch + "@{upstream}"], main_dir)
         if code == 0 and up.strip():
             merged = git(["merge-base", "--is-ancestor", head, up.strip()], main_dir)[0] == 0
-    if not merged:
+    if not merged and not verified_merged:
         raise Precondition("not_merged", "HEAD is neither merged into %s nor contained in its pushed upstream" % base_ref)
 
     code, out, _ = git(["stash", "list", "-z", "--format=%H %P%x09%gs"], main_dir)
@@ -502,8 +505,10 @@ def check_worktree(cwd, raw, cfg):
     return {"target": target, "main_dir": main_dir, "branch": branch, "head": head}
 
 
-def remove_worktree(chk):
-    """`git worktree remove` (never --force) and `branch -d` (never -D) after check_worktree."""
+def remove_worktree(chk, force_branch=False, verified_sha=None):
+    """`git worktree remove` (never --force) and `branch -d` after check_worktree; `force_branch` (a verified-merged
+    squash merge) uses `branch -D` for exactly that branch, or with `verified_sha` `update-ref -d` against that sha
+    (atomic: a branch whose tip moved is kept)."""
     target, main_dir, branch = chk["target"], chk["main_dir"], chk["branch"]
     git(["worktree", "remove", target], main_dir, check=True)  # never --force
     try:
@@ -513,7 +518,12 @@ def remove_worktree(chk):
         pass
     result = {"action": "worktree_remove", "path": target, "branch": branch, "branchDeleted": False}
     if branch:
-        code, _, err = git(["branch", "-d", branch], main_dir)  # never -D
+        if verified_sha:
+            code, _, err = git(["update-ref", "-d", "refs/heads/" + branch, verified_sha], main_dir)
+            if code == 0:
+                git(["config", "--remove-section", "branch." + branch], main_dir)  # best effort, as branch -D does
+        else:
+            code, _, err = git(["branch", "-D" if force_branch else "-d", branch], main_dir)
         result["branchDeleted"] = code == 0
         if code != 0:
             result["branchMessage"] = err.strip()
@@ -764,7 +774,7 @@ OPS = {"move": op_move, "copy": op_copy, "worktree_remove": op_worktree_remove, 
        "log": op_log, "diff_stat": op_diff_stat, "branch_state": op_branch_state}
 
 
-PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find")
+PR_OPS = ("pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch")
 
 
 def handle(req):

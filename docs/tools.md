@@ -73,8 +73,8 @@ ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role
 
 | Event | Fields | Meaning |
 |---|---|---|
-| `tool_pack` | `pack` (`git`), `op` | one pack call while the pack is on; `op` is `status`, `log`, `diff_stat`, `branch_state`, `move`, `copy` or `worktree_remove`, or a PR tool name (`pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`). A call the drift preflight blocked is not counted. |
-| `pr_watch` | `outcome` (`started`, `checks`, `comment`, `timeout`, `error` or `lost`) | a watch started or ended (`lost`: it could not be resumed after a restart); the PR number is never traced |
+| `tool_pack` | `pack` (`git`), `op` | one pack call while the pack is on; `op` is `status`, `log`, `diff_stat`, `branch_state`, `move`, `copy` or `worktree_remove`, or a PR tool name (`pr_create`, `pr_status`, `pr_checks`, `pr_comments`, `pr_watch`, `pr_unwatch`). A call the drift preflight blocked is not counted. |
+| `pr_watch` | `outcome` (`started`, `event`, `merged`, `closed`, `gone`, `unwatched`, `polling_failed`, `recovered` or `lost`) | a watch started, sent a message or ended (`lost`: it could not be resumed after a restart); the PR number is never traced |
 
 `foreman retro` prints `git: pack N calls (status a, ...) vs bash git M` after the trace lines: pack calls from the
 trace, bash git calls (`git` as the command word) from the session. The JSON report has `trace.git_pack` and
@@ -84,8 +84,8 @@ registered in the session, so there is no registration line or registration trac
 
 ## PR tools
 
-Five host-neutral tools for pull requests (merge requests on GitLab): `pr_create`, `pr_status`, `pr_checks`,
-`pr_comments` and `pr_watch`. They show nothing in Pi: the herdr-app mod is the only PR and run display (see
+Six host-neutral tools for pull requests (merge requests on GitLab): `pr_create`, `pr_status`, `pr_checks`,
+`pr_comments`, `pr_watch` and `pr_unwatch`. They show nothing in Pi: the herdr-app mod is the only PR and run display (see
 [herdr](herdr.md#open-prs)); without it, use these tools and `foreman radar --json`. They sit in the git pack's trace family (`tool_pack`, `pack: git`) but are switched
 independently of `tools.git`. The generic layer never hardcodes a host: `gh` and `glab` are two built-in command
 sets, and a templates object brings any other CLI. Nothing here merges a PR, fixes CI or pushes a branch.
@@ -94,7 +94,7 @@ sets, and a templates object brings any other CLI. Nothing here merges a PR, fix
 |---|---|---|
 | `tools.pr` | `true` | tighten-only (only `false` is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
-| `tools.prWatchSeconds` | `60` | any layer (integer 5..3600, seconds between two `pr_watch` polls) |
+| `tools.prWatchSeconds` | `60` | any layer (integer 5..3600, seconds between two `pr_watch` polls; floored to 30 at runtime) |
 
 Pi tracks no PRs for display any more: the PR registration tools, the PR list command, and the display, watch and pattern keys of the old tracker are gone. An old key in a config file warns as unknown.
 
@@ -105,18 +105,19 @@ call then refuses with `pr_off`. `/foreman doctor` prints one `PR tools:` line w
 
 ### Ops
 
-`pr_create` and `pr_watch` act and are for the foreman only: they are not registered in
-children and are refused if a child calls them (`[pr_refused:child]`; both are in `CHILD_DENIED_TOOLS`). Children
+`pr_create`, `pr_watch` and `pr_unwatch` act and are for the foreman only: they are not registered in
+children and are refused if a child calls them (`[pr_refused:child]`; all three are in `CHILD_DENIED_TOOLS`). Children
 whose role has bash get the three read tools. Unknown keys give
 `bad_request`; a string argument with a leading `-` is refused before it reaches the host.
 
 | Tool | Args | Answer |
 |---|---|---|
 | `pr_create` | `title` (1..256 chars, one line), `body` (up to 64 KiB) required; `base`, `head` (branch names), `draft` | `number`, `url`, `head`, `base` (null when the host picks the default) |
-| `pr_status` | `number` (default: the current branch's PR), `repo`, `host` | `number`, `url`, `title`, `state` (`open`, `closed`, `merged`), `draft`, `mergeable` (`mergeable`, `conflicting`, `unknown`), `reviewDecision` (`approved`, `changes_requested`, `review_required` or null), `headSha`, `baseRef`, `updatedAt` |
+| `pr_status` | `number` (default: the current branch's PR), `repo`, `host` | `number`, `url`, `title`, `state` (`open`, `closed`, `merged`), `draft`, `mergeable` (`mergeable`, `conflicting`, `unknown`), `reviewDecision` (`approved`, `changes_requested`, `review_required` or null), `headSha`, `headRefName`, `baseRef`, `updatedAt` |
 | `pr_checks` | `number`, `repo`, `host`, `required` (true = only the checks the branch protection requires; gh `--required`, none reported is an empty list) | `required`, `pending`, `failed`, `passed` (each entry `name`, `status`, `conclusion`, `url`, `startedAt`, `completedAt`), `summary`, `truncated`, `total` |
 | `pr_comments` | `number`, `repo`, `host`, `since` (ISO 8601 timestamp with zone; keeps newer comments) | `comments [{id, kind, author, createdAt, body, bodyCut?, path?, line?, resolved?, state?}]`, `truncated`, `total`; `kind` is `issue`, `review` (inline) or `review_summary` |
-| `pr_watch` | `number`, `until` (`checks`, `comment` or `any`, default `any`), `timeoutSeconds` (1..3600, default 3600) | `watching`, `number`, `until`, `timeoutSeconds`, `intervalSeconds`; see [Watch](#watch) |
+| `pr_watch` | `number` (default: the current branch's PR); `until` and `timeoutSeconds` are gone and refused with `bad_request` | `watching`, `number`, `intervalSeconds`, `head`, `checks`, `mergeable`; when the first poll failed, the text `armed, but the first poll failed (<reason>); it will retry` instead of the state; see [Watch](#watch) |
+| `pr_unwatch` | `number` required; `repo` (`owner/name`; without it the current repository's watch of that number ends if there is one, else every watch of that number) | `number`, `unwatched` (false when no watch of that number existed); ends the watch without a message |
 
 `repo` and `host` select a PR of another repository or host (see [Identity](#identity)). `title` and every check name
 are stripped of control and format characters in Python and cut to 200 characters. `host` is accepted only when it is the current
@@ -142,7 +143,7 @@ branch.
 Other failures: `pr_not_found` (no PR for the branch or number), `pr_auth_missing`, `pr_host_failed` (any other host
 error, with the redacted first stderr line), `timeout` (the host did not answer within 30 s).
 
-In the permission baseline `pr_status`, `pr_checks`, `pr_comments` and `pr_watch` are allowed; `pr_create` is not in
+In the permission baseline `pr_status`, `pr_checks`, `pr_comments`, `pr_watch` and `pr_unwatch` are allowed; `pr_create` is not in
 the allow list and goes through the gates above.
 
 ### Host templates
@@ -185,23 +186,46 @@ a missing login gives `pr_auth_missing` with the command to run yourself.
 
 ### Watch
 
-`pr_watch` starts a background poll of `pr_checks` and/or `pr_comments` (per `until`) every `tools.prWatchSeconds`
-seconds, after taking a baseline. It ends at the first change (checks finished or a new failure; a new comment), at
-`timeoutSeconds`, or after three polls in a row that failed. Each end sends exactly one `pi-foreman-pr` message with
-the summary, up to 10 failed checks and up to 10 new comments (cut to 4 KB), and clears the watch. It starts a turn
-when the foreman is idle and follows up when it is busy; the message is data, not an instruction. One watch per PR and
-session (`duplicate` otherwise). Active watches are stored in the session file (the `pi-foreman-prwatch` entry: PR number, `until`, baseline, deadline, working directory) and survive a restart of the same Pi session (`pi --continue`, `--session <id>`, `/reload`). At session start a watch with time left resumes with the remaining time and polls once at once, so a change that happened while the session was down (a failed check, a new comment) sends its message right away. A watch whose deadline passed, or whose stored record is unreadable, sends one `pi-foreman-pr` message `watch lost on restart: <reason>` (trace outcome `lost`); check the PR with `pr_checks`. A fork or a copied session file has another session id and starts with no watches.
+`pr_create` arms a watch of the PR it opened; `pr_watch` arms one for a PR opened elsewhere. The watch is persistent: it polls every
+`tools.prWatchSeconds` seconds (floor 30) until the PR is merged or closed, or `pr_unwatch` ends it, and never ends on a
+push, a rerun, a comment or a failed poll. It needs no model turn to keep running. If the first poll fails (a host error), the watch is
+armed anyway and retries with backoff; the first good poll baselines comments, reviews and a mergeable state (old ones are not sent; a first
+`CONFLICTING` is news and is sent, with the child's merge line) but reports CI like any other poll, so a failed check or a settled result is sent once. If the PR is not found, or is not open, on the
+first poll nothing is armed (`pr_watch` answers with the error; `pr_create` appends `pr_watch: not armed (<reason>)` to its answer).
+After a baseline poll each tick that finds
+something new sends one `pi-foreman-pr` message that folds all events of the tick: a failed check (a fresh failed run id, so a
+rerun or a new head reports again, while other checks still run), the CI result once every check settled (`checks finished:
+pass|fail`, once per head and result), a new comment or review, a mergeable change (`UNKNOWN` is ignored; with no state known yet, a first `CONFLICTING` is sent and a first `MERGEABLE` is only the baseline), no checks for two
+ticks, and `merged` or `closed` (or `not found`), which end the watch with a message. The message has the head, the check counts,
+the mergeable state, up to 10 failed checks and up to 10 new comments (cut to 4 KB). It starts a turn when the foreman is idle and
+follows up when it is busy; the message is data, not an instruction. One watch per PR and session (`duplicate` otherwise).
+The parent does not watch child PRs. A failing poll backs off (the delay starts at the poll interval, at least 30 s, and doubles to 10 min); the third failure in a row sends one
+`polling fails` notice and the recovery one `polling recovered` line.
+
+On gh with a known repository the poll is one `pr_batch` with the watch fields (head, base, `updatedAt`, one run per check with its
+id and link); comments are fetched only when `updatedAt` moved. Other hosts use `pr_status` and `pr_checks` and identify a rerun by
+name and start time.
+
+In a child session (`PI_FOREMAN_HANDOFF_DIR` set) the message also carries the instruction lines: `report to the parent: PR #n
+green on <sha>, mergeable, ready to merge` once per head when CI passed and the PR is mergeable; on a mergeable conflict `merge
+<base> into the branch, then push via the parent`; on a PR closed unmerged `report to the parent: PR #n closed unmerged`.
+
+A session cannot close while it holds a watch on an open PR: the close is refused with `PR #n open and watched (merge it, or
+pr_unwatch)` after one fresh `pr_status` per watched PR (a PR merged since the last tick does not block). In a child session the
+watch's `merged` message starts the child's own close and cleanup (see [close](close.md#self-finish-on-merge)).
+
+Active watches are stored in the session file (the `pi-foreman-prwatch` entry, version 2: key host/repo/number, working directory, last seen state) and survive a restart of the same Pi session (`pi --continue`, `--session <id>`, `/reload`). At session start each watch resumes and polls once at once, so a change that happened while the session was down sends its message right away. A version 1 entry converts to a number-only key. A stored record that is unreadable sends one `pi-foreman-pr` message `watch lost on restart: <reason>` (trace outcome `lost`); check the PR with `pr_checks`. A fork or a copied session file has another session id and starts with no watches.
 
 ### Identity
 
 A PR is identified by host, owner, repo and number. Every host answer that carries a `url` is keyed by that URL
 (`https://<host>/<owner>/<name>/pull/<n>`, or `/-/merge_requests/<n>` on GitLab). This is the primary rule: gh resolves a number
 against the repository it considers current, which in a fork setup is the upstream repo and not `origin`. The `pr_watch`
-numbers are keyed by the URL of their first `pr_status` answer.
+numbers are keyed by the URL of their first `pr_status` answer. A `pr_watch` key is the repository of the PR URL (`pr_create`) or the current repository; a number-only key from an old entry falls back to the current repository.
 
 ### Host ops
 
-These ops serve the repo lookup and the pushed-branch notice. They are not model tools; they run through
+These ops serve the repo lookup, the watch poll and the pushed-branch notice. They are not model tools; they run through
 `safe_ops.py` like the others, with the same 30 s timeout, caps and redaction. All validate their arguments in Python
 (unknown keys give `bad_request`; a value that could pass as an option is refused).
 
@@ -209,7 +233,9 @@ These ops serve the repo lookup and the pushed-branch notice. They are not model
 |---|---|---|
 | `pr_repo` | none | `host`, `repo`, `url` of the host-resolved current repo (gh `repo view`, glab `repo view`, templates: derived from the branch's remote, else `origin`) |
 | `pr_find` | exactly one of `head` (a branch name) or `author` (`@me`, or a login of 1..39 characters with an optional `[bot]` suffix); `state` `open` (default) or `all` | `prs [{number, url, state, title, headRefName, author}]`, `truncated`, `total`; 50 entries and 16 KB at most |
-Only these two ops remain. `pr_find` strips control and format characters from titles; URLs are kept only when they are plain `https://` addresses.
+| `pr_batch` | `prs` (at most 50 entries `{repo, number}`), optional `host`, `watch` (true adds head, base, `updatedAt` and one run per check) | one answer per PR (state, mergeability, review and checks) from one GraphQL call; gh only (other hosts answer `pr_unsupported`); the watch polls through it |
+
+Only `pr_repo`, `pr_find` and `pr_batch` exist. `pr_find` strips control and format characters from titles; URLs are kept only when they are plain `https://` addresses.
 
 ### Pushed-branch notice
 
@@ -218,6 +244,10 @@ When a session ends (close, or the finish gate of a triaged session) after pushi
 ### Display
 
 Pi shows no PR or run list: no widget above the editor, and the footer keeps model, branch, context, cache, time and cost only. The herdr-app mod is the only PR and run display (see [herdr](herdr.md#open-prs)); its data is the shared open-PRs feed (`radar.openPrs`, on by default, `foreman radar --json`). The feed is GitHub only: GitLab and template hosts get no PR display, only the PR tools above.
+
+### Call budget
+
+A watch costs one `pr_batch` per tick on gh with a known repository (plus `pr_comments` when `updatedAt` moved) and one `pr_repo` per session and directory; watches of one host and directory are polled in `pr_batch` calls of up to 50 PRs per tick. On glab and templates each watched PR costs two calls (`pr_status`, `pr_checks`). A GraphQL `RATE_LIMITED` error or a 403 or 429 doubles the interval through the backoff.
 
 ### Safety notes
 
@@ -228,7 +258,7 @@ Pi shows no PR or run list: no widget above the editor, and the footer keeps mod
 
 - gh gives no resolved state for review comments; glab gives no review summaries.
 - The open-PRs feed (the only PR display, in the herdr-app mod) is GitHub only: it runs through `gh` against the CLI's default host, so GitLab users get no PR display. `pr_status` and `pr_checks` stay for them, and for everyone without herdr-app, together with `foreman radar --json`.
-- The CI detail hook is not shipped; GitHub check names are the detail. Use `tools.prHost` templates (`find`, `search`) to adapt another host.
+- The CI detail hook is not shipped; GitHub check names are the detail. Use `tools.prHost` templates (`find`) to adapt another host.
 - Minimum versions: gh 2.40 (`pr checks --json`), glab 1.36 (`mr view --output json`, `api --input`); older ones fail
   with `pr_host_failed`. The gh and glab commands follow their public docs and have not been run against a real host.
 - No merge op, no auto-fix of CI, no review-bot handling.

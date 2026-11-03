@@ -59,14 +59,16 @@ function normDots(raw, repoUrl) {
   const byN = new Map();
   if (!Array.isArray(raw)) return [];
   for (const d of raw) {
-    if (!isObj(d) || d.src !== "pr" || int(d.n) === null || !(d.state in CHECK)) continue;
-    let pr = byN.get(d.n);
+    if (!isObj(d) || d.src !== "pr" || int(d.n) === null || !Object.hasOwn(CHECK, d.state)) continue;
+    const id = `${cleanRepoUrl(d.repo) || repoUrl}#${d.n}`; // one PR per repository and number
+    let pr = byN.get(id);
     if (!pr) {
       pr = { number: d.n, checks: [], jobs: [], url: "", repo: "", ...prExtras(d) };
-      byN.set(d.n, pr);
+      byN.set(id, pr);
     }
-    pr.checks.push(CHECK[d.state]);
-    pr.jobs.push({ name: str(d.name), state: CHECK[d.state] });
+    const state = CHECK[d.state];
+    pr.checks.push(state);
+    pr.jobs.push({ name: str(d.name), state });
     if (!pr.url && isSafeHttpsUrl(d.url)) pr.url = d.url;
     if (!pr.repo) pr.repo = cleanRepoUrl(d.repo) || repoUrl;
   }
@@ -390,15 +392,27 @@ export function prState(pr) {
 
 const urgency = (pr) => ({ fail: 0, pending: 1 })[prState(pr)] ?? 2;
 
+/** The open PRs of a list, each once (its URL, else repo and number): a merged or closed one and a repeat are dropped. */
+function openOnce(prs) {
+  const seen = new Set();
+  return (Array.isArray(prs) ? prs : []).filter((p) => {
+    if (!isObj(p) || p.state === "merged" || p.state === "closed") return false;
+    const id = str(p.url) || `${str(p.repo)}#${p.number}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
 /** Failing first, then pending, then green; newest (highest number) first inside each. */
 export function sortPrs(prs) {
-  return (Array.isArray(prs) ? prs.filter(isObj) : [])
+  return openOnce(prs)
     .slice().sort((a, b) => urgency(a) - urgency(b) || num(b.number) - num(a.number));
 }
 
 /** "N PRs · k failing · m pending", "N PRs · all green" (every PR ok), or just "N PRs" (no CI data); "" for none. Merged and closed PRs are not counted. */
 export function prSummary(prs) {
-  const list = (Array.isArray(prs) ? prs.filter(isObj) : []).filter((p) => p.state !== "merged" && p.state !== "closed");
+  const list = openOnce(prs);
   if (!list.length) return "";
   const noun = `${list.length} PR${list.length === 1 ? "" : "s"}`;
   if (list.every((p) => prState(p) === "none")) return noun;
