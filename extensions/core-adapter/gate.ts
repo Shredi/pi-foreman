@@ -214,7 +214,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     if (cmd !== null) {
       // a child's $FOREMAN_SCRATCH is its own scratch dir (set in its process env); without the binding the variable would make every scratch write opaque
       const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0] } } : {};
-      const segs = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar });
+      const segs = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar, ...(roots?.child ? { loopVars: true } : {}) });
       const h = lineFloors(cmd, segs, env);
       if (h && h.kind === "deny") return decided(blocked(h));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
