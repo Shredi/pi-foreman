@@ -149,13 +149,15 @@ function gitAlias(c: EffectCtx, part: string): boolean {
 const hasGitPart = (c: EffectCtx, rel: string): boolean => rel.split(/[\\/]/).some((p) => gitAlias(c, p));
 
 /** The deepest existing ancestor of `abs` (itself included) resolves inside realpath(base); with `noGit` not under its `.git` either. */
-function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, noGit = false): boolean {
+function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, noGit = false, link = false): boolean {
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
   const rb = real(base);
   if (!rb) return false;
-  let e = abs;
+  // a link is judged by its directory (`realpath(dirname) + name`): the name itself is never resolved
+  let e = link ? x.dirname(abs) : abs;
+  if (link && e === abs) return false;
   while (!exists(e)) {
     if (!within(c, base, e, true)) return false;
     e = x.dirname(e);
@@ -163,7 +165,7 @@ function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, no
   const r = real(e);
   if (!r) return false;
   if (noGit && hasGitPart(c, x.relative(rb, r))) return false;
-  return within(c, rb, r, strict && e === abs);
+  return within(c, rb, r, strict && e === abs && !link);
 }
 
 /** `word` as an absolute path against `cwd`, or null for `~`, `..`, drive-relative or an unknown cwd. */
@@ -180,7 +182,7 @@ function bases(c: EffectCtx, write: boolean): string[] {
 }
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
-export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[]): boolean {
+export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[], link = false): boolean {
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
@@ -193,7 +195,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
     if (base === null || p === null) continue;
     if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
     if (write && c.extraWriteGuard && (c.extraWriteRoots ?? []).includes(b) && c.extraWriteGuard(p)) return false;
-    if (realInside(c, base, p, write, write)) return true;
+    if (realInside(c, base, p, write, write, link)) return true;
   }
   return false;
 }
@@ -424,7 +426,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
       }
     }
   }
-  return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where)) ? "write-in" : "write-out";
+  return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);

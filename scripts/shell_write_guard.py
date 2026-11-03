@@ -693,12 +693,16 @@ class Scope(object):
         self.allowed = [os.path.normpath(os.path.join(self.ws_real, *parts))
                         for parts in map(_allowed_rel, dirs) if parts]
 
-    def project_path(self, abs_path):
+    def project_path(self, abs_path, link=False):
+        """`link`: the operand is judged on the link itself (realpath of its directory + its name), as plain `rm link` removes the link."""
         if abs_path is None:
             return True
         if _drive_path(abs_path) and os.name != "nt":
             return False
-        real = os.path.realpath(abs_path)
+        if link:
+            real = os.path.join(os.path.realpath(os.path.dirname(abs_path)), os.path.basename(abs_path))
+        else:
+            real = os.path.realpath(abs_path)
         if self.scratch and _inside(self.scratch, real) and _fold(os.path.normpath(real)) != _fold(self.scratch):
             return False
         for owned in self.allow_abs:
@@ -711,7 +715,7 @@ class Scope(object):
                 return False
         return True
 
-    def target(self, word, cwd):
+    def target(self, word, cwd, link=False):
         """True when writing to `word` (a Word or str) counts as a project write."""
         if isinstance(word, Word):
             if word.unresolvable:
@@ -725,7 +729,7 @@ class Scope(object):
             return False
         if text == "":
             return False
-        return self.project_path(absolute(text, cwd, lexical=False))
+        return self.project_path(absolute(text, cwd, lexical=False), link)
 
     def dir_in_ws(self, cwd):
         """A tool that writes below its working directory (git, patch): any place in the workspace."""
@@ -750,8 +754,8 @@ def _show(word):
     return str(word)
 
 
-def _hit(scope, kind, word, cwd):
-    if scope.target(word, cwd):
+def _hit(scope, kind, word, cwd, link=False):
+    if scope.target(word, cwd, link):
         raise Found(kind, _show(word))
 
 
@@ -984,10 +988,12 @@ class Analyzer(object):
         if prog in ("node", "nodejs", "deno", "bun", "tsx", "ts-node"):
             return self.node(args, cwd, stdin)
         if prog in ("rm", "rmdir", "unlink", "shred", "trash"):
-            _, ops = _positionals(args, with_arg="ns" if prog == "shred" else "",
-                                  long_with_arg=("--iterations", "--size", "--random-source"))
+            ropts, ops = _positionals(args, with_arg="ns" if prog == "shred" else "",
+                                      long_with_arg=("--iterations", "--size", "--random-source"))
+            # plain rm / unlink / rmdir removes the link itself: judged on realpath(dirname) + name (not -r, no trailing slash)
+            plain = prog in ("rm", "rmdir", "unlink") and not any(o in ("-r", "-R", "--recursive") for o, _v in ropts)
             for w in ops:
-                _hit(s, "delete", w, cwd)
+                _hit(s, "delete", w, cwd, plain and not w.unresolvable and not re.search(r"[\\/]$", w.text))
             return
         if prog in ("sort", "curl", "wget", "tar", "unzip", "awk", "gawk"):
             return self.fetch_like(prog, args, cwd)

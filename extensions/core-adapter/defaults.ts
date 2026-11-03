@@ -843,11 +843,24 @@ function writeTargets(s: ShellSegment): string[] {
 
 const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
 
+/** The operand `w` of `s` is judged on the link itself: a plain `rm` / `unlink` / `rmdir` (no `-r`/`-R`/`--recursive`) of a name without a trailing slash. */
+function linkOperand(s: ShellSegment, w: string): boolean {
+  const p = progOf(s);
+  if (p !== "rm" && p !== "unlink" && p !== "rmdir") return false;
+  const opts: string[] = [];
+  for (const a of s.argv) {
+    if (a === "--") break;
+    if (a.startsWith("-") && a !== "-") opts.push(a);
+  }
+  if (opts.some((a) => a === "--recursive" || (!a.startsWith("--") && /[rR]/.test(a)))) return false;
+  return !/[\\/]$/.test(w);
+}
+
 /** The write target `w` (run from `cwd`) lies where the path rules allow a write: the worktree, scratch, and (outside children) the OS temp dir. */
-function writable(w: string, cwd: string | null, env: DangerEnv, folders = false): boolean {
+function writable(w: string, cwd: string | null, env: DangerEnv, folders = false, link = false): boolean {
   if (SINK.has(w) || nullDevice(env.platform, w)) return true;
   if (cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) return false;
-  return pathDecide("write", { path: w }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
+  return pathDecide("write", { path: w, link }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
 }
 
 /** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp. */
@@ -855,7 +868,7 @@ function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
   // work folders count only when every live segment is a built-in default with them as write roots; otherwise today's context
   const fa = folderAware(c, env);
   const ec = fa ? fa.ec : effectCtxOf(env);
-  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa))) return true;
+  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa, linkOperand(s, w)))) return true;
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;
     const chain = toChain(s);
