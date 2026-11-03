@@ -85,8 +85,24 @@ GIT_TIMEOUT = 120
 CREATED_FILE = "created-branches.json"
 OK_STATUSES = ("clean", "committed", "pushed", "dry-run")
 
-SECRET_NAMES = [".env*", "*.pem", "*.key", "*.p12", "id_rsa*", "id_ed25519*", "*credential*", "*secret*", "*token*",
-                ".npmrc", ".netrc", ".pypirc", ".git-credentials", "*.kdbx", "*.jks", "*.pfx", "id_ecdsa*"]
+# the key-file name globs are shared with the gate's secret-path floor (config/secret-paths.json); the inline list is the fail-closed fallback
+SECRET_PATHS_FILE = os.path.join(HERE, "..", "config", "secret-paths.json")
+SECRET_GLOBS_INLINE = ["*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore", "*.kdbx", "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*"]
+
+
+def load_secret_globs(path=SECRET_PATHS_FILE):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return list(SECRET_GLOBS_INLINE)
+    if isinstance(data, list) and data and all(isinstance(x, str) and x for x in data):
+        return data
+    return list(SECRET_GLOBS_INLINE)
+
+
+SECRET_NAMES = [".env*", *load_secret_globs(), "*credential*", "*secret*", "*token*",
+                ".npmrc", ".netrc", ".pypirc", ".git-credentials"]
 TOKEN_RX = safe_ops.TOKEN_RX
 SECRET_CONTENT = [
     ("private key header", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----")),

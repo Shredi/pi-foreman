@@ -189,6 +189,16 @@ Details of the read and write rows:
 - **`rm` of a symlink.** A plain `rm`, `unlink` or `rmdir` (no `-r`, no trailing slash) is judged on the link itself, not on its target, wherever the write roots are checked.
 - **Local `npx`.** `npx <bin>` is not `danger-install` when it runs a bin that is already installed: the segment's directory is known, the nearest ancestor holding a `package.json` has `node_modules/.bin/<bin>` (or `<bin>.cmd`), and the line has no `-p`/`--package`, no `@version`, no `--yes` and no path-like bin name. It is never a default allow: it runs under the mode step like any call that no rule decides. Any other `npx` stays an install.
 
+### Read tools
+
+The path tools `read`, `grep`, `find` and `ls` are judged on their path field. An extension tool that reads files is an ordinary tool to the gate until the user names it in `gate.readTools`, a map from the tool name to the name of its path field (`null` when it has no path field and reads the cwd). A mapped tool is then judged like `read`/`grep` on that field: `Read(...)` rules cover it, the secret-path floor applies to the field (search patterns such as `pattern` or `patterns` are not paths and are not floored; `glob` is), and a path inside the session's roots or an owned path gets the `path-read-*` allow. Example for pi-fff:
+
+```json
+{ "gate": { "readTools": { "ffgrep": "path", "fffind": "root" } } }
+```
+
+The key is user or overlay config only; a project value is dropped with the usual warning. The names of the built-in tools (the path tools including `foreman_move` and `foreman_copy`, the shell tools and pi-foreman's own tools) cannot be remapped: such an entry is ignored and named in the same `config_warning` record (`ignored`). A mapped tool keeps the secret-path floors on all its other path-like fields (`paths`, `root`, `file`, arrays), exactly as when unmapped. A name in the map that no registered tool carries (for example `ffgrep` while pi-fff runs in `override` mode, which registers `grep`, `find` and `multi_grep`) is ignored and leaves one `config_warning` trace record per session; it never fails a call.
+
 ### Owned paths
 
 Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `foreman_copy`) go through `pathrules.ts`. The allowed places are computed at runtime from the session's roots:
@@ -250,7 +260,7 @@ The git guard (`scripts/git_guard.py`, also for the main role) denies, never ask
 
 Floors deny with a reason and no model call, for every session kind and every mode. No config key turns them off, and there is no dialog. They run on the raw text of every tool before parsing and again on the parsed segments, so an unparseable command can be denied but never allowed by default.
 
-- secrets and key paths (`~/.ssh`, `~/.gnupg`, `~/.aws`, cloud and kube credentials, `.env`, `.npmrc`, `.pypirc`, `.netrc`, git credential stores, Pi's auth file) for read and write;
+- secrets and key paths (`~/.ssh`, `~/.gnupg`, `~/.aws`, cloud and kube credentials, `.env`, `.npmrc`, `.pypirc`, `.netrc`, git credential stores, key files such as `*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `*.kdbx`, `id_rsa*`, `id_ecdsa*`, Pi's auth file) for read and write; the key-file name globs are one list, `config/secret-paths.json` (a JSON array of globs, `*` is any run of characters inside one path segment), read by this floor and by `scripts/foreman_sync.py`; overlays can read the same file. Public keys (`*.pub`) stay readable. When the file cannot be read, both fall back to the same list built into the code;
 - writes to the three `permissions.json` files (matched by the basename below a `.workflow` or `.pi` directory too, so `mv x .workflow/permissions.json` is caught), pi-foreman's config files when the line carries a `safety.permissions*`, `safety.policy*` or `gate.*` key, `managed.json`, `state/round-parents.json`, `state/bridge-trust.json`, `state/approvals/**`, `state/gate/**`, Pi session files, and (for any child tool write) `state/child-asks/**`. Reading `permissions.json` is not a floor, and a read-only look at the config file is fine;
 - force, mirror and delete pushes, pushes to the default or a protected branch, and **any `git push` from a subagent child** (children never push; the foreman pushes). Only parsed `git push` segments count: the word inside a quoted string, a heredoc body or a read-only interpreter snippet is data;
 - a delete (`rm`, `unlink`, `rmdir`, `find -delete`, `rsync --delete`) outside the worktree, scratch and `/tmp` is `floor-delete-outside`. A plain `rm`, `unlink` or `rmdir` of a symbolic link is judged on the link, not on what it points to: removing the `node_modules` link of a worktree is inside the worktree even though the link leads out;
@@ -397,6 +407,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
+| `gate.readTools` | extension tool name to path field (or null), judged like read/grep, see [Read tools](#read-tools) (default `{}`) | user or overlay only |
 | `gate.mode` | retired: `floors-only` means mode `allow` and shows a notice; remove it | user or overlay only |
 | `providers.<p>.roles.review`, `roles.review` | the classifier model | user or overlay only |
 | `safety.preBash` | pre-bash hooks | user or overlay only |

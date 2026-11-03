@@ -14,6 +14,8 @@ export interface MergedConfig {
   roles: Record<string, Json>;
   /** "cli" = foreman_config.py answered; "defaults" = L1 file read directly. */
   source: "cli" | "defaults";
+  /** Why the CLI fallback ran (source "defaults" only). */
+  fallbackReason?: string;
   /** safety.permissions after L1 -> L3 -> L2, before the project and session layers (cli only). */
   basePermissions?: Json;
 }
@@ -89,14 +91,18 @@ export function configCliArgs(input: LoadInput): string[] {
   return args;
 }
 
+/** The L1 defaults with presence forced off: a failed config CLI must not turn the away-mode deny on by itself. */
 function fallback(pkgRoot: string, why: string): MergedConfig {
+  const defaults = readDefaults(pkgRoot);
+  const presence = defaults.presence && typeof defaults.presence === "object" ? (defaults.presence as Json) : {};
   return {
-    config: readDefaults(pkgRoot),
+    config: { ...defaults, presence: { ...presence, enabled: false } },
     warnings: [],
     errors: [`pi-foreman: config CLI failed (${why}); using the built-in L1 defaults.`],
     safetyFallback: true,
     roles: {},
     source: "defaults",
+    fallbackReason: why,
   };
 }
 

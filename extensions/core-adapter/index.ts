@@ -25,6 +25,7 @@ import { folderRelaxes } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
+import { readToolsOf, warnUnknownReadTools } from "./readtools.ts";
 import { adopt as adoptSuggested, entriesFromReport, parsePicks, review as reviewAdopted, runSuggest, suggestHint } from "./permssuggest.ts";
 import type { AdoptPick } from "./permssuggest.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
@@ -940,7 +941,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.13 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
     for (const e of config.errors) ctx.ui.notify(e, "error");
-    if (config.safetyFallback && config.source === "cli") ctx.ui.notify("pi-foreman: invalid safety config; L1 safety values apply.", "warning");
+    if (config.source === "defaults") s.trace?.emit({ event: "config_fallback", reason: config.fallbackReason ?? "unknown", source: config.source });
+    if (config.safetyFallback) ctx.ui.notify(config.source === "cli" ? "pi-foreman: invalid safety config; L1 safety values apply." : "pi-foreman: config CLI unavailable; L1 defaults apply and presence stays off.", "warning");
     for (const w of config.warnings) ctx.ui.notify(`pi-foreman config: ${w}`, "warning");
     const firstRun = firstRunNotice({ mode: ctx.mode, isChild: s.isChild, config: config.config, presets: presetNames(PKG_ROOT) });
     if (firstRun) ctx.ui.notify(firstRun, "info");
@@ -2256,6 +2258,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const gateRuntimes = new Map<string, GateRuntime>();
   /** Tool calls the gate decided (allow); the old overlay skips them. */
   const gateDecided = new Set<string>();
+  const readToolsWarned = new Set<string>();
   /** Sessions whose owner answered "deny and stop" (until the next user prompt), and per-session allows keyed `tool\0payload`. */
   const gateStopped = new Set<string>();
   /** The owner's prompts of a session, newest first. */
@@ -2305,7 +2308,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionFacts: GitFacts | undefined = gs && roots
       ? sessionGitFacts({ ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] }, ownWorktreeCheck([roots.worktree, ...roundWorktrees(path.join(gs.agentDir, "pi-foreman", "state"), gs.usage.line.foremanSession, platform)], platform))
       : undefined;
+    const readTools = gs ? readToolsOf(gs.config.config) : undefined;
+    if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
+      ...(readTools ? { readTools } : {}),
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
       ...(roots ? { roots: () => roots, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
@@ -2426,6 +2432,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return {
       ui: ctx.ui as unknown as OwnerDeps["ui"],
       presence: s.presence,
+      presenceEnabled: get(s.config.config, "presence.enabled") !== false,
       stateDir: path.join(s.agentDir, "pi-foreman", "state"),
       remember: { store: rt.store, afterWrite: () => { rt.store.reload(); rt.classifier.clearCache(); } },
     };
