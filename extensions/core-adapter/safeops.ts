@@ -29,13 +29,15 @@ export interface RunSafeOpInput {
   timeoutMs?: number;
   /** Extra roots a `copy` source may sit under (the foreman's own handoff dirs); a top-level request key, never in `args`. */
   srcRoots?: string[];
+  /** `pr_comments` with `args.repo` needs no work tree (the PR poll CLI runs outside any checkout); a top-level request key, never in `config` or the model's `args`. */
+  repoless?: boolean;
 }
 
 export async function runSafeOp(input: RunSafeOpInput): Promise<SafeOpOutcome> {
   if (!input.python) return { kind: "error", message: "no Python >= 3.13 found; nothing was done. Set python.path or PI_FOREMAN_PYTHON and run /foreman doctor." };
   const timeoutMs = input.timeoutMs ?? SAFE_OP_TIMEOUT_MS;
   const r = await input.spawner(input.python, ["-E", "-s", input.script], {
-    input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {}, ...(input.op === "copy" && input.srcRoots?.length ? { srcRoots: input.srcRoots } : {}) }),
+    input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {}, ...(input.op === "copy" && input.srcRoots?.length ? { srcRoots: input.srcRoots } : {}), ...(input.op === "pr_comments" && input.repoless === true ? { repoless: true } : {}) }),
     env: input.env,
     cwd: input.cwd,
     timeoutMs,

@@ -1,5 +1,8 @@
 """bin/foreman, foreman.ps1 and foreman.cmd expose the same subcommands."""
+import os
 import re
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -37,3 +40,34 @@ class BinWrappers(unittest.TestCase):
             found = usage_lists(text(name))
             self.assertTrue(found, name)
             self.assertEqual({tuple(sorted(f)) for f in found}, expected, name)
+
+
+class PrsDispatch(unittest.TestCase):
+    """`foreman prs poll` runs extensions/core-adapter/prs-cli.ts behind the Node >= 22.6 gate in all three wrappers."""
+
+    def test_posix_wrapper(self):
+        src = text("foreman")
+        self.assertRegex(src, r'if \[ "\$sub" = "prs" \]')
+        self.assertIn("extensions/core-adapter/prs-cli.ts", src)
+        self.assertIn("foreman prs needs Node >= 22.6", src)
+
+    def test_cmd_wrapper_passes_every_argument(self):
+        src = text("foreman.cmd")
+        self.assertIn('if /i "%~1"=="prs" goto prs', src)
+        body = src.split(":prs\n", 1)[1].split(":setup\n", 1)[0]
+        self.assertIn("prs-cli.ts", body)
+        self.assertIn("set PF_ARGS=%PF_ARGS% %1", body)
+        self.assertNotIn('"%~2"', body)
+
+    def test_ps1_wrapper(self):
+        src = text("foreman.ps1")
+        self.assertIn("$sub -eq 'prs'", src)
+        self.assertIn("prs-cli.ts", src)
+        self.assertIn("@rest", src.split("$sub -eq 'prs'", 1)[1].split("$sub -eq 'dialogs'", 1)[0])
+
+    @unittest.skipIf(os.name == "nt" or not shutil.which("node"), "needs sh and node")
+    def test_posix_usage_exit_codes(self):
+        for args in (["prs"], ["prs", "nope"], ["prs", "poll", "--jsn"]):
+            r = subprocess.run([str(ROOT / "bin" / "foreman")] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn("usage: foreman prs poll [--json]", r.stderr)

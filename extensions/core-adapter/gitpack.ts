@@ -7,9 +7,11 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
-import { PrWatches, countRuns, oneLine, pollWatch } from "./prwatch.ts";
+import { PrWatches, TRACKER_DOWN, countRuns, oneLine } from "./prwatch.ts";
 import type { WatchSnapshot } from "./prwatch.ts";
-import { keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
+import { FULL_TEXT } from "./prstore.ts";
+import type { AddOutcome } from "./prstore.ts";
+import { isGithubKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { PrKey } from "./prhost.ts";
 import { prGateRefusal } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
@@ -274,7 +276,11 @@ export interface PrPackSession {
   trace(rec: Record<string, unknown>): void;
   /** The host rule for `host` arguments and the repository of a checkout (prhost.ts). */
   tracker?: PrTracker;
+  /** Adds a PR to the tracked list (prstore.ts addTracked), or says `off` when the PR feed is off. Absent: nothing is added. */
+  track?(repo: string, n: number): Promise<TrackOutcome>;
 }
+
+export type TrackOutcome = AddOutcome | "off";
 
 export interface PrTracker {
   hostAllowed(host: string, cwd: string): Promise<boolean>;
@@ -378,17 +384,66 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const outcome = await run(t.op as PrOp, params);
         const res = report(outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
-        // the session that opened the PR watches it; a failed arm never fails the create
-        const armed = await armWatch(s, ctx, run, outcome.result.number, outcome.result.url).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
-        if ("duplicate" in armed) return res;
-        const r = res as { content: { type: "text"; text: string }[] };
-        if ("error" in armed) return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };
-        const note = "retry" in armed ? `; the first poll failed (${oneLine(armed.retry)}), it will retry` : "";
-        return { ...r, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${note}` }] };
+        // the session that opened the PR follows and watches it; a failed add or arm never fails the create
+        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        const r = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
+        const out = armed.tracked ? { ...r, details: { ...r.details, tracked: armed.tracked } } : r;
+        if ("duplicate" in armed) return out;
+        if ("error" in armed) return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };
+        return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${armNote(armed)}` }] };
       },
     } as never);
   }
   return names;
+}
+
+export interface PrFollowDeps {
+  isChild: boolean;
+  session(ctx: ExtensionContext): Promise<PrPackSession>;
+}
+
+export const PR_FOLLOW = "pr_follow";
+
+/**
+ * `pr_follow {repo, number}` (docs/tools.md#pr-tools): adds a github.com PR to the tracked list that `foreman prs poll` polls. Foreman only; it makes no
+ * GitHub call, runs no git and no host program (so no drift preflight). `defaultActive` false: index.ts activates it with the PR pack.
+ */
+export function registerPrFollow(pi: Pick<ExtensionAPI, "registerTool">, deps: PrFollowDeps): string[] {
+  if (deps.isChild) return [];
+  pi.registerTool({
+    name: PR_FOLLOW,
+    label: "Follow PR",
+    description: "Follow a GitHub pull request: adds it to the tracked list that herdr-app's `foreman prs poll` polls for its checks, and drops once it is merged or closed (pr_create and pr_watch add theirs automatically). GitHub (github.com) only. Makes no GitHub call. Needs radar.openPrs on.",
+    parameters: { type: "object", properties: { repo: str(200, "Repository as owner/name on github.com."), number: num("PR number.") }, required: ["repo", "number"], additionalProperties: false } as never,
+    defaultActive: false,
+    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+      let s: PrPackSession;
+      try {
+        s = await deps.session(ctx);
+      } catch (err) {
+        return failure(`${PR_FOLLOW}: adapter error (${(err as Error).message}); nothing was done.`, { decision: "error" });
+      }
+      if (!s.packOn) return failure(`${PR_FOLLOW}: the PR tools are off (tools.pr); nothing was done.`, { decision: "pr_off" });
+      if (s.isChild) {
+        s.trace({ event: "pr_refused", reason: "child", toolFamily: PR_FOLLOW });
+        return failure(`pi-foreman: ${PR_FOLLOW} refused [pr_refused:child]: children may not follow pull requests. Report back and let the foreman do it.`, { decision: "pr_refused", reason: "child" });
+      }
+      if (!validNumber(params.number)) return failure(`${PR_FOLLOW}: bad arguments (number 1..1000000000); nothing was done.`, { decision: "bad_request" });
+      if (!validRepo(params.repo)) return failure(`${PR_FOLLOW}: bad arguments (repo owner/name); nothing was done.`, { decision: "bad_request" });
+      const { repo, number } = params;
+      const tracked: TrackOutcome = s.track ? await s.track(repo, number).catch((): TrackOutcome => "unavailable") : "off";
+      const details = { repo, number, tracked };
+      const at = `${repo}#${number}`;
+      switch (tracked) {
+        case "off": return failure(`${PR_FOLLOW}: the PR feed is off (radar.openPrs.enabled false, or tools.prHost not auto/gh); nothing was done.`, { decision: "feed_off", ...details });
+        case "full": return failure(`${PR_FOLLOW}: ${FULL_TEXT}`, { decision: "tracked_full", ...details });
+        case "unavailable": return failure(`${PR_FOLLOW}: could not update the tracked list (busy, unreadable or not writable); nothing was done.`, { decision: "tracked_unavailable", ...details });
+        case "present": return { content: [{ type: "text" as const, text: `${PR_FOLLOW}: already following ${at}` }], details: { decision: "ran", ...details } };
+        default: return { content: [{ type: "text" as const, text: `${PR_FOLLOW}: following ${at}; herdr-app's \`foreman prs poll\` polls it and drops it when it is merged or closed` }], details: { decision: "ran", ...details } };
+      }
+    },
+  } as never);
+  return [PR_FOLLOW];
 }
 
 /** The `host` rule for the read tools; undefined: carry on with the ordinary op. */
@@ -413,28 +468,45 @@ async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url:
   return at ? { host: at.host, repo: at.repo, n } : { host: "", repo: "", n };
 }
 
-/** Reserve the slot, take the baseline poll and start the watch; `snap` is that first poll. */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, run: PrRun, n: number, url: unknown): Promise<{ key: PrKey; snap: WatchSnapshot } | { key: PrKey; retry: string } | { duplicate: true } | { error: string }> {
+export const NOT_GITHUB = "only github.com PRs can be watched (the PR tracker covers github.com)";
+
+type Armed =
+  | { error: string; hostUnsupported?: true; tracked?: TrackOutcome }
+  | { duplicate: true; tracked?: TrackOutcome }
+  /** `snap`: the stored snap the watch started from; null: the tracker has none yet. `down`: no tracker runs. */
+  | { key: PrKey; snap: WatchSnapshot | null; down: boolean; tracked?: TrackOutcome };
+
+function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
+  if (a.down) return `; ${TRACKER_DOWN}`;
+  return a.snap ? "" : "; waiting for the PR tracker's first poll";
+}
+
+/**
+ * Add the PR to the tracked list (`created`: whatever the arm then returns; else once the arm is not refused), reserve the slot and start the watch.
+ * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
+ * first poll decides.
+ */
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false): Promise<Armed> {
   const key = await watchKey(s, ctx, n, url);
-  if (!s.watches.reserve(key)) return { duplicate: true };
+  if (!isGithubKey(key)) return { error: NOT_GITHUB, hostUnsupported: true };
+  const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n).catch((): TrackOutcome => "unavailable") : undefined);
+  let tracked = created ? await track() : undefined;
+  if (!s.watches.reserve(key)) return { duplicate: true, tracked: tracked ?? (await track()) };
   try {
-    const p = await pollWatch(run, key, { updatedAt: "" });
-    if ("error" in p) {
-      s.watches.startPending(key, p.error);
-      s.trace({ event: "pr_watch", outcome: "started" });
-      return { key, retry: p.error };
-    }
-    if (!("snap" in p)) {
+    const st = await s.watches.stored(key);
+    if (st?.kind === "entry" && st.snap.state !== "open") {
       s.watches.release(key);
-      return { error: "the pull request was not found" };
+      return { error: `the pull request is ${st.snap.state}; there is nothing to watch`, tracked };
     }
-    if (p.snap.state !== "open") {
+    if (st?.kind === "error" && st.gone) {
       s.watches.release(key);
-      return { error: `the pull request is ${p.snap.state}; there is nothing to watch` };
+      return { error: "the pull request was not found", tracked };
     }
-    s.watches.start(key, p.snap);
+    tracked ??= await track();
+    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt);
+    else s.watches.startPending(key);
     s.trace({ event: "pr_watch", outcome: "started" });
-    return { key, snap: p.snap };
+    return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked };
   } catch (err) {
     s.watches.release(key);
     throw err;
@@ -453,11 +525,15 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
     url = st.result.url;
     if (n === undefined) return failure(`${tool}: the host gave no PR number; nothing was done.`, { decision: "error" });
   }
-  const armed = await armWatch(s, ctx, run, n, url);
-  if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate" });
-  if ("error" in armed) return failure(`${tool}: ${armed.error}`, { decision: "error" });
-  if ("retry" in armed) return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() })}; armed, but the first poll failed (${oneLine(armed.retry)}); it will retry` }], details: { decision: "watching", number: n } };
-  const { snap } = armed;
-  const state = { head: snap.head.slice(0, 7), checks: countRuns(snap.runs), mergeable: snap.mergeable };
-  return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ watching: true, number: n, intervalSeconds: s.watches.intervalSeconds(), ...state })}` }], details: { decision: "watching", number: n } };
+  const armed = await armWatch(s, ctx, n, url);
+  const tracked = armed.tracked ? { tracked: armed.tracked } : {};
+  if ("duplicate" in armed) return failure(`pr_watch: PR #${n} is already watched; one watch per PR per session.`, { decision: "duplicate", ...tracked });
+  if ("error" in armed) {
+    if (armed.hostUnsupported) return failure(`pr_watch: ${armed.error}; nothing was done.`, { decision: "host_unsupported" });
+    return failure(`${tool}: ${armed.error}`, { decision: "error", ...tracked });
+  }
+  const base = { watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() };
+  const state = armed.snap ? { head: armed.snap.head.slice(0, 7), checks: countRuns(armed.snap.runs), mergeable: armed.snap.mergeable } : {};
+  const lost = armed.tracked === "full" ? `; not tracked: ${FULL_TEXT}` : armed.tracked === "unavailable" ? "; not tracked: could not update the tracked list (busy, unreadable or not writable)" : "";
+  return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ ...base, ...state })}${armNote(armed)}${lost}` }], details: { decision: "watching", number: n, ...tracked } };
 }

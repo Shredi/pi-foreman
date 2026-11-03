@@ -695,6 +695,60 @@ class OptionalTemplateKeyTest(PrCase):
         self.refused(self.pr("pr_status", host={"find": "gh x"}), "pr_host_missing")
 
 
+class RepolessCommentsTest(RepoLessCase):
+    """pr_comments with a top-level `repoless` and `args.repo` runs without a work tree (the PR poll CLI); the head repository of a watch batch."""
+
+    VIEW = {"comments": [{"id": "IC1", "author": {"login": "u1"}, "createdAt": "2026-01-02T00:00:00Z", "body": "hi"}], "reviews": []}
+
+    def setUp(self):
+        super().setUp()
+        self.scn({"gh pr view 5": {"stdout": j(self.VIEW)}, "gh api": {"stdout": "[]"}})
+
+    def req(self, cwd=None, repoless=True, config=None, **args):
+        r = {"op": "pr_comments", "args": args, "cwd": cwd or self.plain, "config": config or {"prHost": "gh"}}
+        if repoless is not None:
+            r["repoless"] = repoless
+        return safe_ops.handle(r)
+
+    def test_runs_outside_a_checkout_and_inside_a_work_tree(self):
+        for cwd in (self.plain, self.repo):
+            res = self.ok(self.req(cwd=cwd, number=5, repo="acme/lib", host="github.com"))
+            self.assertEqual([c["id"] for c in res["comments"]], ["IC1"])
+        argv = self.calls()[0]["argv"]
+        self.assertIn("github.com/acme/lib", argv)
+
+    def test_without_repoless_the_old_root_rule_applies(self):
+        self.refused(self.req(repoless=None, number=5, repo="acme/lib"), "not_a_git_repo")
+        self.refused(self.req(repoless=False, number=5, repo="acme/lib"), "not_a_git_repo")
+        self.refused(self.req(repoless="yes", number=5, repo="acme/lib"), "not_a_git_repo")
+
+    def test_a_repoless_key_inside_config_is_ignored(self):
+        self.refused(self.req(repoless=None, config={"prHost": "gh", "repoless": True}, number=5, repo="acme/lib"), "not_a_git_repo")
+
+    def test_repoless_without_repo_keeps_the_old_rule(self):
+        self.refused(self.req(number=5), "not_a_git_repo")
+
+    def test_a_planted_gh_in_the_checkout_is_still_skipped_without_repoless(self):
+        planted = os.path.join(self.repo, "bin")
+        make_bin(self.repo, ("gh",), name="bin")
+        self.use_path(planted)
+        sub = os.path.join(self.repo, "sub")
+        os.mkdir(sub)
+        res = safe_ops.handle({"op": "pr_comments", "args": {"number": 5, "repo": "acme/lib"}, "cwd": sub, "config": {"prHost": "gh"}})
+        self.assertEqual(res["precondition"], "pr_host_missing")
+        self.assertEqual(self.calls(), [])
+
+    def test_batch_watch_asks_for_the_head_repository_only_when_watching(self):
+        pr = gql_pr(5, rollup(), headRefOid="abc", baseRefName="main", updatedAt="2026-01-02T00:00:00Z", headRepository={"nameWithOwner": "fork/lib"})
+        self.scn({"gh api graphql": {"stdout": j({"data": {"r0": pr}})}})
+        plain = self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}]))["prs"][0]
+        self.assertNotIn("headRepo", plain)
+        self.assertNotIn("headRepository", json.loads(self.calls()[0]["body"])["query"])
+        got = self.ok(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch=True))["prs"][0]
+        self.assertIn("headRepository { nameWithOwner }", json.loads(self.calls()[1]["body"])["query"])
+        self.assertEqual(got["headRepo"], "fork/lib")
+
+
 class PrOpsSetTest(unittest.TestCase):
     def test_only_the_watch_poller_op_is_left(self):
         self.assertEqual(set(safe_ops.PR_OPS), {"pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch"})

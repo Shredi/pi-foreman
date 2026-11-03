@@ -4,6 +4,7 @@ import { latestWatches, PR_MESSAGE_TYPE, PRWATCH_ENTRY, PrWatches } from "../prw
 import type { Timers, WatchPoll, WatchRecord, WatchSnapshot } from "../prwatch.ts";
 import type { PrKey } from "../prhost.ts";
 import { r11Rig } from "./_r11rig.ts";
+import { storeFromPoll } from "./_storefake.ts";
 
 const SID = "sess-1";
 const K: PrKey = { host: "github.com", repo: "acme/app", n: 7 };
@@ -16,7 +17,7 @@ function harness(poll: (key: PrKey, cwd?: string) => Promise<WatchPoll>) {
   const sent: { msg: { customType: string; content: string; details: Record<string, unknown> }; idle: boolean }[] = [];
   const traces: Record<string, unknown>[] = [];
   const persisted: WatchRecord[][] = [];
-  const w = new PrWatches({ poll: async (key, cwd) => poll(key, cwd), cwd: () => "/work", persist: (x) => void persisted.push(x), send: (msg, idle) => void sent.push({ msg, idle }), idle: () => true, trace: (r) => void traces.push(r), intervalMs: () => 5000, now: () => clock, timers: fake });
+  const w = new PrWatches({ storeEntry: storeFromPoll((key) => poll(key)), cwd: () => "/work", persist: (x) => void persisted.push(x), send: (msg, idle) => void sent.push({ msg, idle }), idle: () => true, trace: (r) => void traces.push(r), intervalMs: () => 5000, now: () => clock, timers: fake });
   const settle = () => new Promise((r) => setImmediate(r));
   return { w, sent, traces, persisted, timers, settle, advance: (ms: number) => void (clock += ms), now: () => clock };
 }
@@ -56,7 +57,7 @@ test("restore: a v2 watch resumes without a deadline; a check that failed while 
   h.w.restore(latestWatches(entry(JSON.parse(JSON.stringify(stored))), SID));
   assert.equal(h.w.has(K), true);
   await h.settle();
-  assert.deepEqual(polled, ["/work"]);
+  assert.deepEqual(polled, [undefined]); // R1: the store read takes no cwd
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0].msg.customType, PR_MESSAGE_TYPE);
   assert.match(h.sent[0].msg.content, /PR #7 checks finished: fail/);

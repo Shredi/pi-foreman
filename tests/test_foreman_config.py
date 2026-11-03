@@ -685,5 +685,26 @@ class SessionForemanRoleTest(unittest.TestCase):
                 self.assertTrue(res and res["model"], "%s/%s" % (preset.name, name))
 
 
+class PrFollowTest(unittest.TestCase):
+    def test_pr_follow_is_child_denied_and_baseline_allowed(self):
+        self.assertIn("pr_follow", fc.CHILD_DENIED_TOOLS)
+        baseline = json.loads((ROOT / "config" / "permissions.baseline.json").read_text("utf-8"))
+        found = [v for k, v in _walk(baseline) if k == "pr_follow"]
+        self.assertEqual(found, ["allow"])
+
+    def test_pr_follow_is_not_a_child_pr_pack_tool(self):
+        self.assertNotIn("pr_follow", fc.PR_READ_TOOLS)
+        for tools in fc.PR_ROLE_TOOLS.values():
+            self.assertNotIn("pr_follow", tools)
+
+
+def _walk(d):
+    for k, v in d.items():
+        if isinstance(v, dict):
+            yield from _walk(v)
+        else:
+            yield k, v
+
+
 if __name__ == "__main__":
     unittest.main()

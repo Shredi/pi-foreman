@@ -628,14 +628,25 @@ Owner and overlay config only (a project cannot change the GitHub search):
 | `radar.openPrs.authors` | `[]` | other authors, for example `renovate[bot]` (a GitHub App `<name>[bot]` is searched as `author:app/<name>`) |
 | `radar.openPrs.scope` | `[]` | owners (`example-org`) or `owner/repo`; authors are searched only inside it, never unscoped |
 
-A Pi session (not a child) refreshes `<agent dir>/pi-foreman/state/open-prs.json` in the background, at most once per
+A Pi session (not a child) or `foreman prs poll` refreshes `<agent dir>/pi-foreman/state/open-prs.json` in the background, at most once per
 `refreshSeconds` across all sessions on the machine: one refresher per machine (an exclusive lock file with a stale timeout, then an atomic rename). One
 `gh api graphql` search runs per query: `author:@me`, `review-requested:@me`, and one per author and scope entry. `foreman
 radar --json` reads the file and never calls the network, so its 3 s polls cost nothing. It adds `openPrs` (`repo`, `number`,
 `title`, `url` (https only), `state`, `author`, `headRefName`, `headRepo`, `baseRefName` (what a conflict is against), `bodyText` (the description with secret-shaped tokens redacted, cut to 500 characters), `mergeable` (`MERGEABLE`, `CONFLICTING` or `UNKNOWN`), `checks` as `{n, state, label}` with the states `fail`, `run`, `ok`, `none`, at most 20 check names) and
-`openPrsAt`, the time of the last refresh in which a search succeeded (absent, so the mod shows no list, until one did); the mod shows its age on the section header. When `gh` is missing, not
+`openPrsAt`, the time of the last refresh in which a search succeeded (absent until a search succeeded; meanwhile the list shows only tracked PRs, without an age); the mod shows its age on the section header. When `gh` is missing, not
 logged in or rate limited, the last file stays and carries `error` and `errorAt` (when only some queries fail, the others' PRs are kept and `error` counts the failed ones); radar and the sessions go on. Only `tools.prHost`
 `auto` or `gh` is searched. Remote spaces: the radar on that machine reads its own file.
+
+**Tracked PRs and the PR tracker.** `pr_follow {repo, number}` (github.com only), `pr_create` and `pr_watch` add a PR to the tracked list; no tool removes one. `foreman prs poll [--json]` is the tracker: herdr-app runs it per machine, 30 s after its previous run ended (run it by hand or from a scheduler without herdr-app; without a tracker, `pr_watch` watches stay armed and say `no PR tracker running`). One run polls up to 50 tracked PRs with `pr_batch` through `gh` and then calls the search refresh (`refreshOpenPrs`, the same throttle), so a Pi session is not needed. A merged or closed PR is written to the state file and dropped from the list; the ended entry stays 15 minutes so every session sees the ending. Gone and failed PRs stay with an `error`. Four files under `<agent dir>/pi-foreman/state/`:
+
+| File | Writer |
+|---|---|
+| `open-prs.json` | `refreshOpenPrs` (a Pi session or `foreman prs poll`), under `open-prs.json.lock` |
+| `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt}]}` (at most 200 lines) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
+| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt` per PR; `trackedAt`; `off`) | the poll only |
+| `tracked-prs-comments.json` | the poll only |
+
+When the list is full (200), `pr_follow` says so; remove a stuck or unwanted line by editing `tracked-prs.json` by hand, and the next poll prunes its state. `radar.openPrs.enabled: false`, or a `tools.prHost` other than `auto`/`gh`, switches tracking and `pr_follow` off too (the state file gets `off: true`).
 
 **Renovate.** The Renovate GitHub App opens PRs as `renovate[bot]`: list it under `authors` with the owners or repositories in
 `scope`. A self-hosted Renovate that uses a personal token opens them as that user, which `mine` already covers.

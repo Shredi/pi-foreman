@@ -31,6 +31,8 @@ export interface PrKey {
 }
 /** Identity for maps and sets (case-insensitive). */
 export const keyString = (k: PrKey): string => `${k.host.toLowerCase()}/${k.repo.toLowerCase()}#${k.n}`;
+/** A github.com key with a repository: the only kind the PR tracker (prstore.ts) covers. */
+export const isGithubKey = (k: PrKey): boolean => k.host.toLowerCase() === "github.com" && k.repo !== "";
 /** `host/owner/name#n` as written. */
 export const keyText = (k: PrKey): string => `${k.host}/${k.repo}#${k.n}`;
 

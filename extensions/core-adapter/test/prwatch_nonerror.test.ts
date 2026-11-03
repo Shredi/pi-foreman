@@ -5,6 +5,7 @@ import type { PrPackSession, PrTracker } from "../gitpack.ts";
 import { baselineOf, prDelta, PrWatches } from "../prwatch.ts";
 import type { Timers, WatchSnapshot } from "../prwatch.ts";
 import type { Spawner } from "../spawn.ts";
+import { storeFromPoll } from "./_storefake.ts";
 
 type Tool = { execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
 
@@ -16,7 +17,8 @@ test("pr_create: a non-Error throw while arming still returns the created PR and
     throw "plain string";
   };
   const timers: Timers = { set: () => 1, clear: () => {} };
-  const watches = new PrWatches({ poll: async () => ({ error: "x" }), send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers });
+  // R1: arming reads the store; a store reader that throws a non-Error is the failure under test
+  const watches = new PrWatches({ storeEntry: async () => { throw "plain string"; }, send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers });
   const tracker: PrTracker = { hostAllowed: async () => true, repoFor: async () => ({ host: "github.com", repo: "acme/app" }) };
   const session: PrPackSession = { python: "/py", isChild: false, packOn: true, config: {}, gateOn: false, reviewed: async () => [], watches, trace: () => {}, tracker };
   registerPrPack({ registerTool: (t: unknown) => void tools.set((t as { name: string }).name, t as Tool) } as never, { isChild: false, session: async () => session, script: "/s.py", spawner, env: () => ({}), pushRefusal: async () => null });
@@ -45,7 +47,7 @@ test("a pending watch whose first good poll is CONFLICTING sends the conflict; M
     const sent: { content: string }[] = [];
     const timers: Timers = { set: (fn) => fns.push(fn), clear: () => {} };
     const watches = new PrWatches({
-      poll: async () => ({ snap: snap({ mergeable }) }),
+      storeEntry: storeFromPoll(async () => ({ snap: snap({ mergeable }) })),
       send: (m) => void sent.push(m),
       idle: () => true,
       trace: () => {},

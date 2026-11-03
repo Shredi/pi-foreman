@@ -23,7 +23,7 @@ function setup(opts: { isChild?: boolean; allowed?: string[] } = {}) {
     config: {},
     gateOn: false,
     reviewed: async () => [],
-    watches: new PrWatches({ poll: async () => ({ error: "x" }), send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 5000, now: () => 0 }),
+    watches: new PrWatches({ send: () => {}, idle: () => true, trace: () => {}, intervalMs: () => 5000, now: () => 0 }),
     trace: (r) => void traces.push(r),
     tracker,
   };

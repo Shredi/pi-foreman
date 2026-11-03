@@ -2,7 +2,7 @@
 """PR operations of the git tool pack (design/pr-ops.md section 2). Stdlib only, 3.13+.
 
 Loaded by scripts/safe_ops.py for the ops pr_create, pr_status, pr_checks, pr_comments, pr_repo, pr_find and
-pr_batch (needs no work tree; the persistent PR watch polls through it); the
+pr_batch (needs no work tree, nor does pr_comments with top-level `repoless: true` and `args.repo`; the PR tracker polls through them); the
 request and answer envelopes are the ones documented there. `config` is the `safety.ops` object
 plus one key, `prHost` (the effective tools.prHost: "auto", "gh", "glab" or a templates object).
 
@@ -726,7 +726,8 @@ def op_pr_comments(req):
     number = arg_number(args)
     since = arg_since(args)
     repo, hostname = arg_repo(args), arg_host(args)
-    root = workspace_root(req.get("cwd"))
+    # a top-level `repoless: true` (never part of `config` or the model's args) with a `repo` needs no work tree, like pr_batch
+    root = _repoless_root(req) if req.get("repoless") is True and repo else workspace_root(req.get("cwd"))
     host = resolve_host(pr_host, "comments", root)
     if host.kind == "template":
         out = run_template(host, "comments", _values(root, number=number, since=since, repo=repo, host=hostname), root)
@@ -996,7 +997,7 @@ def op_pr_find(req):
 
 
 def _repoless_root(req):
-    """The process cwd of an op that needs no work tree: realpath of an existing directory."""
+    """The process cwd of an op that needs no work tree (pr_batch; pr_comments with top-level `repoless` and `repo`): realpath of an existing directory."""
     cwd = req.get("cwd")
     if not isinstance(cwd, str) or not cwd or not os.path.isdir(cwd):
         raise _bad("cwd is not a directory")
@@ -1076,8 +1077,8 @@ def map_rollup(roll):
 
 
 def _pr_query(count, watch=False):
-    # watch: the extra fields pr_watch reads (head, base, updatedAt, run identity and link)
-    pr_extra = "headRefOid baseRefName updatedAt " if watch else ""
+    # watch: the extra fields pr_watch reads (head, base, head repository, updatedAt, run identity and link)
+    pr_extra = "headRefOid baseRefName headRepository { nameWithOwner } updatedAt " if watch else ""
     run_extra = "databaseId detailsUrl " if watch else ""
     ctx_extra = "createdAt targetUrl " if watch else ""
     decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
@@ -1174,7 +1175,9 @@ def op_pr_batch(req):
                     "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
                     "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)}
         if watch:
+            hr = pr.get("headRepository")
             item.update({"headSha": s_or_none(pr.get("headRefOid"), 64), "baseRef": s_or_none(pr.get("baseRefName"), 200),
+                         "headRepo": s_or_none(hr.get("nameWithOwner"), 140) if isinstance(hr, dict) else None,
                          "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": watch_runs(roll)})
         prs.append(item)
     return {"action": "pr_batch", "prs": prs, "errors": errors}

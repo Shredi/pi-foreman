@@ -93,9 +93,11 @@ import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { runGuard } from "./runguard.ts";
-import { applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrPack } from "./gitpack.ts";
+import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
+import type { PrPackSession } from "./gitpack.ts";
+import { addTracked, readStoreEntry } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
-import { PRWATCH_ENTRY, PrWatches, latestWatches, pollWatch, pollWatchBatch, watchIntervalMs } from "./prwatch.ts";
+import { PRWATCH_ENTRY, PrWatches, latestWatches, watchIntervalMs } from "./prwatch.ts";
 import { PrHost, branchOf } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
@@ -128,7 +130,7 @@ const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
-import { OpenPrsRefresher, realGh } from "./openprs.ts";
+import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate, overIdleFloor } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
@@ -702,8 +704,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prPack: false,
       prCtx: null,
       prWatches: new PrWatches({
-        poll: (key, cwd, seen) => pollWatch((op, args) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, args), key, seen),
-        pollMany: (items, cwd) => pollWatchBatch((op, args) => prRun(s, cwd ?? s.prCtx?.cwd ?? s.cwd, op, args), items),
+        storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s)),
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
         fresh: async (key, cwd) => {
@@ -918,6 +919,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     applyGitPack(pi, s.gitPack, s.isChild, process.env);
     s.prPack = prPackOn({ config: config.config, isChild: s.isChild, env: process.env });
     applyPrPack(pi, s.prPack, s.isChild, process.env);
+    if (s.prPack && !s.isChild && !pi.getActiveTools().includes(PR_FOLLOW)) pi.setActiveTools([...pi.getActiveTools(), PR_FOLLOW]);
     if (!s.isChild) {
       const gitLines = s.gitDrift.bind(markerDir, cwd, home);
       if (gitLines.length) ctx.ui.notify(`pi-foreman: the repository's git config or hooks changed since the last session; the next foreman git run or child launch asks.\n${gitLines.join("\n")}`, "warning");
@@ -1210,6 +1212,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const outcome = evaluateRun(guard, r, pyPath(s));
     s.trace?.emit({ event: "guard", guard, toolFamily, decision: outcome.kind === "failure" ? "error" : outcome.d.decision, latencyMs: Date.now() - started });
     return outcome;
+  }
+
+  /** The PR feed is on: radar.openPrs.enabled is not false and tools.prHost is auto or gh (what the search refresher and `foreman prs poll` require). */
+  function prFeedOn(s: Session): boolean {
+    const h = get(s.config.config, "tools.prHost") ?? "auto";
+    return openPrsConfig(get(s.config.config, "radar.openPrs")).enabled && (h === "auto" || h === "gh");
   }
 
   /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost. */
@@ -4078,30 +4086,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
   });
 
+  const prSession = async (ctx: ExtensionContext): Promise<PrPackSession> => {
+    const s = await ensureSession(ctx);
+    s.prCtx = ctx;
+    return {
+      python: pyPath(s),
+      isChild: s.isChild,
+      packOn: s.prPack,
+      config: prOpsConfig(s),
+      gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false,
+      reviewed: async () => {
+        await s.reviewSync;
+        return passHeads(s.reviews);
+      },
+      headless: async () => {
+        await s.reviewSync;
+        return headlessPass(s.reviews);
+      },
+      watches: s.prWatches,
+      trace: (r) => s.trace?.emit(r),
+      tracker: s.prHost,
+      track: s.isChild ? undefined : async (repo, n) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n) : "off"),
+    };
+  };
+  registerPrFollow(pi, { isChild: process.env.PI_SUBAGENT_CHILD === "1", session: prSession });
   const prPackNames = registerPrPack(pi, {
     isChild: process.env.PI_SUBAGENT_CHILD === "1",
-    session: async (ctx) => {
-      const s = await ensureSession(ctx);
-      s.prCtx = ctx;
-      return {
-        python: pyPath(s),
-        isChild: s.isChild,
-        packOn: s.prPack,
-        config: prOpsConfig(s),
-        gateOn: get(s.config.config, "ceremony.reviewBeforePr") !== false,
-        reviewed: async () => {
-          await s.reviewSync;
-          return passHeads(s.reviews);
-        },
-        headless: async () => {
-          await s.reviewSync;
-          return headlessPass(s.reviews);
-        },
-        watches: s.prWatches,
-        trace: (r) => s.trace?.emit(r),
-        tracker: s.prHost,
-      };
-    },
+    session: prSession,
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);

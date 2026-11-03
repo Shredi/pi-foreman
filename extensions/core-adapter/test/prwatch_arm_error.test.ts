@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { registerPrPack } from "../gitpack.ts";
 import type { PrPackSession, PrTracker } from "../gitpack.ts";
 import { PrWatches } from "../prwatch.ts";
-import type { Timers, WatchPoll, WatchSnapshot } from "../prwatch.ts";
+import type { StoreRead, Timers, WatchPoll, WatchSnapshot } from "../prwatch.ts";
 import type { Spawner } from "../spawn.ts";
 
 type Tool = { execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details: Record<string, unknown>; isError?: boolean }> };
@@ -23,7 +23,15 @@ function setup(firstPoll: "error" | "not_found" | "ok") {
     if (firstPoll === "not_found") return { code: 0, stdout: JSON.stringify({ ok: true, prs: [], errors: [{ repo: "acme/app", number: 5, kind: "pr_not_found" }] }) + "\n", stderr: "", timedOut: false };
     return { code: 1, stdout: JSON.stringify({ ok: false, error: "host_error", message: "boom" }) + "\n", stderr: "", timedOut: false };
   };
-  const watches = new PrWatches({ poll: async () => ticks.shift() ?? { error: "x" }, send: (m) => void sent.push(m), idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers: fakeTimers });
+  // R1: pr_watch reads only the tracker's store. A queued tick is a store snap; with none queued the tracker has no entry yet (or says not found)
+  let okAt = 1_000_000;
+  const storeEntry = async (): Promise<StoreRead> => {
+    const t = ticks.shift();
+    if (!t) return firstPoll === "not_found" ? { kind: "error", error: "the pull request was not found", gone: true } : { kind: "waiting" };
+    if ("snap" in t) return { kind: "entry", snap: t.snap, okAt: (okAt += 1000) };
+    return { kind: "error", error: "gone" in t ? "not found" : t.error };
+  };
+  const watches = new PrWatches({ storeEntry, send: (m) => void sent.push(m), idle: () => true, trace: () => {}, intervalMs: () => 60_000, now: () => 0, timers: fakeTimers });
   const tracker: PrTracker = { hostAllowed: async () => true, repoFor: async () => ({ host: "github.com", repo: "acme/app" }) };
   const session: PrPackSession = { python: "/py", isChild: false, packOn: true, config: {}, gateOn: false, reviewed: async () => [], watches, trace: () => {}, tracker };
   registerPrPack({ registerTool: (t: unknown) => void tools.set((t as { name: string }).name, t as Tool) } as never, { isChild: false, session: async () => session, script: "/s.py", spawner, env: () => ({}), pushRefusal: async () => null });
@@ -31,20 +39,20 @@ function setup(firstPoll: "error" | "not_found" | "ok") {
   return { call, watches, sent, timers, delays, ticks };
 }
 
-test("pr_create: a host error on the first poll keeps the watch armed and says it will retry", async () => {
+test("pr_create: no store entry yet keeps the watch armed and says it waits for the tracker", async () => {
   const h = setup("error");
   const r = await h.call("pr_create", { title: "t", body: "b" });
   assert.equal(h.watches.size(), 1);
-  assert.match(r.content[0].text, /\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\); the first poll failed \(.*\), it will retry$/);
+  assert.match(r.content[0].text, /\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\); waiting for the PR tracker's first poll$/);
   assert.equal(h.timers.length, 1);
   assert.ok(h.delays[0] >= 60_000);
 });
 
-test("pr_watch: a host error on the first poll keeps the watch armed", async () => {
+test("pr_watch: no store entry yet keeps the watch armed", async () => {
   const h = setup("error");
   const r = await h.call("pr_watch", { number: 5 });
   assert.equal(h.watches.size(), 1);
-  assert.match(r.content[0].text, /armed, but the first poll failed .* it will retry/);
+  assert.match(r.content[0].text, /waiting for the PR tracker's first poll/);
   assert.equal(r.details.decision, "watching");
 });
 

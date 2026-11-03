@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
+import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
 import { resolveGh } from "./wait.ts";
 import { redactCommand } from "./trace.ts";
 
@@ -192,45 +193,6 @@ function readFile(file: string): OpenPrsFile | null {
   }
 }
 
-function writeAtomic(file: string, doc: OpenPrsFile): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(tmp, JSON.stringify(doc), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
-    throw err;
-  }
-}
-
-/** The lock file holds a unique token; the token is returned, or null when another session holds the lock. */
-function takeLock(lock: string, now: number): string | null {
-  fs.mkdirSync(path.dirname(lock), { recursive: true });
-  const token = `${process.pid}-${now}-${Math.random().toString(36).slice(2)}`;
-  for (let i = 0; i < 2; i++) {
-    try {
-      fs.writeFileSync(lock, token, { flag: "wx" });
-      return token;
-    } catch {
-      try {
-        if (now - fs.statSync(lock).mtimeMs <= LOCK_STALE_MS) return null;
-        fs.unlinkSync(lock);
-      } catch {
-        // gone meanwhile: try once more
-      }
-    }
-  }
-  return null;
-}
-
-/** Deletes the lock only when it still holds this session's token (a stale takeover may have replaced it). */
-function dropLock(lock: string, token: string): void {
-  try {
-    if (fs.readFileSync(lock, "utf8") === token) fs.unlinkSync(lock);
-  } catch { /* already gone */ }
-}
-
 export interface RefreshOptions {
   file: string;
   config: OpenPrsConfig;
@@ -255,7 +217,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
     const last = Date.parse(prev?.checkedAt ?? prev?.fetchedAt ?? "");
     if (!o.force && Number.isFinite(last) && now() - last < o.config.refreshSeconds * 1000) return "fresh";
     const lock = `${o.file}.lock`;
-    const token = takeLock(lock, now());
+    const token = takeLock(lock, now(), LOCK_STALE_MS);
     if (!token) return "locked";
     try {
       const stamp = (): string => new Date(now()).toISOString();

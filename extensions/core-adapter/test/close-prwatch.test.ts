@@ -17,7 +17,6 @@ function rig(opts: { fresh?: () => Promise<"open" | "merged" | "closed" | "unkno
   const timers: Timers = { set: () => 0, clear: () => undefined };
   let freshCalls = 0;
   const watches = new PrWatches({
-    poll: async () => ({ snap: snap() }),
     send: () => undefined,
     idle: () => true,
     trace: () => undefined,
