@@ -109,7 +109,7 @@ export class IdleCache {
   private landedCount = 0;
   private settleAt = 0;
   private settleChecked = true;
-  /** With a gate the window trigger is the post-warm check; the time rule stays only for a window shorter than one tick. */
+  /** With a gate the window trigger is the post-warm check; the time rule stays for a window shorter than one tick and while the budget is unavailable (that check has nothing to judge). */
   private timeRuleOff = false;
 
   constructor(deps: IdleCacheDeps) {
@@ -158,7 +158,7 @@ export class IdleCache {
     this.windowEndAt = Math.min(now + policy.effectiveWindowMinutes * 60_000, (this.lastTurnStartAt ?? now) + PI_IDLE_CAP_MS);
     const span = this.windowEndAt - now;
     this.compactAt = span <= interval ? now + span / 2 : this.windowEndAt - interval;
-    this.timeRuleOff = !!d.gate && span > interval;
+    this.timeRuleOff = !!d.gate && d.gate.budgetAvailable() && span > interval;
     this.compactChecked = false;
     this.compactedForIdle = false;
     this.lastDecisionAt = undefined;

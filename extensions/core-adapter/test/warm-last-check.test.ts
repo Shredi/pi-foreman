@@ -37,6 +37,7 @@ interface Over {
   contextTokens?: number | null;
   isChild?: boolean;
   gate?: boolean;
+  noRates?: boolean;
 }
 
 /** Clock, timers, presence and the SelfWarm both paths share (the gate of the Pi path, the sender of the self path). */
@@ -82,7 +83,7 @@ function world(base: CachePolicy, over: Over) {
     policy: () => f.policy,
     presence,
     busy: () => NOT_BUSY,
-    rates: () => RATES,
+    rates: () => (over.noRates ? null : RATES),
     compact,
     contextTokens: () => f.context,
     trace: (r) => void traces.push(r),
@@ -777,4 +778,41 @@ test("self: the settle check arrives while the first warm is in flight -> no com
   assert.equal(h.f.compacts, 1);
   assert.deepEqual(h.compactions(), ["away"]);
   assert.deepEqual(h.ev("keepalive", "skipped").map((r) => [r.reason, r.count, r.phase]), [["away", 1, "post_warm"]]);
+});
+
+// ---------------------------------------------------------------------------------------------------- budget unavailable
+
+test("budget unavailable self: no settle refusal, no early window end; the window rule compacts after the warm that passes the window", async () => {
+  const h = self({ noRates: true, policy: { selfWarmWindowMinutes: 120 } });
+  h.open();
+  await h.advance(2 * MIN);
+  assert.equal(h.f.compacts, 0, "settle check skips the budget part");
+  assert.deepEqual(h.reasons("window_end"), []);
+  await h.advance(52 * MIN);
+  assert.equal(h.f.replays, 1);
+  assert.equal(h.f.compacts, 0);
+  await h.advance(54 * MIN);
+  assert.equal(h.f.replays, 2);
+  assert.equal(h.f.compacts, 1, "post-warm window check, as on main");
+  assert.deepEqual(h.compactions(), ["window"]);
+  assert.deepEqual(h.reasons("window_end"), ["window"]);
+  assert.deepEqual(h.reasons("skipped"), ["budget_unavailable"], "traced once, never a refusal");
+});
+
+test("budget unavailable Pi: the time rule stays on with a gate, the window compacts as on main and never ends early for the budget", async () => {
+  const h = pi({ noRates: true, policy: { windowMinutes: 1, effectiveWindowMinutes: 1 } });
+  h.open();
+  await h.advanceTo(29 * SEC);
+  assert.equal(h.state.compactCalls, 0);
+  await h.advanceTo(31 * SEC);
+  assert.equal(h.state.compactCalls, 1, "midpoint of the one-minute window");
+  assert.deepEqual(h.compactions(), ["window"]);
+  assert.deepEqual(h.reasons("window_end").filter((r) => r === "budget"), []);
+  const g = pi({ noRates: true });
+  g.open();
+  await g.advanceTo(61 * SEC);
+  assert.equal(g.ic.state(), "watching", "settle check ends nothing");
+  await g.ticksUntil(1350 * SEC);
+  await g.advanceTo(25 * MIN + 31 * SEC);
+  assert.equal(g.state.compactCalls, 1, "windowEnd - interval, as on main");
 });
