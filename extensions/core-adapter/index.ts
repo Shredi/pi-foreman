@@ -22,7 +22,9 @@ import { noClassifierModelText } from "./reviewwarn.ts";
 import { PermStore, PERM_MODES, profileName, workFoldersBlock } from "./permconfig.ts";
 import { folderRelaxes } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
-import { describeCall, proposeRule } from "./rules.ts";
+import { describeCall, exactRules, proposeRule } from "./rules.ts";
+import { adopt as adoptSuggested, entriesFromReport, parsePicks, review as reviewAdopted, runSuggest, suggestHint } from "./permssuggest.ts";
+import type { AdoptPick } from "./permssuggest.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
 import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, writeChildAsk } from "./childask.ts";
@@ -2390,11 +2392,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     denied: (rule: string, layer: GateLayer, reason: string) => { block: true; reason: string };
   }
   /** The sentence and pattern rules the remember step proposes (rules.ts describeCall, proposeRule). */
-  function rememberOf(name: string, tool: string, payload: string, input: unknown, segments: import("./shellast.ts").ShellSegment[] | undefined, cwd: string): { sentence: string; rules: string[] | null } {
+  function rememberOf(name: string, tool: string, payload: string, input: unknown, segments: import("./shellast.ts").ShellSegment[] | undefined, cwd: string): { sentence: string; rules: string[] | null; exact: string[] | null } {
     const shell = SHELL_GATE_TOOLS.has(tool) && tool !== "powershell";
     const segs = segments ?? (shell ? parseShell(payload, { cwd }) : undefined);
     const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : undefined;
-    return { sentence: describeCall({ name, tool, ...(segs ? { segments: segs } : {}), ...(inp ? { input: inp } : {}) }), rules: shell && segs ? proposeRule(segs) : null };
+    return { sentence: describeCall({ name, tool, ...(segs ? { segments: segs } : {}), ...(inp ? { input: inp } : {}) }), rules: shell && segs ? proposeRule(segs) : null, exact: shell && segs ? exactRules(segs) : null };
   }
   /** The slice of the session the owner dialog needs: the pane, the presence, the remember store (a write reloads the files and clears the classifier cache). */
   function ownerDeps(s: Session, ctx: ExtensionContext, rt: GateRuntime): OwnerDeps {
@@ -2487,6 +2489,41 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return [...lines, ...rt.store.drainNotices()].join("\n");
     }
     return usage;
+  }
+
+  /** `/foreman perms suggest|review|adopt <report> <n>...` (the rule workshop): adopt is the owner's command, one select per candidate. */
+  async function workshopCommand(s: Session, ctx: ExtensionContext, rest: string[]): Promise<string> {
+    if (rest[0] === "review") return rest.length === 1 ? reviewAdopted(s.agentDir) : "Usage: /foreman perms review";
+    if (rest[0] === "suggest") {
+      const r = runSuggest(s.agentDir, ctx.cwd, rest.slice(1));
+      return r.ok === false ? `pi-foreman: ${r.error}` : r.text;
+    }
+    if (s.isChild || !ctx.hasUI) return "pi-foreman: /foreman perms adopt changes the owner's permissions file; it runs in the owner's own session only.";
+    const picks = rest.length >= 3 ? parsePicks(rest.slice(2)) : "Usage: /foreman perms adopt <report> <n>...";
+    if (typeof picks === "string") return picks;
+    let text: string;
+    try {
+      text = fs.readFileSync(path.resolve(ctx.cwd, rest[1]), "utf8");
+    } catch (e) {
+      return `pi-foreman: cannot read the report: ${(e as Error).message}`;
+    }
+    // one select per candidate: its rule, its sentence, or skip (the report is re-validated by entriesFromReport inside adopt as well)
+    const chosen: AdoptPick[] = [];
+    for (const p of picks) {
+      const asRule = entriesFromReport(text, [{ n: p.n, as: "rule" }]);
+      const asSentence = entriesFromReport(text, [{ n: p.n, as: "sentence" }]);
+      if (asRule.ok === false) return `pi-foreman: nothing adopted: ${asRule.error}`;
+      if (asSentence.ok === false) return `pi-foreman: nothing adopted: ${asSentence.error}`;
+      const rule = asRule.entries[0].kind === "rule" ? asRule.entries[0].text : null;
+      const how = await ctx.ui.select(`Candidate ${p.n}: add to ${path.join(s.agentDir, "pi-foreman", "permissions.json")}?\n\nrule: ${rule ?? "(none is safe)"}\nsentence: ${asSentence.entries[0].text}`, [...(rule ? ["rule"] : []), "sentence", "skip"]);
+      if (how === "rule" || how === "sentence") chosen.push({ n: p.n, as: how });
+    }
+    if (chosen.length === 0) return "nothing adopted";
+    const rt = gateRuntimeOf(s);
+    const r = await adoptSuggested(s.agentDir, text, chosen, async () => true);
+    rt.store.reload();
+    rt.classifier.clearCache();
+    return r.lines.join("\n");
   }
 
   const SHELL_GATE_TOOLS = new Set(["bash", "foreman_bg", "bg_run", "powershell"]);
@@ -4534,6 +4571,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const day = new Date().toISOString().slice(0, 10);
       const argv = [...retroInputs(s, ctx, "--session"), "--proposals-out", path.join(s.agentDir, "pi-foreman", "state", "retro", `permission-proposals-${day}.json`)];
       const r = await runScript(s, "foreman_retro.py", argv);
+      const suggestLine = suggestHint(s.agentDir);
+      if (suggestLine && r.ok) r.text = `${r.text}\n${suggestLine}`;
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
       let file: string | null = null;
       try {
@@ -4673,6 +4712,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (sub === "perms") {
         const s = await ensureSession(ctx);
+        if (rest[0] === "suggest" || rest[0] === "review" || rest[0] === "adopt") {
+          ctx.ui.notify(await workshopCommand(s, ctx, rest), "info");
+          return;
+        }
         ctx.ui.notify(permsCommand(s, rest), "info");
         return;
       }
