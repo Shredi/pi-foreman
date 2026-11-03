@@ -80,3 +80,28 @@ test("force, HEAD:B, --delete and main stay refused from the own second worktree
     `git -C ${wtB} push origin round/b --tags`,
   ]) assert.notEqual(rule(run(line, [wtB])), "default-git-push", line);
 });
+
+// -C is resolved once (shellast moves the segment's cwd); own = the worktree top level is an own root exactly
+test("relative and subdir -C forms from the session checkout", () => {
+  fs.mkdirSync(path.join(wtA, "sub"), { recursive: true });
+  assert.equal(rule(run("git -C ../b push origin round/b", [wtB])), "default-git-push");
+  assert.equal(rule(run("git -C sub push origin round/a", [])), "default-git-push");
+  assert.equal(rule(run(`git -C ${wtA}/sub push origin round/a`, [])), "default-git-push");
+  assert.equal(rule(run(`git -C ${wtB} push origin round/b`, [wtB])), "default-git-push");
+  assert.equal(rule(run("cd sub && git push origin round/a", [])), "default-git-push");
+});
+
+test("a foreign worktree nested inside the session checkout is not own, in the cd and -C forms", () => {
+  const nested = path.join(wtA, "nested");
+  git(main, "worktree", "add", "-q", "-b", "round/n", nested);
+  for (const line of [`cd ${nested} && git push origin round/n`, `git -C ${nested} push origin round/n`, "git -C nested push origin round/n", "cd nested && git push origin round/n"])
+    assert.notEqual(rule(run(line, [])), "default-git-push", line);
+  assert.equal(rule(run(`git -C ${nested} push origin round/n`, [nested])), "default-git-push");
+});
+
+test("a nonexistent path is not own", () => {
+  const gone = path.join(base, "repo.worktrees", "gone");
+  assert.ok(!ownWorktreeCheck([wtA, gone])(gone));
+  assert.notEqual(rule(run(`git -C ${gone} push origin round/b`, [gone])), "default-git-push");
+  assert.notEqual(rule(run(`cd ${gone} && git push origin round/b`, [gone])), "default-git-push");
+});

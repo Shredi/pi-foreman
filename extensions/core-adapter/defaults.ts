@@ -205,17 +205,11 @@ function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boole
 
 const GIT_READ_ONLY_SUBS: ReadonlySet<string> = new Set(["branch", "remote"]);
 
-/** The leading `-C <dir>` options of a git argv resolved against `cwd`, and the words after them. Null when an operand cannot be resolved. */
-function gitC(argv: string[], cwd: string, platform: string): { dir: string; argv: string[] } | null {
-  let dir = cwd;
+/** The words of a git argv after its leading `-C <dir>` options; `cwd` already carries them (shellast moves the segment's cwd by every `-C`). */
+function gitC(argv: string[]): string[] {
   let i = 0;
-  while (argv[i] === "-C") {
-    const r = resolveWord(platform, dir, argv[i + 1]);
-    if (!r) return null;
-    dir = r;
-    i += 2;
-  }
-  return { dir, argv: argv.slice(i) };
+  while (argv[i] === "-C") i += 2;
+  return argv.slice(i);
 }
 
 /** `cd <dir>` into the session's own checkout or a worktree it created: a read, so a following push in that worktree can be a default. */
@@ -240,11 +234,11 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   const rest = argv.slice(1);
   if (sub === "-C") {
     // `git -C <dir> push ...` only: the branch, protected and push-config facts are those of <dir>
-    const g = gitC(argv, cwd, c.platform);
-    if (!g || g.argv[0] !== "push" || workFolderBarred(c, g.dir)) return null;
+    const after = gitC(argv);
+    if (after[0] !== "push" || workFolderBarred(c, cwd)) return null;
     // without the session's worktree list, only the session's checkout is known to be own
-    if (!(c.facts.isOwnWorktree ? c.facts.isOwnWorktree(g.dir) : rootHolds(c.roots.worktree, g.dir, c.platform, c.roots.realpath, c.roots.worktree))) return null;
-    return pushOk(g.argv.slice(1), text, g.dir, c) ? "default-git-push" : null;
+    if (!(c.facts.isOwnWorktree ? c.facts.isOwnWorktree(cwd) : rootHolds(c.roots.worktree, cwd, c.platform, c.roots.realpath, c.roots.worktree))) return null;
+    return pushOk(after.slice(1), text, cwd, c) ? "default-git-push" : null;
   }
   if (!sub || sub.startsWith("-")) return null; // global options (-C, -c, --git-dir ...) are never a default
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
@@ -639,15 +633,6 @@ function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
   return { sub: a[i], rest: a.slice(i + 1) };
 }
 
-/** The directory a git call works in: `cwd` moved by every `-C` among the global options; null when an operand cannot be resolved. */
-function gitDirOf(a: string[], cwd: string, platform: string): string | null {
-  let dir: string | null = cwd;
-  for (let i = 0; dir !== null && i < a.length && a[i].startsWith("-"); i += GIT_GLOBAL_VALUED.has(a[i]) ? 2 : 1) {
-    if (a[i] === "-C") dir = resolveWord(platform, dir, a[i + 1]);
-  }
-  return dir;
-}
-
 const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
 const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
@@ -691,8 +676,8 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
     case "branch":
       return flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete");
     case "push": {
-      const dir = gitDirOf(s.argv, s.cwd ?? env.cwd, env.platform);
-      return dir === null || !pushOwn(rest, dir, env);
+      // s.cwd is already moved by every `-C` (shellast); null: a `-C` operand that cannot be resolved
+      return s.cwd === null || !pushOwn(rest, s.cwd ?? env.cwd, env);
     }
     case "rebase":
     case "filter-branch":

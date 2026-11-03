@@ -23,14 +23,17 @@ test("pathKey / pathWithin: darwin folds case, linux does not", () => {
   assert.ok(!pathWithin("/work/wt", "/work/wt-2", "linux"));
 });
 
-test("ownWorktreeCheck: a root, its subdirs and its real spelling are own; a sibling is not", () => {
+test("ownWorktreeCheck: a root, its subdirs and its real spelling are own; a sibling or a nested worktree is not", () => {
   const real = (p: string): string => p.replace("/link/", "/real/");
-  const own = ownWorktreeCheck(["/link/wt"], "linux", real);
+  const top = (d: string): string | null => (d.startsWith("/real/wt/nested") ? "/real/wt/nested" : d.startsWith("/real/wt") ? "/real/wt" : d.startsWith("/real/other") ? "/real/other" : null);
+  const own = ownWorktreeCheck(["/link/wt"], "linux", real, top);
   assert.ok(own("/link/wt"));
   assert.ok(own("/link/wt/sub"));
   assert.ok(own("/real/wt"));
+  assert.ok(!own("/link/wt/nested/src"));
   assert.ok(!own("/link/other"));
-  assert.ok(!ownWorktreeCheck([], "linux", id)("/link/wt"));
+  assert.ok(!own("/link/nowhere"));
+  assert.ok(!ownWorktreeCheck([], "linux", id, top)("/link/wt"));
 });
 
 test("headLine: the full sha, or unknown with the why", () => {
