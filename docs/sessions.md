@@ -302,7 +302,7 @@ means the bridge is not loaded or has not registered yet.
 
 ### Opener intercom id
 
-The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom 0.17.0 resolved and
+The id written to `parent` is, in order: `PI_INTERCOM_SESSION_ID` (the id pi-intercom resolved and
 published, which also covers an id claimed through `intercom:session-identity`), `PI_INTERCOM_STABLE_ID`,
 `stableId` in `<agent dir>/intercom/config.json`, then the Pi session id. The CLI cannot know the Pi session id
 and takes `--parent-id` instead.
@@ -500,7 +500,17 @@ deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `los
 `pi-intercom` is bundled with the package (pinned); `foreman setup` filters it out with `--no-intercom` and otherwise writes
 `<agent dir>/intercom/config.json` (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent
 (see [install](install.md)). Sessions then address each other by name or id; the close request above travels over
-it as plain text `foreman:close`, accepted only from the recorded parent session.
+it as plain text `foreman:close`, accepted only from the recorded parent session. `foreman setup --intercom-hc
+[--machine-name <name>]` sets `crossMachine.transport: "hc"` (and `crossMachine.machineName`) in that file, so a child on
+a remote machine can send to `<uuid>@<parentName>` over hc; the remote needs `hc machine add <parentName>`
+([safety](safety.md#known-limit-remote-machine-trust-boundary)). The package pins a fork of `pi-intercom` for this
+(see [install](install.md)).
+
+An inbound intercom message starts a turn in every session, subagent children included, under the session's normal guards
+(none of the gates is relaxed for it). pi-foreman detects the message itself (custom message type `intercom_message`), so it works with
+both delivery paths of `pi-intercom` 0.18.1: on Pi 1.2.0 and newer an idle session is started by the message (no wake line), on
+Pi before 1.2.0 `pi-intercom` wakes it with the legacy line `New intercom message above.`. An accepted `foreman:close` to an idle
+session makes that started turn the close turn (no extra turn); to a busy session the close turn follows the run.
 
 ## Herdr
 

@@ -458,13 +458,15 @@ export type TurnCause = "user" | "child" | "intercom" | "wake" | "close" | "othe
 export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
 /**
  * Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js),
- * and pi-intercom 0.17.0's inbound message (index.ts:1300).
+ * and pi-intercom's inbound message (0.18.1 fork index.ts:1334-1341).
  */
 export const INTERCOM_MESSAGE_TYPES = ["subagent_supervisor_request", "intercom_message"];
 /**
- * pi-intercom 0.17.0 appends a message to an idle session without starting a run (Pi's extension
- * `message_end` does not fire for that append), then wakes it with this extension prompt (index.ts:1312,
- * `deliverAs: "steer"`, one wake per idle session through idle-wake.ts).
+ * Legacy wake line: on Pi before 1.2.0 pi-intercom appends a message to an idle session without
+ * starting a run (no extension `message_end`), then wakes it with this extension prompt (0.18.1 fork
+ * index.ts:1347, version switch :163-170). On Pi 1.2.0+ it sends the message with triggerTurn and no
+ * wake line (no `input` event). Hooks find an inbound message through intercomInbound (intercomguard.ts);
+ * only the pure classifiers causeOfInput and isOwnerPrompt compare the text.
  */
 export const INTERCOM_WAKE_TEXT = "New intercom message above.";
 /** pi-foreman's own long-wait wake-up (wait.ts). */
@@ -512,4 +514,42 @@ export function keepSection<M>(messages: readonly M[], name: string, fallback?: 
   const head = out[i] as Sys;
   out[i] = { ...head, sections: { ...(head.sections ?? {}), [name]: fallback } } as M;
   return out;
+}
+
+/**
+ * Pi renders the provider's leading prompt by replaying every system message (contents joined with
+ * blank lines, then the sections in Map order: a patch keeps an old key in place and appends a new
+ * key at the end). `ctx.getSystemPrompt()` is a fresh build with the sections in insertion order.
+ * Both hold the same texts when a section first appears mid-session, but in another order, and a
+ * client that compares the two byte for byte (pi-claude-bridge) refuses the turn. When the replay
+ * differs from `canonical` only in section order, the first system message gets every current
+ * section in the canonical order and the later system messages lose their sections (contents stay).
+ * Returns null when nothing needs to change or the texts differ in any other way.
+ */
+export function alignSections<M>(messages: readonly M[], canonical: string): M[] | null {
+  type Sys = { role?: unknown; content?: unknown; sections?: Record<string, unknown> };
+  const sys = messages.map((m, i) => ({ m: m as Sys, i })).filter((x) => x.m.role === "system");
+  if (!sys.length) return null;
+  const text = (c: unknown): string => (typeof c === "string" ? c : Array.isArray(c) ? c.filter((b) => b?.type === "text").map((b) => b.text).join("\n") : "");
+  const content = sys.map((x) => text(x.m.content)).filter((t) => t.length > 0).join("\n\n");
+  const merged = new Map<string, string>();
+  for (const { m } of sys) {
+    for (const [name, v] of Object.entries(m.sections ?? {})) {
+      if (v === null) merged.delete(name);
+      else if (typeof v === "string") merged.set(name, v);
+    }
+  }
+  const render = (entries: [string, string][]): string => [content, ...entries.map((e) => e[1])].filter((p) => p.length > 0).join("\n\n");
+  const current = [...merged];
+  if (render(current) === canonical) return null;
+  if (current.some(([, t]) => t.length === 0 || !canonical.includes(t))) return null;
+  const ordered = [...current].sort((a, b) => canonical.indexOf(a[1]) - canonical.indexOf(b[1]));
+  if (render(ordered) !== canonical) return null;
+  const first = sys[0].i;
+  return messages.map((m, i) => {
+    if (i === first) return { ...(m as object), sections: Object.fromEntries(ordered) } as M;
+    if (!sys.some((x) => x.i === i) || !(m as Sys).sections) return m;
+    const { sections: _drop, ...rest } = m as Sys & object;
+    return rest as M;
+  });
 }

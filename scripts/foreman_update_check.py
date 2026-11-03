@@ -48,6 +48,9 @@ def fetch(name):
 def check(entry, fetcher=fetch):
     name, pinned, tmpl = entry["name"], entry.get("version"), entry.get("notes")
     row = {"name": name, "pinned": pinned, "latest": None, "newer": [], "notes": None, "error": None}
+    if isinstance(pinned, str) and pinned.startswith(("github:", "git+https://", "git+ssh://")):
+        row["fork"] = True  # a git pin is not on the registry's version line: no lookup
+        return row
     try:
         doc = fetcher(name)
     except Exception as exc:  # offline, DNS, HTTP error, bad JSON: one line, exit 0
@@ -83,6 +86,9 @@ def entries(lock):
 def render(rows):
     lines = []
     for r in rows:
+        if r.get("fork"):
+            lines.append("%s: fork pin, see docs/install.md" % r["name"])
+            continue
         if r["error"]:
             lines.append("%s: could not check (%s)" % (r["name"], r["error"]))
             continue

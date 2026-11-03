@@ -1,15 +1,21 @@
 // pi-intercom adoption (Phase 4, ledger items 3, 4, 22): the guard on the `intercom` tool, the
-// inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.17.0 (pinned in
-// packages.lock.json):
-//   - tool `intercom` (index.ts:2434), params incl. action, to, cwd, openProjectPaneIfMissing;
-//     a `to` of the form name@machine is a cross-machine send over SSH (cross-machine-discovery.ts).
+// inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.18.1 (the fork pin
+// in packages.lock.json, upstream v0.18.1 plus the hc transport; line numbers are the fork's):
+//   - tool `intercom` (index.ts:2597), params incl. action, to, cwd, openProjectPaneIfMissing;
+//     a `to` of the form name@machine is a cross-machine send, over SSH (crossMachine.transport
+//     "herdr", default) or `hc` (transport "hc") (cross-machine-discovery.ts).
 //   - inbound messages: pi.sendMessage({customType: "intercom_message", details: {from, message,
-//     replyCommand?, bodyText}}) (index.ts:1289); an idle session is then woken with
-//     pi.sendUserMessage("New intercom message above.") (index.ts:1302).
+//     replyCommand?, bodyText}}) (delivery index.ts:1334-1341); on Pi 1.2.0 and newer an idle
+//     session gets sendMessage's triggerTurn and no wake line: no `input` event, the message
+//     reaches before_agent_start (messageType "custom") and then message_end; on Pi before 1.2.0
+//     an idle session is woken with pi.sendUserMessage("New intercom message above.") (index.ts:1347)
+//     (version switch index.ts:163-170). A busy session steers the message in (message_end).
+//     intercomInbound below reads all three, keyed on the custom message, not on the wake text.
 //   - config: <agentDir>/intercom/config.json (config.ts getConfigPath, broker/paths.ts).
 // Intercom messages are data: no gate is relaxed for a turn they start.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { INTERCOM_WAKE_TEXT } from "./usage.ts";
 
 export const INTERCOM_TOOL = "intercom";
 export const INTERCOM_PACKAGE = "pi-intercom";
@@ -30,7 +36,7 @@ export function intercomBlock(toolName: string, input: unknown, p: IntercomPolic
     return "pi-foreman: intercom openProjectPaneIfMissing is refused: starting Pi in a new pane is a launch outside the role allowlist. Send to a running session, or set intercom.allowOpenPane in your foreman.json.";
   }
   if (typeof i.to === "string" && i.to.includes("@") && !p.allowRemote) {
-    return "pi-foreman: intercom targets of the form name@machine (cross-machine over SSH) are refused. Send to a session on this machine, or set intercom.allowRemote in your foreman.json.";
+    return "pi-foreman: intercom targets of the form name@machine (cross-machine over SSH or hc) are refused. Send to a session on this machine, or set intercom.allowRemote in your foreman.json.";
   }
   return undefined;
 }
@@ -83,7 +89,7 @@ export function intercomDoctor(agentDir: string, packageLists: unknown[], env: N
   const risks = all.filter((k) => k !== "stableId");
   // Security review S6: a shared stableId makes every session (children too) register under one id.
   if (all.includes("stableId")) out.push(`WARN ${intercomConfigPath(agentDir)} sets stableId: every Pi session of this agent dir, child sessions included, registers under that one intercom id, so a child can pose as the foreman's parent (foreman:close). Remove it and set PI_INTERCOM_STABLE_ID per session if you need a fixed id.`);
-  if (risks.length) out.push(`WARN ${intercomConfigPath(agentDir)} sets ${risks.join(", ")}: brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH. Fine if you set them on purpose.`);
+  if (risks.length) out.push(`WARN ${intercomConfigPath(agentDir)} sets ${risks.join(", ")}: brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH or hc. Fine if you set them on purpose.`);
   if (env.HERDR_ENV === "1" && !fs.existsSync(path.join(agentDir, "extensions", "herdr-agent-state.ts"))) {
     out.push("INFO Herdr detected; run `herdr integration install pi` for pane state");
   }
@@ -92,8 +98,8 @@ export function intercomDoctor(agentDir: string, packageLists: unknown[], env: N
 
 /**
  * Details of the newest pi-intercom message since the last user message in a session branch
- * (entries oldest first), or null. An idle session gets the message without an extension
- * `message_end`, then pi-intercom's wake prompt; this finds the message for that prompt.
+ * (entries oldest first), or null. On Pi before 1.2.0 an idle session gets the message without an
+ * extension `message_end`, then pi-intercom's wake prompt; this finds the message for that prompt.
  */
 export function lastIntercomDetails(entries: readonly unknown[]): { details: unknown } | null {
   for (let i = entries.length - 1; i >= 0; i--) {
@@ -103,6 +109,45 @@ export function lastIntercomDetails(entries: readonly unknown[]): { details: unk
     if (e.type === "message" && e.message?.role === "user") return null;
   }
   return null;
+}
+
+/** A pi-intercom inbound custom message: the customType plus `details.from` and `details.message` objects (never the text). */
+export function isIntercomCustom(message: unknown): boolean {
+  const m = message as { customType?: unknown; details?: { from?: unknown; message?: unknown } | null } | null;
+  if (!m || typeof m !== "object" || m.customType !== INTERCOM_MESSAGE_TYPE) return false;
+  const d = m.details;
+  return !!d && typeof d === "object" && !!d.from && typeof d.from === "object" && !!d.message && typeof d.message === "object";
+}
+
+export type IntercomInboundEvent =
+  | { hook: "input"; source: unknown; text: unknown; branch: readonly unknown[] }
+  | { hook: "before_agent_start"; messageType: unknown; message?: unknown }
+  | { hook: "message_end"; message: unknown };
+
+/**
+ * The inbound pi-intercom message an event carries, or null. Version-free: `before_agent_start`
+ * (Pi 1.2+ idle triggerTurn run) and `message_end` (busy steer on every Pi, and the triggerTurn run
+ * once more) read the custom message itself; `input` is the legacy wake line (Pi before 1.2.0),
+ * which then reads the newest intercom entry of the branch. `id` is `details.message.id` ("" when
+ * absent); before_agent_start and message_end of one message report the same id.
+ */
+export function intercomInbound(event: IntercomInboundEvent): { details: unknown; id: string } | null {
+  let details: unknown;
+  if (event.hook === "input") {
+    if (event.source !== "extension" || event.text !== INTERCOM_WAKE_TEXT) return null;
+    const hit = lastIntercomDetails(event.branch);
+    if (!hit) return null;
+    details = hit.details;
+  } else if (event.hook === "before_agent_start") {
+    if (event.messageType !== "custom" || !isIntercomCustom(event.message)) return null;
+    details = (event.message as { details: unknown }).details;
+  } else {
+    const m = event.message as { role?: unknown } | null;
+    if (!m || typeof m !== "object" || m.role !== "custom" || !isIntercomCustom(m)) return null;
+    details = (m as { details: unknown }).details;
+  }
+  const id = (details as { message?: { id?: unknown } } | null)?.message?.id;
+  return { details, id: typeof id === "string" ? id : "" };
 }
 
 /** Sender label of the newest pi-intercom message since the last user message, or null. */

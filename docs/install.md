@@ -23,6 +23,15 @@ meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `pack
 `skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
 
+**`pi-intercom` is a fork pin.** `package.json` and `packages.lock.json` pin it as
+`git+https://github.com/Shredi/pi-intercom.git#<sha>` (the explicit https form, so `npm ci` needs no SSH key), the `hc-transport` branch, which is upstream `pi-intercom` v0.18.1 plus one commit: a
+`crossMachine.transport: "hc"` option that sends `name@machine` messages through `hc exec` instead of SSH. Upstream has
+no such transport yet. `foreman update-check` prints `pi-intercom: fork pin, see docs/install.md` for it and Renovate is
+switched off for it. To take an upstream update: watch the upstream releases, rebase `hc-transport` onto the new tag, run the
+fork's tests, then set the new commit in both files (the two specs must be identical) and run `npm install`. pi-foreman
+returns to the upstream `pi-intercom` at the first release that contains the transport: pin that version again in both
+files and delete the `pi-intercom` rule in `renovate.json`.
+
 Then run setup once:
 
 ```sh
@@ -161,7 +170,10 @@ backups ([migration](permissions.md#from-the-permission-package)). Setup writes 
 `settings.json.bak-<timestamp>` first), and creates `<agent dir>/foreman.json` only if absent. Unless
 `--no-intercom`, it writes `<agent dir>/intercom/config.json`
 (`{"inboundTrigger":"always","busyDelivery":"human-first"}`) only if absent; an existing file that sets
-`brokerCommand`, `brokerArgs` or `crossMachine` gets a warning. `--no-intercom` is a package filter: it adds
+`brokerCommand`, `brokerArgs` or `crossMachine` gets a warning. `--intercom-hc` (off by default) sets
+`crossMachine.transport` to `"hc"` in that file, so a `name@machine` send travels over hc instead of SSH, and with
+`--machine-name <name>` also `crossMachine.machineName`; it creates the file or merges the keys into an existing one, keeps
+every other key and never touches `allowRemote`. `--no-intercom` is a package filter: it adds
 `!node_modules/pi-intercom/**` to the pi-foreman package entry and writes no intercom config (delete those filter
 lines from `settings.json` to undo). When the Claude bridge is in use, setup prints a login hint (see
 [below](#claude-bridge-log-in-once)). Map each provider you use to models in `foreman.json`:
@@ -193,6 +205,13 @@ set to `true` hides it.
 
 Then re-run `foreman setup` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
+
+### Pi's built-in `tool-search`
+
+pi-foreman registers its own `tool_search` (deferred tools and skills), which replaces Pi's built-in `tool-search` extension. Without
+help Pi prints `built-in extension tool-search was not loaded` at every start. `foreman setup` adds `-builtin:tool-search` to the
+`extensions` list of the target `settings.json` (what `pi config` writes when you disable it under Built-in extensions) so the
+replacement is silent. An existing `builtin:tool-search` entry of any kind (`+`, `-`, `!`) is left alone, and `--remove` keeps the entry.
 
 ### What setup writes for compaction
 

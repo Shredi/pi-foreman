@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependencies are @inquirer/prompts (picker) and @earendil-works/pi-tui (--preview), both loaded lazily.
+// pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependency is @inquirer/prompts (picker), loaded lazily; --preview needs @earendil-works/pi-tui, a Pi-provided peer that a checkout installs as a devDependency.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
 //                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]
 // pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents
@@ -26,18 +26,28 @@ const PI_DEFAULT_KEEP_RECENT = pointModule?.PI_DEFAULT_KEEP_RECENT ?? 20000;
 const ROOT = fs.realpathSync(path.dirname(fileURLToPath(import.meta.url)));
 const WIN = process.platform === "win32";
 const MANAGED_KEYS = ["agentOverridesByProvider", "agentOverrides", "forceTopLevelAsync"]; // same keys as /foreman doctor
+const BUILTIN_TOOL_SEARCH_OFF = "-builtin:tool-search";
+/** Settings with Pi's built-in `tool-search` extension switched off (pi-foreman registers its own `tool_search`; Pi warns when it has to drop the built-in itself), or null when the settings already carry an entry for it. */
+export function withBuiltinToolSearchOff(settings) {
+  if (settings.extensions !== undefined && !Array.isArray(settings.extensions)) return null;
+  const list = settings.extensions ?? [];
+  if (list.some((e) => typeof e === "string" && e.replace(/^[+\-!]/, "") === "builtin:tool-search")) return null;
+  return { ...settings, extensions: [...list, BUILTIN_TOOL_SEARCH_OFF] };
+}
 const OVERLAY_RE = /^npm:(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*@\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const FOREMAN_INSTALL = "pi install git:github.com/Shredi/pi-foreman";
 const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
 const USAGE = [
   "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]",
   "                       [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--pick]",
-  "                       [--preview [screen]]",
+  "                       [--intercom-hc [--machine-name <name>]] [--preview [screen]]",
   `  Install pi-foreman first: ${FOREMAN_INSTALL}  (this script is also reachable as \`foreman setup\`).`,
   "  --no-intercom  filter pi-intercom out of the pi-foreman package entry and do not write its config",
   "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
   "  --develop      run from a checkout: write <checkout>/.pi/settings.json so the checkout replaces the installed",
   "                 package in that directory (project packages load only after Pi's trust prompt, or `pi -a`)",
+  "  --intercom-hc  write crossMachine.transport \"hc\" (and, with --machine-name, crossMachine.machineName) into the pi-intercom config, so `name@machine` sends go over hc instead of SSH; off by default, intercom.allowRemote stays as is",
+  "  --machine-name the name this machine goes by for pi-intercom (crossMachine.machineName); needs --intercom-hc",
   "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
   "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
   "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
@@ -55,9 +65,10 @@ const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
 // pi-subagents spawns the hook without a shell, so a script cannot run on Windows (docs/safety.md, known limits).
 const WORKTREE_HOOK_TIMEOUT_MS = 600000;
-// Written once when absent (never overwritten): wake on every inbound message, the human's input first.
+// Defaults for pi-intercom's config.json when it is absent: wake on every inbound message, the human's input first.
 const INTERCOM_CONFIG = { inboundTrigger: "always", busyDelivery: "human-first" };
-// Keys that change the program pi-intercom starts or enable sends over SSH: trusted overrides, warned about.
+const intercomHcKeys = (o) => ({ transport: "hc", ...(o.machineName ? { machineName: o.machineName } : {}) });
+// Keys that change the program pi-intercom starts or enable sends over SSH or hc: trusted overrides, warned about.
 const INTERCOM_RISKY_KEYS = ["brokerCommand", "brokerArgs", "crossMachine"];
 // Providers an extension registers at runtime (no Pi registry file) that serve another provider's model ids: price tiers come from the base.
 const BUILTIN_MODEL_DATA_FROM = { "claude-bridge": "anthropic" };
@@ -76,7 +87,7 @@ const say = (s = "") => console.log(s);
 const csv = (v) => v.split(",").map((s) => s.trim()).filter(Boolean);
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, develop: false, profile: null, enable: [], disable: [], addon: [], pick: false, preview: null };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], pick: false, preview: null };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -90,6 +101,11 @@ function parseArgs(argv) {
     else if (flag === "--project") o.project = true;
     else if (flag === "--remove") o.remove = true;
     else if (flag === "--no-intercom") o.noIntercom = true;
+    else if (flag === "--intercom-hc") o.intercomHc = true;
+    else if (flag === "--machine-name") {
+      o.machineName = value().trim();
+      if (!o.machineName || o.machineName.startsWith("--")) throw new Fatal(`${flag} needs a machine name, not an empty value or another flag.\n${USAGE}`, 2);
+    }
     else if (flag === "--develop") o.develop = true;
     else if (flag === "--overlay") o.overlay = value();
     else if (flag === "--agent-dir") o.agentDir = value();
@@ -103,7 +119,7 @@ function parseArgs(argv) {
     else throw new Fatal(`Unknown argument: ${argv[i]}\n${USAGE}`, 2);
   }
   if (o.preview !== null) {
-    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.pick && "--pick"].filter(Boolean);
+    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.pick && "--pick"].filter(Boolean);
     if (others.length) throw new Fatal(`--preview cannot be combined with ${others.join(", ")}.`, 2);
     return o;
   }
@@ -111,6 +127,8 @@ function parseArgs(argv) {
     throw new Fatal(`--overlay needs an exact version, e.g. npm:@scope/pkg@1.2.3 (got "${o.overlay}"). Ranges and tags are refused.`, 2);
   }
   if (o.overlay && o.remove) throw new Fatal("--overlay and --remove cannot be combined.", 2);
+  if (o.machineName !== null && !o.intercomHc) throw new Fatal("--machine-name needs --intercom-hc.", 2);
+  if (o.intercomHc && (o.noIntercom || o.remove)) throw new Fatal("--intercom-hc cannot be combined with --no-intercom or --remove.", 2);
   if (o.develop && (o.remove || o.project)) throw new Fatal("--develop cannot be combined with --remove or --project.", 2);
   const named = [o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon"].filter(Boolean);
   if (o.remove && (named.length || o.pick)) throw new Fatal(`${[...named, o.pick && "--pick"].filter(Boolean).join(", ")} cannot be combined with --remove.`, 2);
@@ -1009,8 +1027,10 @@ async function main(argv) {
       if (icText === null) {
         anyChange = true;
         say(`intercom config: absent, ${dry ? "would create" : "creating"} ${icFile}`);
-        if (dry) say(unifiedDiff("intercom/config.json", null, toJson(INTERCOM_CONFIG)));
-        else writeFile(icFile, toJson(INTERCOM_CONFIG));
+        const fresh = opts.intercomHc ? { ...INTERCOM_CONFIG, crossMachine: intercomHcKeys(opts) } : INTERCOM_CONFIG;
+        if (dry) say(unifiedDiff("intercom/config.json", null, toJson(fresh)));
+        else writeFile(icFile, toJson(fresh));
+        if (opts.intercomHc) say(`  warning: ${icFile} sets crossMachine (--intercom-hc: name@machine sends go over hc to a machine added with \`hc machine add\`); fine only if you set it on purpose.`);
       } else {
         let ic = null;
         try {
@@ -1018,9 +1038,20 @@ async function main(argv) {
         } catch (err) {
           say(`  warning: ${err.message}`);
         }
+        if (ic && opts.intercomHc) {
+          const cm = ic.crossMachine && typeof ic.crossMachine === "object" && !Array.isArray(ic.crossMachine) ? ic.crossMachine : {};
+          const next = { ...ic, crossMachine: { ...cm, ...intercomHcKeys(opts) } };
+          if (canonical(next) !== canonical(ic)) {
+            anyChange = true;
+            say(`intercom config: ${dry ? "would set" : "setting"} crossMachine.transport "hc"${opts.machineName ? " and crossMachine.machineName" : ""} in ${icFile} (--intercom-hc)`);
+            say(unifiedDiff("intercom/config.json", toJson(ic), toJson(next)));
+            if (!dry) writeFile(icFile, toJson(next));
+            ic = next;
+          }
+        }
         const risky = ic ? INTERCOM_RISKY_KEYS.filter((k) => Object.prototype.hasOwnProperty.call(ic, k)) : [];
-        say("intercom config: present, left alone");
-        if (risky.length) say(`  warning: ${icFile} sets ${risky.join(", ")} (brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH); fine only if you set them on purpose.`);
+        say(`intercom config: present, ${opts.intercomHc ? "other keys left alone" : "left alone"}`);
+        if (risky.length) say(`  warning: ${icFile} sets ${risky.join(", ")} (brokerCommand/brokerArgs choose the program pi-intercom starts as its broker, crossMachine enables sends over SSH or hc); fine only if you set them on purpose.`);
       }
     }
     if (opts.project) say("  note: project packages load only after the project is trusted; headless runs need `pi --approve` (or `-a`).");
@@ -1295,6 +1326,12 @@ async function main(argv) {
       comp.apply(next);
     }
     if (comp.recordChanged) anyChange = true;
+    const searchOff = withBuiltinToolSearchOff(next);
+    if (searchOff) {
+      anyChange = true;
+      next = searchOff;
+      say(`extensions: ${dry ? "would add" : "adding"} ${BUILTIN_TOOL_SEARCH_OFF} (pi-foreman's tool_search replaces Pi's built-in tool-search)`);
+    }
     if (!same) {
       if (hasCur && record && sha(cur) !== record.subagentsHash) say("subagents block: edited by hand since the last install; backing it up and overwriting");
       else if (hasCur && !record) say("subagents block: present but not recorded as ours; backing it up and overwriting");
@@ -1336,18 +1373,20 @@ async function main(argv) {
       if (needRecord) say(`would record the managed hash in ${managedFile}`);
       if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);
     } else if (anyChange) {
-      if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed) backup();
+      if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed || searchOff) backup();
       for (const a of [...removeArgs, ...installArgs]) runOrDie(a);
       for (const a of addonNew) {
         if (!isObj(managed.addons)) managed.addons = {};
         managed.addons[a.id] = { spec: a.spec, installedAt: new Date().toISOString() };
       }
       let finalBlock = pick(next.subagents);
-      if (!same || filtered || reordered || comp.changed) {
+      if (!same || filtered || reordered || comp.changed || searchOff) {
         // pi edits `packages` in the same file, so merge into what is on disk now
         const fresh = parseJsonObject(readText(settingsFile), settingsFile) ?? {};
         if (!same) applyWanted(fresh);
         comp.apply(fresh);
+        const freshOff = withBuiltinToolSearchOff(fresh);
+        if (freshOff) fresh.extensions = freshOff.extensions;
         const filteredNow = applyFilter(fresh.packages);
         fresh.packages = foremanBeforeBridge(filteredNow, baseDir) ?? filteredNow;
         writeFile(settingsFile, toJson(fresh));

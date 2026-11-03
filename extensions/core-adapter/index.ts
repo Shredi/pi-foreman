@@ -76,7 +76,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb } from "./reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -116,7 +116,7 @@ import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
 import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
-import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
+import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
@@ -191,7 +191,7 @@ import { liftSizing, misplacedHint, subagentDescription, planSizing, prependProb
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
-import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomSender, lastIntercomSender } from "./intercomguard.ts";
+import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender } from "./intercomguard.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ENTRY = fileURLToPath(import.meta.url);
@@ -1331,6 +1331,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     for (const w of merged.warnings) notifyOnce(s, ctx, `deferred:${w}`, `pi-foreman: ${w}`, "warning");
     deferred.patterns = merged.list;
     deferred.loaded = new Set(recorded?.names ?? []);
+    deferred.hint = "";
     deferred.planMode = recorded ? recorded.planMode : planModeOn(branch);
     deferred.trace = (r) => s.trace?.emit(r);
     let declared: string[] = [];
@@ -1546,7 +1547,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       deferred.hint = deferredHint(deferred.hidden, codemode);
       event.systemPromptOptions.sections[DEFERRED_SECTION] = deferred.hint;
-    }
+    } else deferred.hint = "";
     if (!s.isChild) {
       const listed = (event.systemPromptOptions as { skills?: (SkillRef & { disableModelInvocation?: boolean })[] }).skills;
       if (Array.isArray(listed)) {
@@ -1561,14 +1562,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (skillState.hidden.length) {
       skillState.hint = skillsHint(skillState.hidden);
       event.systemPromptOptions.sections[SKILLS_SECTION] = skillState.hint;
-    }
+    } else skillState.hint = "";
     if (!toolUsage.started) startToolUsage(s, (event.systemPromptOptions as { skills?: SkillRef[] }).skills ?? []);
     flushToolUsage(s);
     if (!s.isChild) {
       // Idle downshift: a custom message has not passed message_end yet, so its cause is read here; a user message carries the input handler's.
       idleBind = { s, ctx };
+      // An inbound intercom message (Pi 1.2+ triggerTurn run) gets its cause and downshift in the handler registered
+      // after registerClose (close claims a foreman:close run first); every other run is handled here.
       const customType = (event as { message?: { customType?: unknown } }).message?.customType;
-      await idleModel.beforeTurn((event as { messageType?: string }).messageType === "custom" ? causeOfCustom(customType) : s.turn.cause);
+      const inbound = intercomInbound({ hook: "before_agent_start", messageType: (event as { messageType?: unknown }).messageType, message: (event as { message?: unknown }).message });
+      if (!inbound) await idleModel.beforeTurn((event as { messageType?: string }).messageType === "custom" ? causeOfCustom(customType) : s.turn.cause);
     }
     // Pi 1.2: a wake or child-notice run (messageType "custom") also lands here, without a prompt.
     // Only a user run sets the review intent and triages; the section below is built for every run.
@@ -1679,6 +1683,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
     for (const [name, text] of [[DEFERRED_SECTION, deferred.hint], [SKILLS_SECTION, skillState.hint]]) if (text) messages = keepSection(messages ?? event.messages, name, text) ?? messages;
+    // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
+    // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
+    const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
+    let canonical: string | undefined;
+    try {
+      if (!midConvo) canonical = ctx.getSystemPrompt();
+    } catch {
+      // no prompt api: the order stays
+    }
+    if (typeof canonical === "string") messages = alignSections(messages ?? event.messages, canonical) ?? messages;
     s.selfWarm.capture(messages ?? event.messages);
     return messages ? { messages } : undefined;
   });
@@ -2582,6 +2596,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let ladderRoles: Record<string, Json> | undefined;
       let reviewerClimbs: ReviewerClimb[] = [];
       let reviewerTraces: Record<string, unknown>[] = [];
+      // reviewer entries whose final model differs from their climb's (a ceremony.reviewModel pair or the same-model walk moved them): their rung_up trace and `climbed` mark are dropped
+      const climbReplaced = new Set<Json>();
       let sized: ReturnType<typeof takeSizing> | null = null;
       let sizedPlans: EntryPlan[] = [];
       let sizingRecords: Record<string, unknown>[] = [];
@@ -2816,7 +2832,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerTraces = rc.traces;
         }
         const foremanAt0 = foremanBaseModel(ctx);
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => explicitModelAllowed(s.config.config, foremanAt0, m, role) });
+        const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
         if (bottomWhy.size > 0) pendingBottom = bottomWhy;
         if (sizedPlans.length > 0) {
@@ -2833,8 +2850,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
           // ceremony.reviewByOccasion (reviewerclimb.ts): over the mapped models, before the rank check and the different-model rule.
+          const reviewerEntries = launchEntries(input).filter((e) => e.agent === "reviewer" && typeof e.model === "string");
+          const pinned = new Map<Json, ReviewPin>(reviewerEntries.filter((e) => explicitReviewers.has(splitLevel(e.model as string).base)).map((e) => [e, "explicit"]));
           const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking") });
           reviewerTraces.push(...occ.traces);
+          for (const e of occ.overrode) pinned.set(e, "occasion");
           // [research] / [fact-critical] markers (research.ts): the floor is written before the rank check.
           const marked = markedEntries(input);
           const raised = applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
@@ -2854,7 +2874,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const r of entryTraces(input, marked)) s.trace?.emit(r);
           // Different-model rule (every reviewer launch): after the security rung, so it sees the final model; traced with policy_override.
           const refusedBy = (m: string): boolean => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null;
-          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: foremanModel, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
+          for (const c of reviewerClimbs) if (c.reason === "security") pinned.set(c.entry, "security_rung");
+          // the rank checks keep the base model; the review rule judges the live one
+          reviewerTraces.push(...applyReviewModelRule(input, resolution.roles, { config: s.config.config, foreman: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null, pinned, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: refusedBy, thinking: occ.thinking }));
+          for (const c of reviewerClimbs) if (c.reason === "review_fail_repeat" && typeof (c.entry as Json).model === "string" && splitLevel((c.entry as Json).model as string).base !== splitLevel(c.model).base) climbReplaced.add(c.entry);
           // Review panel (panel.ts): a gate-occasion reviewer is the primary; its shadows come after its run end.
           panel = primaryPanel(input, occasions, s.config.config, foremanModel);
         }
@@ -2940,7 +2963,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const diffText = !first || occ === "plan-review" ? null : await reviewFacts.diffOf(first, input, ctx.cwd).then((d) => `${d.diff ?? ""}\n${d.untracked}`, () => null);
           const files = !first ? [] : occ === "plan-review" ? planReviewFiles(String(first.task ?? ""), boundLedger(s.markerDir, s.id)) : filesOfDiff(diffText);
           const sh = shadow.kind === "launch" ? shadow : null;
-          const rl = reviewLaunchOf(input, occasions, new Map(sh ? [[input, sh.base]] : []), { started: Date.now(), files, panel: sh ? { gate: sh.pending.gate, primary: sh.pending.primary, shadows: [sh.base] } : panel?.panel ?? null, climbed: new Set(reviewerClimbs.map((c) => c.entry)) });
+          const rl = reviewLaunchOf(input, occasions, new Map(sh ? [[input, sh.base]] : []), { started: Date.now(), files, panel: sh ? { gate: sh.pending.gate, primary: sh.pending.primary, shadows: [sh.base] } : panel?.panel ?? null, climbed: new Set(reviewerClimbs.filter((c) => !climbReplaced.has(c.entry)).map((c) => c.entry)) });
           if (rl && panel) rl.task = panel.task;
           if (rl && sh) rl.bind = sh.pending.id;
           if (rl && diffText !== null) rl.lines = diffLinesOf(diffText);
@@ -3005,7 +3028,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const decision = revisionTrace.noStrong ? "no_strong" : revisionTrace.keyword ? "keyword" : rose ? "climb" : "unchanged";
         s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision, reason: revisionTrace.reason });
       }
-      if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.map((c) => c.trace)]) s.trace?.emit(r);
+      if (event.toolName === "subagent") for (const r of [...reviewerTraces, ...reviewerClimbs.filter((c) => !climbReplaced.has(c.entry)).map((c) => c.trace)]) s.trace?.emit(r);
       if (shadow.kind === "launch") {
         s.panels.launched(shadow.pending.id, shadow.base);
         s.trace?.emit(shadow.trace);
@@ -3132,7 +3155,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (opened) s.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
     if (s.isChild) return;
     const cause = causeOfCustom(m.customType);
-    if (cause) s.turn.cause = cause;
+    // the starting intercom message of a close turn arrives after close claimed the run: the cause stays "close"
+    if (cause && !(cause === "intercom" && s.turn.cause === "close")) s.turn.cause = cause;
     if (cause) {
       s.idleCache.onActivity();
       s.selfWarm.onActivity();
@@ -3167,7 +3191,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     if (s && !s.isChild) s.turn.cause = isSubagentWake(event.source, event.text) ? idleCause ?? "child" : causeOfInput(event.source, event.text);
-    if (s && !s.isChild && s.turn.cause === "intercom") s.turn.intercomFrom = lastIntercomSender(ctx.sessionManager.getBranch()) ?? s.turn.intercomFrom;
+    // Legacy Pi < 1.2.0: the wake line; the message is the newest intercom entry of the branch.
+    const wake = s && !s.isChild ? intercomInbound({ hook: "input", source: event.source, text: event.text, branch: ctx.sessionManager.getBranch?.() ?? [] }) : null;
+    if (s && wake) s.turn.intercomFrom = intercomSender(wake.details);
     // D3: the owner is back in the loop, so revision rounds count from zero again.
     if (s && !s.isChild && isOwnerPrompt(event.source, event.text)) {
       s.chains.clear();
@@ -4081,6 +4107,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return selfFinish({ cwd: s.cwd, handoff, sessionId: s.id, stateDir: path.join(s.agentDir, "pi-foreman", "state"), trusted: safeTrusted(c), pid: process.pid, status: (n) => prRun(s, s.cwd, "pr_status", { number: n }), git: async (args) => (await git(s.cwd, args))?.trim() ?? null, closeScript: async (args) => (await runScript(s, "foreman_close.py", args, 120_000)).text, spawnCleanup: (args) => spawnDetached(py, ["-E", "-s", script, ...args], handoff) }, req.pr.n);
       }, pushNotice: (c) => startPushNotice(s, c), runSync: (c) => runSync(s, c), report: (c, file) => closeReport(s, c, file), retro: async (c) => (await runScript(s, "foreman_retro.py", retroInputs(s, c, "--session"))).text, markClosed: () => void markOwnClosed(s.agentDir, process.env), remoteReply: async (kind, arg) => { const py = pyPath(s); if (py) await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "scripts", "foreman_session.py"), "--agent-dir", s.agentDir, "remote", "notice", kind, ...(kind === "refused" ? [`--reason=${arg ?? ""}`] : arg ? ["--close", arg] : [])], { timeoutMs: 60_000, cwd: s.cwd }); }, closeChildren: (send) => closeChildren({ agentDir: s.agentDir, opener: openerIntercomId(process.env, s.agentDir, s.id), send, waitMs: Math.max(0, Number(get(s.config.config, "close.childWaitMs") ?? 60_000) || 0), sleep: (ms) => new Promise((r) => setTimeout(r, ms)), runRemote: remoteRunner({ python: pyPath(s), spawner, pkgRoot: PKG_ROOT, agentDir: s.agentDir }) }) };
     },
+  });
+
+  // Pi 1.2+: an inbound intercom message starts an idle run through triggerTurn (no input event, and agent_start fires
+  // before the message_end). Registered after registerClose so a foreman:close run is claimed first: it keeps cause "close"
+  // (no idle downshift of the close turn); any other intercom run is cause "intercom" with the sender for the turn notice.
+  pi.on("before_agent_start", async (event, ctx) => {
+    const s = sessionFor(ctx);
+    if (!s || s.isChild) return;
+    const inbound = intercomInbound({ hook: "before_agent_start", messageType: (event as { messageType?: unknown }).messageType, message: (event as { message?: unknown }).message });
+    if (!inbound) return;
+    s.turn.cause = close.closing(s.id) ? "close" : "intercom";
+    s.turn.intercomFrom = intercomSender(inbound.details);
+    await idleModel.beforeTurn(s.turn.cause);
   });
 
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
