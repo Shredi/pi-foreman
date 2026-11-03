@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -232,7 +233,8 @@ class ConfigTest(unittest.TestCase):
 
     def test_defaults(self):
         sessions = self.load()["config"]["sessions"]
-        self.assertEqual(sessions, {"backend": "auto", "hc": {"outliveParent": True}, "machines": {}, "worktree": {"branchPrefix": "round"}})
+        self.assertEqual(sessions, {"backend": "auto", "hc": {"outliveParent": True}, "machines": {},
+                                    "remote": {"fetchTimeoutSeconds": 30}, "worktree": {"branchPrefix": "round"}})
 
     def test_machines_from_the_project_layer_are_ignored(self):
         r = self.load(project={"sessions": {"machines": {"alpha": {}}}}, l2={"sessions": {"machines": {"beta": {}}}})
@@ -243,7 +245,9 @@ class ConfigTest(unittest.TestCase):
         ok = {"sessions": {"machines": {"alpha": {"foremanArgv": ["powershell.exe", "-NoProfile", "-File", "C:/Program Files/fm/bin/foreman.ps1"],
                                                   "parentName": "beta", "space": "sp-1"}}}}
         self.assertEqual(self.issues(ok), [])
-        for bad in ({"sessions": {"remote": {"fetchTimeoutSeconds": 30}}},
+        self.assertEqual(self.issues({"sessions": {"remote": {"fetchTimeoutSeconds": 30}}}), [])
+        for bad in ({"sessions": {"remote": {"fetchTimeoutSeconds": 4}}}, {"sessions": {"remote": {"fetchTimeoutSeconds": 601}}},
+                    {"sessions": {"remote": {"fetchTimeoutSeconds": "30"}}}, {"sessions": {"remote": {"other": 1}}},
                     {"sessions": {"machines": {"alpha": {"foremanArgv": ["a;b"]}}}},
                     {"sessions": {"machines": {"alpha": {"foremanArgv": "foreman"}}}},
                     {"sessions": {"machines": {"alpha": {"space": "a b"}}}},
@@ -266,7 +270,15 @@ class ConfigTest(unittest.TestCase):
         self.assertTrue(fd.switch_on(feature, self.load(l2={"sessions": {"machines": {"alpha": {}}}})["config"]))
         text = feature["description"] if "description" in feature else json.dumps(feature)
         self.assertIn("hc", text)
-        self.assertIn("PR 4", text)
+        self.assertNotIn("PR 4", text)
+        self.assertIn("sessions.remote.fetchTimeoutSeconds", text)
+        self.assertIn("foreman session remote notice", text)
+
+    def test_fetch_timeout_is_user_or_overlay_only(self):
+        r = self.load(project={"sessions": {"remote": {"fetchTimeoutSeconds": 99}}}, l2={"sessions": {"remote": {"fetchTimeoutSeconds": 60}}})
+        self.assertEqual(r["config"]["sessions"]["remote"]["fetchTimeoutSeconds"], 60)
+        self.assertNotEqual(r["config"]["sessions"]["remote"]["fetchTimeoutSeconds"], 99)
+        self.assertTrue(any("sessions.remote" in w for w in r["warnings"]), r["warnings"])
 
 
 class ProbeTest(RemoteBase):
@@ -704,6 +716,29 @@ class HcExecVerbTest(unittest.TestCase):
             self.run_verb(self.envelope(out, code=1))
         self.assertEqual((cm.exception.code, str(cm.exception)), ("bad[31m_cwd", "remote alpha: no]0;x dir!"))
 
+    def test_control_characters_of_hc_stderr_are_stripped(self):
+        dirty = b"bo\x1b[31mom\x1b]0;x\x07\xc2\x9b!\x7f"
+        with self.assertRaises(fsn.Unreachable) as cm:  # hc itself failed: its own stderr
+            self.run_verb(None, 1, dirty)
+        self.assertEqual(str(cm.exception), "remote alpha unreachable: bo[31mom]0;x!")
+        with self.assertRaises(fsn.Unreachable) as cm:  # no usable reply: the remote's stderr
+            self.run_verb(self.envelope(b"not json\n", dirty, code=1))
+        self.assertEqual(str(cm.exception), "remote alpha unreachable: bo[31mom]0;x!")
+        with mock.patch.object(fsn.subprocess, "run", side_effect=OSError("go\x1b[2Jne")):
+            with self.assertRaises(fsn.Unreachable) as cm:
+                fsn.hc_exec_verb("/x/hc", "alpha", ["foreman"], "probe", {}, 15)
+        self.assertEqual(str(cm.exception), "remote alpha unreachable: go[2Jne")
+
+    def test_main_prints_unreachable_without_control_characters(self):
+        with mock.patch.object(fsn, "cmd_list", side_effect=fsn.Unreachable("x\x1b[2Jy\x07")):
+            code = self.main_err("list")
+        self.assertEqual(code, (1, "pi-foreman session: x[2Jy\n"))
+
+    def main_err(self, *argv):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            return fsn.main(list(argv)), err.getvalue()
+
     def test_a_banner_before_the_json_line_is_skipped(self):
         reply, _ = self.run_verb(self.envelope(b'Welcome\r\n{"ok": true}\r\n\r\n'))
         self.assertEqual(reply, {"ok": True})
@@ -1039,6 +1074,19 @@ class BriefTest(RemoteBase):
             self.assertEqual((sent["kind"], sent["name"], sent["content"]), (kind, name, "content of " + name))
             self.assertEqual((self.rh / name).read_text("utf-8"), "content of " + name)
 
+    def test_rulings_are_counted_apart_from_briefs(self):
+        reg = self.padir / "pi-foreman" / "state" / "sessions.json"
+
+        def counts():
+            e = [s for s in json.loads(reg.read_text("utf-8"))["sessions"] if s["child"] == self.entry["child"]][-1]
+            return e.get("briefs"), e.get("rulings")
+
+        for name, want in (("brief-7.md", (1, None)), ("steer-1.md", (2, None)), ("ruling.md", (3, 1)), ("ruling-2.md", (4, 2))):
+            f = self.tmp / name
+            f.write_text("x", "utf-8")
+            self.assertEqual(self.send(str(f))[0], 0, name)
+            self.assertEqual(counts(), want, name)
+
     def test_other_files_become_numbered_briefs(self):
         f = self.tmp / "notes.md"
         f.write_text("some notes", "utf-8")
@@ -1106,7 +1154,8 @@ class NoticeBase(RemoteBase):
         self.reply = self.remote_open()
         self.dir = self.handoff(self.reply)
         self.child = self.reply["child"]
-        self.env.update(PI_CODING_AGENT_DIR=str(self.radir), PI_FOREMAN_REMOTE_PARENT="1", PI_FOREMAN_HANDOFF_DIR=str(self.dir))
+        self.env.update(PI_CODING_AGENT_DIR=str(self.radir), PI_FOREMAN_REMOTE_PARENT="1", PI_FOREMAN_HANDOFF_DIR=str(self.dir),
+                        HC_TERMINAL_ID="t1")
 
     def notice(self, *args, **env):
         code, out, err = self.run_main("remote", "notice", *args, **env)
@@ -1117,18 +1166,17 @@ class NoticeBase(RemoteBase):
 
 
 class NoticeTest(NoticeBase):
-    """The child-side `remote notice` checks its input, then refuses `no_return_path`: the hc label return path lands in PR 4."""
+    """The child-side `remote notice` checks its input, then sets the `fm.notice` label on its own hc terminal."""
 
-    def test_a_valid_notice_is_refused_until_the_return_path_exists(self):
+    def test_a_valid_notice_sets_the_label(self):
         (self.dir / "result.md").write_text("done", "utf-8")
         (self.dir / "plan.md").write_text("plan", "utf-8")
         (self.dir / "ask.md").write_text("# Ask 1: x", "utf-8")
-        for args in (("result",), ("plan",), ("ask",), ("update",), ("closed", "--close", "ready"), ("closed",)):
+        for n, args in enumerate((("result",), ("plan",), ("ask",), ("update",), ("closed", "--close", "ready"), ("closed",)), 1):
             code, r = self.notice(*args)
-            self.assertEqual((code, r["ok"], r["code"]), (1, False, "no_return_path"), args)
-            self.assertIn("not available", r["error"])
+            self.assertEqual((code, r["ok"], r["seq"]), (0, True, n), args)
         self.assertEqual(self.sent(), [])
-        self.assertEqual(self.hc_calls("label"), [])
+        self.assertEqual(len(self.hc_calls("label")), 6)
 
     def test_no_entry(self):
         (self.dir / "child").write_text("fm-other-000000\n", "utf-8")
@@ -1178,9 +1226,174 @@ class NoticeTest(NoticeBase):
         self.assertEqual(Path(argv[3]), Path(fsn.__file__).resolve())
         self.assertNotIn("session", argv)
         (self.dir / "result.md").write_text("from the footer", "utf-8")
-        rc, out, err = self.run_main(*argv[4:])
-        self.assertEqual(rc, 1)
-        self.assertEqual(json.loads(out)["code"], "no_return_path")
+        rc, out, err = self.run_main(*argv[4:], HC_TERMINAL_ID="t1")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(json.loads(out)["seq"], 1)
+
+
+class NoticeLabelTest(NoticeBase):
+    """The label grammar: `fm.notice=<seq>:<kind>:<sha256>:<bytes>`, `fm.close=ready|open`, `fm.notice=<seq>:refused:<slug>`."""
+
+    def labels(self):
+        return [c[1:] for c in self.hc_calls("label")]
+
+    def sha(self, text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest(), len(text.encode("utf-8"))
+
+    def sha_bytes(self, data):
+        return hashlib.sha256(data).hexdigest(), len(data)
+
+    def test_file_kinds(self):
+        for name, text in (("plan.md", "plan \u6f22"), ("result.md", "done\n"), ("ask.md", "# Ask 1: x")):
+            (self.dir / name).write_text(text, "utf-8")
+        sha = {n: self.sha_bytes((self.dir / n).read_bytes()) for n in ("plan.md", "result.md", "ask.md")}
+        out = []
+        for kind, name in (("plan", "plan.md"), ("result", "result.md"), ("update", "result.md"), ("ask", "ask.md")):
+            code, r = self.notice(kind)
+            out.append(r)
+            want = "%d:%s:%s:%d" % (len(out), kind, sha[name][0], sha[name][1])
+            self.assertEqual((code, r), (0, {"ok": True, "seq": len(out), "label": want}))
+        self.assertEqual(self.labels(), [["t1", "fm.notice=" + r["label"]] for r in out])
+        self.assertEqual(self.notice("result")[1]["seq"], 5)
+
+    def test_json_line_on_stdout(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        code, out, err = self.run_main("remote", "notice", "result")
+        self.assertEqual(len(out.splitlines()), 1)
+        self.assertEqual(sorted(json.loads(out)), ["label", "ok", "seq"])
+
+    def test_seq_counts_up_and_starts_at_one_without_the_file(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        self.assertFalse((self.dir / "notice-seq").exists())
+        self.assertEqual(self.notice("result")[1]["seq"], 1)
+        self.assertEqual(self.notice("result")[1]["seq"], 2)
+        self.assertEqual((self.dir / "notice-seq").read_text("utf-8").strip(), "2")
+        (self.dir / "notice-seq").unlink()
+        self.assertEqual(self.notice("result")[1]["seq"], 1)
+        (self.dir / "notice-seq").write_text("junk\n", "utf-8")
+        self.assertEqual(self.notice("result")[1]["seq"], 1)
+
+    def test_closed_with_and_without_a_result(self):
+        code, r = self.notice("closed")
+        self.assertEqual((code, r["label"]), (0, "1:closed:-:0"))
+        code, r = self.notice("closed", "--close", "open")
+        self.assertEqual(r["label"], "2:closed:-:0")
+        (self.dir / "result.md").write_text("final", "utf-8")
+        sha, size = self.sha("final")
+        code, r = self.notice("closed", "--close", "ready")
+        self.assertEqual((code, r["label"]), (0, "3:closed:%s:%d" % (sha, size)))
+        self.assertEqual(self.labels(), [["t1", "fm.notice=1:closed:-:0"], ["t1", "fm.notice=2:closed:-:0", "fm.close=open"],
+                                         ["t1", "fm.notice=3:closed:%s:%d" % (sha, size), "fm.close=ready"]])
+
+    def test_refused_slug(self):
+        code, r = self.notice("refused", "--reason", "uncommitted-work")
+        self.assertEqual((code, r), (0, {"ok": True, "seq": 1, "label": "1:refused:uncommitted-work"}))
+        self.assertEqual(self.labels(), [["t1", "fm.notice=1:refused:uncommitted-work"]])
+        for bad in (None, "", "Upper", "has space", "semi;colon", "a:b", "x" * 41):
+            args = ("refused",) + (("--reason", bad) if bad is not None else ())
+            code, r = self.notice(*args)
+            self.assertEqual((code, r["code"]), (1, "bad_request"), bad)
+        self.assertEqual(len(self.labels()), 1)
+        self.assertEqual(self.notice("refused", "--reason", "x" * 40)[0], 0)
+
+    def test_failure_replies_share_one_shape(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        code, r = self.notice("refused", "--reason", "Not A Slug")
+        self.assertEqual((code, r["ok"], r["error"], r["code"]), (1, False, "bad_request", "bad_request"))
+        self.assertIn("detail", r)
+        code, r = self.notice("result", HC_TERMINAL_ID="")
+        self.assertEqual((code, r["ok"], r["error"]), (1, False, "not_hc"))
+
+    def test_notice_seq_is_locked_and_unique_under_parallel_callers(self):
+        import threading
+        got = []
+        errors = []
+
+        def take():
+            try:
+                got.append(fsn.next_notice_seq(self.dir))
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=take) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual((errors, sorted(got)), ([], list(range(1, 13))))
+        self.assertFalse((self.dir / "notice-seq.lock").exists())
+        self.assertEqual((self.dir / "notice-seq").read_text("utf-8").strip(), "12")
+
+    def test_a_stale_notice_seq_lock_is_broken(self):
+        lock = self.dir / "notice-seq.lock"
+        lock.write_text("", "utf-8")
+        old = time.time() - 60
+        os.utime(str(lock), (old, old))
+        self.assertEqual(fsn.next_notice_seq(self.dir), 1)
+        self.assertFalse(lock.exists())
+
+    def test_a_held_notice_seq_lock_fails_instead_of_continuing(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        lock = self.dir / "notice-seq.lock"
+        lock.write_text("", "utf-8")
+        with mock.patch.object(fsn.time, "sleep"):
+            code, r = self.notice("result")
+        self.assertEqual((code, r), (1, {"ok": False, "error": "label_failed", "detail": "seq_lock_timeout"}))
+        self.assertTrue(lock.exists())
+        self.assertFalse((self.dir / "notice-seq").exists())
+        self.assertEqual(self.hc_calls("label"), [])
+
+    def test_not_hc(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        for env in ({"HC_TERMINAL_ID": ""}, {"PATH": self.path(hc=False)}):
+            code, r = self.notice("result", **env)
+            self.assertEqual((code, r), (1, {"ok": False, "error": "not_hc"}))
+        self.assertEqual(self.hc_calls("label"), [])
+        self.assertFalse((self.dir / "notice-seq").exists())
+
+    def test_hc_bin_names_the_binary(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        real = shutil.which("hc", path=str(self.hcbin))
+        code, r = self.notice("result", PATH=self.path(hc=False), HC_BIN=real)
+        self.assertEqual((code, r["ok"]), (0, True))
+
+    def test_label_failed(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        code, r = self.notice("result", FAKE_HC_FAIL="1")
+        self.assertEqual((code, r), (1, {"ok": False, "error": "label_failed", "detail": "boom"}))
+
+    def test_label_failed_when_hc_cannot_be_spawned(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        with mock.patch.object(fsn.subprocess, "run", side_effect=OSError("gone\x1b[2J")):
+            code, r = self.notice("result")
+        self.assertEqual((code, r["error"], r["detail"]), (1, "label_failed", "gone[2J"))
+
+
+class ControlTextOfOpenTest(RemoteBase):
+    """The handoff path and the launch command of an `open` reply reach the terminal without control characters."""
+
+    def open_with(self, **over):
+        real = fsn.hc_exec_verb
+
+        def dirty(binary, name, argv, verb, payload, timeout):
+            reply = real(binary, name, argv, verb, payload, timeout)
+            return dict(reply, **over) if verb == "open" else reply
+
+        with mock.patch.object(fsn, "hc_exec_verb", side_effect=dirty):
+            return self.run_main(*self.open_args())
+
+    def test_handoff_is_stripped(self):
+        rc, out, err = self.open_with(handoff="/h\x1b[2Jx\x07/y")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("handoff on alpha: /h[2Jx/y\n", out)
+        self.assertNotIn("\x1b", out)
+
+    def test_launch_is_stripped(self):
+        rc, out, err = self.open_with(status="pending", launch="pi \x1b]0;t\x07go\x9b")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("pi ]0;tgo", out)
+        for ch in ("\x1b", "\x07", "\x9b"):
+            self.assertNotIn(ch, out)
 
 
 class FooterTest(unittest.TestCase):

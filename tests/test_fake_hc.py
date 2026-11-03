@@ -134,10 +134,17 @@ class FakeHc(unittest.TestCase):
                                                 "parent": None, "state": "working", "turn": 0})
         digest = "a" * 64
         self.hc("label", "alpha/t1", f"fm.notice=1:plan:{digest}:12345")
-        events = [json.loads(x) for x in self.hc("events", "--json").stdout.splitlines()]
-        self.assertEqual(events, [{"terminal": "alpha/t1", "label": "fm.notice", "value": f"1:plan:{digest}:12345"}])
-        self.assertEqual(self.hc("events", "--json", "--label", "fm.child=c1").stdout.count("\n"), 1)
-        self.assertEqual(self.hc("events", "--json", "--label", "fm.child=zz").stdout, "")
+        lines = [json.loads(x) for x in self.hc("events", "--json").stdout.splitlines()]
+        self.assertEqual(sorted(lines[0]), ["channel", "seq", "terminals"])  # the snapshot comes first
+        self.assertEqual([t["address"] for t in lines[0]["terminals"]], ["alpha/t1"])
+        self.assertEqual(lines[0]["terminals"][0]["status"], {"app": "pi", "state": "working"})
+        self.assertEqual(len(lines), 2)
+        ev = lines[1]
+        self.assertEqual((ev["jsonrpc"], ev["method"]), ("2.0", "event"))
+        self.assertEqual((ev["params"]["type"], ev["params"]["terminal"]), ("labels", "alpha/t1"))
+        self.assertEqual(ev["params"]["data"]["labels"], {"fm.child": "c1", "fm.notice": f"1:plan:{digest}:12345"})
+        self.assertEqual(self.hc("events", "--json", "--label", "fm.child=c1").stdout.count("\n"), 2)
+        self.assertEqual(self.hc("events", "--json", "--label", "fm.child=zz").stdout.count("\n"), 1)  # the snapshot only
         for sub in ("get", "wait"):
             args = [sub, "alpha/t1", "--json"]
             rec = json.loads(self.hc(*args).stdout)
@@ -153,9 +160,25 @@ class FakeHc(unittest.TestCase):
     def test_kill_and_rm(self):
         self.hc("run", "--on", "alpha", "--", "sleep", "9")
         self.hc("kill", "alpha/t1")
-        self.assertEqual(json.loads(self.hc("get", "alpha/t1").stdout)["status"], "finished")
+        rec = json.loads(self.hc("get", "alpha/t1").stdout)
+        self.assertEqual((rec["state"], rec["status"]["state"]), ("finished", "done"))
         self.hc("rm", "alpha/t1")
-        self.assertEqual(self.hc("get", "alpha/t1").returncode, 4)
+        r = self.hc("get", "alpha/t1")
+        self.assertEqual(r.returncode, 3)  # the real hc: exit 3, {"error": {"kind": "not_found"}} on stderr
+        self.assertEqual(json.loads(r.stderr)["error"]["kind"], "not_found")
+
+    def test_events_follow_prints_new_labels_and_heartbeats(self):
+        self.hc("run", "--on", "alpha", "--", "sleep", "9")
+        exe = shutil.which("hc", path=self.env["PATH"])
+        env = dict(self.env, FAKE_HC_EVENTS_FOLLOW="3")
+        p = subprocess.Popen([exe, "events", "--json"], stdout=subprocess.PIPE, text=True, env=env)
+        self.addCleanup(p.stdout.close)
+        self.addCleanup(p.kill)
+        self.assertIn("terminals", json.loads(p.stdout.readline()))
+        self.hc("label", "alpha/t1", "fm.notice=1:ask:-:0")
+        got = [json.loads(p.stdout.readline()) for _ in range(2)]
+        self.assertEqual(sorted(x["method"] for x in got), ["event", "heartbeat"])
+        p.wait(timeout=10)
 
     def test_file_read_bytes_exact(self):
         self.state.mkdir(parents=True)

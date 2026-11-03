@@ -1,7 +1,8 @@
-// Inbound notices of a remote child session (round 40): `foreman session open --machine NAME` children report with
-// `foreman session remote notice`, which sends pi-intercom's `send --to <uuid>@<machine>`; pi-intercom relays it with a
-// structured `crossMachine` origin. This module is pure matching and mirroring, no authentication: the broker checks
-// only the shape of `crossMachine`, so a notice is data (a registry update and a mirror file), never acted on.
+// Notices of a remote child session (`foreman session open --machine NAME`): the child sets labels on its hc terminal
+// (`foreman session remote notice`) and the parent's hc events watcher (remotewatch.ts) fetches and checks the named file,
+// then calls `applyRemoteNotice` here. A message that pi-intercom relays with a structured `crossMachine` origin is matched
+// the same way. This module is pure matching and mirroring, no authentication: a notice is data (a registry update and a
+// mirror file), never acted on.
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -17,7 +18,7 @@ export interface RemoteOrigin {
 
 const str = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
 
-/** The structured origin of a relayed message (`details.message.crossMachine`); null without it (a hard stop, never parsed from text). */
+/** The structured origin of a message relayed by pi-intercom (`details.message.crossMachine`); null without it (a hard stop, never parsed from text). */
 export function remoteOrigin(details: unknown): RemoteOrigin | null {
   const m = (details as { message?: { crossMachine?: unknown } } | null | undefined)?.message;
   const x = m && typeof m === "object" ? (m.crossMachine as Record<string, unknown> | null | undefined) : undefined;
@@ -81,8 +82,9 @@ export function writeMirror(file: string, data: string): void {
  * Apply a notice from a cross-machine sender to the registry entry it matches: `machine` set, `originMachine` equal to
  * the origin machine (case-insensitive), `child` equal to the origin session id, status open, pending or closing.
  * Returns null when nothing matches (silently ignored); a result with `changed: false` and a `message` is shown only.
+ * `checked`: the caller already compared the exact bytes with the hash and size, so the UTF-8 re-hash of the text is skipped.
  */
-export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: RemoteNotice, write: (file: string, data: string) => void = writeMirror, now: Date = new Date()): RemoteApplied | null {
+export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: RemoteNotice, write: (file: string, data: string) => void = writeMirror, now: Date = new Date(), checked = false): RemoteApplied | null {
   const entry = [...reg.sessions].reverse().find(
     (s) =>
       typeof s.machine === "string" &&
@@ -117,7 +119,7 @@ export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: R
   if (!MIRRORED.has(base) || !mirror || typeof entry.remoteHandoff !== "string" || norm(dir, win) !== norm(entry.remoteHandoff, win)) {
     return { entry, kind: notice.kind, path: "", message: `remote notice from ${who}: ${notice.kind} ignored (its path is not a file of the remote handoff dir)`, changed: false };
   }
-  if (!notice.truncated) {
+  if (!notice.truncated && !checked) {
     const bytes = Buffer.from(notice.content, "utf8");
     const hash = crypto.createHash("sha256").update(bytes).digest("hex");
     if (hash !== notice.sha256 || bytes.length !== notice.bytes) {

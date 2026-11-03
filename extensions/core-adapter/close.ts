@@ -294,7 +294,7 @@ export class CloseFlow {
     this.d.trace({ event: "close", cause: source, decision: "refused" });
     const text = `pi-foreman: close refused: ${reason}`;
     this.d.notify(text, "warning");
-    if (source === "remote-parent") void Promise.resolve(this.d.remoteReply?.("refused", reason)).catch(() => undefined);
+    if (source === "remote-parent") void Promise.resolve(this.d.remoteReply?.("refused", reason)).catch((e: unknown) => this.d.notify(`pi-foreman: ${e instanceof Error ? e.message : String(e)}`, "warning"));
     else if (replyTo) this.d.reply(replyTo, text);
   }
 
@@ -460,8 +460,8 @@ export class CloseFlow {
     } else if (req.source === "remote-parent") {
       try {
         await this.d.remoteReply?.("closed", report ? (report.ready ? "ready" : "open") : undefined);
-      } catch {
-        // as above
+      } catch (e) {
+        this.d.notify(`pi-foreman: ${e instanceof Error ? e.message : String(e)}`, "warning"); // the entry carries it as lastError
       }
     }
     this.d.trace({ event: "close", cause: req.source, decision: "shutdown" });
