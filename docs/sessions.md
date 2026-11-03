@@ -443,7 +443,7 @@ Glyphs come from the `ui.symbols` set (`unicode` shown; `emoji`, `nerd` (Nerd Fo
 | `✓` | done (also a closed session, a finished run) |
 | `✗` | lost: presence file not `done` and no heartbeat for 90 seconds; or registry `open` with no presence file after 2 minutes; or `failed` |
 
-Remote entries (opened with `--machine`) are shown as `label@machine`, with a state from the registry and not from a local live file. An open ask shows as `ask`, `closing` and `starting` as waiting, and an entry that is still `open` once its starting window is over is `lost` until the return path lands.
+Remote entries (opened with `--machine`) are shown as `label@machine`, with a state from `remoteLive` (the hc terminal status the parent's watcher stores) and not from a local live file. An open ask shows first as `ask`; a blocked, working or idle terminal shows as such, and a terminal whose hc state is lost shows as finished. The registry status is only the fallback before the first hc status arrives.
 
 Options: `--once` prints one plain snapshot (no ANSI) and exits 0; without it the screen is redrawn with ANSI codes
 every `--interval` seconds (default 3) until `q` or Ctrl-C (no curses, so Windows works; a stdout that is not a
