@@ -32,19 +32,28 @@ test("child: the same through $FOREMAN_SCRATCH", () => {
   assert.equal(out.danger, null, JSON.stringify(out.danger));
 });
 
-test("child: a loop of grep over the config files and ls of config/ are read allows, no ask", () => {
-  for (const l of ['for f in config/*.json; do grep -n foo "$f"; done', "ls -la config/"]) {
+test("child: a loop of grep over the config files is opaque with no ask, ls of config/ is a read allow", () => {
+  const loop = run('for f in config/*.json; do grep -n foo "$f"; done');
+  assert.equal(isAsk(loop), false, JSON.stringify(loop.result));
+  assert.equal(loop.danger?.name ?? null, "danger-opaque", JSON.stringify(loop.danger));
+  const ls = run("ls -la config/");
+  assert.equal(isAsk(ls), false, JSON.stringify(ls.result));
+  assert.equal(ls.danger?.name ?? null, null, JSON.stringify(ls.danger));
+});
+
+test("child loop variable: a loop body stays opaque, never a default write-in allow", () => {
+  for (const l of ['for f in a.json b.json; do grep -n foo "$f"; done', "for f in *; do rm -rf $f/; done", "for f in 'a /etc/outside'; do rm -rf $f; done"]) {
     const out = run(l);
     assert.equal(isAsk(out), false, `${l}: ${JSON.stringify(out.result)}`);
-    assert.equal(out.danger?.name ?? null, null, `${l}: ${JSON.stringify(out.danger)}`);
+    assert.equal(out.danger?.name ?? null, "danger-opaque", `${l}: ${JSON.stringify(out.danger)}`);
   }
 });
 
-test("child loop variable: only a literal list that the body never rebinds is bound", () => {
-  const bound = (l: string) => run(l).danger?.name ?? null;
-  assert.equal(bound('for f in a.json b.json; do grep -n foo "$f"; done'), null);
-  for (const l of ['for f in $(ls); do grep -n foo "$f"; done', 'for f in $L; do grep -n foo "$f"; done', 'for f in a b; do f=/etc/x; cat "$f"; done', 'for f in a b; do read f; cat "$f"; done', "for f in -r; do grep $f x; done"]) {
-    assert.equal(bound(l), "danger-opaque", l);
+test("child: ${FOREMAN_SCRATCH} resolves on a pipe line like the unbraced form", () => {
+  for (const l of ["cp x $FOREMAN_SCRATCH/a | cat", "cp x ${FOREMAN_SCRATCH}/a | cat"]) {
+    const out = run(l);
+    assert.equal(isAsk(out), false, `${l}: ${JSON.stringify(out.result)}`);
+    assert.equal(out.danger?.name ?? null, null, `${l}: ${JSON.stringify(out.danger)}`);
   }
 });
 

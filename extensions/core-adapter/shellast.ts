@@ -64,8 +64,6 @@ export interface ShellParseOptions {
   env?: Record<string, string>;
   /** Defaults to process.platform; "win32" switches on the drive-path forms of shellvars.ts. */
   platform?: string;
-  /** Children only (A3): `for NAME in <literal words>` binds `$NAME` in its body, which is walked once per word. */
-  loopVars?: boolean;
 }
 
 export const MAX_DEPTH = 4;
@@ -99,7 +97,6 @@ interface Run {
   assignOk: Set<Command>;
   env: Record<string, string>;
   platform: string;
-  loopVars: boolean;
 }
 
 interface Scope {
@@ -338,19 +335,6 @@ function walkNode(n: any, sc: Scope): string | null {
       walkWords(n.wordlist, sc);
       const nm = String(n.name.text);
       const listed = n.wordlist !== undefined && (n.wordlist as Word[]).every((w) => wordOf(w).value !== null);
-      const values = sc.run.loopVars ? loopValues(n, nm) : null;
-      if (values) {
-        // `for f in a b; do grep x "$f"; done`: the literal list binds `$f`, the body is walked once per value (a glob stays one literal word)
-        const cmds = new Set<Command>();
-        commandsIn(n.body, cmds);
-        let cwd = sc.cwd;
-        for (const v of values) {
-          for (const c of cmds) sc.run.vars.set(c, new Map([...(sc.run.vars.get(c) ?? []), [nm, v]]));
-          const end = walkLists([n.body], { ...sc, cwd });
-          cwd = end === cwd ? cwd : null;
-        }
-        return cwd;
-      }
       if (!(listed && (HARMLESS.has(nm) || nm.startsWith("LC_")))) seg(sc, "for", [], "assignment");
       return walkLists([n.body], sc);
     }
@@ -367,41 +351,6 @@ function walkNode(n: any, sc: Scope): string | null {
       return sc.cwd;
     }
   }
-}
-
-const LOOP_MAX = 16;
-
-/** The `Command` nodes below `node`, nested loops and groups included. */
-function commandsIn(node: any, out: Set<Command>): void {
-  if (!node || typeof node !== "object") return;
-  if (Array.isArray(node)) {
-    for (const x of node) commandsIn(x, out);
-    return;
-  }
-  if (node.type === "Command") out.add(node as Command);
-  for (const v of Object.values(node)) if (v && typeof v === "object") commandsIn(v, out);
-}
-
-/**
- * The values of a `for NAME in w1 w2` whose words are all literal (at most LOOP_MAX) when the body mentions NAME only as `$NAME` / `${NAME}`
- * (no assignment, `read`, nested `for NAME`, `${NAME:-x}`); null otherwise (the loop variable stays unknown).
- */
-function loopValues(n: any, nm: string): string[] | null {
-  const words = n.wordlist as Word[] | undefined;
-  if (!words || words.length === 0 || words.length > LOOP_MAX || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(nm)) return null;
-  // a plain glob (`config/*.json`) is one word here: the body sees the pattern, never a path outside it
-  const vals = words.map((w) => {
-    const x = wordOf(w);
-    return x.value ?? (x.reason === "glob_target" && /^[A-Za-z0-9_.\/*?-]+$/.test(x.text) && !x.text.split("/").includes("..") ? x.text : null);
-  });
-  if (vals.some((v) => v === null || v === "" || v.startsWith("-"))) return null;
-  const body = JSON.stringify(n.body);
-  for (const m of body.matchAll(new RegExp(`(?<![A-Za-z0-9_])${nm}(?![A-Za-z0-9_])`, "g"))) {
-    const i = m.index!;
-    const dollar = body[i - 1] === "$" || (body.slice(i - 2, i) === "${" && body[i + nm.length] === "}");
-    if (!dollar) return null;
-  }
-  return vals as string[];
 }
 
 function doCommand(cmd: Command, sc: Scope): string | null {
@@ -812,7 +761,7 @@ function prepare(script: Script, src: string, sc: Scope): void {
   const child = childAssigns(script, src, rn);
   for (const [, , cmd] of child.values()) rn.assignOk.add(cmd);
   // the harness constant `$FOREMAN_SCRATCH` of a child resolves on any line that never rebinds it (a heredoc or pipe leaves the closed grammar)
-  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !runsCode(script) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 16] === "}")));
+  const scratchConst = !!rn.env.FOREMAN_SCRATCH && !runsCode(script) && [...src.matchAll(/(?<![A-Za-z0-9_])FOREMAN_SCRATCH(?![A-Za-z0-9_])/g)].every((m) => (src[m.index! - 1] === "$" || (src.slice(m.index! - 2, m.index!) === "${" && src[m.index! + 15] === "}")));
   for (const pr of probes) {
     const got = res.get(pr.unit);
     const later = (n: string): string | undefined => {
@@ -837,7 +786,7 @@ function walkScript(script: Script, src: string, sc: Scope): void {
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
-  const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform, loopVars: opts.loopVars === true };
+  const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform };
   const sc: Scope = { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
   let script: Script | undefined;
   try {

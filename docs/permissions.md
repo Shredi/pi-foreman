@@ -239,7 +239,6 @@ For a **child session** with a scratch dir, three more cases resolve outside tha
 
 - **One literal assignment.** `NAME=/abs/path` or `NAME=$FOREMAN_SCRATCH[/sub]` at the start of a statement (line start, after `;` or a newline, or after `&&` following another such assignment: not in a pipeline, subshell, group, loop, function, `$(...)` or after `||`) resolves later `$NAME` and `${NAME}` words. `NAME` is assigned exactly once and the line mentions it in no other way (no `export`, `read`, `for NAME`, `${NAME:-x}`, no use before the assignment). It does not apply when the line runs `eval`, `source`, a function definition, a runner or a computed program name. `$PWD`, `~` and `$HOME` are not forms of it.
 - **`$FOREMAN_SCRATCH` itself** resolves on a heredoc or pipe line too, as long as the line mentions `FOREMAN_SCRATCH` only as `$FOREMAN_SCRATCH` or `${FOREMAN_SCRATCH}` and never rebinds it, under the same code-running guard.
-- **Loop variables over literal lists.** `for f in a.json b.json; do ...; done` and `for f in config/*.json; do ...; done` bind `$f` to each word (at most 16, none starting with `-`, a glob only of plain name characters and `*`/`?`) and judge the body once per word. A list built by `$(...)` or a variable, a body that assigns or reads the name, a nested `for` on it or a `${NAME:-x}` form, or an option-like word leaves the loop opaque.
 
 The foreman and an opened session never get these three. The git guard (`scripts/git_guard.py`) applies the same two assignment forms and the same mention rule.
 

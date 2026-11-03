@@ -668,7 +668,11 @@ const rawWords = (text: string): string[] => text.toLowerCase().split(/[\s'"`=;&
  * call, never a deny and never the classifier's. A package publish or a removal of the root stays a deny. Obfuscation reaches the owner or a deny,
  * never a default allow and never the mode step.
  */
-export function opaqueTextFloors(text: string, env: FloorEnv, anywhere = false): FloorHit | null {
+export function opaqueTextFloors(text: string, env: FloorEnv): FloorHit | null {
+  return opaqueTextFloorsAt(text, env, false);
+}
+
+function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): FloorHit | null {
   const lower = text.toLowerCase();
   // A2: git counts only at a command position (after `;` `&` `|` `(` a newline, a shell keyword or a wrapper program); the verb is the word after git's own options
   const calls = (anywhere && !/\bgit\b/.test(lower) ? [] : [...lower.matchAll(anywhere ? GIT_ANY : GIT_CALL)]).map((m) => {
@@ -802,7 +806,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
     const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
-    const o = opaqueTextFloors(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true));
+    const o = opaqueTextFloorsAt(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true));
     if (o?.kind === "deny") return o;
     pending = o;
   }
