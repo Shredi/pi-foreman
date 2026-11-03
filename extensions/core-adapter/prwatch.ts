@@ -12,8 +12,8 @@ import type { PrKey } from "./prhost.ts";
 export const PR_MESSAGE_TYPE = "pi-foreman-pr";
 export const MAX_CONTENT = 4096;
 export const MIN_WATCH_SECONDS = 30;
-/** A watch without a stored entry for this long, or a tracker run older than this, counts as "no PR tracker running". */
-const WAIT_FIRST_POLL_MS = 600_000;
+/** A watch whose key has no stored entry asks the tracker's list again at most this often (ms). */
+const RETRACK_MS = 300_000;
 export const TRACKER_DOWN = "no PR tracker running: start herdr-app or run `foreman prs poll`";
 const MAX_IDS = 300;
 
@@ -457,6 +457,8 @@ export interface MergedInfo {
 export interface PrWatchesDeps {
   /** What the PR tracker stored for a watched PR (prstore.ts readStoreEntry); absent: no tracker, every watch says so. Never a GitHub call. */
   storeEntry?(key: PrKey): StoreRead | Promise<StoreRead>;
+  /** Put the key back on the tracker's list when it is not there (a restored watch, a failed add, a hand-removed line). Never a GitHub call. */
+  retrack?(key: PrKey): void | Promise<void>;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set or a watch's state changed: write the session entry. */
@@ -488,8 +490,8 @@ interface Watch {
   cwd: string;
   /** The `okAt` of the stored data the watch last settled; null until the first one (a restored or new watch). */
   seenAt: number | null;
-  /** When this process registered the watch (a first-poll wait counts from here). */
-  since: number;
+  /** When the watch last asked `retrack` (ms; null = never). */
+  retrackedAt: number | null;
   /** The status line while the store has no news ("" = nothing to say). */
   status: string;
 }
@@ -562,7 +564,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, since: this.deps.now(), status: "" };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "" };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
     return w;
@@ -650,7 +652,21 @@ export class PrWatches {
       this.deps.send(lostMessage(n, reason), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "lost" });
     }
-    for (const w of live) void this.tick(w);
+    for (const w of live) {
+      this.retrack(w);
+      void this.tick(w);
+    }
+  }
+
+  /** Ask `retrack` for `w`, at most once per RETRACK_MS; a failure is retried on the next due tick. */
+  private retrack(w: Watch): void {
+    if (!this.deps.retrack || (w.retrackedAt !== null && this.deps.now() - w.retrackedAt < RETRACK_MS)) return;
+    w.retrackedAt = this.deps.now();
+    try {
+      void Promise.resolve(this.deps.retrack(w.key)).catch(() => {});
+    } catch {
+      // the list is not writable now: the next due tick tries again
+    }
   }
 
   clear(): void {
@@ -698,8 +714,8 @@ export class PrWatches {
 
   private settle(w: Watch, r: StoreRead): void {
     if (w.ended) return;
-    const down = r.kind === "down" || (r.kind === "waiting" && this.deps.now() - w.since >= WAIT_FIRST_POLL_MS);
-    if (down) {
+    // `down` is a fact about the tracker, the same for every watch: the notice goes out on the up -> down transition only
+    if (r.kind === "down") {
       this.setStatus(w, TRACKER_DOWN);
       if (!this.trackerDown) {
         this.trackerDown = true;
@@ -710,6 +726,7 @@ export class PrWatches {
     }
     this.trackerDown = false;
     if (r.kind === "waiting") {
+      this.retrack(w);
       this.setStatus(w, "waiting for the tracker's first poll");
       return this.arm(w);
     }

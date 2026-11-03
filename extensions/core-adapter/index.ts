@@ -98,7 +98,7 @@ import type { PrPackSession } from "./gitpack.ts";
 import { addTracked, readStoreEntry } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, watchIntervalMs } from "./prwatch.ts";
-import { PrHost, branchOf } from "./prhost.ts";
+import { PrHost, branchOf, isGithubKey } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
 import { ExtStatus } from "./extstatus.ts";
@@ -705,6 +705,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prCtx: null,
       prWatches: new PrWatches({
         storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s)),
+        retrack: async (key) => {
+          if (isGithubKey(key) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n);
+        },
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
         fresh: async (key, cwd) => {

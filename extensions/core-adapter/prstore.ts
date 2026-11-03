@@ -23,7 +23,6 @@ const LOCK_TRIES = 10;
 const LOCK_WAIT_MS = 200;
 
 export const FULL_TEXT = "tracked list full (200 PRs); `foreman prs poll` (herdr-app runs it) drops merged and closed PRs; remove other lines from tracked-prs.json by hand";
-export const TRACKER_DOWN_TEXT = "no PR tracker running: start herdr-app or run `foreman prs poll`";
 
 const stateDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state");
 export const trackedFile = (agentDir: string): string => path.join(stateDir(agentDir), "tracked-prs.json");

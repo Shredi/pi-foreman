@@ -62,7 +62,7 @@ test("TRACKER_DOWN is the R1 text", () => {
   assert.equal(TRACKER_DOWN, DOWN_TEXT);
 });
 
-test("waiting for the tracker's first poll, then the missing text after 10 minutes", async () => {
+test("waiting for the tracker's first poll stays a status text after 10 minutes (the tracker runs; no tracker-down text)", async () => {
   const x = harness();
   x.watches.startPending(K);
   x.h.read = { kind: "waiting" };
@@ -72,8 +72,8 @@ test("waiting for the tracker's first poll, then the missing text after 10 minut
   assert.equal(x.sent.length, 0);
   x.h.clock = 600_000;
   await x.tick();
-  assert.equal(x.list()[0].event, DOWN_TEXT);
-  assert.equal(x.sent.length, 1);
+  assert.equal(x.list()[0].event, "waiting for the tracker's first poll");
+  assert.equal(x.sent.length, 0);
 });
 
 test("a stale entry and a tracker error keep the watch armed with a status", async () => {
