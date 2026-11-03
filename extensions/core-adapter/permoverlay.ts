@@ -1951,6 +1951,35 @@ function scriptOperands(core: string[], skip: Set<number>): number[] {
   return scripts;
 }
 
+/** An unknown word: an expansion (`$`, backtick) outside single quotes, or an unquoted tilde. */
+const unknownWord = (w: string): boolean => /[$`]/.test(w.replace(/'[^']*'/g, "''")) || w.startsWith("~");
+/** A word that is one double-quoted string (`"$PAT"`, `"$(cat p)"`): no word splitting or globbing, so it is exactly one operand. */
+const wholeDoubleQuoted = (w: string): boolean => /^"(?:[^"\\]|\\.)*"$/s.test(w);
+
+/**
+ * A8: a grep or rg segment whose only unknown words are double-quoted strings (`"$PAT"`, `"$(...)"`) in a pattern position or the value of a non-file
+ * option is a read: those words are replaced by a neutral literal and the segment is no longer opaque. An unquoted unknown word, an unknown program,
+ * redirect target or path operand, a file option (`-f`), a wrapper and sed/awk (their script text is the pattern position and is unknown) keep the
+ * segment as it is. Returns the relaxed segment, or the segment itself when nothing applies.
+ */
+export function relaxPatternWords<S extends { program: string; argv: string[]; redirects: Array<{ target: string }>; wrappers: string[]; opaque: string | null; heredoc: boolean }>(seg: S): S {
+  if (seg.opaque !== "unresolved_var" && seg.opaque !== "glob_target") return seg;
+  if (seg.wrappers.length > 0 || seg.heredoc || !GREP_FAMILY.has(seg.program) || unknownWord(seg.program)) return seg;
+  if (seg.redirects.some((r) => unknownWord(r.target))) return seg;
+  const core = [seg.program, ...seg.argv];
+  const slots = new Set(scriptOperands(core, new Set()));
+  const argv = [...seg.argv];
+  let relaxed = false;
+  for (let i = 0; i < argv.length; i++) {
+    if (!unknownWord(argv[i])) continue;
+    if (!slots.has(i + 1) || !wholeDoubleQuoted(argv[i])) return seg;
+    argv[i] = "_";
+    relaxed = true;
+  }
+  if (!relaxed) return seg;
+  return { ...seg, argv, opaque: seg.opaque === "glob_target" ? seg.opaque : null };
+}
+
 /**
  * R10 item 4: the pickaxe/grep values of `git log` (`-S <string>`, `-G <regex>`, `--grep <pattern>`, their attached forms `-S<s>`, `--grep=<p>`),
  * up to `--`. `-L <range>:<file>` is left out: its <file> part stays a path word.

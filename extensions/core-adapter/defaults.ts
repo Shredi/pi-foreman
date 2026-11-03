@@ -1,6 +1,7 @@
 // R41 defaults (ledger item 4): named allow rules, evaluated per shell segment. A line is a default allow only when the floors
 // found nothing (the caller ran lineFloors first), no segment is opaque and every segment matches a rule below. Anything else
 // returns null and falls through to the review. Rule names: `default-<name>`.
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
@@ -578,12 +579,37 @@ const SYS_PKG = new Set(["apt", "apt-get", "dnf", "yum", "choco", "winget", "sco
 const SYS_VERBS = new Set(["install", "remove", "uninstall", "purge", "upgrade", "autoremove", "reinstall", "erase", "add"]);
 const BREW_READ = new Set(["list", "ls", "info", "search", "outdated", "deps", "uses", "leaves", "doctor", "config", "--prefix", "--version", "--cellar", "--repository"]);
 
+/**
+ * A8: `npx <bin>` that runs a bin already installed locally: the segment cwd is known and `node_modules/.bin/<bin>` exists under the nearest ancestor of the
+ * cwd holding a `package.json` (npm's local prefix). No `-p`/`--package`, no `@version`, no `--yes`, no path-like bin: it runs what is installed, never a download.
+ */
+function localNpx(s: ShellSegment): boolean {
+  if (s.cwd === null || s.wrappers.length > 0) return false;
+  let k = 0;
+  while (s.argv[k]?.startsWith("-")) {
+    if (!["--no", "--no-install", "--ignore-existing", "-q", "--quiet"].includes(s.argv[k])) return false;
+    k++;
+  }
+  const bin = s.argv[k];
+  if (!bin || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(bin)) return false;
+  let dir = path.resolve(s.cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, "package.json"))) break;
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+  const bins = path.join(dir, "node_modules", ".bin");
+  return [bin, `${bin}.cmd`].some((n) => fs.existsSync(path.join(bins, n)));
+}
+
 function installSeg(s: ShellSegment): boolean {
   const p = progOf(s);
   const a = s.argv;
   const pos = positionals(a);
   if (PKG.has(p)) return PKG_VERBS.has(pos[0]) || pos[0] === "dlx" || (p === "yarn" && pos.length === 0 && !HELPFLAG(a));
-  if (p === "npx" || p === "bunx" || p === "uvx") return true;
+  if (p === "npx") return !localNpx(s);
+  if (p === "bunx" || p === "uvx") return true;
   if (p === "pip" || p === "pip3") return pos[0] === "install" || pos[0] === "uninstall";
   if (p === "uv") return pos[0] === "pip" && (pos[1] === "install" || pos[1] === "uninstall");
   if (/^python[0-9.]*$/.test(p)) return a[0] === "-m" && a[1] === "pip" && (a.includes("install") || a.includes("uninstall"));
