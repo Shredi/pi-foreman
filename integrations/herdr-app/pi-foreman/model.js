@@ -118,7 +118,7 @@ function normOpenPrs(raw) {
     const jobs = (Array.isArray(p.checks) ? p.checks : Array.isArray(p.jobs) ? p.jobs : []).map(jobOf).filter(Boolean);
     out.push({
       number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
-      state: str(p.state), ...prExtras(p),
+      state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p),
     });
   }
   return out;
@@ -133,11 +133,32 @@ export function matchPrs(nodes, feed, depth = 0) {
     if (n.kind === "session" && n.repo && n.branch) {
       const repo = n.repo.toLowerCase();
       for (const p of listOf(feed)) {
-        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.repo).toLowerCase() !== repo) continue;
+        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.headRepo || p.repo).toLowerCase() !== repo) continue;
         if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
       }
     }
     matchPrs(n.children, feed, depth + 1);
+  }
+}
+
+const FEED_FRESH_MS = 30 * 60 * 1000;
+
+/** Drops from every node the PRs that are not open any more: a PR whose feed twin says merged or closed, and, while the feed is
+ *  fresh (`at` within 30 minutes of `now`, both ms), a PR with a known repository that the feed covers (has an entry of) but
+ *  does not list. A PR without a known repository, a stale feed or an uncovered repository leaves the chip. Mutates the nodes. */
+export function dropClosedPrs(nodes, feed, at, now, depth = 0) {
+  if (depth > MAX_DEPTH) return;
+  const fresh = Number.isFinite(at) && Number.isFinite(now) && now - at <= FEED_FRESH_MS;
+  const covered = new Set(listOf(feed).filter(isObj).map((f) => nameOf(f.repo).toLowerCase()).filter(Boolean));
+  for (const n of listOf(nodes)) {
+    if (!isObj(n)) continue;
+    n.prs = listOf(n.prs).filter((p) => {
+      const twin = twinOf(p, feed, n.repoUrl);
+      if (twin) return twin.state !== "merged" && twin.state !== "closed";
+      const repo = (nameOf(p.repo || n.repoUrl) || nameOf(str(p.url).replace(/\/pull\/\d+\/?$/, ""))).toLowerCase();
+      return !(fresh && repo && covered.has(repo));
+    });
+    dropClosedPrs(n.children, feed, at, now, depth + 1);
   }
 }
 
@@ -151,6 +172,7 @@ export function parseRadarDoc(text) {
   const at = typeof doc.openPrsAt === "string" ? Date.parse(doc.openPrsAt) : NaN;
   const openPrs = normOpenPrs(doc.openPrs);
   matchPrs(nodes, openPrs);
+  dropClosedPrs(nodes, openPrs, at, Date.parse(doc.now));
   return { nodes, openPrs, ...(Number.isFinite(at) ? { openPrsAt: at } : {}) };
 }
 
@@ -214,8 +236,9 @@ const pidOf = (a) => int(a?.pid) ?? int(a?.foreground?.pid);
 
 /** Map agent address -> session node. Join on `hcTerminal` == the agent's terminal address (`machine/` prefix for an agent of
  *  a remote space: pass that machine), only nodes that are not done and not themselves remote; when both sides have a pid
- *  they must match. */
-export function joinAgents(agents, tree, machine = null) {
+ *  they must match. An agent without a `hcTerminal` match joins the live local node with the same pid (a session started by hand
+ *  in an hc terminal); a node matched by `hcTerminal` or in `taken` is never used for that. */
+export function joinAgents(agents, tree, machine = null, taken = new Set()) {
   const out = new Map();
   if (!Array.isArray(agents)) return out;
   const prefix = machine ? `${machine}/` : "";
@@ -232,16 +255,31 @@ export function joinAgents(agents, tree, machine = null) {
     if (pid !== null && n.pid !== null && pid !== n.pid) continue;
     out.set(addr, n);
   }
+  if (machine) return out;
+  const used = new Set([...out.values(), ...taken]);
+  const byPid = new Map();
+  for (const n of allSessions(tree)) {
+    if (n.pid !== null && n.state !== "done" && !isEnded(n) && !n.machine && !used.has(n) && !byPid.has(n.pid)) byPid.set(n.pid, n);
+  }
+  for (const a of agents) {
+    const addr = str(a?.address);
+    const pid = pidOf(a);
+    if (!addr || addr.includes("/") || out.has(addr) || pid === null) continue;
+    const n = byPid.get(pid);
+    if (!n || used.has(n)) continue;
+    used.add(n);
+    out.set(addr, n);
+  }
   return out;
 }
 
-/** Map pane-less child terminal address -> session node. `kids` are terminal records (`hc ls`), joined like agents on
+/** Map pane-less child terminal address -> session node. `kids` are terminal records (herdr `terminals()`), joined like agents on
  *  `hcTerminal` == the address (`machine/` prefix: pass that machine). Nodes in `taken` (already shown under a paned agent) are
  *  not used; a node joins one terminal only. */
 export function joinChildren(kids, tree, machine = null, taken = new Set()) {
   const out = new Map();
   const used = new Set(taken);
-  for (const [addr, n] of joinAgents(kids, tree, machine)) {
+  for (const [addr, n] of joinAgents(kids, tree, machine, taken)) {
     if (used.has(n)) continue;
     used.add(n);
     out.set(addr, n);
@@ -285,7 +323,7 @@ const GLYPHS = {
   blocked: { kind: "pill", tone: "blocked", hollow: false },
   idle: { kind: "dot", tone: "idle", hollow: true },
   done: { kind: "dot", tone: "done", hollow: false },
-  agents: { kind: "spin", tone: "working", hollow: true, ms: 1800 },
+  agents: { kind: "spin", tone: "working", hollow: false },
   bg: { kind: "square", tone: "working", hollow: false },
   waiting: { kind: "dot", tone: "muted", hollow: true },
 };
@@ -336,14 +374,21 @@ export function totalCost(node) {
   return sum;
 }
 
+/** A session that is over without the "done" mark: closed by its owner, or lost (its process vanished). */
+export const isEnded = (n) => n.state === "closed" || n.state === "lost";
+
 export function sessionCount(node) {
-  return allSessions([node]).filter((s) => s.state !== "closed").length;
+  return allSessions([node]).filter((s) => !isEnded(s)).length;
 }
 
-const urgency = (pr) => {
-  const s = (Array.isArray(pr.checks) ? pr.checks : []).map(jobOf).filter(Boolean).map((j) => j.state);
-  return s.includes("fail") ? 0 : s.includes("pending") ? 1 : 2;
-};
+/** The one state of a PR that the chip colour, the sort and the summary share: "fail" (red chip), "pending" (a job runs and none
+ *  failed), "ok" (green) or "none" (no checks known). */
+export function prState(pr) {
+  const d = prDotState(pr);
+  return d.fill === "red" ? "fail" : d.ring || d.fill === "amber" ? "pending" : d.fill === "green" ? "ok" : "none";
+}
+
+const urgency = (pr) => ({ fail: 0, pending: 1 })[prState(pr)] ?? 2;
 
 /** Failing first, then pending, then green; newest (highest number) first inside each. */
 export function sortPrs(prs) {
@@ -351,14 +396,17 @@ export function sortPrs(prs) {
     .slice().sort((a, b) => urgency(a) - urgency(b) || num(b.number) - num(a.number));
 }
 
-/** "N PRs · k failing · m pending", or "N PRs · all green"; "" for none. */
+/** "N PRs · k failing · m pending", "N PRs · all green" (every PR ok), or just "N PRs" (no CI data); "" for none. Merged and closed PRs are not counted. */
 export function prSummary(prs) {
-  const list = Array.isArray(prs) ? prs.filter(isObj) : [];
+  const list = (Array.isArray(prs) ? prs.filter(isObj) : []).filter((p) => p.state !== "merged" && p.state !== "closed");
   if (!list.length) return "";
+  const noun = `${list.length} PR${list.length === 1 ? "" : "s"}`;
+  if (list.every((p) => prState(p) === "none")) return noun;
   const failing = list.filter((p) => urgency(p) === 0).length;
   const pending = list.filter((p) => urgency(p) === 1).length;
   const parts = [failing && `${failing} failing`, pending && `${pending} pending`].filter(Boolean);
-  return `${list.length} PR${list.length === 1 ? "" : "s"} · ${parts.join(" · ") || "all green"}`;
+  const rest = parts.length ? parts : list.every((p) => prState(p) === "ok") ? ["all green"] : [];
+  return [noun, ...rest].join(" · ");
 }
 
 /** Up to INLINE_MAX chips sit on a session row; more go on a line below. */
@@ -619,6 +667,14 @@ export function urgentStatus(list) {
   return listOf(list).reduce((best, s) => (rankOf(s) < rankOf(best) ? s : best), "idle");
 }
 
+/** A detail line as drawn in the card: "wait: x 29s" / "bg: x 3m" become `{icon: "⏳"|"⚙", text: "x · 29s"}`; an ask or
+ *  any other line keeps its text and has no icon. */
+export function statusLine(line) {
+  const m = /^(wait|bg): (.*)$/.exec(line?.text ?? "");
+  if (!m || line.blocked) return { icon: "", text: line?.text ?? "" };
+  return { icon: m[1] === "wait" ? "⏳" : "⚙", text: m[2].replace(/ (\d+[smhd])\b/g, " · $1") };
+}
+
 /** The line under a top-most session's name: the open ask, else the background task, else the waits. */
 export function detailLine(node) {
   if (!isObj(node)) return { text: "", blocked: false };
@@ -634,7 +690,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set()
   if (!isObj(node)) return null;
   const build = (n, status, id, depth, root) => {
     const kids = [];
-    const closed = !root && n.state === "closed";
+    const closed = !root && isEnded(n);
     listOf(n.workers).forEach((w, i) => {
       if (w.ended || closed) return;
       const st = nodeStatus(w);
@@ -772,7 +828,7 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
     const named = listOf(pr.jobs).some((j) => isObj(j) && j.name);
     return {
       ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
-      baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch,
+      baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
       ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks } : {}),
     };
   });

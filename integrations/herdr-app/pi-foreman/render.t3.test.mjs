@@ -68,7 +68,7 @@ test("folding a parent closes its children", () => {
   const root = mod.render({});
   const closed = walk(root).filter((e) => e.kind === "Collapsible" && typeof e.contentEl === "object" && e.props.open === false);
   assert.equal(closed.length, 1, "only c/1 is folded: " + closed.map((c) => c.kids[0]?.props.id));
-  assert.equal(closed[0].kids[0].props.id, "row:hc:c/1");
+  assert.equal(closed[0].kids[0].props.id, "card:hc:c/1");
 });
 
 test("a joined radar node is the agent's row: no second session row under it", () => {
