@@ -623,6 +623,7 @@ const RAW: { name: string; re: RegExp; reason: string }[] = [
   // r79 Addendum S4: the profile is the owner's choice (CLI in the owner's own terminal), never an agent's
   { name: "perms-profile", re: /PI_FOREMAN_PERMS_PROFILE\s*=|\b(?:export|declare|typeset|readonly|setenv|unset)\s+(?:-\S+\s+)*PI_FOREMAN_PERMS_PROFILE\b|\$env:PI_FOREMAN_PERMS_PROFILE\b|SetEnvironmentVariable\(\s*['"]PI_FOREMAN_PERMS_PROFILE|\benv:PI_FOREMAN_PERMS_PROFILE\b/i, reason: "The permissions profile is chosen by the owner when the session is opened; an agent never sets PI_FOREMAN_PERMS_PROFILE. Ask the user to open the session with the profile." },
   { name: "perms-profile", re: /(?:\bforeman(?:\.(?:ps1|cmd))?\s+(?:\S+\s+)*session\s+(?:\S+\s+)*open\b|foreman_session\.py)[^\n]*--profile\b|--profile\b[^\n]*(?:\bforeman(?:\.(?:ps1|cmd))?\s+(?:\S+\s+)*session\s+(?:\S+\s+)*open\b|foreman_session\.py)/, reason: "`--profile` of `foreman session open` is the owner's choice and only the owner runs it, in their own terminal. Open the session without it." },
+  { name: "perms-adopt", re: /\bforeman(?:\.(?:ps1|cmd))?\s+(?:\S+\s+)*perms\s+(?:\S+\s+)*adopt\b|permssuggest-cli(?:\.ts)?\s+(?:\S+\s+)*adopt\b/, reason: "`foreman perms adopt` writes the owner's permissions file and only the owner runs it, in their own terminal or pane. Run `foreman perms suggest` and give the owner the report path." },
 ];
 
 /** Floors that need the raw text only: specific enough to apply to every shell line (a download piped into a shell, privilege, power, disk, injected git config). */

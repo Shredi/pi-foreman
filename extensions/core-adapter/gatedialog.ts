@@ -12,6 +12,8 @@ import type { PresenceLike, WaitTimers } from "./presencewait.ts";
 
 export const DIALOG_OPTIONS = ["allow once", "allow and remember", "deny with comment", "deny and stop"] as const;
 export type DialogOption = (typeof DIALOG_OPTIONS)[number];
+/** Offered after "allow and remember" when every segment is readable and glob-free (rules.ts exactRules): one exact rule per segment, no sentence. */
+export const EXACT_OPTION = "allow and remember this exact command";
 export const REMEMBER_OPTIONS = ["use this sentence", "edit the sentence", "cancel"] as const;
 export const DEFAULT_ASK_TIMEOUT_MS = 15 * 60 * 1000;
 export const SHOW_ALL_LINES = 60;
@@ -44,7 +46,7 @@ export interface OwnerAsk {
   /** A child's ask shown in its parent's pane. */
   child?: { role: string; run: string };
   /** Offered only for dangerous-class escalations and unmatched calls under mode ask: the sentence (describeCall) and the pattern rules (proposeRule), if any. */
-  remember?: { sentence: string; rules: string[] | null };
+  remember?: { sentence: string; rules: string[] | null; /** The exact rules of every segment, or null when one cannot be pinned. */ exact?: string[] | null };
 }
 
 /** The slice of Pi's `ctx.ui` the dialog uses. `editor` has no signal: the owner is at the keyboard while editing. */
@@ -133,7 +135,8 @@ export async function askOwner(a: OwnerAsk, d: OwnerDeps): Promise<OwnerAnswer> 
 async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSignal): Promise<OwnerAnswer> {
   const { ui } = d;
   const dismissed: OwnerAnswer = { allow: false, how: "dismissed", reason: userDeny("the dialog was dismissed") };
-  const options = a.remember && d.remember ? [...DIALOG_OPTIONS] : DIALOG_OPTIONS.filter((o) => o !== "allow and remember");
+  const exact = a.remember?.exact && a.remember.exact.length > 0 && d.remember ? a.remember.exact : null;
+  const options: string[] = a.remember && d.remember ? DIALOG_OPTIONS.flatMap((o) => (o === "allow and remember" && exact ? [o, EXACT_OPTION] : [o])) : DIALOG_OPTIONS.filter((o) => o !== "allow and remember");
   const choice = await ui.select(title, options, { signal });
   if (choice === "allow once") return { allow: true, how: "once", notes: [] };
   if (choice === "deny with comment") {
@@ -141,7 +144,7 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
     return { allow: false, how: "comment", reason: userDeny(typed) };
   }
   if (choice === "deny and stop") return { allow: false, how: "stop", reason: STOP_TEXT };
-  if (choice !== "allow and remember" || !a.remember || !d.remember) return dismissed;
+  if ((choice !== "allow and remember" && !(choice === EXACT_OPTION && exact)) || !a.remember || !d.remember) return dismissed;
 
   const once = (note: string): OwnerAnswer => {
     ui.notify(note, "warning");
@@ -150,6 +153,19 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
   const { store, afterWrite } = d.remember;
   const why = store.projectDistrust();
   if (why !== null) return once(`pi-foreman: not remembered: ${why}. The call runs once. Add \`.workflow/\` to .git/info/exclude to allow remembering.`);
+  if (choice === EXACT_OPTION && exact) {
+    // one exact rule per segment into the project file's allow; no sentence is written
+    let file = "";
+    for (const rule of exact) {
+      const w = store.writeRemember({ rule });
+      if (w.ok === false) return once(`pi-foreman: ${w.reason} The call runs once.`);
+      file = w.file;
+    }
+    afterWrite();
+    const note = `remembered ${exact.length === 1 ? "the exact command" : `${exact.length} exact segment rules`} in ${file}`;
+    ui.notify(`pi-foreman: ${note}`, "info");
+    return { allow: true, how: "remember", notes: [note] };
+  }
 
   const pick = await ui.select(`Remember this as a whitelist sentence?\n\n${a.remember.sentence}`, [...REMEMBER_OPTIONS], { signal });
   if (pick === undefined) return dismissed;

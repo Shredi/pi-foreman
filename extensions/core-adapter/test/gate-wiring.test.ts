@@ -170,7 +170,8 @@ test("classifier escalate opens the dialog with the classifier's reason; failure
   assert.equal(await esc.call("bash", { command: DANGER }), undefined);
   assert.match(esc.asked[0].title, /cause: danger-deploy/);
   assert.match(esc.asked[0].title, /classifier: because null/);
-  assert.deepEqual(esc.asked[0].options, ["allow once", "allow and remember", "deny with comment", "deny and stop"]);
+  // B2.3: a readable, glob-free command also offers the exact-command option next to "allow and remember"
+  assert.deepEqual(esc.asked[0].options, ["allow once", "allow and remember", "allow and remember this exact command", "deny with comment", "deny and stop"]);
   const gone = await rig(t, [new Error("boom")], { perms: PROSE });
   assert.equal((await gone.call("bash", { command: DANGER }))?.block, true);
   assert.equal(gone.asked.length, 1);

@@ -1,5 +1,5 @@
 #!/bin/sh
-# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs).
+# pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|perms|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs).
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
@@ -24,6 +24,14 @@ if [ "$sub" = "dialogs" ]; then
     fi
     exec node --no-warnings --experimental-strip-types "$here/../extensions/core-adapter/dialogs-cli.ts" "$@"
 fi
+if [ "$sub" = "perms" ]; then
+    shift
+    if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)' 2>/dev/null; then
+        echo "foreman perms needs Node >= 22.6 (--experimental-strip-types)" >&2
+        exit 1
+    fi
+    exec node --no-warnings --experimental-strip-types "$here/../extensions/core-adapter/permssuggest-cli.ts" "$@"
+fi
 if [ "$sub" = "features" ]; then
     shift
     exec node "$here/../scripts/foreman_features.mjs" "$@"
@@ -45,7 +53,7 @@ case "$sub" in
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
-    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|features|knowledge [args]" >&2; exit 2 ;;
+    *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|perms|features|knowledge [args]" >&2; exit 2 ;;
 esac
 shift
 py="${PI_FOREMAN_PYTHON:-}"

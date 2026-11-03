@@ -53,7 +53,8 @@ const CMD = { command: "pip install requests" };
 test("owner ask: the dialog shows the cause and the command and offers the four options; allow once continues", async (t) => {
   const r = await rig(t, [ESCALATE], { answers: ["allow once"] });
   assert.equal(await r.call("bash", CMD), undefined);
-  assert.deepEqual(r.optionLists[0], ["allow once", "allow and remember", "deny with comment", "deny and stop"]);
+  // B2.3: a readable, glob-free command also offers the exact-command option next to "allow and remember"
+  assert.deepEqual(r.optionLists[0], ["allow once", "allow and remember", "allow and remember this exact command", "deny with comment", "deny and stop"]);
   assert.match(r.titles[0], /^pi-foreman: bash asks\n/);
   assert.match(r.titles[0], /cause: danger-install/);
   assert.match(r.titles[0], /pip install requests/);
