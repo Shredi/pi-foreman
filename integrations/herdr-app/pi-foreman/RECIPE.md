@@ -8,6 +8,6 @@ An Agents list for the sidebar, grouped by space, that shows the pi-foreman sess
 
 **Built from:** `herdr` `agents`, `terminals`, `focused`, `spaces`, `setAgentOrder`, `run`, `theme`, `exec`, `props`, `window`; `cx.timer.every`, `cx.spawn`. `model.js` is pure (parse, tree, join, rows, URL rule, opener argv) and has node tests. The only programs run: `foreman radar --json` (prop `foreman`, a path or an object keyed by machine with `local`), `hc get <terminal> --json` (polled for pi terminals) and the opener.
 
-**Watch out:** join agents to radar nodes on `hcTerminal` (the `machine/` prefix for remote spaces), skip done nodes, require equal pids when both sides have one. Open only `https://` URLs without whitespace or `& | ^ < > " '`; call `hc` only as `hc get <terminal> --json` (argv, failures ignored), never write, never fetch. Never throw in render.
+**Watch out:** join agents to radar nodes on `hcTerminal` (the `machine/` prefix for remote spaces), else by the terminal's foreground pid from the herdr `terminals()` record (live local nodes only: skip done, ended and remote nodes and nodes already matched); require equal pids when both sides have one. Open only `https://` URLs without whitespace or `& | ^ < > " '`; call `hc` only as `hc get <terminal> --json` (argv, failures ignored), never write, never fetch. Never throw in render.
 
 **Done when:** `herdr-app check` passes; with a radar that has a session in an agent terminal its rows appear under the agent; with no `foreman` the dim line appears; a bad URL never reaches the opener.

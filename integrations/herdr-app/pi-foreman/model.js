@@ -273,7 +273,7 @@ export function joinAgents(agents, tree, machine = null, taken = new Set()) {
   return out;
 }
 
-/** Map pane-less child terminal address -> session node. `kids` are terminal records (`hc ls`), joined like agents on
+/** Map pane-less child terminal address -> session node. `kids` are terminal records (herdr `terminals()`), joined like agents on
  *  `hcTerminal` == the address (`machine/` prefix: pass that machine). Nodes in `taken` (already shown under a paned agent) are
  *  not used; a node joins one terminal only. */
 export function joinChildren(kids, tree, machine = null, taken = new Set()) {
