@@ -93,7 +93,7 @@ A `$NAME` in a bash line resolves to a same-line assignment only inside a closed
 tar node npm npx python3 git test echo true` with plain words (letters, digits, `/ . _ ~ = : @ % + , -`, `$NAME`,
 `${NAME}`, `2>&1`, `>/dev/null`, `>`/`>>` with a plain word). A pipe, `&`, parentheses, braces, brackets, backtick, `#`,
 `<`, `$(`, `${` beyond a bare name or any other statement form makes the line resolve nothing, and it asks as before. The
-exact rules are in [permissions](permissions.md#variables-in-bash-lines), including the three extra cases a child with a scratch dir gets (one literal assignment, `$FOREMAN_SCRATCH` on a heredoc or pipe line, loop variables over literal lists).
+exact rules are in [permissions](permissions.md#variables-in-bash-lines), including the two extra cases a child with a scratch dir gets (one literal assignment, `$FOREMAN_SCRATCH` on a heredoc or pipe line).
 
 ## Child scratch
 

@@ -235,12 +235,12 @@ A candidate that passes is a read: it runs under every mode but `deny` with no c
 
 `shellvars.ts` resolves `$NAME` / `${NAME}` only when every statement of the line is in a closed grammar: a sole `NAME=literal` assignment of a plain absolute path (or a `$FOREMAN_SCRATCH` prefix), or a simple command from a fixed list of programs with plain words, `$NAME` words, `2>&1`, `>/dev/null` or one plain redirect target. Anything else leaves the variable unresolved and the segment opaque. The cases are pinned by `tests/fixtures/shellvars-grammar.json` and `tests/fixtures/shellvars-cases.json`.
 
-For a **child session** with a scratch dir, three more cases resolve outside that grammar, so a line with a heredoc, a pipe or other statements is no longer opaque for these variables alone:
+For a **child session** with a scratch dir, two more cases resolve outside that grammar, so a line with a heredoc, a pipe or other statements is no longer opaque for these variables alone:
 
 - **One literal assignment.** `NAME=/abs/path` or `NAME=$FOREMAN_SCRATCH[/sub]` at the start of a statement (line start, after `;` or a newline, or after `&&` following another such assignment: not in a pipeline, subshell, group, loop, function, `$(...)` or after `||`) resolves later `$NAME` and `${NAME}` words. `NAME` is assigned exactly once and the line mentions it in no other way (no `export`, `read`, `for NAME`, `${NAME:-x}`, no use before the assignment). It does not apply when the line runs `eval`, `source`, a function definition, a runner or a computed program name. `$PWD`, `~` and `$HOME` are not forms of it.
 - **`$FOREMAN_SCRATCH` itself** resolves on a heredoc or pipe line too, as long as the line mentions `FOREMAN_SCRATCH` only as `$FOREMAN_SCRATCH` or `${FOREMAN_SCRATCH}` and never rebinds it, under the same code-running guard.
 
-The foreman and an opened session never get these three. The git guard (`scripts/git_guard.py`) applies the same two assignment forms and the same mention rule.
+The foreman and an opened session never get these two. The git guard (`scripts/git_guard.py`) applies the same two assignment forms and the same mention rule.
 
 ### Split literals
 
@@ -337,7 +337,7 @@ The child stops waiting after `gate.askTimeoutMs` (default 900000, 15 minutes), 
 
 A parent's remember applies to its running children, which re-read the permission files at each decision.
 
-**What a child never asks about.** A child's parent is never asked about a text-only floor hit on a line the parser could not read (a push, a git config key, a remote, a policy or config file): that is the deterministic deny with the rephrase hint described under [Floors](#floors). A line that only reads (every program in the read class, no runner, no inline code, no output redirect except an fd dup or the null device) is not stopped by the `policy-file` and `config-keys` text floors, and a loop over a literal list binds its variable (see [Variables in bash lines](#variables-in-bash-lines)), so `for f in config/*.json; do grep -n foo "$f"; done` and `ls -la config/` are decided locally and do not ask. A loop over a list the gate cannot read (`for f in $(ls)`) stays opaque, hence dangerous class. A heredoc into the child's own scratch dir that names `git config` in its body is data and does not ask either. Only the cases in the list above (a dangerous-class call the classifier could not clear, an ask rule) open the parent's dialog.
+**What a child never asks about.** A child's parent is never asked about a text-only floor hit on a line the parser could not read (a push, a git config key, a remote, a policy or config file): that is the deterministic deny with the rephrase hint described under [Floors](#floors). A line that only reads (every program in the read class, no runner, no inline code, no output redirect except an fd dup or the null device) is not stopped by the `policy-file` and `config-keys` text floors, so `ls -la config/` is decided locally and does not ask. A loop (`for f in config/*.json; do grep -n foo "$f"; done`) binds no variable: its body stays opaque, hence dangerous class, for a literal list and for one the gate cannot read (`for f in $(ls)`) alike, and it opens no dialog. A heredoc into the child's own scratch dir that names `git config` in its body is data and does not ask either. Only the cases in the list above (a dangerous-class call the classifier could not clear, an ask rule) open the parent's dialog.
 
 ## Profiles
 

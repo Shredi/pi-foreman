@@ -698,8 +698,8 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
 
 /**
  * `text` with the content of its quoted strings blanked: single quotes and `$'..'` always (nothing expands there), double quotes unless the
- * string holds a `$(`, `${` or backtick (those run). Only used for lines whose every segment is a data program (see DATA_PROGS), where a quoted
- * argument is text for the program, not a command line.
+ * string holds a `$(`, `${` or backtick (those run). Runs on every line without a runner, where a quoted argument is text for the program,
+ * not a command line.
  */
 export function maskQuoted(text: string): string {
   let out = "";
