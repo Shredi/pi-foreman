@@ -76,6 +76,23 @@ class FakeHc(unittest.TestCase):
                          {"ok": False, "code": "bad_request", "error": "missing field: parentName"})
         self.assertEqual(base64.b64decode(out["stderr"]), b"")
 
+    def test_exec_runs_pi_intercom_as_a_subprocess_with_stdin(self):
+        prog = self.tmp / "prog"
+        prog.mkdir()
+        (prog / "pi_intercom.py").write_text("import sys; sys.stdout.write(sys.stdin.read().upper()); sys.stderr.write('e'); sys.exit(4)")
+        if sys.platform == "win32":
+            (prog / "pi-intercom.cmd").write_text(f'@"{sys.executable}" "%~dp0pi_intercom.py" %*\r\n')
+        else:
+            (prog / "pi-intercom").write_text(f'#!/bin/sh\nexec "{sys.executable}" "{prog}/pi_intercom.py" "$@"\n')
+            (prog / "pi-intercom").chmod(0o755)
+        env = dict(self.exec_env(), PATH=str(prog) + os.pathsep + self.env["PATH"])
+        r = self.hc("exec", "--on", "alpha", "-i", "--json", "--", "pi-intercom", "relay", stdin="abc", env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual((out["code"], out["timed_out"]), (4, False))
+        self.assertEqual(base64.b64decode(out["stdout"]), b"ABC")
+        self.assertEqual(base64.b64decode(out["stderr"]), b"e")
+
     def test_exec_exit_code_and_stdout_without_json(self):
         r = self.hc("exec", "--on", "alpha", "--", "/x/bin/foreman", "session", "remote", "probe", "--json",
                     stdin="{}", env=self.exec_env())

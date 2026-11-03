@@ -24,7 +24,8 @@ Subcommands:
   exec --on M [-i] [--timeout S] [--json] -- ARGV...   never runs ARGV: finds `session remote <verb>` in it and runs
       that verb in-process against the remote agent dir, so a Windows-style argv works on POSIX. stdin is the request.
       --json prints the real reply {code, ms, signal, stderr, stdout, timed_out, truncated}: stdout and stderr base64,
-      code the verb's exit code. A failure of hc itself prints {"error": {"hint", "kind", "message"}} on stderr (exit 1).
+      code the verb's exit code. A `pi-intercom ...` ARGV (no `session`) runs as a subprocess, stdin
+      passed through, code its exit code. A failure of hc itself prints {"error": {"hint", "kind", "message"}} on stderr (exit 1).
   run [--on M] [--name N] [--label K=V]... [flags] -- ARGV...   prints {address, agent, cwd, name, parent, state, turn};
       the address is `tN` (`M/tN` with --on)
   get T [--json]                prints the terminal record
@@ -41,6 +42,8 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -136,12 +139,15 @@ def cmd_exec(args):
     if mode == "timed_out":
         out, err, code, timed_out = b"", b"", None, True
     else:
-        try:
-            verb = argv[argv.index("remote", argv.index("session")) + 1]
-        except (ValueError, IndexError):
-            die("exec: no `session remote <verb>` in argv: " + " ".join(argv), 2)
-        out, err, code = run_verb(verb, data)
         timed_out = False
+        if "session" not in argv and Path(argv[0]).stem == "pi-intercom":
+            out, err, code = run_program(argv, data)
+        else:
+            try:
+                verb = argv[argv.index("remote", argv.index("session")) + 1]
+            except (ValueError, IndexError):
+                die("exec: no `session remote <verb>` in argv: " + " ".join(argv), 2)
+            out, err, code = run_verb(verb, data)
         if mode == "garbage":
             out = b"not json at all\n"
         if mode == "cp850":
@@ -156,6 +162,16 @@ def cmd_exec(args):
     sys.stderr.buffer.write(err)
     sys.stdout.flush()
     sys.exit(code or 0)
+
+
+def run_program(argv, data):
+    """Run a program that is not a `session` verb (e.g. `pi-intercom relay`) as a subprocess, stdin passed through."""
+    exe = shutil.which(argv[0]) or argv[0]
+    try:
+        r = subprocess.run([exe, *argv[1:]], input=data, capture_output=True)
+    except OSError as e:
+        return b"", str(e).encode("utf-8"), 127
+    return r.stdout, r.stderr, r.returncode
 
 
 def run_verb(verb, data):
