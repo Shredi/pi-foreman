@@ -185,6 +185,17 @@ test("an away owner: denied with the absent text, the dialog is never opened", a
   assert.equal(u.selects.length, 0);
 });
 
+test("presence disabled: an away-reporting presence is never probed and the dialog opens", async (t) => {
+  const w = world(t);
+  const u = ui({ select: ["allow once"] });
+  let refreshed = 0;
+  const presence = { refresh: async () => void refreshed++, away: () => true };
+  const r = await askOwner(ASK, deps(u, w, { presence, presenceEnabled: false }).d);
+  assert.notEqual((r as { how?: string }).how, "away");
+  assert.equal(refreshed, 0);
+  assert.equal(u.selects.length, 1);
+});
+
 test("long commands: 60 lines show in full; more show head and tail, name the trace file, and the file holds everything", (t) => {
   const w = world(t);
   const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`);
