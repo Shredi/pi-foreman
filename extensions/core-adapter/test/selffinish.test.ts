@@ -107,7 +107,8 @@ test("pr-merged: a PR closed unmerged starts no close and no cleanup", async () 
     onMerged: (i) => void merged.push(i),
   });
   w.start(K, openSnap());
-  await new Promise((res) => setTimeout(res, 20));
+  // wait on the condition, not a fixed delay: a stalled event loop fires a 20ms timer before the setImmediate tick has run
+  for (let i = 0; i < 1000 && w.has(K); i++) await new Promise((res) => setImmediate(res));
   assert.equal(w.has(K), false, "the watch ended");
   assert.deepEqual(merged, []);
 });
