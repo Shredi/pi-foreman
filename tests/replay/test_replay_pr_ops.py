@@ -1,9 +1,8 @@
 """Replay: pr_checks and pr_watch through the real Pi tool path against a fake gh (PR tools, ledger item 24).
 
 The fake gh (tests/fixtures/fake_pr_host.py behind sh and .cmd shims, first on PATH) reports one pending
-check. The foreman reads it with pr_checks, then starts pr_watch (tools.prWatchSeconds 5, floored to 30 at
-runtime). The persistent watch polls the host again while the session lives, and session shutdown clears it:
-the host sees no call afterwards.
+check. The foreman reads it with pr_checks, then starts pr_watch (no number: the PR comes from gh pr view, a github.com URL).
+The watch is store-only and makes no host call of its own; after shutdown the host sees no call either.
 The trace holds `tool_pack` for both tools and `pr_watch` outcome `started`, and never the PR number.
 Same prerequisites and skips as test_replay.py.
 """
@@ -25,7 +24,7 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 KEYS = ("event", "pack", "op", "outcome")
 CHECKS = [{"name": "build", "state": "PENDING", "bucket": "pending", "link": "https://example.com/run/1",
            "startedAt": "2026-10-11T10:00:00Z", "completedAt": None}]
-VIEW = {"number": 7, "url": "https://example.com/acme/app/pull/7", "title": "t", "state": "OPEN", "isDraft": False,
+VIEW = {"number": 7, "url": "https://github.com/acme/app/pull/7", "title": "t", "state": "OPEN", "isDraft": False,
         "mergeable": "MERGEABLE", "reviewDecision": "", "headRefOid": "0123456789abcdef", "baseRefName": "main",
         "updatedAt": "2026-10-11T10:00:00Z", "comments": [], "reviews": []}
 
@@ -50,15 +49,11 @@ class TestPrOps(ReplayCase):
         def count():
             return len(calls.read_text("utf-8").splitlines()) if calls.exists() else 0
 
-        deadline = time.time() + 60
-        before = count()
-        while count() <= before and time.time() < deadline:
-            time.sleep(0.5)
-        self.assertGreater(count(), before, "the watch never polled the host")
+        # pr_watch is store-only: it never polls the host itself (the PR tracker does)
         pi.close()
         after = count()
-        time.sleep(35)  # longer than the 30 s watch interval floor
-        self.assertEqual(count(), after, "the watch kept polling after shutdown")
+        time.sleep(2)
+        self.assertEqual(count(), after, "the host was called after shutdown")
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
         ev = [r for r in trace if r.get("event") in ("tool_pack", "pr_watch")]
