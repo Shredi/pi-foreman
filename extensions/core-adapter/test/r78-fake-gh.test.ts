@@ -39,7 +39,7 @@ test("the open-PRs refresher goes through the fake and records the failure in it
 test("an adapter session with the refresher on reaches only the fake gh", { skip }, async (t) => {
   const w = world(t);
   const agentDir = path.resolve(w.handoff, "..", "..", "..");
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ radar: { openPrs: { enabled: true } } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ radar: { openPrs: { enabled: true } }, tools: { prGithubHosts: ["github.com"] } }));
   const before = calls().length;
   await w.adapter();
   for (let i = 0; i < 80 && calls().length === before; i++) await tick(100);

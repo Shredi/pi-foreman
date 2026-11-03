@@ -33,7 +33,7 @@ VIEW = {"number": 7, "url": "https://github.com/acme/app/pull/7", "title": "t", 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestPrOps(ReplayCase):
     def test_checks_then_watch_makes_no_host_call_while_live(self):
-        rig = self.rig("props", load_fixture("pr_ops"), config={"tools": {"prWatchSeconds": 5}})
+        rig = self.rig("props", load_fixture("pr_ops"), config={"tools": {"prWatchSeconds": 5, "prGithubHosts": ["github.com"]}})
         host = rig.root / "host"
         host.mkdir()
         scenario = {"gh pr checks": {"stdout": json.dumps(CHECKS), "exit": 8}, "gh pr view": {"stdout": json.dumps(VIEW)}, "gh api": {"stdout": "[]"}}

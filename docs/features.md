@@ -548,6 +548,7 @@ Switch: `tools.pr` is true.
 |---|---|---|
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
+| `tools.prGithubHosts` | unset | not in project/session (the GitHub hosts of the PR tracker come from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
 
 ### sidebar-status
@@ -954,6 +955,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `roles.*.skills` | the skills a role gets come from the user or overlay config |
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
+| `tools.prGithubHosts` | the GitHub hosts of the PR tracker come from the user or overlay config |
 | `skills.visible` | it hides every other skill: user or overlay config only |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |
