@@ -103,8 +103,11 @@ overlay config only (a project or session value is ignored) and unset by default
   downshift. The model switch drops the provider cache once, so the restore pays one cold resume; the warm compaction
   keeps that small ([cache](cache.md)).
 - **User `/model`.** A model the owner picks while downshifted becomes the base; the downshift stays enabled for later idles.
-- **Gates use the base model.** The reviewer different-model rule (`review_model`), the rank checks of child launches
-  and the shadow checks compare against the base model, never against the idle rung. The child role map stays keyed by
+- **Gates use the base model, the review rule the live one.** The review rule judges the live model; the other gates
+  judge the base model. The reviewer different-model rule (`review_model`, including `ceremony.reviewModel` pairs,
+  [review](review.md#reviewer-pairs)) compares against the model running the turn, so a downshifted foreman is
+  reviewed against the idle rung. The rank checks of child launches and the shadow checks compare against the base
+  model, never against the idle rung. The child role map stays keyed by
   the base model's provider (children and the finalizer keep the base provider's roles), `foreman_session_open` and
   `/foreman session open` apply the session rank rule to the base model, and `foreman doctor` judges the base model's
   cache and the idle rung. A model the owner picks with `/model` becomes the base, so these re-key with it.
