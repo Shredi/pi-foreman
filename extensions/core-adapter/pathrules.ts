@@ -26,6 +26,8 @@ export interface GateRoots {
   /** Handoff dirs of sessions this session opened (its id is in the dir's `parent` file): `ruling*.md` and `brief*.md` may be written there. */
   openedHandoffs?: string[];
   child: boolean;
+  /** A child only: the foreman's checkout (launch binding, FOREMAN_CHECKOUT) in its real spelling; a shell write into it is `child-write-foreman-checkout`. Absent for `tasks`/`chain` launches. */
+  checkout?: string;
   role: string;
   /** `gate.tmpAccess` (default true): writes (and for the owner reads) under the OS temp dirs. */
   tmpAccess: boolean;
@@ -68,9 +70,15 @@ export function realDefault(p: string): string | null {
   }
 }
 
-/** The real spelling of `abs`: its deepest existing ancestor through realpath, the rest appended. */
-export function realSpelling(platform: string, abs: string, real: (p: string) => string | null): string {
-  return longForm(platform, abs, real);
+/**
+ * The real spelling of `abs`: its deepest existing ancestor through realpath, the rest appended. `link`: the path names a link itself (a plain `rm link`
+ * removes the link, not its target), so only the directory is resolved: `realpath(dirname) + basename`.
+ */
+export function realSpelling(platform: string, abs: string, real: (p: string) => string | null, link = false): string {
+  if (!link) return longForm(platform, abs, real);
+  const x = px(platform);
+  const dir = x.dirname(abs);
+  return dir === abs ? abs : x.join(longForm(platform, dir, real), x.basename(abs));
 }
 
 /** The absolute form of a path word, or null (empty, `~`, NUL, a drive-relative `C:x`). */
@@ -90,12 +98,18 @@ const HANDOFF_NOTE = /^(?:ruling|brief)[A-Za-z0-9._-]*\.md$/;
  * (no symlink out). Relative roots resolve against `base`. win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`),
  * so long forms count too.
  */
-export function rootHolds(root: string, abs: string, platform: string, realpath?: (p: string) => string | null, base?: string): boolean {
+export function rootHolds(root: string, abs: string, platform: string, realpath?: (p: string) => string | null, base?: string, link = false): boolean {
   const real = realpath ?? (platform === process.platform ? realDefault : () => null);
-  const ra = realSpelling(platform, abs, real);
+  const ra = realSpelling(platform, abs, real, link);
   const win = platform === "win32";
   const longRoot = (r: string): string => realSpelling(platform, base ? px(platform).resolve(base, r) : px(platform).resolve(r), real);
-  if (!under(platform, root, abs, base)) return win && !root.includes("*") && under(platform, longRoot(root), ra, base);
+  if (!under(platform, root, abs, base)) {
+    if (win) return !root.includes("*") && under(platform, longRoot(root), ra, base);
+    // posix: `abs` spelled through a link to the root (`/var` -> `/private/var`). The real directory plus the unresolved last component must lie under the real root;
+    // the fully resolved target must too, unless the path names a link itself.
+    const rr = root.includes("*") ? null : real(root);
+    return !!rr && under(platform, rr, realSpelling(platform, abs, real, true), base) && (link || under(platform, rr, ra, base));
+  }
   if (ra === abs) return true;
   return under(platform, root, ra, base) || (!root.includes("*") && under(platform, real(root) ?? root, ra, base)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, base));
 }
@@ -132,13 +146,13 @@ export function workFolderOf(r: GateRoots, platform: string, abs: string): { pat
 }
 
 /** The class of root `abs` lies in for `dir`, or null. The real spelling must stay inside the same root (no symlink out). */
-function classOf(r: GateRoots, platform: string, abs: string, dir: Dir): string | null {
+function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = false): string | null {
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
-  const ra = realSpelling(platform, abs, real);
+  const ra = realSpelling(platform, abs, real, link);
   const win = platform === "win32";
   // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
   const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
-  const inside = (root: string): boolean => rootHolds(root, abs, platform, r.realpath, r.worktree);
+  const inside = (root: string): boolean => rootHolds(root, abs, platform, r.realpath, r.worktree, link);
   const gitFree = (root: string): boolean => !px(platform).relative(root, abs).split(/[\\/]/).includes(".git");
   const noWrite = dir === "write";
   if (inside(r.worktree) && (!noWrite || gitFree(r.worktree))) return "worktree";
@@ -199,7 +213,8 @@ export function pathDecide(tool: string, input: unknown, cwd: string, roots: Gat
   for (const [w, dir] of ops) {
     const abs = resolveWord(platform, cwd, w);
     if (!abs) return undefined;
-    const cls = classOf(roots, platform, abs, dir);
+    // `link`: the operand of a plain rm / unlink / rmdir is judged on the link itself (writes only)
+    const cls = classOf(roots, platform, abs, dir, inp.link === true && dir === "write");
     if (!cls) return undefined;
     rule ??= `path-${dir}-${cls}`;
   }

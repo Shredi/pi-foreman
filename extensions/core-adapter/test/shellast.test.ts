@@ -189,8 +189,10 @@ test("variables resolve only through the closed grammar (old: null)", () => {
   assert.deepEqual(views("D='C:\\t\\x'; mkdir -p $D", WIN), ["", "mkdir -p C:\\t\\x"]);
   assert.deepEqual(views("D=C:/t/x; mkdir -p $D", WIN), ["", "mkdir -p C:/t/x"]);
   assert.deepEqual(views("mkdir -p $UNSET/y"), ["mkdir -p $UNSET/y !unresolved_var"]);
-  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat"), [" !assignment", "mkdir -p $D !unresolved_var", "cat"]);
-  assert.ok(views("D=/t/x && mkdir -p $D | cat").some((v) => v.includes("!unresolved_var")));
+  // A7 changes exactly this pair: with a child scratch binding (env.FOREMAN_SCRATCH) a sole literal assignment is substituted into a later pipeline too
+  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat"), ["", "mkdir -p /t/x", "cat"]);
+  // without the binding (owner, round) the line stays outside the closed grammar
+  assert.deepEqual(views("D=/t/x && mkdir -p $D | cat", { platform: "posix", cwd: "/w/proj" }), [" !assignment", "mkdir -p $D !unresolved_var", "cat"]);
 });
 
 test("a variable outside the grammar stays unresolved: command position, loop variable, reserved name", () => {

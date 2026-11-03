@@ -2233,6 +2233,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
+      ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
       agentDir: s.agentDir,
       ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",

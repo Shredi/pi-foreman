@@ -182,6 +182,13 @@ A built-in allow is a named rule that allows without a model. A shell line is al
 
 Children get the same built-ins minus pushes, parent `.workflow` writes and anything outside their worktree.
 
+Details of the read and write rows:
+
+- **Quoted pattern words.** A `grep`, `egrep`, `fgrep` or `rg` segment is still a read when its only unknown words (`$PAT`, `$(...)`) are double-quoted strings in a pattern position or the value of an option that does not name a file (`grep -n "$PAT" src/a.ts`, `rg --type "$T" foo src/`). A `$(...)` word there is no longer opaque, but the line is not a default read either: the inner command is judged on its own (`$(sudo id)` still hits the `privilege` floor). An unquoted unknown word, an unknown path operand or redirect target, a file option (`-f`, `--file`) and a wrapper keep the segment opaque. `sed` and `awk` are excluded: their script text is the pattern position and the gate cannot tell a read-only script from a writing one when it is unknown. The floors read the line as written; only the allow step relaxes the words.
+- **The null device.** A redirect to `/dev/null` (`>/dev/null`, `2>/dev/null`, `&>/dev/null`) is no write on every platform. `NUL` in any case (`>NUL`, `2>nul`) is the null device on win32 only; on macOS and Linux it names a file, so it is a write like any other.
+- **`rm` of a symlink.** A plain `rm`, `unlink` or `rmdir` (no `-r`, no trailing slash) is judged on the link itself, not on its target, wherever the write roots are checked.
+- **Local `npx`.** `npx <bin>` is not `danger-install` when it runs a bin that is already installed: the segment's directory is known, the nearest ancestor holding a `package.json` has `node_modules/.bin/<bin>` (or `<bin>.cmd`), and the line has no `-p`/`--package`, no `@version`, no `--yes` and no path-like bin name. It is never a default allow: it runs under the mode step like any call that no rule decides. Any other `npx` stays an install.
+
 ### Owned paths
 
 Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `foreman_copy`) go through `pathrules.ts`. The allowed places are computed at runtime from the session's roots:
@@ -193,6 +200,10 @@ Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `fore
 - a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree and scratch dir, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
 
 A path write outside every root is `danger-write-outside`. Secret paths are floors and never reach this step.
+
+**The foreman's checkout (`child-write-foreman-checkout`).** A child launched through a single `subagent` call knows the foreman's checkout (`FOREMAN_CHECKOUT` in its launch binding). A shell write of the child that lands inside that checkout, its `.workflow/` included, is a deny named `child-write-foreman-checkout`: a redirect, a write-class operand (`cp`, `mv`, `tee`, ...), a git write verb run from it or given `-C`, `--git-dir` or `--work-tree` for it, and `git clone` into it. The reason says the foreman's files change through the foreman and points the child at its own worktree and `$FOREMAN_SCRATCH`. Reads are never fenced (`cat`, `ls`, `grep`, `git status`, `git log` on the checkout pass the fence). The child's own worktree and scratch dir are never part of it, so a worktree nested inside the checkout stays the child's own. Write and edit tool paths into the checkout are not named separately: they get the general `child-write-outside`. The git guard (`scripts/git_guard.py`) applies the same fence to a child's git write verbs.
+
+**Realpath comparison.** The child's scratch dir and the checkout are each compared in two spellings, the one in the launch binding and its realpath (a symlinked temp dir such as macOS `/var` -> `/private/var`), and the target of a write is compared in its real spelling too. A `cd` or redirect through either spelling of the scratch dir is a write-in; a link inside the scratch dir that leads out of it is not. On Windows the comparison folds case and treats `\`, `/` and the `C:` drive forms alike; on Linux it compares case exactly.
 
 ### Work folders
 
@@ -224,6 +235,13 @@ A candidate that passes is a read: it runs under every mode but `deny` with no c
 
 `shellvars.ts` resolves `$NAME` / `${NAME}` only when every statement of the line is in a closed grammar: a sole `NAME=literal` assignment of a plain absolute path (or a `$FOREMAN_SCRATCH` prefix), or a simple command from a fixed list of programs with plain words, `$NAME` words, `2>&1`, `>/dev/null` or one plain redirect target. Anything else leaves the variable unresolved and the segment opaque. The cases are pinned by `tests/fixtures/shellvars-grammar.json` and `tests/fixtures/shellvars-cases.json`.
 
+For a **child session** with a scratch dir, two more cases resolve outside that grammar, so a line with a heredoc, a pipe or other statements is no longer opaque for these variables alone:
+
+- **One literal assignment.** `NAME=/abs/path` or `NAME=$FOREMAN_SCRATCH[/sub]` at the start of a statement (line start, after `;` or a newline, or after `&&` following another such assignment: not in a pipeline, subshell, group, loop, function, `$(...)` or after `||`) resolves later `$NAME` and `${NAME}` words. `NAME` is assigned exactly once and the line mentions it in no other way (no `export`, `read`, `for NAME`, `${NAME:-x}`, no use before the assignment). It does not apply when the line runs `eval`, `source`, a function definition, a runner or a computed program name. `$PWD`, `~` and `$HOME` are not forms of it.
+- **`$FOREMAN_SCRATCH` itself** resolves on a heredoc or pipe line too, as long as the line mentions `FOREMAN_SCRATCH` only as `$FOREMAN_SCRATCH` or `${FOREMAN_SCRATCH}` and never rebinds it, under the same code-running guard.
+
+The foreman and an opened session never get these two. The git guard (`scripts/git_guard.py`) applies the same two assignment forms and the same mention rule.
+
 ### Split literals
 
 The git guard (`scripts/git_guard.py`, also for the main role) denies, never asks, a bash line whose quoted, ANSI-C or escaped pieces of one word (`'.g''it'`) or whose `"a"+"b"` literal chain spell a guarded path component (`.git`, `.git.`, `GIT~1`, any case) that no single piece spells; the reason is `split literal reassembles a guarded token`. For a child the guard also denies string fragments joined by `+`, `..`, `.concat(...)`, `[...].join(...)` or `.replace(All)` whose reassembly is a whole guarded command token (`rm`, `dd`, `git`, `push --force`, `reset --hard`, ...). Cases: `tests/fixtures/split-literal-cases.json`.
@@ -235,6 +253,7 @@ Floors deny with a reason and no model call, for every session kind and every mo
 - secrets and key paths (`~/.ssh`, `~/.gnupg`, `~/.aws`, cloud and kube credentials, `.env`, `.npmrc`, `.pypirc`, `.netrc`, git credential stores, Pi's auth file) for read and write;
 - writes to the three `permissions.json` files (matched by the basename below a `.workflow` or `.pi` directory too, so `mv x .workflow/permissions.json` is caught), pi-foreman's config files when the line carries a `safety.permissions*`, `safety.policy*` or `gate.*` key, `managed.json`, `state/round-parents.json`, `state/bridge-trust.json`, `state/approvals/**`, `state/gate/**`, Pi session files, and (for any child tool write) `state/child-asks/**`. Reading `permissions.json` is not a floor, and a read-only look at the config file is fine;
 - force, mirror and delete pushes, pushes to the default or a protected branch, and **any `git push` from a subagent child** (children never push; the foreman pushes). Only parsed `git push` segments count: the word inside a quoted string, a heredoc body or a read-only interpreter snippet is data;
+- a delete (`rm`, `unlink`, `rmdir`, `find -delete`, `rsync --delete`) outside the worktree, scratch and `/tmp` is `floor-delete-outside`. A plain `rm`, `unlink` or `rmdir` of a symbolic link is judged on the link, not on what it points to: removing the `node_modules` link of a worktree is inside the worktree even though the link leads out;
 - `git config` of the keys listed in `extensions/core-adapter/git-floor-keys.json` (hooksPath, sshCommand, credential helpers, `url.*.insteadOf`, remote urls, push configuration), in every form: `git config` in any scope, the `-c key=value` prefix, `--config-env`, `GIT_CONFIG_*` environment words, and `git remote add|set-url|rename|remove|set-branches|set-head`; `core.attributesFile` outside `.workflow/` or with a verb other than `merge`;
 - deletes and recursive overwrites outside the session's worktree, scratch and `/tmp`; `rm` of `/`, home or a system dir;
 - `sudo`, `su`, `doas`; shutdown, disk formatting, `dd` to a device;
@@ -245,7 +264,18 @@ Floors deny with a reason and no model call, for every session kind and every mo
 - **`perms-adopt`**: a shell line that runs `foreman perms adopt` (any `foreman` spelling) or `permssuggest-cli.ts adopt`. Adoption writes your user permissions file and is your command in your own terminal or pane; an agent runs `foreman perms suggest` and hands you the report;
 - the existing guards, unchanged: the git guard, the shell-write guard, the destructive guard, secrets-in-commit, `protect.deny`, `childDeny`, own-ruling writes and foreign session dirs.
 
-**Opaque-text matches ask instead of denying.** On a line the parser could not state exactly, a text match for a child push, a git config key, a remote change, a force or protected-branch push or a permissions file asks the owner (never the classifier, never run under mode `allow`). The same words on a parsed segment are a deny. The `rawFloors` list (download piped into a shell, privilege, shutdown, disk, `GIT_CONFIG_*`, `--config-env`), publish and `rm` of system dirs stay denies on the raw text.
+**Opaque-text matches.** On a line the parser could not state exactly, a text match for a child push, a git config key, a remote change, a force or protected-branch push or a policy or config file (`policy-file`, `config-keys`) cannot be told from quoted prose, so what happens depends on the session kind:
+
+- **Child:** a deterministic deny with the hint "Rephrase without a variable or loop, or let the foreman do it." A child never asks its parent about a text-only hit.
+- **Owner or an opened session:** a dialog (never the classifier, never run under mode `allow`).
+
+The same words on a parsed segment are a deny for every kind. The `rawFloors` list (download piped into a shell, privilege, shutdown, disk, `GIT_CONFIG_*`, `--config-env`), publish and `rm` of system dirs stay denies on the raw text.
+
+What the text floors read, so that data is not mistaken for a command:
+
+- **Masked text.** Every text floor reads the line with its data blanked: the body of a `cat` or `tee` heredoc (the `privilege` floor included, so a `sudo` inside a note is no hit even when the same line then runs the file it wrote), and quoted strings. A heredoc body fed to a shell or interpreter (`bash <<EOF`, `python3 - <<EOF`, `cat <<EOF | bash`) stays visible. Quoted strings stay visible when a segment of the line runs text: a shell or interpreter with `-c`/`-e`, a runner such as `xargs`, `awk`, `ssh`, `osascript`, `deno eval|run`, `find -exec`.
+- **`git` in command position only.** A `git push`, `git config` or `git remote` counts at the start of a statement, after a shell keyword (`do`, `then`, `if`, ...) or a wrapper (`env`, `xargs`, `timeout`, `sudo`, ...), with git's own options (`-C <dir>`, `-c k=v`, `--git-dir`) before the verb. A line that runs text or builds its program through `$(...)` has no known command position, and there `git` counts anywhere.
+- **Search patterns are not paths.** The secret-path floor skips the pattern of `grep`, `egrep`, `fgrep` and `rg` (the first operand and `-e` values), and the script of `sed` and the program of `awk` only when it can only read (a sed script with `w`, `r`, `e`, `a`, `i` or `c` commands, or an awk program with redirection, a pipe, `getline` or `system`, is not skipped). `-f`/`--file` values and every other operand stay paths. `rg --files` and `rg --type-list` take no pattern, so every operand of those is a path.
 
 **The honest gap.** A non-opaque script or snippet that *itself* deploys (a `./deploy.sh` that calls `kubectl apply`, a Python file that posts to an API) is just a command the parser reads: the gate judges the line, not the file's contents, so under `auto` it runs unless a rule says otherwise. The same holds for a build or test command whose scripts do something dangerous. Put such scripts behind an `ask` rule (`"ask": ["Bash(./deploy.sh *)"]`) if that matters to you. This is an owner decision, not a bug: a script the agent runs (`./x.sh`, `npm run x`, `make x`) is routine under `auto`, and the gate and the floors read only the command text, never the script body.
 
@@ -284,6 +314,7 @@ A dialog never waits for a fixed time while you are at the machine. Before it op
 - Otherwise the dialog opens with an abort signal. A watchdog re-probes every 60 seconds; if you turn away while the dialog is open it closes and the call is denied with the same text.
 - A probe that fails or has no data is `unknown`, which counts as present. `presence.enabled: false` turns the probe and the watchdog off.
 - A session opened with `--machine` probes the idle time of the remote machine, not of the machine you sit at.
+- Away applies to a real ask only: a dialog of an owner or opened session, or a child's wait for its parent's ruling. A floor decision (a deny, or a built-in or rule allow) is deterministic: it runs no presence probe and is never turned into the away text, whether the owner is away or not.
 
 ## Session kinds and who answers
 
@@ -309,6 +340,8 @@ With nobody to ask, the agent reads: `pi-foreman: denied: nobody is at this sess
 The child stops waiting after `gate.askTimeoutMs` (default 900000, 15 minutes), sooner when the parent's presence turns away. With `"deny"`, or when the binding has no ask dir (a headless parent), the child is denied with a text that tells it to report to the foreman.
 
 A parent's remember applies to its running children, which re-read the permission files at each decision.
+
+**What a child never asks about.** A child's parent is never asked about a text-only floor hit on a line the parser could not read (a push, a git config key, a remote, a policy or config file): that is the deterministic deny with the rephrase hint described under [Floors](#floors). A line that only reads (every program in the read class, no runner, no inline code, no output redirect except an fd dup or the null device) is not stopped by the `policy-file` and `config-keys` text floors, so `ls -la config/` is decided locally and does not ask. A loop (`for f in config/*.json; do grep -n foo "$f"; done`) binds no variable: its body stays opaque, hence dangerous class, for a literal list and for one the gate cannot read (`for f in $(ls)`) alike, and it opens no dialog. A heredoc into the child's own scratch dir that names `git config` in its body is data and does not ask either. Only the cases in the list above (a dangerous-class call the classifier could not clear, an ask rule) open the parent's dialog.
 
 ## Profiles
 
@@ -379,11 +412,13 @@ Every other `gate.*` key is user or overlay only; a project value is dropped wit
 - The decision is made on the command string, not at run time: another local user can swap a `/tmp` path for a symlink in between.
 - Git config in the repository (`diff.external`, a pager) still applies to `git diff` and `git log`.
 - Windows: shell writes to the system temp dir are dangerous class; no default-allowed tmp on win32 yet.
+- `tasks` and `chain` launches carry no launch binding, so their children get no `FOREMAN_CHECKOUT` and no `child-write-foreman-checkout` fence; they still get `child-write-outside` for a write outside their worktree and scratch dir.
+- The bundled pi-subagents (`long-running-guard.js`, `isMutatingTool`) has no exception for `/dev/null`, so a bash call that redirects to it counts as a mutating tool for its "mutating tool failures" attention signal. That signal is upstream of the gate: the gate's null-device rule (no write) does not change it.
 - The gate judges a command line, not the files it runs (see the honest gap under [Floors](#floors)). Under mode `allow` the classifier does not run, so whitelist deny sentences do not apply; `deny` rules and floors still do.
 
 ## Windows
 
-The `bash` tool on native Windows runs Git Bash, so the bash AST applies as on Linux and macOS. The optional `powershell` tool has no parser: every `powershell` call is opaque. The floors run on its raw text (with the PowerShell-aware shell-write grammar), then it is `danger-opaque`, never a built-in allow. Inside a bash line, `powershell`, `pwsh`, `cmd`, `cmd.exe`, `wsl` and any invocation of a `.ps1`, `.cmd` or `.bat` file are opaque segments. On win32 a path has two spellings (backslashes, 8.3 short names such as `RUNNER~1`); `effects.ts` `realSpelling()` compares the real spellings, so a read root stored by its realpath still matches, and `pathnorm.ts` is the one normaliser the floors, the path rules and the pattern rules share. `/tmp` never counts on Windows. The gate tests run on the three CI operating systems with path fixtures for both separators and drive letters.
+The `bash` tool on native Windows runs Git Bash, so the bash AST applies as on Linux and macOS. The optional `powershell` tool has no parser: every `powershell` call is opaque. The floors run on its raw text (with the PowerShell-aware shell-write grammar), then it is `danger-opaque`, never a built-in allow. Inside a bash line, `powershell`, `pwsh`, `cmd`, `cmd.exe`, `wsl` and any invocation of a `.ps1`, `.cmd` or `.bat` file are opaque segments. On win32 a path has two spellings (backslashes, 8.3 short names such as `RUNNER~1`); `effects.ts` `realSpelling()` compares the real spellings, so a read root stored by its realpath still matches, and `pathnorm.ts` is the one normaliser the floors, the path rules and the pattern rules share. `/tmp` never counts on Windows. `NUL` (any case, `>NUL`, `2>nul`) is the null device on Windows only; elsewhere it is a file name. The fence against the foreman's checkout accepts `\`, `/` and `C:` drive spellings and folds case on Windows, and `$FOREMAN_SCRATCH` resolves to the drive form of the scratch dir. The gate tests run on the three CI operating systems with path fixtures for both separators and drive letters.
 
 ## Parser and prior art
 

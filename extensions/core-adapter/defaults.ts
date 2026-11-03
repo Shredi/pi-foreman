@@ -1,12 +1,14 @@
 // R41 defaults (ledger item 4): named allow rules, evaluated per shell segment. A line is a default allow only when the floors
 // found nothing (the caller ran lineFloors first), no segment is opaque and every segment matches a rule below. Anything else
 // returns null and falls through to the review. Rule names: `default-<name>`.
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
-import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
+import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { nullDevice } from "./pathnorm.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -138,7 +140,7 @@ export function folderRelaxes(call: DangerCall, env: DangerEnv): boolean {
 export function folderShellRelaxes(c: DangerCall, env: DangerEnv): boolean {
   const fa = folderAware(c, env);
   if (!fa) return false;
-  return (c.segments ?? []).some((s) => s.opaque === null && s.program !== "" && writeTargets(s).some((w) => !SINK.has(w) && s.cwd !== null && inAutoFolder(env, w, s.cwd)));
+  return (c.segments ?? []).some((s) => s.opaque === null && s.program !== "" && writeTargets(s).some((w) => !SINK.has(w) && !nullDevice(env.platform, w) && s.cwd !== null && inAutoFolder(env, w, s.cwd)));
 }
 
 const NAME = /^[A-Za-z0-9._\/-]+$/;
@@ -608,12 +610,37 @@ const SYS_PKG = new Set(["apt", "apt-get", "dnf", "yum", "choco", "winget", "sco
 const SYS_VERBS = new Set(["install", "remove", "uninstall", "purge", "upgrade", "autoremove", "reinstall", "erase", "add"]);
 const BREW_READ = new Set(["list", "ls", "info", "search", "outdated", "deps", "uses", "leaves", "doctor", "config", "--prefix", "--version", "--cellar", "--repository"]);
 
+/**
+ * A8: `npx <bin>` that runs a bin already installed locally: the segment cwd is known and `node_modules/.bin/<bin>` exists under the nearest ancestor of the
+ * cwd holding a `package.json` (npm's local prefix). No `-p`/`--package`, no `@version`, no `--yes`, no path-like bin: it runs what is installed, never a download.
+ */
+function localNpx(s: ShellSegment): boolean {
+  if (s.cwd === null || s.wrappers.length > 0) return false;
+  let k = 0;
+  while (s.argv[k]?.startsWith("-")) {
+    if (!["--no", "--no-install", "--ignore-existing", "-q", "--quiet"].includes(s.argv[k])) return false;
+    k++;
+  }
+  const bin = s.argv[k];
+  if (!bin || !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(bin)) return false;
+  let dir = path.resolve(s.cwd);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, "package.json"))) break;
+    const up = path.dirname(dir);
+    if (up === dir) return false;
+    dir = up;
+  }
+  const bins = path.join(dir, "node_modules", ".bin");
+  return [bin, `${bin}.cmd`].some((n) => fs.existsSync(path.join(bins, n)));
+}
+
 function installSeg(s: ShellSegment): boolean {
   const p = progOf(s);
   const a = s.argv;
   const pos = positionals(a);
   if (PKG.has(p)) return PKG_VERBS.has(pos[0]) || pos[0] === "dlx" || (p === "yarn" && pos.length === 0 && !HELPFLAG(a));
-  if (p === "npx" || p === "bunx" || p === "uvx") return true;
+  if (p === "npx") return !localNpx(s);
+  if (p === "bunx" || p === "uvx") return true;
   if (p === "pip" || p === "pip3") return pos[0] === "install" || pos[0] === "uninstall";
   if (p === "uv") return pos[0] === "pip" && (pos[1] === "install" || pos[1] === "uninstall");
   if (/^python[0-9.]*$/.test(p)) return a[0] === "-m" && a[1] === "pip" && (a.includes("install") || a.includes("uninstall"));
@@ -876,11 +903,24 @@ function writeTargets(s: ShellSegment): string[] {
 
 const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
 
+/** The operand `w` of `s` is judged on the link itself: a plain `rm` / `unlink` / `rmdir` (no `-r`/`-R`/`--recursive`) of a name without a trailing slash. */
+function linkOperand(s: ShellSegment, w: string): boolean {
+  const p = progOf(s);
+  if (p !== "rm" && p !== "unlink" && p !== "rmdir") return false;
+  const opts: string[] = [];
+  for (const a of s.argv) {
+    if (a === "--") break;
+    if (a.startsWith("-") && a !== "-") opts.push(a);
+  }
+  if (opts.some((a) => a === "--recursive" || (!a.startsWith("--") && /[rR]/.test(a)))) return false;
+  return !/[\\/]$/.test(w);
+}
+
 /** The write target `w` (run from `cwd`) lies where the path rules allow a write: the worktree, scratch, and (outside children) the OS temp dir. */
-function writable(w: string, cwd: string | null, env: DangerEnv, folders = false): boolean {
-  if (SINK.has(w)) return true;
+function writable(w: string, cwd: string | null, env: DangerEnv, folders = false, link = false): boolean {
+  if (SINK.has(w) || nullDevice(env.platform, w)) return true;
   if (cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) return false;
-  return pathDecide("write", { path: w }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
+  return pathDecide("write", { path: w, link }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
 }
 
 /** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp. */
@@ -888,7 +928,7 @@ function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
   // work folders count only when every live segment is a built-in default with them as write roots; otherwise today's context
   const fa = folderAware(c, env);
   const ec = fa ? fa.ec : effectCtxOf(env);
-  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa))) return true;
+  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa, linkOperand(s, w)))) return true;
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;
     const chain = toChain(s);
@@ -896,6 +936,29 @@ function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
     for (const r of chain.redirects) if (r.op !== "<" && r.op !== "dup" && !redirectOk(r, ec, cwd, ec.scratch ?? [], env.platform) && !contained(ec, cwd, r.target, true)) return true;
     // the redirects are judged above; the effect class of the words alone (a redirect into the worktree is write-out to segmentEffect)
     if (segmentEffect(ec, cwd, { ...chain, redirects: [] }).cls === "write-out") return true;
+  }
+  return false;
+}
+
+/**
+ * A9, children only: a shell write of the call lands inside the foreman's checkout (`roots.checkout`, the launch binding's FOREMAN_CHECKOUT, in its real
+ * spelling): a redirect, a write-class operand, a git write subcommand run in, `-C`, `--git-dir`, `--work-tree` or cloned into it. The child's own worktree and
+ * scratch (a worktree nested in the checkout) are no write into it; the parent's `.workflow/` is not exempt. Names the deny `child-write-foreman-checkout`.
+ */
+export function writesIntoCheckout(c: DangerCall, env: DangerEnv): boolean {
+  const co = env.roots.checkout;
+  if (!co || !env.roots.child) return false;
+  const real = env.roots.realpath ?? realDefault;
+  for (const s of live(c)) {
+    const cwd = s.cwd ?? env.cwd;
+    const words = writeTargets(s);
+    for (const r of toChain(s)?.redirects ?? []) if (r.op !== "<" && r.op !== "dup") words.push(r.target);
+    for (const w of words) {
+      const link = linkOperand(s, w);
+      if (SINK.has(w) || nullDevice(env.platform, w) || writable(w, s.cwd, env, false, link)) continue;
+      const abs = resolveWord(env.platform, cwd, w);
+      if (abs && (under(env.platform, co, abs) || under(env.platform, co, realSpelling(env.platform, abs, real, link)))) return true;
+    }
   }
   return false;
 }

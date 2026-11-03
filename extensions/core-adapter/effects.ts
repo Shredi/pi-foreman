@@ -28,7 +28,7 @@ import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
 import { netReadSegment } from "./netread.ts";
-import { foldCase } from "./pathnorm.ts";
+import { foldCase, nullDevice } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
 /** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
@@ -149,13 +149,15 @@ function gitAlias(c: EffectCtx, part: string): boolean {
 const hasGitPart = (c: EffectCtx, rel: string): boolean => rel.split(/[\\/]/).some((p) => gitAlias(c, p));
 
 /** The deepest existing ancestor of `abs` (itself included) resolves inside realpath(base); with `noGit` not under its `.git` either. */
-function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, noGit = false): boolean {
+function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, noGit = false, link = false): boolean {
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
   const rb = real(base);
   if (!rb) return false;
-  let e = abs;
+  // a link is judged by its directory (`realpath(dirname) + name`): the name itself is never resolved
+  let e = link ? x.dirname(abs) : abs;
+  if (link && e === abs) return false;
   while (!exists(e)) {
     if (!within(c, base, e, true)) return false;
     e = x.dirname(e);
@@ -163,7 +165,7 @@ function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, no
   const r = real(e);
   if (!r) return false;
   if (noGit && hasGitPart(c, x.relative(rb, r))) return false;
-  return within(c, rb, r, strict && e === abs);
+  return within(c, rb, r, strict && e === abs && !link);
 }
 
 /** `word` as an absolute path against `cwd`, or null for `~`, `..`, drive-relative or an unknown cwd. */
@@ -180,7 +182,7 @@ function bases(c: EffectCtx, write: boolean): string[] {
 }
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
-export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[]): boolean {
+export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[], link = false): boolean {
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
@@ -193,19 +195,22 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
     if (base === null || p === null) continue;
     if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
     if (write && c.extraWriteGuard && (c.extraWriteRoots ?? []).includes(b) && c.extraWriteGuard(p)) return false;
-    if (realInside(c, base, p, write, write)) return true;
+    if (realInside(c, base, p, write, write, link)) return true;
   }
   return false;
 }
 
-/** win32 only: `abs` with its deepest existing ancestor through the native realpath (8.3 short names expanded), else null. */
+/**
+ * `abs` with its deepest existing ancestor through the native realpath (win32: 8.3 short names expanded; posix: a symlinked dir such as `/var` -> `/private/var`), else null.
+ * posix never resolves the final component: it may be a link an `rm` / `mv` acts on (`OUT/lnk` -> `WT/file` is still a write outside); realInside judges what a write goes through.
+ */
 function realSpelling(c: EffectCtx, abs: string): string | null {
-  if (plat(c) !== "win32") return null;
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
   const tail: string[] = [];
-  let e = abs;
+  let e = plat(c) === "win32" ? abs : x.dirname(abs);
+  if (e !== abs) tail.push(x.basename(abs));
   while (!exists(e)) {
     const d = x.dirname(e);
     if (d === e) return null;
@@ -259,7 +264,9 @@ export interface SegmentEffect {
 }
 
 const READ = new Set(["ls", "cat", "head", "tail", "cut", "wc", "stat", "file", "tree", "diff", "grep", "egrep", "fgrep", "rg", "find"]);
-const FIND_BAD = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-H", "-follow"]);
+/** The programs of the read class (floors.ts reads a line as read-looking by them). */
+export const READ_CLASS: ReadonlySet<string> = READ;
+export const FIND_BAD = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-L", "-H", "-follow"]);
 
 function shortHas(a: string, ch: string): boolean {
   return /^-[A-Za-z0-9]+$/.test(a) && a.slice(1).includes(ch);
@@ -422,7 +429,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
       }
     }
   }
-  return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where)) ? "write-in" : "write-out";
+  return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);
@@ -657,7 +664,7 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
 /** A redirect the deterministic allow accepts: an fd dup, /dev/null, output into a scratch dir or /tmp, input from a contained path. */
 export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null, scratch: string[], platform: string): boolean {
   if (r.op === "dup") return /^\d+$/.test(r.target);
-  if (r.target === "/dev/null") return true;
+  if (nullDevice(platform, r.target)) return true;
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;
   return platform !== "win32" && !c?.noTmp && tmpDest(r.target);
