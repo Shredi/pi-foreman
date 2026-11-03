@@ -587,7 +587,7 @@
       "id": "remote-sessions",
       "area": "sessions",
       "title": "Remote child sessions over herdr-core",
-      "purpose": "`foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The child reports with `foreman session remote notice`, which sets the `fm.notice` label on its own hc terminal; the parent watches the hc events stream, fetches the named file with `hc file read` (`sessions.remote.fetchTimeoutSeconds`), checks it and mirrors it. User or overlay config only.",
+      "purpose": "`foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The child reports with `foreman session remote notice`, which sets the `fm.notice` label on its own hc terminal; the parent watches the hc events stream, fetches the named file with `hc file read` (`sessions.remote.fetchTimeoutSeconds`), checks it and mirrors it. A Windows machine works as a remote (`pi.cmd`, the full `hc.exe` path, a PowerShell `foremanArgv`; see Windows remotes). User or overlay config only.",
       "doc": "docs/sessions.md#remote-child-sessions",
       "keys": ["sessions.machines", "sessions.remote.fetchTimeoutSeconds"],
       "commands": ["foreman session remote", "foreman session remote notice", "foreman session close-remote"],
@@ -751,6 +751,18 @@
       "doc": "docs/permissions.md#the-steps",
       "keys": ["gate.reviewTimeoutMs", "gate.tmpAccess", "gate.logMaxBytes", "gate.mode"],
       "commands": ["/foreman perms"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
+      "id": "rule-workshop",
+      "area": "safety",
+      "title": "Permission rule workshop",
+      "purpose": "`foreman perms suggest` groups the decisions that cost a dialog or a classifier call in the gate log into candidate generic rules and sentences, with a safety note each and a replay against the logged history (a lower bound, since the log keeps redacted shapes). `foreman perms adopt` re-validates chosen candidates and writes them to your user file at your terminal; `foreman perms review` flags adopted rules that never fire. The owner dialog also offers to remember the exact command.",
+      "doc": "docs/permissions.md#commands",
+      "keys": [],
+      "commands": ["foreman perms"],
       "switch": null,
       "state": "on",
       "enable": ""

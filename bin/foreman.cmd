@@ -1,10 +1,11 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|prs|features|knowledge [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|prs|perms|features|knowledge [args]` for cmd.
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
 if /i "%~1"=="dialogs" goto dialogs
 if /i "%~1"=="prs" goto prs
+if /i "%~1"=="perms" goto perms
 if /i "%~1"=="features" goto features
 if /i "%~1"=="knowledge" goto knowledge
 set "PF_PY=%PI_FOREMAN_PYTHON%"
@@ -21,7 +22,7 @@ if /i "%~1"=="backlog" set "PF_SCRIPT=foreman_backlog.py"
 if /i "%~1"=="findings" set "PF_SCRIPT=foreman_findings.py"
 if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|prs^|features^|knowledge [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|prs^|perms^|features^|knowledge [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS="
 :collect
@@ -63,13 +64,26 @@ node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a
 if errorlevel 1 (echo foreman prs needs Node ^>= 22.6 ^(--experimental-strip-types^) 1>&2 & exit /b 1)
 shift
 set "PF_ARGS="
-:collectp
+:collectr
 if "%~1"=="" goto runprs
 set PF_ARGS=%PF_ARGS% %1
 shift
-goto collectp
+goto collectr
 :runprs
 node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\prs-cli.ts" %PF_ARGS%
+exit /b %ERRORLEVEL%
+:perms
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
+if errorlevel 1 (echo foreman perms needs Node ^>= 22.6 ^(--experimental-strip-types^) 1>&2 & exit /b 1)
+shift
+set "PF_ARGS="
+:collectp
+if "%~1"=="" goto runperms
+set PF_ARGS=%PF_ARGS% %1
+shift
+goto collectp
+:runperms
+node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\permssuggest-cli.ts" %PF_ARGS%
 exit /b %ERRORLEVEL%
 :setup
 node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=19)?0:1)" >nul 2>nul

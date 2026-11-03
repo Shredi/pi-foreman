@@ -59,6 +59,7 @@ Besides the approval and trace lines, the report carries these lines when there 
   `trace.critique_rounds` (`[{raised, lines}]`, `lines` null when the review had no diff, `?` in the text; 0 for an empty diff).
 - `pr: 4 calls (create 1, checks 2, watch 1)`: PR tool calls from `tool_pack` events, listing counts of at least 1 in
   the order create, status, checks, comments, watch. The JSON report has `trace.pr_pack`.
+- `N decisions cost a dialog or a classifier call in the last 7 days; run foreman perms suggest`: the last line of the `/retro` text (not of `foreman retro`), shown when the gate decision log holds 10 or more such decisions (classifier calls and cache hits, dialogs, child asks, and `danger-*` calls that ran only because the mode is `allow`). `foreman perms suggest` groups them into candidate rules; see [permissions](permissions.md#commands). The threshold is a constant, not a config key.
 
 - `cache: keepalives 3 ($0.07), warm compactions 2, cold resumes 1`: cache keep-alive usage lines (`kind: "keepalive"`,
   count and summed cost; left out of the per-role rows), `compaction` trace events with reason `warm_idle`, and

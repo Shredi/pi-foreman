@@ -274,7 +274,7 @@ export function matchRules(sets: RuleSets, call: RuleCall, env: RuleEnv, builtin
 // ------------------------------------------------------------------ proposeRule
 
 /** Words that hand the rest of the line to another program: a rule built on a program that carries one would allow anything after it. */
-const EXEC_FLAG = /^(?:-e|-c|-x|-exec|-execdir|-ok|--exec(?:=.*)?|--upload-pack(?:=.*)?|-oProxyCommand.*)$/;
+export const EXEC_FLAG = /^(?:-e|-c|-x|-exec|-execdir|-ok|--exec(?:=.*)?|--upload-pack(?:=.*)?|-oProxyCommand.*)$/;
 
 /**
  * The pattern rules that would allow the segments of a line, `Bash(<program> <first non-flag arg> *)` each, or null when any segment cannot be
@@ -293,6 +293,25 @@ export function proposeRule(segments: ShellSegment[]): string[] | null {
     const first = s.argv[0];
     if (first !== undefined && first.startsWith("-")) return null;
     const rule = first === undefined ? `Bash(${s.program} *)` : `Bash(${s.program} ${first} *)`;
+    if (!out.includes(rule)) out.push(rule);
+  }
+  return out;
+}
+
+/**
+ * The exact rules of a line, `Bash(<program> <args>)` without a wildcard, one per segment (the no-wildcard form of the grammar: the whole
+ * normalised segment text must match). Null when any segment cannot be pinned: an opaque segment, a glob character in a word (it would be read as a
+ * wildcard or break the parse), an empty program, or an output redirect other than /dev/null (an allow rule matches such a segment only when the
+ * pattern names the redirect). The rule matches the segment wherever it stands (other lines, other cwds), not only this line.
+ */
+export function exactRules(segments: ShellSegment[]): string[] | null {
+  if (segments.length === 0) return null;
+  const out: string[] = [];
+  for (const s of segments) {
+    if (s.opaque !== null || s.program === "") return null;
+    if (s.redirects.some((r) => r.op !== "<" && r.op !== "dup" && r.target !== "/dev/null")) return null;
+    if ([s.program, ...s.argv].some((w) => /[*?()\n]/.test(w))) return null;
+    const rule = `Bash(${normaliseSegment(s)})`;
     if (!out.includes(rule)) out.push(rule);
   }
   return out;

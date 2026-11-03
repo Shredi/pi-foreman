@@ -558,3 +558,63 @@ export class PermStore {
     return { ok: true, file };
   }
 }
+
+/**
+ * The workshop writer (`foreman perms adopt`): appends pattern rules to `allow` and whitelist sentences to `classifier.allow` of the USER file,
+ * atomically, keeping the file's other keys (`workFolders`, `profiles`, ...) and their order. Every input is re-validated here (the rule grammar,
+ * the sentence length, control characters); the whole call is refused when one is bad, so nothing is half written. Never reachable from a dialog.
+ */
+export function writeUserAllow(agentDir: string, input: { rules?: string[]; sentences?: string[] }): { ok: true; file: string; added: string[] } | { ok: false; reason: string } {
+  const file = userFilePath(agentDir);
+  const rules = (input.rules ?? []).map((r) => (typeof r === "string" ? r.trim() : r));
+  const sentences = input.sentences ?? [];
+  if (rules.length + sentences.length === 0) return { ok: false, reason: "nothing to write" };
+  for (const r of rules) {
+    const p = typeof r === "string" ? parseRule(r) : null;
+    if (!p || "error" in p) return { ok: false, reason: `the pattern rule is not valid: ${p && "error" in p ? p.error : "not a string"}` };
+  }
+  for (const s of sentences) {
+    if (typeof s !== "string" || s.trim() === "" || s.length > PROSE_MAX || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(s)) return { ok: false, reason: `a sentence must be 1 to ${PROSE_MAX} characters without control characters` };
+  }
+  let obj: Json = {};
+  try {
+    if (fs.lstatSync(file).isSymbolicLink()) return { ok: false, reason: `not written: ${file} is a symbolic link` };
+    const v = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!isObj(v)) return { ok: false, reason: `not written: ${file} is not a JSON object` };
+    obj = v;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return { ok: false, reason: `not written: ${file} is not valid JSON (${clip((e as Error).message, 80)}); fix it first` };
+  }
+  const added: string[] = [];
+  const push = (holder: Json, key: string, value: string): string | null => {
+    const cur = holder[key];
+    if (cur === undefined) holder[key] = [value];
+    else if (Array.isArray(cur)) {
+      if (cur.includes(value)) return null;
+      cur.push(value);
+    } else return `${key} in ${file} is not a list`;
+    added.push(value);
+    return null;
+  };
+  for (const r of rules) {
+    const e = push(obj, "allow", r);
+    if (e) return { ok: false, reason: `not written: ${e}` };
+  }
+  if (sentences.length) {
+    if (obj.classifier === undefined) obj.classifier = {};
+    if (!isObj(obj.classifier)) return { ok: false, reason: `not written: classifier in ${file} is not an object` };
+    for (const s of sentences) {
+      const e = push(obj.classifier, "allow", s.trim());
+      if (e) return { ok: false, reason: `not written: ${e}` };
+    }
+  }
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    return { ok: false, reason: `not written: ${clip((e as Error).message, 120)}` };
+  }
+  return { ok: true, file, added };
+}

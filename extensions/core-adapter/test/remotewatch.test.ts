@@ -582,7 +582,7 @@ test("watcher: stop() aborts the in-flight hc get and file read; nothing is writ
   assert.equal(e.noticeSeq, undefined);
 });
 
-test("runHc: an abort kills the child and resolves at once", { skip: process.platform === "win32" }, async () => {
+test("runHc: an abort kills the child and resolves at once", { skip: process.platform === "win32" ? "the stub hc is a `#!/bin/sh` script run through `sleep`, which win32 cannot execute" : false }, async () => {
   const bin = path.join(fs.mkdtempSync(path.join(root, "bin-")), "hc");
   fs.writeFileSync(bin, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
   const old = process.env.HC_BIN;
