@@ -42,6 +42,14 @@ class ScratchRealpathTest(unittest.TestCase):
         self.assertEqual(self.level(root, self.heredoc(os.path.join(self.real, "other"))), 2)
         self.assertEqual(self.level(root, self.heredoc(os.path.join(self.link, "other"))), 2)
 
+    def test_git_clone_targets(self):
+        for root, lit in ((os.path.join(self.link, "pi-foreman-scratch", "s1", "L1"), os.path.join(self.real, "pi-foreman-scratch", "s1", "L1")),
+                          (os.path.join(self.real, "pi-foreman-scratch", "s1", "L1"), os.path.join(self.link, "pi-foreman-scratch", "s1", "L1"))):
+            u = "git clone https://example.invalid/r.git "
+            for cmd in (u + "$FOREMAN_SCRATCH/r", u + '"$FOREMAN_SCRATCH/r"', "S=$FOREMAN_SCRATCH/w; " + u + "$S/r", u + lit + "/r"):
+                with self.subTest(root=root, cmd=cmd):
+                    self.assertEqual(self.level(root, cmd), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

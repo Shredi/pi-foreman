@@ -48,3 +48,21 @@ test("the same symlinked tmp does not widen the fence: a sibling dir stays outsi
   assert.equal(outside(root, `echo x > ${path.join(realTmp, "other")}/f.txt`), true);
   assert.equal(outside(root, `echo x > ${path.join(linkTmp, "other")}/f.txt`), true);
 });
+
+const clean = (scratch: string, command: string): boolean => !decide(scratch, command).result;
+const clones = (spell: string): string[] => [
+  "git clone https://example.invalid/r.git $FOREMAN_SCRATCH/r",
+  'git clone https://example.invalid/r.git "$FOREMAN_SCRATCH/r"',
+  "S=$FOREMAN_SCRATCH/w; git clone https://example.invalid/r.git $S/r",
+  `git clone https://example.invalid/r.git ${spell}/r`,
+];
+
+test("git clone into the own scratch, root spelled through a link or the real path: write-in", { skip: !posix }, () => {
+  for (const [root, lit] of [[path.join(linkTmp, rel), path.join(realTmp, rel)], [path.join(realTmp, rel), path.join(linkTmp, rel)]]) {
+    for (const cmd of clones(lit)) {
+      assert.equal(outside(root, cmd), false, cmd);
+      assert.equal(clean(root, cmd), true, cmd);
+    }
+    assert.equal(outside(root, "git clone https://example.invalid/r.git /tmp/elsewhere/r"), true);
+  }
+});
