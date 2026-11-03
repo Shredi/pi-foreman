@@ -9,6 +9,7 @@ import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import { parseRule, type ParsedRule, type RuleSets } from "../rules.ts";
 import { readToolsOf, unknownReadTools, warnUnknownReadTools } from "../readtools.ts";
+import { slashForm } from "../pathnorm.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 const base = fs.realpathSync(mkTestTmp("pf-readtools-"));
@@ -20,7 +21,11 @@ after(() => fs.rmSync(base, { recursive: true, force: true }));
 
 const roots: GateRoots = { worktree: wt, scratch: [], tmp: [], owned: [owned], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false };
 const facts: GitFacts = { currentBranch: () => "x", protectedBranches: () => ["main"], pushConfigured: () => false };
-const env: FloorEnv = { cwd: wt, home: "/pf/home", agentDir: "/pf/agent", platform: "linux", protectedBranches: ["main"], currentBranch: () => "x", remoteHead: () => "main", writeRoots: [wt] };
+const platform = process.platform;
+const home = path.join(base, "home");
+// absolute rule spelling: `//` + slash form (`//tmp/x/**` on posix, `//d:/a/x/**` on win32)
+const absRule = (p: string) => `${platform === "win32" ? "//" : "/"}${slashForm(platform, p)}/**`;
+const env: FloorEnv = { cwd: wt, home, agentDir: path.join(base, "agent"), platform, protectedBranches: ["main"], currentBranch: () => "x", remoteHead: () => "main", writeRoots: [wt] };
 const MAP = { ffgrep: "path", fffind: "root", fffmulti: null } as const;
 
 const g = (tool: string, input: Record<string, unknown>, map?: Record<string, string | null>, sets?: RuleSets): GateResult =>
@@ -29,7 +34,7 @@ const g = (tool: string, input: Record<string, unknown>, map?: Record<string, st
     roots: () => roots,
     facts,
     ...(map ? { readTools: map } : {}),
-    ...(sets ? { rules: { sets, env: { cwd: wt, home: "/pf/home", platform: "linux", checkout: wt } } } : {}),
+    ...(sets ? { rules: { sets, env: { cwd: wt, home, platform, checkout: wt } } } : {}),
   });
 const rl = (t: string) => {
   const r = parseRule(t);
@@ -66,7 +71,7 @@ test("a mapped tool pointing at a secret path hits the floor; the search pattern
 });
 
 test("Read rules cover a mapped tool on its path field", () => {
-  const sets: RuleSets = { allow: [], ask: [], deny: [rl(`Read(/${outside}/**)`)] };
+  const sets: RuleSets = { allow: [], ask: [], deny: [rl(`Read(${absRule(outside)})`)] };
   const r = g("ffgrep", { pattern: "x", path: path.join(outside, "a") }, { ...MAP }, sets);
   assert.ok(r && "block" in r, "deny rule applies");
   const none = g("ffgrep", { pattern: "x", path: path.join(outside, "a") }, undefined, sets);
@@ -88,13 +93,13 @@ test("readToolsOf keeps valid entries only; unknown names are listed and traced 
   assert.equal(recs.length, 1);
 });
 
-const SSH = "/pf/home/.ssh/id_rsa";
+const SSH = path.join(home, ".ssh", "id_rsa");
 
 test("a mapped tool keeps the payload floors on its other fields, exactly as unmapped", () => {
   const cases: [string, Record<string, unknown>, Record<string, string | null>][] = [
     ["ffgrep", { path: owned, paths: [SSH] }, { ffgrep: "path" }],
-    ["ffgrep", { path: owned, root: "/pf/home/.ssh" }, { ffgrep: "path" }],
-    ["ffgrep", { path: owned, file: "/pf/home/.aws/credentials" }, { ffgrep: "path" }],
+    ["ffgrep", { path: owned, root: path.join(home, ".ssh") }, { ffgrep: "path" }],
+    ["ffgrep", { path: owned, file: path.join(home, ".aws", "credentials") }, { ffgrep: "path" }],
     ["ffgrep", { path: [SSH] }, { ffgrep: "path" }],
     ["ffgrep", { path: SSH }, { ffgrep: null as unknown as string }],
   ];
@@ -108,8 +113,8 @@ test("a mapped tool keeps the payload floors on its other fields, exactly as unm
 });
 
 test("gate.readTools never remaps built-in tools", () => {
-  const sets: RuleSets = { allow: [rl(`Read(/${outside}/**)`)], ask: [], deny: [] };
-  const dst = "/pf/home/.ssh/authorized_keys";
+  const sets: RuleSets = { allow: [rl(`Read(${absRule(outside)})`)], ask: [], deny: [] };
+  const dst = path.join(home, ".ssh", "authorized_keys");
   const calls: [string, Record<string, unknown>, string][] = [
     ["foreman_copy", { src: path.join(wt, "a"), dst }, "src"],
     ["foreman_move", { src: path.join(wt, "a"), dst }, "src"],
