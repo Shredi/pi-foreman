@@ -103,7 +103,13 @@ export function rootHolds(root: string, abs: string, platform: string, realpath?
   const ra = realSpelling(platform, abs, real, link);
   const win = platform === "win32";
   const longRoot = (r: string): string => realSpelling(platform, base ? px(platform).resolve(base, r) : px(platform).resolve(r), real);
-  if (!under(platform, root, abs, base)) return win && !root.includes("*") && under(platform, longRoot(root), ra, base);
+  if (!under(platform, root, abs, base)) {
+    if (win) return !root.includes("*") && under(platform, longRoot(root), ra, base);
+    // posix: `abs` spelled through a link to the root (`/var` -> `/private/var`). The real directory plus the unresolved last component must lie under the real root;
+    // the fully resolved target must too, unless the path names a link itself.
+    const rr = root.includes("*") ? null : real(root);
+    return !!rr && under(platform, rr, realSpelling(platform, abs, real, true), base) && (link || under(platform, rr, ra, base));
+  }
   if (ra === abs) return true;
   return under(platform, root, ra, base) || (!root.includes("*") && under(platform, real(root) ?? root, ra, base)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, base));
 }

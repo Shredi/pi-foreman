@@ -38,6 +38,9 @@ test("scratch root through the real path, literal target through the symlink: wr
   const lit = path.join(linkTmp, rel);
   assert.equal(outside(root, `cd ${lit}/sub && echo x > f.txt`), false);
   assert.equal(outside(root, `echo x > ${lit}/f.txt`), false);
+  assert.equal(outside(root, `mkdir -p ${lit}/d`), false);
+  assert.equal(outside(root, `touch ${lit}/t`), false);
+  assert.equal(outside(root, `cd ${lit} && mkdir q`), false);
 });
 
 test("the same symlinked tmp does not widen the fence: a sibling dir stays outside", { skip: !posix }, () => {
