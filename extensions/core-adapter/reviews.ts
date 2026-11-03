@@ -24,10 +24,15 @@ const HEAD_TIMEOUT_MS = 2000;
 
 /** Completed reviewer results of a run-end event that carry a verdict, with the cwd they ran in. */
 export function reviewsOfRunEnd(data: unknown): { role: string; verdict: Verdict; cwd: string | null }[] {
+  return reviewsWithOutput(data).map(({ role, verdict, cwd }) => ({ role, verdict, cwd }));
+}
+
+/** As reviewsOfRunEnd, each with the path of the result's output file when it has one. */
+export function reviewsWithOutput(data: unknown): { role: string; verdict: Verdict; cwd: string | null; outputPath?: string }[] {
   if (!data || typeof data !== "object") return [];
   const d = data as Record<string, unknown>;
   const results = Array.isArray(d.results) && d.results.length > 0 ? d.results : [d];
-  const out: { role: string; verdict: Verdict; cwd: string | null }[] = [];
+  const out: { role: string; verdict: Verdict; cwd: string | null; outputPath?: string }[] = [];
   for (const c of results) {
     if (!c || typeof c !== "object") continue;
     const r = c as Record<string, unknown>;
@@ -38,9 +43,34 @@ export function reviewsOfRunEnd(data: unknown): { role: string; verdict: Verdict
     const verdict = verdictOf([r.output, r.summary].filter((t): t is string => typeof t === "string").join("\n"));
     if (!verdict) continue;
     const cwd = typeof r.cwd === "string" && r.cwd ? r.cwd : typeof d.cwd === "string" && d.cwd ? d.cwd : null;
-    out.push({ role, verdict, cwd });
+    const ap = r.artifactPaths;
+    const outputPath = ap && typeof ap === "object" ? (ap as Record<string, unknown>).outputPath : undefined;
+    out.push({ role, verdict, cwd, ...(typeof outputPath === "string" && outputPath ? { outputPath } : {}) });
   }
   return out;
+}
+
+/** The verdict-file line for a review's head: `Head: <full sha>`, or `Head: unknown (<why>)` (docs/review.md, "Verdict file"). */
+export function headLine(h: { head: string | null; why?: NoHeadWhy }): string {
+  return h.head ? `Head: ${h.head}` : `Head: unknown (${h.why ?? "head_unread"})`;
+}
+
+/** Appends the Head line as the last line of an existing reviewer output file; false when the file is missing or not writable (it is never created). */
+export function appendHeadLine(file: string, h: { head: string | null; why?: NoHeadWhy }): boolean {
+  try {
+    const cur = fs.readFileSync(file, "utf8");
+    fs.appendFileSync(file, `${cur === "" || cur.endsWith("\n") ? "" : "\n"}${headLine(h)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** What the last `Head:` line of a verdict file names: the sha, "unknown", or null with no such line. The last line wins: the reviewer's own text may quote one. */
+export function lastHeadLine(text: string): string | null {
+  let last: string | null = null;
+  for (const m of text.matchAll(/^Head: (?:([0-9a-f]{40,64})|unknown(?: \([a-z_]+\))?)[ \t]*\r?$/gm)) last = m[1] ?? "unknown";
+  return last;
 }
 
 /** `git rev-parse HEAD` in `cwd`; null on any failure. */

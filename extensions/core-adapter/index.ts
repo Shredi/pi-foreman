@@ -17,10 +17,12 @@ import { childHandoffDirs, openedHandoffDirs, ownedRoots, ownHandoffDirs, resolv
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
+import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { PermStore, PERM_MODES, profileName, workFoldersBlock } from "./permconfig.ts";
 import { folderRelaxes } from "./defaults.ts";
+import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
 import { adopt as adoptSuggested, entriesFromReport, parsePicks, review as reviewAdopted, runSuggest, suggestHint } from "./permssuggest.ts";
@@ -108,7 +110,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, reviewsOfRunEnd } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -2019,12 +2021,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
-          for (const r of reviewsOfRunEnd(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
+          for (const r of reviewsWithOutput(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
               const h = reviewedHeadWhy(start, cwd, await headOf(cwd));
               appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: h.head, ...(h.why ? { why: h.why } : {}) });
+              // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
+              if (r.outputPath) appendHeadLine(r.outputPath, h);
               s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why });
               persistCeremonyState(s);
             });
@@ -2282,9 +2286,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (gs && rt) for (const n of rt.store.drainNotices()) notifyOnce(gs, ctx, n, n);
     const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx), resolved?.additionalDirectories, resolved?.workFolders) : undefined;
     const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
+    // own worktrees for the push guard: the session's checkout and the worktrees it created (session manifest); other linked worktrees are not own
+    const sessionFacts: GitFacts | undefined = gs && roots
+      ? sessionGitFacts({ ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] }, ownWorktreeCheck([roots.worktree, ...roundWorktrees(path.join(gs.agentDir, "pi-foreman", "state"), gs.usage.line.foremanSession, platform)], platform))
+      : undefined;
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
-      ...(roots ? { roots: () => roots, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
+      ...(roots ? { roots: () => roots, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
     });
     const r = out.result;
@@ -2330,7 +2338,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // nothing decided and not dangerous: runs under auto and allow, asks under ask, refused under deny. A call the work folders relax runs under
         // auto instead (never for a session override or a floors-only session: modeSource session)
         const folderMode = (resolved.mode === "deny" || resolved.mode === "ask") && roots && ["default", "user", "profile"].includes(resolved.modeSource)
-          && folderRelaxes({ tool: event.toolName, input: event.input, ...(out.segments ? { segments: out.segments } : {}), text: payload }, { roots, platform, cwd: ctx.cwd, facts: { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } });
+          && folderRelaxes({ tool: event.toolName, input: event.input, ...(out.segments ? { segments: out.segments } : {}), text: payload }, { roots, platform, cwd: ctx.cwd, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } });
         if (folderMode) return allowed("no-rule", "mode", "mode:folder:auto", true);
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
