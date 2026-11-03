@@ -17,6 +17,8 @@
 import * as path from "node:path";
 import type { ShellSegment } from "./shellast.ts";
 import { comparableFs, nullDevice, slashForm } from "./pathnorm.ts";
+import { PATH_TOOL_NAMES } from "./pathrules.ts";
+import { OWN_TOOLS } from "./defaults.ts";
 
 export type RuleFamily = "bash" | "read" | "edit" | "write" | "named";
 
@@ -36,9 +38,14 @@ export const READ_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", 
 /** `gate.readTools`: extension tool name -> its path field (null: no path field, the tool reads the cwd). */
 export type ReadToolMap = Readonly<Record<string, string | null>>;
 
+/** Built-in tools: the path tools (read/write/edit/grep/find/ls, foreman_move, foreman_copy), the shell tools and pi-foreman's own tools. `gate.readTools` never remaps them. */
+export function isBuiltinTool(tool: string): boolean {
+  return PATH_TOOL_NAMES.has(tool) || READ_TOOLS.has(tool) || BASH_TOOLS.has(tool) || OWN_TOOLS.has(tool);
+}
+
 /** The path field of a configured read tool (null: none), or undefined when `tool` is not one; the built-in tools are never remapped. */
 export function readFieldOf(map: ReadToolMap | undefined, tool: string): string | null | undefined {
-  if (!map || !Object.hasOwn(map, tool) || READ_TOOLS.has(tool) || BASH_TOOLS.has(tool)) return undefined;
+  if (!map || !Object.hasOwn(map, tool) || isBuiltinTool(tool)) return undefined;
   const f = map[tool];
   return typeof f === "string" || f === null ? f : undefined;
 }

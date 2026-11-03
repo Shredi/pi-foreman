@@ -250,7 +250,10 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     }
     const readField = readFieldOf(readTools, toolName);
     if (PATH_TOOLS.has(toolName) || readField !== undefined) {
-      const h = pathFloors(inp, env, toolName, readField);
+      // a mapped tool keeps the payload floors on every other path field (arrays included); `pattern`/`patterns` stay search patterns
+      const ph0 = pathFloors(inp, env, toolName, readField);
+      const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(inp, "", env, false) : null;
+      const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
       if (h && h.kind === "deny") return decided(blocked(h));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, roots, platform), roots.child);

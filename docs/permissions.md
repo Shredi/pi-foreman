@@ -197,7 +197,7 @@ The path tools `read`, `grep`, `find` and `ls` are judged on their path field. A
 { "gate": { "readTools": { "ffgrep": "path", "fffind": "root" } } }
 ```
 
-The key is user or overlay config only; a project value is dropped with the usual warning. The names of the built-in tools and of shell tools cannot be remapped. A name in the map that no registered tool carries (for example `ffgrep` while pi-fff runs in `override` mode, which registers `grep`, `find` and `multi_grep`) is ignored and leaves one `config_warning` trace record per session; it never fails a call.
+The key is user or overlay config only; a project value is dropped with the usual warning. The names of the built-in tools (the path tools including `foreman_move` and `foreman_copy`, the shell tools and pi-foreman's own tools) cannot be remapped: such an entry is ignored and named in the same `config_warning` record (`ignored`). A mapped tool keeps the secret-path floors on all its other path-like fields (`paths`, `root`, `file`, arrays), exactly as when unmapped. A name in the map that no registered tool carries (for example `ffgrep` while pi-fff runs in `override` mode, which registers `grep`, `find` and `multi_grep`) is ignored and leaves one `config_warning` trace record per session; it never fails a call.
 
 ### Owned paths
 

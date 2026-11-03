@@ -7,7 +7,7 @@ import { gateDecide, type GateResult } from "../gate.ts";
 import type { GitFacts } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
-import { parseRule, type RuleSets } from "../rules.ts";
+import { parseRule, type ParsedRule, type RuleSets } from "../rules.ts";
 import { readToolsOf, unknownReadTools, warnUnknownReadTools } from "../readtools.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
@@ -34,8 +34,10 @@ const g = (tool: string, input: Record<string, unknown>, map?: Record<string, st
 const rl = (t: string) => {
   const r = parseRule(t);
   assert.ok(r.ok, t);
-  return (r as { rule: never }).rule;
+  return (r as { ok: true; rule: ParsedRule }).rule;
 };
+
+const verdict = (r: GateResult): string => (r === undefined ? "none" : "block" in r ? `block:${r.rule}` : "allow" in r ? `allow:${r.rule}` : JSON.stringify(r));
 
 test("a mapped tool under an owned dir is allowed like read; unmapped keeps today's behaviour", () => {
   const r = g("ffgrep", { pattern: "x", path: owned }, { ...MAP });
@@ -84,4 +86,53 @@ test("readToolsOf keeps valid entries only; unknown names are listed and traced 
   assert.equal(recs[0].names, "ffgrep");
   warnUnknownReadTools(map, () => { throw new Error("no tools"); }, new Set(), (r) => recs.push(r));
   assert.equal(recs.length, 1);
+});
+
+const SSH = "/pf/home/.ssh/id_rsa";
+
+test("a mapped tool keeps the payload floors on its other fields, exactly as unmapped", () => {
+  const cases: [string, Record<string, unknown>, Record<string, string | null>][] = [
+    ["ffgrep", { path: owned, paths: [SSH] }, { ffgrep: "path" }],
+    ["ffgrep", { path: owned, root: "/pf/home/.ssh" }, { ffgrep: "path" }],
+    ["ffgrep", { path: owned, file: "/pf/home/.aws/credentials" }, { ffgrep: "path" }],
+    ["ffgrep", { path: [SSH] }, { ffgrep: "path" }],
+    ["ffgrep", { path: SSH }, { ffgrep: null as unknown as string }],
+  ];
+  for (const [tool, inp, map] of cases) {
+    const un = verdict(g(tool, inp));
+    assert.match(un, /^block:floor-secret-path/, `unmapped ${JSON.stringify(inp)}`);
+    assert.equal(verdict(g(tool, inp, map)), un, `mapped ${JSON.stringify(inp)}`);
+  }
+  const ok = g("ffgrep", { pattern: SSH, patterns: [SSH], path: owned }, { ffgrep: "path" });
+  assert.ok(ok && "allow" in ok, "patterns stay search patterns");
+});
+
+test("gate.readTools never remaps built-in tools", () => {
+  const sets: RuleSets = { allow: [rl(`Read(/${outside}/**)`)], ask: [], deny: [] };
+  const dst = "/pf/home/.ssh/authorized_keys";
+  const calls: [string, Record<string, unknown>, string][] = [
+    ["foreman_copy", { src: path.join(wt, "a"), dst }, "src"],
+    ["foreman_move", { src: path.join(wt, "a"), dst }, "src"],
+    ["write", { path: path.join(outside, "a"), content: "x" }, "path"],
+    ["edit", { path: path.join(outside, "a"), edits: [] }, "path"],
+    ["grep", { pattern: "x", path: SSH }, "pattern"],
+    ["bash", { command: `cat ${SSH}` }, "command"],
+  ];
+  for (const [tool, inp, field] of calls) {
+    assert.equal(verdict(g(tool, inp, { [tool]: field }, sets)), verdict(g(tool, inp, undefined, sets)), tool);
+  }
+  assert.match(verdict(g("foreman_copy", { src: path.join(wt, "a"), dst }, { foreman_copy: "src" })), /^block:floor-secret-path/);
+  const w = g("write", { path: path.join(outside, "a"), content: "x" }, { write: "path" }, sets);
+  assert.ok(!(w && "allow" in w), "a Read rule does not cover write");
+});
+
+test("remapped built-in names are ignored with one warning naming them", () => {
+  const map = { write: "path", foreman_copy: "src", grep: "path", bash: "command", ffgrep: "path" };
+  const warned = new Set<string>();
+  const recs: Record<string, string>[] = [];
+  warnUnknownReadTools(map, () => ["write", "foreman_copy", "grep", "bash", "ffgrep"], warned, (r) => recs.push(r));
+  warnUnknownReadTools(map, () => ["write", "foreman_copy", "grep", "bash", "ffgrep"], warned, (r) => recs.push(r));
+  assert.equal(recs.length, 1);
+  assert.equal(recs[0].ignored, "write,foreman_copy,grep,bash");
+  assert.equal(recs[0].names, undefined);
 });
