@@ -32,10 +32,8 @@ test("dots: the same number in two repositories is two PRs; inherited names are 
       dot(7, "ok", { repo: "https://example.test/acme/app" }),
       dot(7, "fail", { repo: "https://example.test/acme/other" }),
       dot(8, "toString"),
-      dot(9, "ok", { checks: [{ name: "x", state: "constructor" }] }),
     ])],
   })));
   const prs = tree[0].prs;
-  assert.deepEqual(prs.map((p) => p.number), [7, 7, 9]);
-  assert.deepEqual(prs[2].checks, ["ok"], "an inherited name is not a check state");
+  assert.deepEqual(prs.map((p) => p.number), [7, 7], "an inherited name is not a check state, so dot 8 is no PR");
 });

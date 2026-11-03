@@ -281,7 +281,7 @@ export async function pollWatch(run: RunOp, key: PrKey, seen: { updatedAt: strin
 const MAX_BATCH = 50;
 
 /**
- * One poll of several watched PRs: the gh PRs of one host share one pr_batch (watch fields), the others (and a host that answers
+ * One poll of several watched PRs: the gh PRs of one host go out in pr_batch calls of up to 50 PRs (watch fields), the others (and a host that answers
  * pr_unsupported) are polled one by one. The answers are in the order of `items`.
  */
 export async function pollWatchBatch(run: RunOp, items: { key: PrKey; seen: { updatedAt: string } }[]): Promise<WatchPoll[]> {
@@ -661,7 +661,7 @@ export class PrWatches {
   }
 
   /**
-   * One tick: the watch and the idle watches of its host and directory are polled together (one pr_batch call per host and
+   * One tick: the watch and the idle watches of its host and directory are polled together (pr_batch calls of up to 50 PRs per host and
    * tick); the others' own timers are cleared and re-armed by their result, so they stay on one beat.
    */
   private async tick(w: Watch): Promise<void> {

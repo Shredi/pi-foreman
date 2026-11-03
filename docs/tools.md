@@ -247,7 +247,7 @@ Pi shows no PR or run list: no widget above the editor, and the footer keeps mod
 
 ### Call budget
 
-A watch costs one `pr_batch` per tick on gh with a known repository (plus `pr_comments` when `updatedAt` moved) and one `pr_repo` per session and directory; watches of one host and directory share one `pr_batch` per tick. On glab and templates each watched PR costs two calls (`pr_status`, `pr_checks`). A GraphQL `RATE_LIMITED` error or a 403 or 429 doubles the interval through the backoff.
+A watch costs one `pr_batch` per tick on gh with a known repository (plus `pr_comments` when `updatedAt` moved) and one `pr_repo` per session and directory; watches of one host and directory are polled in `pr_batch` calls of up to 50 PRs per tick. On glab and templates each watched PR costs two calls (`pr_status`, `pr_checks`). A GraphQL `RATE_LIMITED` error or a 403 or 429 doubles the interval through the backoff.
 
 ### Safety notes
 

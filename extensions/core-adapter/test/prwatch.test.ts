@@ -353,9 +353,10 @@ test("pollWatchBatch: more than 50 PRs on one host go out in several pr_batch ca
     const prs = args.prs as { repo: string; n: number }[];
     sizes.push(prs.length);
     polled.push(...prs.map((p) => p.n));
-    return ran({ prs: prs.map((p) => ({ repo: p.repo, number: p.n, state: "open", mergeable: "mergeable", headSha: SHA, baseRef: "main", updatedAt: "t0", runs: [] })), errors: [] });
+    return ran({ prs: prs.map((p) => ({ repo: p.repo, number: p.n, state: "open", mergeable: "mergeable", headSha: `h${p.n}`, baseRef: "main", updatedAt: "t0", runs: [] })), errors: [] });
   };
   const out = await pollWatchBatch(r as never, items);
+  out.forEach((o, i) => assert.equal((o as { snap: WatchSnapshot }).snap.head, `h${i + 1}`, `answer ${i} maps to PR ${i + 1}`));
   assert.deepEqual(sizes, [50, 50, 20]);
   assert.deepEqual(polled.sort((a, b) => a - b), items.map((i) => i.key.n));
   assert.equal(out.length, 120);
