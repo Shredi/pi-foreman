@@ -1264,6 +1264,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         fetchTimeoutSeconds: () => get(s.config.config, "sessions.remote.fetchTimeoutSeconds"),
         wake: (label, kind, text) => void waits.childNotice(s.id, label, kind, text),
         notify: (msg, level) => ctx.ui.notify(msg, level),
+        trace: (rec) => s.trace?.emit(rec),
       });
       remoteWatch.start();
     }

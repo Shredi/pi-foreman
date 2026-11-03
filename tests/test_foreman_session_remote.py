@@ -1329,6 +1329,17 @@ class NoticeLabelTest(NoticeBase):
         self.assertEqual(fsn.next_notice_seq(self.dir), 1)
         self.assertFalse(lock.exists())
 
+    def test_a_held_notice_seq_lock_fails_instead_of_continuing(self):
+        (self.dir / "result.md").write_text("r", "utf-8")
+        lock = self.dir / "notice-seq.lock"
+        lock.write_text("", "utf-8")
+        with mock.patch.object(fsn.time, "sleep"):
+            code, r = self.notice("result")
+        self.assertEqual((code, r), (1, {"ok": False, "error": "label_failed", "detail": "seq_lock_timeout"}))
+        self.assertTrue(lock.exists())
+        self.assertFalse((self.dir / "notice-seq").exists())
+        self.assertEqual(self.hc_calls("label"), [])
+
     def test_not_hc(self):
         (self.dir / "result.md").write_text("r", "utf-8")
         for env in ({"HC_TERMINAL_ID": ""}, {"PATH": self.path(hc=False)}):

@@ -1377,6 +1377,8 @@ def next_notice_seq(handoff):
             except OSError:
                 pass
             time.sleep(0.05)
+    if fd is None:
+        raise NoticeFailed({"error": "label_failed", "detail": "seq_lock_timeout"})
     try:
         try:
             last = int(path.read_text("utf-8").strip())
@@ -1387,12 +1389,11 @@ def next_notice_seq(handoff):
         tmp.write_text("%d\n" % seq, "utf-8")
         os.replace(str(tmp), str(path))
     finally:
-        if fd is not None:
-            os.close(fd)
-            try:
-                os.unlink(lock)
-            except OSError:
-                pass
+        os.close(fd)
+        try:
+            os.unlink(lock)
+        except OSError:
+            pass
     return seq
 
 

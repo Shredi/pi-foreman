@@ -13,13 +13,20 @@
 //       {"jsonrpc":"2.0","method":"event","params":{"type":"labels","terminal":"t3","seq":8748,"data":{"labels":{"k":"v"}}}}
 //           (a label change sends the FULL label map; removing the last probe label sent the map without it)
 //       {"jsonrpc":"2.0","method":"event","params":{"type":"turn","terminal":"t3","seq":8746,"data":{"state":"done","turn":112}}}
+//       {"jsonrpc":"2.0","method":"event","params":{"type":"finished","terminal":"t3","seq":8756,"data":{"exit_code":0,"finished_ms":1793694685092,"reason":"exited","signal":null}}}
+//           (a terminal that exited or was killed: `reason` is "exited" or "killed"; a new terminal is sent once as `created` with the whole object)
 //       {"jsonrpc":"2.0","method":"event","params":{"type":"records",...}}   (ignored, as is `turn`)
 //       {"jsonrpc":"2.0","method":"heartbeat","params":{"seq":8751}}   (about every 20 s)
-//   `hc get <addr> --json`: the terminal object above (`state:"live"`, `status:{app,state}`, `labels`).
+//   `hc get <addr> --json`: the terminal object above (`state:"live"`, `status:{app,state}`, `labels`). A finished or killed terminal
+//       stays listed (snapshot and `hc get`) as `state:"finished"`, `status:null`, `reason:"exited"|"killed"`, `exit_code`, until `hc rm`
+//       (answers {"removed":"t3"}; no event of its own was seen). Any lifecycle `state` other than `live` is read as lost.
 //   `hc get <missing> --json`: exit 3, stdout empty, stderr {"error":{"hint":"...","kind":"not_found","message":"no terminal \"t99\""}}.
-// Not observed (no remote terminal on this machine): how a remote terminal is named in the local stream (the entry address
-// `<machine>/<id>` is matched whole; a bare id counts only when the event names the machine in `machine`), the event of a
-// removed terminal, and a label event as `data.label`+`data.value` (accepted besides `data.labels`).
+//   `hc events --json` takes `--terminal <addr>`, `--children-of <addr>` and `--label K=V` (exact value; useless for the changing `fm.notice`).
+//       A stream with exactly one watched entry on a machine is filtered on `--terminal <machine>/<id>`; with several entries it is the
+//       full stream (the option is not repeatable). A change of a machine's watched set restarts its stream. A remote address with
+//       `--terminal` could not be tried here (`unknown machine` without a registered one); if hc refuses it the stream ends and the poll fallback runs.
+// Not observed (no remote terminal on this machine): how a remote terminal is named in the local stream. The entry address
+// `<machine>/<id>` is matched whole, nothing else. A label event carries the full map in `data.labels`.
 import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
@@ -58,7 +65,11 @@ export type ParsedLabel = { seq: number; kind: NoticeKind; sha256: string; bytes
 export function parseNoticeLabel(v: unknown): ParsedLabel | null {
   if (typeof v !== "string") return null;
   const m = NOTICE_RE.exec(v);
-  if (m) return { seq: Number(m[1]), kind: m[2] as NoticeKind, sha256: m[3], bytes: Number(m[4]) };
+  if (m) {
+    // `-:0` (no result file) is for `closed` only; every other kind names a file with a hash
+    if (m[3] === "-" && (m[2] !== "closed" || Number(m[4]) !== 0)) return null;
+    return { seq: Number(m[1]), kind: m[2] as NoticeKind, sha256: m[3], bytes: Number(m[4]) };
+  }
   const r = REFUSED_RE.exec(v);
   return r ? { seq: Number(r[1]), kind: "refused", slug: r[2] } : null;
 }
@@ -108,7 +119,8 @@ export type Action =
   | { type: "notice"; child: string; seq: number; kind: NoticeKind; sha256: string; bytes: number; value: string }
   | { type: "refused"; child: string; seq: number; slug: string; value: string }
   | { type: "close"; child: string; close: "ready" | "open" }
-  | { type: "live"; child: string; state: LiveState };
+  | { type: "live"; child: string; state: LiveState }
+  | { type: "ignored"; child: string; value: string };
 
 const OPEN = new Set(["open", "pending", "closing"]);
 
@@ -141,8 +153,6 @@ export function watchState(reg: { sessions: SessionEntry[] }, prev?: WatchState,
 
 export interface ParsedEvent {
   address: string;
-  /** The machine the event names (a field `machine` of a snapshot terminal), when it does. */
-  machine?: string;
   labels?: Record<string, string>;
   state: LiveState | null;
 }
@@ -161,7 +171,12 @@ function labelsOf(v: unknown): Record<string, string> | undefined {
 /** The agent state of a `status` object `{app, state}` (the terminal's own `state` is the lifecycle). */
 const agentState = (status: unknown): LiveState | null => mapHcState(objOf(status)?.state);
 
-/** One line of `hc events --json`: the snapshot (`terminals[]`), or a JSON-RPC `event` of type `status` or `labels`. Heartbeats and every other type give nothing. */
+/** A terminal object (snapshot entry or `hc get`): a lifecycle `state` other than `live` (`finished`) is lost whatever `status` says. */
+function terminalState(r: Record<string, unknown>): LiveState | null {
+  return strOf(r.state) && r.state !== "live" ? "lost" : agentState(r.status);
+}
+
+/** One line of `hc events --json`: the snapshot (`terminals[]`), or a JSON-RPC `event` of type `status`, `labels` or `finished`. Heartbeats and every other type give nothing. */
 export function parseEvents(raw: unknown): ParsedEvent[] {
   const o = objOf(raw);
   if (!o) return [];
@@ -171,24 +186,24 @@ export function parseEvents(raw: unknown): ParsedEvent[] {
       const r = objOf(t);
       if (!r || !strOf(r.address)) continue;
       const labels = labelsOf(r.labels);
-      out.push({ address: r.address, ...(strOf(r.machine) ? { machine: r.machine } : {}), ...(labels ? { labels } : {}), state: agentState(r.status) });
+      out.push({ address: r.address, ...(labels ? { labels } : {}), state: terminalState(r) });
     }
     return out;
   }
   const p = o.method === "event" ? objOf(o.params) : undefined;
   if (!p || !strOf(p.terminal)) return [];
   const data = objOf(p.data) ?? {};
-  const machine = strOf(p.machine) ? { machine: p.machine } : {};
-  if (p.type === "status") return [{ address: p.terminal, ...machine, state: agentState(data.status) }];
+  if (p.type === "status") return [{ address: p.terminal, state: agentState(data.status) }];
+  if (p.type === "finished") return [{ address: p.terminal, state: "lost" }];
   if (p.type === "labels") {
-    const labels = labelsOf(data.labels) ?? (strOf(data.label) && typeof data.value === "string" ? { [data.label]: data.value } : undefined);
-    return labels ? [{ address: p.terminal, ...machine, labels, state: null }] : [];
+    const labels = labelsOf(data.labels);
+    return labels ? [{ address: p.terminal, labels, state: null }] : [];
   }
   return [];
 }
 
-/** The full address, or a bare id of an event that names the entry's machine; a bare local id (`t3`) never matches a remote entry. */
-const sameTerminal = (w: Watched, ev: ParsedEvent): boolean => ev.address === w.address || (!ev.address.includes("/") && ev.machine === w.machine && `${w.machine}/${ev.address}` === w.address);
+/** The full `<machine>/<id>` address only; a bare local id (`t3`) never matches a remote entry. */
+const sameTerminal = (w: Watched, ev: ParsedEvent): boolean => ev.address === w.address;
 
 function ingest(w: Watched, labels: Record<string, string>, state: LiveState | null, out: Action[]): void {
   const close = labels["fm.close"];
@@ -196,7 +211,10 @@ function ingest(w: Watched, labels: Record<string, string>, state: LiveState | n
   const value = labels["fm.notice"];
   if (value !== undefined && value !== w.seen) {
     const p = parseNoticeLabel(value);
-    if (p && p.seq > w.lastSeq) {
+    if (!p) {
+      w.seen = value; // traced once
+      out.push({ type: "ignored", child: w.child, value });
+    } else if (p.seq > w.lastSeq) {
       w.seen = value;
       if (p.kind === "refused") out.push({ type: "refused", child: w.child, seq: p.seq, slug: p.slug, value });
       else out.push({ type: "notice", child: w.child, seq: p.seq, kind: p.kind, sha256: p.sha256, bytes: p.bytes, value });
@@ -223,7 +241,7 @@ export function applyGet(state: WatchState, child: string, reply: unknown): Acti
   const out: Action[] = [];
   const r = objOf(reply);
   if (!w || !r) return out;
-  ingest(w, labelsOf(r.labels) ?? {}, agentState(r.status), out);
+  ingest(w, labelsOf(r.labels) ?? {}, terminalState(r), out);
   return out;
 }
 
@@ -276,13 +294,14 @@ export interface HcResult {
   overflow: boolean;
   error?: Error;
 }
-export type HcRun = (args: string[], timeoutMs: number) => Promise<HcResult>;
-export type HcEvents = (onLine: (line: string) => void, onEnd: () => void) => { kill(): void };
+export type HcRun = (args: string[], timeoutMs: number, signal?: AbortSignal) => Promise<HcResult>;
+/** `extra` is appended to `hc events --json` (a `--terminal` filter). */
+export type HcEvents = (onLine: (line: string) => void, onEnd: () => void, extra?: string[]) => { kill(): void };
 
 const hcBin = (): string => process.env.HC_BIN?.trim() || "hc";
 
 /** `hc <args>` without a shell; stdout is kept as bytes. */
-export const runHc: HcRun = (args, timeoutMs) =>
+export const runHc: HcRun = (args, timeoutMs, signal) =>
   new Promise((resolve) => {
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -291,10 +310,15 @@ export const runHc: HcRun = (args, timeoutMs) =>
     let timedOut = false;
     let done = false;
     let child: ReturnType<typeof spawn>;
+    const onAbort = (): void => {
+      child?.kill();
+      finish(null, new Error("aborted"));
+    };
     const finish = (code: number | null, error?: Error): void => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
       resolve({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err).toString("utf8"), timedOut, overflow, ...(error ? { error } : {}) });
     };
     const timer = setTimeout(() => {
@@ -302,6 +326,11 @@ export const runHc: HcRun = (args, timeoutMs) =>
       child?.kill();
       finish(null);
     }, timeoutMs);
+    if (signal?.aborted) {
+      finish(null, new Error("aborted"));
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     try {
       child = spawn(hcBin(), args, { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     } catch (error) {
@@ -326,7 +355,7 @@ export const runHc: HcRun = (args, timeoutMs) =>
   });
 
 /** `hc events --json` as a line stream. */
-export const spawnEvents: HcEvents = (onLine, onEnd) => {
+export const spawnEvents: HcEvents = (onLine, onEnd, extra = []) => {
   let buf = "";
   let ended = false;
   const end = (): void => {
@@ -336,7 +365,7 @@ export const spawnEvents: HcEvents = (onLine, onEnd) => {
   };
   let child: ReturnType<typeof spawn> | undefined;
   try {
-    child = spawn(hcBin(), ["events", "--json"], { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    child = spawn(hcBin(), ["events", "--json", ...extra], { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
   } catch {
     queueMicrotask(end);
     return { kill() {} };
@@ -367,6 +396,8 @@ export interface WatchDeps {
   fetchTimeoutSeconds?: () => unknown;
   /** Wakes `foreman_wait kind child`: label, kind, text (mirror path or refused slug). */
   wake: (label: string, kind: string, text: string) => void;
+  /** A trace record (`remote_notice_ignored`) for a label that does not follow the grammar. */
+  trace?: (rec: Record<string, unknown>) => void;
   notify?: (message: string, level: "info" | "warning") => void;
   now?: () => number;
   timer?: (fn: () => void, ms: number) => Cancel;
@@ -378,6 +409,8 @@ interface MachineRun {
   restart?: Cancel;
   /** The silence watchdog of the stream. */
   silence?: Cancel;
+  /** The watched addresses the stream was opened for. */
+  key?: string;
 }
 
 const defaultTimer = (fn: () => void, ms: number): Cancel => {
@@ -400,6 +433,7 @@ export class RemoteWatcher {
   private chain: Promise<void> = Promise.resolve();
   private cancelRefresh: Cancel | null = null;
   private stopped = true;
+  private abort = new AbortController();
   private readonly hc: HcRun;
   private readonly events: HcEvents;
   private readonly timer: (fn: () => void, ms: number) => Cancel;
@@ -416,6 +450,7 @@ export class RemoteWatcher {
   /** Watches until `stop()`: re-reads the registry now and every 10 s. */
   start(): void {
     this.stopped = false;
+    this.abort = new AbortController();
     const tick = (): void => {
       if (this.stopped) return;
       this.refresh();
@@ -426,6 +461,7 @@ export class RemoteWatcher {
 
   stop(): void {
     this.stopped = true;
+    this.abort.abort(); // in-flight hc get / file read children end now
     this.cancelRefresh?.();
     this.cancelRefresh = null;
     for (const m of [...this.machines.keys()]) this.stopMachine(m);
@@ -447,7 +483,19 @@ export class RemoteWatcher {
     this.state = watchState(reg, prev, this.d.opener());
     for (const w of this.state.values()) {
       if (!this.machines.has(w.machine)) this.startMachine(w.machine);
-      if (!prev.has(w.child)) this.enqueue(() => this.pollOne(w.child));
+      if (!prev.has(w.child)) {
+        this.enqueue(() => this.pollOne(w.child));
+        const m = this.machines.get(w.machine);
+        if (m && !m.stream) this.schedulePoll(m, w.child); // the machine is in poll fallback: no stream will report this entry
+      }
+    }
+    for (const [name, m] of this.machines) {
+      if (m.stream && m.key !== this.watchedKey(name)) {
+        const old = m.stream;
+        m.stream = undefined;
+        old.kill();
+        this.openStream(name, m); // the watched set changed: a new filter
+      }
     }
     for (const m of [...this.machines.keys()]) if (![...this.state.values()].some((w) => w.machine === m)) this.stopMachine(m);
   }
@@ -463,6 +511,10 @@ export class RemoteWatcher {
 
   private enqueue(fn: () => Promise<void>): void {
     this.chain = this.chain.then(fn).catch(() => undefined);
+  }
+
+  private watchedKey(machine: string): string {
+    return [...this.state.values()].filter((w) => w.machine === machine).map((w) => w.address).sort().join(" ");
   }
 
   private startMachine(machine: string): void {
@@ -485,6 +537,8 @@ export class RemoteWatcher {
         this.fallback(machine, m);
       }, STREAM_SILENCE_MS);
     };
+    const addrs = [...this.state.values()].filter((w) => w.machine === machine).map((w) => w.address);
+    m.key = this.watchedKey(machine);
     const stream = this.events(
       (line) => {
         arm();
@@ -502,6 +556,7 @@ export class RemoteWatcher {
         m.silence?.();
         this.fallback(machine, m);
       },
+      addrs.length === 1 ? ["--terminal", addrs[0]] : [],
     );
     m.stream = stream;
     arm();
@@ -549,7 +604,8 @@ export class RemoteWatcher {
   private async pollOne(child: string): Promise<void> {
     const w = this.state.get(child);
     if (!w) return;
-    const r = await this.hc(["get", w.address, "--json"], GET_TIMEOUT_MS);
+    const r = await this.hc(["get", w.address, "--json"], GET_TIMEOUT_MS, this.abort.signal);
+    if (this.stopped) return;
     if (r.code === 0) {
       let reply: unknown;
       try {
@@ -571,8 +627,12 @@ export class RemoteWatcher {
 
   private async handle(a: Action): Promise<void> {
     const w = this.state.get(a.child);
-    if (!w) return;
+    if (!w || this.stopped) return;
     if ((a.type === "notice" || a.type === "refused") && a.seq <= w.lastSeq) return; // applied meanwhile
+    if (a.type === "ignored") {
+      this.d.trace?.({ event: "remote_notice_ignored", child: a.child, value: strip(a.value).slice(0, 80) });
+      return;
+    }
     const at = new Date((this.d.now ?? Date.now)()).toISOString();
     if (a.type === "live") {
       this.update(a.child, (e) => {
@@ -622,7 +682,8 @@ export class RemoteWatcher {
     let buf: Buffer | null = null;
     if (!(a.kind === "closed" && a.sha256 === "-")) {
       for (let attempt = 0; attempt < 2; attempt++) {
-        const r = await this.hc(["file", "read", "--on", w.machine, remote], timeout);
+        const r = await this.hc(["file", "read", "--on", w.machine, remote], timeout, this.abort.signal);
+        if (this.stopped) return;
         if (r.code !== 0 || r.timedOut || r.overflow) {
           const why = r.timedOut ? "timed out" : r.overflow ? "too large" : r.error ? r.error.message : r.stderr || `exit ${String(r.code)}`;
           this.setError(w.child, `fetch_failed: ${strip(why)}`);

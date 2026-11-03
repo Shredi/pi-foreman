@@ -4,7 +4,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { applyEvent, applyGet, commit, fail, fetchTimeoutMs, mapHcState, parseEvents, parseNoticeLabel, pollPlan, RemoteWatcher, remotePath, watchState } from "../remotewatch.ts";
+import { applyEvent, applyGet, commit, fail, fetchTimeoutMs, mapHcState, parseEvents, parseNoticeLabel, pollPlan, RemoteWatcher, remotePath, runHc, watchState } from "../remotewatch.ts";
 import type { HcResult, HcRun, WatchState } from "../remotewatch.ts";
 import { readRegistry, writeRegistry } from "../session.ts";
 import type { SessionEntry } from "../session.ts";
@@ -37,8 +37,10 @@ function rig(entries: SessionEntry[] = [entry()]) {
   const files = new Map<string, Buffer[]>(); // remote path -> successive reads
   const calls: string[][] = [];
   const hcGet: { reply: unknown; code: number } = { reply: gotten("working"), code: 0 };
-  const hc: HcRun = async (args) => {
+  const signals: (AbortSignal | undefined)[] = [];
+  const hc: HcRun = async (args, _t, signal) => {
     calls.push(args);
+    signals.push(signal);
     const res = (over: Partial<HcResult>): HcResult => ({ code: 0, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, ...over });
     if (args[0] === "get") return res({ code: hcGet.code, stdout: Buffer.from(JSON.stringify(hcGet.reply)), stderr: hcGet.code ? JSON.stringify({ error: { hint: "see `hc ls --all`", kind: "not_found", message: "no terminal" } }) : "" });
     const q = files.get(args[4]);
@@ -47,16 +49,18 @@ function rig(entries: SessionEntry[] = [entry()]) {
   };
   const streams = new Map<string, { onLine: (l: string) => void; onEnd: () => void; killed: boolean }>();
   const opened: string[] = [];
+  const extras: string[][] = [];
   const wakes: string[] = [];
   const timers: { fn: () => void; ms: number; live: boolean }[] = [];
   const w = new RemoteWatcher({
     agentDir: dir,
     opener: () => "p",
     hc,
-    events: (onLine, onEnd) => {
+    events: (onLine, onEnd, extra) => {
       const s = { onLine, onEnd, killed: false };
       const k = `s${opened.length}`;
       opened.push(k);
+      extras.push(extra ?? []);
       streams.set(k, s);
       return { kill: () => void (s.killed = true) };
     },
@@ -74,7 +78,7 @@ function rig(entries: SessionEntry[] = [entry()]) {
     await w.idle();
   };
   const put = (file: string, ...bodies: (Buffer | string)[]): void => void files.set(`${HANDOFF}/${file}`, bodies.map((b) => Buffer.from(b)));
-  return { dir, w, reg, send, put, calls, wakes, timers, streams, opened, hcGet, files };
+  return { dir, w, reg, send, put, calls, wakes, timers, streams, opened, hcGet, files, extras, signals };
 }
 
 const st = (over: Record<string, unknown> = {}): WatchState => watchState({ sessions: [entry(over)] }, undefined, "p");
@@ -107,7 +111,8 @@ test("applyEvent: filters on the address, ignores duplicates and a seq that goes
   commit(s, CHILD, 1);
   assert.deepEqual(applyEvent(s, ev(label(1, "result", "r"))), [], "seq not above the last applied");
   assert.deepEqual(applyEvent(s, ev(`0:result:${sha("r")}:1`)), [], "backwards");
-  assert.deepEqual(applyEvent(s, ev("garbage")), []);
+  assert.deepEqual(applyEvent(s, ev("garbage")), [{ type: "ignored", child: CHILD, value: "garbage" }]);
+  assert.deepEqual(applyEvent(s, ev("garbage")), [], "traced once");
   const next = applyEvent(s, ev(label(2, "result", "r")));
   assert.deepEqual(next.map((a) => a.type === "notice" && [a.seq, a.kind]), [[2, "result"]]);
 });
@@ -129,7 +134,10 @@ test("parseEvents: the real snapshot and JSON-RPC lines; heartbeats, turn and un
   assert.deepEqual(parseEvents(snap), [{ address: "t3", labels: { k: "v" }, state: "done" }, { address: "alpha/t9", labels: {}, state: null }]);
   assert.deepEqual(parseEvents(stat("done", "t3")), [{ address: "t3", state: "done" }]);
   assert.deepEqual(parseEvents(lab({ a: "b" }, "t3")), [{ address: "t3", labels: { a: "b" }, state: null }]);
-  assert.deepEqual(parseEvents(rpc("labels", "t3", { label: "fm.close", value: "open" })), [{ address: "t3", labels: { "fm.close": "open" }, state: null }]);
+  assert.deepEqual(parseEvents(rpc("labels", "t3", { label: "fm.close", value: "open" })), [], "the unobserved label+value form is gone");
+  assert.deepEqual(parseEvents(rpc("finished", "t3", { exit_code: 0, finished_ms: 1, reason: "exited", signal: null })), [{ address: "t3", state: "lost" }]);
+  const gone = { address: "t3", labels: {}, state: "finished", status: null, reason: "killed", exit_code: null };
+  assert.deepEqual(parseEvents({ channel: null, seq: 1, terminals: [gone, { ...gone, address: "t4", status: { app: "pi", state: "working" } }] }).map((e) => e.state), ["lost", "lost"], "a finished lifecycle is lost whatever status says");
   assert.deepEqual(parseEvents(rpc("turn", "t3", { state: "done", turn: 112 })), []);
   assert.deepEqual(parseEvents(rpc("records", "t3", { records: {} })), []);
   assert.deepEqual(parseEvents({ jsonrpc: "2.0", method: "heartbeat", params: { seq: 8751 } }), []);
@@ -137,14 +145,54 @@ test("parseEvents: the real snapshot and JSON-RPC lines; heartbeats, turn and un
   assert.deepEqual(parseEvents("x"), []);
 });
 
-test("applyEvent: a bare local terminal id never drives a remote entry; a bare id counts only with the entry's machine", () => {
+test("applyEvent: a bare local terminal id never drives a remote entry; only the full address matches", () => {
   const s = st();
   assert.deepEqual(applyEvent(s, stat("blocked", "t7")), [], "local t7, remote alpha/t7");
   assert.deepEqual(applyEvent(s, lab({ "fm.close": "ready" }, "t7")), []);
   const snap = (machine?: string) => ({ channel: null, seq: 1, terminals: [{ address: "t7", ...(machine ? { machine } : {}), labels: { "fm.close": "ready" }, state: "live" }] });
   assert.deepEqual(applyEvent(s, snap()), []);
-  assert.deepEqual(applyEvent(s, snap("beta")), []);
-  assert.deepEqual(applyEvent(s, snap("alpha")).map((a) => a.type), ["close"]);
+  assert.deepEqual(applyEvent(s, snap("alpha")), [], "a machine field no longer makes a bare id match");
+  assert.deepEqual(applyEvent(s, { channel: null, seq: 1, terminals: [{ address: "alpha/t7", labels: { "fm.close": "ready" }, state: "live" }] }).map((a) => a.type), ["close"]);
+});
+
+test("finished terminal: snapshot, get and the finished event give lost; a live one keeps its status state", () => {
+  const fin = { address: "alpha/t7", labels: {}, state: "finished", status: null, reason: "exited", exit_code: 0 };
+  assert.deepEqual(applyGet(st(), CHILD, fin), [{ type: "live", child: CHILD, state: "lost" }]);
+  assert.deepEqual(applyGet(st(), CHILD, { ...fin, reason: "killed", status: { app: "pi", state: "working" } }), [{ type: "live", child: CHILD, state: "lost" }]);
+  assert.deepEqual(applyEvent(st(), { channel: null, seq: 1, terminals: [fin] }), [{ type: "live", child: CHILD, state: "lost" }]);
+  assert.deepEqual(applyEvent(st(), rpc("finished", "alpha/t7", { exit_code: 0, finished_ms: 1, reason: "exited", signal: null })), [{ type: "live", child: CHILD, state: "lost" }]);
+  assert.deepEqual(applyGet(st(), CHILD, gotten("working")), [{ type: "live", child: CHILD, state: "working" }]);
+});
+
+test("parseNoticeLabel: `-` as sha and 0 bytes are for closed only", () => {
+  const h = "b".repeat(64);
+  assert.equal(parseNoticeLabel("1:closed:-:0")?.kind, "closed");
+  assert.equal(parseNoticeLabel(`1:closed:${h}:9`)?.kind, "closed");
+  for (const k of ["plan", "result", "update", "ask"]) assert.equal(parseNoticeLabel(`1:${k}:-:0`), null, k);
+  assert.equal(parseNoticeLabel("1:closed:-:5"), null);
+  assert.equal(parseNoticeLabel(`1:plan:${h}:0`)?.kind, "plan");
+});
+
+test("watcher: a malformed fm.notice is traced once and does nothing", async () => {
+  const r = rig();
+  const recs: Record<string, unknown>[] = [];
+  (r.w as unknown as { d: { trace?: (x: Record<string, unknown>) => void } }).d.trace = (x) => void recs.push(x);
+  r.w.start();
+  await r.w.idle();
+  await r.send(ev("1:plan:-:0"));
+  await r.send(ev("1:plan:-:0"));
+  assert.deepEqual(recs, [{ event: "remote_notice_ignored", child: CHILD, value: "1:plan:-:0" }]);
+  assert.deepEqual(r.wakes, []);
+});
+
+test("watcher: a finished event and a finished lifecycle in get set remoteLive lost", async () => {
+  const r = rig();
+  r.w.start();
+  await r.w.idle();
+  await r.send(stat("working"));
+  assert.equal((r.reg().remoteLive as { state: string }).state, "working");
+  await r.send(rpc("finished", "alpha/t7", { exit_code: 1, finished_ms: 1, reason: "killed", signal: 9 }));
+  assert.equal((r.reg().remoteLive as { state: string }).state, "lost");
 });
 
 test("fail: a failure of an older value keeps the newer pending one", () => {
@@ -462,4 +510,95 @@ test("foreman_wait kind child: the watcher wake resolves a child wait with `chil
   w.stop();
   assert.match(outcomes[0][0].outcome, /^child demo: result \S+result\.md$/);
   assert.equal(rt.active, 0);
+});
+
+const second = (over: Record<string, unknown> = {}): SessionEntry => entry({ child: "c-two", label: "two", hc: { address: "alpha/t8" }, ...over });
+const addEntry = (r: ReturnType<typeof rig>, e: SessionEntry): void => {
+  const reg = readRegistry(r.dir);
+  reg.sessions.push({ ...e, mirror: path.join(r.dir, "m", String(e.child)), handoff: path.join(r.dir, "m", String(e.child)) });
+  writeRegistry(r.dir, reg);
+};
+
+test("watcher: a lone watched entry gets a --terminal filter, several get the full stream; a changed set restarts the stream", async () => {
+  const r = rig();
+  r.w.start();
+  await r.w.idle();
+  assert.deepEqual(r.extras, [["--terminal", "alpha/t7"]]);
+  addEntry(r, second());
+  r.w.refresh();
+  await r.w.idle();
+  assert.equal(r.streams.get("s0")?.killed, true, "the old filter is gone");
+  assert.deepEqual(r.extras, [["--terminal", "alpha/t7"], []]);
+  r.w.refresh();
+  await r.w.idle();
+  assert.equal(r.opened.length, 2, "an unchanged set keeps the stream");
+  const reg = readRegistry(r.dir);
+  reg.sessions[1].status = "closed";
+  writeRegistry(r.dir, reg);
+  r.w.refresh();
+  await r.w.idle();
+  assert.deepEqual(r.extras.at(-1), ["--terminal", "alpha/t7"]);
+  assert.equal(r.streams.get("s1")?.killed, true);
+});
+
+test("watcher: an entry added while its machine is in poll fallback gets its own scheduled poll", async () => {
+  const r = rig();
+  r.w.start();
+  await r.w.idle();
+  r.streams.get("s0")?.onEnd();
+  const live60 = (): number => r.timers.filter((t) => t.live && t.ms === 60_000).length;
+  const before = live60();
+  addEntry(r, second({ ask: { seq: 1, rulings: 0 } }));
+  r.w.refresh();
+  await r.w.idle();
+  assert.equal(r.timers.filter((t) => t.live && t.ms === 5_000).length, 1, "the ask entry polls every 5 s");
+  assert.equal(live60(), before);
+  const gets = (): number => r.calls.filter((c) => c[0] === "get" && c[1] === "alpha/t8").length;
+  const base = gets();
+  r.timers.filter((t) => t.live && t.ms === 5_000)[0].fn();
+  await r.w.idle();
+  assert.equal(gets(), base + 1);
+});
+
+test("watcher: stop() aborts the in-flight hc get and file read; nothing is written after", async () => {
+  const r = rig();
+  const seen: AbortSignal[] = [];
+  const started: string[] = [];
+  const hc: HcRun = (args, _t, signal) =>
+    new Promise((resolve) => {
+      started.push(args[0]);
+      seen.push(signal as AbortSignal);
+      (signal as AbortSignal).addEventListener("abort", () => resolve({ code: null, stdout: Buffer.alloc(0), stderr: "", timedOut: false, overflow: false, error: new Error("aborted") }));
+    });
+  const w = new RemoteWatcher({ agentDir: r.dir, opener: () => "p", hc, events: (onLine) => { setImmediate(() => onLine(JSON.stringify(ev(label(1, "plan", "p"))))); return { kill() {} }; }, wake: () => assert.fail("woken after stop") });
+  w.start();
+  for (let i = 0; i < 50 && started.length < 1; i++) await new Promise((res) => setImmediate(res));
+  assert.ok(started.length >= 1 && seen.every((s) => s && !s.aborted), "a call is in flight");
+  w.stop();
+  assert.ok(seen.every((s) => s.aborted));
+  await w.idle();
+  const e = readRegistry(r.dir).sessions[0];
+  assert.equal(e.lastError, null);
+  assert.equal(e.noticeSeq, undefined);
+});
+
+test("runHc: an abort kills the child and resolves at once", { skip: process.platform === "win32" }, async () => {
+  const bin = path.join(fs.mkdtempSync(path.join(root, "bin-")), "hc");
+  fs.writeFileSync(bin, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+  const old = process.env.HC_BIN;
+  process.env.HC_BIN = bin;
+  try {
+    const ac = new AbortController();
+    const t0 = Date.now();
+    const p = runHc(["get", "x"], 60_000, ac.signal);
+    setTimeout(() => ac.abort(), 100);
+    const res = await p;
+    assert.ok(Date.now() - t0 < 5_000);
+    assert.equal(res.code, null);
+    assert.match(res.error?.message ?? "", /aborted/);
+    assert.equal((await runHc(["get", "x"], 60_000, ac.signal)).error?.message, "aborted", "an already aborted signal never spawns");
+  } finally {
+    if (old === undefined) delete process.env.HC_BIN;
+    else process.env.HC_BIN = old;
+  }
 });
