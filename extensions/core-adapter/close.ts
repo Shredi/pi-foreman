@@ -330,6 +330,11 @@ export class CloseFlow {
       this.refuse(`${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
       return true;
     }
+    const prs = this.d.watchedPrs?.() ?? [];
+    if (prs.length > 0) {
+      this.refuse(`PR #${prs.join(", #")} open and watched (merge it, or pr_unwatch)`, source, replyTo);
+      return true;
+    }
     let waits = this.d.activeWaits();
     if (waits.length > 0 && this.d.cancelWaits) {
       const note = waits.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}`).join(", ");
@@ -337,11 +342,6 @@ export class CloseFlow {
       this.d.trace({ event: "waits_cancelled", cause: source, count: ids.length, note });
       this.d.notify(`pi-foreman: closing; cancelled waits: ${ids.join(", ")}`, "info");
       waits = this.d.activeWaits();
-    }
-    const prs = this.d.watchedPrs?.() ?? [];
-    if (prs.length > 0) {
-      this.refuse(`PR #${prs.join(", #")} open and watched (merge it, or pr_unwatch)`, source, replyTo);
-      return true;
     }
     if (waits.length === 0) return false;
     this.refuse(`${waits.length} foreman_wait pending (${waits.map((w) => `${w.id} ${w.kind}${w.note ? ` "${w.note}"` : ""}`).join(", ")}); cancel or let them finish, then close again`, source, replyTo);
@@ -390,7 +390,12 @@ export class CloseFlow {
     const open = this.d.ceremonyNote?.() ?? "";
     if (open) this.d.notify(`pi-foreman: ceremony incomplete. ${open}`, "warning");
     this.d.pushNotice?.();
-    if (inRun || ctx.isIdle()) void this.closeTurn(refreshed, inRun);
+    if (inRun || ctx.isIdle()) {
+      this.closeTurn(refreshed, inRun).catch((e) => {
+        this.reset();
+        this.refuse(`the close turn failed to start: ${e instanceof Error ? e.message : String(e)}`, req.source, req.replyTo);
+      });
+    }
     else this.phase = "idle-wait";
   }
 
