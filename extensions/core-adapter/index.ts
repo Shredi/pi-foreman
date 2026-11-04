@@ -115,7 +115,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
-import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, trimNoticeMessage } from "./notices.ts";
+import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
@@ -306,6 +306,8 @@ interface Session {
   launchBatch: LaunchBatch;
   /** Foreman only: run ids whose completion notice was deduplicated and traced (knob 5a; trace once per run). */
   dedupeTraced: Set<string>;
+  /** Foreman only: first verdict (kept or dropped) per custom message sent to the model, so sent notices never change (notices.ts stableNoticeFilter). */
+  noticeVerdicts: Map<string, boolean>;
   /** Async-started guidance lines trimmed from a held launch result, by run id (trace notify_deduped). */
   trimmedLines: Map<string, number>;
   /** Foreman only: builder revision rounds per review chain since the last user prompt or /ceremony tier change (rounds.ts). */
@@ -829,6 +831,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ledgerBash: new Set(),
       launchBatch: new LaunchBatch(),
       dedupeTraced: new Set(),
+      noticeVerdicts: new Map(),
       trimmedLines: new Map(),
       ladder: new LadderState(),
       retro: new RetroState(),
@@ -1516,6 +1519,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = sessionFor(ctx);
     if (!s) return;
     compactionGate.reset(s.id);
+    s.noticeVerdicts.clear(); // the prefix is rewritten anyway: the next request decides afresh
     if (!s.isChild) s.idleCache.onCompact();
     if (!s.isChild) s.selfWarm.onCompact();
     if (!s.isChild) void onForemanCompact(s, ctx, event.compactionEntry.summary, event.reason);
@@ -3990,13 +3994,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const hiddenLong = dropSuppressedNotices(ended?.messages ?? calls?.messages ?? event.messages, s.attention.suppressed);
     const r = dedupeNotices(hiddenLong?.messages ?? ended?.messages ?? calls?.messages ?? event.messages);
     const base = hiddenLong ?? ended ?? calls;
-    if (!r) return base ? { messages: base.messages } : undefined;
-    for (const runId of r.deduped) {
+    // Prompt cache: a message already sent keeps its first verdict (notices.ts stableNoticeFilter); new state reaches only unsent ones.
+    const fresh = r?.messages ?? base?.messages ?? event.messages;
+    const stable = stableNoticeFilter(event.messages, fresh, s.noticeVerdicts);
+    for (const runId of r?.deduped ?? []) {
       if (s.dedupeTraced.has(runId)) continue;
       s.dedupeTraced.add(runId);
-      s.trace?.emit({ event: "notify_deduped", runId, mode: r.mode, trimmed_lines: s.trimmedLines.get(runId) ?? 0 });
+      s.trace?.emit({ event: "notify_deduped", runId, mode: r!.mode, trimmed_lines: s.trimmedLines.get(runId) ?? 0 });
     }
-    return { messages: r.messages };
+    return stable ? { messages: stable } : undefined;
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {

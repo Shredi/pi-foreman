@@ -159,6 +159,10 @@ The footer bar and the idle floor show and use the point Pi really uses (window 
 
 Retro trade-off: Pi's own compaction cannot carry custom instructions, so a summary from a threshold compaction has no `## Retro` section; the retro entry notes that. The Retro section rides only on the idle warm compaction. A manual `/compact` never carried it either.
 
+## Stable prefix
+
+The per-request hooks only append: a message already sent to the model stays byte-identical in every later request until a compaction, because a rewrite of an earlier message breaks the provider's cached prefix from that point on. The `context` notice filters (`ceremony.dedupeNotify`: duplicate tool-open notices, notices of ended runs, hidden long-command notices, delivered completion notices) decide once, the first time a notice reaches the model, and keep that verdict; a run that ends or a notice that is suppressed later affects only notices not yet sent. A compaction clears the verdicts, so the filters apply afresh to the rewritten context.
+
 ## Deferred tools
 
 The hidden set of `tools.deferred` and the skill filter (`skills.*`) are fixed at session start and never change on their
