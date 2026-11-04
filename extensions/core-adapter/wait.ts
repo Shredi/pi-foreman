@@ -611,6 +611,8 @@ export interface WaitSession {
   pressure?: () => { level: string; reasons: string[] };
   /** True when no child run is active (pressure queue waits). */
   idle?: () => boolean;
+  /** True while the active run was started by an intercom message (turn cause intercom): a wake then merges into it as a follow-up. */
+  intercomRun?: () => boolean;
 }
 
 const PARAMS = {
@@ -632,8 +634,9 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; restore: (ctx: ExtensionContext) => Promise<void> } {
-  const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext }>();
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; restore: (ctx: ExtensionContext) => Promise<void>; settled: (sessionId: string) => void } {
+  /** `held`: outcomes that resolved while a run was active; `settled` sends them as one wake that starts a run of its own. */
+  const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext; held: Outcome[]; send: (outcomes: Outcome[], followUp?: boolean) => void }>();
   const listeners = new Map<string, Set<() => void>>();
   const handle = {
     onChange: (sessionId: string, cb: () => void) => {
@@ -646,6 +649,12 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
     cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
     startPressure: async (_ctx: ExtensionContext, _spec: Extract<ValidSpec, { kind: "pressure" }>): Promise<{ id: string } | { error: string }> => ({ error: "pressure waits are for the foreman only" }),
+    /** agent_settled (after the adapter reset its per-run state): a wake held during the run goes out as one message that triggers its own run. */
+    settled: (sessionId: string): void => {
+      const h = runtimes.get(sessionId);
+      if (!h || h.held.length === 0) return;
+      h.send(h.held.splice(0));
+    },
     /** session_start of the foreman: report the waits a restart of this Pi session lost (called from the adapter's own handler). */
     restore: async (_ctx: ExtensionContext): Promise<void> => undefined,
   };
@@ -685,7 +694,12 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       have.ctx = ctx;
       return have.rt;
     }
-    const holder = { ctx } as { rt: WaitRuntime; ctx: ExtensionContext };
+    const holder = { ctx, held: [] as Outcome[] } as { rt: WaitRuntime; ctx: ExtensionContext; held: Outcome[]; send: (outcomes: Outcome[], followUp?: boolean) => void };
+    holder.send = (outcomes, followUp) => {
+      const msg = wakeMessage(outcomes);
+      if (s.steer) msg.content = s.steer(msg.content);
+      pi.sendMessage(msg, followUp ? { deliverAs: "followUp" } : { triggerTurn: true });
+    };
     holder.rt = new WaitRuntime({
       timers: realTimers,
       now: () => Date.now(),
@@ -716,9 +730,16 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
         } catch {
           // a stale context: treat as idle
         }
-        const msg = wakeMessage(outcomes);
-        if (s.steer) msg.content = s.steer(msg.content);
-        pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+        // A wake that merged into a running run would share its stop hold: hold it until the run settled (an intercom-triggered run takes it as a follow-up).
+        if (!idle && s.intercomRun?.()) {
+          holder.send([...holder.held.splice(0), ...outcomes], true);
+          return;
+        }
+        if (!idle) {
+          holder.held.push(...outcomes);
+          return;
+        }
+        holder.send([...holder.held.splice(0), ...outcomes]);
       },
     });
     runtimes.set(s.id, holder);
