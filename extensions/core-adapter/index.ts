@@ -1766,8 +1766,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_settled", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (s) s.stopContinued = false;
-    // A wake that resolved during this run starts its own run (pi defers a triggerTurn sent while it emits agent_settled), after the reset above.
-    if (s && !s.isChild) waits.settled(s.id);
     s?.live?.onSettled(ctx.isIdle?.());
     radarTouch(s, ctx);
     if (s && !s.isChild) {
@@ -1779,6 +1777,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.running = false;
       idleModel.setRunning(false);
     }
+    // Last, so a throw in the wake send skips nothing above. A wake that resolved during this run starts its own run (pi defers a triggerTurn sent while it emits agent_settled), after the stopContinued reset.
+    if (s && !s.isChild) waits.settled(s.id);
   });
 
   /** Pi's `cacheWarming` setting is "idle" (the effective settings through the extension API). */

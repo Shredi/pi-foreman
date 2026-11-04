@@ -352,6 +352,13 @@ class PiRpc:
                     except ValueError:
                         self.bad_lines += 1
                         self.bad_tail = (self.bad_tail + [line.decode("utf-8", "replace")[:300]])[-5:]
+        rest = buf.rstrip(b"\r")
+        if rest.strip():  # an unterminated fragment at EOF
+            try:
+                self.records.put(json.loads(rest.decode("utf-8")))
+            except ValueError:
+                self.bad_lines += 1
+                self.bad_tail = (self.bad_tail + [rest.decode("utf-8", "replace")[:300]])[-5:]
         self.records.put(None)
 
     def _read_err(self):
@@ -371,7 +378,8 @@ class PiRpc:
         tail = []
         for r in self.seen[-25:]:
             msg = r.get("message") if isinstance(r.get("message"), dict) else {}
-            tail.append((r.get("type"), msg.get("customType"), msg.get("role")))
+            entry = r.get("entry") if isinstance(r.get("entry"), dict) else {}
+            tail.append((r.get("type"), msg.get("customType") or entry.get("customType"), msg.get("role")))
         return "stderr tail: %s\nlast %d of %d records (type, customType, role): %s\nunparseable stdout lines: %d, last: %s" % (
             "\n".join(self.stderr[-15:]), len(tail), len(self.seen), tail, self.bad_lines, self.bad_tail)
 
@@ -384,7 +392,7 @@ class PiRpc:
         except queue.Empty:
             raise TimeoutError("no RPC record in time; %s" % self._diagnostics())
         if rec is None:
-            raise EOFError("pi exited (code %s); stderr tail: %s" % (self.proc.poll(), "\n".join(self.stderr[-15:])))
+            raise EOFError("pi exited (code %s); %s" % (self.proc.poll(), self._diagnostics()))
         self.seen.append(rec)
         return rec
 
