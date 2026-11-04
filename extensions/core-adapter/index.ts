@@ -326,8 +326,6 @@ interface Session {
   steps: StepCounts;
   /** The reviewer step under ceremony.reviewGate "pass": latest verdict and a revision since (bound.ts). */
   reviewGate: ReviewGate;
-  /** ceremony.heavyThreshold strict: heavySignals hit in the latest request, shown to the foreman ("" = none). */
-  triageHint: string;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
   /** Foreman only: a handoff wait or a pending checkpoint waits for the parent/owner; the finish gate lets the turn end. Cleared by the next user/parent input. */
@@ -795,7 +793,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchedRoles: new Map(),
       steps: emptySteps(),
       reviewGate: initialReviewGate(),
-      triageHint: "",
       finishRefusals: 0,
       waitingForParent: false,
       handoffWaits: new Set(),
@@ -1648,15 +1645,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // Pi 1.2: a wake or child-notice run (messageType "custom") also lands here, without a prompt.
     // Only a user run sets the review intent and triages; the section below is built for every run.
     const prompt = userPromptOf(event);
+    // ceremony.heavyThreshold strict: heavySignals hit in this request. It rides as a message for this prompt only, never in the
+    // system text, so the system prompt stays byte-stable between prompts (prompt cache).
+    let triageHint = "";
     if (prompt !== null) {
       if (!s.isChild) gateOwnerMessages.set(s.id, [prompt, ...(gateOwnerMessages.get(s.id) ?? [])].slice(0, MAX_OWNER_MESSAGES));
       // D7: a child never triages; only the foreman's request can escalate on a signal.
       const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
-      s.triageHint = "";
       if (signals.length) {
         if (heavyStrict(s)) {
           // D6 strict: keyword hits are a hint for the foreman's own triage, not an escalation.
-          s.triageHint = `Signals seen: ${signals.join(", ")} — heavy only if the heavy criteria apply.`;
+          triageHint = `Signals seen: ${signals.join(", ")} — heavy only if the heavy criteria apply.`;
           s.trace?.emit({ event: "triage_hint", signals: signals.join(", ") });
         } else setCeremony(s, escalate(s.ceremony, "heavy", "auto", `heavy signal in the request: ${signals.join(", ")}`));
       }
@@ -1690,10 +1689,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120), roots: await piRootsOf(s) });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
-    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), s.triageHint, finishLine({ [s.ceremony.tier]: requiredOf(s, s.ceremony.tier) }, s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
+    const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), finishLine({ [s.ceremony.tier]: requiredOf(s, s.ceremony.tier) }, s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
     s.retro.base = text;
     s.foremanSection = withDigest(text, s.retro.digest);
     event.systemPromptOptions.sections["pi-foreman"] = s.foremanSection;
+    return triageHint ? { message: { customType: "foreman_triage_hint", content: triageHint, display: false } } : undefined;
   });
   let piInstallRoot: Promise<string | null> | undefined;
   /** The roots of the running pi: its coding-agent package dir (resolved from the package itself, never a literal path), the global npm root, this package's root. */

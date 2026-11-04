@@ -147,6 +147,7 @@ export function hideStaleNotice<M>(att: AttentionNotices, m: M): M | null {
  * already sent never changes when the state behind the filters moves on (run ended, notice suppressed, result fetched). Only
  * messages not yet seen take the fresh verdict. Entries for messages no longer in the context (after a compaction) are pruned.
  * Returns the messages to send, or null when none is dropped.
+ * The filters feeding `kept` must stay keep/drop only (never rewrite a message): kept messages are matched by object identity.
  */
 export function stableNoticeFilter<M>(messages: readonly M[], kept: readonly M[], memo: Map<string, boolean>): M[] | null {
   const keptSet = new Set<M>(kept);

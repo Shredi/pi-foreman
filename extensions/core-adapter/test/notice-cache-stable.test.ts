@@ -59,3 +59,41 @@ test("stableNoticeFilter: a verdict is kept once made; a new message takes the f
   stableNoticeFilter([user], [user], memo);
   assert.equal(memo.size, 0);
 });
+
+test("adapter: a launch-wait result fetched after a sent notice leaves earlier messages byte-identical", async (t) => {
+  const r = await r11Rig(t, { default: "standard" });
+  const dir = "/tmp/pi-subagents-uid-1/async-subagent-runs/run-a";
+  const done = (timestamp: number) => ({ role: "custom", customType: "subagent-notify", content: `Background task completed: **builder**\n\nbuilder:\nreport\n\nRetention-managed async directory: ${dir}\n\nSession file: /x/s.jsonl`, display: false, timestamp });
+  const result = { role: "toolResult", toolName: "subagent", isError: false, details: { runId: "run-a" }, content: [{ type: "text", text: "Async: builder [run-a]" }, { type: "text", text: "pi-foreman launch-wait: run run-a (builder) ended completed after 3s. Result path: x." }] };
+  const sent1 = [user, done(1)];
+  const before1 = structuredClone(sent1);
+  assert.equal(await r.fire("context", { messages: structuredClone(sent1) }), undefined, "notice before any delivery is kept");
+  // the result is fetched, then a second completion notice for the same run arrives
+  const sent2 = [...structuredClone(before1), { role: "assistant", content: "waiting" }, result, done(2), { role: "user", content: "next" }];
+  const second = (await r.fire("context", { messages: structuredClone(sent2) })) as Ctx;
+  const want = [...before1, sent2[2], sent2[3], sent2[5]];
+  assert.deepEqual(second?.messages, want, "earlier messages byte-identical; only the notice after the fetched result is dropped");
+  // the next request: the verdicts stay
+  const sent3 = [...structuredClone(sent2), { role: "assistant", content: "ok" }];
+  const third = (await r.fire("context", { messages: structuredClone(sent3) })) as Ctx;
+  assert.deepEqual(third?.messages, [...want, { role: "assistant", content: "ok" }]);
+});
+
+test("adapter: a heavy-signal prompt keeps the system section byte-stable; the hint rides as a message", async (t) => {
+  const r = await r11Rig(t, { default: "standard" }, { config: { ceremony: { default: "standard", launchWait: "detach", heavySignals: ["ci"] } } });
+  const turn = async (prompt: string) => {
+    const event = { prompt, systemPromptOptions: { sections: {} as Record<string, string> } };
+    const res = (await r.fire("before_agent_start", event)) as { message?: { customType: string; content: string } } | undefined;
+    return { section: event.systemPromptOptions.sections["pi-foreman"], res };
+  };
+  const plain = await turn("tidy the readme");
+  const heavy = await turn("fix the ci pipeline");
+  const next = await turn("thanks");
+  assert.ok(plain.section);
+  assert.equal(heavy.section, plain.section);
+  assert.equal(next.section, plain.section);
+  assert.doesNotMatch(plain.section, /Signals seen/);
+  assert.equal(plain.res, undefined);
+  assert.equal(heavy.res?.message?.content, "Signals seen: ci — heavy only if the heavy criteria apply.");
+  assert.equal(next.res, undefined);
+});
