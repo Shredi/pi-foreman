@@ -4,7 +4,7 @@ import { registerWait } from "../wait.ts";
 
 // A wake that resolves while a run is active is not sent as a followUp (it would merge into that run and share its
 // stop hold): it is held and goes out with triggerTurn when the adapter calls `settled` (agent_settled, after its reset).
-function rig() {
+function rig(intercom = false) {
   delete process.env.PI_SUBAGENT_CHILD;
   let tool: { execute: (...a: unknown[]) => Promise<{ details: Record<string, unknown> }> } | undefined;
   const handlers = new Map<string, (e: unknown, ctx: unknown) => Promise<void>>();
@@ -14,7 +14,7 @@ function rig() {
     registerTool: (t: never) => (tool = t),
     sendMessage: (m: { content: string }, opts: Record<string, unknown>) => sent.push({ content: m.content, opts }),
   };
-  const session = { id: "s1", isChild: false, cwd: process.cwd(), agentDir: "/t/agent", overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
+  const session = { id: "s1", isChild: false, cwd: process.cwd(), agentDir: "/t/agent", overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined, intercomRun: () => intercom };
   const handle = registerWait(pi as never, { session: async () => session as never, home: "/t/home", platform: process.platform });
   const state = { idle: true };
   const ctx = { mode: "tui", cwd: process.cwd(), isIdle: () => state.idle, sessionManager: { getSessionId: () => "s1" } };
@@ -59,6 +59,26 @@ test("wait: several outcomes during one run are one wake message", async () => {
   assert.equal(r.sent.length, 1);
   assert.match(r.sent[0].content, /child a: result/);
   assert.match(r.sent[0].content, /child b: update/);
+});
+
+test("wait: a wake during an intercom-triggered run is sent at once as a followUp, nothing held", async () => {
+  const r = rig(true);
+  await r.start("a");
+  r.state.idle = false;
+  r.handle.childNotice("s1", "a", "result", "/p");
+  assert.equal(r.sent.length, 1);
+  assert.deepEqual(r.sent[0].opts, { deliverAs: "followUp" });
+  r.state.idle = true;
+  r.handle.settled("s1");
+  assert.equal(r.sent.length, 1, "nothing was held");
+});
+
+test("wait: a wake during a non-intercom run is still held", async () => {
+  const r = rig(false);
+  await r.start("a");
+  r.state.idle = false;
+  r.handle.childNotice("s1", "a", "result", "/p");
+  assert.equal(r.sent.length, 0);
 });
 
 test("wait: a session shutdown drops a held wake", async () => {
