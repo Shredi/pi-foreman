@@ -33,6 +33,7 @@
 // FOREMAN_FAKE_PROMPT_CACHE=1 declares `promptCache: {short: 20}` on every fake model (idle-cache replay); a step's
 // usage may carry `totalTokens` (the context size the foreman's compaction check reads).
 // FOREMAN_FAKE_COST=<in>,<out>,<cacheRead>,<cacheWrite> prices the fake models (warm-budget replay).
+// FOREMAN_FAKE_DELAY=<tag>:<step>:<ms> delays the answer of that script step by <ms> (a wake timer racing a run).
 // FOREMAN_FAKE_FROZEN=1 mimics a provider that fixes its tool list per turn (pi-claude-bridge): the tool names declared by the
 // turn's first request are recorded, and a later scripted call to any other name is never forwarded to Pi; the turn ends with
 // the text `No such tool available: <name>` (the bridge's own answer). FOREMAN_FAKE_FROZEN_LOG=<file> appends one JSON line
@@ -245,7 +246,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     else options?.signal?.addEventListener("abort", abort, { once: true });
     return stream;
   }
-  queueMicrotask(() => {
+  const answer = (): void => {
     if (options?.signal?.aborted) {
       output.stopReason = "aborted";
       output.errorMessage = "Request was aborted";
@@ -273,8 +274,18 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
     output.stopReason = step.tools?.length ? "toolUse" : "stop";
     stream.push({ type: "done", reason: output.stopReason, message: output });
     stream.end();
-  });
+  };
+  const wait = delayMs(context.messages as { role: string; content: unknown }[]);
+  if (wait > 0) setTimeout(answer, wait);
+  else queueMicrotask(answer);
   return stream;
+}
+
+/** FOREMAN_FAKE_DELAY=<tag>:<step>:<ms>: the answer of that script step (as locate() counts it) comes after <ms>. */
+function delayMs(messages: { role: string; content: unknown }[]): number {
+  const m = /^([^:]+):(\d+):(\d+)$/.exec(process.env.FOREMAN_FAKE_DELAY ?? "");
+  const where = m ? locate(messages) : null;
+  return m && where && where[0] === m[1] && where[1] === Number(m[2]) ? Number(m[3]) : 0;
 }
 
 // FOREMAN_FAKE_COST=<input>,<output>,<cacheRead>,<cacheWrite> ($ per million tokens) prices every fake model in the

@@ -193,6 +193,11 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   request"; background work continues, so answer with `subagent_supervisor` and call `bg_wait` again.
 - **`foreman_bg` and `foreman_wait {kind: pid}`.** `foreman_bg` returns the wait id; an explicit `foreman_wait` on the same pid
   returns that id (no second wait).
+- **A wake during a run is delivered after the run settles.** An idle session is started by the `foreman_wake` message at once.
+  When the waits resolve while a run is active, the outcomes are held (not sent as a follow-up into that run) and go out as one
+  message with a turn trigger after the run's `agent_settled` and the reset of its stop-gate state. The wake therefore runs as
+  its own run (trace `turn` cause `wake`) with its own stop hold. A session shutdown drops a held wake. Exception: a run started by an intercom message (trace `turn`
+  cause `intercom`) takes the wake at once as a follow-up, so a child notice costs no extra turn.
 - **A restart loses the waits.** `foreman_wait` and `foreman_bg` waits live in the process, so a restart (`pi --continue`,
   `--session <id>`, `/reload`) ends them without a wake. The active set is stored in the session file (`pi-foreman-waits`
   entry, keyed by the Pi session id); at the next start of the same session the agent gets one `foreman_wake` message
