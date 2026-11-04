@@ -16,6 +16,8 @@ export interface CacheBarView {
   cold: boolean;
   /** Warms still to come (at least 1) and the limiter when it is not the window; null = none scheduled. */
   warms: { count: number; limiter: "budget" | "away" | null } | null;
+  /** Away warms still allowed while the owner is present (awayTicks - used); null = no away cap. Shown as `(away M)` when below the count. */
+  awayLeft?: number | null;
   /** The idle model id of the step after the warms; null = no step. */
   step: string | null;
   glyphs: { keepalive: string; cold: string; downshift: string };
@@ -132,6 +134,7 @@ function cacheBarSegment(c: CacheBarView, cells: number, reduced: boolean, theme
   if (!reduced && c.warms) {
     out += ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}`;
     if (c.warms.limiter) out += ` ${theme.fg("dim", c.warms.limiter)}`;
+    if (typeof c.awayLeft === "number" && c.awayLeft < c.warms.count) out += ` ${theme.fg("dim", `(away ${c.awayLeft})`)}`;
   }
   return out;
 }

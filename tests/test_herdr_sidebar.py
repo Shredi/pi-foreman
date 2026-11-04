@@ -2270,5 +2270,31 @@ class LiveKidsOnAgentLineTest(unittest.TestCase):
         self.assertIn("+%d" % (len(live) - sidebar.MAX_ITEMS), many)
 
 
+class SidebarAway(unittest.TestCase):
+    def cost_row(self, away, pressure=None, width=40):
+        snap = snapshot()
+        if away is not None:
+            snap["roots"][0]["away"] = away
+        if pressure is not None:
+            snap["roots"][0]["pressure"] = pressure
+        return sidebar.compose(snap, width)["w1:p1"]["fm_meta"]
+
+    def test_suffix_only_when_away_is_true(self):
+        base = self.cost_row(None)
+        self.assertNotIn("away", base)
+        self.assertEqual(self.cost_row(False), base)
+        self.assertEqual(self.cost_row("yes"), base)
+        self.assertIn("$0.47 · away", self.cost_row(True))
+
+    def test_suffix_follows_the_pressure_glyph(self):
+        row = self.cost_row(True, {"level": "high", "reasons": ["mem"]})
+        self.assertIn("$0.47 ⚠ mem · away", row)
+
+    def test_row_fits_the_width(self):
+        for width in (20, 24, 34, 40):
+            row = self.cost_row(True, width=width)
+            self.assertLessEqual(sidebar.cell_width(row), width - sidebar.INSET)
+
+
 if __name__ == "__main__":
     unittest.main()

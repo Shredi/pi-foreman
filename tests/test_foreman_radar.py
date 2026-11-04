@@ -623,5 +623,22 @@ class Round33Tests(Fixture):
         self.assertIn("\u23f8\ufe0f", text)
 
 
+class RadarAway(Fixture):
+    def doc(self):
+        syms = fr.load_symbols("unicode")
+        return fr.json_doc(self.snap(), NOW, "unicode", syms)
+
+    def test_away_is_carried_only_when_true(self):
+        d = live("s1", "a", "fm-a")
+        self.put_live(d)
+        self.assertNotIn("away", self.doc()["roots"][0])
+        d["away"] = True
+        self.put_live(d)
+        self.assertIs(self.doc()["roots"][0]["away"], True)
+        d["away"] = "yes"
+        self.put_live(d)
+        self.assertNotIn("away", self.doc()["roots"][0])
+
+
 if __name__ == "__main__":
     unittest.main()

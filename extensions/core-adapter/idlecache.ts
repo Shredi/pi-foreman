@@ -5,7 +5,8 @@
 // re-armed to the next absolute deadline (the PendingPanels / PrWatches pattern); clear() at shutdown.
 import type { CachePolicy } from "./cachepolicy.ts";
 import type { Timers } from "./prwatch.ts";
-import { warmCompact } from "./warmcompact.ts";
+import { settleGraceMs } from "./selfwarm.ts";
+import { coldAt as coldAtTouch, warmCompact } from "./warmcompact.ts";
 
 export type IdleState = "off" | "watching" | "ended";
 export type EndReason = "window" | "compact" | "activity" | "shutdown" | "warmer_stopped" | "error" | "hook_stop" | "budget" | "away";
@@ -22,6 +23,8 @@ export interface WarmGate {
   owns(): boolean;
   /** A warm was allowed (counts an away tick when the owner is away). */
   noteWarm(): void;
+  /** Forced presence probe (no 60 s gap) for the settle check; resolves once the sample is current. */
+  refreshPresence?(): Promise<void>;
   /** Background presence probe shortly before `dueAt`. */
   armProbe(dueAt: number): void;
   disarm(): void;
@@ -69,6 +72,10 @@ export interface IdleCacheDeps {
 export const PI_IDLE_CAP_MS = 30 * 60 * 1000;
 const CONFIRM_MS = 90 * 1000;
 const WATCHDOG_SLACK_S = 60;
+/** With a gate: how often the landing of a Pi-sent warm is looked for. */
+const POLL_MS = 5000;
+
+type Refusal = { reason: "budget" | "away" | "window"; budget?: { spent: number; cold: number; share: number } };
 
 const realTimers: Timers = {
   set: (fn, ms) => {
@@ -97,6 +104,13 @@ export class IdleCache {
   private lastKeepaliveAt: number | null = null;
   private lastTurnStartAt: number | null = null;
   private refusal: "budget" | "away" | null = null;
+  private gen = 0;
+  /** Pi-sent warms of this idle that landed in the usage log (gate only). */
+  private landedCount = 0;
+  private settleAt = 0;
+  private settleChecked = true;
+  /** With a gate the window trigger is the post-warm check; the time rule stays for a window shorter than one tick and while the budget is unavailable (that check has nothing to judge). */
+  private timeRuleOff = false;
 
   constructor(deps: IdleCacheDeps) {
     this.deps = deps;
@@ -110,7 +124,8 @@ export class IdleCache {
   /** Read-only state for the footer's cache bar: the next Pi-sent warm is one Pi tick after the last decision (else the window start). */
   snapshot(): { state: IdleState; windowEndAt: number; nextWarmAt: number | null } {
     const ttl = this.deps.policy()?.ttlSeconds ?? null;
-    const next = this.st === "watching" && ttl !== null ? (this.lastDecisionAt ?? this.startedAt) + Math.min(0.9 * ttl, ttl - 10) * 1000 : null;
+    const landed = this.deps.gate && this.lastKeepaliveAt !== null && this.lastKeepaliveAt >= this.startedAt ? this.lastKeepaliveAt : null;
+    const next = this.st === "watching" && ttl !== null ? (landed ?? this.lastDecisionAt ?? this.startedAt) + Math.min(0.9 * ttl, ttl - 10) * 1000 : null;
     return { state: this.st, windowEndAt: this.windowEndAt, nextWarmAt: next };
   }
 
@@ -143,10 +158,15 @@ export class IdleCache {
     this.windowEndAt = Math.min(now + policy.effectiveWindowMinutes * 60_000, (this.lastTurnStartAt ?? now) + PI_IDLE_CAP_MS);
     const span = this.windowEndAt - now;
     this.compactAt = span <= interval ? now + span / 2 : this.windowEndAt - interval;
+    this.timeRuleOff = !!d.gate && d.gate.budgetAvailable() && span > interval;
     this.compactChecked = false;
     this.compactedForIdle = false;
     this.lastDecisionAt = undefined;
     this.oldestUnconfirmedFireAt = undefined;
+    this.gen += 1;
+    this.landedCount = 0;
+    this.settleAt = now + settleGraceMs(policy.ttlSeconds);
+    this.settleChecked = !d.gate;
     this.st = "watching";
     this.setGlyph(true);
     this.arm();
@@ -182,6 +202,7 @@ export class IdleCache {
   /** Idempotent. Traces only when it ends a watching window. */
   end(reason: EndReason): void {
     const was = this.st;
+    this.gen += 1;
     this.timers.clear(this.timer);
     this.timer = null;
     this.deps.gate?.disarm();
@@ -231,9 +252,69 @@ export class IdleCache {
   /** The gate refused the next warm: say why, spend the last warm read on one compaction, end the window. */
   private refuse(reason: "budget" | "away"): void {
     const now = this.deps.now();
-    this.deps.trace({ event: "keepalive", outcome: "skipped", reason });
+    this.deps.trace({ event: "keepalive", outcome: "skipped", reason, count: this.landedCount, phase: "pre_warm" });
     if (!this.compactedForIdle) this.tryCompact(now, reason);
     this.end(reason);
+  }
+
+  /** No further warm: the gate refuses (state after the last cache touch) or, after a landed warm, Pi's next tick falls at or past the window end. */
+  private refusalHit(withWindow: boolean): Refusal | null {
+    const g = this.deps.gate;
+    if (!g) return null;
+    const v = g.verdict();
+    if (v.ok === false) return { reason: v.reason, budget: v.budget };
+    const ttl = this.deps.policy()?.ttlSeconds;
+    if (withWindow && typeof ttl === "number" && (this.lastKeepaliveAt ?? 0) + Math.min(0.9 * ttl, ttl - 10) * 1000 >= this.windowEndAt) return { reason: "window" };
+    return null;
+  }
+
+  /** Act on a refusal hit: budget/away compact and end the window at once; window compacts and keeps watching until `onCompact` (or ends when declined). */
+  private onHit(hit: Refusal, phase: "settle" | "post_warm", now: number): void {
+    if (hit.reason === "window") {
+      if (!this.compactChecked) {
+        this.compactChecked = true;
+        this.tryCompact(now);
+      }
+      if (!this.compactedForIdle) this.end("window");
+      return;
+    }
+    if (hit.budget) this.deps.trace({ event: "budget", ...hit.budget });
+    this.deps.trace({ event: "keepalive", outcome: "skipped", reason: hit.reason, count: this.landedCount, phase });
+    if (!this.compactedForIdle) this.tryCompact(now, hit.reason);
+    this.end(hit.reason);
+  }
+
+  /** Zero allowed warms (budget or away): once, after the grace and a forced presence probe, unless Pi has decided a warm in this window. */
+  private settleCheck(): void {
+    this.settleChecked = true;
+    const g = this.deps.gate;
+    if (!g || this.lastDecisionAt !== undefined) return;
+    const run = (): void => {
+      if (this.lastDecisionAt !== undefined) return;
+      const hit = this.refusalHit(false);
+      if (hit) this.onHit(hit, "settle", this.deps.now());
+    };
+    if (!g.refreshPresence) return run();
+    const gen = this.gen;
+    void g
+      .refreshPresence()
+      .catch(() => undefined)
+      .then(() => {
+        if (gen !== this.gen || this.st !== "watching") return;
+        try {
+          run();
+        } catch {
+          this.end("error");
+        }
+      });
+  }
+
+  /** Cold bound of the last cache touch (ms): a window kept open past its end for a running compaction ends here at the latest. */
+  private boundAt(): number {
+    const d = this.deps;
+    const ttl = d.policy()?.ttlSeconds;
+    const touch = Math.max(this.lastKeepaliveAt ?? 0, d.lastAssistantAt() ?? 0, d.gate?.lastCacheTouch() ?? 0);
+    return typeof ttl !== "number" || touch === 0 ? d.now() : coldAtTouch(touch, ttl);
   }
 
   private skipOnce(reason: string): void {
@@ -267,10 +348,19 @@ export class IdleCache {
     const g = this.deps.gate;
     const p = this.deps.policy();
     if (g && p) g.armProbe((this.lastDecisionAt ?? this.startedAt) + p.intervalSeconds * 1000);
-    let next = Math.min(this.windowEndAt, this.watchdogAt());
-    if (this.oldestUnconfirmedFireAt !== undefined) next = Math.min(next, this.oldestUnconfirmedFireAt + CONFIRM_MS);
-    if (!this.compactChecked) next = Math.min(next, this.compactAt);
-    this.timer = this.timers.set(() => this.wake(), Math.max(0, next - this.deps.now()));
+    const now = this.deps.now();
+    const past = !!g && now >= this.windowEndAt;
+    const winding = !!g && (past || this.compactedForIdle);
+    let next = past ? Infinity : this.windowEndAt;
+    if (!winding) next = Math.min(next, this.watchdogAt());
+    if (this.oldestUnconfirmedFireAt !== undefined) {
+      next = Math.min(next, this.oldestUnconfirmedFireAt + CONFIRM_MS);
+      if (g) next = Math.min(next, now + POLL_MS);
+    }
+    if (!this.compactChecked && !this.timeRuleOff) next = Math.min(next, this.compactAt);
+    if (g && !this.settleChecked) next = Math.min(next, this.settleAt);
+    if (winding && this.oldestUnconfirmedFireAt === undefined) next = Math.min(next, this.boundAt());
+    this.timer = this.timers.set(() => this.wake(), Math.max(0, next - now));
   }
 
   private wake(): void {
@@ -280,11 +370,35 @@ export class IdleCache {
       const sync = this.deps.syncKeepalives();
       if (sync.lastReadAt !== null) this.lastKeepaliveAt = Math.max(this.lastKeepaliveAt ?? 0, sync.lastReadAt);
       const now = this.deps.now();
-      if (this.oldestUnconfirmedFireAt !== undefined && this.lastKeepaliveAt !== null && this.lastKeepaliveAt >= this.oldestUnconfirmedFireAt) this.oldestUnconfirmedFireAt = undefined;
-      if (now >= this.windowEndAt) return this.end("window");
-      if (now >= this.watchdogAt()) return this.end("warmer_stopped");
+      const g = this.deps.gate;
+      if (this.oldestUnconfirmedFireAt !== undefined && this.lastKeepaliveAt !== null && this.lastKeepaliveAt >= this.oldestUnconfirmedFireAt) {
+        this.oldestUnconfirmedFireAt = undefined;
+        if (g) {
+          this.landedCount += 1;
+          const hit = this.refusalHit(true);
+          if (hit) this.onHit(hit, "post_warm", now);
+          if (this.st !== "watching") return;
+        }
+      }
+      if (g && !this.settleChecked && now >= this.settleAt) {
+        this.settleCheck();
+        if (this.st !== "watching") return;
+      }
+      if (now >= this.windowEndAt) {
+        if (!g) return this.end("window");
+        if (!this.compactedForIdle && this.oldestUnconfirmedFireAt === undefined) {
+          if (!this.compactChecked) {
+            this.compactChecked = true;
+            this.tryCompact(now);
+          }
+          if (!this.compactedForIdle) return this.end("window");
+        }
+      }
+      const winding = !!g && (now >= this.windowEndAt || this.compactedForIdle);
+      if (!winding && now >= this.watchdogAt()) return this.end("warmer_stopped");
       if (this.oldestUnconfirmedFireAt !== undefined && now >= this.oldestUnconfirmedFireAt + CONFIRM_MS) return this.end("warmer_stopped");
-      if (!this.compactChecked && now >= this.compactAt) {
+      if (winding && this.oldestUnconfirmedFireAt === undefined && now >= this.boundAt()) return this.end("window");
+      if (!this.compactChecked && !this.timeRuleOff && now >= this.compactAt) {
         this.compactChecked = true;
         this.tryCompact(now);
       }

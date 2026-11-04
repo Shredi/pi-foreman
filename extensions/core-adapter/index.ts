@@ -550,7 +550,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       nextWarmAt: owner ? (snap.state === "watching" ? snap.nextWarmAt : null) : pi.nextWarmAt,
       tickMs: (owner ? 0.9 * ttl : Math.min(0.9 * ttl, ttl - 10)) * 1000,
       budget: snap.budget && policy.budgetShare !== undefined ? { spent: snap.budget.spent, cold: snap.budget.cold, next: snap.budget.next, share: policy.budgetShare } : null,
-      away: policy.awayTicks !== undefined && s.presence.away() ? { isAway: true, used: snap.awayUsed, ticks: policy.awayTicks } : null,
+      away: policy.awayTicks !== undefined && (s.presence.away() || (policy.awayTicks > 0 && s.presence.enabled())) ? { isAway: s.presence.away(), used: snap.awayUsed, ticks: policy.awayTicks } : null,
       running: s.running,
       downshifted: idleModel.downshifted(),
       idleRung: rung ? rung.id : null,
@@ -887,6 +887,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       const where = new Where({ cwd: () => s.cwd, repo: originRepo, branch: branchOf, changed: () => s.live?.touch() });
       if (s.live) s.live.where = () => where.read();
+      s.live?.setAwayGetter(() => (s.idleCache.state() === "watching" || s.selfWarm.state() === "watching") && s.presence.away());
       s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(s.config.config) });
       s.openPrs.start();
       const live = s.live;

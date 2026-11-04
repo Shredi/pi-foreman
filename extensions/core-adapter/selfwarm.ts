@@ -15,6 +15,9 @@ import { warmCompact, type CompactTrigger } from "./warmcompact.ts";
 /** Pi's warm tick: this share of the TTL after the last touch. */
 export const WARM_TICK_SHARE = 0.9;
 
+/** Zero allowed warms are acted on this long after settle (the shorter of 60 s and a quarter of the TTL), so an owner who answers at once is never compacted. */
+export const settleGraceMs = (ttlSeconds: number | null): number => Math.min(60_000, 0.25 * (ttlSeconds ?? 0) * 1000);
+
 export interface WarmReply {
   provider: string | null;
   model: string | null;
@@ -63,6 +66,8 @@ export class SelfWarm implements WarmGate {
   private deps: SelfWarmDeps;
   private timers: Timers;
   private timer: unknown = null;
+  private graceTimer: unknown = null;
+  private warmsSent = 0;
   private st: St = "off";
   private touch: number | null = null;
   private budget = new WarmBudget();
@@ -141,6 +146,11 @@ export class SelfWarm implements WarmGate {
     if (this.deps.policy()?.awayTicks !== undefined && this.deps.presence.away()) this.awayUsed += 1;
   }
 
+  /** Forced presence probe for the settle check of a Pi-path window (only when an away cap is set). */
+  refreshPresence(): Promise<void> {
+    return this.deps.policy()?.awayTicks !== undefined ? this.deps.presence.refreshNow() : Promise.resolve();
+  }
+
   armProbe(dueAt: number): void {
     this.deps.presence.armBefore(dueAt);
   }
@@ -161,6 +171,7 @@ export class SelfWarm implements WarmGate {
     this.touch = this.deps.now();
     this.budget.reset(promptTokens);
     this.awayUsed = 0;
+    this.warmsSent = 0;
     this.compactedForIdle = false;
   }
 
@@ -177,6 +188,7 @@ export class SelfWarm implements WarmGate {
     this.touch = null;
     this.budget.reset(0);
     this.awayUsed = 0;
+    this.warmsSent = 0;
     this.compactedForIdle = false;
   }
 
@@ -219,8 +231,14 @@ export class SelfWarm implements WarmGate {
     const now = this.deps.now();
     this.windowEndAt = now + (p.selfWarmWindowMinutes ?? 45) * 60_000;
     this.st = "watching";
+    this.gen += 1;
     this.compactedForIdle = false;
     this.schedule();
+    this.timers.clear(this.graceTimer);
+    this.graceTimer = null;
+    if (p.budgetShare === undefined && p.awayTicks === undefined) return;
+    const gen = this.gen;
+    this.graceTimer = this.timers.set(() => void this.settleCheck(gen), settleGraceMs(p.ttlSeconds));
   }
 
   // ---- internals -------------------------------------------------------------------------------------------
@@ -249,6 +267,9 @@ export class SelfWarm implements WarmGate {
   private end(reason: string): void {
     this.timers.clear(this.timer);
     this.timer = null;
+    this.timers.clear(this.graceTimer);
+    this.graceTimer = null;
+    this.gen += 1;
     this.deps.presence.disarm();
     if (this.st !== "watching") return;
     this.deps.trace({ event: "keepalive", outcome: "window_end", reason });
@@ -268,11 +289,34 @@ export class SelfWarm implements WarmGate {
     return b.pendingMessages || b.notIdle || (!this.deps.policy()?.whileWaiting && (b.childRun || b.wait || b.launchWait));
   }
 
-  private refuse(reason: "budget" | "away" | "window", budget?: { spent: number; cold: number; share: number }): void {
+  private refuse(reason: "budget" | "away" | "window", phase: "settle" | "post_warm" | "pre_warm", budget?: { spent: number; cold: number; share: number }): void {
     if (budget) this.deps.trace({ event: "budget", ...budget });
-    if (reason !== "window") this.deps.trace({ event: "keepalive", outcome: "skipped", reason });
+    if (reason !== "window") this.deps.trace({ event: "keepalive", outcome: "skipped", reason, count: this.warmsSent, phase });
     this.compactFor(reason);
     this.end(reason);
+  }
+
+  /** No further warm will be sent, judged on the state after the last cache touch; the window part only after a completed warm. */
+  private nextWarmRefused(withWindow: boolean): { reason: "budget" | "away" | "window"; budget?: { spent: number; cold: number; share: number } } | null {
+    const v = this.verdict();
+    if (v.ok === false) return { reason: v.reason, budget: v.budget };
+    const due = this.dueAt();
+    return withWindow && due !== null && due >= this.windowEndAt ? { reason: "window" } : null;
+  }
+
+  /** Zero allowed warms: after the grace and a fresh presence probe, compact instead of waiting for the first tick. */
+  private async settleCheck(gen: number): Promise<void> {
+    this.graceTimer = null;
+    try {
+      if (gen !== this.gen || this.st !== "watching") return;
+      await this.refreshPresence();
+      if (gen !== this.gen || this.st !== "watching") return;
+      if (this.ac !== null || this.warmsSent > 0) return; // a warm is in flight or sent: the post-warm check decides
+      const hit = this.nextWarmRefused(false);
+      if (hit) this.refuse(hit.reason, "settle", hit.budget);
+    } catch {
+      this.end("error");
+    }
   }
 
   private async fire(gen: number): Promise<void> {
@@ -284,7 +328,7 @@ export class SelfWarm implements WarmGate {
       if (!p || !this.owns() || this.isBusy()) return this.end("activity");
       const due = this.dueAt();
       if (due === null) return this.end("error");
-      if (due >= this.windowEndAt) return this.refuse("window");
+      if (due >= this.windowEndAt) return this.refuse("window", "pre_warm");
       const ttlMs = (p.ttlSeconds ?? 0) * 1000;
       if (d.now() > due + (ttlMs - WARM_TICK_SHARE * ttlMs) / 2) {
         d.trace({ event: "keepalive", outcome: "skipped", reason: "late" });
@@ -297,7 +341,7 @@ export class SelfWarm implements WarmGate {
       await d.presence.refresh();
       if (gen !== this.gen || this.st !== "watching") return;
       const v = this.verdict();
-      if (v.ok === false) return this.refuse(v.reason, v.budget);
+      if (v.ok === false) return this.refuse(v.reason, "pre_warm", v.budget);
       const away = d.presence.away();
       const ac = new AbortController();
       this.ac = ac;
@@ -310,6 +354,7 @@ export class SelfWarm implements WarmGate {
       this.touch = d.now();
       this.budget.note({ input: Number(u.input) || 0, output: Number(u.output) || 0, cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0 });
       if (away && p.awayTicks !== undefined) this.awayUsed += 1;
+      this.warmsSent += 1;
       d.trace({ event: "keepalive", outcome: "fired", source: "foreman", cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0, cost: line?.cost.total ?? (Number(u.cost?.total) || 0) });
       if (!this.missChecked) {
         this.missChecked = true;
@@ -318,6 +363,8 @@ export class SelfWarm implements WarmGate {
           return this.end("self_warm_miss");
         }
       }
+      const hit = this.nextWarmRefused(true);
+      if (hit) return this.refuse(hit.reason, "post_warm", hit.budget);
       this.schedule();
     } catch {
       this.end("error");
