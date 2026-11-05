@@ -140,3 +140,34 @@ export function hideStaleNotice<M>(att: AttentionNotices, m: M): M | null {
   if (!ev || typeof ev.runId !== "string") return null;
   return att.endedRuns.has(ev.runId) ? ({ ...(m as object), display: false } as M) : null;
 }
+
+/**
+ * Prompt-cache guard for the notice filters: `kept` is the fresh filter result for `messages` (same objects, in order). The first
+ * time a custom message is seen its verdict (kept or dropped) is stored in `memo` and reused on every later request, so a message
+ * already sent never changes when the state behind the filters moves on (run ended, notice suppressed, result fetched). Only
+ * messages not yet seen take the fresh verdict. Entries for messages no longer in the context (after a compaction) are pruned.
+ * Returns the messages to send, or null when none is dropped.
+ * The filters feeding `kept` must stay keep/drop only (never rewrite a message): kept messages are matched by object identity.
+ */
+export function stableNoticeFilter<M>(messages: readonly M[], kept: readonly M[], memo: Map<string, boolean>): M[] | null {
+  const keptSet = new Set<M>(kept);
+  const ordinal = new Map<string, number>();
+  const next = new Map<string, boolean>();
+  const out: M[] = [];
+  for (const m of messages) {
+    if (!isObj(m) || m.role !== "custom") {
+      out.push(m);
+      continue;
+    }
+    const base = JSON.stringify(m);
+    const n = ordinal.get(base) ?? 0;
+    ordinal.set(base, n + 1);
+    const key = `${n}:${base}`;
+    const keep = memo.get(key) ?? keptSet.has(m);
+    next.set(key, keep);
+    if (keep) out.push(m);
+  }
+  memo.clear();
+  for (const [k, v] of next) memo.set(k, v);
+  return out.length === messages.length ? null : out;
+}
