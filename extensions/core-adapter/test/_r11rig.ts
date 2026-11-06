@@ -60,12 +60,14 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     fs.writeFileSync(path.join(agentDir, "pi-foreman", "permissions.json"), JSON.stringify(perms));
   }
   const handlers = new Map<string, Handler>();
+  const allHandlers = new Map<string, Handler[]>();
   const inputHandlers: Handler[] = [];
   const channels = new Map<string, (d: unknown) => void>();
   const pi = {
     events: { on: (n: string, h: (d: unknown) => void) => void channels.set(n, h), emit: () => undefined },
     on: (n: string, h: Handler) => {
       if (n === "input") inputHandlers.push(h);
+      allHandlers.set(n, [...(allHandlers.get(n) ?? []), h]);
       const prev = handlers.get(n);
       // tool_call: the first block wins; any other event runs every handler (the first result is kept)
       handlers.set(n, !prev ? h : n === "tool_call" ? async (e, c) => (await prev(e, c)) ?? (await h(e, c)) : async (e, c) => { const r = await prev(e, c); const r2 = await h(e, c); return r ?? r2; });
@@ -151,6 +153,8 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     wrote: (file: string) => handlers.get("tool_result")!({ toolName: "write", toolCallId: `w${++calls}`, input: { path: file }, content: [{ type: "text", text: "ok" }], isError: false }, ctx),
     /** Any hook event through the adapter's handlers as registered. */
     fire: (name: string, event: unknown) => handlers.get(name)!(event, ctx),
+    /** Every handler registered for `name`, in registration order (`fire` only runs the merged one). */
+    handlersOf: (name: string): Handler[] => allHandlers.get(name) ?? [],
     /** A custom `subagent-notify` message (a child completion notice) as the foreman receives it. */
     notice: (text: string) => handlers.get("message_end")!({ message: { role: "custom", customType: "subagent-notify", content: text } }, ctx),
     /** An event-bus message (`pi.events.on` channel) such as `permissions:ui_prompt`. */
