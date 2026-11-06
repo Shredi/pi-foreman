@@ -524,6 +524,19 @@ def render_prompt(text, values):
     return "".join(out)
 
 
+LOOP_RULE = ("- Review and revise until a review passes; no count limits the rounds. The adapter stops you with `[review_loop]` when a review FAIL repeats the findings of the round before, "
+             "or brings no new finding and no change to the work since then. Then stop: report the open findings to the owner and ask how to go on. A new owner prompt, a parent ruling or brief, "
+             "or a `/ceremony` tier change by the user lifts the stop; your own `foreman_triage`, a ledger `Tier:` line or an automatic escalation does not. While it stands, builder and reviewer "
+             "launches are refused; `[second-opinion]` and a `resume` are not.\n")
+POST_PASS_EXEMPT = (" Pushing the reviewed head, opening the PR, watching CI, `gh pr merge --match-head-commit <reviewed head>` and the base CI check are not checks and do not count.")
+
+
+def review_loop_rewrite(want):
+    """The review-loop change (revision-round limit replaced by the loop guard; post-PASS exemptions) applied to an older rendering."""
+    want = re.sub(r"- Revision rounds per user prompt:.*?a `resume` of a builder run\.\n", lambda _: LOOP_RULE, want, flags=re.S)
+    return want.replace("own checks, then finish.", "own checks, then finish." + POST_PASS_EXEMPT)
+
+
 class PackageFilesTest(unittest.TestCase):
     def test_package_json_private(self):
         pkg = json.loads((ROOT / "package.json").read_text())
@@ -611,6 +624,7 @@ class PackageFilesTest(unittest.TestCase):
         want = expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch).replace(old_ask, new_ask)
         for old_text, new_text in role_pairs:
             want = want.replace(old_text, new_text)
+        want = review_loop_rewrite(want)
         self.assertEqual(render_prompt(text, knobs), want)
 
     def test_defaults_validate(self):
@@ -643,12 +657,13 @@ class SlimRolesTest(unittest.TestCase):
         self.assertEqual(front["name"], "security-review")
         self.assertLess(len(front["description"]), 1024)
 
-    def test_default_rules_render_keeps_the_security_cap_and_names_no_removed_role(self):
+    def test_default_rules_render_has_the_loop_rule_and_names_no_removed_role(self):
         text = (ROOT / "instructions" / "foreman.md").read_text()
         values = {"ledgerhelper": "tool", "heavythreshold": "strict", "reviewperrevision": "on", "trivialpath": "builder", "ladder": "on",
                   "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on", "planreview": "on", "tools.pr": "on"}
         kept = render_prompt(text, values)
-        self.assertIn("A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit", kept)
+        self.assertIn(LOOP_RULE, kept)
+        self.assertNotIn("revisionRounds", kept)
         for word in ("planner", "finalizer", "senior-reviewer"):
             self.assertNotIn(word, kept)
 
