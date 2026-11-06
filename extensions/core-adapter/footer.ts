@@ -137,7 +137,7 @@ export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const p = src?.policy;
   if (!src || !src.enabled || !p || p.billing === "request" || p.ttlSeconds === null) return null;
   if (p.skip === "no_entry" || p.skip === "ttl_unknown" || p.skip === "billing_request") return null;
-  const warming = (!p.skip || (p.skip === "ttl_long" && p.selfWarm)) && !src.running;
+  const warming = (!p.skip || (p.skip === "ttl_long" && p.keepaliveOwned)) && !src.running;
   const bar = cacheBar({ now: src.now, lastTouch: src.lastTouch, ttlSeconds: p.ttlSeconds, stretchStartAt: src.stretchStartAt, spanEndAt: src.spanEndAt, warmsLeft: src.warmsLeft, tier: src.tier, nextWarmAt: warming ? src.nextWarmAt : null });
   const set = symbolSet(src.symbols);
   return {
