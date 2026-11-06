@@ -56,6 +56,14 @@ test("session confirm: No refuses with owner_declined and spawns nothing", async
   assert.equal(fs.existsSync(path.join(root, "agent")), false);
 });
 
+test("session confirm: a truthy non-true answer refuses with owner_declined", async () => {
+  const d = deps({ confirm: (async () => 1) as unknown as SessionDeps["confirm"] });
+  const r = await runSessionCommand(d, "open demo b.md");
+  assert.equal(r.ok, false);
+  assert.match(r.text, /\[owner_declined\]/);
+  assert.equal(d.spawned.length, 0);
+});
+
 test("session confirm: no UI refuses with no_ui and spawns nothing", async () => {
   const d = deps();
   const r = await runSessionCommand(d, "open demo b.md");

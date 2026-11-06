@@ -29,7 +29,7 @@ import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
-import { withBlocked } from "./herdr.ts";
+import { blockedConfirm } from "./herdr.ts";
 import type { EventBus } from "./herdr.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
@@ -410,9 +410,10 @@ export const NO_UI_REFUSAL = "session open refused [no_ui]: opening a session ne
 /** The owner-confirm hook of one Pi context: a yes/no dialog without timeout; absent without an interactive UI; a thrown dialog counts as No. */
 export function ownerConfirm(ctx: ExtensionContext, events: EventBus | undefined): SessionDeps["confirm"] {
   if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return undefined;
+  const ask = blockedConfirm(events, (title, message) => ctx.ui.confirm(title, message));
   return async (title, message) => {
     try {
-      return (await withBlocked(events, title, () => ctx.ui.confirm(title, message))) === true;
+      return (await ask(title, message)) === true;
     } catch {
       return false;
     }
@@ -463,7 +464,7 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   if (!c.dryRun) {
     if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
     const yes = await d.confirm(`pi-foreman: open session ${c.label}?`, openSummary(d, c, model, cwdArg));
-    if (!yes) return { text: `session open refused [owner_declined]: the owner declined to open session ${c.label}`, ok: false };
+    if (yes !== true) return { text: `session open refused [owner_declined]: the owner declined to open session ${c.label}`, ok: false };
   }
   const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
   const out = r.stdout.trim();

@@ -140,7 +140,7 @@ class HcSessionTest(unittest.TestCase):
         self.assertEqual(self.log(self.herdr_log), [])
         entry = self.registry()[0]
         self.assertEqual((entry["status"], entry["backend"], entry["hc"]),
-                         ("open", "hc", {"address": "t2", "parent": "t1", "space": None, "tab": None}))
+                         ("open", "hc", {"address": "t2", "parent": "t1", "space": None}))
         self.assertNotIn("pane", entry)
 
     def test_auto_prefers_herdr_over_hc(self):
@@ -187,7 +187,7 @@ class HcSessionTest(unittest.TestCase):
         code, out, err = self.run_main(*self.open_args(), HC_TERMINAL_ID="")
         self.assertEqual(code, 0, err)
         self.assertIn("not nested: no parent terminal", out)
-        self.assertEqual(self.registry()[0]["hc"], {"address": "t2", "parent": None, "space": None, "tab": None})
+        self.assertEqual(self.registry()[0]["hc"], {"address": "t2", "parent": None, "space": None})
 
     def test_forced_hc_wins_over_herdr(self):
         self.config(backend="hc")
@@ -332,47 +332,31 @@ class HcSessionTest(unittest.TestCase):
     def test_run_args_with_and_without_labels(self):
         plain = fsn.hc_run_args("n", "/w", ["x"], False)
         self.assertEqual(plain, ["run", "--json", "--bg", "--no-notify", "--keep", "--cwd", "/w", "--name", "n", "--", "x"])
-        labelled = fsn.hc_run_args("n", "/w", ["x"], True, "sp", "tb1")
+        labelled = fsn.hc_run_args("n", "/w", ["x"], True, "sp")
         self.assertEqual(labelled, ["run", "--json", "--bg", "--no-notify", "--keep", "--cwd", "/w", "--name", "n",
-                                    "--outlive-parent", "--label", "herdr.space=sp", "--label", "herdr.tab=tb1", "--", "x"])
+                                    "--outlive-parent", "--label", "herdr.space=sp", "--", "x"])
 
-    def test_space_label_gives_the_child_its_own_tab(self):
+    def test_local_child_gets_no_herdr_labels_even_when_the_opener_has_a_space(self):
         code, out, err = self.run_main(*self.open_args(), FAKE_HC_LABELS=self.LABELS)
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.log(self.hc_log)[0], ["get", "t1", "--json"])
+        self.assertEqual(self.log(self.hc_log), [c for c in self.log(self.hc_log) if c[0] == "run"])
         call = self.hc_call()
-        sep = call.index("--")
-        self.assertEqual(call[sep - 4], "--label")
-        self.assertEqual(call[sep - 3], "herdr.space=sp_1")
-        tab = call[sep - 1].split("=", 1)[1]
-        self.assertEqual(call[sep - 2:sep - 1], ["--label"])
-        self.assertRegex(tab, r"^tb[0-9a-f]{32}$")
-        self.assertEqual(self.registry()[0]["hc"], {"address": "t2", "parent": None, "space": "sp_1", "tab": tab})
+        self.assertFalse(any(a.startswith("herdr.") for a in call), call)
+        self.assertNotIn("--label", call)
+        self.assertIn("--keep", call)
+        self.assertEqual(self.registry()[0]["hc"], {"address": "t2", "parent": None, "space": None})
 
-    def test_dry_run_shows_the_labels(self):
+    def test_dry_run_shows_no_labels_for_a_local_child(self):
         code, out, err = self.run_main(*self.open_args("--dry-run"), FAKE_HC_LABELS=self.LABELS)
         self.assertEqual(code, 0, err)
-        self.assertIn("herdr.space=sp_1", out)
-        self.assertIn("herdr.tab=tb", out)
-        self.assertEqual(self.run_calls(), [])
+        self.assertNotIn("--label", out)
+        self.assertIn("--keep", out)
+        self.assertEqual(self.log(self.hc_log), [])
 
-    def test_no_labels_when_the_lookup_gives_nothing(self):
-        cases = {"hc failure": {"FAKE_HC_FAIL": "1"}, "no label": {"FAKE_HC_LABELS": json.dumps({"where": "x"})},
-                 "invalid value": {"FAKE_HC_LABELS": json.dumps({"herdr.space": "a b;c"})},
-                 "non-string value": {"FAKE_HC_LABELS": json.dumps({"herdr.space": 5})},
-                 "no terminal id": {"HC_TERMINAL_ID": "", "FAKE_HC_LABELS": self.LABELS}}
-        self.config(backend="hc")
-        for name, env in cases.items():
-            self.hc_log.unlink(missing_ok=True)
-            code, out, err = self.run_main(*self.open_args("--dry-run"), **env)
-            self.assertEqual(code, 0, (name, err))
-            self.assertNotIn("--label", out, name)
-            self.assertIn("--keep", out, name)
-
-    def test_parent_space_never_raises(self):
-        self.assertIsNone(fsn.hc_parent_space(str(self.hc), None))
-        self.assertIsNone(fsn.hc_parent_space(str(self.hc), "bad id"))
-        self.assertIsNone(fsn.hc_parent_space(str(self.tmp / "missing"), "t1"))
+    def test_run_args_still_passes_a_remote_space_and_labels(self):
+        args = fsn.hc_run_args("n", "/w", ["x"], False, "sp-alpha", [("fm.child", "c")], True)
+        self.assertEqual(args, ["run", "--json", "--bg", "--no-notify", "--keep", "--no-parent", "--cwd", "/w", "--name", "n",
+                                "--label", "herdr.space=sp-alpha", "--label", "fm.child=c", "--", "x"])
 
 
 if __name__ == "__main__":
