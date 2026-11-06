@@ -4,7 +4,7 @@
     python scripts/foreman_session.py open <label> <brief-file> [--cwd DIR] [--model ID]
                                       [--plan-first] [--focus] [--dry-run] [--print-all]
                                       [--first-command CMD]... [--plan-mode]
-                                      [--parent-id ID] [--own-model ID] [--profile NAME] [--agent-dir D]
+                                      [--parent-id ID] [--profile NAME] [--agent-dir D]
     python scripts/foreman_session.py open <label> <brief-file> --worktree [--base REF] [--cwd DIR] [...]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
@@ -591,37 +591,6 @@ def child_env(handoff, parent, child, parent_slug, model=None, environ=None, rem
     return env + addon_env(environ)
 
 
-def rank_refusal(adir, own_model, child_model):
-    """Mirror of ranks.ts sessionRankRefusal for a known own model; None when allowed (or no ranks configured)."""
-    try:
-        import foreman_config
-        import foreman_retro
-        ranks = foreman_retro.ranks_of(foreman_config.load_config(agent_dir=str(adir))["config"])
-    except Exception:  # noqa: BLE001 - an unreadable config never blocks the open
-        return None
-    levels = ("off", "minimal", "low", "medium", "high", "xhigh")
-
-    def base(m):
-        m = m.strip()
-        head, _, tail = m.rpartition(":")
-        return head if head and tail in levels else m
-
-    child, own = base(child_model), base(own_model)
-    if own == child or not ranks:
-        return None
-    head = "session open refused [session_rank]: cannot open a session ranked above this session:"
-    tail = "use --model with a model at or below your rank"
-    c_tier = foreman_retro._rank_tier(ranks, child)
-    o_tier = foreman_retro._rank_tier(ranks, own)
-    if c_tier is None:
-        return "%s %s is unranked; %s, or add a ranks entry for it" % (head, child, tail)
-    if o_tier is None:
-        return "%s this session's model %s is unranked; %s, or add a ranks entry for it" % (head, own, tail)
-    if c_tier < o_tier:
-        return "%s %s is tier %d, this session is tier %d (lower number = higher rank); %s" % (head, child, c_tier, o_tier, tail)
-    return None
-
-
 def opener_slug(cwd, top):
     """The opener's slug: its own session label when it is an opened child, else its repo (or cwd) name."""
     handoff = os.environ.get(ENV_HANDOFF, "").strip()
@@ -887,13 +856,6 @@ def cmd_open(a):
         raise Refused("--model may use only A-Z a-z 0-9 . _ : / @ -")
     if a.profile:
         check_profile(adir, a.profile)
-    own_model = a.own_model or os.environ.get(ENV_MODEL, "").strip() or None
-    if own_model and not VALUE_RE.match(own_model):
-        raise Refused("--own-model may use only A-Z a-z 0-9 . _ : / @ -")
-    if a.model and own_model:
-        refused = rank_refusal(adir, own_model, a.model)
-        if refused:
-            raise Refused(refused)
     parent = opener_id(a.parent_id, adir)
     if not parent:
         raise Refused("no parent intercom id: pass --parent-id (inside Pi, /foreman session open passes it)")
@@ -919,7 +881,7 @@ def cmd_open(a):
                 sys.stderr.write("pi-foreman session: npm ci failed in %s (%s); the session opens anyway, rerun npm ci there\n"
                                  % (wtree["path"], wtree["install"]))
         cwd = Path(wtree["path"])
-    params = {"adir": adir, "label": a.label, "text": text, "cwd": cwd, "model": a.model, "own_model": own_model,
+    params = {"adir": adir, "label": a.label, "text": text, "cwd": cwd, "model": a.model,
               "plan_first": a.plan_first, "parent": parent, "focus": a.focus, "dry_run": a.dry_run,
               "print_all": a.print_all, "first": first, "profile": a.profile, "worktree": wtree}
     return open_session(params)[0]
@@ -970,8 +932,6 @@ def open_session(p, remote=None):
     say("child intercom id: %s" % child)
     if model:
         say("session model: %s" % model)
-        if not p["own_model"]:
-            say("rank check skipped: own model unknown")
     info = {"handoff": str(handoff), "child": child}
     if p.get("worktree"):
         info["worktree"] = p["worktree"]
@@ -1159,7 +1119,7 @@ def check_trust(adir, cwd, trust, dry_run):
 
 
 def remote_open(adir, params):
-    spec = {"label": str, "brief": str, "cwd": str, "model": (str, type(None)), "ownModel": (str, type(None)),
+    spec = {"label": str, "brief": str, "cwd": str, "model": (str, type(None)),
             "planFirst": bool, "parentAddress": str, "parentName": str, "trust": bool, "dryRun": bool,
             "firstCommands": list, "space": str}
     check_fields(params, spec, ("label", "brief", "cwd", "parentAddress", "parentName"))
@@ -1173,12 +1133,11 @@ def remote_open(adir, params):
     space = params.get("space")
     if space is not None and not VALUE_RE.match(space):
         raise Refused("space may use only A-Z a-z 0-9 . _ : / @ -", "bad_request")
-    label, model, own = params["label"], params.get("model"), params.get("ownModel")
+    label, model = params["label"], params.get("model")
     if not LABEL_RE.match(label):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit", "bad_request")
-    for what, v in (("model", model), ("ownModel", own)):
-        if v and not VALUE_RE.match(v):
-            raise Refused("%s may use only A-Z a-z 0-9 . _ : / @ -" % what, "bad_request")
+    if model and not VALUE_RE.match(model):
+        raise Refused("model may use only A-Z a-z 0-9 . _ : / @ -", "bad_request")
     check_parent_address(params)
     if len(params["brief"].encode("utf-8")) > MAX_CONTENT_BYTES:
         raise Refused("the brief is larger than %d bytes" % MAX_CONTENT_BYTES, "too_large")
@@ -1188,17 +1147,13 @@ def remote_open(adir, params):
         raise Refused("cwd is not a directory on this machine: %s" % cwd, "bad_cwd")
     cwd = cwd.resolve()
     check_path_text(cwd, "cwd")
-    if model and own:
-        refused = rank_refusal(adir, own, model)
-        if refused:
-            raise Refused(refused, "session_rank")
     if not hc_bin():
         raise Refused("hc was not found on this machine (PATH or HC_BIN): the child is launched with its hc", "remote_launcher")
     dry = params.get("dryRun") is True
     trusted = check_trust(adir, cwd, params.get("trust") is True, dry)
     lines = []
     remote = {"parentName": params["parentName"], "say": lines.append, "trusted": trusted, "space": space}
-    p = {"adir": adir, "label": label, "text": params["brief"], "cwd": cwd, "model": model, "own_model": own,
+    p = {"adir": adir, "label": label, "text": params["brief"], "cwd": cwd, "model": model,
          "plan_first": params.get("planFirst") is True, "parent": params["parentAddress"], "focus": False,
          "dry_run": dry, "print_all": False, "first": first}
     _, info = open_session(p, remote)
@@ -1607,13 +1562,6 @@ def cmd_open_remote(a):
     check_first_commands(first)
     if a.model and not VALUE_RE.match(a.model):
         raise Refused("--model may use only A-Z a-z 0-9 . _ : / @ -")
-    own_model = a.own_model or os.environ.get(ENV_MODEL, "").strip() or None
-    if own_model and not VALUE_RE.match(own_model):
-        raise Refused("--own-model may use only A-Z a-z 0-9 . _ : / @ -")
-    if a.model and own_model:
-        refused = rank_refusal(adir, own_model, a.model)
-        if refused:
-            raise Refused(refused, "session_rank")
     parent = opener_id(a.parent_id, adir)
     if not parent:
         raise Refused("no opener intercom id; pass --parent-id", "no_return_path")
@@ -1651,7 +1599,7 @@ def cmd_open_remote(a):
     if seen != name:
         notes.append("intercom name differs: %s" % (seen if isinstance(seen, str) and MACHINE_RE.match(seen) else "(none)"))
     space = None if a.dry_run else machine_space(entry_cfg, name, a.cwd)
-    payload = {"label": a.label, "brief": text, "cwd": a.cwd, "model": a.model, "ownModel": own_model,
+    payload = {"label": a.label, "brief": text, "cwd": a.cwd, "model": a.model,
                "planFirst": a.plan_first, "parentAddress": address, "parentName": parent_name, "trust": a.trust,
                "dryRun": a.dry_run}
     if first:
@@ -1917,7 +1865,6 @@ def main(argv=None):
     o.add_argument("brief")
     o.add_argument("--cwd")
     o.add_argument("--model")
-    o.add_argument("--own-model")
     o.add_argument("--parent-id")
     o.add_argument("--plan-first", action="store_true")
     o.add_argument("--profile")

@@ -29,6 +29,7 @@ function deps(over: Partial<SessionDeps> = {}, stdout = "handoff: x"): SessionDe
     python: "/usr/bin/python3",
     spawner: async (_c, args) => (spawned.push(args), { code: 0, stdout, stderr: "", timedOut: false }),
     send: async () => "sent",
+    confirm: async () => true,
     trace: (r) => void traced.push(r),
     recordWorktree: async (e) => void recorded.push(e),
     spawned,

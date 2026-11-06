@@ -29,7 +29,8 @@ import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
-import { sessionRankRefusal } from "./ranks.ts";
+import { withBlocked } from "./herdr.ts";
+import type { EventBus } from "./herdr.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
 
@@ -343,7 +344,9 @@ export interface SessionDeps {
   send: (to: string, text: string) => Promise<string>;
   /** Like `send`, with the outbox result's code and detail; when present it decides the retry via live.json. */
   sendDetailed?: (to: string, text: string) => Promise<OutboxOutcome>;
-  /** This session's own model, `<provider>/<id>`; with `config` it enables the session-foreman model and the rank check. */
+  /** The owner's yes/no for a real open (see ownerConfirm); absent = no interactive session, so an open is refused. */
+  confirm?: (title: string, message: string) => Promise<boolean>;
+  /** This session's own model, `<provider>/<id>`; with `config` it enables the session-foreman model. */
   model?: string;
   /** Merged config (providers.<p>.roles.session-foreman.model, ranks, ladder.childPolicy). */
   config?: Json;
@@ -402,15 +405,45 @@ export function cliModelOf(argv: readonly string[]): string | undefined {
   return undefined;
 }
 
+export const NO_UI_REFUSAL = "session open refused [no_ui]: opening a session needs the owner's confirmation in an interactive Pi session; run `foreman session open ...` in a terminal instead";
+
+/** The owner-confirm hook of one Pi context: a yes/no dialog without timeout; absent without an interactive UI; a thrown dialog counts as No. */
+export function ownerConfirm(ctx: ExtensionContext, events: EventBus | undefined): SessionDeps["confirm"] {
+  if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return undefined;
+  return async (title, message) => {
+    try {
+      return (await withBlocked(events, title, () => ctx.ui.confirm(title, message))) === true;
+    } catch {
+      return false;
+    }
+  };
+}
+
+/** The summary the owner confirms: label, model, cwd, worktree and base, plan-first, machine, first 3 non-empty brief lines. */
+function openSummary(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, model: string | undefined, cwd: string): string {
+  let brief: string;
+  try {
+    brief = fs.readFileSync(path.resolve(d.cwd, c.brief), "utf8").split(/\r?\n/).filter((l) => l.trim() !== "").slice(0, 3).join("\n");
+  } catch {
+    brief = "(brief unreadable)";
+  }
+  return [
+    `label: ${c.label}`,
+    `model: ${model ?? "(default)"}`,
+    `cwd: ${cwd}`,
+    `worktree: ${c.worktree ? `yes (base ${c.base ?? "default branch"})` : "no"}`,
+    `plan-first: ${c.planFirst ? "yes" : "no"}`,
+    `machine: ${c.machine ?? "local"}`,
+    "brief:",
+    brief,
+  ].join("\n");
+}
+
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
   if (c.planMode && !c.machine && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
   const explicit = c.model ?? sessionForemanModel(d.config, d.model);
   const model = explicit ?? d.model;
-  if (d.config && (model || d.model === undefined)) {
-    const refused = sessionRankRefusal(d.config, d.model, model ?? "the new session's default model");
-    if (refused) return { text: refused, ok: false };
-  }
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
   if (c.machine && !c.cwd) return { text: "pi-foreman session: open --machine needs --cwd (the directory on the remote machine).", ok: false };
   // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
@@ -418,7 +451,6 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", cwdArg, "--parent-id", opener];
   if (c.machine) argv.push("--machine", c.machine);
   if (c.trust) argv.push("--trust");
-  if (d.model) argv.push("--own-model", d.model);
   // only an explicit choice (--model or the session-foreman mapping) sets PI_FOREMAN_SESSION_MODEL in the child; the opener's own model is just displayed
   if (explicit) argv.push("--model", explicit);
   if (c.planFirst) argv.push("--plan-first");
@@ -428,6 +460,11 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   if (c.dryRun) argv.push("--dry-run");
   if (c.worktree) argv.push("--worktree");
   if (c.base !== undefined) argv.push("--base", c.base);
+  if (!c.dryRun) {
+    if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
+    const yes = await d.confirm(`pi-foreman: open session ${c.label}?`, openSummary(d, c, model, cwdArg));
+    if (!yes) return { text: `session open refused [owner_declined]: the owner declined to open session ${c.label}`, ok: false };
+  }
   const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
   const out = r.stdout.trim();
   if (c.worktree && !c.dryRun && !r.error && !r.timedOut && r.code === 0) await noteWorktree(d, c.label, out);
@@ -664,6 +701,7 @@ export function registerSession(
           pkgRoot: deps.pkgRoot,
           python: s.python,
           spawner: deps.spawner,
+          confirm: ownerConfirm(ctx, pi.events as EventBus | undefined),
           send: (to, text) => outboxSend(pi.events, to, text, "session", SEND_WAIT_MS),
           sendDetailed: (to, text) => outboxSendDetailed(pi.events, to, text, "session", SEND_WAIT_MS),
           model: s.model,
@@ -686,7 +724,7 @@ const OPEN_PARAMS = {
     label: { type: "string", description: "Session label: 1-40 characters of A-Z a-z 0-9 . _ -." },
     brief: { type: "string", description: "Path of the brief file the new session reads." },
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
-    model: { type: "string", description: "Model of the new session, <provider>/<id>; the rank rule applies." },
+    model: { type: "string", description: "Model of the new session, <provider>/<id>." },
     planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks questions via ask_user_question until the plan is decision-complete." },
     planMode: { type: "boolean", description: "Open the session in plan mode (the brief prompt runs as `/plan <brief prompt>`); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
@@ -724,6 +762,7 @@ export function registerSessionOpenTool(
           pkgRoot: deps.pkgRoot,
           python: s.python,
           spawner: deps.spawner,
+          confirm: ownerConfirm(ctx, pi.events as EventBus | undefined),
           send: async () => "unavailable",
           model: s.model,
           config: s.config,

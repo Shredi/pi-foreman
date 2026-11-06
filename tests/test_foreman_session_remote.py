@@ -452,14 +452,10 @@ class RemoteOpenTest(RemoteBase):
             self.assertEqual((rc, reply["ok"], reply.get("code")), (1, False, code), over)
         self.assertFalse((self.radir / "pi-foreman").exists())
 
-    def test_rank_refusal_on_the_remote(self):
+    def test_no_rank_rule_on_the_remote(self):
         ranks = [{"match": "big-*", "tier": 0}, {"match": "small-*", "tier": 2}]
         self.write_config({}, {"providers": {"prov": {"ranks": ranks}}}, adir=self.radir)
-        rc, reply = self.remote("open", self.open_params(model="big-x", ownModel="small-y"))
-        self.assertEqual((rc, reply["code"]), (1, "session_rank"))
-        self.assertIn("tier 0", reply["error"])
-        self.assertFalse((self.radir / "pi-foreman").exists())
-        self.assertEqual(self.remote("open", self.open_params(model="small-x", ownModel="big-y"))[0], 0)
+        self.assertEqual(self.remote("open", self.open_params(model="big-x"))[0], 0)
 
     def test_untrusted_project_resources(self):
         (self.rproj / ".pi").mkdir()
@@ -976,12 +972,11 @@ class ParentTest(RemoteBase):
         self.assertEqual(self.run_main(*self.open_args(cwd="/home/u/p"))[0], 1)  # the remote refuses: no such directory
         self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["cwd"], "/home/u/p")
 
-    def test_rank_refusal_happens_before_any_hc_call(self):
+    def test_no_rank_rule_on_the_client(self):
         ranks = [{"match": "big-*", "tier": 0}, {"match": "small-*", "tier": 2}]
         self.write_config({"alpha": {"parentName": "beta"}}, {"providers": {"prov": {"ranks": ranks}}})
-        err = self.refused(*self.open_args("--model", "big-x", "--own-model", "small-y"), code="session_rank")
-        self.assertIn("tier 0", err)
-        self.assertEqual(self.hc_calls("machine", "exec"), [])
+        rc, out, err = self.run_main(*self.open_args("--model", "big-x"), PI_FOREMAN_SESSION_MODEL="small-y")
+        self.assertEqual(rc, 0, err)
 
     def test_remote_protocol(self):
         err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="4")

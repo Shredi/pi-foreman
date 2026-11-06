@@ -26,7 +26,8 @@ test("session open: the opener's own model is shown but not passed as --model (n
   const r = await runSessionCommand(d, "open demo b.md --dry-run");
   assert.match(r.text, /^session model: p\/own-model\n/);
   assert.equal(d.spawned[0].includes("--model"), false);
-  assert.deepEqual(d.spawned[0].slice(-3), ["--own-model", own, "--dry-run"]);
+  assert.equal(d.spawned[0].at(-1), "--dry-run");
+  assert.equal(d.spawned[0].includes("--own-model"), false);
 });
 
 test("session open: an explicit --model is still passed", async () => {
