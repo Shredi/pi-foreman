@@ -1,7 +1,8 @@
 // Prompt cache, catch-all: every `context` and `before_agent_start` handler the whole adapter registers keeps the sent prefix
 // byte-identical (docs/cache.md "Stable prefix"). The handlers are collected from the rig, never picked by name, so a new hook is
 // covered without editing this file. They run the way Pi's request loop runs them: `context` handlers chain on the visible list,
-// `before_agent_start` handlers share one system options object and their messages follow the prompt in the session.
+// `before_agent_start` handlers share one system options object per run (a fresh copy of the base options, as Pi builds it) and their
+// messages follow the prompt in the session.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
@@ -30,8 +31,11 @@ test("every context and before_agent_start handler leaves the sent prefix byte-i
 
   // Pi's session: append-only. The model sees the request's `context` result of it, never the stored list.
   const session: Msg[] = [];
-  // Pi keeps one system prompt options object for the session; before_agent_start handlers edit its sections in place.
-  const options = { sections: {} as Record<string, string>, forceSystemPrompt: undefined as string | undefined };
+  // Pi builds the system prompt options per run (`normalizeBuildSystemPromptOptions` copies the base's sections) and drops a forced
+  // prompt when the run ends. before_agent_start handlers edit that run's copy; the request renders the latest run's options.
+  type Options = { sections: Record<string, string>; forceSystemPrompt: string | undefined };
+  const baseOptions: Options = { sections: {}, forceSystemPrompt: undefined };
+  let options: Options = { ...baseOptions, sections: { ...baseOptions.sections } };
   const renderSystem = () => options.forceSystemPrompt ?? Object.entries(options.sections).map(([k, v]) => `<${k}>\n${v}\n</${k}>`).join("\n");
   let sent: { label: string; visible: Msg[]; system: string } | undefined;
   let calls = 0;
@@ -46,11 +50,13 @@ test("every context and before_agent_start handler leaves the sent prefix byte-i
   const startPrompt = async (text: string) => {
     assert.deepEqual(await r.inputRun("interactive", text), { action: "continue" }, `prompt "${text}" is not handled by an input hook`);
     const extra: Msg[] = [];
+    const run: Options = { ...baseOptions, sections: { ...baseOptions.sections } };
+    options = run;
     for (const h of r.handlersOf("before_agent_start")) {
-      const event = { prompt: text, type: "before_agent_start", get systemPrompt() { return renderSystem(); }, systemPromptOptions: options };
+      const event = { prompt: text, type: "before_agent_start", get systemPrompt() { return renderSystem(); }, systemPromptOptions: run };
       const res = (await h(event, r.ctx)) as { message?: { customType: string; content: string; display?: boolean }; systemPrompt?: string } | undefined;
       if (res?.message) extra.push({ role: "custom", customType: res.message.customType, content: res.message.content, display: res.message.display ?? true });
-      if (res?.systemPrompt !== undefined) options.forceSystemPrompt = res.systemPrompt;
+      if (res?.systemPrompt !== undefined) run.forceSystemPrompt = res.systemPrompt;
     }
     await say({ role: "user", content: [{ type: "text", text }] });
     for (const m of extra) await say(m);
@@ -93,7 +99,7 @@ test("every context and before_agent_start handler leaves the sent prefix byte-i
   const input: Record<string, unknown> = { agent: "builder", task: "build" };
   const launch = await toolTurn("subagent", input, { text: "Async: builder [run-1]", details: { runId: "run-1" } });
   assert.equal(launch.block, undefined, "the child launch is not blocked");
-  const dir = path.resolve(/(\S*pi-foreman-scratch\S*)/.exec(String(input.task))?.[1]?.replace(/[`'".,]+$/, "") ?? "");
+  const dir = path.resolve(/Your scratch dir: (\S+) \(env/.exec(String(input.task))?.[1] ?? "");
   assert.notEqual(dir, path.resolve(""), `the launch names a scratch dir in its task: ${String(input.task)}`);
   await request("child launch");
   await reply("the builder runs");
@@ -103,7 +109,8 @@ test("every context and before_agent_start handler leaves the sent prefix byte-i
   await request("open-tool notice");
   await reply("waiting");
   writeOpenCommand(dir, { toolCallId: "tc1", command: "npm test", startedAt: Date.now() - 240_000 });
-  await r.fire("message_end", { message: notice("run-1", "tc1") });
+  const suppressed = (await r.fire("message_end", { message: notice("run-1", "tc1") })) as { message?: { display?: boolean } } | undefined;
+  assert.equal(suppressed?.message?.display, false, "the notice for the long test run is suppressed");
   await say(notice("run-1", "tc2"));
   await request("notice suppressed");
   await reply("still waiting");
@@ -112,7 +119,7 @@ test("every context and before_agent_start handler leaves the sent prefix byte-i
   r.end({ runId: "run-1", agent: "builder", success: true, summary: "done", results: [{ agent: "builder" }] });
   await say(finished("run-1"));
   await request("run end");
-  await toolTurn("subagent", { runId: "run-1" }, { text: "pi-foreman launch-wait: run run-1 (builder) ended completed after 3s. Result path: x.", details: { runId: "run-1" } }, false);
+  await toolTurn("subagent", { runId: "run-1" }, { text: "pi-foreman launch-wait: run run-1 (builder) ended completed after 3s. Result path: x.", details: { runId: "run-1" } });
   await request("result fetched");
   await reply("reviewed");
 
