@@ -202,6 +202,15 @@ def _pressure_suffix(p):
     return " ⚠ " + ",".join(reasons) if reasons else " ⚠"
 
 
+def _owner_suffix(node):
+    """` · owner <state>` from the live state's presence of the owner (present, away, grace, unknown); an older file
+    without it keeps the legacy ` · away` while a warm window is open and the owner is away."""
+    owner = node.get("owner")
+    if owner in ("present", "away", "grace", "unknown"):
+        return " · owner " + owner
+    return " · away" if node.get("away") is True else ""
+
+
 def _cap(value):
     if value is None:
         return None
@@ -538,7 +547,7 @@ def _meta(node, recent, width, place, budget):
     tot = node.get("tot") or {}
     shown = sum(1 for k in node.get("children") or [] if _recent_run(k, recent))
     done = max(0, (node.get("done_children") or 0) - shown)
-    parts = [fmt_cost(tot.get("cost")) + _pressure_suffix(node.get("pressure")) + (" · away" if node.get("away") is True else "")]
+    parts = [fmt_cost(tot.get("cost")) + _pressure_suffix(node.get("pressure")) + _owner_suffix(node)]
     if done:
         parts.append("✓%d" % done)
     if not (tot.get("in") or tot.get("out") or tot.get("uncached")):

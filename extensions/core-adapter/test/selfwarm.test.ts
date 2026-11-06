@@ -1,21 +1,20 @@
-// Self-warm (selfwarm.ts) and the warm gate behind Pi-sent warms: fake clock, fake timers, fake probe and replay.
+// Warm owner (selfwarm.ts, docs/cache.md): tick timing, the activity rule (tiers), the cost rule, the final-warm compaction,
+// in-flight handling and the replay. Fake clock, fake timers, fake probe and replay.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SelfWarm, type WarmReply } from "../selfwarm.ts";
+import { SelfWarm, warmDelayMs, settleGraceMs, AWAY_GRACE_MS, type WarmReply, type WarmSignals } from "../selfwarm.ts";
 import { Presence } from "../presence.ts";
-import { IdleCache, type Busy } from "../idlecache.ts";
 import { resolveWarmPolicy, type CachePolicy } from "../cachepolicy.ts";
 import { replayWarm, replayable, splitSystem } from "../warmreplay.ts";
 import type { UsageLine } from "../usage.ts";
 
 const MIN = 60_000;
-const NOT_BUSY: Busy = { childRun: false, wait: false, launchWait: false, pendingMessages: false, notIdle: false };
-const LONG: CachePolicy = {
-  active: false, skip: "ttl_long", ttlSeconds: 3600, billing: "token", intervalSeconds: 3240, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true,
-  budgetShare: 0.5, awayTicks: 0, whileWaiting: true, selfWarm: true, selfWarmWindowMinutes: 180,
-};
 const RATES = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 10 };
 const HIT: WarmReply = { provider: "p", model: "m", usage: { input: 5, output: 1, cacheRead: 100_000, cacheWrite: 0 }, timestamp: 0 };
+const NONE: WarmSignals = { strongA: null, turn: false, question: false, dialog: false, command: false };
+const policy = (ttl: number | null, over: Partial<CachePolicy> = {}): CachePolicy => ({
+  active: false, ttlSeconds: ttl, billing: "token", intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: ttl !== null && ttl > 10, ...over,
+});
 
 interface Slot {
   fn: () => void;
@@ -26,7 +25,22 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
 };
 
-function make(over: { policy?: Partial<CachePolicy>; idle?: number | null; compact?: { point: number | null; model: string | null } | null; replayable?: boolean; rates?: typeof RATES | null; reply?: () => Promise<WarmReply | null>; isChild?: boolean } = {}) {
+interface Opts {
+  ttl?: number;
+  policy?: Partial<CachePolicy>;
+  idle?: number | null;
+  presence?: boolean;
+  compact?: { point: number | null; model: string | null } | null;
+  replayable?: boolean;
+  rates?: typeof RATES | null;
+  reply?: () => Promise<WarmReply | null>;
+  isChild?: boolean;
+  tokens?: number | null;
+  window?: number | null;
+  drift?: boolean;
+}
+
+function make(o: Opts = {}) {
   const clock = { t: 10_000_000 };
   const t0 = clock.t;
   const slots: Slot[] = [];
@@ -41,42 +55,47 @@ function make(over: { policy?: Partial<CachePolicy>; idle?: number | null; compa
     },
   };
   const traces: Record<string, unknown>[] = [];
-  const f = { policy: { ...LONG, ...over.policy } as CachePolicy, busy: { ...NOT_BUSY }, replays: 0, signals: [] as AbortSignal[], recorded: [] as WarmReply[], compacts: 0, probes: 0 };
+  const f = { sig: { ...NONE } as WarmSignals, queued: false, drift: o.drift ?? false, replays: 0, signals: [] as AbortSignal[], recorded: [] as WarmReply[], compacts: 0, probes: 0, idle: o.idle === undefined ? 0 : o.idle, glyph: [] as boolean[] };
   const presence = new Presence({
     now: () => clock.t,
     timers,
-    config: () => ({ enabled: true, awayAfterMinutes: 11, command: null }),
+    config: () => ({ enabled: o.presence ?? true, awayAfterMinutes: 11, command: null }),
     probe: async () => {
       f.probes += 1;
-      return over.idle === undefined ? 0 : over.idle;
+      return f.idle;
     },
     trace: (r) => void traces.push(r),
   });
+  const pol = policy(o.ttl ?? 3600, o.policy);
   const sw = new SelfWarm({
     now: () => clock.t,
     timers,
-    isChild: over.isChild ?? false,
-    policy: () => f.policy,
+    isChild: o.isChild ?? false,
+    policy: () => pol,
     presence,
-    busy: () => f.busy,
-    rates: () => (over.rates === undefined ? RATES : over.rates),
+    signals: () => f.sig,
+    queued: () => f.queued,
+    rates: () => (o.rates === undefined ? RATES : o.rates),
     compact: () => {
       f.compacts += 1;
-      return over.compact === undefined ? { point: 100000, model: "p/m" } : over.compact;
+      return o.compact === undefined ? { point: 100000, model: "p/m" } : o.compact;
     },
+    contextTokens: () => (o.tokens === undefined ? 700_000 : o.tokens),
+    contextWindow: () => (o.window === undefined ? 1_000_000 : o.window),
+    driftPending: () => f.drift,
+    setGlyph: (on) => void f.glyph.push(on),
     trace: (r) => void traces.push(r),
-    replayable: () => over.replayable ?? true,
+    replayable: () => o.replayable ?? true,
     replay: async (_m, signal) => {
       f.replays += 1;
       f.signals.push(signal);
-      return over.reply ? over.reply() : HIT;
+      return o.reply ? o.reply() : HIT;
     },
     record: (reply) => {
       f.recorded.push(reply);
       return { cost: { total: 0.05 } } as UsageLine;
     },
   });
-  sw.capture([{ role: "system", content: "sys" }, { role: "user", content: "hi" }]);
   const advance = async (ms: number): Promise<void> => {
     const target = clock.t + ms;
     for (;;) {
@@ -89,70 +108,347 @@ function make(over: { policy?: Partial<CachePolicy>; idle?: number | null; compa
     }
     clock.t = target;
   };
-  const open = (prompt = 100_000): void => {
+  /** A real request: captured at the request, ended with its usage. */
+  const request = (prompt = 100_000): void => {
+    sw.capture([{ role: "system", content: "sys" }, { role: "user", content: "hi" }]);
     sw.noteRequest(prompt);
+  };
+  const open = (prompt = 100_000): void => {
+    request(prompt);
     sw.start();
   };
   const ev = (event: string, outcome?: string) => traces.filter((r) => r.event === event && (outcome === undefined || r.outcome === outcome));
   const reasons = (outcome: string): unknown[] => ev("keepalive", outcome).map((r) => r.reason);
-  return { sw, f, clock, t0, traces, advance, open, ev, reasons, slots };
+  return { sw, f, clock, t0, traces, advance, open, request, ev, reasons, slots };
 }
 
-test("3600 s TTL: first self-warm at 54 minutes, recorded as source foreman, then every 54 minutes", async () => {
-  const h = make();
-  h.open();
-  await h.advance(53 * MIN);
-  assert.equal(h.f.replays, 0);
-  await h.advance(1 * MIN);
-  assert.equal(h.f.replays, 1);
-  assert.equal(h.f.recorded.length, 1);
-  assert.deepEqual(h.ev("keepalive", "fired").map((r) => [r.source, r.cacheRead, r.cacheWrite]), [["foreman", 100_000, 0]]);
-  assert.equal(h.sw.lastCacheTouch(), h.t0 + 54 * MIN);
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 2);
+// ---- tick timing -------------------------------------------------------------------------------------------
+
+test("warmDelayMs: min(0.9 x TTL, TTL - 10 s); null for a TTL of 10 s or less", () => {
+  assert.equal(warmDelayMs(20), 10_000);
+  assert.equal(warmDelayMs(300), 270_000);
+  assert.equal(warmDelayMs(3600), 3_240_000);
+  assert.equal(warmDelayMs(11), 1000);
+  assert.equal(warmDelayMs(10), null);
+  assert.equal(warmDelayMs(5), null);
+  assert.equal(warmDelayMs(null), null);
 });
 
-test("the replay is sent through the provided signal; the hook-side owns() is true so Pi's hook answers stop", () => {
-  const h = make();
-  assert.equal(h.sw.owns(), true);
+for (const [ttl, tick] of [[20, 10], [300, 270], [3600, 3240]] as const) {
+  test(`${ttl} s TTL: the first warm goes out ${tick} s after the request end, then every ${tick} s, recorded as source foreman`, async () => {
+    const h = make({ ttl });
+    h.open();
+    await h.advance((tick - 1) * 1000);
+    assert.equal(h.f.replays, 0);
+    await h.advance(1000);
+    assert.equal(h.f.replays, 1);
+    assert.equal(h.f.recorded.length, 1);
+    assert.deepEqual(h.ev("keepalive", "fired").map((r) => [r.source, r.cacheRead, r.cacheWrite]), [["foreman", 100_000, 0]]);
+    assert.equal(h.sw.lastCacheTouch(), h.t0 + tick * 1000);
+    await h.advance(tick * 1000);
+    assert.equal(h.f.replays, 2);
+  });
+}
+
+test("a TTL of 10 s or less: no ownership, nothing scheduled, no warm", async () => {
+  for (const ttl of [10, 5]) {
+    const h = make({ ttl });
+    h.open();
+    await h.advance(60 * MIN);
+    assert.equal(h.sw.owns(), false);
+    assert.equal(h.f.replays, 0);
+  }
 });
 
-test("short TTL, beyondPiCap off or a child: not owned, nothing scheduled", async () => {
-  for (const o of [{ policy: { selfWarm: false, ttlSeconds: 300 } }, { policy: { selfWarm: false } }, { isChild: true }]) {
+test("not owned: keepalive off, a child's missing switch or a model that cannot be replayed", async () => {
+  for (const o of [{ policy: { keepaliveOwned: false } }, { replayable: false }] as Opts[]) {
     const h = make(o);
     h.open();
     await h.advance(200 * MIN);
     assert.equal(h.sw.owns(), false);
     assert.equal(h.f.replays, 0);
   }
+  const h = make({ replayable: false });
+  h.open();
+  h.open();
+  assert.deepEqual(h.reasons("skipped"), ["not_replayable"], "traced once");
 });
 
-test("abort on activity: the in-flight call is aborted, not recorded, window ends with activity", async () => {
+test("a child session is wired like the parent: it warms, with no presence probe", async () => {
+  const h = make({ isChild: true });
+  h.open();
+  await h.advance(54 * MIN);
+  assert.equal(h.f.replays, 1);
+  assert.equal(h.f.probes, 0);
+});
+
+test("the footer glyph is on while watching and off when the stretch ends", async () => {
+  const h = make({ policy: { budgetShare: 0.01 } });
+  h.open();
+  assert.deepEqual(h.f.glyph, [true]);
+  await h.advance(54 * MIN);
+  assert.equal(h.f.glyph.at(-1), false);
+});
+
+// ---- the activity rule -------------------------------------------------------------------------------------
+
+const REASONS: [Partial<WarmSignals>, string][] = [
+  [{ strongA: "subagent" }, "subagent"],
+  [{ strongA: "bg_task" }, "bg_task"],
+  [{ strongA: "wait" }, "wait"],
+  [{ question: true }, "question"],
+  [{ dialog: true }, "dialog"],
+  [{ command: true }, "command"],
+  [{ turn: true }, "turn"],
+];
+
+test("an owner who is present: every activity reason is the half tier, no reason is the quarter tier", () => {
+  for (const [sig, reason] of REASONS) {
+    const h = make({ idle: 0 });
+    h.f.sig = { ...NONE, ...sig };
+    assert.deepEqual([h.sw.tierAt(h.clock.t).tier, h.sw.tierAt(h.clock.t).reason], ["half", reason]);
+  }
+  const h = make();
+  assert.deepEqual([h.sw.tierAt(h.clock.t).tier, h.sw.tierAt(h.clock.t).reason], ["quarter", "idle"]);
+});
+
+test("an owner who is away past the grace: a subagent, background task or wait stays the half tier, the rest drops to the quarter tier", async () => {
+  const h = make({ idle: 20 * MIN / 1000 });
+  h.open();
+  await h.sw["deps"].presence.refresh();
+  assert.equal(h.sw["deps"].presence.away(), true);
+  const late = h.clock.t + 30 * MIN;
+  for (const [sig, reason] of REASONS) {
+    h.f.sig = { ...NONE, ...sig };
+    const v = h.sw.tierAt(late);
+    if (["subagent", "bg_task", "wait"].includes(reason)) assert.deepEqual([v.tier, v.reason, v.presence], ["half", reason, "away"], reason);
+    else assert.deepEqual([v.tier, v.presence], ["quarter", "away"], reason);
+  }
+});
+
+test("grace: an owner who went away less than 15 minutes before the due time still gets the half tier for a turn; after the grace the quarter tier", async () => {
+  // away since (idle 11 min = the threshold) = the sample time when the idle time is exactly 11 minutes
+  const h = make({ idle: 11 * 60 });
+  h.open();
+  await h.sw["deps"].presence.refresh();
+  const since = h.sw["deps"].presence.awaySince()!;
+  assert.equal(since, h.clock.t);
+  h.f.sig = { ...NONE, turn: true };
+  assert.equal(h.sw.tierAt(since + AWAY_GRACE_MS - 1).tier, "half");
+  assert.equal(h.sw.tierAt(since + AWAY_GRACE_MS - 1).presence, "grace");
+  assert.equal(h.sw.tierAt(since + AWAY_GRACE_MS).tier, "quarter");
+  assert.equal(h.sw.tierAt(since + AWAY_GRACE_MS).presence, "away");
+});
+
+test("unknown presence (no probe result) counts as present for the tier", () => {
+  const h = make({ idle: null });
+  h.f.sig = { ...NONE, turn: true };
+  assert.equal(h.sw.tierAt(h.clock.t).tier, "half");
+});
+
+test("a signals() that throws counts as no activity: the quarter tier", () => {
+  const h = make();
+  (h.sw["deps"] as { signals: () => WarmSignals }).signals = () => {
+    throw new Error("stale");
+  };
+  assert.equal(h.sw.tierAt(h.clock.t).tier, "quarter");
+});
+
+// ---- the cost rule -----------------------------------------------------------------------------------------
+
+test("quarter tier: 4 warms (spent + next <= 0.25 x cold), then the stretch ends and the last warm is followed by the final compaction", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  await h.advance(60 * MIN);
+  assert.equal(h.f.replays, 4);
+  assert.deepEqual(h.reasons("window_end"), ["budget"]);
+  assert.deepEqual(h.ev("compaction").map((r) => [r.reason, r.trigger]), [["warm_idle", "final_warm"]]);
+  assert.equal(h.f.compacts, 1);
+  assert.deepEqual(h.ev("budget").map((r) => r.tier), ["quarter"]);
+});
+
+test("half tier: 9 warms while a subagent runs", async () => {
+  const h = make({ ttl: 300 });
+  h.f.sig = { ...NONE, strongA: "subagent" };
+  h.open();
+  await h.advance(120 * MIN);
+  assert.equal(h.f.replays, 9);
+  assert.deepEqual(h.ev("keepalive", "fired").map((r) => r.tier), Array(9).fill("half"));
+});
+
+test("the tier at each tick decides: activity ending after the quarter share is spent refuses the next warm and compacts", async () => {
+  const h = make({ ttl: 300 });
+  h.f.sig = { ...NONE, strongA: "wait" };
+  h.open();
+  await h.advance(6 * 270_000);
+  assert.equal(h.f.replays, 6);
+  h.f.sig = { ...NONE };
+  await h.advance(270_000);
+  assert.equal(h.f.replays, 6, "the quarter tier is spent");
+  assert.deepEqual(h.reasons("window_end"), ["budget"]);
+});
+
+test("the next warm is refused before any warm: compaction after the settle grace instead of waiting for the first tick", async () => {
+  const h = make({ ttl: 300, policy: { budgetShare: 0.01 } });
+  h.open();
+  await h.advance(settleGraceMs(300) - 1);
+  assert.equal(h.f.compacts, 0);
+  await h.advance(2);
+  assert.equal(h.f.replays, 0);
+  assert.equal(h.f.compacts, 1);
+  assert.deepEqual(h.ev("compaction").map((r) => r.trigger), ["final_warm"]);
+  assert.deepEqual(h.reasons("window_end"), ["budget"]);
+});
+
+test("activity within the settle grace: a new request leaves no compaction", async () => {
+  const h = make({ ttl: 300, policy: { budgetShare: 0.01 } });
+  h.open();
+  await h.advance(10_000);
+  h.open();
+  await h.advance(10_000);
+  assert.equal(h.f.compacts, 0);
+});
+
+test("budget unavailable (no rates): traced once, no warm is sent", async () => {
+  const h = make({ rates: null, ttl: 300 });
+  h.open();
+  await h.advance(10 * 270_000);
+  assert.equal(h.f.replays, 0, "no warm is sent when the cost is not computable");
+  assert.deepEqual(h.reasons("skipped"), ["budget_unavailable"]);
+});
+
+test("a real request resets the budget", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  await h.advance(60 * MIN);
+  assert.equal(h.f.replays, 4);
+  h.open();
+  await h.advance(60 * MIN);
+  assert.equal(h.f.replays, 8, "a fresh stretch, a fresh budget");
+});
+
+// ---- the final-warm compaction -----------------------------------------------------------------------------
+
+test("final compaction: 300 s TTL and a 3600 s TTL both compact right after the last warm", async () => {
+  for (const ttl of [300, 3600]) {
+    const h = make({ ttl });
+    h.open();
+    await h.advance(24 * 60 * MIN);
+    assert.equal(h.f.compacts, 1, `ttl ${ttl}`);
+    assert.deepEqual(h.ev("compaction").map((r) => r.trigger), ["final_warm"]);
+  }
+});
+
+test("final compaction: below 0.6 x the context window, below compactMinTokens, busy or already compacted: none", async () => {
+  const below = make({ ttl: 300, tokens: 500_000 });
+  below.open();
+  await below.advance(60 * MIN);
+  assert.equal(below.f.compacts, 0);
+  assert.ok(below.reasons("window_end").includes("budget"));
+  const min = make({ ttl: 300, tokens: 700_000, policy: { compactMinTokens: 800_000 } });
+  min.open();
+  await min.advance(60 * MIN);
+  assert.equal(min.f.compacts, 0);
+  assert.equal(min.ev("compaction_skipped").length, 1);
+  const busy = make({ ttl: 300 });
+  busy.f.sig = { ...NONE, turn: false };
+  busy.open();
+  await busy.advance(3 * 270_000);
+  busy.f.queued = true;
+  await busy.advance(60 * MIN);
+  assert.equal(busy.f.compacts, 0);
+});
+
+test("a compaction that is running holds the warms; its end ends the stretch", async () => {
+  const h = make({ ttl: 300, policy: { budgetShare: 0.5 } });
+  h.open();
+  await h.advance(100_000);
+  h.sw.onCompactStart();
+  await h.advance(60 * MIN);
+  assert.equal(h.f.replays, 0);
+  h.sw.onCompact();
+  assert.equal(h.sw.state(), "ended");
+});
+
+test("a failed compaction arms the warm again", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.sw.onCompactStart();
+  h.sw.onCompactFailed();
+  await h.advance(270_000);
+  assert.equal(h.f.replays, 1);
+});
+
+// ---- in-flight, errors, drift ------------------------------------------------------------------------------
+
+test("a real request starting aborts an in-flight warm: it is not recorded", async () => {
   let release: (r: WarmReply) => void = () => {};
   const h = make({ reply: () => new Promise<WarmReply | null>((res) => (release = res)) });
   h.open();
   await h.advance(54 * MIN);
   assert.equal(h.f.replays, 1);
-  h.sw.onActivity();
+  h.sw.capture([{ role: "system", content: "s" }]);
   assert.equal(h.f.signals[0].aborted, true);
   release(HIT);
   await flush();
   assert.equal(h.f.recorded.length, 0);
-  assert.deepEqual(h.reasons("window_end"), ["activity"]);
-  await h.advance(120 * MIN);
-  assert.equal(h.f.replays, 1, "no further warms");
 });
 
-test("an errored call is not recorded and ends the window", async () => {
+test("no warm while a real request is in flight; the request end re-arms", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.sw.capture([{ role: "system", content: "s" }]);
+  await h.advance(60 * MIN);
+  assert.equal(h.f.replays, 0);
+  h.sw.noteRequest(100_000);
+  await h.advance(270_000);
+  assert.equal(h.f.replays, 1);
+});
+
+test("an errored request keeps the last touch, budget and capture: the warming goes on from the old touch", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  await h.advance(270_000);
+  assert.equal(h.f.replays, 1);
+  const touch = h.sw.lastCacheTouch();
+  h.sw.capture([{ role: "system", content: "s" }, { role: "user", content: "never answered" }]);
+  h.sw.requestFailed();
+  assert.equal(h.sw.lastCacheTouch(), touch);
+  await h.advance(270_000);
+  assert.equal(h.f.replays, 2);
+  assert.equal(h.sw.snapshot().budget!.spent > 0, true);
+});
+
+test("a queued message at fire time: no warm, tried again shortly", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  h.f.queued = true;
+  await h.advance(275_000);
+  assert.equal(h.f.replays, 0);
+  h.f.queued = false;
+  await h.advance(10_000);
+  assert.equal(h.f.replays, 1);
+});
+
+test("pending claude-bridge config drift ends the stretch before the replay", async () => {
+  const h = make({ ttl: 300, drift: true });
+  h.open();
+  await h.advance(300_000);
+  assert.equal(h.f.replays, 0);
+  assert.deepEqual(h.reasons("skipped"), ["claude_cfg_pending"]);
+  assert.equal(h.sw.state(), "ended");
+});
+
+test("an errored warm ends the stretch and is not recorded", async () => {
   const h = make({ reply: async () => null });
   h.open();
   await h.advance(54 * MIN);
   assert.equal(h.f.recorded.length, 0);
-  assert.deepEqual(h.reasons("window_end"), ["activity"]);
+  assert.deepEqual(h.reasons("window_end"), ["error"]);
 });
 
-test("model change, compaction and session shutdown abort an in-flight warm", async () => {
-  for (const act of ["invalidate", "onCompact", "onShutdown"] as const) {
+test("model change, compaction and shutdown abort an in-flight warm", async () => {
+  for (const act of ["onModelChange", "onCompact", "onShutdown"] as const) {
     const h = make({ reply: () => new Promise<WarmReply | null>(() => {}) });
     h.open();
     await h.advance(54 * MIN);
@@ -161,7 +457,7 @@ test("model change, compaction and session shutdown abort an in-flight warm", as
   }
 });
 
-test("miss contingency: the first completed warm with cacheWrite >= cacheRead disables self-warm for the session", async () => {
+test("miss contingency: the first completed warm with cacheWrite >= cacheRead switches the warming off for the session", async () => {
   const h = make({ reply: async () => ({ ...HIT, usage: { ...HIT.usage, cacheRead: 0, cacheWrite: 100_000 } }) });
   h.open();
   await h.advance(54 * MIN);
@@ -169,128 +465,13 @@ test("miss contingency: the first completed warm with cacheWrite >= cacheRead di
   assert.deepEqual(h.reasons("window_end"), ["self_warm_miss"]);
   assert.equal(h.sw.owns(), false);
   assert.equal(h.sw.missed(), true);
-  h.sw.onActivity();
-  h.open();
-  await h.advance(200 * MIN);
-  assert.equal(h.f.replays, 1);
-});
-
-test("not replayable: skipped, traced once, no warm", async () => {
-  const h = make({ replayable: false });
-  h.open();
-  h.sw.onActivity();
-  h.open();
-  await h.advance(200 * MIN);
-  assert.equal(h.f.replays, 0);
-  assert.deepEqual(h.reasons("skipped"), ["not_replayable"]);
-});
-
-test("budget: the warm that would exceed budgetShare x cold is refused, the last warm read compacts once (trigger budget)", async () => {
-  const h = make({ policy: { budgetShare: 0.01 } });
-  h.open();
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 0);
-  assert.deepEqual(h.reasons("skipped"), ["budget"]);
-  assert.deepEqual(h.ev("compaction").map((r) => [r.reason, r.trigger]), [["warm_idle", "budget"]]);
-  assert.deepEqual(h.reasons("window_end"), ["budget"]);
-  assert.equal(h.ev("budget").length, 1);
-  assert.equal(h.f.compacts, 1);
-});
-
-test("budget exhausted below the idle floor: no compaction, the idle goes cold", async () => {
-  const h = make({ policy: { budgetShare: 0.01 }, compact: null });
-  h.open();
-  await h.advance(54 * MIN);
-  assert.equal(h.ev("compaction").length, 0);
-  assert.deepEqual(h.reasons("skipped"), ["budget", "below_floor"]);
-});
-
-test("budget accumulates over warms: the second warm is refused when two ticks no longer fit", async () => {
-  // cold = 1.0 USD; a tick = 100k x 0.5/M + 1 token = 0.05; share 0.12 allows two warms (0.1) but not a third
-  const h = make({ policy: { budgetShare: 0.12 } });
-  h.open();
-  await h.advance(54 * MIN);
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 2);
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 2);
-  assert.deepEqual(h.reasons("window_end"), ["budget"]);
-});
-
-test("budget unavailable (no rates): traced once, warming goes on inside the window", async () => {
-  const h = make({ rates: null });
-  h.open();
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 1);
-  assert.deepEqual(h.reasons("skipped"), ["budget_unavailable"]);
-  await h.advance(54 * MIN);
-  assert.equal(h.reasons("skipped").length, 1);
-});
-
-test("a real request resets the budget and the away ticks", async () => {
-  const h = make({ policy: { budgetShare: 0.06 } });
-  h.open();
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 1);
-  h.sw.onActivity();
-  h.open();
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 2, "fresh idle, fresh budget");
-});
-
-test("away: awayTicks 0 refuses the first warm and compacts (trigger away); the probe ran in the background timer", async () => {
-  const h = make({ idle: 20 * 60 });
-  h.open();
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 0);
-  assert.deepEqual(h.reasons("skipped"), ["away"]);
-  assert.deepEqual(h.ev("compaction").map((r) => r.trigger), ["away"]);
-  assert.deepEqual(h.reasons("window_end"), ["away"]);
-  assert.deepEqual(h.ev("presence").map((r) => r.outcome), ["away"]);
-  assert.ok(h.f.probes >= 1);
-});
-
-test("away with awayTicks 2: two warms, the third is refused", async () => {
-  const h = make({ idle: 20 * 60, policy: { awayTicks: 2 } });
-  h.open();
-  for (let i = 0; i < 3; i++) await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 2);
-  assert.deepEqual(h.reasons("window_end"), ["away"]);
-});
-
-test("present or unknown owner is never refused for presence", async () => {
-  for (const idle of [30, null]) {
-    const h = make({ idle });
-    h.open();
-    await h.advance(54 * MIN);
-    assert.equal(h.f.replays, 1);
-  }
-});
-
-test("window end: the warm that would fall past selfWarmWindowMinutes compacts (trigger window) and ends the window", async () => {
-  const h = make({ policy: { selfWarmWindowMinutes: 60 } });
-  h.open();
-  await h.advance(54 * MIN);
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 1);
-  assert.deepEqual(h.ev("compaction").map((r) => r.trigger), ["window"]);
-  assert.deepEqual(h.reasons("window_end"), ["window"]);
-});
-
-test("a running turn or queued message at fire time: no warm", async () => {
-  const h = make();
-  h.open();
-  h.f.busy.pendingMessages = true;
-  await h.advance(54 * MIN);
-  assert.equal(h.f.replays, 0);
-  assert.deepEqual(h.reasons("window_end"), ["activity"]);
 });
 
 test("a late timer (more than half the margin past due) skips the warm", async () => {
   const h = make();
   h.open();
   h.clock.t += 54 * MIN + 4 * MIN; // margin is 6 min, half is 3
-  const slot = h.slots.filter((s) => !s.dead).sort((a, b) => b.at - a.at)[0]; // the warm timer; the probe slot is 60 s earlier
+  const slot = h.slots.filter((s) => !s.dead).sort((a, b) => b.at - a.at)[0];
   slot.dead = true;
   slot.fn();
   await flush();
@@ -298,144 +479,51 @@ test("a late timer (more than half the margin past due) skips the warm", async (
   assert.deepEqual(h.reasons("skipped"), ["late"]);
 });
 
-test("noteWarmLine (a Pi-sent warm) moves the cache touch and counts toward spent", () => {
+test("noteWarmLine (a stray Pi-sent warm) moves the cache touch and counts toward the budget", () => {
   const h = make();
   h.sw.noteRequest(100_000);
   const ts = new Date(h.clock.t + 5 * MIN).toISOString();
   h.sw.noteWarmLine({ ts, input: 0, output: 0, cacheRead: 100_000, cacheWrite: 0 } as UsageLine);
   assert.equal(h.sw.lastCacheTouch(), Date.parse(ts));
-  const v = h.sw.verdict();
-  assert.equal(v.ok, true);
+  assert.ok(h.sw.snapshot().budget!.spent > 0);
 });
 
-// ---- the gate behind Pi-sent warms (idlecache.ts) --------------------------------------------------------
-
-const PI: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true };
-
-function makeIdle(policy: CachePolicy, gate?: ConstructorParameters<typeof IdleCache>[0]["gate"], compact: { point: number | null; model: string | null } | null = { point: 100000, model: "p/m" }) {
-  const clock = { t: 1_000_000 };
-  const slots: Slot[] = [];
-  const traces: Record<string, unknown>[] = [];
-  let compacts = 0;
-  const ic = new IdleCache({
-    now: () => clock.t,
-    timers: {
-      set: (fn, ms) => {
-        const s: Slot = { fn, at: clock.t + ms, dead: false };
-        slots.push(s);
-        return s;
-      },
-      clear: (h) => {
-        if (h) (h as Slot).dead = true;
-      },
-    },
-    policy: () => policy,
-    piIdleMode: () => true,
-    hasPromptCache: () => true,
-    busy: () => NOT_BUSY,
-    trace: (r) => void traces.push(r),
-    compact: () => {
-      compacts += 1;
-      return compact;
-    },
-    setGlyph: () => {},
-    syncKeepalives: () => ({ newEntries: 0, lastReadAt: null }),
-    lastAssistantAt: () => clock.t,
-    isChild: false,
-    gate,
-  });
-  return { ic, clock, traces, slots, compacts: () => compacts };
-}
-
-test("Pi path: a budget refusal answers stop, compacts with trigger budget and ends the window", () => {
-  const gate = {
-    verdict: () => ({ ok: false as const, reason: "budget" as const, budget: { spent: 0.4, cold: 1, share: 0.5 } }),
-    budgetAvailable: () => true,
-    lastCacheTouch: () => null,
-    owns: () => false,
-    noteWarm: () => {},
-    armProbe: () => {},
-    disarm: () => {},
-  };
-  const h = makeIdle({ ...PI, budgetShare: 0.5 }, gate);
-  h.ic.start();
-  const a = h.ic.decide(NOT_BUSY);
-  assert.equal(a, "stop");
-  h.ic.noteDecision(a);
-  assert.deepEqual(h.traces.filter((r) => r.event === "budget"), [{ event: "budget", spent: 0.4, cold: 1, share: 0.5 }]);
-  assert.deepEqual(h.traces.filter((r) => r.event === "compaction"), [{ event: "compaction", reason: "warm_idle", point: 100000, model: "p/m", trigger: "budget" }]);
-  assert.deepEqual(h.traces.filter((r) => r.event === "keepalive").map((r) => [r.outcome, r.reason]), [["skipped", "budget"], ["window_end", "budget"]]);
-  assert.equal(h.ic.decide(NOT_BUSY), "stop", "ended");
+test("snapshot: tier, warms left, span end and tick", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  const s = h.sw.snapshot();
+  assert.equal(s.tickMs, 270_000);
+  assert.equal(s.nextWarmAt, h.t0 + 270_000);
+  assert.deepEqual([s.tier?.tier, s.warmsLeft, s.budget?.share], ["quarter", 4, 0.25]);
+  assert.equal(s.spanEndAt, h.t0 + 4 * 270_000 + 300_000);
 });
 
-test("Pi path: a refusal below the idle floor does not compact", () => {
-  const gate = { verdict: () => ({ ok: false as const, reason: "away" as const }), budgetAvailable: () => false, lastCacheTouch: () => null, owns: () => false, noteWarm: () => {}, armProbe: () => {}, disarm: () => {} };
-  const h = makeIdle({ ...PI, budgetShare: 0.5 }, gate, null);
-  h.ic.start();
-  h.ic.noteDecision(h.ic.decide(NOT_BUSY));
-  assert.equal(h.traces.filter((r) => r.event === "compaction").length, 0);
-  assert.deepEqual(h.traces.filter((r) => r.event === "keepalive").map((r) => r.reason), ["away", "below_floor", "away"]);
-});
+// ---- policy: deprecated keys ------------------------------------------------------------------------------
 
-test("Pi path: an allowed warm counts an away tick and arms the background probe; decide never probes", () => {
-  const log: string[] = [];
-  const gate = { verdict: () => ({ ok: true as const }), budgetAvailable: () => true, lastCacheTouch: () => null, owns: () => false, noteWarm: () => void log.push("warm"), armProbe: () => void log.push("arm"), disarm: () => {} };
-  const h = makeIdle({ ...PI, budgetShare: 0.5 }, gate);
-  h.ic.start();
-  assert.deepEqual(log, ["arm"]);
-  log.length = 0;
-  h.ic.noteDecision(h.ic.decide(NOT_BUSY));
-  assert.deepEqual(log, ["warm", "arm"]);
-});
-
-test("whileWaiting: child runs, waits and launch waits do not stop the Pi-path warm; a queued message still does", () => {
-  const h = makeIdle({ ...PI, whileWaiting: true });
-  h.ic.start();
-  for (const k of ["childRun", "wait", "launchWait"] as const) assert.equal(h.ic.decide({ ...NOT_BUSY, [k]: true }), "warm", k);
-  assert.equal(h.ic.decide({ ...NOT_BUSY, pendingMessages: true }), undefined);
-  assert.equal(h.ic.decide({ ...NOT_BUSY, notIdle: true }), undefined);
-  const old = makeIdle(PI);
-  old.ic.start();
-  assert.equal(old.ic.decide({ ...NOT_BUSY, childRun: true }), undefined, "absent field = old behaviour");
-});
-
-test("the idle cache stays out when pi-foreman owns the warming", () => {
-  const gate = { verdict: () => ({ ok: true as const }), budgetAvailable: () => true, lastCacheTouch: () => null, owns: () => true, noteWarm: () => {}, armProbe: () => {}, disarm: () => {} };
-  const h = makeIdle({ ...PI, selfWarm: true }, gate);
-  h.ic.start();
-  assert.equal(h.ic.state(), "off");
-});
-
-test("the cold gate reads the owner's last cache touch: a self-warm touch keeps the idle warm for the window compaction", () => {
-  const gate = { verdict: () => ({ ok: true as const }), budgetAvailable: () => true, lastCacheTouch: () => h.clock.t, owns: () => false, noteWarm: () => {}, armProbe: () => {}, disarm: () => {} };
-  const h = makeIdle({ ...PI, windowMinutes: 1, effectiveWindowMinutes: 1, budgetShare: 0.5 }, gate);
-  h.ic.start();
-  h.clock.t += 30_000;
-  const slot = h.slots.filter((s) => !s.dead).sort((a, b) => a.at - b.at)[0];
-  slot.dead = true;
-  slot.fn();
-  assert.deepEqual(h.traces.filter((r) => r.event === "compaction").map((r) => r.trigger), ["window"]);
-});
-
-// ---- policy and replay ------------------------------------------------------------------------------------
-
-test("resolveWarmPolicy: defaults, self-warm switch and window default", () => {
+test("keepalive.enabled is the only switch: deprecated keys are accepted and change nothing", () => {
   const cfg = (ka: unknown, extra: Record<string, unknown> = {}) => ({ providers: { "claude-bridge": { cache: { ttlSeconds: 3600, keepalive: ka, ...extra } } } });
-  const d = resolveWarmPolicy({}, "claude-bridge");
-  assert.deepEqual([d.budgetShare, d.awayTicks, d.whileWaiting, d.selfWarm, d.selfWarmWindowMinutes], [0.5, 0, true, false, 45]);
-  const on = resolveWarmPolicy(cfg({ enabled: true }), "claude-bridge");
-  assert.deepEqual([on.selfWarm, on.selfWarmWindowMinutes, on.skip, on.active], [true, 180, "ttl_long", false]);
-  assert.equal(resolveWarmPolicy(cfg({}), "claude-bridge").selfWarm, false, "keepalive.enabled is not on for a 1h TTL by default");
-  assert.equal(resolveWarmPolicy(cfg({ enabled: true, beyondPiCap: false }), "claude-bridge").selfWarm, false);
-  assert.equal(resolveWarmPolicy(cfg({ enabled: false }), "claude-bridge").selfWarm, false);
-  assert.equal(resolveWarmPolicy(cfg({ enabled: true }, { billing: "request" }), "claude-bridge").selfWarm, false);
-  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 1000, keepalive: { enabled: true } } } } }, "claude-bridge").selfWarm, false, "Pi warms 1000 s twice before its cap");
-  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 1001, keepalive: { enabled: true } } } } }, "claude-bridge").selfWarm, true);
-  const set = resolveWarmPolicy(cfg({ enabled: true, budgetShare: 0.2, awayTicks: 2, whileWaiting: false, selfWarmWindowMinutes: 90 }), "claude-bridge");
-  assert.deepEqual([set.budgetShare, set.awayTicks, set.whileWaiting, set.selfWarmWindowMinutes], [0.2, 2, false, 90]);
-  assert.equal(resolveWarmPolicy(cfg({ enabled: true, selfWarmWindowMinutes: 99999 }), "claude-bridge").selfWarmWindowMinutes, 1440);
+  assert.equal(resolveWarmPolicy(cfg({ enabled: true }), "claude-bridge").keepaliveOwned, true);
+  assert.equal(resolveWarmPolicy(cfg({}), "claude-bridge").keepaliveOwned, false);
+  assert.equal(resolveWarmPolicy(cfg({ enabled: false }), "claude-bridge").keepaliveOwned, false);
+  assert.equal(resolveWarmPolicy(cfg({ enabled: true }, { billing: "request" }), "claude-bridge").keepaliveOwned, false);
+  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 10, keepalive: { enabled: true } } } } }, "claude-bridge").keepaliveOwned, false);
+  assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 11, keepalive: { enabled: true } } } } }, "claude-bridge").keepaliveOwned, true);
+  const dep = { enabled: true, beyondPiCap: false, windowMinutes: 5, selfWarmWindowMinutes: 5, awayTicks: 3, whileWaiting: false, intervalSeconds: 60 };
+  const p = resolveWarmPolicy(cfg(dep), "claude-bridge");
+  assert.equal(p.keepaliveOwned, true);
   assert.equal(resolveWarmPolicy({}, "other").skip, "no_entry");
 });
+
+test("deprecated keys do not change when the warm goes out or how many", async () => {
+  const dep = resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 300, billing: "token", keepalive: { enabled: true, windowMinutes: 1, awayTicks: 0, whileWaiting: false, intervalSeconds: 5, selfWarmWindowMinutes: 1, beyondPiCap: false } } } } }, "p");
+  const h = make({ ttl: 300, policy: dep });
+  h.open();
+  await h.advance(60 * MIN);
+  assert.equal(h.f.replays, 4);
+  assert.equal(h.sw.owns(), true);
+});
+
+// ---- replay ------------------------------------------------------------------------------------------------
 
 test("replay: system message first, rest converted, tools, session id, maxTokens 1, maxRetries 0, reasoning like Pi", async () => {
   let seen: { context: { systemPrompt: string; messages: unknown[]; tools: unknown[] }; options: Record<string, unknown> } | null = null;
@@ -474,73 +562,4 @@ test("isReplayable mirror: budget-thinking anthropic-messages without forceAdapt
   assert.equal(replayable({ api: "anthropic-messages" }, "off"), true);
   assert.equal(replayable({ api: "openai-responses" }, "high"), true);
   assert.equal(replayable(null, "off"), false);
-});
-
-test("the Pi hook path reads the cached presence sample: decide never probes, an away sample refuses with awayTicks 0", async () => {
-  const h = make({ idle: 20 * 60, policy: { selfWarm: false, ttlSeconds: 300, awayTicks: 0 } });
-  h.sw.noteRequest(100_000);
-  const gateIc = makeIdle({ ...PI, awayTicks: 0, budgetShare: 0.5 }, h.sw);
-  gateIc.ic.start();
-  assert.equal(gateIc.ic.decide(NOT_BUSY), "warm", "no sample yet reads as present");
-  assert.equal(h.f.probes, 0, "decide did not probe");
-  await (h.sw as unknown as { deps: { presence: Presence } }).deps.presence.refresh();
-  assert.equal(h.f.probes, 1);
-  assert.equal(gateIc.ic.decide(NOT_BUSY), "stop");
-  assert.equal(h.f.probes, 1);
-});
-
-test("Pi cacheWarming not idle: no ownership, no stream call, skipped pi_mode_not_idle traced once", async () => {
-  const traces: Record<string, unknown>[] = [];
-  let replays = 0;
-  let idle = false;
-  const clock = { t: 10_000_000 };
-  const slots: { fn: () => void; at: number; dead: boolean }[] = [];
-  const timers = {
-    set: (fn: () => void, ms: number) => {
-      const s = { fn, at: clock.t + ms, dead: false };
-      slots.push(s);
-      return s;
-    },
-    clear: (h: unknown) => {
-      if (h) (h as { dead: boolean }).dead = true;
-    },
-  };
-  const sw = new SelfWarm({
-    now: () => clock.t,
-    timers,
-    isChild: false,
-    policy: () => LONG,
-    presence: new Presence({ now: () => clock.t, timers, config: () => ({ enabled: false, awayAfterMinutes: 11, command: null }), trace: () => {} }),
-    busy: () => NOT_BUSY,
-    piIdleMode: () => idle,
-    rates: () => RATES,
-    compact: () => null,
-    trace: (r) => void traces.push(r),
-    replayable: () => true,
-    replay: async () => {
-      replays += 1;
-      return HIT;
-    },
-    record: () => null,
-  });
-  sw.capture([{ role: "system", content: "sys" }]);
-  for (let i = 0; i < 2; i++) {
-    sw.noteRequest(100_000);
-    sw.start();
-  }
-  assert.equal(sw.owns(), false);
-  assert.equal(slots.length, 0);
-  assert.equal(replays, 0);
-  assert.deepEqual(traces.filter((r) => r.outcome === "skipped").map((r) => r.reason), ["pi_mode_not_idle"]);
-  idle = true;
-  assert.equal(sw.owns(), true);
-  sw.start();
-  assert.equal(sw.state(), "watching");
-});
-
-test("owns() agrees with start(): a model Pi would not replay is not owned at 1001 s", () => {
-  const policy = resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 1001, billing: "token", keepalive: { enabled: true } } } } }, "p");
-  assert.equal(policy.selfWarm, true);
-  assert.equal(make({ policy, replayable: false }).sw.owns(), false);
-  assert.equal(make({ policy, replayable: true }).sw.owns(), true);
 });

@@ -1745,7 +1745,8 @@ def cache_policy(config, provider, model=None, bridge_ttl=None):
 def warm_policy(config, provider, model=None, bridge_ttl=None):
     """cache_policy plus the warm-policy fields (mirrors resolveWarmPolicy in cachepolicy.ts).
 
-    -> cache_policy's keys and budgetShare, awayTicks, whileWaiting, selfWarm, selfWarmWindowMinutes, compactMinTokens, or None.
+    -> cache_policy's keys and keepaliveOwned (keepalive.enabled with token billing and a TTL above 10 s: pi-foreman sends the warms),
+    budgetShare, compactMinTokens, or None. awayTicks, whileWaiting, selfWarm and selfWarmWindowMinutes are deprecated: still resolved, read by nobody.
     """
     base = cache_policy(config, provider, model, bridge_ttl)
     if base is None:
@@ -1764,6 +1765,7 @@ def warm_policy(config, provider, model=None, bridge_ttl=None):
     default_window = min(1440, max(45, 3 * -(-(ttl or 0) // 60)))
     out = dict(base)
     out.update({
+        "keepaliveOwned": bool(base["enabled"] and base["billing"] == "token" and ttl is not None and ttl > 10),
         "budgetShare": clamp(ka.get("budgetShare"), 0, 1, 0.5),
         "awayTicks": int(clamp(ka.get("awayTicks"), 0, 20, 0)),
         "whileWaiting": ka.get("whileWaiting") if isinstance(ka.get("whileWaiting"), bool) else True,
