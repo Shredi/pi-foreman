@@ -1,5 +1,5 @@
 // R18 item 1: a parent-written ruling-<n>.md or brief-<x>.md in the session's handoff dir lifts the loop stop and resets the
-// recheck budget and the read budget (index.ts capsReset, rounds.ts rulingReset strict). No text parser; ruling.md,
+// read budget (index.ts capsReset, rounds.ts rulingReset strict). No text parser; ruling.md,
 // ruling-plan.md and brief.md never reset; a self-written, symlinked, ctime-only changed or older file does not; the
 // owner-prompt reset stays as it was.
 import { test } from "node:test";
@@ -18,8 +18,6 @@ type Res = { block?: boolean; reason?: string } | undefined;
 const WARN = DEFAULT_READ_LIMITS.before.warn;
 const review = (n: number) => ({ agent: "reviewer", task: `review items ${n}` });
 const capRefused = loopRefused;
-const recheckDenied = (r: Res): boolean => r?.block === true && /\[recheck_budget_exceeded\]/.test(r.reason ?? "");
-const PASS = "Background task completed: **reviewer**\nOverall verdict: PASS";
 
 /** A rig whose env has no PI_FOREMAN_HANDOFF_DIR (restored afterwards). */
 async function rig(t: Parameters<typeof r11Rig>[0], ceremony: Record<string, unknown> = {}): Promise<Rig> {
@@ -51,12 +49,6 @@ async function readsFresh(a: Rig): Promise<void> {
   for (let i = 0; i < WARN - 1; i++) assert.equal(await bash(a, `ls fresh${i}`), undefined);
   assert.equal(reminds(a), 1, "the count restarted");
 }
-/** recheckBudget 1: a PASS, one read allowed, the next refused. */
-async function recheckDeniedState(a: Rig): Promise<void> {
-  await a.notice(PASS);
-  assert.equal(await bash(a, "ls one"), undefined);
-  assert.ok(recheckDenied(await bash(a, "ls two")), "recheck budget used");
-}
 
 test("caps_name_predicates", () => {
   for (const n of ["ruling-1.md", "ruling-2.md", "brief-1.md", "brief-x.y_z-9.md"]) assert.ok(isCapsResetName(n), n);
@@ -72,15 +64,6 @@ test("parent_ruling_file_lifts_loop_stop", async (t) => {
   writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
   assert.equal((await a.launch(review(3))).res, undefined, "the stop is lifted");
   assert.deepEqual(a.events("cap_reset").map((r) => [r.by, r.count]), [["ruling", 1]]);
-});
-
-test("parent_ruling_file_lifts_recheck_budget", async (t) => {
-  const a = await rig(t, { recheckBudget: 1 });
-  const dir = a.handoff("round", "child");
-  await recheckDeniedState(a);
-  writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
-  assert.equal(await bash(a, "ls three"), undefined, "the recheck budget is lifted");
-  assert.equal(a.events("cap_reset").length, 1);
 });
 
 test("parent_ruling_file_resets_read_budget", async (t) => {
@@ -219,16 +202,13 @@ test("watermark_persisted_and_restored", async (t) => {
   assert.equal(a.events("cap_reset").length, 2, "a low watermark does not hold it back");
 });
 
-test("owner_prompt_still_resets_all_three", async (t) => {
-  const a = await rig(t, { recheckBudget: 1 });
+test("owner_prompt_still_resets_both", async (t) => {
+  const a = await rig(t);
   a.handoff("round", "child");
   await reviewCapped(a);
   await readsReminded(a);
   await a.ownerPrompt();
   assert.equal((await a.launch(review(3))).res, undefined, "loop stop");
   await readsFresh(a);
-  await recheckDeniedState(a);
-  await a.ownerPrompt();
-  assert.equal(await a.call("bash", { command: "ls again" }), undefined, "recheck budget");
   assert.deepEqual(a.events("cap_reset"), []);
 });

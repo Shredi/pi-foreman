@@ -87,7 +87,6 @@ Keys outside safety that the project and session layers cannot loosen either
                                      any layer is a config error, replaced by the L1 default
     ceremony.reviewBeforePr          only true is accepted (false lets a PR open unreviewed)
     ceremony.foremanReads.<phase>.<warn|every>  lower only, minimum 1 (a higher value lets the foreman read more before a reminder)
-    ceremony.recheckBudget           lower only, minimum 0
     ceremony.launchWait              tighten only, detach < block (may only move to block)
     ceremony.dedupeNotify            only true is accepted
     ceremony.reviewGate              tighten only, verdict < pass (may only move to pass)
@@ -293,7 +292,6 @@ LAYER_TIGHTEN = [
     (("ceremony", "foremanReads", "*", "*"), "lower_only"),
     (("ceremony", "childReads", "*", "*"), "lower_only"),
     # ceremony.childScratch.keep has no rule: any layer may set it, it only retains temp data.
-    (("ceremony", "recheckBudget"), "lower_only"),
     (("ceremony", "childTimeoutSeconds"), "lower_only"),
     (("ceremony", "launchTimeoutCapMinutes"), "lower_only"),
     (("ceremony", "budgetUsd"), "lower_only_number"),
@@ -330,7 +328,7 @@ LAYER_TIGHTEN = [
 # gate keys the project and session layers may set (the LAYER_TIGHTEN rows above); every other gate key is user or overlay only
 GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk")
 LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "heavyFileCount": 1,
-                 "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
+                 "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "budgetUsd": 0.01,
                  "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).

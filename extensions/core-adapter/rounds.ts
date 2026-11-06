@@ -16,7 +16,7 @@
 // builder run counts like a builder launch (index.ts). The state resets on a user prompt and on a
 // tier change by the user (`/ceremony`), not on a raise by the foreman, a ledger or a signal.
 //
-// `rulingReset` with the `strict` options lifts the loop stop, the recheck and the read budgets for a parent
+// `rulingReset` with the `strict` options lifts the loop stop and the read budget for a parent
 // `ruling-<n>.md` / `brief-<x>.md` (ruling.ts isCapsResetName, index.ts capsReset).
 
 import * as fs from "node:fs";

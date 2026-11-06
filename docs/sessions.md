@@ -104,7 +104,7 @@ Plain pi-intercom text, one line each:
 - Parent to child brief: `Brief from <opener id>: read <absolute path> and act on it`, the path being `<handoff dir>/brief-<n>.md`.
   `n` starts at 1 per handoff dir and takes the lowest free number (a gap is filled); an existing `brief-<n>.md` is never
   overwritten, and a name that appears during the write is refused. A text brief is written to the same kind of file and stays
-  on disk. A parent-written `brief-<n>.md` lifts the child's loop stop and resets its recheck and read budgets (see [ceremony](ceremony.md)).
+  on disk. A parent-written `brief-<n>.md` lifts the child's loop stop and resets its read budget (see [ceremony](ceremony.md)).
 
 ### A child that finishes on merge
 

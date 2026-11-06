@@ -1,7 +1,7 @@
 """Replay: ceremony.ledgerHelper (foreman_ledger tool, pure-ledger bash, off) on the fake provider.
 
-After a reviewer PASS four ledger marks through the tool, or a pure-ledger bash compound, do not
-use the recheck budget and the finish goes through. The tool closes V only after a PASS with no
+After a reviewer PASS four ledger marks through the tool, or a pure-ledger bash compound, go through
+and so does the finish. The tool closes V only after a PASS with no
 revision since (traced attested, no stop_hold after it); before a review and after a FAIL it
 refuses, and the escape-hatch finish leaves V open. A reviewer child closes V on the foreman's
 ledger through the tool and may do nothing else with it. The reviewer replies carry no `N. PASS` lines, so the harness marks nothing itself. "off" keeps the old behaviour: no tool,
@@ -20,13 +20,12 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 from test_replay_ceremony_gate import events  # noqa: E402
 
 V_REFUSAL = "V closes after a reviewer PASS with no revision since"
-RECHECK = {"ceremony": {"recheckBudget": 1}}
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestLedgerHelper(ReplayCase):
     def run_flow(self, tag, config=None, notices=2):
-        rig = self.rig("lh-" + tag, load_fixture("ledger_helper"), config=config or RECHECK)
+        rig = self.rig("lh-" + tag, load_fixture("ledger_helper"), config=config)
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         pi = rig.start()
         sid = pi.session_id()
@@ -43,7 +42,6 @@ class TestLedgerHelper(ReplayCase):
         rig, sid, recs = self.run_flow("a")
         res = [(n, e) for n, e, _ in tool_results(recs) if n in ("foreman_ledger", "read")]
         self.assertEqual(res, [("foreman_ledger", False)] * 4 + [("read", False)], tool_results(recs))
-        self.assertEqual([r["action"] for r in events(rig, sid, "recheck_budget")], ["start"])
         self.assertEqual(events(rig, sid, "finish_refused"), [])
         self.assertNotIn("- [ ]", self.ledger(rig, "la"))
         self.assertEqual([(r["kind"], r["allowed"], r["items"]) for r in events(rig, sid, "ledger_call")], [("mark", True, str(i)) for i in range(1, 5)])
@@ -52,7 +50,6 @@ class TestLedgerHelper(ReplayCase):
         rig, sid, recs = self.run_flow("b")
         res = [(n, e) for n, e, _ in tool_results(recs) if n in ("bash", "read")]
         self.assertEqual(res, [("bash", False), ("bash", False), ("read", False)], tool_results(recs))
-        self.assertEqual([r["action"] for r in events(rig, sid, "recheck_budget")], ["start"])
         self.assertNotIn("- [ ]", self.ledger(rig, "lb"))
         self.assertEqual([(r["kind"], r["allowed"]) for r in events(rig, sid, "ledger_call")], [("bash", True), ("bash", True)])
 
@@ -77,13 +74,11 @@ class TestLedgerHelper(ReplayCase):
         self.assertEqual([r["missing"] for r in events(rig, sid, "ceremony_incomplete")], ["reviewer"])
         self.assertIn("- [ ] V. fresh-eyes verification passed", self.ledger(rig, "ld"))
 
-    def test_off_has_no_tool_and_ledger_bash_counts(self):
-        cfg = {"ceremony": {"recheckBudget": 1, "ledgerHelper": "off"}}
+    def test_off_has_no_tool_and_ledger_bash_runs(self):
+        cfg = {"ceremony": {"ledgerHelper": "off"}}
         rig, sid, recs = self.run_flow("f", config=cfg)
         res = [(n, e) for n, e, _ in tool_results(recs) if n in ("foreman_ledger", "bash")]
-        self.assertEqual(res, [("foreman_ledger", True), ("bash", False), ("bash", True)], tool_results(recs))
-        self.assertIn("[recheck_budget_exceeded]", tool_results(recs, "bash")[1][2])
-        self.assertEqual([(r["action"], r["count"]) for r in events(rig, sid, "recheck_budget")], [("start", 0), ("deny", 2)])
+        self.assertEqual(res, [("foreman_ledger", True), ("bash", False), ("bash", False)], tool_results(recs))
         self.assertIn("- [ ] 2. b", self.ledger(rig, "lf"))
 
     def test_permission_denied_ledger_bash_traced_not_allowed(self):

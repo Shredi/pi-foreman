@@ -59,7 +59,7 @@ import type { PiRoots } from "./orient.ts";
 import { applyRootsBlock } from "./childbrief.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.ts";
-import { afterPassExempt, bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { bgWaitLocations, coordinationCall, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
@@ -382,7 +382,7 @@ interface Session {
   plan: PlanRecord | null;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
-  /** Foreman only: read and recheck budgets (budget.ts), in memory only. */
+  /** Foreman only: read budget (budget.ts), in memory only. */
   budget: ReadBudget;
   /** Read-budget warn notices by tool call id, added to the result. */
   readNotices: Map<string, string>;
@@ -1869,42 +1869,22 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
 
   /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
-  /** After a reviewer PASS: the bash call is a read-only CI/merge step of the reviewed head (budget.ts afterPassExempt). */
-  async function afterPassCall(s: Session | undefined, cwd: string, toolName: string, input: unknown): Promise<boolean> {
-    if (!s || s.isChild || !s.budget.postPass || toolName !== "bash") return false;
-    const command = input && typeof input === "object" ? (input as Record<string, unknown>).command : undefined;
-    if (typeof command !== "string" || !/\b(?:git|gh)\b/.test(command)) return false;
-    await s.reviewSync; // the PASS record (and its head) lands first
-    const [head, branch] = await Promise.all([headOf(cwd), branchOf(cwd)]);
-    return afterPassExempt(command, { passHeads: passHeads(s.reviews), head, branch: branch || null });
-  }
-
-  function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown, afterPass = false) {
+  function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
     if (!s || s.isChild || !isReadCall(toolName, input)) return undefined;
     const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
     // ceremony.ledgerHelper tool/bash: a pure-ledger shell command is not a re-check (ledgercall.ts).
     const ledgerOnly = toolName === "bash" && ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper")) !== "off" && isLedgerOnlyCommand(inp.command);
-    // harness-friction: a handoff poll (ruling.md, owned dirs) or a git worktree add|list|prune is no re-check (recheckexempt.ts).
+    // harness-friction: a handoff poll (ruling.md, owned dirs) or a git worktree add|list|prune is no read (recheckexempt.ts).
     // R12 item 8: reads of the session's own bg_run outputs (`.pi/tasks/<session id>-*`) are exempt too, another session's are not.
     const handoff = recheckExempt(toolName, input, { cwd: ctx.cwd, home: os.homedir(), platform, owned: s.owned, ownTasks: ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform) });
-    // R11 item 5: finalization (a reviewer PASS, no child run active): the read budget never
-    // refuses, and a plain git commit/add/status/log is exempt from the recheck budget too.
-    // An accepted launch without its tool_result yet also ends it (fail closed).
-    const final = s.budget.finalized && s.activeRuns.size === 0 && s.pendingLaunches.size === 0;
-    const finalExempt = final && finalizationCommand(toolName, input);
-    const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
+    const exempt = ledgerOnly || handoff || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
-    s.budget.verdict = s.reviewGate.last; // R12 item 8: the recheck refusal names the real verdict
-    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt, coordinationCall(toolName, input), afterPass);
+    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), exempt, coordinationCall(toolName, input));
     if (d.kind === "remind") {
       if (s.planPhase) return undefined; // the plan phase reads freely: no reminder
       s.readNotices.set(callId, d.text);
       s.trace?.emit({ event: "read_budget", phase: d.phase, count: d.count, action: "remind" });
-    } else if (d.kind === "deny") {
-      const deny = denyFields(d.reason, toolName, input, "foreman");
-      s.trace?.emit({ event: "recheck_budget", count: d.count, action: "deny", ...deny });
-      return { block: true as const, reason: d.reason };
     }
     return undefined;
   }
@@ -1925,10 +1905,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return undefined;
   }
 
-  function resetRecheck(s: Session, why: string): void {
-    const used = s.budget.resetPost();
-    if (used !== null) s.trace?.emit({ event: "recheck_budget", count: used, action: `reset_${why}` });
-  }
   // Knob 3 launch-wait (launchwait.ts): held launch results, released by run end, supervisor request, abort or timeout.
   const launchWaits = new LaunchWaits();
   const steerWatches = new Map<string, SteerWatch>();
@@ -2123,7 +2099,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
-  /** A panel shadow launch (panel.ts): it never counts for steps, rounds, review_done or the recheck budget. */
+  /** A panel shadow launch (panel.ts): it never counts for steps, rounds or review_done. */
   function shadowRun(launch: ReviewLaunch | undefined): boolean {
     return !!launch?.bind;
   }
@@ -2669,7 +2645,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
-    const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input, await afterPassCall(sessionFor(ctx), ctx.cwd, event.toolName, event.input));
+    const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input);
     if (rb) return rb;
     const crb = childReadCheck(sessionFor(ctx), event.toolName, event.toolCallId, event.input);
     if (crb) return crb;
@@ -3315,7 +3291,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), persistRounds(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
-      resetRecheck(s, "user");
       const was = s.budget.phase;
       const n = s.budget.resetAll();
       // traced only when it discards a count that had reached warn
@@ -3346,7 +3321,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     recordChild(s, noticeLocations(text, knownRun(s)));
     const reviews = completedAgents(text).filter((a) => REVIEW_ROLES.includes(a));
     if (reviews.length === 0) return;
-    // panel shadows only (panel.ts): no marks, rounds, review_done or recheck budget
+    // panel shadows only (panel.ts): no marks, rounds or review_done
     const ids = noticeRuns(text)?.ids ?? [];
     if (ids.length > 0 && ids.every((id) => shadowRun(s.reviewRuns.byRun.get(id)))) return;
     const verdict = verdictOf(text);
@@ -3356,14 +3331,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
     s.round = onReviewDone(s.round, verdict);
     persistRounds(s);
-    if (verdict === "pass") {
-      // a plan-review pass is no counting review: the normal read budget stays
-      const planOnly = ids.length > 0 && ids.every((id) => s.reviewRuns.byRun.get(id)?.entries.some((e) => REVIEW_ROLES.includes(e.role) && e.occasion === "plan-review"));
-      if (!planOnly) {
-        s.budget.enterPost();
-        s.trace?.emit({ event: "recheck_budget", count: 0, action: "start" });
-      }
-    } else if (verdict === "fail") resetRecheck(s, "fail");
   }
 
   /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
@@ -3579,7 +3546,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
-   * A parent-written `ruling-<n>.md` / `brief-<x>.md` in this session's handoff dir lifts the loop stop, the recheck budget and the read
+   * A parent-written `ruling-<n>.md` / `brief-<x>.md` in this session's handoff dir lifts the loop stop and the read
    * budget (rounds.ts rulingReset, strict: regular file, ctime and mtime newer than the watermark, not self-written; no text parser).
    * Skipped while another write/edit/shell call is in flight. Runs at the top of tool_call, before the budget and cap checks.
    */
@@ -3604,7 +3571,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (hits.length === 0) return;
     s.loopStop = null;
-    resetRecheck(s, "ruling");
     s.budget.resetAll();
     s.capsResetAt = Math.ceil(at);
     persistRounds(s);
@@ -3787,8 +3753,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
-    if (owner && !owner.isChild && !event.isError && (owner.budget.postPass || (owner.reviewGate.last !== null && !owner.reviewGate.revised)) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
-      if (owner.budget.postPass) resetRecheck(owner, "edit");
+    if (owner && !owner.isChild && !event.isError && (owner.reviewGate.last !== null && !owner.reviewGate.revised) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
       if (!touchUp) owner.reviewGate = onRevision(owner.reviewGate);
     }
@@ -3835,7 +3800,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             writeHint(boundLedger(s.markerDir, s.id), cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
             s.budget.onLaunch();
             if (roles.includes("builder")) {
-              resetRecheck(s, "builder");
               if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
               s.reviewGate = onRevision(s.reviewGate);
             }

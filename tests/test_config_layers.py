@@ -189,7 +189,6 @@ class LayerRulesTest(unittest.TestCase):
         old = {"revisionRounds": {"standard": 3}, "reviewRuns": 9, "planReviewMax": 7}
         res = self.load(l2={"ceremony": old}, proj={"ceremony": old}, session={"ceremony": old})
         self.assertEqual(res["errors"], [])
-        self.assertEqual(res["config"]["ceremony"]["recheckBudget"], 3)
 
     def test_timeout_minutes_lower_only(self):
         res = self.load(l2={"roles": {"builder": {"timeoutMinutes": 90}}},
@@ -224,13 +223,13 @@ class LayerRulesTest(unittest.TestCase):
 
     def test_lower_only_below_minimum_is_dropped_with_a_warning(self):
         res = self.load(proj={"roles": {"builder": {"timeoutMinutes": 0}}},
-                        session={"ceremony": {"recheckBudget": -1}})
+                        session={"ceremony": {"heavyFileCount": 0}})
         self.assertEqual(res["errors"], [])
         self.assertEqual(res["config"]["roles"]["builder"]["timeoutMinutes"], 60)
-        self.assertEqual(res["config"]["ceremony"]["recheckBudget"], 3)
+        self.assertEqual(res["config"]["ceremony"]["heavyFileCount"], 8)
         joined = "\n".join(res["warnings"])
         self.assertIn("project roles.builder.timeoutMinutes ignored: below the minimum 1", joined)
-        self.assertIn("session ceremony.recheckBudget ignored: below the minimum 0", joined)
+        self.assertIn("session ceremony.heavyFileCount ignored: below the minimum 1", joined)
 
     def test_require_triage_true_only(self):
         res = self.load(proj={"ceremony": {"requireTriage": False}}, session={"ceremony": {"requireTriage": False}})
@@ -353,17 +352,16 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project ceremony.trivialBound ignored: not an object", "\n".join(res["warnings"]))
 
     def test_frugality_keys_tighten_only(self):
-        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "every": 5}}, "recheckBudget": 9,
+        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "every": 5}},
                                             "launchWait": "detach", "dedupeNotify": False}},
-                        session={"ceremony": {"foremanReads": {"after": {"warn": 0}}, "recheckBudget": 0}})
+                        session={"ceremony": {"foremanReads": {"after": {"warn": 0}}}})
         c = res["config"]["ceremony"]
         self.assertEqual(res["errors"], [])
         self.assertEqual(c["foremanReads"], {"before": {"warn": 8, "every": 5}, "after": {"warn": 8, "every": 8}})
-        self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "detach", True))
+        self.assertEqual((c["launchWait"], c["dedupeNotify"]), ("detach", True))
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.foremanReads.before.warn ignored: it would loosen", joined)
         self.assertIn("session ceremony.foremanReads.after.warn ignored: below the minimum 1", joined)
-        self.assertIn("project ceremony.recheckBudget ignored: it would loosen", joined)
         self.assertNotIn("project ceremony.launchWait ignored", joined)
         self.assertIn("project ceremony.dedupeNotify ignored: it would loosen", joined)
         res = self.load(proj={"ceremony": {"launchWait": "block"}}, session={})

@@ -528,13 +528,14 @@ LOOP_RULE = ("- Review and revise until a review passes; no count limits the rou
              "or brings no new finding and no change to the work since then. Then stop: report the open findings to the owner and ask how to go on. A new owner prompt, a parent ruling or brief, "
              "or a `/ceremony` tier change by the user lifts the stop; your own `foreman_triage`, a ledger `Tier:` line or an automatic escalation does not. While it stands, builder and reviewer "
              "launches are refused; `[second-opinion]` and a `resume` are not.\n")
-POST_PASS_EXEMPT = (" Pushing the reviewed head, opening the PR, watching CI, `gh pr merge --match-head-commit <reviewed head>` and the base CI check are not checks and do not count.")
 
 
 def review_loop_rewrite(want):
-    """The review-loop change (revision-round limit replaced by the loop guard; post-PASS exemptions) applied to an older rendering."""
+    """The review-loop change (revision-round limit replaced by the loop guard; the post-PASS recheck budget removed) applied to an older rendering."""
     want = re.sub(r"- Revision rounds per user prompt:.*?a `resume` of a builder run\.\n", lambda _: LOOP_RULE, want, flags=re.S)
-    return want.replace("own checks, then finish.", "own checks, then finish." + POST_PASS_EXEMPT)
+    recheck = "- After a reviewer PASS, run at most `ceremony.recheckBudget` own checks, then finish."
+    want = want.replace(recheck + "\n", "").replace(recheck + " ", "- ")
+    return want.replace(" It does not count against `ceremony.recheckBudget`.", "")
 
 
 class PackageFilesTest(unittest.TestCase):
