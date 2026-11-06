@@ -12,7 +12,7 @@ A sampler in the foreman session measures the host every `resources.sampleSecond
 
 | key | default | meaning |
 |---|---|---|
-| `resources.maxLoadPerCore` | 1.5 | 5-minute load average per core above which pressure is `high`. The 1-minute value is shown for information and never gates, so a short burst (parallel test runs) does not trip the limit. |
+| `resources.maxLoadPerCore` | 1.5 | Load average per core above which pressure is `high`. Both the 5-minute and the 1-minute value must be above it, so a short burst does not trip the limit and a load that has already dropped stops gating at once. |
 | `resources.minFreeMemMB` | 1024 | Free memory (MB) below which pressure is `high`. |
 | `resources.minFreeDiskGB` | 5 | Free disk (GB) of the workspace below which pressure is `high`. |
 | `resources.sampleSeconds` | 30 | Sampling interval, integer of at least 5. User or overlay config only. |
@@ -21,13 +21,14 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 
 ## Levels
 
-- `high`: a limit is crossed (`load`, `mem` or `disk`).
-- `critical`: load is at least twice `maxLoadPerCore`, or free memory or disk is below half its limit.
+- `high`: a limit is crossed (`load`, `mem` or `disk`). `load` needs both the 5-minute and the 1-minute load per core above `maxLoadPerCore`.
+- `critical`: both load values are at least twice `maxLoadPerCore`, or free memory or disk is below half its limit.
 - `ok`: nothing is crossed, or a probe is `unknown` (a field whose probe fails is skipped, never counted as a hit).
 
 ## What the gate does
 
-- `high`: child launches run one at a time. The first launch of an assistant message runs; the others are refused with a
+- Explorers are never gated: an explorer-only launch (a single `explorer`, or `tasks`/`chain` whose every entry is an explorer) runs at any level, is never queued or deferred and leaves no pressure trace event. A mixed call stays gated.
+- `high`: child launches run one at a time. The first gated launch of an assistant message runs (explorers do not count for that slot); the others are refused with a
   queued reason and a `pressure` wait wakes the foreman, with their arguments, once no run is active so it can relaunch them.
   A `tasks` call keeps its first task and queues the rest. Pressure delays a launch, it never downgrades one: every climb (explicit strong, RUNG_UP handoff, revision after a FAIL, sizing) keeps its strong or top rung.
 - `critical`: a launch is deferred (refused with a reason). A `pressure` wait wakes the foreman with the launch arguments when the
@@ -51,7 +52,7 @@ The project layer can only tighten: it may lower `maxLoadPerCore` and raise `min
 
 | OS | load | free memory | free disk |
 |---|---|---|---|
-| Linux | `os.getloadavg` (5-minute value gates, 1-minute is informational) | `/proc/meminfo` `MemAvailable` | `shutil.disk_usage` of the workspace |
+| Linux | `os.getloadavg` (the 5-minute and the 1-minute value must both be over the limit) | `/proc/meminfo` `MemAvailable` | `shutil.disk_usage` of the workspace |
 | macOS | `os.getloadavg` (same) | `vm_stat` free + inactive + speculative pages | `shutil.disk_usage` |
 | Windows | none (`unknown`) | `GlobalMemoryStatusEx` | `shutil.disk_usage` |
 

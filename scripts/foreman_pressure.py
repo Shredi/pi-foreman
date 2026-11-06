@@ -2,7 +2,8 @@
 """Host pressure sampler: load per core, free memory, free workspace disk. Stdlib only, Python 3.13+.
 
 sample() never raises: a probe that fails yields None. classify() turns a sample and the
-resources limits into {level, reasons, at, host}; write_state()/read_state() keep it in
+resources limits into {level, reasons, at, host}; the load reason needs both the 5-minute and the 1-minute
+load per core over the limit (a load that has already dropped does not gate); write_state()/read_state() keep it in
 <agentDir>/pi-foreman/state/pressure.json.
 """
 import argparse
@@ -18,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 
 
 def _load_per_core(window=1):
-    """Load average per core; `window` indexes os.getloadavg(): 0 = 1 minute, 1 = 5 minutes (the gate)."""
+    """Load average per core; `window` indexes os.getloadavg(): 0 = 1 minute, 1 = 5 minutes. The gate needs both."""
     try:
         cores = os.cpu_count() or 0
         if cores < 1:
@@ -111,10 +112,11 @@ def classify(host, limits, now=None):
         elif level == "ok":
             level = "high"
 
-    load, mem, disk = host.get("loadPerCore"), host.get("freeMemMB"), host.get("freeDiskGB")
+    load, load1 = host.get("loadPerCore"), host.get("load1PerCore")
+    mem, disk = host.get("freeMemMB"), host.get("freeDiskGB")
     max_load, min_mem, min_disk = (limits.get(k) for k in ("maxLoadPerCore", "minFreeMemMB", "minFreeDiskGB"))
-    if load is not None and max_load is not None:
-        hit("load", load > max_load, load >= 2 * max_load)
+    if load is not None and load1 is not None and max_load is not None:
+        hit("load", load > max_load and load1 > max_load, load >= 2 * max_load and load1 >= 2 * max_load)
     if mem is not None and min_mem is not None:
         hit("mem", mem < min_mem, mem < min_mem / 2.0)
     if disk is not None and min_disk is not None:

@@ -5,10 +5,14 @@
 //   high      fan-out width 1 (one launch of an assistant message runs, the rest wait for it) and no strong climb.
 //   critical  a child launch is refused; a `pressure` wait wakes the foreman with the launch arguments when the level drops.
 //
+// Explorers are never gated: an explorer-only launch runs at any level and does not take the first-launch slot at high.
+// The sampler's load reason needs both the 5-minute and the 1-minute load per core over the limit.
+//
 // A missing, unreadable or stale file (older than 3x resources.sampleSeconds) is "ok": a dead sampler never blocks work.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { get } from "./config.ts";
+import { subagentAgents } from "./payload.ts";
 
 export type PressureLevel = "ok" | "high" | "critical";
 export interface PressureState {
@@ -163,6 +167,13 @@ export const queuedReason = (reasons: string[]): string =>
 
 /** A call's launch arguments as JSON, for a wake message. */
 export const argsJson = (args: unknown): string => JSON.stringify(args);
+
+/** A launch whose every agent is the explorer (single `agent`, `tasks` or `chain`): never gated by pressure. */
+export function explorerOnly(input: unknown): boolean {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const agents = subagentAgents(input as Json);
+  return agents.length > 0 && agents.every((a) => a === "explorer");
+}
 
 /**
  * Width 1 for one `tasks` call: keeps the first entry in `input` and returns a copy of the call with the rest, or null
