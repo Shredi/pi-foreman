@@ -173,7 +173,7 @@ import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFin
 import type { LaunchRounds } from "./rounds.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
-import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
+import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { selfFinish, spawnDetached } from "./selffinish.ts";
@@ -2138,7 +2138,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   async function narrowLaunch(s: Session, ctx: ExtensionContext, callId: string, input: Record<string, unknown>, raw: Record<string, unknown>, p: PressureState): Promise<string | undefined> {
     const gen = s.launchBatch.generation;
-    const pos = s.launchBatch.positionOf(callId);
+    const pos = s.launchBatch.pickedPositionOf(callId);
     const rest = pos > 0 ? null : (narrowTasks(input), narrowTasks(raw));
     if (pos <= 0 && !rest) return undefined;
     if (s.pressureQ?.gen !== gen) s.pressureQ = { gen, entries: [], started: false };
@@ -2806,7 +2806,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const noPlan = s.isChild ? undefined : builderPlanBlock(s, ctx, input);
         if (noPlan) return { block: true, reason: noPlan };
         // Host pressure (pressure.ts): critical defers the launch (nothing below runs or counts), high narrows the fan-out to one and suppresses climbs.
-        if (!s.isChild && isLaunchArgs(input)) {
+        if (!s.isChild && isLaunchArgs(input) && !explorerOnly(rawLaunch)) {
           const p = pressureOf(s);
           if (p.level === "critical") {
             const args = rawLaunch;
@@ -3228,7 +3228,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) s.lastAssistantAt = Date.now();
     if (!s.isChild) s.selfWarm.noteRequest((Number(m.usage?.input) || 0) + (Number(m.usage?.cacheRead) || 0) + (Number(m.usage?.cacheWrite) || 0));
     if (!s.isChild) {
-      s.launchBatch.onAssistant(content, isLaunchArgs);
+      s.launchBatch.onAssistant(content, isLaunchArgs, (a) => !explorerOnly(a));
       if (Array.isArray(content)) {
         for (const c of content as { type?: unknown; name?: unknown; id?: unknown; arguments?: { command?: unknown } }[]) {
           if (c && c.type === "toolCall" && c.name === "bash" && typeof c.id === "string" && mentionsLedger(c.arguments?.command)) s.ledgerBash.add(c.id);

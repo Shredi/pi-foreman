@@ -142,12 +142,13 @@ async function rig(t: { after(fn: () => void): void }, o: { strong?: boolean } =
 
 const events = (a: Rig, name: string): Record<string, unknown>[] => a.trace().filter((r) => r.event === name);
 const PRESSURE_EVENTS = ["launch_narrowed", "launch_deferred", "climb_suppressed"];
+const worker = (n: number) => ({ agent: "builder", task: `look ${n}` });
 const explorer = (n: number) => ({ agent: "explorer", task: `look ${n}` });
 
 test("ok: three launches of one message all pass, nothing is rewritten or traced, no wait starts", async (t) => {
   const a = await rig(t);
   a.setLevel("ok");
-  const inputs = [explorer(1), explorer(2), explorer(3)];
+  const inputs = [worker(1), worker(2), worker(3)];
   await a.assistant(["c1", "c2", "c3"], (i) => inputs[i]);
   const seen: unknown[] = [];
   for (const [i, id] of ["c1", "c2", "c3"].entries()) {
@@ -160,12 +161,12 @@ test("ok: three launches of one message all pass, nothing is rewritten or traced
 
 test("a missing or stale pressure file behaves like ok", async (t) => {
   const a = await rig(t);
-  await a.assistant(["c1", "c2"], (i) => explorer(i));
-  assert.equal(await a.launch("c1", explorer(0)), undefined);
-  assert.equal(await a.launch("c2", explorer(1)), undefined, "no file");
+  await a.assistant(["c1", "c2"], (i) => worker(i));
+  assert.equal(await a.launch("c1", worker(0)), undefined);
+  assert.equal(await a.launch("c2", worker(1)), undefined, "no file");
   a.setLevel("critical", ["mem"]);
   a.clock.now += 91_000;
-  assert.equal(await a.launch("c3", explorer(2)), undefined, "a file older than 3x sampleSeconds");
+  assert.equal(await a.launch("c3", worker(2)), undefined, "a file older than 3x sampleSeconds");
   assert.deepEqual(events(a, "launch_deferred"), []);
 });
 
@@ -182,7 +183,7 @@ test("high: three launches in one message -> the first runs, two are queued; one
   const a = await rig(t);
   a.setLevel("high", ["load", "mem"]);
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const inputs = [explorer(1), explorer(2), explorer(3)];
+  const inputs = [worker(1), worker(2), worker(3)];
   await a.assistant(["c1", "c2", "c3"], (i) => inputs[i]);
   assert.equal(await a.launch("c1", inputs[0]), undefined);
   const q2 = await a.launch("c2", inputs[1]);
@@ -203,12 +204,12 @@ test("high: three launches in one message -> the first runs, two are queued; one
   t.mock.timers.tick(30_000);
   assert.equal(a.wakes.length, 1);
   assert.equal(a.wakes[0].customType, "foreman_wake");
-  assert.ok(a.wakes[0].content.includes(`pressure: high, a run ended; relaunch the queued launches one at a time with: ${JSON.stringify([explorer(2), explorer(3)])}`), a.wakes[0].content);
+  assert.ok(a.wakes[0].content.includes(`pressure: high, a run ended; relaunch the queued launches one at a time with: ${JSON.stringify([worker(2), worker(3)])}`), a.wakes[0].content);
 
   // the next message is narrowed (and traced) on its own
-  await a.assistant(["d1", "d2"], (i) => explorer(10 + i));
-  assert.equal(await a.launch("d1", explorer(10)), undefined);
-  assert.equal((await a.launch("d2", explorer(11)))?.block, true);
+  await a.assistant(["d1", "d2"], (i) => worker(10 + i));
+  assert.equal(await a.launch("d1", worker(10)), undefined);
+  assert.equal((await a.launch("d2", worker(11)))?.block, true);
   assert.equal(events(a, "launch_narrowed").length, 2);
 });
 
@@ -216,19 +217,20 @@ test("high: a single launch is not narrowed; a tasks call keeps its first task a
   const a = await rig(t);
   a.setLevel("high");
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const one = explorer(1);
+  const one = worker(1);
   await a.assistant(["c1"], () => one);
   assert.equal(await a.launch("c1", one), undefined);
   assert.deepEqual(events(a, "launch_narrowed"), []);
 
-  const many = { tasks: [explorer(1), explorer(2), explorer(3)] };
+  const many = { tasks: [worker(1), worker(2), worker(3)] };
   await a.assistant(["t1"], () => many);
   assert.equal(await a.launch("t1", many), undefined);
-  assert.deepEqual(many.tasks.map((x) => x.task.split("\n")[0]), ["look 1"]); // the roots block (A6) follows the task text
+  assert.equal(many.tasks.length, 1);
+  assert.ok(many.tasks[0].task.includes("look 1") && !many.tasks[0].task.includes("look 2")); // a builder's task gets the protected-files block (A6) around the text
   assert.equal(events(a, "launch_narrowed").length, 1);
   t.mock.timers.tick(30_000);
   assert.equal(a.wakes.length, 1, "no run is active: the queue is released at the next check");
-  assert.match(a.wakes[0].content, /relaunch the queued launches one at a time with: \{"tasks":\[\{"agent":"explorer","task":"look 2"\},\{"agent":"explorer","task":"look 3"\}\]/);
+  assert.match(a.wakes[0].content, /relaunch the queued launches one at a time with: \{"tasks":\[\{"agent":"builder","task":"look 2"\},\{"agent":"builder","task":"look 3"\}\]/);
 });
 
 test("high: a RUNG_UP strong relaunch keeps the strong rung like ok (pressure delays, never downgrades)", async (t) => {
@@ -253,10 +255,10 @@ test("high: a RUNG_UP strong relaunch keeps the strong rung like ok (pressure de
 test("high: an explicit non-keyword model of the owner is not rewritten", async (t) => {
   const a = await rig(t, { strong: true });
   a.setLevel("high");
-  const input: Record<string, unknown> = { agent: "explorer", task: "look", model: "fake/explorer" };
+  const input: Record<string, unknown> = { agent: "builder", task: "look", model: "fake/builder" };
   await a.assistant(["e1"], () => input);
   assert.equal(await a.launch("e1", input), undefined);
-  assert.equal(input.model, "fake/explorer");
+  assert.equal(input.model, "fake/builder");
   assert.deepEqual(events(a, "climb_suppressed"), []);
 });
 
@@ -293,14 +295,14 @@ test("critical: after 600 s of critical pressure the wait wakes with 'still crit
   const a = await rig(t);
   a.setLevel("critical", ["load"]);
   t.mock.timers.enable({ apis: ["setTimeout"] });
-  const input = { agent: "explorer", task: "look around" };
+  const input = { agent: "builder", task: "look around" };
   await a.assistant(["c1"], () => input);
   assert.equal((await a.launch("c1", input))?.block, true);
   t.mock.timers.tick(570_000);
   assert.equal(a.wakes.length, 0);
   t.mock.timers.tick(30_000);
   assert.equal(a.wakes.length, 1);
-  assert.ok(a.wakes[0].content.includes(`pressure: still critical, relaunch with: ${JSON.stringify({ agent: "explorer", task: "look around" })}`), a.wakes[0].content);
+  assert.ok(a.wakes[0].content.includes(`pressure: still critical, relaunch with: ${JSON.stringify({ agent: "builder", task: "look around" })}`), a.wakes[0].content);
   t.mock.timers.tick(3_600_000);
   assert.equal(a.wakes.length, 1);
 });
@@ -322,4 +324,54 @@ test("critical and high do not gate foreman_bg or bash", async (t) => {
     }
   }
   for (const e of PRESSURE_EVENTS) assert.deepEqual(events(a, e), [], e);
+});
+
+test("critical: an explorer-only launch runs: no block, no launch_deferred, no wait", async (t) => {
+  const a = await rig(t);
+  a.setLevel("critical", ["mem"]);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const one = explorer(1);
+  await a.assistant(["e1"], () => one);
+  assert.equal(await a.launch("e1", one), undefined);
+  const chain = { chain: [explorer(2), explorer(3)] };
+  await a.assistant(["e2"], () => chain);
+  assert.equal(await a.launch("e2", chain), undefined);
+  t.mock.timers.tick(700_000);
+  for (const e of PRESSURE_EVENTS) assert.deepEqual(events(a, e), [], e);
+  assert.equal(a.wakes.length, 0);
+});
+
+test("critical: a reviewer launch is deferred", async (t) => {
+  const a = await rig(t);
+  a.setLevel("critical", ["mem"]);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const input = { agent: "reviewer", task: "review it" };
+  await a.assistant(["r1"], () => input);
+  assert.equal((await a.launch("r1", input))?.block, true);
+  assert.equal(events(a, "launch_deferred").length, 1);
+});
+
+test("high: [explorer, builder, builder] -> the explorer runs, the first builder runs, the second is queued", async (t) => {
+  const a = await rig(t);
+  a.setLevel("high", ["load"]);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const inputs = [explorer(1), worker(2), worker(3)];
+  await a.assistant(["c1", "c2", "c3"], (i) => inputs[i]);
+  assert.equal(await a.launch("c1", inputs[0]), undefined);
+  assert.equal(await a.launch("c2", inputs[1]), undefined);
+  assert.equal((await a.launch("c3", inputs[2]))?.block, true);
+  assert.equal(events(a, "launch_narrowed").length, 1);
+});
+
+test("high: an explorer-only tasks call is not narrowed", async (t) => {
+  const a = await rig(t);
+  a.setLevel("high");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const many = { tasks: [explorer(1), explorer(2), explorer(3)] };
+  await a.assistant(["t1"], () => many);
+  assert.equal(await a.launch("t1", many), undefined);
+  assert.equal(many.tasks.length, 3);
+  for (const e of PRESSURE_EVENTS) assert.deepEqual(events(a, e), [], e);
+  t.mock.timers.tick(60_000);
+  assert.equal(a.wakes.length, 0);
 });
