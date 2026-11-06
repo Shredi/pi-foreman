@@ -9,9 +9,12 @@
 // `recheckBudget` read-class calls, then is told to finish (the read budget does not apply).
 // Finalization (R11 item 5): after a reviewer PASS, until the next started launch, the
 // read budget never refuses and a plain git commit/add/status/log is exempt from both budgets while no child run
-// is active (index.ts readBudgetCheck).
+// is active (index.ts readBudgetCheck). After a reviewer PASS the coordination calls and the CI/merge steps of the reviewed head
+// (`afterPassExempt`) do not count against `recheckBudget` either.
+
 
 import { PACK_READ_TOOL_NAMES } from "./gitpack.ts";
+import { parseShell } from "./shellast.ts";
 
 export type Phase = "before" | "after";
 export interface PhaseLimits {
@@ -82,12 +85,12 @@ export class ReadBudget {
     return this.post ? this.post.ids.size : 0;
   }
 
-  /** Decide one tool call. `exempt`: supervisor reply window or a read of a recorded child result file. */
-  check(toolName: string, toolCallId: string, limits: ReadLimits, recheck: number, exempt: boolean, coordination = false): BudgetDecision {
+  /** Decide one tool call. `exempt`: supervisor reply window or a read of a recorded child result file. `afterPass`: a CI/merge step of the reviewed head ({@link afterPassExempt}); it never counts in the post-PASS window. */
+  check(toolName: string, toolCallId: string, limits: ReadLimits, recheck: number, exempt: boolean, coordination = false, afterPass = false): BudgetDecision {
     if (!READ_CLASS.has(toolName) || exempt) return { kind: "allow" };
     const top = topLevelId(toolCallId);
     if (this.post) {
-      if (this.post.ids.has(top)) return { kind: "allow" };
+      if (coordination || afterPass || this.post.ids.has(top)) return { kind: "allow" };
       if (this.post.ids.size >= recheck) {
         return { kind: "deny", event: "recheck_budget", count: this.post.ids.size + 1, reason: this.recheckReason(recheck) };
       }
@@ -161,6 +164,87 @@ export function finalizationCommand(toolName: string, input: unknown): boolean {
   const command = (input as Record<string, unknown>).command;
   if (typeof command !== "string") return false;
   return FINAL_RE.test(command);
+}
+
+export interface AfterPassCtx {
+  /** Heads whose latest review verdict is PASS (reviews.ts passHeads). */
+  passHeads: readonly string[];
+  /** HEAD and the branch name of the checkout the command runs in; null when unreadable. */
+  head: string | null;
+  branch: string | null;
+}
+
+const GIT_READ = new Set(["fetch", "rev-parse", "log", "status", "merge-tree"]);
+const GH_READ = new Set(["pr checks", "pr view", "run list", "run view", "run watch"]);
+const PIPE_TAIL = new Set(["head", "tail", "wc", "sleep", "echo", "true"]);
+const MERGE_FLAGS = new Set(["--squash", "--merge", "--rebase", "--delete-branch", "--auto", "-s", "-m", "-r", "-d"]);
+const API_WRITE = new Set(["-f", "-F", "--field", "--raw-field", "--input"]);
+const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+function pushOk(args: string[], c: AfterPassCtx): boolean {
+  if (!c.head || !c.passHeads.includes(c.head)) return false;
+  const pos: string[] = [];
+  for (const a of args) {
+    if (a === "-u" || a === "--set-upstream") continue;
+    if (a.startsWith("-")) return false;
+    pos.push(a);
+  }
+  if (pos.length === 0) return true;
+  if (pos[0] !== "origin" || pos.length > 2) return false;
+  return pos.length === 1 || pos[1] === "HEAD" || (c.branch !== null && pos[1] === c.branch);
+}
+
+function mergeOk(args: string[], c: AfterPassCtx): boolean {
+  let sha: string | null = null;
+  let pr = 0;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--match-head-commit") sha = args[++i] ?? null;
+    else if (a.startsWith("--match-head-commit=")) sha = a.slice(a.indexOf("=") + 1);
+    else if (a.startsWith("-")) {
+      if (!MERGE_FLAGS.has(a)) return false;
+    } else if (++pr > 1) return false;
+  }
+  return sha !== null && FULL_SHA.test(sha) && c.passHeads.includes(sha);
+}
+
+function apiOk(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (API_WRITE.has(a) || /^-[fF]./.test(a) || /^--(?:field|raw-field|input)=/.test(a)) return false;
+    const m = a === "-X" || a === "--method" ? args[++i] : /^--method=(.*)$/.exec(a)?.[1] ?? (/^-X(.+)$/.exec(a)?.[1]);
+    if (m !== undefined && m.toUpperCase() !== "GET") return false;
+  }
+  return true;
+}
+
+/**
+ * Post-PASS exemption (ceremony.recheckBudget): a bash command whose every segment is a read-only CI or merge step of the
+ * reviewed head and so no re-check: `git push` of a PASS head (no force, no other refspec), `gh pr merge <n>` with
+ * `--match-head-commit <full PASS head>`, `gh pr checks|view`, `gh run list|view|watch`, a GET-only `gh api`, and
+ * `git fetch|rev-parse|log|status|merge-tree`. Parsed with parseShell; an opaque segment, a redirect to a file or any other
+ * program never qualifies. A command that changes HEAD still leaves the review stale (the sha-based PR gate).
+ */
+export function afterPassExempt(command: string, c: AfterPassCtx): boolean {
+  const segs = parseShell(command);
+  if (segs.length === 0) return false;
+  let ok = false;
+  for (const s of segs) {
+    if (s.opaque || s.heredoc || s.redirects.some((r) => r.op !== "dup")) return false;
+    if (s.program === "cd" || PIPE_TAIL.has(s.program)) continue;
+    let argv = s.argv;
+    if (s.program === "git") {
+      if (argv[0] === "-C" && argv.length > 2) argv = argv.slice(2);
+      const sub = argv[0];
+      if (sub === "push" ? pushOk(argv.slice(1), c) : GIT_READ.has(sub)) ok = true;
+      else return false;
+    } else if (s.program === "gh") {
+      const sub = `${argv[0]} ${argv[1]}`;
+      if (argv[0] === "api" ? apiOk(argv.slice(1)) : sub === "pr merge" ? mergeOk(argv.slice(2), c) : GH_READ.has(sub)) ok = true;
+      else return false;
+    } else return false;
+  }
+  return ok;
 }
 
 const PR_COORDINATION: ReadonlySet<string> = new Set(["pr_status", "pr_checks", "pr_comments", "pr_watch", "pr_unwatch"]);

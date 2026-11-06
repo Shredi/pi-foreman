@@ -20,15 +20,6 @@ import type { PanelFinding } from "./panel.ts";
 import type { ReviewResult } from "./occasion.ts";
 import type { Verdict } from "./rounds.ts";
 
-/** `ceremony.planReviewMax`: `[plan-review]` runs per plan topic per session before the owner decides; a positive integer, else 4. */
-export const DEFAULT_PLAN_REVIEW_MAX = 4;
-export function planReviewMax(v: unknown): number {
-  return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : DEFAULT_PLAN_REVIEW_MAX;
-}
-
-/** The line the checkpoint shows (dialog or result text) once a topic reached `ceremony.planReviewMax`. */
-export const planReviewCapLine = (n: number): string => `Plan review cap reached (${n} reviews); the owner decides`;
-
 /** `ceremony.planReviewRounds`: a positive integer, else 2. */
 export const DEFAULT_PLAN_REVIEW_ROUNDS = 2;
 export function planReviewRounds(v: unknown): number {

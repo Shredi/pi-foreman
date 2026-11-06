@@ -75,10 +75,8 @@ Keys outside safety that the project and session layers cannot loosen either
     ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.modelDataFrom        ignored (it decides the reserve setup writes: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
-    ceremony.revisionRounds.<tier>   lower only (a higher limit loosens the review loop)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
     ceremony                         not an object: ignored (null would drop every escalation)
-    ceremony.revisionRounds          not an object: ignored
     ceremony.heavySignals            union only (a project can add signals, not remove one)
     ceremony.heavyFileCount          lower only, minimum 1 (a higher count escalates later)
     ceremony.default                 raise only, trivial < standard < heavy
@@ -101,7 +99,6 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.planReviewRounds        free per layer (no tighten rule)
-    ceremony.reviewRuns              lower only, minimum 1 (a higher cap allows more review runs per user prompt)
     ceremony.budgetUsd               lower only, minimum 0.01 (a higher cap, or none, lets a session spend more); unset = no cap
     ceremony.childTimeoutSeconds     lower only, minimum 1 (a higher limit lets a child tool call run longer)
     ceremony.launchTimeoutCapMinutes lower only, minimum 1 (a higher cap lets a child run longer)
@@ -288,7 +285,6 @@ LAYER_TIGHTEN = [
     (("ladder", "idleDownshift", "enabled"), "false_only"),
     (("ladder", "idleDownshift", "causes"), "intersect"),
     (("roles", "*", "strongOnRevision"), "false_only"),
-    (("ceremony", "revisionRounds", "*"), "lower_only"),
     (("ceremony", "requireTriage"), "true_only"),
     (("ceremony", "reviewBeforePr"), "true_only"),
     (("ceremony", "foremanEdits"), ("ordered", FOREMAN_EDITS)),
@@ -300,7 +296,6 @@ LAYER_TIGHTEN = [
     (("ceremony", "recheckBudget"), "lower_only"),
     (("ceremony", "childTimeoutSeconds"), "lower_only"),
     (("ceremony", "launchTimeoutCapMinutes"), "lower_only"),
-    (("ceremony", "reviewRuns"), "lower_only"),
     (("ceremony", "budgetUsd"), "lower_only_number"),
     (("ceremony", "launchWait"), ("ordered", ("block", "detach"))),
     (("ceremony", "dedupeNotify"), "true_only"),
@@ -334,9 +329,9 @@ LAYER_TIGHTEN = [
 ]
 # gate keys the project and session layers may set (the LAYER_TIGHTEN rows above); every other gate key is user or overlay only
 GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk")
-LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "revisionRounds": 0, "heavyFileCount": 1,
+LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "heavyFileCount": 1,
                  "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1, "recheckBudget": 0,
-                 "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "reviewRuns": 1, "budgetUsd": 0.01,
+                 "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "budgetUsd": 0.01,
                  "maxLoadPerCore": 0.01, "selfWarmWindowMinutes": 1, "awayAfterMinutes": 1}
 # lower_only values with no earlier layer value may not exceed this (the built-in default).
 LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120, "budgetShare": 0.5, "awayTicks": 0,
@@ -608,9 +603,6 @@ def _restrict_ceremony(base, proj, who, warnings):
         warnings.append("%s ceremony ignored: not an object" % who)
         return
     have = base.get("ceremony") if isinstance(base.get("ceremony"), dict) else {}
-    if "revisionRounds" in cer and not isinstance(cer["revisionRounds"], dict):
-        del cer["revisionRounds"]
-        warnings.append("%s ceremony.revisionRounds ignored: not an object" % who)
     for key in ("trivialBound", "required", "foremanReads"):
         if key in cer and not isinstance(cer[key], dict):
             del cer[key]

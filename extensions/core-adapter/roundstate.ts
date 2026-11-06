@@ -1,14 +1,14 @@
 // Reload-safe round state (R14 item 6): `<handoff dir>/round-state.json`, written by the adapter itself in a round
 // session (PI_FOREMAN_HANDOFF_DIR; none = nothing written, nothing restored).
 //
-// The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan,
-// the review counters and the revision rounds per chain. It never keeps an approval: on session_start the checkpoint
+// The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan
+// and the round state (built, review open). It never keeps an approval: on session_start the checkpoint
 // approval comes back only from the parent's `ruling.md` (a `plan-version: <hash>` line stamped by the parent pane's harness naming this
 // plan version, else `ruling-plan.md` or `ruling.md` in parentApproval restore mode: first line APPROVED, ctime newer
 // than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
-// ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). Counters restore only as
-// non-negative integers; a chain with a bad one starts fresh. The rulings a chain used and its last refusal are not kept; the caps-reset
-// watermark (`capsResetAt`, ms epoch of the last parent ruling/brief that lifted the caps) is, so a reload does not apply it twice.
+// // ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). A file of an older version (`chains`, review
+// counters) restores its main chain's state and drops the counters. The caps-reset
+// watermark (`capsResetAt`, ms epoch of the last parent ruling/brief that lifted the loop stop and the budgets) is kept, so a reload does not apply it twice.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE, planVersionHash, stampedApproval } from "./checkpoint.ts";
@@ -33,10 +33,7 @@ export interface PersistedRounds {
   plan: { topic: string; hash: string } | null;
   /** The plan-review lineage of that plan, or null. */
   planReview: PersistedReview | null;
-  chain: string;
-  chains: Record<string, { revisions: number; exempt: number; built: boolean; reviewOpen: boolean; revisionAnswered?: boolean }>;
-  reviewCount: number;
-  planReviewCount: number;
+  round: RoundState;
   /** Watermark of the last caps reset by a parent ruling/brief (index.ts capsReset); absent = none. */
   capsResetAt?: number;
 }
@@ -45,11 +42,6 @@ export interface PersistedRounds {
 export function roundStateDir(env: NodeJS.ProcessEnv): string | null {
   const d = env.PI_FOREMAN_HANDOFF_DIR?.trim();
   return d && path.isAbsolute(d) ? path.resolve(d) : null;
-}
-
-/** The persisted form of the chains: revision counters and the open-review state, no security flag. */
-export function chainsOf(all: Map<string, RoundState>): PersistedRounds["chains"] {
-  return Object.fromEntries([...all].map(([k, s]) => [k, { revisions: s.used, exempt: s.exempt ?? 0, built: s.built, reviewOpen: s.reviewOpen, ...(s.revisionAnswered ? { revisionAnswered: true } : {}) }]));
 }
 
 /** Write the file (temp file + rename); a failure leaves the old file and is not fatal. */
@@ -69,14 +61,10 @@ export function writeRoundState(data: PersistedRounds): void {
 }
 
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
-const CHAIN_KEY = /^(?:main|P\d{1,6})$/;
 const TOPIC = /^[A-Za-z0-9._-]{1,64}$/;
 
 export interface Restored {
-  chain: string;
-  chains: Map<string, RoundState>;
-  reviewCount: number;
-  planReviewCount: number;
+  round: RoundState;
   capsResetAt: number;
   /** The checkpoint approval, granted by the parent's ruling.md; null = re-ceremony. */
   approval: { topic: string; path: string; hash: string; ruling: string; at: number; review: PersistedReview | null } | null;
@@ -105,18 +93,11 @@ export function restoreRoundState(dir: string, currentPlan: (topic: string) => {
     if (!now || now.hash !== p.hash) return null;
     plan = { topic: p.topic, ...now };
   }
-  const chains = new Map<string, RoundState>();
-  const rc = raw.chains && typeof raw.chains === "object" && !Array.isArray(raw.chains) ? (raw.chains as Record<string, unknown>) : {};
-  for (const [k, v] of Object.entries(rc)) {
-    if (!CHAIN_KEY.test(k) || !v || typeof v !== "object") continue;
-    const c = v as Record<string, unknown>;
-    const used = count(c.revisions);
-    const exempt = count(c.exempt);
-    if (used === null || exempt === null) continue;
-    chains.set(k, { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, used, ...(exempt > 0 ? { exempt } : {}), ...(c.revisionAnswered === true ? { revisionAnswered: true } : {}) });
-  }
-  const chain = typeof raw.chain === "string" && CHAIN_KEY.test(raw.chain) ? raw.chain : "main";
-  return { chain, chains, reviewCount: count(raw.reviewCount) ?? 0, planReviewCount: count(raw.planReviewCount) ?? 0, capsResetAt: count(raw.capsResetAt) ?? 0, approval: plan ? approvalOf(dir, plan, raw.planReview, self) : null };
+  const old = raw.chains && typeof raw.chains === "object" && !Array.isArray(raw.chains) ? (raw.chains as Record<string, unknown>).main : undefined;
+  const rs = raw.round && typeof raw.round === "object" && !Array.isArray(raw.round) ? raw.round : old;
+  const c = (rs && typeof rs === "object" ? rs : {}) as Record<string, unknown>;
+  const round: RoundState = { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, ...(c.revisionAnswered === true ? { revisionAnswered: true } : {}) };
+  return { round, capsResetAt: count(raw.capsResetAt) ?? 0, approval: plan ? approvalOf(dir, plan, raw.planReview, self) : null };
 }
 
 const ctimeOf = (f: string): number | null => {

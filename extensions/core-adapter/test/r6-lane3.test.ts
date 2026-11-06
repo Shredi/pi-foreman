@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { costAt, loadPrices, priceRecord, tableRate } from "../cost.ts";
-import { budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap, budgetCap } from "../costguard.ts";
+import { budgetCheck, failedItemsOf, prependReReview, budgetCap } from "../costguard.ts";
 import { ChildRuns, UsageTail } from "../runs.ts";
 import { footerText, zeroTotals, addMessage } from "../footer.ts";
 import { LiveState } from "../livestate.ts";
@@ -135,16 +135,6 @@ test("3c: budget guard fires on the summed estimate, not the foreman's own", () 
   assert.equal(budgetCheck(0.8, 0.9, 2, true), null, "the warning comes once");
   assert.equal(budgetCap(0), null);
   assert.equal(budgetCap(2.5), 2.5);
-});
-
-test("3e: review cap per prompt names the count; reviewRuns defaults to 3", () => {
-  assert.equal(reviewRunsCap(undefined), 3);
-  assert.equal(reviewRunsCap(5), 5);
-  assert.equal(reviewCapCheck(2, 1, 3), null);
-  const r = reviewCapCheck(3, 1, 3);
-  assert.equal(r?.reason, "review_cap");
-  assert.match(r!.text, /3 review run\(s\)/);
-  assert.equal(reviewCapCheck(3, 0, 3), null, "a launch without a review is no concern of the cap");
 });
 
 test("3e: a re-review after FAIL gets [re-review items: N, M] from the failed items of the last FAIL", () => {

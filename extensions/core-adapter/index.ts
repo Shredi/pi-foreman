@@ -59,7 +59,7 @@ import type { PiRoots } from "./orient.ts";
 import { applyRootsBlock } from "./childbrief.ts";
 import { ExplorerBrief } from "./builderbrief.ts";
 import { ChildReads, childReadLimits, launchReadAllowance } from "./childreads.ts";
-import { bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
+import { afterPassExempt, bgWaitLocations, coordinationCall, finalizationCommand, launchLocations, inRecorded, noticeLocations, isReadCall, ReadBudget, READ_CLASS, readLimits, recheckLimit, recordFiles } from "./budget.ts";
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
@@ -122,7 +122,7 @@ import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts"
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
-import { budgetCap, budgetCheck, failedItemsOf, prependReReview, reviewCapCheck, reviewRunsCap } from "./costguard.ts";
+import { budgetCap, budgetCheck, failedItemsOf, prependReReview } from "./costguard.ts";
 import { costReport } from "./costreport.ts";
 import { appendUsage, aggregate, isCostLine, bindLaunch, stripBinding, causeOfCustom, WAKE_MESSAGE_TYPE, causeOfInput, formatSummary, keepSection, alignSections, PARENT_SESSION_ENV, readBinding, checkoutEnv, pricedLine, readUsage, recordUsageLaunch, singleLaunchRole, usageFile, usageLine } from "./usage.ts";
 import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } from "./usage.ts";
@@ -169,8 +169,10 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
-import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, rulingReset, securityOf, verdictOf } from "./rounds.ts";
-import type { LaunchRounds } from "./rounds.ts";
+import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
+import type { LaunchRounds, RoundState } from "./rounds.ts";
+import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
+import type { LoopStop, ReviewKind } from "./reviewloop.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
@@ -189,12 +191,12 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch } from "./occasion.ts";
+import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval } from "./planstate.ts";
-import { PlanReviews, planFactsBlock, planPathsOf, planReviewCapLine, planReviewMax, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
-import { chainsOf, restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
+import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
 import { liftSizing, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
@@ -310,10 +312,8 @@ interface Session {
   noticeVerdicts: Map<string, boolean>;
   /** Async-started guidance lines trimmed from a held launch result, by run id (trace notify_deduped). */
   trimmedLines: Map<string, number>;
-  /** Foreman only: builder revision rounds per review chain since the last user prompt or /ceremony tier change (rounds.ts). */
-  chains: RoundChains;
-  /** Foreman only: the run whose full reviewer report held a counting FAIL with a `SECURITY:` line; the next completion notice consumes it (rounds.ts securityOf). */
-  securityRun: string | null;
+  /** Foreman only: whether a builder launch is a revision of reviewed work, since the last user prompt or /ceremony tier change (rounds.ts). */
+  round: RoundState;
   /** Foreman only: session_start restored the reload file (roundstate.ts); from then on round state changes rewrite it. */
   roundStateOn: boolean;
   /** Foreman only, ceremony gate (bound.ts): own project-file changes at trivial, reset by /ceremony. */
@@ -340,12 +340,8 @@ interface Session {
   climbRefusals: number;
   /** Foreman only: per-item FAIL counts of reviewer runs (ladder.reviewerClimb, reviewerclimb.ts). */
   reviewerFails: ReviewerFails;
-  /** Foreman only: review launches since the last user prompt (ceremony.reviewRuns), plan reviews excluded. */
-  reviewCount: number;
-  /** Foreman only: `[plan-review]` launches since the last user prompt, capped apart by ceremony.reviewRuns. */
-  planReviewCount: number;
-  /** Foreman only: `[plan-review]` runs launched per plan topic in this session (ceremony.planReviewMax; persisted in the ceremony-state entry, planstate.ts). */
-  topicReviews: Record<string, number>;
+  /** Foreman only: the loop guard's stop (reviewloop.ts): builder and reviewer launches are refused while set; persisted in the ceremony-state entry (planstate.ts). */
+  loopStop: LoopStop | null;
   /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval or /foreman plan off. */
   planPhase: boolean;
   /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
@@ -785,8 +781,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       turnSeq: 0,
       checksCache: { current: null },
       turn: { cause: "other", cacheRead: 0, cacheWrite: 0 },
-      chains: new RoundChains(),
-      securityRun: null,
+      round: initialRounds(),
       roundStateOn: false,
       tally: emptyTally(),
       pendingChanges: new Map(),
@@ -800,9 +795,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       attention: new AttentionNotices(),
       climbRefusals: 0,
       reviewerFails: new ReviewerFails(),
-      reviewCount: 0,
-      planReviewCount: 0,
-      topicReviews: {},
+      loopStop: null,
       planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
@@ -954,7 +947,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return s;
   }
 
-  /** Every tier change goes through here so the trace sees it. Only a change by the user (/ceremony) resets the revision rounds. */
+  /** Every tier change goes through here so the trace sees it. Only a change by the user (/ceremony) resets the round state and the loop stop. */
   function setCeremony(s: Session, next: CeremonyState): void {
     const before = s.ceremony.tier;
     // The reason of the change: the reason an escalation or override appended, else the source (a triage without one).
@@ -962,7 +955,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.ceremony = next;
     if (next.tier !== before) {
       if (!s.isChild) s.trace?.emit({ event: "tier", tier: next.tier, reason }); // D7: a tier event is the foreman's triage
-      s.chains.clear(onTierChange(s.chains.state, next.source));
+      if (next.source === "user") (s.round = initialRounds()), (s.loopStop = null);
       persistRounds(s);
     }
     persistCeremonyState(s);
@@ -974,12 +967,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const data = buildCeremonyState({
       plan: s.plan,
       lineages: s.planReviews.all().map((l) => ({ path: l.path, hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds, reviews: l.reviews })),
-      planReviews: s.topicReviews,
       userTier: s.ceremony.userTier,
       tier: s.ceremony.tier,
       tierSource: s.ceremony.source,
       planPhase: s.planPhase,
       reviews: s.reviews,
+      loopStop: s.loopStop,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -998,9 +991,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.ceremonyRestored = true;
     if (!e) return persistCeremonyState(s); // a plan phase entered through the env is recorded at once
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
-    s.topicReviews = { ...e.planReviews };
     s.planPhase = e.planPhase;
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
+    s.loopStop = e.loopStop ?? null;
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -1035,10 +1028,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       handoffDir: dir,
       plan: plan ? { topic: plan.topic, hash: plan.hash } : null,
       planReview: l ? { hash: l.latest.hash, verdict: l.latest.verdict, model: l.latest.model, rounds: l.rounds } : null,
-      chain: s.chains.key,
-      chains: chainsOf(s.chains.all()),
-      reviewCount: s.reviewCount,
-      planReviewCount: s.planReviewCount,
+      round: s.round,
       ...(s.capsResetAt > 0 ? { capsResetAt: s.capsResetAt } : {}),
     });
   }
@@ -1056,9 +1046,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s);
       return;
     }
-    s.chains.restore(r.chain, r.chains);
-    s.reviewCount = r.reviewCount;
-    s.planReviewCount = r.planReviewCount;
+    s.round = r.round;
     s.capsResetAt = r.capsResetAt;
     // The session entry (restoreCeremonyState) comes first; this file only fills in when it restored no approval, and never on a fork.
     const a = s.plan?.status === "approved" || reason === "fork" ? null : r.approval;
@@ -1881,7 +1869,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
 
   /** Read budget (budget.ts): foreman only; undefined = let the call go on. */
-  function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown) {
+  /** After a reviewer PASS: the bash call is a read-only CI/merge step of the reviewed head (budget.ts afterPassExempt). */
+  async function afterPassCall(s: Session | undefined, cwd: string, toolName: string, input: unknown): Promise<boolean> {
+    if (!s || s.isChild || !s.budget.postPass || toolName !== "bash") return false;
+    const command = input && typeof input === "object" ? (input as Record<string, unknown>).command : undefined;
+    if (typeof command !== "string" || !/\b(?:git|gh)\b/.test(command)) return false;
+    await s.reviewSync; // the PASS record (and its head) lands first
+    const [head, branch] = await Promise.all([headOf(cwd), branchOf(cwd)]);
+    return afterPassExempt(command, { passHeads: passHeads(s.reviews), head, branch: branch || null });
+  }
+
+  function readBudgetCheck(s: Session | undefined, ctx: ExtensionContext, toolName: string, callId: string, input: unknown, afterPass = false) {
     if (!s || s.isChild || !isReadCall(toolName, input)) return undefined;
     const inp = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
     const file = toolName === "read" ? resolveToolPath(inp.path, ctx.cwd, os.homedir()) : null;
@@ -1898,7 +1896,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const exempt = ledgerOnly || handoff || finalExempt || s.supervisor.open.size > 0 || (file !== null && inRecorded(s.childFiles, normFile(file)));
     // MCP and subagent get|guide calls are counted under the name `read`, after the exemptions above.
     s.budget.verdict = s.reviewGate.last; // R12 item 8: the recheck refusal names the real verdict
-    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt, coordinationCall(toolName, input));
+    const d = s.budget.check(READ_CLASS.has(toolName) ? toolName : "read", callId, readLimits(get(s.config.config, "ceremony.foremanReads")), recheckLimit(get(s.config.config, "ceremony.recheckBudget")), exempt, coordinationCall(toolName, input), afterPass);
     if (d.kind === "remind") {
       if (s.planPhase) return undefined; // the plan phase reads freely: no reminder
       s.readNotices.set(callId, d.text);
@@ -2013,8 +2011,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const done = reviewResults.length > 0 ? reviewResults.map((r) => ({ role: r.role, decision: r.verdict ?? "no-verdict", shadow: r.shadow !== null })) : roles.filter((r) => REVIEW_ROLES.includes(r)).map((role) => ({ role, decision: "no-verdict", shadow: shadowRun(reviewLaunch) }));
             for (const d of done) s.trace?.emit({ event: "review_done", role: d.role, decision: d.decision, runId, ...(d.shadow ? { kind: "shadow" } : {}) });
             // Item-only re-review: the failed items of the latest FAIL verdict, cleared by a pass.
-            // SECURITY exemption from the full report (rounds.ts securityOf); the notice head is capped.
-            if (reviewResults.some((r) => r.counts && r.verdict === "fail" && hasSecurityFinding(r.text))) s.securityRun = runId;
             for (const r of reviewResults) if (r.counts) {
               s.trace?.emit(s.critique.onReview(r.text, r.role, runId, reviewLaunch?.lines));
               const items = failedItemsOf(r.text);
@@ -2044,12 +2040,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
+          const counting = reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).filter((x) => x.counts && x.verdict !== null);
+          let nth = 0;
           for (const r of reviewsWithOutput(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
+            const full = counting[nth]?.role === r.role ? counting[nth] : undefined;
+            const first = nth++ === 0;
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
               const h = reviewedHeadWhy(start, cwd, await headOf(cwd));
-              appendReview(s.reviews, { role: r.role, verdict: r.verdict, head: h.head, ...(h.why ? { why: h.why } : {}) });
+              const prev = s.reviews.findLast((x) => x.kind === "code");
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(h.why ? { why: h.why } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
+              appendReview(s.reviews, rec);
+              if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
               if (r.outputPath) appendHeadLine(r.outputPath, h);
               s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why });
@@ -2103,6 +2106,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
+  /** Loop guard (reviewloop.ts): the kind, state and finding set of a counting review round, for its ReviewRecord. */
+  async function loopFieldsOf(s: Session, runId: string, r: ReviewResult | undefined, kind: ReviewKind, state: Promise<string | null>): Promise<Pick<ReviewRecord, "kind" | "state" | "sig">> {
+    const fail = r?.verdict === "fail";
+    const found = r && fail ? await (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []) : [];
+    return { kind, state: (await state) ?? "", sig: r && fail ? sigOf(r.text, found) : [] };
+  }
+
+  /** Loop guard: the round just recorded (last of its kind in `s.reviews`) against `prev`, the last round of that kind before the run; a trip sets the stop. One round per run. */
+  function loopCheck(s: Session, runId: string, prev: ReviewRecord | undefined, cur: ReviewRecord): void {
+    if (!cur.kind) return;
+    const rule = loopVerdict(prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [] } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [] });
+    if (!rule) return;
+    s.loopStop = { rule, kind: cur.kind, sig: cur.sig ?? [] };
+    s.trace?.emit({ event: "review_loop", rule, kind: cur.kind, runId });
+    persistCeremonyState(s);
+  }
+
   /** A panel shadow launch (panel.ts): it never counts for steps, rounds, review_done or the recheck budget. */
   function shadowRun(launch: ReviewLaunch | undefined): boolean {
     return !!launch?.bind;
@@ -2119,6 +2139,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const rp = readPlan(p, opts);
         if ("plan" in rp) {
           s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+          const state = planVersionHash(rp.plan.bytes);
+          s.reviewSync = s.reviewSync.then(async () => {
+            const prev = s.reviews.findLast((x) => x.kind === "plan");
+            const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: null, kind: "plan", state, sig: r.verdict === "fail" ? sigOf(r.text, await findings) : [] };
+            appendReview(s.reviews, rec);
+            loopCheck(s, runId, prev, rec);
+          });
           const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
           saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
         }
@@ -2642,7 +2669,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
-    const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input);
+    const rb = readBudgetCheck(sessionFor(ctx), ctx, event.toolName, event.toolCallId, event.input, await afterPassCall(sessionFor(ctx), ctx.cwd, event.toolName, event.input));
     if (rb) return rb;
     const crb = childReadCheck(sessionFor(ctx), event.toolName, event.toolCallId, event.input);
     if (crb) return crb;
@@ -2702,10 +2729,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let launchFlags: { reads?: number; install?: boolean } = {};
       const mcpNotes: string[] = [];
       let budgetNotes: string[] = [];
-      // Counted and warned only once the launch passed every check (set at the end of the guard path).
-      let pendingReviews = 0;
-      let pendingPlanReviews = 0;
-      let pendingTopics = new Map<string, number>();
+      // Warned only once the launch passed every check (set at the end of the guard path).
       let pendingWarn: Record<string, unknown> | null = null;
       let rounds: LaunchRounds | undefined;
       let kind: LaunchKind | undefined;
@@ -2852,38 +2876,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             budgetNotes = [bd.text];
             pendingWarn = { event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) };
           }
-          // R11 item 4: plan reviews and fix-round (all other) reviews are counted apart, each against the cap.
-          const planCount = [...occasions].filter(([e, o]) => o === "plan-review" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).length;
-          const reviewCount = subagentAgents(input).filter((r) => REVIEW_ROLES.includes(r)).length - planCount;
-          const cap = reviewRunsCap(get(s.config.config, "ceremony.reviewRuns"));
-          const fix = reviewCapCheck(s.reviewCount, Math.max(0, reviewCount), cap);
-          const plan = fix ? null : reviewCapCheck(s.planReviewCount, planCount, cap, "plan");
-          const rc = fix ? { ...fix, kind: "review", count: s.reviewCount } : plan ? { ...plan, kind: "plan", count: s.planReviewCount } : null;
-          if (rc) {
-            s.trace?.emit({ event: "launch_refused", reason: rc.reason, tier: s.ceremony.tier, kind: rc.kind, count: rc.count, limit: cap, ...launchDeny(input) });
-            return { block: true, reason: rc.text };
+          // Loop guard (reviewloop.ts): a stop refuses a builder or a non-second-opinion reviewer launch until the owner clears it.
+          if (s.loopStop && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
+            s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
+            return { block: true, reason: loopRefusal(s.loopStop) };
           }
-          // ceremony.planReviewMax: `[plan-review]` runs per plan topic per session; at the cap the owner decides at the checkpoint.
-          const topicMax = planReviewMax(get(s.config.config, "ceremony.planReviewMax"));
-          const adds = new Map<string, number>();
-          for (const [e, o] of occasions) {
-            if (o !== "plan-review" || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
-            for (const f of new Set(planReviewFiles(String(e.task ?? ""), null))) {
-              const m = PLAN_NAME.exec(f.split(/[\\/]/).pop() ?? "");
-              if (m) adds.set(m[1], (adds.get(m[1]) ?? 0) + 1);
-            }
-          }
-          const over = [...adds].find(([topic, n]) => (s.topicReviews[topic] ?? 0) + n > topicMax);
-          if (over) {
-            s.trace?.emit({ event: "launch_refused", reason: "plan_review_cap", tier: s.ceremony.tier, count: s.topicReviews[over[0]] ?? 0, limit: topicMax, ...launchDeny(input) });
-            return { block: true, reason: `pi-foreman: plan review launch refused [launch_refused:plan_review_cap]: ${s.topicReviews[over[0]] ?? 0} \`[plan-review]\` run(s) already ran for plan-${over[0]}.md in this session (ceremony.planReviewMax ${topicMax}). Call ${CHECKPOINT_TOOL} now: it opens with the latest verdict and the owner decides.` };
-          }
-          pendingTopics = adds;
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
           if (s.ladder.probeRisks.size > 0) for (const [e, occ] of occasions) if ((occ === "item" || occ === "pre-pr") && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependProbe(e.task, s.ladder.probeRisks);
-          pendingReviews = Math.max(0, reviewCount);
-          pendingPlanReviews = planCount;
         }
         // D3/D4: builder runs after a review of built work are revision rounds: every step of a
         // tasks/chain call, and a resume of a builder run (its model stays, so never a strong
@@ -2895,15 +2895,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const bottomWhy = new Map<string, string>();
         const noStrong = "no strong rung mapped";
         if (steps.length > 0) {
-          s.chains.enter(chainKey(input, s.chains.key));
-          if (s.chains.applyRuling(childDirsOf(s), selfRulingsFor(s))) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "ruling_reset" });
-          const answeredBefore = s.chains.state.revisionAnswered === true;
-          rounds = checkLaunch(s.chains.state, steps, s.ceremony.tier, get(s.config.config, "ceremony.revisionRounds"), s.chains.key);
-          if (rounds.block) {
-            s.chains.refusal = { key: s.chains.key, at: Date.now() };
-            s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: "blocked" });
-            return { block: true, reason: rounds.block };
-          }
+          const answeredBefore = s.round.revisionAnswered === true;
+          rounds = walkLaunch(s.round, steps);
           // A further fresh builder in the same prompt, after a revision already answered the open FAIL, is a revision too (no extra round).
           const again = !resumed && rounds.revisions === 0 && answeredBefore && s.reviewGate.last === "fail" && steps.some((g) => g.includes("builder"));
           const revision = rounds.revisions > 0 || again;
@@ -3105,9 +3098,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // Kept for the tool result only once the launch passed every check.
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
       for (const r of sizingRecords) s.trace?.emit(r);
-      s.reviewCount += pendingReviews;
-      s.planReviewCount += pendingPlanReviews;
-      for (const [topic, n] of pendingTopics) s.topicReviews[topic] = (s.topicReviews[topic] ?? 0) + n;
       if (pendingWarn) {
         s.budgetWarned = true;
         s.trace?.emit(pendingWarn);
@@ -3118,11 +3108,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (applied) s.trace?.emit(applied);
       }
       if (rounds) {
-        s.chains.state = rounds.next;
+        s.round = rounds.next;
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
-        if (rounds.exempt) s.trace?.emit({ event: "revision_security_exempt", role: "builder", tier: s.ceremony.tier, count: rounds.exempt, after: s.chains.state.exempt ?? 0 });
       }
-      if (rounds || pendingReviews + pendingPlanReviews > 0 || pendingTopics.size > 0) persistRounds(s);
+      if (rounds) persistRounds(s);
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
@@ -3314,15 +3303,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // Legacy Pi < 1.2.0: the wake line; the message is the newest intercom entry of the branch.
     const wake = s && !s.isChild ? intercomInbound({ hook: "input", source: event.source, text: event.text, branch: ctx.sessionManager.getBranch?.() ?? [] }) : null;
     if (s && wake) s.turn.intercomFrom = intercomSender(wake.details);
-    // D3: the owner is back in the loop, so revision rounds count from zero again.
+    // D3: the owner is back in the loop: the round state and the loop stop start again.
     if (s && !s.isChild && isOwnerPrompt(event.source, event.text)) {
-      s.chains.clear();
+      s.round = initialRounds();
+      s.loopStop = null;
       s.reviewFailOpen = false;
       s.trace?.emit({ event: "chain_clear", kind: event.source });
     }
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), (s.reviewCount = 0), (s.planReviewCount = 0), persistRounds(s);
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), persistRounds(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
       resetRecheck(s, "user");
@@ -3364,10 +3354,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
     if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
-    const security = verdict === "fail" ? securityOf(s.securityRun, text, ids) : null;
-    if (security) s.trace?.emit({ event: "security_exempt", runId: security === "report" ? s.securityRun ?? "?" : ids[0] ?? "?", kind: security });
-    s.securityRun = null;
-    s.chains.state = onReviewDone(s.chains.state, verdict, security !== null);
+    s.round = onReviewDone(s.round, verdict);
     persistRounds(s);
     if (verdict === "pass") {
       // a plan-review pass is no counting review: the normal read budget stays
@@ -3592,7 +3579,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
-   * A parent-written `ruling-<n>.md` / `brief-<x>.md` in this session's handoff dir lifts the review cap, the recheck budget and the read
+   * A parent-written `ruling-<n>.md` / `brief-<x>.md` in this session's handoff dir lifts the loop stop, the recheck budget and the read
    * budget (rounds.ts rulingReset, strict: regular file, ctime and mtime newer than the watermark, not self-written; no text parser).
    * Skipped while another write/edit/shell call is in flight. Runs at the top of tool_call, before the budget and cap checks.
    */
@@ -3609,15 +3596,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const used = new Set<string>();
     const hits: string[] = [];
     let at = 0;
-    const scan = () => rulingReset(dirs, after, used, selfRulingsFor(s), { names: isCapsResetName, line: null, strict: true });
+    const scan = () => rulingReset(dirs, after, used, selfRulingsFor(s), { names: isCapsResetName, strict: true });
     for (let r = scan(); r; r = scan()) {
       used.add(r.id);
       hits.push(path.basename(r.file));
       at = Math.max(at, r.at);
     }
     if (hits.length === 0) return;
-    s.reviewCount = 0;
-    s.planReviewCount = 0;
+    s.loopStop = null;
     resetRecheck(s, "ruling");
     s.budget.resetAll();
     s.capsResetAt = Math.ceil(at);
@@ -4482,21 +4468,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "plan_version", tier, from: sha256(plan.bytes).slice(0, 16), to: plan.hash.slice(0, 16) }); // from = hash of the file bytes, to = version (body) hash
         // ceremony.planReview (planreview.ts): a [plan-review] verdict on these bytes first; a first FAIL sends the plan back for a revision.
         let reviewed: string | null = null;
-        // ceremony.planReviewMax: at the cap the owner decides, whatever the latest verdict says and however stale it is.
-        let capNote = "";
         if (planReviewOn(s.config.config, tier)) {
           const cap = planReviewRounds(get(s.config.config, "ceremony.planReviewRounds"));
-          const used = s.topicReviews[plan.topic] ?? 0;
           const g = s.planReviews.gate(plan.path, planVersionHash(plan.bytes), cap);
-          if (used >= planReviewMax(get(s.config.config, "ceremony.planReviewMax"))) {
-            const l = s.planReviews.lineage(plan.path);
-            capNote = [planReviewCapLine(used), l && l.latest.hash !== plan.hash ? "plan changed since its last review" : ""].filter(Boolean).join("\n");
-            reviewed = [capNote, l ? planReviewSection(l.latest, await l.latest.findings) : ""].filter(Boolean).join("\n");
-          } else {
-            if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
-            // Capped: the checkpoint opens on a FAIL with the open findings visible.
-            reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
-          }
+          if ("refusal" in g) return done("refused", null, planReviewRefusalText(g.refusal, plan.rel, tier, g.stale), true, g.refusal);
+          // Capped: the checkpoint opens on a FAIL with the open findings visible.
+          reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
         }
         if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
           // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
@@ -4516,7 +4493,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           answer = verdict.kind === "approve" ? "approve" : verdict.kind;
         } else if (parentMode) {
           const file = handoff ? path.join(handoff, PLAN_VERDICT_FILE) : null;
-          return done("pending", null, `${capNote ? `${capNote}\n` : ""}${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit; a ruling.md APPROVED there counts as APPROVED): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
+          return done("pending", null, `${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit; a ruling.md APPROVED there counts as APPROVED): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
         } else {
           if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;

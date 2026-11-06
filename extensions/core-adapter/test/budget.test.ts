@@ -83,13 +83,21 @@ test("budget: a new user prompt restarts at phase before with a fresh count", ()
   assert.deepEqual(kinds(b, ["e", "f", "g", "h"]), ["allow", "remind", "allow", "allow"]);
 });
 
-test("budget: a coordination call is not counted and never reminds; the recheck window still counts it", () => {
+test("budget: a coordination call is not counted and never reminds; the recheck window does not count it either", () => {
   const b = new ReadBudget();
   for (const id of ["a", "b", "c", "d"]) assert.equal(b.check("bash", id, L, 3, false, true).kind, "allow");
   assert.equal(b.count, 0);
   b.enterPost();
-  assert.deepEqual(["a", "b", "c"].map((id) => b.check("bash", id, L, 3, false, true).kind), ["allow", "allow", "allow"]);
-  assert.equal(b.check("bash", "d", L, 3, false, true).kind, "deny");
+  assert.deepEqual(["a", "b", "c", "d", "e"].map((id) => b.check("bash", id, L, 3, false, true).kind), ["allow", "allow", "allow", "allow", "allow"]);
+  assert.equal(b.check("bash", "f", L, 3, false, false).kind, "allow", "the first plain read is the first of the budget");
+});
+
+test("budget: after a PASS an afterPass call (read-only CI/merge step of the reviewed head) is not counted; plain reads still are", () => {
+  const b = new ReadBudget();
+  b.enterPost();
+  assert.deepEqual(["a", "b", "c", "d", "e"].map((id) => b.check("bash", id, L, 3, false, false, true).kind), ["allow", "allow", "allow", "allow", "allow"]);
+  assert.deepEqual(["f", "g", "h"].map((id) => b.check("bash", id, L, 3, false, false).kind), ["allow", "allow", "allow"]);
+  assert.equal(b.check("bash", "i", L, 3, false, false).kind, "deny");
 });
 
 test("coordinationCall: foreman session bash (also after cd), pr_* tools; nothing else", () => {
