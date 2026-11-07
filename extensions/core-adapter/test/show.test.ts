@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
@@ -640,7 +641,7 @@ test("note: the previous text rolls to note.prev.md only while the title is the 
   await show.note("T", "two");
   assert.equal(text(show, "note.prev.md"), "one");
   assert.equal(text(show, "note.md"), "two");
-  assert.equal(noteJson(show).prevHash, planVersionHash(Buffer.from("one")) === "" ? null : noteJson(show).prevHash);
+  assert.equal(noteJson(show).prevHash, createHash("sha256").update("one").digest("hex"));
   assert.match(noteJson(show).prevHash ?? "", /^[0-9a-f]{64}$/);
   await show.note("Different", "three");
   assert.ok(!names(show).includes("note.prev.md"));

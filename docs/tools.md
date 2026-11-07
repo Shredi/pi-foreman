@@ -270,7 +270,7 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 
 ### foreman_show
 
-`foreman_show({title, markdown})` publishes a note for the owner's side panel (foreman only; child sessions do not get it). Title up to 120
+`foreman_show({title, markdown})` publishes a note for the owner's side panel (foreman sessions, including child foreman sessions opened with `foreman session open`, get it; subagent children such as explorer, builder and reviewer do not). Title up to 120
 characters, markdown up to 256 KiB; larger input is refused with the limit named. It never takes a path. Each call replaces the previous note; the result is
 `shown: <title> (v<n>, <k> diagram(s)) at <path>`, and the trace gets one `show_note` event. `mermaid` fences are rendered to sidecar SVGs after the call returns.
 The tool stays declared whatever `tools.deferred` says. See [Notes](herdr.md#notes).
