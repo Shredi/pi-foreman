@@ -375,12 +375,14 @@ function cleanRaw(s, st) {
         const name = tag[2].toLowerCase();
         if (name === "mark") {
           // the host draws <mark> as a yellow background under the theme's foreground: bold keeps the emphasis readable
-          if (!tag[1]) { if (st.mark++ === 0) out += "**"; } else if (st.mark > 0 && --st.mark === 0) out += "**";
+          // \u0001 and \u0002 mark the span; sanitize turns them into asterisks once the whitespace is moved outside
+          if (!tag[1]) { if (st.mark++ === 0) out += "\u0001"; } else if (st.mark > 0 && --st.mark === 0) out += "\u0002";
         } else if (ALLOWED_TAGS.has(name)) out += tag[1] ? `</${name}>` : `<${name}>`;
         i += tag[0].length;
         continue;
       }
       if (/^<[A-Za-z/!?]/.test(rest)) { out += "\\<"; i++; continue; } // an unfinished tag stays text
+      if (st.hard) { out += "\\<"; i++; continue; }
     }
     out += c;
     i++;
@@ -391,11 +393,22 @@ function cleanRaw(s, st) {
 /** The markdown with every `![` escaped and every HTML tag removed except del, br, sub, sup and kbd (attributes
  *  stripped); `<mark>text</mark>` becomes `**text**`; fences and inline code spans stay as written; `<https://...>` autolinks stay. */
 export function sanitize(md, { links = true } = {}) {
+  // Removing a tag can join the text around it into a new construct (`<<b>img ...>`): clean until nothing changes.
+  let cur = sanitizeOnce(md, links, false);
+  for (let round = 0; round < 8; round++) {
+    const next = sanitizeOnce(cur, links, false);
+    if (next === cur) return cur;
+    cur = next;
+  }
+  return sanitizeOnce(cur, links, true); // still moving: escape every remaining `<` (and `![`) as text
+}
+
+function sanitizeOnce(md, links, hard) {
   const lines = toLines(md);
   const out = [];
-  const st = { comment: false, links, mark: 0 };
+  const st = { comment: false, links, mark: 0, hard };
   let open = null;
-  for (const line of lines) {
+  for (let line of lines) {
     if (open) {
       out.push(line);
       if (fenceCloses(line, open)) open = null;
@@ -403,6 +416,7 @@ export function sanitize(md, { links = true } = {}) {
     }
     const f = st.comment ? null : fenceOpen(line);
     if (f) { open = f; out.push(line); continue; }
+    line = line.replace(/[\u0001\u0002]/g, "");
     // split off inline code spans: a run of n backticks closes at the next run of n backticks on the line
     let res = "";
     let i = 0;
@@ -424,8 +438,11 @@ export function sanitize(md, { links = true } = {}) {
       res += cleanText(line.slice(i, s), st) + line.slice(s, close + run);
       i = close + run;
     }
-    if (st.mark > 0) { res += "**"; st.mark = 0; } // an unclosed <mark> ends with its line
-    out.push(res);
+    if (st.mark > 0) { res += "\u0002"; st.mark = 0; } // an unclosed <mark> ends with its line
+    out.push(res.replace(/\u0001([^\u0002]*)\u0002/g, (_, t) => {
+      const b = t.trim();
+      return b ? `${t.slice(0, t.length - t.trimStart().length)}**${b}**${t.slice(t.trimEnd().length)}` : t;
+    }));
   }
   return out.join("\n");
 }
