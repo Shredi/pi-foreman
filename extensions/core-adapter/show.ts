@@ -9,24 +9,36 @@
 // Ruling points roll the snapshots in a fixed order that keeps plan.json consistent when a step fails: (1) the new copy goes to a temp
 // file, (2) plan.ruled.md is renamed to plan.prev.md (ENOENT = skip), (3) the temp file is renamed to plan.ruled.md, (4) plan.json is
 // written last. All writes of a session go through one promise queue, and a job reads the plan when it runs, never when it was queued.
+//
+// Notes (`foreman_show`): note.md, note.prev.md (kept only while the title stays the same) and note.json (written last) in the same dir.
+// Diagram sidecars (diagrams/<sha>-dark.svg and -light.svg, mermaid.ts) are rendered by a second chain after the document is published:
+// the write that published a plan or note never waits for a render, and plan.json / note.json list the sidecars once they exist.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { handoffPlanPath, HANDOFF_PLAN, isPlanPath, PLAN_MAX_BYTES, planBody, planVersionHash, readHandoffPlan, readPlan } from "./checkpoint.ts";
+import { handoffPlanPath, HANDOFF_PLAN, isPlanPath, PLAN_MAX_BYTES, planBody, planVersionHash, readHandoffPlan, readPlan, sha256 } from "./checkpoint.ts";
 import type { PlanOpts } from "./checkpoint.ts";
 import { scratchRoot } from "./editmode.ts";
 import { planReviewFiles } from "./findings.ts";
 import { liveDir } from "./livestate.ts";
 import type { LiveShow } from "./livestate.ts";
+import { createEngine, DIAGRAMS_DIR, diagramName, renderSidecars, scanFences, sidecarOnDisk } from "./mermaid.ts";
+import type { Diagram, Engine, Fence } from "./mermaid.ts";
 import { resolveToolPath } from "./payload.ts";
 import { planPathsOf } from "./planreview.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep } from "./triage.ts";
 
+export const SHOW_TOOL = "foreman_show";
 export const SHOW_DIR = "show";
 export const PLAN_JSON = "plan.json";
 export const PLAN_RULED = "plan.ruled.md";
 export const PLAN_PREV = "plan.prev.md";
+export const NOTE_MD = "note.md";
+export const NOTE_PREV = "note.prev.md";
+export const NOTE_JSON = "note.json";
+export const NOTE_TITLE_MAX = 120;
+export const NOTE_MAX_BYTES = 256 * 1024;
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const JSON_MAX_BYTES = 64 * 1024;
 const RETRY_MS = 50;
@@ -43,7 +55,28 @@ export interface PlanJson {
   ruledPath: string | null;
   ruledHash: string | null;
   prevHash: string | null;
+  /** Shas of the mermaid fences that have both sidecars. */
   fences: string[];
+  /** The same fences with the relative sidecar paths; the key is absent while there are none. */
+  diagrams?: Diagram[];
+}
+
+/** note.json. */
+export interface NoteJson {
+  v: number;
+  title: string;
+  at: string;
+  hash: string;
+  prevHash: string | null;
+  fences: string[];
+  diagrams: Diagram[];
+}
+
+export interface NoteResult {
+  v: number;
+  /** Mermaid fences in the note (their sidecars are rendered after this returns). */
+  diagrams: number;
+  path: string;
 }
 
 /** The file operations of the show dir, replaceable by tests to inject a failure at one step. */
@@ -83,6 +116,8 @@ export interface ShowInit {
   /** Called after plan.json changed on disk (the adapter flushes the live file). */
   onChange?: () => void;
   io?: Partial<ShowIo>;
+  /** Replaces the mermaid render engine (tests). */
+  engine?: (onMissing: () => void) => Engine;
 }
 
 type Tracked = { kind: "scratch"; path: string } | { kind: "handoff" };
@@ -111,7 +146,32 @@ export function parsePlanJson(text: string): PlanJson | null {
     const j = JSON.parse(text) as Record<string, unknown>;
     if (!j || typeof j !== "object" || !isStrOrNull(j.path) || !isStr(j.title) || !Number.isInteger(j.v) || (j.v as number) < 1 || !isStr(j.at) || !isStr(j.hash)) return null;
     if (!isStrOrNull(j.ruledPath) || !isStrOrNull(j.ruledHash) || !isStrOrNull(j.prevHash) || !Array.isArray(j.fences) || !j.fences.every(isStr)) return null;
-    return { path: j.path, title: j.title, v: j.v as number, at: j.at, hash: j.hash, ruledPath: j.ruledPath, ruledHash: j.ruledHash, prevHash: j.prevHash, fences: j.fences };
+    const diagrams = Array.isArray(j.diagrams) && j.diagrams.every(isDiagram) ? (j.diagrams as Diagram[]) : undefined;
+    return { path: j.path, title: j.title, v: j.v as number, at: j.at, hash: j.hash, ruledPath: j.ruledPath, ruledHash: j.ruledHash, prevHash: j.prevHash, fences: j.fences, ...(diagrams?.length ? { diagrams } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+const isDiagram = (d: unknown): d is Diagram => !!d && typeof d === "object" && isStr((d as Diagram).sha) && isStr((d as Diagram).dark) && isStr((d as Diagram).light);
+
+/** note.json text -> NoteJson, or null when a field has the wrong type. */
+export function parseNoteJson(text: string): NoteJson | null {
+  try {
+    const j = JSON.parse(text) as Record<string, unknown>;
+    if (!j || typeof j !== "object" || !Number.isInteger(j.v) || (j.v as number) < 1 || !isStr(j.title) || !isStr(j.at) || !isStr(j.hash) || !isStrOrNull(j.prevHash)) return null;
+    if (!Array.isArray(j.fences) || !j.fences.every(isStr) || !Array.isArray(j.diagrams) || !j.diagrams.every(isDiagram)) return null;
+    return { v: j.v as number, title: j.title, at: j.at, hash: j.hash, prevHash: j.prevHash, fences: j.fences, diagrams: j.diagrams };
+  } catch {
+    return null;
+  }
+}
+
+function readNoteMeta(file: string): NoteJson | null {
+  try {
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > JSON_MAX_BYTES) return null;
+    return parseNoteJson(fs.readFileSync(file, "utf8"));
   } catch {
     return null;
   }
@@ -136,12 +196,25 @@ function ruledHashOnDisk(file: string): string | null {
   }
 }
 
+function noteHashOnDisk(file: string): string | null {
+  try {
+    const st = fs.lstatSync(file);
+    return st.isFile() && st.size <= NOTE_MAX_BYTES ? sha256(fs.readFileSync(file)) : null;
+  } catch {
+    return null;
+  }
+}
+
 export class Show {
   /** Absolute show dir of this session. */
   readonly dir: string;
   private meta: PlanJson | null;
+  private noteMeta: NoteJson | null = null;
   private tracked: Tracked | null = null;
   private q: Promise<void> = Promise.resolve();
+  /** The render chain: sidecars only, never awaited by a publication. */
+  private rq: Promise<void> = Promise.resolve();
+  private noModule = false;
   private seq = 0;
   private readonly io: ShowIo;
 
@@ -169,6 +242,7 @@ export class Show {
       realDir(this.showRoot);
       realDir(this.dir);
       this.meta = readMeta(path.join(this.dir, PLAN_JSON)); // v continues across a reload
+      this.noteMeta = readNoteMeta(path.join(this.dir, NOTE_JSON));
     } catch (e) {
       if (codeOf(e) === "ENOTDIR") init.trace?.({ event: "show_error", kind: "start", errorKind: "ENOTDIR" });
     }
@@ -176,7 +250,7 @@ export class Show {
 
   /** The live file's `show` pointer: the dir, and the plan version while a plan is published. */
   field(): LiveShow {
-    return { dir: this.dir, ...(this.meta && this.meta.path !== null ? { plan: this.meta.v } : {}) };
+    return { dir: this.dir, ...(this.meta && this.meta.path !== null ? { plan: this.meta.v } : {}), ...(this.noteMeta ? { note: this.noteMeta.v } : {}) };
   }
 
   /** The current plan.json as this session wrote it (null before the first publication). */
@@ -184,9 +258,30 @@ export class Show {
     return this.meta;
   }
 
-  /** Resolves when every queued write has finished (a failed job never rejects it). */
-  idle(): Promise<void> {
-    return this.q;
+  /** Resolves when every queued write and render has finished (a failed job never rejects it). */
+  async idle(): Promise<void> {
+    for (;;) {
+      const [q, rq] = [this.q, this.rq];
+      await Promise.all([q, rq]);
+      if (q === this.q && rq === this.rq) return;
+    }
+  }
+
+  /**
+   * `foreman_show`: publish a note. Resolves once note.json is on disk; the diagram sidecars come later (renderChain). The caller checks the
+   * caps; a title or text over them is refused here too. Rejects when a write failed (the note is then not published).
+   */
+  note(title: string, markdown: string): Promise<NoteResult> {
+    return new Promise<NoteResult>((resolve, reject) => {
+      this.q = this.q.then(async () => {
+        try {
+          resolve(await this.writeNote(title, markdown));
+        } catch (e) {
+          reject(e);
+          throw e;
+        }
+      }).catch((e) => this.init.trace?.({ event: "show_error", kind: "note", errorKind: codeOf(e) }));
+    });
   }
 
   /** A write or edit tool result named `raw`: track it when it is the scratch plan or the handoff plan, and refresh plan.json. */
@@ -295,8 +390,10 @@ export class Show {
       ruledPath: moved ? null : (prev?.ruledPath ?? null),
       ruledHash: moved ? null : (prev?.ruledHash ?? null),
       prevHash: moved ? null : (prev?.prevHash ?? null),
-      fences: [],
+      fences: changed ? [] : (prev?.fences ?? []),
+      ...(!changed && prev?.diagrams?.length ? { diagrams: prev.diagrams } : {}),
     };
+    if (changed || !prev) this.renderChain("plan", cur.hash, planBody(cur.bytes).toString("utf8"));
     if (roll && (meta.ruledPath === null || meta.ruledHash !== cur.hash)) await this.rollTo(cur, meta);
     else if (!prev || JSON.stringify(prev) !== JSON.stringify(meta)) await this.writeMeta(meta);
   }
@@ -325,6 +422,105 @@ export class Show {
     await this.ensureDir();
     await this.atomic(path.join(this.dir, PLAN_JSON), JSON.stringify(meta) + "\n");
     this.meta = meta;
+    try {
+      this.init.onChange?.();
+    } catch {
+      // the live refresh is best effort
+    }
+  }
+
+  /** One queued job: note.md (the previous one rolls to note.prev.md only when the title is unchanged), then note.json last. */
+  private async writeNote(rawTitle: string, markdown: string): Promise<NoteResult> {
+    const title = rawTitle.replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim();
+    if (!title || title.length > NOTE_TITLE_MAX) throw new Error("title");
+    const bytes = Buffer.from(markdown, "utf8");
+    if (bytes.length > NOTE_MAX_BYTES) throw new Error("too_large");
+    await this.ensureDir();
+    const md = path.join(this.dir, NOTE_MD);
+    const prev = this.noteMeta;
+    const same = prev?.title === title;
+    const tmp = this.tmpName(md);
+    let prevHash: string | null = null;
+    try {
+      await this.io.writeFile(tmp, bytes); // (1)
+      if (same) {
+        try {
+          prevHash = noteHashOnDisk(md);
+          await this.rename(md, path.join(this.dir, NOTE_PREV)); // (2)
+        } catch (e) {
+          if (codeOf(e) !== "ENOENT") throw e;
+        }
+      } else {
+        await this.io.rm(path.join(this.dir, NOTE_PREV)); // another note: no previous version to compare with
+      }
+      await this.rename(tmp, md); // (3)
+    } catch (e) {
+      await this.io.rm(tmp).catch(() => undefined);
+      throw e;
+    }
+    const fences = scanFences(markdown);
+    const keep = prev && prev.hash === sha256(bytes) ? prev : null; // the same text again: its sidecars are already listed
+    const meta: NoteJson = { v: (prev?.v ?? 0) + 1, title, at: new Date().toISOString(), hash: sha256(bytes), prevHash: same ? prevHash : null, fences: keep?.fences ?? [], diagrams: keep?.diagrams ?? [] };
+    await this.atomic(path.join(this.dir, NOTE_JSON), JSON.stringify(meta) + "\n"); // (4)
+    this.noteMeta = meta;
+    this.init.trace?.({ event: "show_note", v: meta.v, diagrams: fences.length, bytes: bytes.length });
+    try {
+      this.init.onChange?.();
+    } catch {
+      // the live refresh is best effort
+    }
+    if (fences.length > 0) this.renderChain("note", meta.hash, markdown);
+    return { v: meta.v, diagrams: fences.length, path: md };
+  }
+
+  /** Render the missing sidecars of a published document, then list them. Runs after the publication, on its own chain. */
+  private renderChain(kind: "plan" | "note", hash: string, markdown: string): void {
+    if (this.noModule) return;
+    const fences = scanFences(markdown);
+    if (fences.length === 0) return;
+    this.rq = this.rq.then(() => this.renderJob(kind, hash, fences)).catch((e) => this.init.trace?.({ event: "show_error", kind: "diagrams", errorKind: codeOf(e) }));
+  }
+
+  private async renderJob(kind: "plan" | "note", hash: string, fences: Fence[]): Promise<void> {
+    if (this.noModule) return;
+    const dir = path.join(this.dir, DIAGRAMS_DIR);
+    const onMissing = (): void => {
+      this.noModule = true; // once per session: later documents skip the render chain
+      this.init.trace?.({ event: "show_diagram", outcome: "module_missing" });
+    };
+    const engine = this.init.engine?.(onMissing) ?? createEngine({ onMissing });
+    let shas: string[];
+    try {
+      await this.ensureDir();
+      await this.io.mkdir(dir);
+      realDir(dir); // lstat: a planted link is not a folder
+      shas = await renderSidecars(engine, fences, {
+        write: (name, data) => this.atomic(path.join(dir, name), data),
+        trace: (r) => this.init.trace?.(r),
+        has: (name) => sidecarOnDisk(dir, name),
+      });
+    } finally {
+      engine.close();
+    }
+    if (shas.length === 0) return;
+    this.enqueue("diagrams", () => this.listDiagrams(kind, hash, shas));
+  }
+
+  /** One queued job: add the sidecars to plan.json or note.json when that document is still the one they were rendered for. */
+  private async listDiagrams(kind: "plan" | "note", hash: string, shas: string[]): Promise<void> {
+    const diagrams: Diagram[] = [...new Set(shas)].map((sha) => ({ sha, dark: `${DIAGRAMS_DIR}/${diagramName(sha, "dark")}`, light: `${DIAGRAMS_DIR}/${diagramName(sha, "light")}` }));
+    if (kind === "plan") {
+      const m = this.meta;
+      if (!m || m.hash !== hash || JSON.stringify(m.diagrams ?? []) === JSON.stringify(diagrams)) return;
+      await this.writeMeta({ ...m, fences: diagrams.map((d) => d.sha), diagrams });
+      return;
+    }
+    const n = this.noteMeta;
+    if (!n || n.hash !== hash || JSON.stringify(n.diagrams) === JSON.stringify(diagrams)) return;
+    const meta: NoteJson = { ...n, fences: diagrams.map((d) => d.sha), diagrams };
+    await this.ensureDir();
+    await this.atomic(path.join(this.dir, NOTE_JSON), JSON.stringify(meta) + "\n");
+    this.noteMeta = meta;
     try {
       this.init.onChange?.();
     } catch {

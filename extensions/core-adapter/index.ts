@@ -135,7 +135,7 @@ const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
-import { Show } from "./show.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -1720,6 +1720,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       orientationRoots: "on",
       // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
       reviewMarks: "on",
+      // The foreman_show explain rule (show.ts; "off" only renders the pre-show baseline).
+      show: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
@@ -4285,6 +4287,39 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const em = editModeOfSession(s);
         const advice = tier === "trivial" && trivialBuilderPath(get(s.config.config, "ceremony.required")) ? trivialPathAdvice(em.mode === "bounded") : tier === "trivial" && em.mode !== "bounded" ? `No builder is required, but ${editModeAdvice(em.mode, em.scratchDir)} for any project change (that makes the task standard).` : triageAdvice(tier);
         return { content: [{ type: "text" as const, text: [`${note}${tierLine(s.ceremony)} ${advice} ${TRIAGE_RULES}`, finishLine({ [tier]: requiredOf(s, tier) }, tier)].filter(Boolean).join(" ") }], details: { decision: "recorded", tier } };
+      },
+    } as never);
+  }
+
+  // Item 6: a note for the owner's side panel; foreman only, never takes a path (the text is the argument).
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: SHOW_TOOL,
+      label: "Show a note",
+      description: "The general explanation tool: use it whenever the owner asks you to explain something they should read rendered (a design, a bug analysis, a comparison, how something works), with text, tables, code fences and ```mermaid diagrams; then answer in chat with a two to three sentence summary that points at the panel. Not for status lines or questions (questions go to ask_user_question). Each call replaces the previous note, so write it self-contained; the panel keeps one earlier version of the same title for a diff. Title up to 120 characters, markdown up to 256 KiB; takes the text itself, never a file path.",
+      parameters: { type: "object", properties: { title: { type: "string", minLength: 1, description: "Heading of the note, up to 120 characters." }, markdown: { type: "string", description: "The whole note as markdown, up to 256 KiB." } }, required: ["title", "markdown"], additionalProperties: false } as never,
+      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
+        if (s.isChild) return refuse(`${SHOW_TOOL} is for the foreman only.`);
+        const title = typeof params.title === "string" ? params.title.trim() : "";
+        const markdown = typeof params.markdown === "string" ? params.markdown : "";
+        if (!title) return refuse(`${SHOW_TOOL}: title is required.`);
+        if (title.length > NOTE_TITLE_MAX) return refuse(`${SHOW_TOOL}: the title is ${title.length} characters, the limit is ${NOTE_TITLE_MAX}. Shorten it.`);
+        const size = Buffer.byteLength(markdown, "utf8");
+        if (size > NOTE_MAX_BYTES) return refuse(`${SHOW_TOOL}: the note is ${size} bytes, the limit is ${NOTE_MAX_BYTES} (256 KiB). Cut it down or split it.`);
+        if (!s.show) return refuse(`${SHOW_TOOL}: no side panel is available in this session (the scratch dir is disabled).`);
+        try {
+          const r = await s.show.note(title, markdown);
+          // the harness knows the Herdr pane (env) but not the layout: without a pane no panel can show the note, with one only the block is in doubt
+          const inHerdr = !!((process.env.HERDR_PANE_ID ?? "").trim() || (process.env.HC_TERMINAL_ID ?? "").trim());
+          const hint = inHerdr
+            ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
+            : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+        } catch {
+          return refuse(`${SHOW_TOOL}: the note could not be written.`);
+        }
       },
     } as never);
   }

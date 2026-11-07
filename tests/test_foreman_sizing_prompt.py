@@ -38,7 +38,7 @@ class SizingPromptTest(unittest.TestCase):
     def knobs(self, **over):
         k = {"ledgerhelper": "tool", "heavythreshold": "strict", "reviewperrevision": "on", "trivialpath": "builder",
              "ladder": "on", "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on",
-             "planreview": "on", "tools.pr": "on", "sizing": "on"}
+             "planreview": "on", "tools.pr": "on", "sizing": "on", "show": "on"}
         k.update(over)
         return k
 
@@ -61,7 +61,7 @@ class SizingPromptTest(unittest.TestCase):
             self.skipTest("base commit not available")
         text = (ROOT / "instructions" / "foreman.md").read_text()
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
-            k = self.knobs(sizing="off", launchbriefs=brief)
+            k = self.knobs(sizing="off", launchbriefs=brief, show="off")  # show "off": no foreman_show explain rule
             # round 68: the launch `mcp` field is named in the launch rule
             old_launch = "`output` and `outputMode` are refused (`output_path`). Workflow scripts"
             new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` narrows a child's MCP tools to part of its role's ceiling (single launches only; `[]` = none). Workflow scripts"

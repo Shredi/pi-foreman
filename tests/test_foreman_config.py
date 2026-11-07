@@ -583,7 +583,7 @@ class PackageFilesTest(unittest.TestCase):
         text = (ROOT / "instructions" / "foreman.md").read_text()
         # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
         # (the adapter always renders ladder "on"); factRulings "off" = no rule on foreman rulings, reviewMarks "off" = no harness marks after a PASS (both always "on" too).
-        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off", "tools.pr": "off"}
+        knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off", "tools.pr": "off", "show": "off"}  # show "off" = no foreman_show explain rule (always "on" too)
         # round 29: the launch-wait rule is the one deliberate change since eee843d (async launches)
         old_wait = "- The launch result is the wait: it returns when the child finishes or asks. Do not call bg_wait after it and do not narrate between waits. Call `bg_wait <id>` only when the result says the child is still running. Do not poll with bash."
         new_wait = "- A launch returns at once with its receipt. Launch, then end your turn: the child's completion notice (or its question) starts your next turn, and you read the report there or at the result path. Several children may run at once, with one writer per checkout. Call `bg_wait <id>` only for a result you need in this same turn. Never poll with bash."

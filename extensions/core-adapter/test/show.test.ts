@@ -1,11 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { handoffPlanPath, planVersionHash, readHandoffPlan } from "../checkpoint.ts";
 import { LiveState, liveDir } from "../livestate.ts";
-import { parsePlanJson, Show, titleOf } from "../show.ts";
+import { createEngine, fenceSha } from "../mermaid.ts";
+import type { Engine } from "../mermaid.ts";
+import { r11Rig } from "./_r11rig.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, parseNoteJson, parsePlanJson, Show, titleOf } from "../show.ts";
+import type { NoteJson } from "../show.ts";
 import type { PlanJson, ShowInit, ShowIo } from "../show.ts";
 
 const A = "# Plan A\n\n## Goal\nShip it.\n";
@@ -597,4 +602,221 @@ test("show: titleOf and parsePlanJson", () => {
   assert.equal(parsePlanJson(JSON.stringify({ ...ok, v: 0 })), null);
   assert.equal(parsePlanJson(JSON.stringify({ ...ok, fences: [1] })), null);
   assert.equal(parsePlanJson("not json"), null);
+});
+
+// ---- notes and diagram sidecars (item 6, item 7) ----
+
+const GOOD_SVG = '<svg width="10" height="10"><rect fill="var(--bg)"/></svg>';
+const MM = "graph TD\nA-->B";
+const withFence = (text = MM) => `# Doc\n\n\`\`\`mermaid\n${text}\n\`\`\`\n\n\`\`\`ts title=x\nlet a = 1;\n\`\`\`\n`;
+const noteJson = (show: Show) => parseNoteJson(text(show, "note.json")) as NoteJson;
+const stubEngine = (svg = GOOD_SVG, gate?: Promise<void>): Engine => ({ render: async () => { await gate; return svg; }, close: () => undefined });
+
+test("note: writes note.md and note.json last, v increments, the live field carries note", async (t) => {
+  const e = env(t);
+  let changes = 0;
+  const { show, traces } = e.start({ onChange: () => void changes++ });
+  const r = await show.note("First", "hello\n```ts title=x\nlet a;\n```\n");
+  assert.equal(r.v, 1);
+  assert.equal(r.diagrams, 0);
+  assert.equal(r.path, path.join(show.dir, "note.md"));
+  assert.equal(text(show, "note.md"), "hello\n```ts title=x\nlet a;\n```\n"); // info strings survive untouched
+  const j = noteJson(show);
+  assert.deepEqual(Object.keys(j), ["v", "title", "at", "hash", "prevHash", "fences", "diagrams"]);
+  assert.equal(j.prevHash, null);
+  assert.ok(!Number.isNaN(Date.parse(j.at)));
+  assert.deepEqual(show.field(), { dir: show.dir, note: 1 });
+  assert.ok(changes >= 1);
+  assert.equal((await show.note("First", "again")).v, 2);
+  assert.equal((await show.note("Other", "x")).v, 3);
+  assert.equal(traces.filter((x) => x.event === "show_note").length, 3);
+  assert.ok(names(show).every((n) => !n.endsWith(".tmp")));
+});
+
+test("note: the previous text rolls to note.prev.md only while the title is the same", async (t) => {
+  const e = env(t);
+  const { show } = e.start();
+  await show.note("T", "one");
+  assert.ok(!names(show).includes("note.prev.md"));
+  await show.note("T", "two");
+  assert.equal(text(show, "note.prev.md"), "one");
+  assert.equal(text(show, "note.md"), "two");
+  assert.equal(noteJson(show).prevHash, createHash("sha256").update("one").digest("hex"));
+  assert.match(noteJson(show).prevHash ?? "", /^[0-9a-f]{64}$/);
+  await show.note("Different", "three");
+  assert.ok(!names(show).includes("note.prev.md"));
+  assert.equal(noteJson(show).prevHash, null);
+  assert.equal(noteJson(show).v, 3);
+});
+
+test("note: v continues across a reload of the session", async (t) => {
+  const e = env(t);
+  await e.start().show.note("T", "one");
+  const again = e.start().show;
+  assert.deepEqual(again.field(), { dir: again.dir, note: 1 });
+  assert.equal((await again.note("T", "two")).v, 2);
+});
+
+test("note: a title or text over the cap is refused and nothing is written", async (t) => {
+  const e = env(t);
+  const { show } = e.start();
+  await assert.rejects(show.note("x".repeat(NOTE_TITLE_MAX + 1), "a"));
+  await assert.rejects(show.note("", "a"));
+  await assert.rejects(show.note("T", "x".repeat(NOTE_MAX_BYTES + 1)));
+  assert.ok(!fs.existsSync(path.join(show.dir, "note.md")));
+  assert.ok(!fs.existsSync(path.join(show.dir, "note.json")));
+  assert.equal((await show.note("T", "x".repeat(NOTE_MAX_BYTES))).v, 1); // exactly the cap is fine
+});
+
+test("note: a symlinked show root is refused and nothing is written behind the link", async (t) => {
+  const e = env(t);
+  const outside = path.join(e.root, "outside");
+  fs.mkdirSync(outside);
+  try {
+    fs.symlinkSync(outside, path.join(e.scratch, "show"), "dir");
+  } catch (err) {
+    if (process.platform === "win32") return t.skip(`symlink creation denied: ${(err as Error).message}`);
+    throw err;
+  }
+  const { show } = e.start();
+  await assert.rejects(show.note("T", withFence()));
+  await show.idle();
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+test("diagrams: a note's sidecars are written after the result, named <sha>-dark|light.svg, and listed in note.json", async (t) => {
+  const e = env(t);
+  let release!: () => void;
+  const gate = new Promise<void>((res) => void (release = res));
+  const { show } = e.start({ engine: () => stubEngine(GOOD_SVG, gate) });
+  const r = await show.note("T", withFence()); // resolves while the render is still gated
+  assert.equal(r.diagrams, 1);
+  assert.deepEqual(noteJson(show).diagrams, []);
+  assert.ok(!fs.existsSync(path.join(show.dir, "diagrams")) || fs.readdirSync(path.join(show.dir, "diagrams")).length === 0);
+  release();
+  await show.idle();
+  const sha = fenceSha(MM);
+  assert.deepEqual(fs.readdirSync(path.join(show.dir, "diagrams")).sort(), [`${sha}-dark.svg`, `${sha}-light.svg`]);
+  const j = noteJson(show);
+  assert.deepEqual(j.fences, [sha]);
+  assert.deepEqual(j.diagrams, [{ sha, dark: `diagrams/${sha}-dark.svg`, light: `diagrams/${sha}-light.svg` }]);
+  assert.equal(j.v, 1);
+  assert.doesNotMatch(fs.readFileSync(path.join(show.dir, "diagrams", `${sha}-dark.svg`), "utf8"), /var\(/);
+  // the same fence in the next note is not rendered again
+  let calls = 0;
+  const e2 = e.start({ engine: () => ({ render: async () => (calls++, GOOD_SVG), close: () => undefined }) }, "sess-1");
+  await e2.show.note("T", withFence() + "more\n");
+  await e2.show.idle();
+  assert.equal(calls, 0);
+  assert.deepEqual(noteJson(e2.show).fences, [sha]);
+});
+
+test("diagrams: a plan with a mermaid fence gets its sidecars listed in plan.json (fences and diagrams)", async (t) => {
+  const e = env(t);
+  const { show } = e.start({ engine: () => stubEngine() });
+  fs.writeFileSync(e.plan(), withFence());
+  show.planWritten(e.plan());
+  await show.idle();
+  const sha = fenceSha(MM);
+  const p = json(show);
+  assert.deepEqual(p.fences, [sha]);
+  assert.deepEqual(p.diagrams, [{ sha, dark: `diagrams/${sha}-dark.svg`, light: `diagrams/${sha}-light.svg` }]);
+  assert.equal(p.v, 1);
+  fs.writeFileSync(e.plan(), "# Doc\nno fences now\n");
+  show.planWritten(e.plan());
+  await show.idle();
+  assert.deepEqual(json(show).fences, []);
+  assert.equal(json(show).diagrams, undefined);
+});
+
+test("diagrams: a refused SVG leaves no sidecar and the note stays published", async (t) => {
+  const e = env(t);
+  const { show } = e.start({ engine: () => stubEngine("<svg><script>x</script></svg>") });
+  await show.note("T", withFence());
+  await show.idle();
+  assert.deepEqual(noteJson(show).fences, []);
+  assert.deepEqual(fs.existsSync(path.join(show.dir, "diagrams")) ? fs.readdirSync(path.join(show.dir, "diagrams")) : [], []);
+});
+
+test("diagrams: a missing module is traced once per session and the fences stay code blocks", async (t) => {
+  const e = env(t);
+  const { show, traces } = e.start({ engine: (onMissing) => createEngine({ useWorker: false, load: async () => null, onMissing }) });
+  await show.note("T", withFence());
+  await show.idle();
+  await show.note("T", withFence() + "x\n");
+  await show.idle();
+  assert.equal(traces.filter((x) => x.event === "show_diagram" && x.outcome === "module_missing").length, 1);
+  assert.deepEqual(noteJson(show).diagrams, []);
+  assert.ok(!fs.existsSync(path.join(show.dir, "diagrams", `${fenceSha(MM)}-dark.svg`)));
+});
+
+test("diagrams: a symlinked diagrams dir is not written through", async (t) => {
+  const e = env(t);
+  const { show } = e.start({ engine: () => stubEngine() });
+  await show.note("T", "plain");
+  const outside = path.join(e.root, "outside");
+  fs.mkdirSync(outside);
+  try {
+    fs.symlinkSync(outside, path.join(show.dir, "diagrams"), "dir");
+  } catch (err) {
+    if (process.platform === "win32") return t.skip(`symlink creation denied: ${(err as Error).message}`);
+    throw err;
+  }
+  await show.note("T", withFence());
+  await show.idle();
+  assert.deepEqual(fs.readdirSync(outside), []);
+});
+
+async function showTool(t: { after(fn: () => void | Promise<void>): void }, child = false) {
+  const tools = new Map<string, { description: string; execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; isError?: boolean }> }>();
+  const rig = await r11Rig(t, {}, { child, piExtra: { registerTool: (d: { name: string }) => void tools.set(d.name, d as never) } });
+  const call = (params: Record<string, unknown>) => tools.get("foreman_show")!.execute("id", params, undefined, undefined, rig.ctx);
+  return { rig, tools, call };
+}
+
+test("foreman_show: registered for the foreman, with a description that names its use; never for a child", async (t) => {
+  const { tools } = await showTool(t);
+  const d = tools.get("foreman_show")!;
+  assert.ok(d);
+  assert.match(d.description, /explain/);
+  assert.match(d.description, /replaces the previous note/);
+  assert.match(d.description, /mermaid/);
+  assert.match(d.description, /never a file path/);
+  const child = await showTool(t, true);
+  assert.ok(!child.tools.has("foreman_show"));
+});
+
+test("foreman_show: result line, trace event, replacement semantics, cap refusals", async (t) => {
+  const { rig, call } = await showTool(t);
+  const r1 = await call({ title: "Design", markdown: "# hi\n" });
+  assert.ok(!r1.isError, r1.content[0].text);
+  assert.match(r1.content[0].text, /^shown: Design \(v1, 0 diagrams\) at .*note\.md\./);
+  const r2 = await call({ title: "Design", markdown: "```mermaid\ngraph TD\nA-->B\n```\n" });
+  assert.match(r2.content[0].text, /^shown: Design \(v2, 1 diagram\) at /);
+  assert.match(r2.content[0].text, /pi-foreman-plan/); // the layout hint
+  assert.equal(rig.events("show_note").length, 2);
+  const long = await call({ title: "x".repeat(NOTE_TITLE_MAX + 1), markdown: "a" });
+  assert.ok(long.isError);
+  assert.match(long.content[0].text, /120/);
+  const big = await call({ title: "T", markdown: "x".repeat(NOTE_MAX_BYTES + 1) });
+  assert.ok(big.isError);
+  assert.match(big.content[0].text, /262144/);
+  assert.equal(rig.events("show_note").length, 2);
+});
+
+test("foreman_show: the result says no panel can show the note when no Herdr pane is known", async (t) => {
+  const saved = [process.env.HERDR_PANE_ID, process.env.HC_TERMINAL_ID];
+  t.after(() => {
+    for (const [k, v] of [["HERDR_PANE_ID", saved[0]], ["HC_TERMINAL_ID", saved[1]]] as const) if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  });
+  const { call } = await showTool(t);
+  delete process.env.HERDR_PANE_ID;
+  delete process.env.HC_TERMINAL_ID;
+  const none = await call({ title: "T", markdown: "a" });
+  assert.match(none.content[0].text, /No Herdr pane was detected.*written at .*note\.md.*pi-foreman-plan panel block.*docs\/herdr\.md#notes/);
+  process.env.HERDR_PANE_ID = "p1";
+  const some = await call({ title: "T", markdown: "a" });
+  assert.doesNotMatch(some.content[0].text, /No Herdr pane/);
+  assert.match(some.content[0].text, /if your layout has a pi-foreman-plan block/);
 });

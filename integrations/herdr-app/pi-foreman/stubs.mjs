@@ -24,6 +24,8 @@ export const v_flex = () => element("v_flex");
 export const Collapsible = { new: () => element("Collapsible") };
 export const HoverCard = { new: (id) => { const e = element("HoverCard"); e.cardId = id; return e; } };
 
+export const EditorState = { new: (options) => ({ options }) };
+export const Editor = { new: (state) => { const e = element("Editor"); e.state = state; return e; } };
 export const TextView = { markdown: (id, text) => { const e = element("TextView"); e.mdId = id; e.md = text; return e; } };
 
 // `files`: path -> text for readTextFile; `shared`: the shared store; `focus` / `panes`: what focused() and panes() answer.
@@ -44,4 +46,8 @@ export const theme = () => palette;
 export const setAgentOrder = () => {};
 export const exec = async (...call) => { world.execCalls.push(call); return { code: 1, stdout: "" }; };
 export const props = () => ({});
+export const appHome = () => "/app";
+export const settings = () => ({ font_family: "Mono" });
+export const layout = () => world.layout ?? null;
+export const notify = (n) => { (world.notices ??= []).push(n); return "n1"; };
 export const window = {};

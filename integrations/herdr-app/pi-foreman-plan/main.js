@@ -3,16 +3,22 @@
 // of the session on screen and its markdown documents; writes nothing; the only process it starts is the platform opener, for
 // https links.
 
-import { View, div } from "gpui-kit";
-import { v_flex, h_flex, TextView } from "gpui-base";
-import { readTextFile, watchFolder, theme, shared, agents, panes, terminals, focused, exec, window } from "herdr";
+import { View, div, svg } from "gpui-kit";
+import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
+import { readTextFile, writeTextFile, watchFolder, theme, shared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
 import {
   buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
-  compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince,
+  compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince, isLight,
+  fenceInfo, validateSvg, svgSize, cachePath, findPanelBlock,
 } from "./model.js";
 
 const TICK_MS = 1000;
 const POLL_MS = 5000;
+const MOD = "pi-foreman-plan";
+// the ids of layouts/foreman.json, used when the shown layout cannot be searched
+const DEFAULT_IDS = { stack: "panel-body", block: "plan", show: "panel" };
+const CODE_LINE_PX = 18;
+const CODE_MAX_LINES = 30;
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -26,7 +32,7 @@ export default class PlanPanel extends View {
     this.diff = false;
     this.rootKey = null;
     this.anchorAddr = null;
-    this.pinSeen = 0;
+    this.pinSeen = null; // null until the first sync: a pin that predates this copy is stale
     this.pin = null; // {key, anchorKey}: set by a sidebar click until the tab's foreman changes
     this.lastTerm = null;
     this.loadedFor = null;
@@ -35,6 +41,8 @@ export default class PlanPanel extends View {
     this.busy = false;
     this.again = false;
     this.cur = { empty: "Waiting for foreman radar" };
+    this.noteSeen = new Map(); // root session key -> last note version seen on the radar
+    this.diagOk = new Map(); // app-home relative cache path -> true once written and checked
     this.linksOn = guard(() => typeof TextView.markdown("probe", "").on_link_click === "function", false);
     this.sync();
     this.reload(cx);
@@ -73,9 +81,11 @@ export default class PlanPanel extends View {
     this.anchorAddr = anchor;
     const own = anchor ? this.nodeOf(trees, anchor, pidOf(anchor)) : null;
 
-    // A sidebar click pins a session and a document until the tab's foreman changes.
+    // A sidebar click pins a session and a document until the tab's foreman changes. Herdr persists the value, so one already
+    // present at the first sync is stale: its `n` is recorded as seen, never applied.
     const pin = guard(() => shared("pi-foreman.show"), null);
-    if (isObj(pin) && Number.isInteger(pin.n) && pin.n !== this.pinSeen) {
+    if (this.pinSeen === null) this.pinSeen = isObj(pin) && Number.isInteger(pin.n) ? pin.n : 0;
+    else if (isObj(pin) && Number.isInteger(pin.n) && pin.n !== this.pinSeen) {
       this.pinSeen = pin.n;
       this.pin = typeof pin.key === "string" ? { key: pin.key, kind: pin.kind === "note" ? "note" : "plan", anchorKey: own?.node.key ?? null, fresh: true } : null;
     }
@@ -129,8 +139,35 @@ export default class PlanPanel extends View {
   tick(cx) {
     const before = this.cur?.key;
     this.sync();
+    this.noteWatch(cx);
     if (this.cur?.key !== before) cx.notify();
     if (this.cur?.key !== this.loadedFor || Date.now() - this.loadedAt >= POLL_MS) this.reload(cx);
+  }
+
+  // A note newer than the one seen before on the tab's foreman opens the panel on the Note tab. The first sight of a session only
+  // records its version, so starting the app does not pop the panel.
+  noteWatch(cx) {
+    const root = this.cur?.root;
+    const v = root ? noteHint(root) : null;
+    if (!root || v === null) return;
+    const seen = this.noteSeen.get(root.key);
+    this.noteSeen.set(root.key, v);
+    if (seen === undefined || v <= seen) return;
+    this.tab = "note";
+    this.sync();
+    this.openPanel();
+    this.reload(cx);
+    cx.notify();
+  }
+
+  // Selects this mod's block in its stack and shows the (hidden) panel around it. The Agents mod says when the layout has no block.
+  openPanel() {
+    const tree = guard(() => layout(), null);
+    const found = isObj(tree) ? findPanelBlock(tree, MOD) : undefined; // an unreadable layout falls back to the default ids
+    if (found === null) return;
+    const ids = found ? { stack: found.stack ?? DEFAULT_IDS.stack, block: found.block, show: found.show ?? DEFAULT_IDS.show } : DEFAULT_IDS;
+    guard(() => run("layout.select", { stack: ids.stack, child: ids.block }), null);
+    guard(() => run("layout.show", { id: ids.show }), null);
   }
 
   watch(dir, plan, cx) {
@@ -185,6 +222,7 @@ export default class PlanPanel extends View {
         rec.planJson = pj;
         rec.planDoc = next;
         rec.plan = text === null ? null : markBlocks(text, base);
+        await this.decorate(rec.plan, meta, dir, cur.machine);
         rec.hunks = text === null ? null : diffHunks(text, base);
         rec.rev++;
         changed = true;
@@ -198,11 +236,58 @@ export default class PlanPanel extends View {
         rec.noteMeta = meta;
         rec.noteText = text;
         rec.note = text === null ? null : markBlocks(text, null);
+        await this.decorate(rec.note, meta, dir, cur.machine);
         rec.rev++;
         changed = true;
       }
     }
     return changed;
+  }
+
+  // Fence blocks get what drawing needs, made here because host state objects belong in tasks, never in render: a code fence a
+  // read-only highlighted Editor; a mermaid fence whose hash the harness listed a picture (the checked SVG copied under the app
+  // home), or a `mermaid` code block when there is none.
+  async decorate(doc, meta, dir, machine) {
+    if (!doc) return;
+    const t = guard(() => theme(), {});
+    const font = guard(() => settings().font_family, undefined);
+    const syntax = { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 };
+    for (const b of doc.blocks) {
+      if (b.kind !== "fence") continue;
+      const f = fenceInfo(doc.lines, b);
+      b.fence = f;
+      const entry = f.sha && meta?.fences.includes(f.sha) ? meta.diagrams.find((d) => d.sha === f.sha) : null;
+      if (entry) b.diagram = await this.cacheDiagram(entry, dir, machine);
+      if (b.diagram) continue;
+      const language = f.mermaid ? "mermaid" : f.lang;
+      b.lines = Math.min(CODE_MAX_LINES, Math.max(1, f.text.split("\n").length));
+      b.editor = guard(() => EditorState.new({ ...(language ? { language } : {}), value: f.text, readonly: true, line_numbers: false, folding: false,
+        font_family: font, font_size: 12, syntax }), null);
+    }
+  }
+
+  // Copies the dark and light SVG of a diagram into mods/pi-foreman-plan/cache/ of the app home (named by sha and theme only) after
+  // the allow-list check; `{dark, light, w, h}` with app-home relative paths, or null when anything is wrong with it.
+  async cacheDiagram(entry, dir, machine) {
+    const out = {};
+    for (const th of ["dark", "light"]) {
+      const rel = cachePath(entry.sha, th);
+      if (!rel) return null;
+      const text = await this.read(joinPath(dir, entry[th]), machine);
+      if (text === null || validateSvg(text) !== null) return null;
+      if (!this.diagOk.get(rel)) {
+        const abs = joinPath(guard(() => appHome(), ""), rel);
+        if (!abs.startsWith("/") && !/^[A-Za-z]:/.test(abs)) return null;
+        const have = await this.read(abs, null);
+        if (have !== text) {
+          try { await writeTextFile(abs, text, have); } catch { return null; }
+        }
+        this.diagOk.set(rel, true);
+      }
+      out[th] = rel;
+      if (th === "dark") Object.assign(out, svgSize(text) ?? { w: 600, h: 400 });
+    }
+    return out;
   }
 
   // ---- links ----------------------------------------------------------------------------------------------------
@@ -222,8 +307,18 @@ export default class PlanPanel extends View {
     return this.linksOn ? el.on_link_click((url, cx) => this.openUrl(url, cx)) : el;
   }
 
+  // The body of one block: a picture, a highlighted code block, or the markdown of the text.
+  body(t, b, i, rec, tabId) {
+    if (b.diagram) {
+      const rel = b.diagram[isLight(t.background) ? "light" : "dark"];
+      return svg(rel).w_full().max_w(b.diagram.w).h(Math.min(b.diagram.h, 1200)).flex_none();
+    }
+    if (b.editor) return Editor.new(b.editor).w_full().h(b.lines * CODE_LINE_PX + 10).flex_none().rounded(4);
+    return this.md(`b-${rec.rev}-${tabId}-${i}`, b.text);
+  }
+
   block(t, b, i, rec, tabId) {
-    const el = this.md(`b-${rec.rev}-${tabId}-${i}`, b.text);
+    const el = this.body(t, b, i, rec, tabId);
     const card = v_flex().w_full().gap(4).px(10).py(6).rounded(6);
     if (b.mark === "new") card.bg(t.ansi2 + "18").border_l(3).border_color(t.ansi2).child(div().text_size(10).text_color(t.ansi2).child("NEW"));
     else if (b.mark === "changed") card.bg(t.ansi3 + "18").border_l(3).border_color(t.ansi3).child(div().text_size(10).text_color(t.ansi3).child("CHANGED"));

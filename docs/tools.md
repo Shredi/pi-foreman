@@ -268,6 +268,13 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 `foreman_wait` (timers, files, processes, CI runs, children) and `foreman_bg` (a detached shell run with a pid wait) are foreman-only; see
 [sessions](sessions.md#background-runs). `foreman_bg` and the optional add-on's `bg_run` are guarded like `bash`.
 
+### foreman_show
+
+`foreman_show({title, markdown})` publishes a note for the owner's side panel (foreman sessions, including child foreman sessions opened with `foreman session open`, get it; subagent children such as explorer, builder and reviewer do not). Title up to 120
+characters, markdown up to 256 KiB; larger input is refused with the limit named. It never takes a path. Each call replaces the previous note; the result is
+`shown: <title> (v<n>, <k> diagram(s)) at <path>`, and the trace gets one `show_note` event. `mermaid` fences are rendered to sidecar SVGs after the call returns.
+The tool stays declared whatever `tools.deferred` says. See [Notes](herdr.md#notes).
+
 ### Deferred tools and searchable skills
 
 Every tool declaration and every listed skill is paid for on every request. Rarely used ones stay out of the request and are found on demand, which shrinks the cached prefix.
