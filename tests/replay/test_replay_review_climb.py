@@ -1,7 +1,7 @@
 """Replay: reviewer repeat-fail climb, review panel and plan review on the fake provider.
 
 Repeat-fail: `ladder.reviewerClimb` enabled with reviewer.strong = senior-reviewer; the reviewer FAILs
-item 1 twice with a located `calc.py:2` finding, so the third reviewer launch goes to the strong rung
+item 1 twice, first at `calc.py:2` and then at `calc.py:7` (another finding, so the loop guard does not read it as a repeat), so the third reviewer launch goes to the strong rung
 (`rung_up` review_fail_repeat), whose PASS ends the round.
 Panel: `ladder.reviewPanel` with a senior-reviewer shadow on `pre-pr`. The primary reviewer runs alone; its run end
 lists the shadow launch, the foreman issues `[panel-shadow:<strong>] [pre-pr]` (`panel {decision: launched}`), the
@@ -60,7 +60,7 @@ class TestReviewClimb(ReplayCase):
             pi.wait_child_notify(timeout=180)
         pi.close()
         self.assertEqual([(f["file"], f["line"], f["model"], f["gate"]) for f in events(rig, sid, "finding")],
-                         [("calc.py", 2, CHEAP, "item")] * 2)
+                         [("calc.py", 2, CHEAP, "item"), ("calc.py", 7, CHEAP, "item")])
         ups = [{k: v for k, v in r.items() if k != "ts"} for r in events(rig, sid, "rung_up")]
         self.assertEqual(ups, [{"event": "rung_up", "role": "reviewer", "from": CHEAP, "to": STRONG, "reason": "review_fail_repeat", "item": "1"}])
         self.assertIsNotNone(trace_of(rig.traces(), "child", STRONG), "the third review ran on the strong rung")
