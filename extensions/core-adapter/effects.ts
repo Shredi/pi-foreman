@@ -28,7 +28,7 @@ import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
 import { netReadSegment } from "./netread.ts";
-import { foldCase, nullDevice } from "./pathnorm.ts";
+import { foldCase, longForm, nullDevice } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
 /** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
@@ -62,6 +62,8 @@ export interface EffectCtx {
   extraWriteRoots?: string[];
   /** True for a path under an extra write root that must stay refused (protected places); consulted by `contained`. */
   extraWriteGuard?: (abs: string) => boolean;
+  /** A `cp` source is a read for the write-outside check (defaults.ts): it need not lie in an allowed place; only the destination does. */
+  cpSourceRead?: boolean;
 }
 
 export function effectCtx(cwd: string, scratch: string[] = [], platform: string = process.platform, readRoots: unknown = [], role?: NetRole, netOut?: string[]): EffectCtx {
@@ -153,19 +155,23 @@ function realInside(c: EffectCtx, base: string, abs: string, strict: boolean, no
   const x = px(c);
   const real = c.realpath ?? realDefault;
   const exists = c.exists ?? existsDefault;
-  const rb = real(base);
-  if (!rb) return false;
+  // both sides canonical: a missing base (a scratch run dir not created yet) resolves by its deepest existing ancestor, like the target
+  const rb = longForm(plat(c), base, real);
   // a link is judged by its directory (`realpath(dirname) + name`): the name itself is never resolved
   let e = link ? x.dirname(abs) : abs;
   if (link && e === abs) return false;
+  const tail: string[] = [];
   while (!exists(e)) {
-    if (!within(c, base, e, true)) return false;
-    e = x.dirname(e);
+    const d = x.dirname(e);
+    if (d === e) return false;
+    tail.unshift(x.basename(e));
+    e = d;
   }
   const r = real(e);
   if (!r) return false;
-  if (noGit && hasGitPart(c, x.relative(rb, r))) return false;
-  return within(c, rb, r, strict && e === abs && !link);
+  const full = x.join(r, ...tail);
+  if (noGit && hasGitPart(c, x.relative(rb, full))) return false;
+  return within(c, rb, full, strict && tail.length === 0 && !link);
 }
 
 /** `word` as an absolute path against `cwd`, or null for `~`, `..`, drive-relative or an unknown cwd. */
@@ -190,7 +196,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   const real = c.realpath ?? realDefault;
   for (const b of only ?? bases(c, write)) {
     // win32: the word and the base may spell one dir differently (8.3 `RUNNER~1` vs `runneradmin`): compare the real spellings too
-    const rb = alt ? (real(b) ?? b) : b;
+    const rb = alt ? longForm(plat(c), x.resolve(c.cwd, b), real) : b;
     const [base, p] = within(c, b, abs, write) ? [b, abs] : alt && within(c, rb, alt, write) ? [rb, alt] : [null, null];
     if (base === null || p === null) continue;
     if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
@@ -409,7 +415,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   // -R/-a keep the symlinks of the source tree on GNU and BSD (lowercase -r is refused above: BSD
   // `cp -r` follows them); the source only from the worktree (shared /tmp can be planted)
   const recursive = prog === "cp" && args.some((a) => /^-[A-Za-z]*[rRa]/.test(a));
-  if (recursive && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
+  if (recursive && !c.cpSourceRead && !ops.slice(0, -1).every((o) => c.root !== null && contained(c, cwd, o, false, [c.root]))) return "write-out";
   const reads = prog === "cp" ? ops.slice(0, -1) : [];
   const writes = prog === "cp" ? ops.slice(-1) : ops;
   // rm and mv never reach into the shared /tmp (as tmp-scratch: `rm -rf /tmp/...` stays reviewed)
@@ -429,7 +435,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
       }
     }
   }
-  return reads.every((o) => contained(c, cwd, o, false)) && writes.every((o) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o))) ? "write-in" : "write-out";
+  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);

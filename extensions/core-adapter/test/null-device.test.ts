@@ -45,7 +45,8 @@ test("writesOutside (defaults SINK): a NUL redirect is no write outside on win32
   for (const p of ["win32", "darwin", "linux"]) assert.equal(out("ls >/dev/null", p), false, p);
   assert.equal(out("ls >NUL", "win32"), false);
   assert.equal(out("ls 2>nul", "win32"), false);
-  assert.equal(out("ls >NUL", "linux"), true);
+  // the fixture worktree /w does not exist and a missing base now counts by its deepest existing ancestor, so the file must lie outside /w
+  assert.equal(out("ls >/etc/NUL", "linux"), true);
 });
 
 test("allow-rule redirect rule: a NUL redirect is no write on win32, a file write elsewhere", () => {

@@ -110,11 +110,11 @@ export function rootHolds(root: string, abs: string, platform: string, realpath?
     if (win) return !root.includes("*") && under(platform, longRoot(root), ra, base);
     // posix: `abs` spelled through a link to the root (`/var` -> `/private/var`). The real directory plus the unresolved last component must lie under the real root;
     // the fully resolved target must too, unless the path names a link itself.
-    const rr = root.includes("*") ? null : real(root);
+    const rr = root.includes("*") ? null : longRoot(root);
     return !!rr && under(platform, rr, realSpelling(platform, abs, real, true), base) && (link || under(platform, rr, ra, base));
   }
   if (ra === abs) return true;
-  return under(platform, root, ra, base) || (!root.includes("*") && under(platform, real(root) ?? root, ra, base)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, base));
+  return under(platform, root, ra, base) || (!root.includes("*") && under(platform, longRoot(root), ra, base)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, base));
 }
 
 /**
