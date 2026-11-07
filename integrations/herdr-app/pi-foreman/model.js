@@ -101,7 +101,7 @@ function normNode(raw, depth, budget) {
   return {
     key: str(raw.key), kind: str(raw.kind) || "session", name: str(raw.name), role: str(raw.role), rung: str(raw.rung),
     tier: str(raw.tier), model: str(raw.model), state: str(raw.state), glyph: str(raw.glyph), sym: str(raw.sym),
-    hcTerminal: str(raw.hcTerminal), pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
+    hcTerminal: str(raw.hcTerminal), regOpen: raw.regOpen === true, pid: int(raw.pid), machine: str(raw.machine), parent: str(raw.parent),
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
     repo: nameOf(raw.repo), branch: str(raw.branch),
@@ -390,8 +390,9 @@ export function totalCost(node) {
   return sum;
 }
 
-/** A session that is over without the "done" mark: closed by its owner, finished (its remote terminal ended), or lost (its process vanished). */
-export const isEnded = (n) => n.state === "closed" || n.state === "lost" || n.state === "finished";
+/** A session that is over without the "done" mark: closed by its owner, finished (its remote terminal ended), or lost (its process vanished).
+ *  A lost one with a live hc terminal (`liveHc`, set by the render) or an open registry entry (`regOpen`) is only late, not over. */
+export const isEnded = (n) => n.state === "closed" || n.state === "finished" || (n.state === "lost" && !n.liveHc && !n.regOpen);
 
 export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;

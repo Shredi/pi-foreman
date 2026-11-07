@@ -758,6 +758,8 @@ def build(data, now):
                 live["parent"] = e["parent"]
             if e.get("gone"):
                 live["glyph"], live["state"] = "idle", "closed"
+            elif e.get("status") == "open":
+                live["regOpen"] = True
             merged.add(key)
             continue
         ho = handoff_by_leaf.get(leaf(e.get("handoff")))
@@ -778,6 +780,8 @@ def build(data, now):
                     n["asks"] = [{"n": ask["n"], "topic": topic if isinstance(topic, str) and topic else "remote"}]
             else:
                 n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
+                if e.get("status") == "open" and not e.get("gone"):
+                    n["regOpen"] = True
             if e.get("gone"):  # process and terminal gone: over, not live and not idle
                 n["glyph"], n["state"] = "idle", "closed"
             n["last"] = n["last"] or opened
@@ -788,6 +792,8 @@ def build(data, now):
             nodes[key] = n
         elif e.get("gone"):
             n["glyph"], n["state"] = "idle", "closed"
+        elif e.get("status") == "open":
+            n["regOpen"] = True
         if isinstance(e.get("parent"), str) and e["parent"] and not n["parent"]:
             n["parent"] = e["parent"]
         if n["started"] is None:
@@ -1081,6 +1087,8 @@ def to_json_node(n, now, symbols):
     if n["kind"] == "session":
         if n.get("machine"):
             out["machine"] = n["machine"]
+        if n.get("regOpen"):
+            out["regOpen"] = True
         out["sid"] = n["sid"]
         out["waits"] = n["waits"]
         out["started"] = n["started"]
