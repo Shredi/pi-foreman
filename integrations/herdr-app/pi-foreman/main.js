@@ -8,7 +8,7 @@ import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
-  radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  radarBinary, parseRecords, parseAttachTarget, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock,
 } from "./model.js";
 
@@ -266,12 +266,13 @@ export default class ForemanAgents extends View {
       this.busy.set(`hc:${addr}`, now);
       cx.spawn(async (cx) => {
         let recs = [];
+        let attach = "";
         try {
           const r = await exec(radarBinary(this.hcProp, machine, "hc"), ["get", addr.slice(cut + 1), "--json"], { on: machine });
-          if (r.code === 0) recs = parseRecords(r.stdout);
+          if (r.code === 0) { recs = parseRecords(r.stdout); attach = parseAttachTarget(r.stdout); }
         } catch { /* no hc here: no records */ }
         this.busy.delete(`hc:${addr}`);
-        if (this.childPi.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, tried: Date.now() });
+        if (this.childPi.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, attach, tried: Date.now() });
         cx.notify();
       });
     }
@@ -558,13 +559,22 @@ export default class ForemanAgents extends View {
     for (const [key, rec] of this.radar) {
       if (rec.ok) for (const [addr, n] of joinChildren(kids, rec.tree, key === "local" ? null : key, new Set([...joined.values(), ...childJoined.values()]))) childJoined.set(addr, n);
     }
-    this.childPi = new Set(kids.filter((x) => x.app === "pi" || childJoined.has(x.address)).map((x) => x.address));
+    this.childPi = new Set(kids.filter((x) => x.app === "pi" || x.agent === "pi" || childJoined.has(x.address)).map((x) => x.address));
     const skip = new Set([...joined.values(), ...childJoined.values()]);
     // Item 25: a session drawn as a joined row anywhere is not drawn again as a radar child (matched by key).
     const skipKeys = new Set([...skip].map((n) => n.key).filter(Boolean));
     // A listed agent that is an hc child of another one is drawn once, nested under its parent (see withRows), not as a top-level row.
     const nested = guard(() => nestedAgents(list, all), new Set());
     const listedBy = new Map(list.map((a) => [a.address, a]));
+    // `<machine>/<t>` targets already drawn as a session (radar nodes, listed agents): an attach of one is not drawn again.
+    const drawnTargets = new Set(list.map((a) => a.address));
+    for (const [key, rec] of this.radar) {
+      if (!rec.ok) continue;
+      for (const n of guard(() => allSessions(rec.tree), [])) {
+        if (typeof n.hcTerminal !== "string" || !n.hcTerminal) continue;
+        drawnTargets.add(key !== "local" && !n.hcTerminal.includes("/") ? `${key}/${n.hcTerminal}` : n.hcTerminal);
+      }
+    }
     const groups = [];
     for (const a of list.filter((x) => !nested.has(x.address))) {
       const id = `sp-${a.space}`;
@@ -595,9 +605,9 @@ export default class ForemanAgents extends View {
         const node = childJoined.get(term.address) ?? null;
         const recs = this.recs.get(term.address)?.recs ?? [];
         const own = workerStatus(term.status, listedStatus.get(term.address));
-        return { node, recs, own, status: guard(() => agentStatus(own, node, recs), own) };
+        return { node, recs, own, attach: this.recs.get(term.address)?.attach ?? "", status: guard(() => agentStatus(own, node, recs), own) };
       };
-      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys }), []);
+      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets }), []);
       const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys), { root: null, items: [] });
       drawnItems.push(...(root ? [root] : []), ...items);
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);

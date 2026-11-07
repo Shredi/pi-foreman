@@ -8,6 +8,7 @@
     python scripts/foreman_session.py open <label> <brief-file> --worktree [--base REF] [--cwd DIR] [...]
     python scripts/foreman_session.py open <label> <brief-file> --machine NAME --cwd DIR [--trust] [...]
     python scripts/foreman_session.py list [--json] [--agent-dir D]
+    python scripts/foreman_session.py prune [--dry-run] [--agent-dir D]
     python scripts/foreman_session.py remote probe|open|deliver|close --json   (the remote side; JSON on stdin)
     python scripts/foreman_session.py remote notice <plan|result|update|ask|closed> [file] [--close ready|open]
     python scripts/foreman_session.py remote notice refused --reason=TEXT
@@ -28,6 +29,11 @@ overwritten and a target with no handoff dir is refused): a file argument is cop
 as is. It then sends `Brief from <opener id>: read <abs posix path> and act on it` through pi-intercom's
 `cli.mjs send` (argv list, no shell); text briefs stay on disk. When node or the module is missing, or the broker
 refuses, it prints the manual message and exits 1; it never falls back to Herdr.
+
+`prune [--dry-run]` marks `closed` (note `pruned: process and terminal gone`) each local `open`/`closing` entry whose
+process is gone (no live file with a running pid or fresh heartbeat) AND whose hc terminal / Herdr pane is provably not
+listed; an unreadable listing, a remote entry or an entry without a terminal record is never touched. `--dry-run`
+writes nothing. One line per entry, then the count.
 
 Herdr (HERDR_PANE_ID set and `herdr` on PATH, or HERDR_BIN): the workspace whose label is the
 basename of the git top level of --cwd (default: the current dir), else `workspace create`
@@ -1781,6 +1787,137 @@ def mark_entry(adir, entry, **fields):
     write_registry(adir, reg)
 
 
+STALE_BEAT = 900.0  # seconds without a heartbeat after which a live file with no pid counts as a dead process
+
+
+def process_alive(pid):
+    """True when `pid` is a running process (never signals it; Windows asks the process handle)."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not h:
+            return k32.GetLastError() != 87  # only ERROR_INVALID_PARAMETER means no such pid; access denied is alive
+        try:
+            return k32.WaitForSingleObject(h, 0) == 258  # WAIT_TIMEOUT: still running
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except (PermissionError, OverflowError, ValueError):
+        return True
+    return True
+
+
+def hc_terminal_addresses(timeout=None):
+    """Addresses `hc ls --json` lists (finished terminals are hidden there); None when hc cannot be asked."""
+    binary = hc_bin()
+    if not binary:
+        return None
+    try:
+        data = hc_read(binary, ["ls", "--json"], timeout or DISCOVERY_TIMEOUT)
+    except HcError:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("terminals"), list):
+        return None
+    return {t["address"] for t in data["terminals"] if isinstance(t, dict) and isinstance(t.get("address"), str)}
+
+
+def _live_process_gone(entry, live, now):
+    """No live file of the entry shows a running process: none exists, or each has a dead pid / (no pid) a stale heartbeat."""
+    handoff = Path(str(entry.get("handoff") or "")).name
+    for d in live:
+        if not isinstance(d, dict):
+            continue
+        mine = d.get("intercomId") == entry.get("child") or (handoff and Path(str(d.get("handoff") or "")).name == handoff)
+        if not mine:
+            continue
+        pid = d.get("pid")
+        if isinstance(pid, int) and not isinstance(pid, bool):
+            if process_alive(pid):
+                return False
+            continue
+        beat = d.get("heartbeatAt")
+        try:
+            ts = datetime.datetime.fromisoformat(beat[:-1] + "+00:00" if beat.endswith(("Z", "z")) else beat).timestamp()
+        except (AttributeError, ValueError):
+            return False
+        if now - ts <= STALE_BEAT:
+            return False
+    return True
+
+
+def entry_gone(entry, live, now, hc_addresses, herdr_panes):
+    """True when a local open/closing registry entry is provably over: its process is gone AND its terminal (hc terminal or
+    Herdr pane) is provably not listed. A terminal listing that could not be read (None), an entry without a terminal
+    record and a remote entry are never gone."""
+    if entry.get("status") not in ("open", "closing") or entry.get("machine"):
+        return False
+    hc_at = entry.get("hc") if isinstance(entry.get("hc"), dict) else None
+    if hc_at and isinstance(hc_at.get("address"), str):
+        if hc_addresses is None or hc_at["address"] in hc_addresses:
+            return False
+    elif isinstance(entry.get("pane"), str) and entry["pane"]:
+        if herdr_panes is None or entry["pane"] in herdr_panes:
+            return False
+    else:
+        return False
+    return _live_process_gone(entry, live, now)
+
+
+def read_live_files(adir):
+    out = []
+    base = Path(adir) / "pi-foreman" / "state" / "live"
+    try:
+        names = sorted(os.listdir(base))
+    except OSError:
+        return out
+    for name in names:
+        try:
+            d = json.loads((base / name).read_text("utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict):
+            out.append(d)
+    return out
+
+
+def herdr_pane_ids():
+    """Pane ids of `herdr pane list`; None when Herdr cannot be asked."""
+    binary = herdr_bin()
+    if not binary:
+        return None
+    try:
+        panes = herdr(binary, ["pane", "list"], DISCOVERY_TIMEOUT)["result"]["panes"]
+        return {p["pane_id"] for p in panes if isinstance(p, dict) and isinstance(p.get("pane_id"), str)}
+    except (HerdrError, KeyError, TypeError):
+        return None
+
+
+def cmd_prune(a):
+    """`prune [--dry-run]`: mark `closed` the open/closing entries whose process and terminal are provably gone."""
+    adir = agent_dir(a.agent_dir)
+    reg = read_registry(adir)
+    live = read_live_files(adir)
+    now = time.time()
+    hc_addr = herdr_ids = None
+    if any(isinstance(s, dict) and s.get("status") in ("open", "closing") and not s.get("machine") for s in reg["sessions"]):
+        hc_addr, herdr_ids = hc_terminal_addresses(), herdr_pane_ids()
+    gone = [s for s in reg["sessions"] if isinstance(s, dict) and entry_gone(s, live, now, hc_addr, herdr_ids)]
+    for s in gone:
+        print("%s%s  %s  %s" % ("would prune " if a.dry_run else "pruned ", s.get("label"), s.get("child"), s.get("status")))
+        if not a.dry_run:
+            s.update(status="closed", note="pruned: process and terminal gone")
+    print("%d %s" % (len(gone), "would be pruned" if a.dry_run else "pruned"))
+    if gone and not a.dry_run:
+        write_registry(adir, reg)
+    return 0
+
+
 def cmd_list(a):
     reg = read_registry(agent_dir(a.agent_dir))
     if a.json:
@@ -1934,6 +2071,9 @@ def main(argv=None):
     ls = sub.add_parser("list")
     ls.add_argument("--json", action="store_true")
     ls.add_argument("--agent-dir", dest="agent_dir_sub")
+    pr = sub.add_parser("prune")
+    pr.add_argument("--dry-run", action="store_true")
+    pr.add_argument("--agent-dir", dest="agent_dir_sub")
     try:
         a = p.parse_args(argv)
     except SystemExit as e:
@@ -1946,6 +2086,8 @@ def main(argv=None):
             return cmd_open(a)
         if a.cmd == "list":
             return cmd_list(a)
+        if a.cmd == "prune":
+            return cmd_prune(a)
         if a.cmd == "brief":
             return cmd_brief(a)
         if a.cmd == "remote" and a.verb == "notice":

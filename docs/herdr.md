@@ -154,6 +154,8 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 | `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of external items (see Dots) |
 | `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix and ` · owner present|away|grace|unknown` (the owner's presence as the cache warms see it) |
 
+In the herdr-app mod's Agents tree a `closed`, `lost` or `finished` child session is ended: its row is dropped unless a live session sits below it (then it stays dimmed). A registry entry whose process and terminal are both gone counts as ended (an unreadable terminal listing counts as present). A hand-made `hc attach <machine>/<t>` terminal shows as the attach of that remote session (`<label>@<machine>`) when the target is a known remote session terminal (`fm-<label>-xxxx`), else it has no row.
+
 A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A child session without its own pane row (a closed
 or idle one, a stale registry entry) is listed on `fm_a1` only while it is live: a session whose state is `idle`,
 `waiting`, `done`, `lost`, `closed` or `closing` leaves the line and the hidden `+n` count, one that works (starting and
@@ -193,7 +195,7 @@ are additive: older readers ignore them, and each is present only when there is 
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
 | `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
 | `dots` | live file, radar session node | the dots row: `[{n, state, label, src}]`, at most 14: the external status items (`src` `ext`); `n` is `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters. The extension writes no `pr` dots any more; the radar still reads one from an older live file (`url`) and the herdr-app mod draws one aggregate dot for it (the job list of the hover card comes from the `openPrs` feed). The radar copies the dots to the session node unless the live file is stale (heartbeat older than 90 s, the lost rule) or its session is done, so a finished session keeps no PR dot from before a merge; the herdr-app mod counts a PR seen twice once and skips a merged or closed one. The `prs` field of the `pr_watch` wait is separate and unchanged |
-| `repo`, `branch` | live file, radar session node | `owner/name` of the origin remote and the checked-out branch (each present only when known); the herdr-app mod attaches a feed PR to the session with equal repo and head branch |
+| `repo`, `branch` | live file, radar session node | `owner/name` of the origin remote and the checked-out branch (each present only when known); the herdr-app mod attaches a feed PR to the session with equal repo and head branch, and also one the session watches (`prs`, see above) whose repo or head repo is the session's |
 
 The sidebar sorts them into lines: child runs go to `fm_a1` (agents); `tasks`, waits with `bg` and the `pr_watch` wait
 (with its `prs`) go to `fm_a2` (tasks and watches); other waits and `asks` go to `fm_a3` (`? ask <n>: <topic>`, then the
@@ -625,7 +627,7 @@ outer ring that animates while any job runs, and an inner fill that is amber whi
 failed, green when every job finished and passed, and dim when unknown. Hovering the dot shows a card (title, the first
 ~200 characters of the description, the jobs grouped failed, running and passed, capped, and a CONFLICTING mark when the PR has
 a merge conflict); a click opens the PR. A PR whose repository and head branch equal the `repo` and `branch` of a live session
-is shown under that session; fork PRs match through `headRepo` (the head repository), so a fork PR gets a chip only on the session whose repo is the fork. A watched PR whose head is not the session's branch shows only as the session's `⏳ N pr watch` wait line, with no chip; when the feed has it, it is listed under **Open PRs**, like every other PR nobody shows. Renamed branches fall into that list.
+is shown under that session; fork PRs match through `headRepo` (the head repository), so a fork PR gets a chip only on the session whose repo is the fork. An open PR whose number is in a live session's `pr_watch` `prs` (`pr_create` arms such a watch) also gets its chip there when its repo or head repo is the session's, whatever branch the session is on now, so a renamed or switched branch keeps the chip; a PR matching both ways shows one chip. A PR nobody owns or shows (for example one only tracked with `pr_follow`) is listed under **Open PRs**; merged and closed PRs drop.
 
 Owner and overlay config only (a project cannot change the GitHub search):
 
