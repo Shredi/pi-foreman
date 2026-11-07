@@ -36,15 +36,15 @@ test("https autolinks stay, other schemes are removed", () => {
 
 test("fences and inline code spans stay as written", () => {
   const fence = "```html\n<script>x</script> ![a](b)\n```";
-  assert.equal(sanitize(fence), fence);
-  assert.equal(sanitize("~~~~\n<b>\n~~~\n![x]\n~~~~\n<b>y</b>"), "~~~~\n<b>\n~~~\n![x]\n~~~~\ny");
-  assert.equal(sanitize("use `<b>` and `![a]` then <b>x</b>"), "use `<b>` and `![a]` then x");
+  assert.equal(sanitize(fence), "```html\n<script>x</script> !\\[a](b)\n```"); // `![` is escaped even in code
+  assert.equal(sanitize("~~~~\n<b>\n~~~\n![x]\n~~~~\n<b>y</b>"), "~~~~\n<b>\n~~~\n!\\[x]\n~~~~\ny");
+  assert.equal(sanitize("use `<b>` and `![a]` then <b>x</b>"), "use `<b>` and `!\\[a]` then x");
   assert.equal(sanitize("two ``a ` <i> `` ok <i>"), "two ``a ` <i> `` ok ");
   assert.equal(sanitize("`unclosed <b>x</b>"), "`unclosed x");
 });
 
 test("the document after an unclosed fence stays code", () => {
-  assert.equal(sanitize("```\n<b>x</b>\n![a]"), "```\n<b>x</b>\n![a]");
+  assert.equal(sanitize("```\n<b>x</b>\n![a]"), "```\n<b>x</b>\n!\\[a]");
 });
 
 test("without a link handler links are inert: inline links become text, autolinks code", () => {

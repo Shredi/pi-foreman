@@ -30,7 +30,7 @@ re-read when those bytes change or the folder watch fires. Nothing is written.
 
 - Plans written through the shell are not observed; remote child sessions show no tab.
 - Marks stop above 4000 lines per side or 1500 changed lines.
-- Images never load (`![` is escaped); only `https://` links open, through the platform opener.
+- Images never load (`![` is escaped everywhere, code spans and fences included); only `https://` links open, through the platform opener.
 - HTML tags are removed except `del, br, sub, sup, kbd`; `<mark>` is shown as bold because the host paints it as a yellow background under the theme's text colour.
 - The SVG cache, once diagrams ship, has no pruning API and grows without bound.
 - `model.js` holds copies of a few helpers from `../pi-foreman/model.js` (the loader refuses cross-mod imports); `model.parity.test.mjs` keeps them equal.

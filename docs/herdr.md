@@ -717,7 +717,7 @@ Every 5 s it re-reads only the two JSON files and re-reads the documents only wh
 fired (`watchFolder`, local only; remote spaces poll). It writes nothing. Marks compare the plan with `plan.ruled.md` while it was edited after
 the last ruling, otherwise with `plan.prev.md`; only the body above the first appendix heading (`## Ruling`, `## Addendum`, `## Decision log`) is
 compared, and without a snapshot, or when the snapshot belongs to another plan path, there are no marks and no badge. The markdown is
-sanitised before it renders: `![` is escaped (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
+sanitised before it renders: `![` is escaped everywhere, code spans and fences included (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
 only when it is `https://`, through the platform opener (never a shell).
 
 Limits: a plan written through the shell is not observed; remote child sessions have no live file on this computer, so a parent shows no tab

@@ -390,7 +390,7 @@ function cleanRaw(s, st) {
   return out;
 }
 
-/** The markdown with every `![` escaped and every HTML tag removed except del, br, sub, sup and kbd (attributes
+/** The markdown with every `![` escaped (also inside code spans and fences) and every HTML tag removed except del, br, sub, sup and kbd (attributes
  *  stripped); `<mark>text</mark>` becomes `**text**`; fences and inline code spans stay as written; `<https://...>` autolinks stay. */
 export function sanitize(md, { links = true } = {}) {
   // Removing a tag can join the text around it into a new construct (`<<b>img ...>`): clean until nothing changes.
@@ -444,7 +444,8 @@ function sanitizeOnce(md, links, hard) {
       return b ? `${t.slice(0, t.length - t.trimStart().length)}**${b}**${t.slice(t.trimEnd().length)}` : t;
     }));
   }
-  return out.join("\n");
+  // fail-safe: no code-span or fence detection decides this one, so every `![` is escaped, code included
+  return out.join("\n").replace(/(\\*)!\[/g, (m, b) => (b.length % 2 ? m : `${b}!\\[`)); // `\![` is already inert
 }
 
 // ---- anchor --------------------------------------------------------------------------------------------------------

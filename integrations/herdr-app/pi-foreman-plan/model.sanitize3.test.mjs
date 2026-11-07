@@ -4,10 +4,16 @@ import { sanitize } from "./model.js";
 
 const IMG = /(^|[^\\])!\[/;
 const nested = (n, open, close = "") => "!" + open.repeat(n) + close + "[a](https://t/x.png)";
+const deep = (n) => "!" + "<".repeat(n) + "x>".repeat(n) + "[a](https://t/x.png)";
 
 test("ten nested tags before a link cannot rejoin into an image", () => {
-  const out = sanitize(nested(10, "<x>"));
+  const out = sanitize(deep(10));
   assert.ok(!IMG.test(out), out);
+  assert.ok(out.includes("\\<"), `the hard round did not run: ${out}`);
+});
+
+test("depths 1 to 20 of nested-open shape never yield an image", () => {
+  for (let n = 1; n <= 20; n++) assert.ok(!IMG.test(sanitize(deep(n))), `${n}`);
 });
 
 test("nine empty marks at depth ten cannot rejoin into an image", () => {
@@ -30,7 +36,7 @@ test("depths 1 to 20 never yield an image or a raw tag", () => {
 test("fences and inline code stay literal in hard mode", () => {
   const md = "```\n<x>![a](b)\n```\n`<x>![a]` " + "<<b>".repeat(12) + "z";
   const out = sanitize(md);
-  assert.ok(out.startsWith("```\n<x>![a](b)\n```\n`<x>![a]` "), out);
+  assert.ok(out.startsWith("```\n<x>!\\[a](b)\n```\n`<x>!\\[a]` "), out);
 });
 
 test("200k nested marks still finish", () => {
