@@ -1,0 +1,119 @@
+{
+  "note": "Fence rule test vectors shared by the harness (mermaid.test.ts) and the herdr-app mod tests: opening fence at column 0 with first info word mermaid, closing fence = same char with at least the opening length, CRLF -> LF, one final LF removed, sha256 over UTF-8.",
+  "cases": [
+    {
+      "name": "open",
+      "markdown": "intro\n\n```mermaid\ngraph TD\nA-->B\n```\n\noutro\n",
+      "fences": [
+        {
+          "text": "graph TD\nA-->B",
+          "sha": "f202f94e8104ac38b446dbb208fb4b99e4d6d547d094ccaf7749092be86e8fef"
+        }
+      ]
+    },
+    {
+      "name": "closed-tilde",
+      "markdown": "~~~mermaid\nA-->B\n~~~\n",
+      "fences": [
+        {
+          "text": "A-->B",
+          "sha": "952579688ec2287fb5e605023fc6c49b9116773d0318c776a6e9947afc9cb9fe"
+        }
+      ]
+    },
+    {
+      "name": "info-words",
+      "markdown": "```mermaid theme=dark\nA-->B\n```\n",
+      "fences": [
+        {
+          "text": "A-->B",
+          "sha": "952579688ec2287fb5e605023fc6c49b9116773d0318c776a6e9947afc9cb9fe"
+        }
+      ]
+    },
+    {
+      "name": "not-mermaid-word",
+      "markdown": "```mermaidx\nA-->B\n```\n\n```js\nlet a;\n```\n",
+      "fences": []
+    },
+    {
+      "name": "longer-closing",
+      "markdown": "```mermaid\nA-->B\n`````\n",
+      "fences": [
+        {
+          "text": "A-->B",
+          "sha": "952579688ec2287fb5e605023fc6c49b9116773d0318c776a6e9947afc9cb9fe"
+        }
+      ]
+    },
+    {
+      "name": "shorter-closing-stays-open",
+      "markdown": "````mermaid\nA\n```\nB\n````\n",
+      "fences": [
+        {
+          "text": "A\n```\nB",
+          "sha": "28057716e3e6a79999def94eec448c8627bf7263e1228ecc62ffee3e65ae8879"
+        }
+      ]
+    },
+    {
+      "name": "other-char-does-not-close",
+      "markdown": "```mermaid\nA\n~~~\nB\n```\n",
+      "fences": [
+        {
+          "text": "A\n~~~\nB",
+          "sha": "6dd7e5d38bcedf4b645bb42023c0506489304bf5295c6f21b65b73f9c311e0cc"
+        }
+      ]
+    },
+    {
+      "name": "unclosed",
+      "markdown": "text\n\n```mermaid\nA-->B\n",
+      "fences": []
+    },
+    {
+      "name": "indented",
+      "markdown": "  ```mermaid\nA-->B\n  ```\n",
+      "fences": []
+    },
+    {
+      "name": "crlf",
+      "markdown": "```mermaid\r\ngraph TD\r\nA-->B\r\n```\r\n",
+      "fences": [
+        {
+          "text": "graph TD\nA-->B",
+          "sha": "f202f94e8104ac38b446dbb208fb4b99e4d6d547d094ccaf7749092be86e8fef"
+        }
+      ]
+    },
+    {
+      "name": "one-final-lf-only",
+      "markdown": "```mermaid\nA\n\n```\n",
+      "fences": [
+        {
+          "text": "A\n",
+          "sha": "06f961b802bc46ee168555f066d28f4f0e9afdf3f88174c1ee6f9de004fc30a0"
+        }
+      ]
+    },
+    {
+      "name": "nested-in-four-backticks",
+      "markdown": "````md\n```mermaid\nA-->B\n```\n````\n\nafter\n",
+      "fences": []
+    },
+    {
+      "name": "two-fences",
+      "markdown": "```mermaid\nA-->B\n```\n\ntext\n\n```mermaid\nC-->D\n```\n",
+      "fences": [
+        {
+          "text": "A-->B",
+          "sha": "952579688ec2287fb5e605023fc6c49b9116773d0318c776a6e9947afc9cb9fe"
+        },
+        {
+          "text": "C-->D",
+          "sha": "56f13a3991ba5300e7296f20fa91f1bf9099094566d8a5fd0ab968e2eb01c665"
+        }
+      ]
+    }
+  ]
+}

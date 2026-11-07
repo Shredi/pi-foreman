@@ -65,6 +65,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [launch-wait](#launch-wait) | ceremony |  | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | sessions |  | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
 | [foreman-bg](#foreman-bg) | tools |  | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
+| [foreman-show](#foreman-show) | tools |  | on | The foreman-only `foreman_show` tool publishes a markdown note (text, tables, code fences, mermaid diagrams) that the Herdr plan panel shows on its Note tab; each call replaces the previous note. | on by default | [herdr](herdr.md#notes) |
 | [background-tasks-addon](#background-tasks-addon) | tools |  | on | Detects the optional pi-background-tasks add-on (install with `pi install npm:pi-background-tasks@2.6.10` on consent via `foreman setup --addon background-tasks`; set `PI_BG_FEATURES=process` in the shell profile so it is present when Pi starts): `/foreman doctor` reports it, `foreman_bg` defers to its `bg_run` tool, `/foreman waits` lists its tasks and `bg_run` passes the same bash guards. Nothing requires it. | on by default | [herdr](herdr.md#optional-add-on-background-tasks) |
 | [orientation](#orientation) | ceremony | toggle | on | Adds a short repository overview (file tree, AGENTS.md or README head, build and test commands) to the foreman's system prompt once per session. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
@@ -435,6 +436,12 @@ No config key.
 ### foreman-bg
 
 **Background shell runs.** The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool.
+
+No config key.
+
+### foreman-show
+
+**Notes for the side panel.** The foreman-only `foreman_show` tool publishes a markdown note (text, tables, code fences, mermaid diagrams) that the Herdr plan panel shows on its Note tab; each call replaces the previous note.
 
 No config key.
 

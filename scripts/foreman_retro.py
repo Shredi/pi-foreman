@@ -388,7 +388,7 @@ FLIP_SEARCHABLE_BELOW = 0.10  # declared but used in under 10% of the sessions t
 FLIP_ALWAYS_ON_AT = 0.25  # hidden but found in 25% or more of the sessions that hid it
 # tools that stay declared whatever the config says (extensions/core-adapter/deferred.ts DEFERRED_FLOOR); never suggested
 TOOL_FLOOR = ("tool_search", "codemode", "read", "bash", "subagent", "foreman_ledger", "foreman_triage",
-              "contact_supervisor", "subagent_supervisor", "ask_user_question")
+              "foreman_show", "contact_supervisor", "subagent_supervisor", "ask_user_question")
 # the add-on's optional tools (deferred.ts deferredDoctorLines): disabled at the source (PI_BG_FEATURES=process) they cost nothing
 BG_FEATURE_TOOLS = ("fusion_*", "bg_delegate", "bg_run_pi_attested")
 # packages the harness ships or bundles, and the pseudo-sources: never a `pi remove` suggestion

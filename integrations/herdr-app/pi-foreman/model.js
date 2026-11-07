@@ -955,3 +955,26 @@ export function showRows(show, meta, now) {
   if (int(show.note) !== null) out.push({ kind: "note", text: `📝 note${tail(meta?.note)}` });
   return out;
 }
+
+/** Where the panel block of `mod` sits in a layout tree: `{stack, show}` ids to pass to layout.select (the stack and the block)
+ *  and layout.show (the hidden ancestor, else the stack's parent), or null when the tree has no such block. */
+export function findPanelBlock(tree, mod) {
+  const walk = (n, chain) => {
+    if (!isObj(n)) return null;
+    const here = [...chain, n];
+    if (n.type === "block" && isObj(n.content) && n.content.mod === mod) return { block: n, chain };
+    for (const c of Array.isArray(n.children) ? n.children : []) {
+      const hit = walk(c, here);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const hit = walk(tree, []);
+  if (!hit || typeof hit.block.id !== "string") return null;
+  const up = [...hit.chain].reverse();
+  const si = up.findIndex((n) => n.type === "stack" && typeof n.id === "string");
+  const stack = si >= 0 ? up[si] : null;
+  const hidden = up.find((n) => n.hidden === true && typeof n.id === "string");
+  const show = hidden ?? (si >= 0 ? up.slice(si + 1).find((n) => typeof n.id === "string") : null) ?? null;
+  return { block: hit.block.id, stack: stack?.id ?? null, show: show?.id ?? null };
+}

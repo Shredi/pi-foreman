@@ -5,7 +5,7 @@ import * as mine from "./model.js";
 import * as agents from "../pi-foreman/model.js";
 
 // The loader refuses a cross-mod import, so plan/model.js carries copies of these functions; they must stay equal.
-for (const name of ["isSafeHttpsUrl", "openerArgv", "buildTree", "allSessions", "joinAgents", "joinPath", "fmtSince"]) {
+for (const name of ["isSafeHttpsUrl", "openerArgv", "buildTree", "allSessions", "joinAgents", "joinPath", "fmtSince", "findPanelBlock"]) {
   test(`${name} is the same source as in the Agents mod`, () => {
     assert.equal(String(mine[name]), String(agents[name]));
   });

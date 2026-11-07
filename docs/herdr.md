@@ -717,7 +717,7 @@ session like the Agents mod does, not the terminal that has keyboard focus. A fl
 `hc run` has no tab labels and shows over the parent's tab) never switches the panel away; focusing it at most selects that child's tab
 inside the panel. Child plans are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
 focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session and document until the tab's
-foreman changes.
+foreman changes; a pin already stored when the panel copy starts (herdr persists shared values) is stale and ignored.
 
 **Data.** The panel reads `shared("pi-foreman.radar")` (published by the Agents mod after each radar poll, only when the sessions changed;
 herdr-app persists shared values in `shared.json`), and for the session on screen the two files `plan.json` and `note.json` in the `show.dir`
@@ -729,9 +729,38 @@ compared, and without a snapshot, or when the snapshot belongs to another plan p
 sanitised before it renders: `![` is escaped everywhere, code spans and fences included (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
 only when it is `https://`, through the platform opener (never a shell).
 
+### Notes
+
+The foreman can put a document in front of you with the `foreman_show({title, markdown})` tool: a design, a comparison, a report. It is for
+things you should read rendered, not for status or questions, and it takes the text itself, never a path. Each call replaces the previous
+note (title up to 120 characters, text up to 256 KiB, larger input is refused with the limit named). The harness writes `note.md`, `note.json`
+(`v`, `title`, `at`, `hash`, `prevHash`, `fences`, `diagrams`) and, only while the title stays the same, the previous text as `note.prev.md`; the
+panel shows it on a Note tab and bumps the `note` row's version. A new title drops the previous version, so there is nothing to compare.
+
+**Contract for the mod.** `note.json` is written last, atomically, and its `v` rises by one with every call (it continues across a reload of the
+session), with `at` the ISO time of the write. A mod that sees a `v` or `at` it has not shown yet has a new note and can switch to the Note tab
+by itself. Code fence info strings (`ts`, `python title=x`, ...) are kept exactly as written in `note.md`; the mod highlights by language. The
+harness cannot see the Herdr layout, only the pane (`HERDR_PANE_ID` or `HC_TERMINAL_ID`): the `foreman_show` result says so when no pane is
+detected, and otherwise only that the note shows if the layout has a `pi-foreman-plan` block.
+
+**Diagrams.** A fence whose first info word is `mermaid` (opening fence at column 0, closing fence of the same character and at least the same length)
+is rendered by the harness after the document is published, never on the tool-result path: a `worker_threads` worker with a 2 s limit per
+fence, in the dark and the light theme, into `show/<session>/diagrams/<sha256 of the fence text>-dark.svg` and `-light.svg`. `plan.json` and
+`note.json` list the finished ones under `diagrams` (`{sha, dark, light}`, paths relative to the show dir) and their shas under `fences`; the mod
+swaps a fence for its SVG only when its own hash of the fence text is in that list. Limits: 16 KiB per fence, 200 nodes plus edges, 32 fences per
+document, 512 KiB per SVG. The SVG is flattened (no `<style>`, no remote font, literal colours) and checked against an element allow-list; anything
+refused, over a limit, timed out, or rendered without the optional `beautiful-mermaid` package stays a code block. The package is an optional
+dependency; a missing one is traced once per session (`show_diagram`, `module_missing`).
+
 Limits: a plan written through the shell is not observed; remote child sessions have no live file on this computer, so a parent shows no tab
-for them; marks stop above 4000 lines per side or 1500 changed lines (the header says so); mermaid fences render as code blocks; the mod's SVG
-cache, once diagrams ship, has no pruning API and grows without bound.
+for them; marks stop above 4000 lines per side or 1500 changed lines (the header says so); sidecars of older versions stay in the session's show
+dir until the session's live file is gone and the dir is pruned; the mod copies each checked SVG to
+`mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home (the host reads images only from there) and, with no delete API, never prunes it.
+
+**What the mod does.** A new note (radar `show.note` above the last seen value; a first sight only records it) selects the panel block and shows
+its hidden panel, then switches to the Note tab; block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
+layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached). Fences render in a read-only highlighted editor; a listed mermaid fence
+shows its SVG after the mod's own allow-list check, else a `mermaid` code block.
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.
 
