@@ -136,7 +136,7 @@
             "description": "Prompt-cache policy of this provider (idle-cache): TTL, billing and the keep-alive that stops an idle session resuming cold. Built-in values exist for known providers; a key set here wins. User or overlay config sets everything; a project or session can only switch keepalive.enabled off or shorten keepalive.windowMinutes.",
             "properties": {
               "ttlSeconds": { "type": ["integer", "null"], "minimum": 1, "description": "Prompt-cache time to live in seconds; null = unknown (the policy stays off). Built-in: 300 for claude-bridge. User or overlay config only." },
-              "billing": { "type": "string", "enum": ["token", "request"], "description": "How the provider bills: per token (a cold cache costs tokens) or per request (the keep-alive is never used). Built-in: token for claude-bridge, request for github-copilot. User or overlay config only." },
+              "billing": { "type": "string", "enum": ["token", "request"], "description": "How the provider bills: per token (a cold cache costs tokens) or per request (the keep-alive is never used). Built-in: token for claude-bridge and github-copilot (legacy per-request Copilot plans set request). User or overlay config only." },
               "byModel": {
                 "type": "array",
                 "description": "Per-model rows layered over ttlSeconds and billing: the first row whose match (glob with * or ?, else a substring of the model id) fits the active model wins. A row with billing request never gets a keep-alive. User or overlay config only.",
@@ -166,7 +166,7 @@
                   "beyondPiCap": { "type": "boolean", "description": "Deprecated and ignored: pi-foreman sends every idle warm itself. pi-foreman sends the warms itself for every token-billed cache Pi could not warm twice before its 30-minute idle cap, TTL of 1001 s or more (default true; needs keepalive.enabled). A project or session can only set false." },
                   "selfWarmWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Deprecated and ignored: the warming has no fixed window, the activity and cost rules end it. Minutes of idleness after which the self-sent warms stop (default max(45, 3 x TTL minutes)). A project or session can only shorten it (at most 180)." },
                   "compactMinTokens": { "type": "integer", "minimum": 0, "description": "Smallest context (tokens) at which the final warm compaction runs; below it the session goes cold instead. Default 100000; 0 = no minimum. A project or session can only raise it (at least 100000)." },
-                  "children": { "type": "boolean", "description": "Child sessions on claude-bridge send no keep-alive warms unless this is true (a bridge warm often misses the real request's cache key and pays a cold write). User or overlay config only: a project or session can only set false." }
+                  "children": { "type": "boolean", "description": "Child sessions on claude-bridge send no keep-alive warms unless this is true (a bridge warm often misses the real request's cache key and pays a cold write). On any other provider children warm by default and false stops them (trace child_off). User or overlay config may set either; a project or session can only set false." }
                 }
               },
               "warmCompact": { "type": "boolean", "description": "Warm the cache after a compaction (default true). User or overlay config only." }

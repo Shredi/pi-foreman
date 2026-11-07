@@ -43,7 +43,7 @@ test("the bridge TTL does not touch other providers", () => {
 });
 
 test("BUILTIN_CACHE keeps its literal; copilot rows live in BUILTIN_BY_MODEL", () => {
-  assert.deepEqual(BUILTIN_CACHE, { "claude-bridge": { ttlSeconds: 300, billing: "token" }, "github-copilot": { ttlSeconds: null, billing: "request" } });
+  assert.deepEqual(BUILTIN_CACHE, { "claude-bridge": { ttlSeconds: 300, billing: "token" }, "github-copilot": { ttlSeconds: null, billing: "token" } });
   assert.deepEqual(BUILTIN_BY_MODEL["github-copilot"].map((r) => [r.match, r.ttlSeconds]), [["claude-*", 300], ["gpt-*", 1800], ["o1*", 1800], ["o3*", 1800], ["o4*", 1800]]);
 });
 

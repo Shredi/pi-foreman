@@ -9,7 +9,7 @@ session otherwise pays for a cold prompt on resume. Layer rules are below; the i
 
 ## Config
 
-Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`; the TTL is derived from `bridge.promptCacheTtl` first, see below) and `github-copilot` (`ttlSeconds` null, `billing` `request`, plus built-in per-model rows). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the claude-bridge presets set `billing: token`, `keepalive.enabled: true` and a foreman idle model ([presets](presets.md#claude-bridge-cache-values)). It is off for request-billed providers (`github-copilot`) and silent for providers without any cache entry.
+Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`; the TTL is derived from `bridge.promptCacheTtl` first, see below) and `github-copilot` (`ttlSeconds` null, `billing` `token`, plus built-in per-model rows that give Claude and GPT ids their TTL; see [github-copilot billing](#github-copilot-billing)). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the claude-bridge presets set `billing: token`, `keepalive.enabled: true` and a foreman idle model ([presets](presets.md#claude-bridge-cache-values)). For `github-copilot` it is on for Claude (`claude-*`) and GPT (`gpt-*`) model ids, which have a built-in TTL row, and off for any other model (no TTL). It is off for request-billed providers (`billing: request`, for example a legacy Copilot plan) and silent for providers without any cache entry.
 
 `keepalive.enabled` is the only switch. pi-foreman sends every idle warm itself, for every TTL above 10 s; Pi's own cache warmer is never used (it is always told `stop`), so Pi's `cacheWarming` setting is not read.
 
@@ -17,7 +17,7 @@ Built-in values exist for `claude-bridge` (`ttlSeconds` 300, `billing` `token`; 
 |---|---|---|
 | `bridge.promptCacheTtl.main`, `.subagent` | `1h`, `5m` | Claude Code's prompt-cache TTL on the `claude-bridge` provider for the foreman and session foremen (`main`) and for subagents (`subagent`): `1h`, `5m` or `inherit` (leave `CLAUDE_CODE_PROMPT_CACHE_TTL` alone; the policy assumes 300 s). Invalid values fall back to the default with a warning. User and overlay config only; a project or session value is ignored with a warning. |
 | `providers.<p>.cache.ttlSeconds` | derived for `claude-bridge` (3600 foreman, 300 subagent), else null | Prompt-cache time to live in seconds (integer >= 1); null = unknown, the policy stays off. An explicit value wins over the derived bridge TTL. A TTL of 10 s or less is never warmed. |
-| `providers.<p>.cache.billing` | `token` for `claude-bridge`, `request` for `github-copilot` | `token` or `request`. A request-billed provider never gets a keep-alive. |
+| `providers.<p>.cache.billing` | `token` for `claude-bridge` and `github-copilot` | `token` or `request`. A request-billed provider never gets a keep-alive. Legacy Copilot plans set `request` (see [github-copilot billing](#github-copilot-billing)). |
 | `providers.<p>.cache.byModel` | none | Rows `{match, ttlSeconds?, billing?, note?}` layered over `ttlSeconds` and `billing`: the first row whose `match` (glob with `*`/`?`, else a substring of the model id) fits the active model wins, ahead of `ttlSeconds` and the derived bridge TTL. `billing: "request"` in a row never gets a keep-alive. User and overlay config only. |
 | `providers.<p>.cache.keepalive.enabled` | true iff `billing` is `token` and `ttlSeconds` < 3600 or derived from `bridge.promptCacheTtl` | The only switch of the keep-alive. |
 | `providers.<p>.cache.keepalive.budgetShare` | 0.5 | The half tier: the warms of an idle may cost at most this share (0..1) of one cold re-cache of the prompt. The quarter tier is half of it. |
@@ -38,12 +38,12 @@ The warm tick and the on/off default follow the TTL of the matched row, so a fam
 | Anthropic direct | none built in (`no_entry`; 300 s is the provider's own TTL) | none until set | off until you set `cache.ttlSeconds` and `cache.billing` |
 | Claude through `claude-bridge`, foreman and session foremen | derived from `bridge.promptCacheTtl.main`: 3600 s (`1h`, default), 300 s (`5m`, `inherit`, or `FORCE_PROMPT_CACHING_5M`) | token | pi-foreman's warm, one per 3240 s (3600 s TTL) or 270 s (300 s TTL) |
 | Claude through `claude-bridge`, subagents | derived from `bridge.promptCacheTtl.subagent`: 300 s (`5m`, default) | token | pi-foreman's warm (a child session warms its own cache the same way) |
-| `github-copilot`, Claude-type model (`claude-*`) | 300 s (built-in row) | request | never |
-| `github-copilot`, OpenAI-type model (`gpt-*`, `o1*`, `o3*`, `o4*`) | 1800 s (built-in row) | request | never |
-| `github-copilot`, any other model | unknown (null), the policy stays hidden | request | never |
+| `github-copilot`, Claude-type model (`claude-*`) | 300 s (built-in row; owner measurement 2026-11 on Claude Opus, not published by GitHub) | token | pi-foreman's warm, one per 270 s |
+| `github-copilot`, OpenAI-type model (`gpt-*`, `o1*`, `o3*`, `o4*`) | 1800 s (built-in row; owner measurement 2026-11 on GPT-6.1 Sol, not published by GitHub; other ids such as `gpt-6.1-terra` are assumed 1800 s by the `gpt-*` glob) | token | pi-foreman's warm, one per 1620 s |
+| `github-copilot`, any other model (gemini, grok, kimi, mai) | unknown (null), the policy stays off (`ttl_unknown`); add a `byModel` row to set one | token | off until a TTL is set |
 | request-billed provider with a `byModel` row such as `gpt-*` 600 | the row | request | never |
 
-The built-in `github-copilot` rows are an order of precedence of their own: a matching `byModel` row, then an explicit `cache.ttlSeconds`, then the built-in row, then the provider's null. The footer hides every request-billed policy, so the rows show in `foreman doctor` and the policy values only.
+The built-in `github-copilot` rows are an order of precedence of their own: a matching `byModel` row, then an explicit `cache.ttlSeconds`, then the built-in row, then the provider's null. The footer hides every request-billed policy (a Copilot session on a legacy request plan, or a `byModel` row with `billing: request`), so those rows show in `foreman doctor` and the policy values only; by default Copilot is token-billed and its policy shows like any other.
 
 ### Children through the bridge
 
@@ -55,7 +55,7 @@ The bridge calls the Claude Agent SDK and sets no TTL itself; Claude Code reads 
 
 Switching away from `claude-bridge` restores the earlier value (or removes the variable); other providers are never touched. The variable is process-wide, so a `claude` started from a shell tool inherits it too.
 
-**Keep-alive for children.** A child session on `claude-bridge` sends no warms by default (`keepalive skipped bridge_child_off`, traced once per session): a bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true` (user or overlay config only: a project or session may only set `false`); the miss contingency below still ends warming after the first warm that does not hit.
+**Keep-alive for children.** A child session on `github-copilot` (or any other token-billed provider) warms its own cache by default; `providers.<p>.cache.keepalive.children: false` stops it (`keepalive skipped child_off`, traced once per session; a project or session may only set `false`). A child session on `claude-bridge` sends no warms by default (`keepalive skipped bridge_child_off`, traced once per session): a bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true` (user or overlay config only: a project or session may only set `false`); the miss contingency below still ends warming after the first warm that does not hit.
 
 Claude Code honours the variable from roughly v2.1.242 (the exact minimum is unconfirmed); older versions ignore it harmlessly and keep their own TTL, so the policy then assumes a TTL the cache does not have.
 
@@ -66,6 +66,24 @@ Claude Code honours the variable from roughly v2.1.242 (the exact minimum is unc
 #### Migration from the old preset
 
 Earlier versions of the `claude-bridge` presets wrote `providers.claude-bridge.cache.ttlSeconds: 300` and a `claude-*` `byModel` row of 3600 s. Applying a preset again does not remove them from your user config, and an explicit value wins over the derived TTL. Delete both from your user `foreman.json`; `foreman doctor` warns while they are there. A row or `ttlSeconds` you set on purpose is respected silently. The same goes for `keepalive.awayTicks: 2`, which the old presets wrote and which is now ignored.
+
+#### github-copilot billing
+
+Since 2026-06-01 GitHub bills Copilot per token (see [models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)), so the built-in `github-copilot` entry is now `billing: token` instead of `request`. With it the keep-alive turns on by default for Copilot Claude and GPT models, children included. Earlier versions treated Copilot as request-billed and never warmed.
+
+- **Legacy plans.** Pro and Pro+ subscribers still on an annual plan are billed per request; a warm there costs a premium request, not a cold write. Opt back with `{"providers": {"github-copilot": {"cache": {"billing": "request"}}}}` (user or overlay config), or per model with a `byModel` row `billing: "request"`.
+- **Switch the keep-alive off.** `{"providers": {"github-copilot": {"cache": {"keepalive": {"enabled": false}}}}}`; for children only, `keepalive.children: false`.
+- **Prices.** The warm budget uses Pi's model registry (`@earendil-works/pi-ai`, github-copilot): `config/prices.json` has no Copilot rows. The registry's Copilot rates match GitHub's models-and-pricing page (cache write 1.25 x input, cache read discounted).
+- **TTLs are measurements.** GitHub does not publish the Copilot prompt-cache TTLs; the 300 s (Claude Opus) and 1800 s (GPT-6.1 Sol) rows are owner measurements from 2026-11. A warm that misses ends warming for the stretch; set a `byModel` row if your model's TTL differs.
+
+**Worked example** (100k-token prompt; `WarmBudget.check` in `warmbudget.ts`: a warm goes out while `spent + next <= share x cold`, `cold` = P x max(cacheWrite, input), `next` = P x cacheRead + 1 output token; tick = min(0.9 x TTL, TTL - 10 s)). Registry rates in USD per MTok, input / cacheRead / cacheWrite:
+
+| model | rates | cold re-cache | one warm | tick | half tier (share 0.5) | quarter tier (share 0.25) |
+|---|---|---|---|---|---|---|
+| `claude-opus-5.5` | 4 / 0.2 / 5 | $0.50 | $0.020 | 270 s | cap $0.25: 12 warms, last at 54 min, cache warm to about 59 min | cap $0.125: 6 warms, last at 27 min, warm to about 32 min |
+| `gpt-6.1-sol` | 2 / 0.1 / 2.5 | $0.25 | $0.010 | 1620 s | cap $0.125: 12 warms, last at 5.4 h, warm to about 5.9 h | cap $0.0625: 6 warms, last at 2.7 h, warm to about 3.2 h |
+
+The half tier holds while a subagent, a background task or a wait runs (or the owner is present with a turn, question, dialog or command open); the quarter tier is plain idle. The counts do not depend on the prompt size (cold and warm both scale with it); a measured warm that costs more than the estimate lowers them. `keepalive.budgetShare` (user or overlay config, 0 to 1, default 0.5) raises the limit: at 1 the half tier allows 24 warms (about 108 min on Opus, 10.8 h on Sol) and the quarter tier 12. A project or session may only lower it.
 
 The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}` sets for the live policy. They do not apply to the retro cost report: retro passes no model, so only the provider-level cache values (built-in entry and `cache.ttlSeconds` / `cache.billing`) count there, never a `byModel` row. For `claude-bridge` retro derives the TTL of the foreman kind from `bridge.promptCacheTtl` and the retro process's own environment (`FORCE_PROMPT_CACHING_5M`), not the foreman's.
 
@@ -181,7 +199,7 @@ Keep-alive spends tokens: every warm reads the whole prefix from the cache.
 | provider | TTL | billing | keep-alive |
 |---|---|---|---|
 | `claude-bridge` | derived: 3600 s foreman, 300 s subagent | token | on by default (built-in defaults; the preset carries the same values) |
-| `github-copilot` | per model: `claude-*` 300 s, `gpt-*`/`o1*`/`o3*`/`o4*` 1800 s, else unknown | request | off (request-billed): policy off |
+| `github-copilot` | per model: `claude-*` 300 s, `gpt-*`/`o1*`/`o3*`/`o4*` 1800 s, else unknown | token | on for models with a TTL row (children included; `keepalive.children: false` stops them); off for other models; off with `billing: request` (legacy plans) |
 | others | no entry | n/a | none; silent (no trace) |
 
 A provider with no entry and no `cache` config is not traced at all. Add `providers.<p>.cache` with `ttlSeconds` and `billing: "token"` to give another provider the same treatment.
@@ -194,7 +212,7 @@ A provider with no entry and no `cache` config is not traced at all. Add `provid
 |---|---|---|
 | `fired` | `reason` = the activity reason (`subagent`, `bg_task`, `wait`, `question`, `dialog`, `command`, `turn`, `idle`), plus `source` (`foreman`), `tier`, `presence`, `cacheRead`, `cacheWrite`, `cost` | One warm request. |
 | `skipped` | `budget`, `budget_unavailable` | No further warm is allowed by the cost rule (`budget`: extra fields `count`, `phase`, `tier`), or the budget cannot be computed (once). |
-| `skipped` | `not_replayable`, `late`, `claude_cfg_pending`, `bridge_child_off` | The model cannot be replayed (once), the timer fired more than half the margin late, a claude-bridge config approval is pending, or a child on claude-bridge does not warm (once; `keepalive.children`). |
+| `skipped` | `not_replayable`, `late`, `claude_cfg_pending`, `bridge_child_off`, `child_off` | The model cannot be replayed (once), the timer fired more than half the margin late, a claude-bridge config approval is pending, or a child on claude-bridge does not warm (once; `keepalive.children`). |
 | `skipped` | `ttl_too_short` | The TTL is 10 s or less (once). |
 | `skipped` | `warm_compact_off`, `already_compacted`, `busy`, `cold`, `below_floor` | The final-warm compaction check declined. |
 | `window_end` | `budget`, `compact`, `shutdown`, `model_change`, `not_owned`, `late`, `not_replayable`, `claude_cfg_pending`, `error`, `self_warm_miss` | The stretch ended for that reason. |

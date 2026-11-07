@@ -46,12 +46,19 @@ export function bridgeChildrenOn(config: unknown): boolean {
   return v === true;
 }
 
+/** `providers.<provider>.cache.keepalive.children: false` (resolved over the config layers): children on that provider do not warm. */
+export function childrenOff(config: unknown, provider: string): boolean {
+  return get(config, `providers.${provider}.cache.keepalive.children`) === false;
+}
+
 export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: SelfWarm } {
   const policy = () => {
     const m = o.ctx()?.model;
     if (!m) return null;
     const p = resolveWarmPolicy(o.config(), m.provider, m.id, o.bridgeTtl?.() ?? null);
-    return o.isChild && m.provider === "claude-bridge" && p.keepaliveOwned && !bridgeChildrenOn(o.config()) ? { ...p, keepaliveOwned: false, bridgeChildOff: true } : p;
+    if (!o.isChild || !p.keepaliveOwned) return p;
+    if (m.provider === "claude-bridge") return !bridgeChildrenOn(o.config()) ? { ...p, keepaliveOwned: false, bridgeChildOff: true } : p;
+    return childrenOff(o.config(), m.provider) ? { ...p, keepaliveOwned: false, childOff: true } : p;
   };
   const presence = new Presence({
     now: () => Date.now(),

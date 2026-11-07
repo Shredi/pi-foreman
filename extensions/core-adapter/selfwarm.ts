@@ -306,9 +306,9 @@ export class SelfWarm {
     const p = d.policy();
     if (!p) return;
     const sh = this.shared();
-    if (p.bridgeChildOff && !sh.childOffTraced) {
+    if ((p.bridgeChildOff || p.childOff) && !sh.childOffTraced) {
       sh.childOffTraced = true;
-      d.trace({ event: "keepalive", outcome: "skipped", reason: "bridge_child_off" });
+      d.trace({ event: "keepalive", outcome: "skipped", reason: p.bridgeChildOff ? "bridge_child_off" : "child_off" });
     }
     if (!this.owns() || !this.claim()) {
       if (sh.missed) {

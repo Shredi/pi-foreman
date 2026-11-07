@@ -136,7 +136,7 @@ kept. The items are display data only; they never reach the model. Run, limits, 
 
 ### Session model example
 
-Sessions opened by `foreman session open` run on the `session-foreman` role's model. An overlay for a request-billed provider such as `github-copilot` keeps child sessions on the foreman's own model by mapping both roles to it:
+Sessions opened by `foreman session open` run on the `session-foreman` role's model. An overlay for a provider such as `github-copilot` keeps child sessions on the foreman's own model by mapping both roles to it:
 
 ```json
 { "providers": { "github-copilot": { "roles": {

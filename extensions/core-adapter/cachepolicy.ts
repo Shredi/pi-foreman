@@ -9,7 +9,8 @@ export type CacheBilling = "token" | "request";
 /** Built-in cache values per provider; a config key wins per key. */
 export const BUILTIN_CACHE: Record<string, { ttlSeconds: number | null; billing: CacheBilling }> = {
   "claude-bridge": { ttlSeconds: 300, billing: "token" },
-  "github-copilot": { ttlSeconds: null, billing: "request" },
+  // Token billing since 2026-06-01 (legacy annual Pro/Pro+ plans set billing: request); the TTL comes from BUILTIN_BY_MODEL.
+  "github-copilot": { ttlSeconds: null, billing: "token" },
 };
 
 /** Built-in per-model TTLs of a provider (seconds); the first matching row wins, after a config row and ttlSeconds. */
@@ -52,6 +53,8 @@ export interface CachePolicy {
   keepaliveOwned?: boolean;
   /** Warms are off because this is a child session on claude-bridge and `keepalive.children` is not true (set by warmwire.ts). */
   bridgeChildOff?: boolean;
+  /** Warms are off because this is a child session on another provider and `keepalive.children` is false (set by warmwire.ts). */
+  childOff?: boolean;
   /** Smallest context (tokens) a warm compaction runs at; 0 = no minimum. Absent = 0. */
   compactMinTokens?: number;
 }
