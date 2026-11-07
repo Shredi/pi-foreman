@@ -81,7 +81,7 @@ pi-foreman sends every idle warm itself (`extensions/core-adapter/selfwarm.ts`);
 - **Miss contingency.** The first completed warm of a session must read the cache: when its `cacheWrite` is at least its `cacheRead` the warm did not hit, warming is switched off for the session and the stretch ends with `self_warm_miss`. `/foreman cost` and `foreman doctor` report it.
 - **Through a bridge.** The bridge calls the Claude Agent SDK, so a warm can be a full Claude Code query, not a one-token request; the budget counts its real output cost. Whether that is cheaper than a cold resume is still unmeasured. The manual probe before relying on it: read `cacheRead` against `cacheWrite` of the first warm's usage entry.
 - **Pi prerequisite.** A `promptCache` tier equal to `cache.ttlSeconds` for the retention in use (`long` with `PI_CACHE_RETENTION=long`, else `short`); `foreman doctor` warns on a mismatch. Pi's `cacheWarming` setting is not read.
-- **Glyph and bar.** With `footer.style: "pi"` the status line shows a keep-alive glyph while a stretch is open (see [sessions](sessions.md)). The foreman footer's cache-timer bar (`footer.cacheBar`) is computed from the same state and costs nothing (no request, only a repaint each second).
+- **Glyph and bar.** With `footer.style: "pi"` the status line shows a keep-alive glyph while a stretch is open (see [sessions](sessions.md)). The foreman footer's cache-timer bar (`footer.cacheBar`) always carries `♨ N` (the warms still allowed; while a turn runs, those a fresh idle stretch would allow) and the budget-tier glyph (`½`/`¼`), is computed from the same state and costs nothing (no request, only a repaint each second).
 
 ### Activity rule
 
