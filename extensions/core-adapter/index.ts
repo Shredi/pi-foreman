@@ -415,7 +415,7 @@ interface Session {
   presence: Presence;
   idleCtx: ExtensionContext | null;
   lastAssistantAt: number | null;
-  /** A turn is running (agent_start .. agent_settled): the warm tier's turn signal; the footer's cache bar shows no warms. */
+  /** A turn is running (agent_start .. agent_settled): the warm tier's turn signal; the footer's cache bar shows the warms a fresh idle stretch would allow (`warmsFresh`) with the tier glyph. */
   running: boolean;
   /** Run view of the subagent launches (runs.ts). */
   childRuns: ChildRuns;
