@@ -9,11 +9,9 @@
 // dropped pass-1 copy never does) and <cwd>/.pi/settings.json disables the holder with an empty-filter package
 // override (the --develop override). The first condition alone is unsafe: two copies of one pass have both not
 // started yet, and the second must stay inert. The second alone would steal from a live session.
-// A takeover can also hit a holder Pi does not drop: the parent passes its own entry via --extension (a project
-// setting cannot remove a CLI extension) into a child whose cwd is a develop checkout, so the checkout copy takes
-// over while the first copy's handlers (registered at factory time) stay live. The takeover therefore records the
-// displaced claim (DISPLACED_KEY); the displaced instance gates every handler on isDisplaced and stands down, so
-// one adapter handles events. A same-root re-claim (/reload, in-process children) never displaces anything.
+// A subagent child (PI_SUBAGENT_CHILD=1) never takes over: it runs no trust bootstrap pass, and the parent's entry
+// arrives via --extension, which Pi loads first and never drops, so a takeover would leave two live adapters (tools
+// are first-registration-wins). A same-root re-claim (/reload, in-process children) is unchanged.
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -25,8 +23,6 @@ import { piAgentDir } from "./env.ts";
 export const CORE_KEY = Symbol.for("pi-foreman.core.v1");
 /** Holds the claim object that saw its session_start (kept apart from CORE_KEY: the claim shape is a public handshake). */
 export const STARTED_KEY = Symbol.for("pi-foreman.core.started.v1");
-/** WeakMap of displaced claim -> the claim that took over (kept apart from CORE_KEY: the claim shape is a public handshake). */
-export const DISPLACED_KEY = Symbol.for("pi-foreman.core.displaced.v1");
 export const READY_EVENT = "foreman:ready";
 
 export interface CoreClaim {
@@ -65,16 +61,6 @@ export function inertNotice(activeRoot: string, skippedRoot: string): string {
 /** The active copy saw its first session_start: its claim can no longer be taken over. */
 export function markCoreStarted(claim: CoreClaim, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>): void {
   g[STARTED_KEY] = claim;
-}
-
-/** The claim that displaced `claim` through a different-root takeover, or undefined. */
-export function displacedBy(claim: CoreClaim, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>): CoreClaim | undefined {
-  return (g[DISPLACED_KEY] as WeakMap<object, CoreClaim> | undefined)?.get(claim);
-}
-
-/** Was this claim taken over by another root? A displaced instance must stand down. */
-export function isDisplaced(claim: CoreClaim, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>): boolean {
-  return displacedBy(claim, g) !== undefined;
 }
 
 const isForemanRoot = (root: string): boolean => {
@@ -154,20 +140,13 @@ export function projectDisables(holderRoot: string, claimantRoot: string, cwd: s
 }
 
 /** Claim the process-wide key for `pkgRoot`, or report the root that holds it. `cwd` is where the project settings are read for a takeover. */
-export function claimCore(pkgRoot: string, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>, platform: string = process.platform, cwd: string = process.cwd(), agentDir?: string): ClaimResult {
+export function claimCore(pkgRoot: string, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>, platform: string = process.platform, cwd: string = process.cwd(), agentDir?: string, env: NodeJS.ProcessEnv = process.env): ClaimResult {
   const held = g[CORE_KEY] as Partial<CoreClaim> | undefined;
-  let displaced: CoreClaim | undefined;
   if (held && typeof held.pkgRoot === "string" && rootKey(held.pkgRoot, platform) !== rootKey(pkgRoot, platform)) {
-    const stale = g[STARTED_KEY] !== held && projectDisables(held.pkgRoot, pkgRoot, cwd, platform, agentDir);
+    const stale = env.PI_SUBAGENT_CHILD !== "1" && g[STARTED_KEY] !== held && projectDisables(held.pkgRoot, pkgRoot, cwd, platform, agentDir);
     if (!stale) return { active: false, activeRoot: held.pkgRoot, notice: inertNotice(held.pkgRoot, pkgRoot) };
-    displaced = held as CoreClaim;
   }
   const claim: CoreClaim = { version: readVersion(pkgRoot), pkgRoot, api: 1 };
-  if (displaced) {
-    const map = (g[DISPLACED_KEY] as WeakMap<object, CoreClaim> | undefined) ?? new WeakMap<object, CoreClaim>();
-    map.set(displaced, claim);
-    g[DISPLACED_KEY] = map;
-  }
   g[CORE_KEY] = claim;
   return { active: true, claim, release: () => { if (g[CORE_KEY] === claim) delete g[CORE_KEY]; } };
 }
