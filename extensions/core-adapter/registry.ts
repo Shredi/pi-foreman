@@ -12,6 +12,8 @@
 // A subagent child (PI_SUBAGENT_CHILD=1) never takes over: it runs no trust bootstrap pass, and the parent's entry
 // arrives via --extension, which Pi loads first and never drops, so a takeover would leave two live adapters (tools
 // are first-registration-wins). A same-root re-claim (/reload, in-process children) is unchanged.
+// Known limit: the variable is inherited, so a `pi` CLI started from a child's shell in a two-root develop layout keeps
+// no adapter, matching how pi-subagents already treats such a process as a child host.
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -140,10 +142,10 @@ export function projectDisables(holderRoot: string, claimantRoot: string, cwd: s
 }
 
 /** Claim the process-wide key for `pkgRoot`, or report the root that holds it. `cwd` is where the project settings are read for a takeover. */
-export function claimCore(pkgRoot: string, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>, platform: string = process.platform, cwd: string = process.cwd(), agentDir?: string, env: NodeJS.ProcessEnv = process.env): ClaimResult {
+export function claimCore(pkgRoot: string, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>, platform: string = process.platform, cwd: string = process.cwd(), agentDir?: string): ClaimResult {
   const held = g[CORE_KEY] as Partial<CoreClaim> | undefined;
   if (held && typeof held.pkgRoot === "string" && rootKey(held.pkgRoot, platform) !== rootKey(pkgRoot, platform)) {
-    const stale = env.PI_SUBAGENT_CHILD !== "1" && g[STARTED_KEY] !== held && projectDisables(held.pkgRoot, pkgRoot, cwd, platform, agentDir);
+    const stale = process.env.PI_SUBAGENT_CHILD !== "1" && g[STARTED_KEY] !== held && projectDisables(held.pkgRoot, pkgRoot, cwd, platform, agentDir);
     if (!stale) return { active: false, activeRoot: held.pkgRoot, notice: inertNotice(held.pkgRoot, pkgRoot) };
   }
   const claim: CoreClaim = { version: readVersion(pkgRoot), pkgRoot, api: 1 };

@@ -24,32 +24,51 @@ const agentDir = path.join(tmp, "agent");
 fs.mkdirSync(agentDir, { recursive: true });
 fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: [rootA] }));
 
-const child = { PI_SUBAGENT_CHILD: "1" } as NodeJS.ProcessEnv;
 const rootOf = (g: Record<symbol, unknown>): string => (g[CORE_KEY] as { pkgRoot: string }).pkgRoot;
 
+/** Run `fn` with PI_SUBAGENT_CHILD set (or deleted when `value` is undefined), restoring the previous state. */
+const withChildEnv = (value: string | undefined, fn: () => void): void => {
+  const prev = process.env.PI_SUBAGENT_CHILD;
+  if (value === undefined) delete process.env.PI_SUBAGENT_CHILD;
+  else process.env.PI_SUBAGENT_CHILD = value;
+  try {
+    fn();
+  } finally {
+    if (prev === undefined) delete process.env.PI_SUBAGENT_CHILD;
+    else process.env.PI_SUBAGENT_CHILD = prev;
+  }
+};
+
 test("a subagent child stays inert against a not-started holder its project disables", () => {
-  const g: Record<symbol, unknown> = {};
-  const holder = claimCore(rootA, g, process.platform, cwd, agentDir, {});
-  assert.ok(holder.active);
-  const r = claimCore(rootB, g, process.platform, cwd, agentDir, child);
-  assert.equal(r.active, false);
-  assert.equal(rootOf(g), rootA);
+  withChildEnv("1", () => {
+    const g: Record<symbol, unknown> = {};
+    const holder = claimCore(rootA, g, process.platform, cwd, agentDir);
+    assert.ok(holder.active);
+    const r = claimCore(rootB, g, process.platform, cwd, agentDir);
+    assert.equal(r.active, false);
+    assert.equal(rootOf(g), rootA);
+    assert.equal(g[CORE_KEY], holder.active ? holder.claim : undefined);
+  });
 });
 
 test("without the child env the same setup still takes over (#108)", () => {
-  const g: Record<symbol, unknown> = {};
-  claimCore(rootA, g, process.platform, cwd, agentDir, {});
-  const r = claimCore(rootB, g, process.platform, cwd, agentDir, {});
-  assert.ok(r.active);
-  assert.equal(rootOf(g), rootB);
+  withChildEnv(undefined, () => {
+    const g: Record<symbol, unknown> = {};
+    claimCore(rootA, g, process.platform, cwd, agentDir);
+    const r = claimCore(rootB, g, process.platform, cwd, agentDir);
+    assert.ok(r.active);
+    assert.equal(rootOf(g), rootB);
+  });
 });
 
 test("a child re-claims its own root, also after release (/reload order)", () => {
-  const g: Record<symbol, unknown> = {};
-  const first = claimCore(rootA, g, process.platform, cwd, agentDir, child);
-  assert.ok(first.active);
-  assert.ok(claimCore(rootA, g, process.platform, cwd, agentDir, child).active);
-  if (first.active) first.release();
-  assert.ok(claimCore(rootA, g, process.platform, cwd, agentDir, child).active);
-  assert.equal(rootOf(g), rootA);
+  withChildEnv("1", () => {
+    const g: Record<symbol, unknown> = {};
+    const first = claimCore(rootA, g, process.platform, cwd, agentDir);
+    assert.ok(first.active);
+    assert.ok(claimCore(rootA, g, process.platform, cwd, agentDir).active);
+    if (first.active) first.release();
+    assert.ok(claimCore(rootA, g, process.platform, cwd, agentDir).active);
+    assert.equal(rootOf(g), rootA);
+  });
 });
