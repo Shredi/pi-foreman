@@ -91,13 +91,11 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 from pathlib import Path
 
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\Z")
 # Ids and model names (argv values that end up in the pane command).
 VALUE_RE = re.compile(r"^[A-Za-z0-9._:/@-]{1,200}\Z")
-HC_SPACE_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 # Paths in the pane command: no quotes (also typographic ones, which PowerShell treats as quotes), no shell or
 # PowerShell metacharacters, no control chars.
 PATH_BAD = re.compile(r"[\x00-\x1f\x7f\u2018-\u201e'\"`$;|&<>(){}\[\]*?!#%^,]")

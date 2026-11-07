@@ -318,7 +318,7 @@ class HcSessionTest(unittest.TestCase):
             self.assertEqual(fsn.backend_of({"backend": "nonsense"}, {"HC_TERMINAL_ID": "t1"}), ("hc", str(self.hc)))
             self.assertEqual(fsn.backend_of({}, {})[0], "terminal")
 
-    # ------------------------------------------------------------------ keep and own tab
+    # ------------------------------------------------------------------ keep, local child as sub-agent of the parent's tab, no herdr labels
 
     LABELS = json.dumps({"herdr.space": "sp_1", "herdr.tab": "tbparent"})
 
