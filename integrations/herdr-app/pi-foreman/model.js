@@ -497,11 +497,11 @@ export function attachName(machine, child) {
 
 /** What a click on a remote session card does: focus the live local terminal that already follows `hc attach <machine>/<t>`
  *  (`{kind:"focus", address}`), else open one (`{kind:"open", target, name}`); null for a node that is not a remote session
- *  with a terminal. `all` are the local terminal records. */
-export function remoteClick(node, all) {
+ *  with a terminal. `all` are the local terminal records; `attachOf(address, record)` may add a target learned elsewhere (`hc get`). */
+export function remoteClick(node, all, attachOf = () => "") {
   if (!isObj(node) || !node.machine || !node.hcTerminal) return null;
   const target = node.hcTerminal.includes("/") ? node.hcTerminal : `${node.machine}/${node.hcTerminal}`;
-  const have = (Array.isArray(all) ? all : []).find((k) => isObj(k) && k.state === "live" && typeof k.address === "string" && parseAttachTarget(k) === target);
+  const have = (Array.isArray(all) ? all : []).find((k) => isObj(k) && k.state === "live" && typeof k.address === "string" && (parseAttachTarget(k) || attachOf(k.address, k) || "") === target);
   return have ? { kind: "focus", address: have.address } : { kind: "open", target, name: attachName(node.machine, node.key || node.name) };
 }
 

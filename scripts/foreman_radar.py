@@ -29,7 +29,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from foreman_session import STALE_BEAT, agent_dir, entry_gone, hc_terminal_addresses  # noqa: E402
+from foreman_session import agent_dir, entry_gone, hc_terminal_addresses  # noqa: E402
 
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0
@@ -106,6 +106,19 @@ def mtime(path):
         return Path(path).stat().st_mtime
     except OSError:
         return None
+
+
+def newest_mtime(path):
+    """The newest mtime of a directory and the files directly in it (None when the directory cannot be read)."""
+    newest = mtime(path)
+    try:
+        for f in os.scandir(path):
+            m = mtime(f.path)
+            if m is not None and (newest is None or m > newest):
+                newest = m
+    except OSError:
+        pass
+    return newest
 
 
 class UsageCache:
@@ -452,18 +465,13 @@ RADAR_LISTING_TIMEOUT = 3.0
 
 def mark_gone(reg, live, now):
     """Flag `gone` on each local open/closing registry entry whose process and terminal are provably gone (a terminal
-    listing that cannot be read, or that times out, leaves it present). A local `pending` entry (it never published an
-    intercom id) counts once it is older than STALE_BEAT, so a launch still in progress is not hidden."""
-    def stale_pending(e):
-        opened = parse_ts(e.get("opened"))
-        return e.get("status") == "pending" and opened is not None and now - opened > STALE_BEAT
-
-    cands = [e for e in reg if (e.get("status") in ("open", "closing") or stale_pending(e)) and not e.get("machine")]
+    listing that cannot be read, or that times out, leaves it present)."""
+    cands = [e for e in reg if e.get("status") in ("open", "closing") and not e.get("machine")]
     if not cands:
         return reg
     hc = hc_terminal_addresses(RADAR_LISTING_TIMEOUT) if any(isinstance(e.get("hc"), dict) for e in cands) else None
     panes = herdr_panes() if any(not isinstance(e.get("hc"), dict) and e.get("pane") for e in cands) else None
-    return [dict(e, gone=True) if e in cands and entry_gone(dict(e, status="open") if e.get("status") == "pending" else e, live, now, hc, panes) else e for e in reg]
+    return [dict(e, gone=True) if e in cands and entry_gone(e, live, now, hc, panes) else e for e in reg]
 
 
 def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
@@ -503,7 +511,7 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
             continue
         live_id = read_json(p / "live.json")  # R46: the child's own {intercomId, piSessionId}
         live_id = live_id if isinstance(live_id, dict) else {}
-        handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p),
+        handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p), "activity": newest_mtime(p),
                         "path": str(p),
                         "piSessionId": live_id.get("piSessionId") if isinstance(live_id.get("piSessionId"), str) else None,
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
@@ -760,6 +768,8 @@ def build(data, now):
             if isinstance(e.get("machine"), str) and e["machine"]:
                 n["machine"] = e["machine"]
                 n["name"] += "@" + e["machine"]
+                addr = (e.get("hc") or {}).get("address") if isinstance(e.get("hc"), dict) else None
+                n["hcTerminal"] = addr if isinstance(addr, str) and addr else None
                 n["glyph"], n["state"] = remote_glyph(e, opened, now)
                 ask = e.get("ask")
                 # the number and topic come from the ask.md header the watcher stored; `seq` (the notice counter) is never shown
@@ -799,6 +809,9 @@ def build(data, now):
                 opened = None
         opened = opened or ho["mtime"]
         n["glyph"], n["state"] = reg_glyph("open", opened, now, "result.md" in ho["has"])
+        # no registry entry and no live file: with no handoff-dir activity within STALE_AFTER the session is over
+        if dn not in by_handoff and now - (ho.get("activity") or opened or 0) > STALE_AFTER:
+            n["glyph"], n["state"] = "idle", "closed"
         n["last"], n["started"], n["parent"] = opened, opened, ho["parent"] or None
         n["path"] = ho.get("path") or ""
         n["sid"] = ho.get("piSessionId") or None

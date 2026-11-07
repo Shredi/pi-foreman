@@ -248,7 +248,7 @@ export default class ForemanAgents extends View {
 
   // A click on a remote session card: focus the local `hc attach` terminal of it, else start one (`hc run`, removed once it exits).
   openRemote(node, cx) {
-    const plan = guard(() => remoteClick(node, this.terms), null);
+    const plan = guard(() => remoteClick(node, this.terms, (a) => this.recs.get(a)?.attach ?? ""), null);
     if (!plan) return;
     if (plan.kind === "focus") {
       const pane = guard(() => agents().find((a) => a?.address === plan.address)?.pane, undefined);

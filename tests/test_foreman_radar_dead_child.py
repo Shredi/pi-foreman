@@ -1,5 +1,5 @@
 """A local child that never published a live file and whose process and terminal are provably gone is hidden;
-a launch still in progress, an unknown terminal listing, a live process and a remote session stay shown."""
+a pending launch, an unknown terminal listing, a live process and a remote session stay shown."""
 import datetime
 import os
 import sys
@@ -33,11 +33,8 @@ class DeadChild(unittest.TestCase):
     def test_hidden_when_never_registered_and_terminal_unlisted(self):
         self.assertEqual(gone([entry("a")], set()), [True])
 
-    def test_old_pending_launch_is_hidden(self):
-        self.assertEqual(gone([entry("a", "pending")], set()), [True])
-
-    def test_recent_pending_launch_is_kept(self):
-        self.assertEqual(gone([entry("a", "pending", ago=30)], set()), [False])
+    def test_pending_launch_is_kept(self):
+        self.assertEqual(gone([entry("a", "pending")], set()), [False])
 
     def test_kept_when_terminal_listing_unknown(self):
         self.assertEqual(gone([entry("a")], None), [False])
