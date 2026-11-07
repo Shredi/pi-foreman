@@ -1,44 +1,42 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { bgWaitLocations, coordinationCall, detailLocations, inRecorded, noticeLocations, ReadBudget, readLimits, recheckLimit, recordFiles, topLevelId } from "../budget.ts";
+import { bgWaitLocations, coordinationCall, detailLocations, inRecorded, noticeLocations, ReadBudget, readLimits, recordFiles, topLevelId } from "../budget.ts";
 import { finishLine } from "../bound.ts";
 import { CHILD_READ_TOOLS } from "../childreads.ts";
 import { READ_CLASS } from "../budget.ts";
 import { PACK_READ_TOOL_NAMES } from "../gitpack.ts";
 
 const L = readLimits({ before: { warn: 2, every: 3 }, after: { warn: 1, every: 2 } });
-const kinds = (b: ReadBudget, ids: string[], tool = "read") => ids.map((id) => b.check(tool, id, L, 3, false).kind);
+const kinds = (b: ReadBudget, ids: string[], tool = "read") => ids.map((id) => b.check(tool, id, L, false).kind);
 
 test("budget: limits fall back to the defaults on malformed config", () => {
   assert.deepEqual(readLimits(undefined), { before: { warn: 8, every: 8 }, after: { warn: 8, every: 8 } });
   assert.deepEqual(readLimits({ before: { warn: "x", every: 0, deny: 3 } }).before, { warn: 8, every: 8 });
-  assert.equal(recheckLimit(0), 0);
-  assert.equal(recheckLimit(-1), 3);
   assert.equal(topLevelId("call_1/4"), "call_1");
 });
 
 test("budget: remind at warn and every K reads after, never deny, non-read tools never counted", () => {
   const b = new ReadBudget();
   assert.deepEqual(kinds(b, ["a", "b", "c", "d", "e", "f", "g"]), ["allow", "remind", "allow", "allow", "remind", "allow", "allow"]);
-  assert.equal(b.check("edit", "x", L, 3, false).kind, "allow");
-  const d = b.check("grep", "h", L, 3, false);
+  assert.equal(b.check("edit", "x", L, false).kind, "allow");
+  const d = b.check("grep", "h", L, false);
   assert.ok(d.kind === "remind" && d.count === 8 && d.text.includes("you have read 8 times") && d.text.includes("explorer or builder"));
 });
 
 test("budget: a codemode script counts once, nested calls of it are free", () => {
   const b = new ReadBudget();
-  assert.equal(b.check("codemode", "s1", L, 3, false).kind, "allow");
-  for (const n of [1, 2, 3, 4, 5]) assert.equal(b.check("bash", `s1/${n}`, L, 3, false).kind, "allow");
+  assert.equal(b.check("codemode", "s1", L, false).kind, "allow");
+  for (const n of [1, 2, 3, 4, 5]) assert.equal(b.check("bash", `s1/${n}`, L, false).kind, "allow");
   assert.equal(b.count, 1);
 });
 
 test("budget: a nested call of an admitted script and an exempt call are not counted", () => {
   const b = new ReadBudget();
-  b.check("codemode", "s1", L, 3, false);
-  b.check("read", "r2", L, 3, false);
-  b.check("read", "r3", L, 3, false);
-  assert.equal(b.check("bash", "s1/1", L, 3, false).kind, "allow");
-  assert.equal(b.check("read", "r5", L, 3, true).kind, "allow");
+  b.check("codemode", "s1", L, false);
+  b.check("read", "r2", L, false);
+  b.check("read", "r3", L, false);
+  assert.equal(b.check("bash", "s1/1", L, false).kind, "allow");
+  assert.equal(b.check("read", "r5", L, true).kind, "allow");
   assert.equal(b.count, 3);
 });
 
@@ -60,19 +58,6 @@ test("budget: a launch restarts the count", () => {
   assert.equal(b.phase, "after");
 });
 
-test("recheck: N reads after a PASS, then refused; reset leaves the state", () => {
-  const b = new ReadBudget();
-  b.enterPost();
-  assert.deepEqual(kinds(b, ["a", "b", "c"]), ["allow", "allow", "allow"]);
-  const d = b.check("bash", "d", L, 3, false);
-  assert.ok(d.kind === "deny" && d.event === "recheck_budget" && d.reason.includes("the reviewer passed; finish now"));
-  assert.equal(b.check("bash", "d/1", L, 3, false).kind, "deny");
-  assert.equal(b.check("bash", "a/1", L, 3, false).kind, "allow");
-  assert.equal(b.resetPost(), 3);
-  assert.equal(b.resetPost(), null);
-  assert.equal(b.check("read", "e", L, 3, false).kind, "allow");
-});
-
 test("budget: a new user prompt restarts at phase before with a fresh count", () => {
   const b = new ReadBudget();
   kinds(b, ["a", "b", "c", "d"]);
@@ -83,13 +68,10 @@ test("budget: a new user prompt restarts at phase before with a fresh count", ()
   assert.deepEqual(kinds(b, ["e", "f", "g", "h"]), ["allow", "remind", "allow", "allow"]);
 });
 
-test("budget: a coordination call is not counted and never reminds; the recheck window still counts it", () => {
+test("budget: a coordination call is not counted and never reminds", () => {
   const b = new ReadBudget();
-  for (const id of ["a", "b", "c", "d"]) assert.equal(b.check("bash", id, L, 3, false, true).kind, "allow");
+  for (const id of ["a", "b", "c", "d"]) assert.equal(b.check("bash", id, L, false, true).kind, "allow");
   assert.equal(b.count, 0);
-  b.enterPost();
-  assert.deepEqual(["a", "b", "c"].map((id) => b.check("bash", id, L, 3, false, true).kind), ["allow", "allow", "allow"]);
-  assert.equal(b.check("bash", "d", L, 3, false, true).kind, "deny");
 });
 
 test("coordinationCall: foreman session bash (also after cd), pr_* tools; nothing else", () => {

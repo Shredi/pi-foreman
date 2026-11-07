@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { changedFileOf, escalate, initialCeremony, onFileChanged, userOverride } from "../ceremony.ts";
 import { roundSteps } from "../actions.ts";
-import { checkLaunch, completedAgents, initialRounds, launchSteps, onReviewDone, onTierChange, revisionLimit, verdictOf } from "../rounds.ts";
+import { completedAgents, initialRounds, launchSteps, onReviewDone, verdictOf, walkLaunch } from "../rounds.ts";
 import type { RoundState } from "../rounds.ts";
 import { foremanTriage, isTriaged, stripVerbatim, triageGateBlock, workspaceTarget, OUTWARD_TOOLS } from "../triage.ts";
 import { familyWarnings, modelFamily, modelGaps } from "../modelcheck.ts";
@@ -30,45 +30,33 @@ test("completion notices: completed agents and the review verdict", () => {
 
 const B = [["builder"]];
 const R = [["reviewer"]];
-const launch = (r: RoundState, steps: string[][]): RoundState => checkLaunch(r, steps, "standard", undefined).next;
+const launch = (r: RoundState, steps: string[][]): RoundState => walkLaunch(r, steps).next;
 
-test("revision rounds: limits per tier, PASS opens none, a review before any build opens none", () => {
-  assert.deepEqual([revisionLimit(undefined, "trivial"), revisionLimit(undefined, "standard"), revisionLimit({ heavy: 5 }, "heavy"), revisionLimit({ standard: -1 }, "standard")], [0, 1, 5, 1]);
+test("revision rounds: PASS opens none, a review before any build opens none, no count refuses a builder", () => {
   let r = onReviewDone(launch(initialRounds(), R), "fail");
-  assert.equal(checkLaunch(r, B, "standard", undefined).revisions, 0, "plan review before the first build");
+  assert.equal(walkLaunch(r, B).revisions, 0, "plan review before the first build");
   r = launch(r, B);
-  assert.equal(checkLaunch(onReviewDone(launch(r, R), "pass"), B, "standard", undefined).revisions, 0);
+  assert.equal(walkLaunch(onReviewDone(launch(r, R), "pass"), B).revisions, 0);
   r = onReviewDone(launch(r, R), null);
-  assert.equal(checkLaunch(r, B, "standard", undefined).revisions, 1);
-  assert.equal(checkLaunch(r, B, "standard", undefined).block, undefined);
-  r = onReviewDone(launch(launch(r, B), R), "fail");
-  const second = checkLaunch(r, B, "standard", undefined);
-  assert.match(second.block ?? "", /revision limit for standard reached \(1\).*Report the open findings to the owner.*\/ceremony/s);
-  assert.equal(checkLaunch(r, B, "heavy", { heavy: 2 }).block, undefined);
-  assert.ok(checkLaunch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), B, "trivial", undefined).block);
+  assert.equal(walkLaunch(r, B).revisions, 1);
+  for (let i = 0; i < 5; i++) {
+    r = onReviewDone(launch(launch(r, B), R), "fail");
+    assert.equal(walkLaunch(r, B).revisions, 1, `round ${i + 2} is still a revision, never refused`);
+  }
 });
 
-test("MAJOR-1: every builder entry after a review step in a chain is a round; the whole call is refused over the limit", () => {
+test("MAJOR-1: every builder entry after a review step in a chain is a round", () => {
   const chain = { chain: [{ agent: "builder", task: "a" }, { agent: "reviewer" }, { agent: "builder", task: "fix {previous}" }, { parallel: [{ agent: "reviewer" }, { agent: "explorer" }] }, { agent: "builder" }] };
   const steps = launchSteps(chain);
   assert.deepEqual(steps, [["builder"], ["reviewer"], ["builder"], ["reviewer", "explorer"], ["builder"]]);
-  const heavy = checkLaunch(initialRounds(), steps, "heavy", undefined);
-  assert.deepEqual([heavy.revisions, heavy.block, heavy.next.used], [2, undefined, 2]);
-  assert.match(checkLaunch(initialRounds(), steps, "standard", undefined).block ?? "", /revision limit for standard reached \(1\).*rounds to 2/);
+  assert.equal(walkLaunch(initialRounds(), steps).revisions, 2);
   // tasks run side by side: each builder entry counts while a review is open
   const open = onReviewDone(launch(launch(initialRounds(), B), R), "fail");
-  assert.equal(checkLaunch(open, launchSteps({ tasks: [{ agent: "builder" }, { agent: "builder" }] }), "heavy", undefined).revisions, 2);
+  assert.equal(walkLaunch(open, launchSteps({ tasks: [{ agent: "builder" }, { agent: "builder" }] })).revisions, 2);
   // a builder launched while a review of built work is still running is a round
   const running = launch(launch(initialRounds(), B), R);
-  assert.equal(checkLaunch(running, B, "standard", undefined).revisions, 1);
-  assert.equal(checkLaunch(onReviewDone(running, "pass"), B, "standard", undefined).revisions, 0);
-});
-
-test("MINOR-2: only a tier change by the user resets the rounds", () => {
-  const used = launch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), B);
-  assert.equal(used.used, 1);
-  for (const source of ["foreman", "ledger", "auto"]) assert.equal(onTierChange(used, source), used);
-  assert.deepEqual(onTierChange(used, "user"), initialRounds());
+  assert.equal(walkLaunch(running, B).revisions, 1);
+  assert.equal(walkLaunch(onReviewDone(running, "pass"), B).revisions, 0);
 });
 
 test("MAJOR-2: a resume of a builder run counts like a builder launch", () => {
@@ -76,10 +64,8 @@ test("MAJOR-2: a resume of a builder run counts like a builder launch", () => {
   assert.deepEqual(roundSteps({ action: "resume", id: "r1", message: "fix the findings" }, runs), [["builder"]]);
   assert.deepEqual(roundSteps({ action: "status", id: "r1" }, runs), []);
   assert.deepEqual(roundSteps({ action: "resume", id: "nope" }, runs), []);
-  const used = onReviewDone(launch(launch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), B), R), "fail");
   const resume = roundSteps({ action: "resume", runId: "r1" }, runs);
-  assert.match(checkLaunch(used, resume, "standard", undefined).block ?? "", /revision limit for standard reached/);
-  assert.equal(checkLaunch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), resume, "standard", undefined).revisions, 1);
+  assert.equal(walkLaunch(onReviewDone(launch(launch(initialRounds(), B), R), "fail"), resume).revisions, 1);
 });
 
 test("foreman_triage records a tier and never lowers a recorded or escalated one", () => {

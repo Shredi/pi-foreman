@@ -111,13 +111,11 @@ test("sec 4: denied-command traces redact secret-shaped tokens", () => {
   assert.equal(redactCommand(`cat ${os.homedir()}/notes.md`), "cat ~/notes.md");
 });
 
-test("sec 5/7: the review count and warning are set after the last launch refusal; review shadows use the reviewer policy", () => {
+test("sec 5/7: the warning is set after the last launch refusal; review shadows use the reviewer policy", () => {
   const src = fs.readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-  const commit = src.indexOf("s.reviewCount += pendingReviews");
+  const commit = src.indexOf("s.budgetWarned = true");
   assert.ok(commit > src.indexOf("reason: \"rank_policy\""));
   assert.ok(commit > src.indexOf("reason: \"strong_no_reason\""));
-  assert.equal(src.match(/s\.reviewCount \+=/g)?.length, 1);
   assert.equal(src.match(/s\.budgetWarned = true/g)?.length, 1);
-  assert.ok(src.indexOf("s.budgetWarned = true") > commit);
   assert.match(src, /refused: \(m\) => rankRefusalFor\(s\.config\.config, foremanAt, m, \["reviewer"\]\)/);
 });

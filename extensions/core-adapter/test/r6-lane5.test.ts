@@ -6,7 +6,6 @@ import { ChildLadder, childMaxTurns, LadderState, revisionClimb, strongAbove } f
 import { applyLaunchModels } from "../launchmodel.ts";
 import { explicitModelAllowed, rankRefusal, rankRefusalFor, rolePolicy } from "../ranks.ts";
 import { cliModelOf, foremanModelSpec } from "../session.ts";
-import { checkLaunch, hasSecurityFinding, initialRounds, onReviewDone } from "../rounds.ts";
 import { sanitizeTrace, TRACE_FIELDS } from "../trace.ts";
 
 const ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -37,16 +36,6 @@ test("5b: strongOnRevision climbs a builder revision after a FAIL; without it no
   assert.equal(revisionClimb(on, "p", true), "review_fail");
   assert.equal(revisionClimb({ ladder: { strongOnRevision: false } }, "p", true), null);
   assert.equal(revisionClimb(on, "p", false), null);
-});
-
-test("5b: revision_security_exempt alone lifts only the revision cap, not the rung", () => {
-  assert.equal(hasSecurityFinding("verdict: FAIL\nSECURITY: path traversal"), true);
-  const failed = onReviewDone({ ...initialRounds(), built: true, reviewOpen: true }, "fail", true);
-  const r = checkLaunch(failed, [["builder"]], "standard", { standard: 1 });
-  assert.equal(r.block, undefined);
-  assert.equal(r.exempt, 1);
-  assert.equal(revisionClimb({ ladder: { strongOnRevision: false } }, "p", true), null, "the exemption does not climb by itself");
-  assert.equal(revisionClimb({ ladder: { strongOnRevision: true } }, "p", true), "review_fail");
 });
 
 test("5c: the claude-bridge presets put Sonnet on the bottom rung of explorer, builder and reviewer", () => {

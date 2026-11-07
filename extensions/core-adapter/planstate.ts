@@ -2,7 +2,7 @@
 // (appended with pi.appendEntry, read back from the branch like idlemodel.ts latestIdleEntry), keyed on the plan version hash.
 //
 //   { v: 1, plan: {topic, path, hash, status, by, at, source} | null, lineages: [{path, hash, verdict, model, rounds, reviews}],
-//     planReviews: {<topic>: n}, userTier: tier | null, tier: tier | null, tierSource: source | null, planPhase: boolean }
+//     userTier: tier | null, tier: tier | null, tierSource: source | null, planPhase: boolean }
 //
 // `tier` is the effective tier and `tierSource` the source of its last change; a reload never lowers it (index.ts restoreCeremonyState).
 //
@@ -18,6 +18,7 @@ import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
 import { reviewsOfEntry } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
+import type { LoopStop } from "./reviewloop.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
 
@@ -46,7 +47,6 @@ export interface CeremonyStateEntry {
   v: 1;
   plan: PersistedPlan | null;
   lineages: PersistedLineage[];
-  planReviews: Record<string, number>;
   userTier: Tier | null;
   /** The effective tier and the source of its last change (null in an entry from before they were recorded). */
   tier: Tier | null;
@@ -55,24 +55,26 @@ export interface CeremonyStateEntry {
   planPhase: boolean;
   /** Reviewer verdicts with the head they covered (reviews.ts), so the PR gate survives compaction, /reload and resume. */
   reviews: ReviewRecord[];
+  /** The loop guard's stop (reviewloop.ts), absent when none is set. */
+  loopStop?: LoopStop;
 }
 
 export function emptyCeremonyState(): CeremonyStateEntry {
-  return { v: 1, plan: null, lineages: [], planReviews: {}, userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
+  return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; planReviews: Record<string, number>; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[] }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
     plan: p ? { topic: p.topic, path: p.path, hash: p.hash, status: p.status, by: p.by, at: p.approvedAt, source: p.source ?? "dialog" } : null,
     lineages: o.lineages,
-    planReviews: { ...o.planReviews },
     userTier: o.userTier ?? null,
     tier: o.tier ?? null,
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
-    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.why ? { why: r.why } : {}) })),
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}) })),
+    ...(o.loopStop ? { loopStop: o.loopStop } : {}),
   };
 }
 
@@ -102,17 +104,13 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
         }
       }
     }
-    if (d.planReviews && typeof d.planReviews === "object" && !Array.isArray(d.planReviews)) {
-      for (const [k, v] of Object.entries(d.planReviews as Record<string, unknown>)) {
-        const n = count(v);
-        if (n !== null) out.planReviews[k] = n;
-      }
-    }
     out.userTier = isTier(d.userTier) ? d.userTier : null;
     out.tier = isTier(d.tier) ? d.tier : null;
     out.tierSource = typeof d.tierSource === "string" && TIER_SOURCES.has(d.tierSource) ? (d.tierSource as TierSource) : null;
     out.planPhase = d.planPhase === true;
     out.reviews = reviewsOfEntry(d.reviews);
+    const ls = d.loopStop as Record<string, unknown> | null | undefined;
+    if (ls && typeof ls === "object" && (ls.rule === "repeat" || ls.rule === "stalled") && (ls.kind === "plan" || ls.kind === "code") && Array.isArray(ls.sig) && ls.sig.every((x) => typeof x === "string")) out.loopStop = { rule: ls.rule, kind: ls.kind, sig: ls.sig as string[] };
     return out;
   }
   return null;

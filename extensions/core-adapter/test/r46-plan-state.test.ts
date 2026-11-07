@@ -1,6 +1,6 @@
 // R46 items 2 and 3: plan approval and the plan-review lineages persist in a `pi-foreman-ceremony-state` session entry
 // (keyed on the plan version hash) and survive /reload and resume; a ruling-plan.md approval restores; an Addendum after
-// approval does not void it; the plan-review loop has a per-topic cap (ceremony.planReviewMax, default 4).
+// approval does not void it; the plan-review loop has no count cap (the loop guard stops a repeated FAIL).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -108,38 +108,30 @@ test("an identical state appends no second entry", async (t) => {
   assert.equal(last.planPhase, false);
 });
 
-test("ceremony.planReviewMax (default 4) refuses the 5th [plan-review] per topic, across a reload; the checkpoint opens with the cap line", async (t) => {
+test("no count caps the plan reviews: six [plan-review] runs in a row, across a reload, are all launched", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
-  for (let i = 0; i < 4; i++) {
-    assert.equal(await a.review("PASS"), null, `review ${i + 1}`);
-    await a.ownerPrompt(); // the per-prompt review cap resets; the per-topic one does not
-  }
-  const fifth = await a.review("PASS");
-  assert.match(fifth ?? "", /plan_review_cap/);
+  for (let i = 0; i < 4; i++) assert.equal(await a.review("PASS"), null, `review ${i + 1}`);
   await a.down();
   const b = await w.adapter("reload");
-  assert.match((await b.review("PASS")) ?? "", /plan_review_cap/, "the count is persisted");
-  fs.writeFileSync(w.planFile, fs.readFileSync(w.planFile, "utf8").replace("Ship it.", "Ship it twice."));
-  const ck = await b.checkpoint();
-  assert.equal(ck.decision, "approve", "stale, but at the cap the owner decides: the dialog opens");
-  const shown = w.notes.join("\n");
-  assert.match(shown, /Plan review cap reached \(4 reviews\); the owner decides/);
-  assert.match(shown, /plan changed since its last review/);
+  for (let i = 4; i < 6; i++) assert.equal(await b.review("PASS"), null, `review ${i + 1}`);
+  assert.equal((await b.checkpoint()).decision, "approve");
+  assert.doesNotMatch(w.notes.join("\n"), /review cap/i);
 });
 
-test("planReviewMax in parent checkpoint mode: the cap lines go into the foreman_checkpoint result text", async (t) => {
-  const w = world(t, { handoff: true, parent: true, ceremony: { planReviewMax: 2 } });
+test("a plan review that fails twice with the same findings on the same plan stops plan reviews with [review_loop]; an owner prompt lifts it", async (t) => {
+  const w = world(t);
   const a = await w.adapter("startup");
-  assert.equal(await a.review("PASS"), null);
+  const failing = async (): Promise<string | null> => {
+    const r = await a.reviewLaunch();
+    if (r.blocked) return r.blocked;
+    a.endRun(r.id, "1. FAIL: the goal is vague\nOverall verdict: FAIL");
+    await tick(400);
+    return null;
+  };
+  assert.equal(await failing(), null);
+  assert.equal(await failing(), null);
+  assert.match((await failing()) ?? "", /\[review_loop\]/);
   await a.ownerPrompt();
-  assert.equal(await a.review("PASS"), null);
-  await a.ownerPrompt();
-  assert.match((await a.review("PASS")) ?? "", /plan_review_cap/);
-  fs.writeFileSync(w.planFile, fs.readFileSync(w.planFile, "utf8").replace("Ship it.", "Ship it twice."));
-  const ck = await a.checkpoint();
-  assert.equal(ck.decision, "pending");
-  assert.match(ck.text, /Plan review cap reached \(2 reviews\); the owner decides/);
-  assert.match(ck.text, /plan changed since its last review/);
-  assert.ok(fs.existsSync(path.join(w.handoff, "round-state.json")));
+  assert.equal(await failing(), null);
 });

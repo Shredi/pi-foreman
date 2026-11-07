@@ -1,21 +1,15 @@
-// Cost guard and review cap (R6 lane 3): ceremony.budgetUsd on the summed estimate (the foreman
-// plus all its runs), ceremony.reviewRuns per user prompt, and the item-only re-review line.
+// Cost guard (R6 lane 3): ceremony.budgetUsd on the summed estimate (the foreman
+// plus all its runs), and the item-only re-review line.
 import { verdictItemsOf } from "./reviewmarks.ts";
 import { verdictOf } from "./rounds.ts";
 
 export const BUDGET_WARN_SHARE = 0.8;
-export const DEFAULT_REVIEW_RUNS = 3;
 
 const usd = (v: number): string => `$${v.toFixed(2)}`;
 
 /** ceremony.budgetUsd: a positive number, else null (no cap). */
 export function budgetCap(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
-}
-
-/** ceremony.reviewRuns: an integer of at least 1, else the default 3. */
-export function reviewRunsCap(v: unknown): number {
-  return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : DEFAULT_REVIEW_RUNS;
 }
 
 export type BudgetDecision = { kind: "refuse"; reason: string; text: string } | { kind: "warn"; text: string } | null;
@@ -28,16 +22,6 @@ export function budgetCheck(foreman: number, runs: number, cap: number | null, w
   if (total >= cap) return { kind: "refuse", reason: "budget_exceeded", text: `pi-foreman: launch refused [budget_exceeded]: ${parts}. Finish with what exists, or ask the user to raise ceremony.budgetUsd.` };
   if (!warned && total >= cap * BUDGET_WARN_SHARE) return { kind: "warn", text: `pi-foreman: budget warning: ${parts} (80 % reached).` };
   return null;
-}
-
-/**
- * Refuse a review launch past the per-prompt cap; `count` = review runs of the same kind already launched since the
- * user's prompt. Plan reviews (`[plan-review]`) and the other (fix-round) reviews are counted apart, each against `cap`.
- */
-export function reviewCapCheck(count: number, adding: number, cap: number, kind: "review" | "plan" = "review"): { reason: string; text: string } | null {
-  if (adding === 0 || count + adding <= cap) return null;
-  const what = kind === "plan" ? "plan review" : "review";
-  return { reason: "review_cap", text: `pi-foreman: review launch refused [review_cap]: ${count} ${what} run(s) already ran for this prompt (ceremony.reviewRuns ${cap}). Finish, or ask the owner for a new prompt: a new owner prompt resets the cap.` };
 }
 
 const MARK = "[re-review items:";

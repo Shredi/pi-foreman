@@ -1,6 +1,6 @@
-// Recheck-budget exemptions (ceremony.recheckBudget, harness-friction ledger item 4): a handoff poll
+// Read-budget exemptions (ceremony.foremanReads, harness-friction ledger item 4): a handoff poll
 // (a read of the handoffs dir `<agentDir>/pi-foreman/handoffs`, ruling.md included) and a worktree
-// creation/listing are not re-checks of the reviewed work. Pure: index.ts readBudgetCheck calls `recheckExempt`.
+// creation/listing do not count as foreman reads. Pure: index.ts readBudgetCheck calls `recheckExempt`.
 // A call is exempt only when every path operand it names is under the handoffs dir (and at least one is),
 // or when it is `git worktree add|list|prune`; anything it cannot read with certainty (command
 // substitution, an unknown variable) counts as before. Builders' worktrees and a ruling.md elsewhere count.
@@ -108,7 +108,7 @@ function scriptExempt(code: string, c: ExemptCtx): boolean {
   });
 }
 
-/** True when this read-class call is a handoff poll or a worktree creation and must not count as a re-check. */
+/** True when this read-class call is a handoff poll or a worktree creation and must not count as a read. */
 export function recheckExempt(toolName: string, input: unknown, c: ExemptCtx): boolean {
   if (!input || typeof input !== "object") return false;
   const inp = input as Record<string, unknown>;

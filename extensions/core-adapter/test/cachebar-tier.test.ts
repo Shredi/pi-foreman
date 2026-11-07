@@ -98,13 +98,12 @@ test("no limiter word and no (away n) in any state", () => {
   }
 });
 
-test("cold stays `□□□ ❄ cold` and shows no tier glyph", () => {
+test("cold stays `□□□ ❄ cold`, the warm part follows with 0 and the tier glyph", () => {
   const l = line(cacheViewOf(src({ lastTouch: null, nextWarmAt: null }))!);
-  assert.match(l, /□□□□□□□□□□ ❄ cold$/);
-  assert.doesNotMatch(l, /[½¼]/);
+  assert.match(l, /□□□□□□□□□□ ❄ cold ♨ 0 ½$/);
 });
 
-test("no warms left or a running turn: countdown only, no keepalive glyph or tier", () => {
-  assert.doesNotMatch(line(cacheViewOf(src({ warmsLeft: 0 }))!), /♨|½/);
-  assert.doesNotMatch(line(cacheViewOf(src({ running: true }))!), /♨|½/);
+test("no warms left or a running turn without a fresh count: `♨ 0` and the tier glyph", () => {
+  assert.match(line(cacheViewOf(src({ warmsLeft: 0 }))!), /04:45 ♨ 0 ½$/);
+  assert.match(line(cacheViewOf(src({ running: true }))!), /04:45 ♨ 0 ½$/);
 });
