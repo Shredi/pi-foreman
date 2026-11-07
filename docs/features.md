@@ -60,8 +60,8 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
 | [bench](#bench) | ops |  | opt-in | Measures harness changes over Harbor tasks in local Docker, and reviewer models over planted-defect diffs with `foreman bench review`. | `foreman bench review --tasks bench/review-samples --dry-run` | [bench](bench.md#running) |
 | [bench-climb](#bench-climb) | ops |  | opt-in | Explores cheap-to-strong reviewer climb policies offline over review-bench cells; the runtime has no climb on a finding. | `foreman bench review --tasks bench/review-samples --mode climb --rungs <cheap-model>,<strong-model> --dry-run` | [bench](bench.md#review-bench) |
-| [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). | on by default | [ceremony](ceremony.md#triage-and-delegation) |
-| [read-budgets](#read-budgets) | ceremony |  | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [ceremony-tiers](#ceremony-tiers) | ceremony |  | on | The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent ruling or brief arrives, or the user changes the tier. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
+| [read-budgets](#read-budgets) | ceremony |  | on | Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), and gives child roles their own read budgets. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [launch-wait](#launch-wait) | ceremony |  | on | Returns a foreman launch at once with its receipt (the completion notice starts the next turn; "block" holds it until the child ends, for replay rigs and bench), drops duplicate completion notices and caps concurrent children. | on by default | [ceremony](ceremony.md#triage-and-delegation) |
 | [waits](#waits) | sessions |  | on | The foreman-only `foreman_wait` tool waits on timers, files, processes and CI runs within a duration and concurrency limit, batching its notices. | on by default | [sessions](sessions.md#further-session-keys) |
 | [foreman-bg](#foreman-bg) | tools |  | on | The foreman-only `foreman_bg` tool starts a shell command detached, logs to the session scratch dir and registers a pid wait with your note; it passes the same bash guards as the foreground tool. | on by default | [sessions](sessions.md#background-runs) |
@@ -343,7 +343,6 @@ Switch: `ceremony.planReview.standard` is true.
 
 | Key | Default | Layer |
 |---|---|---|
-| `ceremony.planReviewMax` | `4` | any layer |
 | `ceremony.planReview.trivial` | `false` | tighten-only (only true is accepted) |
 | `ceremony.planReview.standard` | `false` | tighten-only (only true is accepted) |
 | `ceremony.planReview.heavy` | `true` | tighten-only (only true is accepted) |
@@ -371,7 +370,7 @@ No config key.
 
 ### ceremony-tiers
 
-**Tiers and finish gates.** The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree).
+**Tiers and finish gates.** The foreman records a tier (trivial, standard, heavy) that the adapter checks, and may only finish once the tier's required steps and review gate are met, or when the session changed nothing (no builder run, no foreman edit, a clean work tree). Reviews and revisions run until a review passes; no count limits them. A loop guard (no config key) stops builder and reviewer launches when a review FAIL repeats the previous round's findings, or brings no new finding and no change to the work, until the owner answers, a parent ruling or brief arrives, or the user changes the tier.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -379,8 +378,6 @@ No config key.
 | `ceremony.heavySignals` | `["delete", "migration", "safety", "auth", "ci", "release", "public-api"]` | tighten-only (entries are added, never removed) |
 | `ceremony.heavyFileCount` | `8` | tighten-only (lower only, minimum 1) |
 | `ceremony.overrides` | `{}` | any layer |
-| `ceremony.revisionRounds.standard` | `1` | tighten-only (lower only, minimum 0) |
-| `ceremony.revisionRounds.heavy` | `2` | tighten-only (lower only, minimum 0) |
 | `ceremony.requireTriage` | `true` | tighten-only (only true is accepted) |
 | `ceremony.trivialBound.files` | `2` | tighten-only (lower only) |
 | `ceremony.trivialBound.lines` | `40` | tighten-only (lower only) |
@@ -393,13 +390,12 @@ No config key.
 | `ceremony.reviewGate` | `"pass"` | tighten-only (toward pass; tightest first: pass, verdict) |
 | `ceremony.ledgerHelper` | `"tool"` | tighten-only (toward off; tightest first: off, bash, tool) |
 | `ceremony.reviewPerRevision` | `true` | tighten-only (only true is accepted) |
-| `ceremony.reviewRuns` | `3` | tighten-only (lower only, minimum 1) |
 | `ceremony.budgetUsd` | `null` | tighten-only (lower only, minimum 0.01) |
 | `ceremony.heavyThreshold` | `"strict"` | tighten-only (toward eee843d; tightest first: eee843d, strict) |
 
 ### read-budgets
 
-**Read budgets.** Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), caps rechecks after a PASS (a plan-review PASS does not start the recheck window), and gives child roles their own read budgets.
+**Read budgets.** Reminds the foreman to delegate once its own reads pass a budget (never refuses a read; coordination calls do not count), and gives child roles their own read budgets.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -413,7 +409,6 @@ No config key.
 | `ceremony.childReads.<x>.deny` | `builder`: `40`, `reviewer`: `30` | tighten-only (lower only) |
 | `ceremony.childReads.<x>.perFile` | `builder`: `5`, `reviewer`: `2` | tighten-only (lower only) |
 | `ceremony.childReads.<x>.max` | `builder`: `120`, `reviewer`: `120` | tighten-only (lower only) |
-| `ceremony.recheckBudget` | `3` | tighten-only (lower only, minimum 0) |
 
 ### launch-wait
 
