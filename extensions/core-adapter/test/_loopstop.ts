@@ -36,9 +36,17 @@ export async function rigStop(a: Rig): Promise<void> {
     if (agent === "builder") continue;
     const runId = `loop-run-${++runs}`;
     await a.started(l.id, input, runId);
+    const before = a.events("review_recorded").length;
     a.end({ runId, agent, status: "completed", success: true, results: [{ agent, status: "completed", success: true, output: FAIL_REPORT }] });
-    await tick(400);
+    // the review record is written after git reads of the checkout (slow on Windows): wait for it, loop check included
+    const end = Date.now() + 10_000;
+    while (a.events("review_recorded").length <= before) {
+      assert.ok(Date.now() < end, `the review round ${n} was not recorded within 10 s`);
+      await tick(25);
+    }
   }
+  const stopEnd = Date.now() + 10_000;
+  while (a.events("review_loop").length < 1 && Date.now() < stopEnd) await tick(25);
   assert.equal(a.events("review_loop").length, 1, "the stop is set");
 }
 
