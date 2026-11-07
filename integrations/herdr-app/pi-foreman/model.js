@@ -86,6 +86,7 @@ function normNode(raw, depth, budget) {
   const repoUrl = cleanRepoUrl(raw.repoUrl) || cleanRepoUrl(raw.repo);
   const waits = Array.isArray(raw.waits) ? raw.waits.filter(isObj).map((w) => ({
     kind: str(w.kind), note: str(w.note), ageS: num(w.age_s),
+    prs: Array.isArray(w.prs) ? w.prs.slice(0, 50).map(int).filter((x) => x !== null) : [],
   })) : [];
   const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ label: str(t.label), ageS: num(t.ageSeconds) })) : [];
   const asks = Array.isArray(raw.asks) ? raw.asks.filter((a) => isObj(a) && int(a.n) !== null).map((a) => ({ n: a.n, topic: str(a.topic) })) : [];
@@ -134,15 +135,21 @@ function normOpenPrs(raw) {
 }
 
 /** Puts each open feed PR on the sessions with the same repository and head branch (`node.repo`, `node.branch` from the live
- *  file); a PR already on the node (same number) is not added twice. Mutates the nodes `parseRadarDoc` just built. */
+ *  file), and on the session whose `waits[].prs` lists its number when the repository (or head repository) is the session's,
+ *  whatever branch the session is on now; a PR already on the node (same number) is not added twice. Mutates the nodes
+ *  `parseRadarDoc` just built. */
 export function matchPrs(nodes, feed, depth = 0) {
   if (depth > MAX_DEPTH) return;
   for (const n of listOf(nodes)) {
     if (!isObj(n)) continue;
-    if (n.kind === "session" && n.repo && n.branch) {
+    if (n.kind === "session" && n.repo) {
       const repo = n.repo.toLowerCase();
+      const watched = new Set(listOf(n.waits).flatMap((w) => listOf(w?.prs)));
       for (const p of listOf(feed)) {
-        if (!isObj(p) || p.state === "merged" || p.state === "closed" || p.branch !== n.branch || nameOf(p.headRepo || p.repo).toLowerCase() !== repo) continue;
+        if (!isObj(p) || p.state === "merged" || p.state === "closed") continue;
+        const byBranch = Boolean(n.branch) && p.branch === n.branch && nameOf(p.headRepo || p.repo).toLowerCase() === repo;
+        const byWatch = watched.has(p.number) && [p.repo, p.headRepo].some((r) => nameOf(r).toLowerCase() === repo);
+        if (!byBranch && !byWatch) continue;
         if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
       }
     }
