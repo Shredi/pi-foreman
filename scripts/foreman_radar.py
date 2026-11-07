@@ -108,6 +108,19 @@ def mtime(path):
         return None
 
 
+def newest_mtime(path):
+    """The newest mtime of a directory and the files directly in it (None when the directory cannot be read)."""
+    newest = mtime(path)
+    try:
+        for f in os.scandir(path):
+            m = mtime(f.path)
+            if m is not None and (newest is None or m > newest):
+                newest = m
+    except OSError:
+        pass
+    return newest
+
+
 class UsageCache:
     """Per usage file: byte offset and running totals, so a refresh reads only appended lines.
     Totals are [in, out, cost, uncached]: in counts fresh input + cache reads + cache writes, uncached only
@@ -498,7 +511,7 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
             continue
         live_id = read_json(p / "live.json")  # R46: the child's own {intercomId, piSessionId}
         live_id = live_id if isinstance(live_id, dict) else {}
-        handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p),
+        handoffs[dn] = {"parent": read_line(p / "parent"), "child": read_line(p / "child"), "mtime": mtime(p), "activity": newest_mtime(p),
                         "path": str(p),
                         "piSessionId": live_id.get("piSessionId") if isinstance(live_id.get("piSessionId"), str) else None,
                         "has": [f for f in ("result.md", "plan.md", "brief.md") if (p / f).exists()]}
@@ -755,10 +768,14 @@ def build(data, now):
             if isinstance(e.get("machine"), str) and e["machine"]:
                 n["machine"] = e["machine"]
                 n["name"] += "@" + e["machine"]
+                addr = (e.get("hc") or {}).get("address") if isinstance(e.get("hc"), dict) else None
+                n["hcTerminal"] = addr if isinstance(addr, str) and addr else None
                 n["glyph"], n["state"] = remote_glyph(e, opened, now)
                 ask = e.get("ask")
-                if n["state"] == "ask" and isinstance(ask.get("seq"), int):
-                    n["asks"] = [{"n": ask["seq"], "topic": "remote"}]
+                # the number and topic come from the ask.md header the watcher stored; `seq` (the notice counter) is never shown
+                if n["state"] == "ask" and isinstance(ask, dict) and isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool):
+                    topic = ask.get("topic")
+                    n["asks"] = [{"n": ask["n"], "topic": topic if isinstance(topic, str) and topic else "remote"}]
             else:
                 n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
             if e.get("gone"):  # process and terminal gone: over, not live and not idle
@@ -792,6 +809,9 @@ def build(data, now):
                 opened = None
         opened = opened or ho["mtime"]
         n["glyph"], n["state"] = reg_glyph("open", opened, now, "result.md" in ho["has"])
+        # no registry entry and no live file: with no handoff-dir activity within STALE_AFTER the session is over
+        if dn not in by_handoff and now - (ho.get("activity") or opened or 0) > STALE_AFTER:
+            n["glyph"], n["state"] = "idle", "closed"
         n["last"], n["started"], n["parent"] = opened, opened, ho["parent"] or None
         n["path"] = ho.get("path") or ""
         n["sid"] = ho.get("piSessionId") or None

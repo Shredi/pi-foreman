@@ -53,7 +53,7 @@ class RemoteGlyphTest(unittest.TestCase):
         opened = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(NOW - 600))
         reg.write_text(json.dumps({"version": 1, "sessions": [
             {"label": "demo", "child": "c1", "handoff": str(adir / "m" / "x"), "opened": opened, "parent": "", "status": "open",
-             "machine": "alpha", "remoteLive": {"state": "working"}, "ask": {"seq": 3, "path": "/m/x/ask.md"}}]}), "utf-8")
+             "machine": "alpha", "remoteLive": {"state": "working"}, "ask": {"seq": 3, "n": 3, "path": "/m/x/ask.md"}}]}), "utf-8")
         (node,) = fr.snapshot(adir, NOW, 24.0)
         self.assertEqual((node["name"], node["state"], node["glyph"]), ("demo@alpha", "ask", "blocked"))
         self.assertEqual(node["asks"], [{"n": 3, "topic": "remote"}])

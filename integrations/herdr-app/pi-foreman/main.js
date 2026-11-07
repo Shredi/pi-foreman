@@ -8,7 +8,7 @@ import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
-  radarBinary, parseRecords, parseAttachTarget, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock,
 } from "./model.js";
 
@@ -285,6 +285,21 @@ export default class ForemanAgents extends View {
     }
   }
 
+  // A click on a remote session card: focus the local `hc attach` terminal of it, else start one (`hc run`, removed once it exits).
+  openRemote(node, cx) {
+    const plan = guard(() => remoteClick(node, this.terms, (a) => this.recs.get(a)?.attach ?? ""), null);
+    if (!plan) return;
+    if (plan.kind === "focus") {
+      const pane = guard(() => agents().find((a) => a?.address === plan.address)?.pane, undefined);
+      run(pane === undefined ? "terminal.peek" : "pane.focus", pane === undefined ? { terminal: plan.address } : { pane });
+      return;
+    }
+    const hc = radarBinary(this.hcProp, null, "hc");
+    cx.spawn(async () => {
+      try { await exec(hc, ["run", "--json", "--bg", "--no-notify", "--rm", "--name", plan.name, "--", hc, "attach", plan.target]); } catch { /* no hc: nothing to open */ }
+    });
+  }
+
   openUrl(url, cx) {
     if (!isSafeHttpsUrl(url)) return;
     const p = guard(() => window().platform, "");
@@ -440,7 +455,8 @@ export default class ForemanAgents extends View {
     const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
     return row
       .when(active && root, (el) => el.bg(t.raised).rounded(6)) // a card carries the selection itself (see node)
-      .child(item.address === undefined ? name : name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }))))
+      .child(item.address !== undefined ? name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane })))
+        : item.node?.machine && item.node?.hcTerminal ? name.cursor_pointer().on_click((_e, cx) => this.openRemote(item.node, cx)) : name)
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
@@ -532,6 +548,7 @@ export default class ForemanAgents extends View {
     const list = guard(() => agents().filter((a) => typeof a?.address === "string"), []);
     const listedStatus = new Map(list.map((a) => [a.address, a.status]));
     const all = guard(() => terminals().filter((x) => x && typeof x === "object"), []);
+    this.terms = all;
     const shown = guard(() => focused()?.agent, null);
     this.shown = shown;
     const spaceList = guard(() => spaces(), []);
@@ -565,6 +582,17 @@ export default class ForemanAgents extends View {
     const skipKeys = new Set([...skip].map((n) => n.key).filter(Boolean));
     // A listed agent that is an hc child of another one is drawn once, nested under its parent (see withRows), not as a top-level row.
     const nested = guard(() => nestedAgents(list, all), new Set());
+    // A hand-made `hc attach` of a session radar shows (as a remote node) is no row of its own: that card is its row.
+    const radarTargets = new Set();
+    const knownMachines = new Set();
+    for (const [key, rec] of this.radar) {
+      if (!rec.ok) continue;
+      for (const n of guard(() => allSessions(rec.tree), [])) {
+        if (n.machine) knownMachines.add(n.machine);
+        if (typeof n.hcTerminal === "string" && n.hcTerminal && (n.machine || key !== "local")) radarTargets.add(n.hcTerminal.includes("/") ? n.hcTerminal : `${n.machine || key}/${n.hcTerminal}`);
+      }
+    }
+    for (const addr of guard(() => attachNests(list, all, radarTargets, (a) => this.recs.get(a)?.attach ?? ""), new Set())) nested.add(addr);
     const listedBy = new Map(list.map((a) => [a.address, a]));
     // `<machine>/<t>` targets already drawn as a session (radar nodes, listed agents): an attach of one is not drawn again.
     const drawnTargets = new Set(list.map((a) => a.address));
@@ -588,7 +616,7 @@ export default class ForemanAgents extends View {
       const rec = this.radar.get(machine ?? "local");
       const out = [h_flex().id(g.id).px(8).pt(8).h(30).flex_none().gap(6).items_center().text_size(11).font_medium()
         .child(div().truncate().text_color(t.dim).child(g.label))];
-      if (rec && !rec.ok) out.push(div().px(8).h(18).flex_none().text_size(10.5).text_color(t.dim).child(`No foreman radar on ${machine ?? "this computer"} (set props.foreman)`));
+      if (rec && !rec.ok && !(machine && knownMachines.has(machine))) out.push(div().px(8).h(18).flex_none().text_size(10.5).text_color(t.dim).child(`No foreman radar on ${machine ?? "this computer"} (set props.foreman)`));
       return out;
     };
     const recsOf = (a) => this.recs.get(a.address)?.recs ?? [];
