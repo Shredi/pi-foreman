@@ -50,6 +50,8 @@ export interface CachePolicy {
   selfWarmWindowMinutes?: number;
   /** pi-foreman sends every idle warm of this cache itself (selfwarm.ts): keepalive on, token billing, TTL above 10 s. Pi's own warmer is told `stop`. */
   keepaliveOwned?: boolean;
+  /** Warms are off because this is a child session on claude-bridge and `keepalive.children` is not true (set by warmwire.ts). */
+  bridgeChildOff?: boolean;
   /** Smallest context (tokens) a warm compaction runs at; 0 = no minimum. Absent = 0. */
   compactMinTokens?: number;
 }

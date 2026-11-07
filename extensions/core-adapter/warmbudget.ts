@@ -38,6 +38,8 @@ export interface BudgetCheck {
 export class WarmBudget {
   private prompt = 0;
   private warms: WarmTokens[] = [];
+  /** The last completed warm of the session and the prompt size it ran at; survives a reset (a new stretch has no warm yet). */
+  private lastWarm: { tokens: WarmTokens; prompt: number } | null = null;
 
   /** A real request ended (prompt = its input + cacheRead + cacheWrite), a compaction ran or the model changed: a new idle. */
   reset(promptTokens = 0): void {
@@ -50,16 +52,26 @@ export class WarmBudget {
   }
 
   note(t: WarmTokens): void {
-    this.warms.push({ input: num(t.input), output: num(t.output), cacheRead: num(t.cacheRead), cacheWrite: num(t.cacheWrite) });
+    const w = { input: num(t.input), output: num(t.output), cacheRead: num(t.cacheRead), cacheWrite: num(t.cacheWrite) };
+    this.warms.push(w);
+    this.lastWarm = { tokens: w, prompt: this.prompt };
   }
 
-  /** Null when there is no prompt size or no rate (budget unavailable). `cold` = P x max(cacheWrite, input); `next` = last completed warm's cost, else P x cacheRead + 1 output token. */
+  /** The cost of the last measured warm of the session, its prompt tokens scaled to the current prompt size when that changed; null = none yet. */
+  private measured(rates: Rates): number | null {
+    const l = this.lastWarm;
+    if (!l) return null;
+    const k = l.prompt > 0 && this.prompt > 0 ? this.prompt / l.prompt : 1;
+    const t = l.tokens;
+    return costAt({ input: t.input * k, output: t.output, cacheRead: t.cacheRead * k, cacheWrite: t.cacheWrite * k }, rates).total;
+  }
+
+  /** Null when there is no prompt size or no rate (budget unavailable). `cold` = P x max(cacheWrite, input); `next` = the measured cost of the last completed warm of the session (this stretch or an earlier one), else P x cacheRead + 1 output token. */
   check(rates: Rates | null, share: number): BudgetCheck | null {
     if (!rates || this.prompt <= 0) return null;
     const spent = this.warms.reduce((a, w) => a + costAt(w, rates).total, 0);
     const cold = (this.prompt * Math.max(rates.cacheWrite, rates.input)) / 1e6;
-    const last = this.warms[this.warms.length - 1];
-    const next = last ? costAt(last, rates).total : costAt({ cacheRead: this.prompt, output: 1 }, rates).total;
+    const next = this.measured(rates) ?? costAt({ cacheRead: this.prompt, output: 1 }, rates).total;
     return { ok: spent + next <= share * cold, spent, cold, next };
   }
 }
