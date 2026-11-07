@@ -554,8 +554,7 @@ machine stays on the radar node, as before: an address is relative to its viewer
 The remote `open --machine` path runs over `hc exec --on`; the remote then runs `hc run` locally on that machine (see [sessions](sessions.md#remote-child-sessions)). `sessions.hc.outliveParent` (default `true`) passes `--outlive-parent`,
 so a parent crash never kills a child with uncommitted work; set `false` to let hc end the child with its parent. A child
 nests under the terminal that opened it; `--focus` is ignored for a local child (it has no pane of its own; a remote child's `--focus` runs `herdr-app do agent.focus` here) and `foreman close` still asks
-the child over intercom. The child runs as `hc run --json --bg --no-notify --keep --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent]
-[--label herdr.space=<space> --label herdr.tab=tb<hex>] -- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
+the child over intercom. The child runs as `hc run --json --bg --no-notify --keep --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent] -- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
 `powershell -NoProfile -Command "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID …; $env:PATH = '…'; <the usual PowerShell line>"`.
 Three decisions:
 
@@ -568,12 +567,11 @@ Three decisions:
   folder at the same address; its command is not rerun. A child that exits or is killed is finished, not restarted, and
   `hc rm` removes it.
 
-When the opener's terminal (`hc get`) carries a `herdr.space` label, the child gets that space and a fresh `herdr.tab` id
-(`tb` + 32 hex), so herdr-app shows it in its own tab of the parent's space. Without the label (or when the lookup fails) no
-labels are passed.
+A local child gets no `herdr.space` or `herdr.tab` label, so herdr-app shows it as a sub-agent (a floating window) of the
+parent's tab, not in a tab of its own. Keeping it as a tab stays available to the user in herdr-app.
 
-`foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent, space, tab}`
-(`space` and `tab` are `null` without the label).
+`foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent, space}`
+(`space` is `null` for a local child; a remote child records its machine's space).
 `launch.txt` keeps the usual shell line, so a relaunch is a copy. The final screen of a finished child stays readable (no `--rm`).
 
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { sessionRankRefusal } from "../ranks.ts";
 import { childRoleIds, roleLaunchBlock } from "../roles.ts";
 import { foremanModelSpec, formatList, runSessionCommand, sessionForemanModel, sessionModelOf } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
@@ -48,25 +47,6 @@ test("session-foreman: model choice reads the own provider map, then its fallbac
   assert.equal(sessionForemanModel(undefined, "claude-bridge/x"), undefined);
 });
 
-test("sessionRankRefusal: identical, no ranks, equal and lower tiers pass", () => {
-  assert.equal(sessionRankRefusal(config, "claude-bridge/claude-opus-5-5", "claude-bridge/claude-opus-5-5"), null);
-  assert.equal(sessionRankRefusal({}, "a/b", "c/d"), null);
-  assert.equal(sessionRankRefusal(config, "claude-bridge/claude-opus-5-5", "claude-bridge/claude-opus-4"), null);
-  assert.equal(sessionRankRefusal(config, "claude-bridge/claude-opus-5-5", "claude-bridge/claude-sonnet-5-5"), null);
-});
-
-test("sessionRankRefusal: a higher rank is refused with the exact message", () => {
-  assert.equal(
-    sessionRankRefusal(config, "claude-bridge/claude-sonnet-5-5", "claude-bridge/claude-opus-5-5"),
-    "session open refused [session_rank]: cannot open a session ranked above this session: claude-bridge/claude-opus-5-5 is tier 1, this session is tier 2 (lower number = higher rank); use --model with a model at or below your rank",
-  );
-});
-
-test("sessionRankRefusal: unranked models are refused once ranks exist", () => {
-  assert.match(sessionRankRefusal(config, "claude-bridge/claude-opus-5-5", "x/unknown") ?? "", /x\/unknown is unranked.*add a ranks entry/);
-  assert.match(sessionRankRefusal(config, "x/unknown", "claude-bridge/claude-opus-5-5") ?? "", /unranked.*add a ranks entry/);
-});
-
 test("session open: model is --model, else the mapping, else the own model; dry-run prints it", async () => {
   const own = "claude-bridge/claude-opus-5-5";
   let d = deps({ model: own, config });
@@ -85,14 +65,6 @@ test("session open: model is --model, else the mapping, else the own model; dry-
   assert.match(r.text, /^session model: claude-bridge\/claude-sonnet-5-5\n/);
 });
 
-test("session open: a higher-ranked model is refused before spawning", async () => {
-  const d = deps({ model: "claude-bridge/claude-sonnet-5-5", config });
-  const r = await runSessionCommand(d, "open demo b.md --model claude-bridge/claude-fable-5-1");
-  assert.equal(r.ok, false);
-  assert.match(r.text, /^session open refused \[session_rank\]/);
-  assert.equal(d.spawned.length, 0);
-});
-
 test("session list: shows label, model, status, handoff dir and child id", () => {
   const text = formatList({ version: 1, sessions: [{ label: "demo", child: "fm-demo-abc123", status: "open", handoff: "/h/x", model: "p/m" }, { label: "old", child: "fm-old-000000", status: "closed", handoff: "/h/y" }] });
   const lines = text.split("\n");
@@ -109,15 +81,14 @@ test("session model: the env var wins over the mapped foreman role model; unset 
   assert.equal(foremanModelSpec("claude-bridge/claude-opus-5-5", undefined), "claude-bridge/claude-opus-5-5");
 });
 
-test("session open: passes its own model for the CLI rank check and does not repeat the model line", async () => {
+test("session open: does not repeat the model line and passes no --own-model", async () => {
   const own = "claude-bridge/claude-opus-5-5";
   const child = "claude-bridge/claude-sonnet-5-5";
   const d = deps({ model: own, config, spawner: async () => ({ code: 0, stdout: `handoff: x\nsession model: ${child}`, stderr: "", timedOut: false }) });
   const r = await runSessionCommand(d, `open demo b.md --model ${child} --dry-run`);
   assert.equal(r.ok, true);
   assert.equal(r.text.match(/session model:/g)?.length, 1);
-  const d2 = deps({ model: own, config });
+  const d2 = deps({ model: own, config, confirm: async () => true });
   await runSessionCommand(d2, `open demo b.md --model ${child}`);
-  const argv = d2.spawned[0];
-  assert.equal(argv[argv.indexOf("--own-model") + 1], own);
+  assert.equal(d2.spawned[0].includes("--own-model"), false);
 });
