@@ -334,7 +334,7 @@ export function diffHunks(text, base, ctx = 2) {
 
 // ---- sanitiser -----------------------------------------------------------------------------------------------------
 
-const ALLOWED_TAGS = new Set(["mark", "del", "br", "sub", "sup", "kbd"]);
+const ALLOWED_TAGS = new Set(["del", "br", "sub", "sup", "kbd"]);
 const AUTOLINK = /^<https:\/\/[^\s<>]+>/;
 const TAG = /^<(\/?)([A-Za-z][A-Za-z0-9-]*)(?:[\s/][^<>]*)?\/?>/;
 
@@ -373,7 +373,10 @@ function cleanRaw(s, st) {
       const tag = TAG.exec(rest);
       if (tag) {
         const name = tag[2].toLowerCase();
-        if (ALLOWED_TAGS.has(name)) out += tag[1] ? `</${name}>` : `<${name}>`;
+        if (name === "mark") {
+          // the host draws <mark> as a yellow background under the theme's foreground: bold keeps the emphasis readable
+          if (!tag[1]) { if (st.mark++ === 0) out += "**"; } else if (st.mark > 0 && --st.mark === 0) out += "**";
+        } else if (ALLOWED_TAGS.has(name)) out += tag[1] ? `</${name}>` : `<${name}>`;
         i += tag[0].length;
         continue;
       }
@@ -385,12 +388,12 @@ function cleanRaw(s, st) {
   return out;
 }
 
-/** The markdown with every `![` escaped and every HTML tag removed except mark, del, br, sub, sup and kbd (attributes
- *  stripped); fences and inline code spans stay as written; `<https://...>` autolinks stay. */
+/** The markdown with every `![` escaped and every HTML tag removed except del, br, sub, sup and kbd (attributes
+ *  stripped); `<mark>text</mark>` becomes `**text**`; fences and inline code spans stay as written; `<https://...>` autolinks stay. */
 export function sanitize(md, { links = true } = {}) {
   const lines = toLines(md);
   const out = [];
-  const st = { comment: false, links };
+  const st = { comment: false, links, mark: 0 };
   let open = null;
   for (const line of lines) {
     if (open) {
@@ -421,6 +424,7 @@ export function sanitize(md, { links = true } = {}) {
       res += cleanText(line.slice(i, s), st) + line.slice(s, close + run);
       i = close + run;
     }
+    if (st.mark > 0) { res += "**"; st.mark = 0; } // an unclosed <mark> ends with its line
     out.push(res);
   }
   return out.join("\n");

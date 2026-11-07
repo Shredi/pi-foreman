@@ -13,7 +13,7 @@ test("HTML tags go, the text inside stays, the allow-list keeps its tags without
   assert.equal(sanitize("<script>alert(1)</script>x"), "alert(1)x");
   assert.equal(sanitize('<img src="https://t/x.png" onerror="y">after'), "after");
   assert.equal(sanitize('<a href="https://x">link</a>'), "link");
-  assert.equal(sanitize('<mark class="x" style="color:red">m</mark> <del>d</del> <sub>s</sub><sup>u</sup> <kbd>k</kbd>'), "<mark>m</mark> <del>d</del> <sub>s</sub><sup>u</sup> <kbd>k</kbd>");
+  assert.equal(sanitize('<mark class="x" style="color:red">m</mark> <del>d</del> <sub>s</sub><sup>u</sup> <kbd>k</kbd>'), "**m** <del>d</del> <sub>s</sub><sup>u</sup> <kbd>k</kbd>");
   assert.equal(sanitize("a<br/>b<br />c<BR>d"), "a<br>b<br>c<br>d");
   assert.equal(sanitize("<iframe src=x></iframe><div>y</div>"), "y");
   assert.equal(sanitize("<!-- hidden -->visible"), "visible");
