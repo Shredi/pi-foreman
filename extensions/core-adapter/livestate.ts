@@ -107,7 +107,11 @@ export interface LiveFile {
   pressure?: { level: "high" | "critical"; reasons: string[] };
   /** A foreman warm window is open and the owner is away (limited warms); present only then. */
   away?: true;
+  /** The owner's presence as the warm tiers see it (presence probe plus the away grace); omitted when the adapter feeds none. */
+  owner?: OwnerState;
 }
+
+export type OwnerState = "present" | "away" | "grace" | "unknown";
 
 export type PresenceName = "working" | "waiting-owner" | "waiting-external" | "idle" | "done" | "needs-you";
 
@@ -191,6 +195,11 @@ export class LiveState {
   private readonly pressure: (() => { level: string; reasons: string[] } | null) | undefined;
   private readonly dotsOf: (() => LiveDot[]) | undefined;
   private awayOf: (() => boolean) | null = null;
+  private ownerOf: (() => OwnerState) | null = null;
+  /** The adapter's owner-presence source (self-warm's view), read at write time. */
+  setOwnerGetter(fn: () => OwnerState): void {
+    this.ownerOf = fn;
+  }
   /** The adapter's away source, read at write time like `pressure` so it cannot go stale. */
   setAwayGetter(fn: () => boolean): void {
     this.awayOf = fn;
@@ -337,6 +346,11 @@ export class LiveState {
     this.touch();
   }
 
+  /** A prompt or own ask is open now (any blocker source): read by the warm tier. */
+  isBlocked(): boolean {
+    return this.blockers.size > 0;
+  }
+
   /** An own ask: blocked until the returned release runs (idempotent), whatever Pi's prompt events do. */
   hold(): () => void {
     const key = `own:${++this.holds}`;
@@ -386,6 +400,12 @@ export class LiveState {
     } catch {
       // away is best effort
     }
+    let owner: OwnerState | undefined;
+    try {
+      owner = this.ownerOf?.();
+    } catch {
+      // owner is best effort
+    }
     const asks = this.askList();
     const tasks = this.taskList();
     const dots = this.dotList();
@@ -395,7 +415,7 @@ export class LiveState {
     } catch {
       // repo and branch are best effort
     }
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}) };
   }
 
   private schedule(): void {

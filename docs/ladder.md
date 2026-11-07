@@ -106,8 +106,7 @@ overlay config only (a project or session value is ignored) and unset by default
   [review](review.md#reviewer-pairs)) compares against the model running the turn, so a downshifted foreman is
   reviewed against the idle rung. The rank checks of child launches and the shadow checks compare against the base
   model, never against the idle rung. The child role map stays keyed by
-  the base model's provider (children and the finalizer keep the base provider's roles), `foreman_session_open` and
-  `/foreman session open` apply the session rank rule to the base model, and `foreman doctor` judges the base model's
+  the base model's provider (children and the finalizer keep the base provider's roles), and `foreman doctor` judges the base model's
   cache and the idle rung. A model the owner picks with `/model` becomes the base, so these re-key with it.
 - **Another provider.** The rung may name `<other-provider>/<model>`. After the switch the idle model's own provider
   entry supplies TTL, billing, keep-alive and warm budget (`providers.<q>.cache`). It needs a `cache` entry with a TTL

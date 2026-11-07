@@ -157,15 +157,15 @@
                 "additionalProperties": false,
                 "description": "Keep-alive pings that renew the cache while the session is idle.",
                 "properties": {
-                  "enabled": { "type": "boolean", "description": "Default true iff billing is token and ttlSeconds is below 3600. A project or session can only set false." },
-                  "intervalSeconds": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Seconds between pings. Default 90% of ttlSeconds, at least 30. User or overlay config only." },
-                  "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Minutes of idleness after which the pings stop (default 45; Pi's own idle cap is 30). A project or session can only shorten it." },
+                  "enabled": { "type": "boolean", "description": "The only switch of the keep-alive: pi-foreman sends every idle warm itself, for every TTL above 10 s. Default true iff billing is token and ttlSeconds is below 3600. A project or session can only set false." },
+                  "intervalSeconds": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Deprecated and ignored: a warm goes out at min(0.9 x TTL, TTL - 10 s). Seconds between pings. Default 90% of ttlSeconds, at least 30. User or overlay config only." },
+                  "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Deprecated and ignored: the warming has no fixed window, the activity and cost rules end it. Minutes of idleness after which the pings stop (default 45; Pi's own idle cap is 30). A project or session can only shorten it." },
                   "budgetShare": { "type": "number", "minimum": 0, "maximum": 1, "description": "Warm budget per idle: the warms may cost at most this share of one cold re-cache of the prompt (default 0.5). A project or session can only lower it (at most 0.5)." },
-                  "awayTicks": { "type": "integer", "minimum": 0, "maximum": 20, "description": "Warms allowed per idle while the owner is away (presence.awayAfterMinutes); default 0. A project or session can only lower it (at most 0)." },
-                  "whileWaiting": { "type": "boolean", "description": "Child runs, waits and launch waits do not stop the warms (default true). A project or session can only set false." },
-                  "beyondPiCap": { "type": "boolean", "description": "pi-foreman sends the warms itself for every token-billed cache Pi could not warm twice before its 30-minute idle cap, TTL of 1001 s or more (default true; needs keepalive.enabled). A project or session can only set false." },
-                  "selfWarmWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes of idleness after which the self-sent warms stop (default max(45, 3 x TTL minutes)). A project or session can only shorten it (at most 180)." },
-                  "compactMinTokens": { "type": "integer", "minimum": 0, "description": "Smallest context (tokens) at which a warm compaction (budget, away or window trigger) runs; below it the session goes cold instead. Default 100000; 0 = no minimum. A project or session can only raise it (at least 100000)." }
+                  "awayTicks": { "type": "integer", "minimum": 0, "maximum": 20, "description": "Deprecated and ignored: an owner who is away warms under the quarter tier of the budget. Warms allowed per idle while the owner is away (presence.awayAfterMinutes); default 0. A project or session can only lower it (at most 0)." },
+                  "whileWaiting": { "type": "boolean", "description": "Deprecated and ignored: running subagents, background tasks and waits raise the budget tier instead. Child runs, waits and launch waits do not stop the warms (default true). A project or session can only set false." },
+                  "beyondPiCap": { "type": "boolean", "description": "Deprecated and ignored: pi-foreman sends every idle warm itself. pi-foreman sends the warms itself for every token-billed cache Pi could not warm twice before its 30-minute idle cap, TTL of 1001 s or more (default true; needs keepalive.enabled). A project or session can only set false." },
+                  "selfWarmWindowMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Deprecated and ignored: the warming has no fixed window, the activity and cost rules end it. Minutes of idleness after which the self-sent warms stop (default max(45, 3 x TTL minutes)). A project or session can only shorten it (at most 180)." },
+                  "compactMinTokens": { "type": "integer", "minimum": 0, "description": "Smallest context (tokens) at which the final warm compaction runs; below it the session goes cold instead. Default 100000; 0 = no minimum. A project or session can only raise it (at least 100000)." }
                 }
               },
               "warmCompact": { "type": "boolean", "description": "Warm the cache after a compaction (default true). User or overlay config only." }
@@ -521,7 +521,7 @@
     "presence": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Presence gate of the cache warms: the owner counts as away after awayAfterMinutes without keyboard or mouse input; warms while away are limited by providers.<p>.cache.keepalive.awayTicks. A failed probe counts as present.",
+      "description": "Presence gate of the cache warms: the owner counts as away after awayAfterMinutes without keyboard or mouse input; an owner who is away warms under the quarter tier of the budget unless a subagent, background task or wait runs. A failed probe counts as present.",
       "properties": {
         "enabled": { "type": "boolean", "description": "Probe the idle input time (default true). A project or session can only set true." },
         "awayAfterMinutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Minutes without input after which the owner counts as away (default 11). A project or session can only lower it." },

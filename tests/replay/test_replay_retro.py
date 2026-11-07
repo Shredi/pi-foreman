@@ -1,14 +1,15 @@
 """Replay: ledger hints, compaction digest and retro files (D8) on the fake provider.
 
 The foreman writes a ledger, marks item 1 (hint), launches a reviewer citing item 2 (launch hint),
-whose PASS (no per-item lines, so the harness marks nothing) adds a verdict hint. The notice turn reports 90000 tokens:
-above the idle floor (50000) and below Pi's threshold (100000), so only the idle warm compaction runs (docs/cache.md), with
+whose PASS (no per-item lines, so the harness marks nothing) adds a verdict hint. The notice turn reports 130000 tokens:
+above the final-warm gate (0.6 x the 200000 window = 120000) and below Pi's threshold (160000), so only the final warm compaction runs (docs/cache.md), with
 the Retro instructions (docs/retro.md); the fake summary then ends with `## Retro`. After it:
 `.workflow/retro/<session>.md` holds the counters and that section, V has a `retro written` hint and
 the next request's pi-foreman section carries the digest naming the ledger. `/retro --model` sent as
 an RPC prompt runs the extension command, and the foreman's one reply is appended to the state file.
-The warm path is set up as in test_replay_idle_cache.py: fake claude-bridge provider with prompt cache, cacheWarming
-"idle", keep-alive with warmCompact and compactMinTokens 0, but with a 60 s cache TTL (see WARM_CONFIG). Same prerequisites and skips as test_replay.py.
+The warm path is set up as in test_replay_idle_cache.py: fake claude-bridge provider with prompt cache, keep-alive
+with warmCompact and compactMinTokens 0, priced fake models so the quarter tier allows no warm (the compaction runs at the
+settle grace), but with a 60 s cache TTL (see WARM_CONFIG). Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
 
@@ -23,8 +24,7 @@ from driver import load_fixture, wait_until  # noqa: E402
 from test_replay_idle_cache import BRIDGE, CONFIG, ENV, SETTINGS  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
-# The ledger flow gets no Pi refresh (the hook never ran in this scenario), so the cache must still count as warm when the
-# window's compaction check lands 30 s after the settle: a 60 s TTL instead of idle_cache's 20 s.
+# The cache must still count as warm when the settle check lands (15 s after the settle at a 60 s TTL): a 60 s TTL instead of idle_cache's 20 s.
 WARM_CONFIG = json.loads(json.dumps(CONFIG))
 WARM_CONFIG["providers"][BRIDGE]["cache"]["ttlSeconds"] = 60
 
@@ -44,7 +44,7 @@ class TestRetro(ReplayCase):
         rig = self.rig("retro", load_fixture("retro"), providers=(BRIDGE,), config=WARM_CONFIG, settings=SETTINGS)
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
         reqs = rig.root / "requests.log"
-        pi = rig.start(provider=BRIDGE, env=dict(ENV, FOREMAN_FAKE_REQUESTS=str(reqs)))
+        pi = rig.start(provider=BRIDGE, env=dict(ENV, FOREMAN_FAKE_REQUESTS=str(reqs), FOREMAN_FAKE_COST="3,15,5,10"))
         sid = pi.session_id()
         pi.prompt("[[replay:rt1]] build it", timeout=60)
         pi.wait_child_notify(timeout=180)

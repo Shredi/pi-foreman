@@ -9,8 +9,6 @@ export interface CacheDoctorInput {
   promptCache: { short?: number; long?: number } | undefined;
   /** Pi's cache retention env value (`PI_CACHE_RETENTION`). */
   retention: string | undefined;
-  /** Pi's `cacheWarming` setting is "idle". */
-  cacheWarmingIdle: boolean;
   /** A self-warm miss ended the self-warm for this session (`keepalive window_end self_warm_miss`). */
   selfWarmMissed: boolean;
   /** providers.<p>.roles.foreman.idle is set. */
@@ -29,7 +27,6 @@ export function cacheDoctorLines(i: CacheDoctorInput): string[] {
     const piTtl = i.promptCache[tier];
     if (piTtl !== p.ttlSeconds) out.push(`WARN Pi promptCache.${tier} for ${prov} is ${piTtl ?? "unset"} s but cache.ttlSeconds is ${p.ttlSeconds}: Pi warms and expires on its own tier, the budget and cold checks on the policy's — make them equal in models.json or providers.${prov}.cache (docs/cache.md)`);
   }
-  if (p.selfWarm && !p.active && !i.cacheWarmingIdle) out.push(`WARN Pi cacheWarming is not "idle": the warms for ${prov} (TTL ${p.ttlSeconds} s) are not sent — set "cacheWarming": "idle" in Pi's settings.json (docs/cache.md)`);
   if (i.selfWarmMissed) out.push(`WARN a self-warm for ${prov} did not read the cache (keepalive window_end self_warm_miss): self-warm is off for this session — check the TTL (docs/cache.md)`);
   const r = i.idleRung;
   if (r && (r.policy.skip === "no_entry" || r.policy.ttlSeconds === null)) out.push(`WARN idle rung ${r.spec}: provider ${r.provider} has no cache entry (ttl unknown): no cache bar and no warms while downshifted — set providers.${r.provider}.cache.ttlSeconds and billing (docs/ladder.md)`);
@@ -38,6 +35,32 @@ export function cacheDoctorLines(i: CacheDoctorInput): string[] {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** What replaced each keepalive key that no longer does anything: accepted in a config, ignored. */
+export const DEPRECATED_KEEPALIVE_KEYS: Record<string, string> = {
+  beyondPiCap: "pi-foreman sends every idle warm itself; keepalive.enabled is the only switch",
+  windowMinutes: "the warm window has no fixed length: the activity and cost rules end the warming",
+  selfWarmWindowMinutes: "the warm window has no fixed length: the activity and cost rules end the warming",
+  awayTicks: "an owner who is away for more than 15 minutes warms under the quarter tier of the budget",
+  whileWaiting: "running subagents, background tasks and waits raise the budget tier instead of blocking the warms",
+  intervalSeconds: "a warm is sent at min(0.9 x TTL, TTL - 10 s) after the last touch",
+};
+
+/** One WARN per deprecated keepalive key set in a provider's cache config (merged config); the keys are read by nobody. */
+export function deprecatedKeepaliveLines(config: unknown): string[] {
+  const provs = isObj(config) ? config.providers : undefined;
+  if (!isObj(provs)) return [];
+  const out: string[] = [];
+  for (const [name, entry] of Object.entries(provs)) {
+    const cache = isObj(entry) && isObj(entry.cache) ? entry.cache : undefined;
+    const ka = cache && isObj(cache.keepalive) ? cache.keepalive : undefined;
+    if (!ka) continue;
+    for (const [key, why] of Object.entries(DEPRECATED_KEEPALIVE_KEYS)) {
+      if (key in ka) out.push(`WARN providers.${name}.cache.keepalive.${key} is deprecated and ignored: ${why} — delete it from your foreman.json (docs/cache.md)`);
+    }
+  }
+  return out;
+}
 /** The note the claude-bridge presets used to write on their `claude-*` 3600 row. */
 const OLD_PRESET_NOTE = "subscription within plan usage; 300 on extra-usage credits or API key";
 

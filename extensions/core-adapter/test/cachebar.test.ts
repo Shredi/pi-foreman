@@ -1,4 +1,5 @@
-// r65: the numbers of the footer's cache bar (cachebar.ts).
+// r65: the numbers of the footer's cache bar (cachebar.ts). The window/budget/away limiters are gone (warm redesign);
+// the span, tier and warms-left cases live in cachebar-tier.test.ts.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cacheBar, formatLeft, type CacheSnapshot } from "../cachebar.ts";
@@ -6,72 +7,22 @@ import { cacheBar, formatLeft, type CacheSnapshot } from "../cachebar.ts";
 const T0 = 1_000_000_000;
 const MIN = 60_000;
 
-// TTL 300 s, Pi's 30-minute cap: ticks at 270 s steps.
+// TTL 300 s, no warm pending: the bar counts the touch-to-cold span.
 const base: CacheSnapshot = {
   now: T0,
   lastTouch: T0,
   ttlSeconds: 300,
-  nextWarmAt: T0 + 270_000,
-  windowEndAt: T0 + 30 * MIN,
-  tickMs: 270_000,
-  budget: null,
-  away: null,
+  stretchStartAt: T0,
+  spanEndAt: null,
+  warmsLeft: 0,
+  tier: null,
+  nextWarmAt: null,
 };
 
-test("window-limited: TTL 300 with the 30-minute cap gives 6 warms", () => {
-  const b = cacheBar(base);
-  assert.equal(b.warmsLeft, 6);
-  assert.equal(b.limiter, "window");
-});
-
-test("fractional tickMs: ticks strictly before the window end, no float noise", () => {
-  const tickMs = 0.9 * 300 * 1000 + 0.1;
-  const first = T0 + tickMs;
-  const warms = (windowEndAt: number) => cacheBar({ ...base, tickMs, nextWarmAt: first, windowEndAt }).warmsLeft;
-  assert.equal(warms(first + 3 * tickMs), 3);
-  assert.equal(warms(first + 3 * tickMs + tickMs / 2), 4);
-  assert.equal(warms(first + 3 * tickMs - 0.5), 3);
-  assert.equal(warms(first), 0);
-});
-
-test("a warm exactly at the window end is not counted", () => {
-  assert.equal(cacheBar({ ...base, windowEndAt: T0 + 270_000 }).warmsLeft, 0);
-  assert.equal(cacheBar({ ...base, windowEndAt: T0 + 270_001 }).warmsLeft, 1);
-});
-
-test("budget-limited: 1 left with limiter budget", () => {
-  const b = cacheBar({ ...base, budget: { spent: 0.2, cold: 1, next: 0.1, share: 0.3 } });
-  assert.equal(b.warmsLeft, 1);
-  assert.equal(b.limiter, "budget");
-});
-
-test("a budget that allows more than the window is not the limiter; a tie goes to the window", () => {
-  assert.equal(cacheBar({ ...base, budget: { spent: 0, cold: 10, next: 0.1, share: 0.5 } }).limiter, "window");
-  const tie = cacheBar({ ...base, budget: { spent: 0, cold: 1, next: 0.1, share: 0.6 } });
-  assert.equal(tie.warmsLeft, 6);
-  assert.equal(tie.limiter, "window");
-});
-
-test("away-limited: awayTicks 2 used 1 leaves 1 with limiter away", () => {
-  const b = cacheBar({ ...base, away: { isAway: true, used: 1, ticks: 2 } });
-  assert.equal(b.warmsLeft, 1);
-  assert.equal(b.limiter, "away");
-});
-
-test("present owner: the away counter does not limit", () => {
-  const b = cacheBar({ ...base, away: { isAway: false, used: 2, ticks: 2 } });
-  assert.equal(b.warmsLeft, 6);
-  assert.equal(b.limiter, "window");
-});
-
-test("budget null does not limit", () => {
-  assert.equal(cacheBar({ ...base, budget: null }).warmsLeft, 6);
-});
-
-test("nextWarmAt null: no warms, no limiter", () => {
-  const b = cacheBar({ ...base, nextWarmAt: null });
+test("nextWarmAt null: no warms, no tier", () => {
+  const b = cacheBar({ ...base, warmsLeft: 3, tier: "half" });
   assert.equal(b.warmsLeft, 0);
-  assert.equal(b.limiter, null);
+  assert.equal(b.tier, null);
 });
 
 test("coldAt and share at touch, mid-TTL and past", () => {

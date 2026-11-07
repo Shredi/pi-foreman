@@ -1,7 +1,7 @@
 // Prompt-cache policy of one provider (idle-cache). Pure: no Pi imports.
 // Mirrors cache_policy / BUILTIN_CACHE in scripts/foreman_config.py.
 
-/** Pi's own idle limit: pings past it are pointless. */
+/** @deprecated Pi's own idle limit; unread since pi-foreman sends every warm itself (kept for the pinned exports). */
 export const PI_IDLE_CAP_MINUTES = 30;
 
 export type CacheBilling = "token" | "request";
@@ -30,20 +30,26 @@ export interface CachePolicy {
   skip?: CacheSkip;
   ttlSeconds: number | null;
   billing: CacheBilling | null;
+  /** @deprecated Resolved, read by nobody (no fixed tick: the tick is min(0.9 x TTL, TTL - 10 s)). */
   intervalSeconds: number;
+  /** @deprecated Resolved, read by nobody (the warm window has no fixed length). */
   windowMinutes: number;
+  /** @deprecated Resolved, read by nobody. */
   effectiveWindowMinutes: number;
   warmCompact: boolean;
   // Warm policy (resolveWarmPolicy); an absent field keeps the old behaviour.
-  /** Per-idle warm spend cap as a share of a cold re-cache; absent = no budget. */
+  /** Per-idle warm spend cap as a share of a cold re-cache (the half tier; the quarter tier is half of it). Absent = 0.5. */
   budgetShare?: number;
-  /** Warms allowed while the owner is away (presence.ts). Absent = presence ignored. */
+  /** @deprecated Resolved, read by nobody (the away grace replaces it). */
   awayTicks?: number;
-  /** Children, waits and launch waits do not count as busy for warming. Absent = they do. */
+  /** @deprecated Resolved, read by nobody. */
   whileWaiting?: boolean;
-  /** pi-foreman sends the warms itself beyond Pi's idle cap (selfwarm.ts). Absent = off. */
+  /** @deprecated Resolved as before (`beyondPiCap`, TTL >= 1001 s), read by nobody: see `keepaliveOwned`. */
   selfWarm?: boolean;
+  /** @deprecated Resolved, read by nobody (the warm window has no fixed length). */
   selfWarmWindowMinutes?: number;
+  /** pi-foreman sends every idle warm of this cache itself (selfwarm.ts): keepalive on, token billing, TTL above 10 s. Pi's own warmer is told `stop`. */
+  keepaliveOwned?: boolean;
   /** Smallest context (tokens) a warm compaction runs at; 0 = no minimum. Absent = 0. */
   compactMinTokens?: number;
 }
@@ -117,7 +123,7 @@ function resolve(config: unknown, provider: string | undefined | null, model?: s
   return { policy: skip ? { ...base, active: false, skip } : { ...base, active: true }, enabled };
 }
 
-/** Smallest TTL Pi could not warm twice before its idle cap (two 0.9 x TTL ticks): the self-warmer owns every such cache. */
+/** @deprecated Smallest TTL Pi could not warm twice before its idle cap; unread (pi-foreman owns every warm). Kept for the pinned exports. */
 export const SELF_WARM_MIN_TTL_SECONDS = Math.floor((PI_IDLE_CAP_MINUTES * 60) / (2 * 0.9)) + 1;
 
 /**
@@ -134,6 +140,7 @@ export function resolveWarmPolicy(config: unknown, provider: string | undefined 
   const clamp = (v: unknown, lo: number, hi: number, d: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
   const ttl = base.ttlSeconds;
   const selfWarm = enabled && base.billing === "token" && ttl !== null && ka.beyondPiCap !== false && ttl >= SELF_WARM_MIN_TTL_SECONDS;
+  const keepaliveOwned = enabled && base.billing === "token" && ttl !== null && ttl > 10;
   const fallbackWindow = Math.min(1440, Math.max(45, 3 * Math.ceil((ttl ?? 0) / 60)));
   return {
     ...base,
@@ -141,6 +148,7 @@ export function resolveWarmPolicy(config: unknown, provider: string | undefined 
     awayTicks: Math.trunc(clamp(ka.awayTicks, 0, 20, 0)),
     whileWaiting: typeof ka.whileWaiting === "boolean" ? ka.whileWaiting : true,
     selfWarm,
+    keepaliveOwned,
     selfWarmWindowMinutes: Math.trunc(clamp(ka.selfWarmWindowMinutes, 1, 1440, fallbackWindow)),
     compactMinTokens: Math.trunc(clamp(ka.compactMinTokens, 0, Number.MAX_SAFE_INTEGER, 100000)),
   };

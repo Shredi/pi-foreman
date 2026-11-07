@@ -227,34 +227,13 @@ class SessionTest(unittest.TestCase):
         self.assertNotIn("PI_FOREMAN_SESSION_MODEL", out)
         self.assertNotIn("session model:", out)
 
-    def test_rank_check_is_skipped_when_the_own_model_is_unknown(self):
+    def test_no_rank_rule_on_the_cli(self):
         self.write_ranks()
-        code, out, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/big-1"))
-        self.assertEqual(code, 0, err)
-        self.assertIn("rank check skipped: own model unknown", out)
-
-    def test_known_own_model_refuses_a_higher_ranked_child(self):
-        self.write_ranks()
-        code, out, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/big-1", "--own-model", "prov/mid-1"))
-        self.assertEqual(code, 1)
-        self.assertIn("session open refused [session_rank]", err)
-        self.assertIn("prov/big-1 is tier 0, this session is tier 1", err)
-        self.assertEqual(out, "")
-        self.assertFalse((self.agent / "pi-foreman").exists())
-        # the env var names the own model too
-        code, _, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/big-1"), PI_FOREMAN_SESSION_MODEL="prov/mid-1")
-        self.assertEqual(code, 1)
-        self.assertIn("session_rank", err)
-
-    def test_known_own_model_allows_equal_and_lower_and_refuses_unranked(self):
-        self.write_ranks()
-        for child in ("prov/mid-2", "prov/small-1"):
-            code, out, err = self.run_main(*self.open_args("--dry-run", "--model", child, "--own-model", "prov/mid-1"))
+        for child in ("prov/big-1", "prov/mid-2", "prov/small-1", "prov/odd"):
+            code, out, err = self.run_main(*self.open_args("--dry-run", "--model", child), PI_FOREMAN_SESSION_MODEL="prov/mid-1")
             self.assertEqual(code, 0, err)
-            self.assertNotIn("rank check skipped", out)
-        code, _, err = self.run_main(*self.open_args("--dry-run", "--model", "prov/odd", "--own-model", "prov/mid-1"))
-        self.assertEqual(code, 1)
-        self.assertIn("prov/odd is unranked", err)
+            self.assertIn("session model: %s" % child, out)
+            self.assertNotIn("rank", out + err)
 
     def test_footer_contract_and_no_home_path(self):
         code, _, _ = self.run_main(*self.open_args("--plan-first"))

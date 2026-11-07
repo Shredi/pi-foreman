@@ -255,7 +255,7 @@ test("closeChildren: without a runner the remote entry is reported and untouched
 });
 
 function sessionDeps(agent: string, over: Partial<SessionDeps> = {}): SessionDeps {
-  return { isChild: false, env: {}, agentDir: agent, cwd: root, piSessionId: "sess-1", pkgRoot: "/pkg", python: "/usr/bin/python3", spawner: async () => spawnOk(), send: async () => "sent", ...over };
+  return { isChild: false, env: {}, agentDir: agent, cwd: root, piSessionId: "sess-1", pkgRoot: "/pkg", python: "/usr/bin/python3", spawner: async () => spawnOk(), send: async () => "sent", confirm: async () => true, ...over };
 }
 
 test("/foreman session close <label> [path]: a remote entry goes through runRemote close-remote with --path; failures show stderr", async () => {

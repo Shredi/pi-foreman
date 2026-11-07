@@ -6,7 +6,7 @@ import { symbolSet } from "./symbols.ts";
 import { isCostLine } from "./usage.ts";
 import { renderFooter } from "./footerview.ts";
 import type { CacheBarView, FooterTheme, FooterView } from "./footerview.ts";
-import { cacheBar, formatLeft } from "./cachebar.ts";
+import { cacheBar, formatLeft, type CacheTier } from "./cachebar.ts";
 import type { CachePolicy } from "./cachepolicy.ts";
 import { realTimers, type Timers } from "./prwatch.ts";
 type Json = Record<string, unknown>;
@@ -110,12 +110,12 @@ export interface CacheSource {
   policy: CachePolicy | null;
   now: number;
   lastTouch: number | null;
-  /** Window end, next warm and tick (ms) of the path that owns the warming; nextWarmAt null = no warm pending. */
-  windowEndAt: number;
+  /** Self-warm projection (selfwarm.ts snapshot): stretch start, next warm and end of the TTL of the last allowed warm (ms), warms left and the budget tier that holds. */
+  stretchStartAt: number | null;
   nextWarmAt: number | null;
-  tickMs: number;
-  budget: { spent: number; cold: number; next: number; share: number } | null;
-  away: { isAway: boolean; used: number; ticks: number } | null;
+  spanEndAt: number | null;
+  warmsLeft: number;
+  tier: CacheTier | null;
   /** A turn runs: the bar shows the countdown without warms. */
   running: boolean;
   downshifted: boolean;
@@ -127,22 +127,26 @@ export interface CacheSource {
   symbols: string;
 }
 
+/** Budget-tier glyphs of the footer; the ascii set spells them out. Kept here, not in the shared symbol table. */
+export function tierGlyphs(set: string): { half: string; quarter: string } {
+  return set === "ascii" ? { half: "1/2", quarter: "1/4" } : { half: "½", quarter: "¼" };
+}
+
 /** The bar of a source, or null when it is hidden (no entry, unknown TTL, per-request billing, switched off). */
 export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const p = src?.policy;
   if (!src || !src.enabled || !p || p.billing === "request" || p.ttlSeconds === null) return null;
   if (p.skip === "no_entry" || p.skip === "ttl_unknown" || p.skip === "billing_request") return null;
-  const warming = (!p.skip || (p.skip === "ttl_long" && p.selfWarm)) && !src.running;
-  const bar = cacheBar({ now: src.now, lastTouch: src.lastTouch, ttlSeconds: p.ttlSeconds, nextWarmAt: warming ? src.nextWarmAt : null, windowEndAt: src.windowEndAt, tickMs: src.tickMs, budget: src.budget, away: src.away });
+  const warming = (!p.skip || (p.skip === "ttl_long" && p.keepaliveOwned)) && !src.running;
+  const bar = cacheBar({ now: src.now, lastTouch: src.lastTouch, ttlSeconds: p.ttlSeconds, stretchStartAt: src.stretchStartAt, spanEndAt: src.spanEndAt, warmsLeft: src.warmsLeft, tier: src.tier, nextWarmAt: warming ? src.nextWarmAt : null });
   const set = symbolSet(src.symbols);
   return {
     share: bar.share,
     left: bar.leftMs === null ? null : formatLeft(bar.leftMs),
     cold: !src.running && (bar.leftMs === null || bar.leftMs <= 0),
-    warms: bar.warmsLeft > 0 ? { count: bar.warmsLeft, limiter: bar.limiter === "budget" || bar.limiter === "away" ? bar.limiter : null } : null,
-    awayLeft: src.away && src.away.ticks > 0 ? Math.max(0, src.away.ticks - src.away.used) : null,
+    warms: bar.warmsLeft > 0 ? { count: bar.warmsLeft, tier: bar.tier } : null,
     step: !src.downshifted ? src.idleRung : null,
-    glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift },
+    glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift, ...tierGlyphs(src.symbols) },
   };
 }
 

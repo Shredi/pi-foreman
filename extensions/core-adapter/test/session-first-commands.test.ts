@@ -27,6 +27,7 @@ function deps(over: Partial<SessionDeps> = {}): SessionDeps & { spawned: string[
     python: "/usr/bin/python3",
     spawner: async (_c, args) => (spawned.push(args), { code: 0, stdout: "handoff: x", stderr: "", timedOut: false }),
     send: async () => "sent",
+    confirm: async () => true,
     spawned,
     ...over,
   };
@@ -72,12 +73,12 @@ test("foreman_session_open: runs the same open, forwards its params", async () =
   assert.equal((await runSessionOpenTool(deps(), { brief: "b.md" })).ok, false);
 });
 
-test("foreman_session_open: the rank rule refuses a higher-ranked model", async () => {
+test("foreman_session_open: a higher-ranked model opens (no rank rule; the owner confirms)", async () => {
   const config = { providers: { "claude-bridge": { ranks: [{ match: "claude-opus-*", tier: 1 }, { match: "claude-sonnet-*", tier: 2 }] } } };
   const d = deps({ model: "claude-bridge/claude-sonnet-4-5", config });
   const r = await runSessionOpenTool(d, { label: "demo", brief: "b.md", model: "claude-bridge/claude-opus-4-1" });
-  assert.equal(r.ok, false);
-  assert.equal(d.spawned.length, 0);
+  assert.equal(r.ok, true);
+  assert.equal(d.spawned.length, 1);
 });
 
 test("plan_mode_unavailable: refused without a plan command, passes with one (command and tool)", async () => {

@@ -51,6 +51,6 @@ test("footer countdown starts at 57:00 with the derived 3600", () => {
   const ttl = resolveWarmPolicy({}, "claude-bridge", "claude-opus-5-5", derivedBridgeTtlS(bridgeTtlSetting(undefined), false, {})).ttlSeconds;
   assert.equal(ttl, 3600);
   const now = 1_000_000_000;
-  const bar = cacheBar({ now, lastTouch: now, ttlSeconds: ttl as number, nextWarmAt: null, windowEndAt: now, tickMs: 3_240_000, budget: null, away: null });
+  const bar = cacheBar({ now, lastTouch: now, ttlSeconds: ttl as number, stretchStartAt: now, spanEndAt: null, warmsLeft: 0, tier: null, nextWarmAt: null });
   assert.equal(formatLeft(bar.leftMs as number), "57:00");
 });

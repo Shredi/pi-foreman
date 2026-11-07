@@ -226,6 +226,8 @@ function capPut<K, V>(m: Map<K, V>, k: K, v: V): void {
  */
 export class LaunchBatch {
   private ids: string[] = [];
+  /** The launches of the current message a predicate selected (a pressure gate counts only these). */
+  private picked: string[] = [];
   private readonly started = new Set<string>();
   /** Counts assistant messages seen: a pressure gate narrows once per message. */
   generation = 0;
@@ -240,14 +242,23 @@ export class LaunchBatch {
     return this.ids.indexOf(id);
   }
 
-  /** Assistant message_end: its `subagent` launch/resume calls. */
-  onAssistant(content: unknown, isLaunch: (args: unknown) => boolean): void {
+  /** Position of `id` among the launches `pick` selected in onAssistant, or -1. */
+  pickedPositionOf(id: string): number {
+    return this.picked.indexOf(id);
+  }
+
+  /** Assistant message_end: its `subagent` launch/resume calls; `pick` selects those pickedPositionOf counts. */
+  onAssistant(content: unknown, isLaunch: (args: unknown) => boolean, pick: (args: unknown) => boolean = () => true): void {
     this.generation++;
     this.ids = [];
+    this.picked = [];
     this.started.clear();
     if (!Array.isArray(content)) return;
     for (const c of content) {
-      if (isObj(c) && c.type === "toolCall" && c.name === "subagent" && typeof c.id === "string" && isLaunch(c.arguments)) this.ids.push(c.id);
+      if (isObj(c) && c.type === "toolCall" && c.name === "subagent" && typeof c.id === "string" && isLaunch(c.arguments)) {
+        this.ids.push(c.id);
+        if (pick(c.arguments)) this.picked.push(c.id);
+      }
     }
   }
 

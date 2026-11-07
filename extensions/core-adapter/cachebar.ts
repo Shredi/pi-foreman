@@ -1,54 +1,49 @@
-// The numbers of the footer's cache bar (docs/cache.md, "Footer bar"): time to cold, share left, warms still to come
-// and what limits them. Pure: no Pi imports; the adapter hands in state it already holds.
+// The numbers of the footer's cache bar (docs/cache.md, "Footer bar"): the countdown to cold, the share left of the
+// whole projected warm span, the warms still to come and the budget tier that allows them. Pure: no Pi imports; the
+// adapter hands in state it already holds.
 import { coldAt } from "./warmcompact.ts";
 
-export type CacheLimiter = "window" | "budget" | "away";
+export type CacheTier = "half" | "quarter";
 
 export interface CacheSnapshot {
   now: number;
   /** Latest cache touch (request end or completed warm), ms; null = none (the cache is cold). */
   lastTouch: number | null;
   ttlSeconds: number;
+  /** The real request that opened the idle stretch, ms; null = none. */
+  stretchStartAt: number | null;
+  /** End of the TTL of the last allowed warm, ms; null = no projection. */
+  spanEndAt: number | null;
+  /** Warms still allowed in the active tier. */
+  warmsLeft: number;
+  /** Active budget tier; null = none. */
+  tier: CacheTier | null;
   /** When the next warm is sent, ms; null = no warm pending. */
   nextWarmAt: number | null;
-  /** The warm window closes here (ms): a warm at or after it is not sent. */
-  windowEndAt: number;
-  /** Time between two warms, ms. */
-  tickMs: number;
-  /** Budget check of the warm policy (warmbudget.ts) with its share; null = no budget or unavailable. */
-  budget: { spent: number; cold: number; next: number; share: number } | null;
-  /** Presence gate: null = presence ignored. */
-  away: { isAway: boolean; used: number; ticks: number } | null;
 }
 
 export interface CacheBar {
   /** Absolute time the cache is taken as cold; null without a touch. */
   coldAt: number | null;
-  /** Ms until cold, never negative; null without a touch. */
+  /** Ms until cold at the current TTL, never negative; null without a touch. */
   leftMs: number | null;
-  /** Share of the touch-to-cold span still ahead, 0..1; null without a touch. */
+  /** Share of the projected warm span still ahead, 0..1; null without a touch. Without warms: share of the touch-to-cold span. */
   share: number | null;
   warmsLeft: number;
-  /** What ends the warms; null when none is pending. */
-  limiter: CacheLimiter | null;
+  /** Tier that allows the warms; null when none is pending. */
+  tier: CacheTier | null;
 }
 
 export function cacheBar(s: CacheSnapshot): CacheBar {
   const cold = s.lastTouch === null ? null : coldAt(s.lastTouch, s.ttlSeconds);
   const leftMs = cold === null ? null : Math.max(0, cold - s.now);
-  const span = cold === null || s.lastTouch === null ? 0 : cold - s.lastTouch;
-  const share = leftMs === null ? null : span > 0 ? Math.min(1, leftMs / span) : 0;
-  if (s.nextWarmAt === null) return { coldAt: cold, leftMs, share, warmsLeft: 0, limiter: null };
-
-  const first = s.nextWarmAt;
-  const byWindow = s.windowEndAt > first ? (s.tickMs > 0 ? Math.ceil((s.windowEndAt - first) / s.tickMs) : 1) : 0;
-  let byBudget = Infinity;
-  if (s.budget && s.budget.next > 0) byBudget = Math.max(0, Math.floor((s.budget.share * s.budget.cold - s.budget.spent) / s.budget.next + 1e-9));
-  const byAway = s.away && s.away.isAway ? Math.max(0, s.away.ticks - s.away.used) : Infinity;
-
-  const warmsLeft = Math.min(byWindow, byBudget, byAway);
-  const limiter: CacheLimiter = byWindow <= byBudget && byWindow <= byAway ? "window" : byBudget <= byAway ? "budget" : "away";
-  return { coldAt: cold, leftMs, share, warmsLeft, limiter };
+  if (cold === null || s.lastTouch === null) return { coldAt: null, leftMs: null, share: null, warmsLeft: 0, tier: null };
+  const warming = s.nextWarmAt !== null && s.warmsLeft > 0;
+  const start = warming && s.stretchStartAt !== null ? s.stretchStartAt : s.lastTouch;
+  const end = warming && s.spanEndAt !== null ? s.spanEndAt : cold;
+  const span = end - start;
+  const share = span > 0 ? Math.max(0, Math.min(1, (end - s.now) / span)) : 0;
+  return { coldAt: cold, leftMs, share, warmsLeft: warming ? s.warmsLeft : 0, tier: warming ? s.tier : null };
 }
 
 /** mm:ss, h:mm:ss above an hour. */

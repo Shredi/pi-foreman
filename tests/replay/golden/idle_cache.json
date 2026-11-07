@@ -2,18 +2,28 @@
  "events": [
   {
    "event": "keepalive",
-   "outcome": "fired"
+   "outcome": "fired",
+   "reason": "idle",
+   "tier": "quarter"
+  },
+  {
+   "event": "keepalive",
+   "outcome": "skipped",
+   "reason": "budget",
+   "tier": "quarter",
+   "phase": "post_warm"
   },
   {
    "event": "compaction",
    "reason": "warm_idle",
-   "point": 100000,
-   "model": "claude-bridge/foreman"
+   "point": 160000,
+   "model": "claude-bridge/foreman",
+   "trigger": "final_warm"
   },
   {
    "event": "keepalive",
    "outcome": "window_end",
-   "reason": "compact"
+   "reason": "budget"
   }
  ],
  "budget": [
@@ -28,7 +38,7 @@
   {
    "event": "compaction",
    "reason": "warm_idle",
-   "trigger": "budget"
+   "trigger": "final_warm"
   },
   {
    "event": "keepalive",
@@ -58,18 +68,27 @@
   },
   {
    "event": "keepalive",
+   "outcome": "fired",
+   "reason": "idle",
+   "tier": "quarter",
+   "presence": "away"
+  },
+  {
+   "event": "keepalive",
    "outcome": "skipped",
-   "reason": "away"
+   "reason": "budget",
+   "tier": "quarter",
+   "presence": "away"
   },
   {
    "event": "compaction",
    "reason": "warm_idle",
-   "trigger": "away"
+   "trigger": "final_warm"
   },
   {
    "event": "keepalive",
    "outcome": "window_end",
-   "reason": "away"
+   "reason": "budget"
   }
  ]
 }

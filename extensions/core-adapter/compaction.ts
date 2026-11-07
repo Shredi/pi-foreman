@@ -17,6 +17,14 @@ export function overIdleFloor(u: ContextUsageLike | null | undefined, point: num
   return !!u && isNum(u.tokens) && isNum(point) && point > 0 && u.tokens > point * IDLE_FLOOR_FACTOR;
 }
 
+/** The final-warm compaction (idle cache stops warming) runs above this share of the model's context window; needs no runtime compaction point. */
+export const FINAL_COMPACT_SHARE = 0.6;
+
+/** True when usage is known and above `FINAL_COMPACT_SHARE` of the context window. */
+export function overFinalGate(u: ContextUsageLike | null | undefined): boolean {
+  return !!u && isNum(u.tokens) && isNum(u.contextWindow) && u.contextWindow > 0 && u.tokens > u.contextWindow * FINAL_COMPACT_SHARE;
+}
+
 /** Once-per-crossing latch per session: reset on session_compact / session_compact_failed. */
 export class CompactionGate {
   private requested = new Set<string>();
@@ -25,6 +33,14 @@ export class CompactionGate {
   decideIdle(sessionId: string, usage: ContextUsageLike | null | undefined, point: number | null | undefined): boolean {
     if (this.requested.has(sessionId)) return false;
     if (!overIdleFloor(usage, point)) return false;
+    this.requested.add(sessionId);
+    return true;
+  }
+
+  /** The final-warm variant: the 0.6 x context window gate replaces the idle floor, so a null runtime point does not block it. */
+  decideFinal(sessionId: string, usage: ContextUsageLike | null | undefined): boolean {
+    if (this.requested.has(sessionId)) return false;
+    if (!overFinalGate(usage)) return false;
     this.requested.add(sessionId);
     return true;
   }

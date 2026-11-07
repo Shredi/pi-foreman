@@ -65,18 +65,17 @@ test("downshifted: a builder launch keeps the base provider's role map; a manual
   assert.equal(String(after.model).split(":")[0], "pb/builder-m");
 });
 
-test("downshifted: foreman_session_open judges and shows the base model", async (t) => {
+test("downshifted: foreman_session_open shows the base model", async (t) => {
   const r = await rig(t);
   await downshift(r);
   const open = r.tools.get("foreman_session_open")!;
   const ok = await open.execute("o1", { label: "demo", brief: "b.md", dryRun: true }, undefined, undefined, r.ctx);
-  assert.ok(ok);
-  const argv = r.spawned[0];
-  assert.equal(argv[argv.indexOf("--own-model") + 1], "pa/big");
-  // pa/top outranks the base pa/big: refused although the live model pb/small has no ranks
-  const refused = await open.execute("o2", { label: "demo", brief: "b.md", model: "pa/top", dryRun: true }, undefined, undefined, r.ctx);
-  assert.match(refused.content?.[0]?.text ?? "", /session_rank/);
-  assert.equal(r.spawned.length, 1);
+  assert.match(ok.content?.[0]?.text ?? "", /^session model: pa\/big\n/);
+  assert.equal(r.spawned[0].includes("--own-model"), false);
+  // no rank rule any more: pa/top outranking the base pa/big opens
+  const higher = await open.execute("o2", { label: "demo", brief: "b.md", model: "pa/top", dryRun: true }, undefined, undefined, r.ctx);
+  assert.doesNotMatch(higher.content?.[0]?.text ?? "", /refused/);
+  assert.equal(r.spawned.length, 2);
 });
 
 test("downshifted: the doctor judges the base model's cache and lists the idle rung", async (t) => {
@@ -88,7 +87,7 @@ test("downshifted: the doctor judges the base model's cache and lists the idle r
   assert.doesNotMatch(text, /idle rung .* has no cache entry/);
 });
 
-test("cache_warming_decision: a self-owned policy answers stop only while no turn runs", async (t) => {
+test("cache_warming_decision: always answers stop, whatever the policy, the turn or Pi's own settings", async (t) => {
   const sw = { providers: { pa: { roles: ROLES("pa"), cache: { ttlSeconds: 1800, billing: "token", keepalive: { enabled: true } } } } };
   let idle = true;
   const r = await r11Rig(t, {}, {
@@ -100,7 +99,7 @@ test("cache_warming_decision: a self-owned policy answers stop only while no tur
   idle = true;
   assert.deepEqual(await r.fire("cache_warming_decision", {}), { action: "stop" });
   idle = false;
-  assert.equal(await r.fire("cache_warming_decision", {}), undefined);
+  assert.deepEqual(await r.fire("cache_warming_decision", {}), { action: "stop" });
 });
 
 test("the doctor warns when the idle rung's provider has no cache entry", async (t) => {
