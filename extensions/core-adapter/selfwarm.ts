@@ -83,6 +83,8 @@ export interface SelfWarmDeps {
   contextWindow?(): number | null;
   /** A claude-bridge config approval is pending: the replay would start Claude Code on unapproved config. */
   driftPending?(): boolean;
+  /** Key of the session this instance serves (session file or id); instances of one process with the same key share one owner claim, the miss flag and the budget. Absent or null = private state. */
+  sessionKey?(): string | null;
   trace(r: Record<string, unknown>): void;
   /** The footer's keep-alive glyph. */
   setGlyph?(on: boolean): void;
@@ -102,6 +104,21 @@ const realTimers: Timers = {
   },
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
 };
+
+/** State shared by every SelfWarm instance of one session in this process (the adapter can be loaded twice in a bridge child). */
+interface SessionWarm {
+  missed: boolean;
+  owner: object | null;
+  budget: WarmBudget;
+  childOffTraced: boolean;
+  notReplayableTraced: boolean;
+}
+const REGISTRY = Symbol.for("pi-foreman.selfwarm.sessions");
+const registry = (): Map<string, SessionWarm> => {
+  const g = globalThis as unknown as Record<symbol, Map<string, SessionWarm> | undefined>;
+  return (g[REGISTRY] ??= new Map());
+};
+const freshSession = (): SessionWarm => ({ missed: false, owner: null, budget: new WarmBudget(), childOffTraced: false, notReplayableTraced: false });
 
 type St = "off" | "watching" | "ended";
 type Refusal = { reason: "budget" | "budget_unavailable"; budget?: { spent: number; cold: number; share: number } };
@@ -138,17 +155,14 @@ export class SelfWarm {
   private st: St = "off";
   private touch: number | null = null;
   private stretchStart: number | null = null;
-  private budget = new WarmBudget();
+  private local = freshSession();
   private captured: unknown[] | null = null;
   private pending: unknown[] | null = null;
   private inFlight = false;
   private compacting = false;
   private ac: AbortController | null = null;
   private gen = 0;
-  private disabled = false;
-  private missChecked = false;
   private compactedForIdle = false;
-  private notReplayableTraced = false;
   private tooShortTraced = false;
 
   constructor(deps: SelfWarmDeps) {
@@ -160,14 +174,32 @@ export class SelfWarm {
     return this.st;
   }
 
-  /** Self-warm was switched off for the session by a miss. */
+  private shared(): SessionWarm {
+    let key: string | null = null;
+    try {
+      key = this.deps.sessionKey?.() ?? null;
+    } catch {
+      // private state
+    }
+    if (!key) return this.local;
+    const r = registry();
+    let s = r.get(key);
+    if (!s) r.set(key, (s = freshSession()));
+    return s;
+  }
+
+  private get budget(): WarmBudget {
+    return this.shared().budget;
+  }
+
+  /** Self-warm was switched off for the session by a miss (every instance of the session honours it). */
   missed(): boolean {
-    return this.disabled;
+    return this.shared().missed;
   }
 
   /** pi-foreman sends the warms of this cache: keepalive on, token billing, TTL above 10 s, a replayable model, no miss. */
   owns(): boolean {
-    return !this.disabled && !!this.deps.policy()?.keepaliveOwned && this.deps.replayable();
+    return !this.shared().missed && !!this.deps.policy()?.keepaliveOwned && this.deps.replayable();
   }
 
   lastCacheTouch(): number | null {
@@ -224,8 +256,9 @@ export class SelfWarm {
     const share = view ? tierShare(p, view.tier) : 0;
     const chk = view ? this.budget.check(this.deps.rates(this.budget.promptTokens()), share) : null;
     const budget = chk ? { ...chk, share } : null;
-    const warmsLeft = budget && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
-    const warmsFresh = budget && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold) / budget.next + 1e-9)) : 0;
+    const off = this.missed();
+    const warmsLeft = budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
+    const warmsFresh = budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold) / budget.next + 1e-9)) : 0;
     const tick = warmDelayMs(p?.ttlSeconds ?? null);
     const ttlMs = (p?.ttlSeconds ?? 0) * 1000;
     return {
@@ -272,9 +305,16 @@ export class SelfWarm {
     this.graceTimer = null;
     const p = d.policy();
     if (!p) return;
-    if (!this.owns()) {
-      if (p.keepaliveOwned && !this.notReplayableTraced) {
-        this.notReplayableTraced = true;
+    const sh = this.shared();
+    if (p.bridgeChildOff && !sh.childOffTraced) {
+      sh.childOffTraced = true;
+      d.trace({ event: "keepalive", outcome: "skipped", reason: "bridge_child_off" });
+    }
+    if (!this.owns() || !this.claim()) {
+      if (sh.missed) {
+        // a miss ended warming for the session: nothing more to trace
+      } else if (p.keepaliveOwned && !sh.notReplayableTraced && sh.owner === null) {
+        sh.notReplayableTraced = true;
         d.trace({ event: "keepalive", outcome: "skipped", reason: "not_replayable" });
       } else if (p.active && p.billing === "token" && p.ttlSeconds !== null && warmDelayMs(p.ttlSeconds) === null && !this.tooShortTraced) {
         this.tooShortTraced = true;
@@ -289,6 +329,13 @@ export class SelfWarm {
     this.schedule();
   }
 
+  /** Single owner per session: the first instance to ask owns the timers and the warms; the others stay passive until it shuts down. */
+  private claim(): boolean {
+    const sh = this.shared();
+    if (sh.owner === null) sh.owner = this;
+    return sh.owner === this;
+  }
+
   /** A real request ended without a usable reply (error, abort) or its turn ended: the cache keeps its last touch, the capture of the last good request stays. */
   requestFailed(): void {
     if (!this.inFlight) return;
@@ -299,6 +346,7 @@ export class SelfWarm {
 
   /** A Pi-sent warm landed in the usage log (Pi's warmer is told `stop`; a stray entry still counts as a touch). */
   noteWarmLine(line: UsageLine): void {
+    if (this.shared().owner !== this) return; // the shared budget is noted once, by the owner
     const at = Date.parse(line.ts);
     if (Number.isFinite(at)) this.touch = Math.max(this.touch ?? 0, at);
     this.budget.note(line);
@@ -343,6 +391,8 @@ export class SelfWarm {
   }
 
   onShutdown(): void {
+    const sh = this.shared();
+    if (sh.owner === this) sh.owner = null;
     this.abort();
     this.end("shutdown");
     this.deps.presence.disarm();
@@ -401,6 +451,10 @@ export class SelfWarm {
     this.graceTimer = null;
     this.gen += 1;
     this.deps.presence.disarm();
+    if (reason === "not_owned") {
+      const sh = this.shared();
+      if (sh.owner === this) sh.owner = null; // the owner stopped owning: free the claim for an instance that can warm
+    }
     if (this.st !== "watching") return;
     this.deps.trace({ event: "keepalive", outcome: "window_end", reason });
     this.st = reason === "error" || reason === "shutdown" || reason === "model_change" || reason === "not_owned" ? "off" : "ended";
@@ -478,7 +532,7 @@ export class SelfWarm {
       if (gen !== this.gen || this.st !== "watching") return;
       const d = this.deps;
       const p = d.policy();
-      if (!p || !this.owns()) return this.end("not_owned");
+      if (!p || !this.owns() || this.shared().owner !== this) return this.end("not_owned");
       if (this.inFlight || this.compacting) return; // the request end or the compaction end reschedules
       if (d.queued()) return this.arm(QUEUED_RETRY_MS);
       const due = this.dueAt();
@@ -514,12 +568,11 @@ export class SelfWarm {
       this.budget.note({ input: Number(u.input) || 0, output: Number(u.output) || 0, cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0 });
       this.warmsSent += 1;
       d.trace({ event: "keepalive", outcome: "fired", source: "foreman", reason: view.reason, tier: view.tier, presence: view.presence, cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0, cost: line?.cost.total ?? (Number(u.cost?.total) || 0) });
-      if (!this.missChecked) {
-        this.missChecked = true;
-        if ((Number(u.cacheWrite) || 0) >= (Number(u.cacheRead) || 0)) {
-          this.disabled = true;
-          return this.end("self_warm_miss");
-        }
+      // a completed warm that did not read the cache (cacheRead 0, or more written than read) ends warming for the whole session
+      const cr = Number(u.cacheRead) || 0;
+      if (cr === 0 || (Number(u.cacheWrite) || 0) >= cr) {
+        this.shared().missed = true;
+        return this.end("self_warm_miss");
       }
       const next = this.nextWarmRefused();
       if (next) return this.refuse(next.hit, next.view, "post_warm", true);
