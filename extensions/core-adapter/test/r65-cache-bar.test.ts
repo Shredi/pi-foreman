@@ -66,13 +66,13 @@ for (const which of ["unicode", "emoji", "nerd", "ascii"] as const) {
     const tg = tierGlyphs(which);
     assert.equal(line1(s()), `${HEAD}■■■■■■■■■□ 38:12 ${sym.keepalive} 3 ${tg.half} · ${sym.downshift} ${RUNG}`, "warm, 3 left");
     assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1) })), `${HEAD}■■■■■■■■□□ 38:12 ${sym.keepalive} last ${tg.half} · ${sym.downshift} ${RUNG}`, "last warm");
-    assert.equal(line1(s({ warmsLeft: 0, spanEndAt: spanEnd(0) })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "budget spent: counting to cold");
+    assert.equal(line1(s({ warmsLeft: 0, spanEndAt: spanEnd(0) })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 0 ${tg.half} · ${sym.downshift} ${RUNG}`, "budget spent: counting to cold");
     assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1), tier: "quarter" })), `${HEAD}■■■■■■■■□□ 38:12 ${sym.keepalive} last ${tg.quarter} · ${sym.downshift} ${RUNG}`, "quarter tier");
-    assert.equal(line1(s({ lastTouch: null, nextWarmAt: null })), `${HEAD}□□□□□□□□□□ ${sym.cold} cold · ${sym.downshift} ${RUNG}`, "cold");
+    assert.equal(line1(s({ lastTouch: null, nextWarmAt: null })), `${HEAD}□□□□□□□□□□ ${sym.cold} cold ${sym.keepalive} 0 ${tg.half} · ${sym.downshift} ${RUNG}`, "cold");
     assert.equal(line1(s({ downshifted: true })), `${HEAD}■■■■■■■■■□ 38:12 ${sym.keepalive} 3 ${tg.half}`, "downshifted: no step");
-    assert.equal(line1(s({ running: true })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "running turn: no warms");
-    assert.equal(line1(s({ policy: policy({ active: false, skip: "disabled" }) })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "keep-alive disabled");
-    assert.equal(line1(s({ policy: policy({ skip: "ttl_long", selfWarm: false }) })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "ttl_long without self-warm");
+    assert.equal(line1(s({ running: true })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 0 ${tg.half} · ${sym.downshift} ${RUNG}`, "running turn: no fresh count in the source = 0");
+    assert.equal(line1(s({ policy: policy({ active: false, skip: "disabled" }) })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 0 ${tg.half} · ${sym.downshift} ${RUNG}`, "keep-alive disabled");
+    assert.equal(line1(s({ policy: policy({ skip: "ttl_long", selfWarm: false }) })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 0 ${tg.half} · ${sym.downshift} ${RUNG}`, "ttl_long without self-warm");
     const preset = resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 300, byModel: [{ match: "claude-*", ttlSeconds: 3600 }], keepalive: { enabled: true } } } } }, "claude-bridge", "claude-opus-5-5");
     assert.equal(preset.skip, "ttl_long");
     assert.equal(preset.selfWarm, true);
@@ -82,7 +82,7 @@ for (const which of ["unicode", "emoji", "nerd", "ascii"] as const) {
 }
 
 test("a past cold deadline shows the cold state", () => {
-  assert.equal(line1(source({ now: NOW + 3_600_000 })), `${HEAD}□□□□□□□□□□ ❄ cold · ↓ ${RUNG}`);
+  assert.equal(line1(source({ now: NOW + 3_600_000 })), `${HEAD}□□□□□□□□□□ ❄ cold ♨ 0 ½ · ↓ ${RUNG}`);
 });
 
 test("hidden: no_entry, ttl_unknown, billing request, no model, footer.cacheBar false", () => {
@@ -113,8 +113,8 @@ const warm: CacheBarView = { share: 0.67, left: "38:12", cold: false, warms: { c
 test("the five width candidates, in order", () => {
   const c1 = `m · br · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 ½ · ↓ ${RUNG}`;
   const c2 = `m · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 ½ · ↓ ${RUNG}`;
-  const c3 = `m · ■□□□□ 10% of 200k · CH 98% · ■■■□□ 38:12 ♨ 3 ½ · ↓ ${RUNG}`;
-  const c4 = "m · ■□□□□ 10% of 200k · CH 98% · ■■■□□ 38:12";
+  const c3 = "m · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 ½";
+  const c4 = "m · ■□□□□ 10% of 200k · CH 98% · ■■■□□ 38:12 ♨ 3 ½";
   for (const c of [c1, c2, c3, c4]) assert.equal(plain(renderFooter(view(warm), visibleWidth(c), theme)[0]), c);
   const cut = plain(renderFooter(view(warm), visibleWidth(c4) - 4, theme)[0]);
   assert.ok(cut.endsWith("…") && cut.startsWith("m · ■□□□□ 10% of 200k"), cut);
@@ -122,7 +122,7 @@ test("the five width candidates, in order", () => {
 
 test("colour codes of the cells and time at 60 / 40 / 10 % left; unknown is dim", () => {
   const code = (share: number | null): string | undefined => {
-    const last = renderFooter({ ...view({ ...warm, share, step: null, warms: null }), cacheHit: null }, 200, theme)[0].split(" · ").pop() ?? "";
+    const last = renderFooter({ ...view({ ...warm, share, step: null, warms: { count: 0, tier: null } }), cacheHit: null }, 200, theme)[0].split(" · ").pop() ?? "";
     return last.match(/^\x1b\[(\d+)m/)?.[1];
   };
   assert.equal(code(0.6), CODE.success);
@@ -133,7 +133,7 @@ test("colour codes of the cells and time at 60 / 40 / 10 % left; unknown is dim"
   assert.equal(code(0.2), CODE.error);
   assert.equal(code(0.1), CODE.error);
   assert.equal(code(null), CODE.dim);
-  const cold = renderFooter(view({ ...warm, cold: true, left: null, warms: null }), 200, theme)[0];
+  const cold = renderFooter(view({ ...warm, cold: true, left: null, warms: { count: 0, tier: null } }), 200, theme)[0];
   assert.ok(cold.includes(`\x1b[${CODE.error}m□□□□□□□□□□ ❄ cold`), cold);
 });
 

@@ -14,8 +14,8 @@ export interface CacheBarView {
   left: string | null;
   /** The cache is cold: empty red cells and the cold word. */
   cold: boolean;
-  /** Warms still to come in the active tier (at least 1) and the tier; null = none scheduled. */
-  warms: { count: number; tier: "half" | "quarter" | null } | null;
+  /** Warms a warm stretch allows (running: a fresh one's; 0 = none) and the tier that holds; always set while the bar shows, tier null = unknown. */
+  warms: { count: number; tier: "half" | "quarter" | null };
   /** The idle model id of the step after the warms; null = no step. */
   step: string | null;
   glyphs: { keepalive: string; cold: string; downshift: string; half: string; quarter: string };
@@ -122,29 +122,26 @@ function cacheSegment(hit: number, theme: FooterTheme): string {
   return theme.fg(color, `CH ${Math.round(hit)}%`);
 }
 
-/** Cache-timer bar: cells drain with the share of the projected warm span left (green above 50 %, yellow above 20 %, red at or below, dim unknown); `reduced` keeps cells and time only. */
-function cacheBarSegment(c: CacheBarView, cells: number, reduced: boolean, theme: FooterTheme): string {
-  if (c.cold) return theme.fg("error", `${"□".repeat(cells)} ${c.glyphs.cold} cold`);
+/** Cache-timer bar: cells drain with the share of the projected warm span left (green above 50 %, yellow above 20 %, red at or below, dim unknown); the warm part (`♨ N` and the tier glyph) always follows. */
+function cacheBarSegment(c: CacheBarView, cells: number, theme: FooterTheme): string {
+  const warmPart = ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}${c.warms.tier ? ` ${c.warms.tier === "half" ? c.glyphs.half : c.glyphs.quarter}` : ""}`;
+  if (c.cold) return theme.fg("error", `${"□".repeat(cells)} ${c.glyphs.cold} cold`) + warmPart;
   const color: FooterColor = c.share === null ? "dim" : c.share > 0.5 ? "success" : c.share > 0.2 ? "warning" : "error";
   const filled = c.share === null ? 0 : Math.min(cells, Math.max(0, Math.round(c.share * cells)));
   let out = theme.fg(color, "■".repeat(filled) + "□".repeat(cells - filled));
   if (c.left !== null) out += ` ${theme.fg(color, c.left)}`;
-  if (!reduced && c.warms) {
-    out += ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}`;
-    if (c.warms.tier) out += ` ${c.warms.tier === "half" ? c.glyphs.half : c.glyphs.quarter}`;
-  }
-  return out;
+  return out + warmPart;
 }
 
-function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; cells: number; reduced?: boolean }): string {
+function headline(v: FooterView, theme: FooterTheme, opts: { branch: boolean; cells: number; step: boolean }): string {
   const model = v.model ?? "no-model";
   const segments = [v.thinking ? `${model} • ${v.thinking}` : model];
   if (opts.branch && v.branch) segments.push(v.branch);
   segments.push(contextBar(v.contextPercent, v.contextWindow, v.contextPoint, opts.cells, theme));
   if (v.cacheHit !== null) segments.push(cacheSegment(v.cacheHit, theme));
   if (v.cache) {
-    segments.push(cacheBarSegment(v.cache, opts.cells, opts.reduced === true, theme));
-    if (v.cache.step && !opts.reduced) segments.push(`${v.cache.glyphs.downshift} ${v.cache.step}`);
+    segments.push(cacheBarSegment(v.cache, opts.cells, theme));
+    if (v.cache.step && opts.step) segments.push(`${v.cache.glyphs.downshift} ${v.cache.step}`);
   }
   return segments.join(" · ");
 }
@@ -155,15 +152,15 @@ export function sanitizeStatus(text: string): string {
 }
 
 /**
- * Line 1 drops the branch first, then shrinks the bars to 5 cells, then the cache bar to cells and time; a line still too wide is cut with `…`.
+ * Line 1 drops the branch first, then the `↓ <id>` step, then shrinks the bars to 5 cells (the cache bar keeps its warm part); a line still too wide is cut with `…`.
  * Line 2 is the usage text, then ` · ` and the other extensions' statuses, dimmed.
  */
 export function renderFooter(v: FooterView, width: number, theme: FooterTheme): string[] {
   const candidates = [
-    { branch: true, cells: 10 },
-    { branch: false, cells: 10 },
-    { branch: false, cells: 5 },
-    { branch: false, cells: 5, reduced: true },
+    { branch: true, cells: 10, step: true },
+    { branch: false, cells: 10, step: true },
+    { branch: false, cells: 10, step: false },
+    { branch: false, cells: 5, step: false },
   ].map((opts) => headline(v, theme, opts));
   const line1 = candidates.find((line) => visibleWidth(line) <= width) ?? candidates[candidates.length - 1];
   const foreign = v.statuses.map(sanitizeStatus).filter((s) => s !== "").join(" ");

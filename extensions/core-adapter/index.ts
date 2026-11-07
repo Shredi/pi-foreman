@@ -548,6 +548,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       nextWarmAt: snap.state === "watching" && snap.budget ? snap.nextWarmAt : null,
       spanEndAt: snap.spanEndAt,
       warmsLeft: snap.warmsLeft,
+      warmsFresh: snap.warmsFresh,
       tier: snap.tier ? snap.tier.tier : null,
       running: s.running,
       downshifted: idleModel.downshifted(),
