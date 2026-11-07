@@ -18,7 +18,8 @@ still live. Nothing else: no fallback to whatever ledger sits in
 new LEDGER-<topic>.md (writing or editing a ledger binds the session).
 Parsing shares the stop guard's fence handling and open-item regex, so
 items inside ``` fences are never touched. Edits are atomic (temp file
-in the same directory + os.replace), keep the file's line endings and
+in the same directory + os.replace, retried briefly on Windows
+PermissionError), keep the file's line endings and
 trailing newline, and never create a ledger. Exit 0 on success, 1 on
 any refusal (file unchanged), 2 on usage errors.
 """
@@ -29,6 +30,7 @@ import re
 import stat
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ledger_guard_stop import OPEN_ITEM_RE, _fence_mask  # noqa: E402
@@ -129,13 +131,27 @@ class Ledger:
                 os.chmod(tmp, stat.S_IMODE(os.stat(self.path).st_mode))
             except OSError:
                 pass
-            os.replace(tmp, self.path)
+            _replace_with_retry(tmp, self.path)
         except BaseException:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
             raise
+
+
+def _replace_with_retry(src, dst):
+    """os.replace, retried on PermissionError (Windows: a reader or scanner holds dst open)."""
+    delay = 0.01
+    for attempt in range(10):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.2)
 
 
 def _require_open(led, i, ident, verb):
