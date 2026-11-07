@@ -23,7 +23,7 @@ const radarRoot = () => treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5"
 const hcAttach = (address, target, over = {}) => ({ address, state: "live", argv: ["hc", "attach", target], ...over });
 
 // Local agent t5 (space 1, joined to the radar root) plus `agents` / `terminals` on top; machine "m" has no radar of its own.
-function render({ agents = [], terminals = [], spaces = [] }) {
+function render({ agents = [], terminals = [], spaces = [], noRemote = false }) {
   stubs.world.agents = [{ address: "t5", pane: "p1", space: 1, space_name: "s", status: "idle", program: { name: "pi" } }, ...agents];
   stubs.world.terminals = [{ address: "t5", state: "live", foreground: { pid: 7 } }, ...terminals];
   stubs.world.spaces = spaces;
@@ -31,7 +31,7 @@ function render({ agents = [], terminals = [], spaces = [] }) {
   stubs.world.runCalls = [];
   const mod = Object.create(Mod.prototype);
   mod.changed = {}; mod.feed = []; mod.folded = new Set();
-  mod.radar = new Map([["local", { ok: true, tree: [radarRoot()], openPrs: [], tried: Date.now() }], ["m", { ok: false, tried: Date.now() }]]);
+  mod.radar = new Map([["local", { ok: true, tree: [noRemote ? treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5" })) : radarRoot()], openPrs: [], tried: Date.now() }], ["m", { ok: false, tried: Date.now() }]]);
   mod.busy = new Map(); mod.recs = new Map(); mod.childPi = new Set();
   mod.poll = () => {};
   return { mod, root: mod.render({}) };
@@ -81,6 +81,20 @@ test("a listed attach of a drawn remote session is no group of its own, and no f
   assert.ok(!byId(root, "agent:m/t9").length, "no row of its own");
   assert.ok(!texts(root).some((x) => /No foreman radar on m/.test(x)));
   assert.ok(byId(root, "name:").some((e) => texts(e).includes("fix@m")), "the remote card still renders");
+});
+
+const plain = { address: "m/p1", pane: "p2", space: 2, space_name: "mspace", status: "idle", program: { name: "pi" } };
+
+test("no radar record for m, but the local radar shows a session on m: the group header stays, no hint", () => {
+  const { root } = render({ agents: [plain], spaces: mSpace });
+  assert.equal(byId(root, "sp-2").length, 1, "its space header");
+  assert.ok(!texts(root).some((x) => /No foreman radar on m/.test(x)));
+});
+
+test("control: no radar record for m and no session on m in the local radar: the hint is shown", () => {
+  const { root } = render({ agents: [plain], spaces: mSpace, noRemote: true });
+  assert.equal(byId(root, "sp-2").length, 1, "its space header");
+  assert.ok(texts(root).some((x) => /No foreman radar on m \(set props\.foreman\)/.test(x)));
 });
 
 test("control: an attach of an unknown target keeps its group and row", () => {

@@ -499,8 +499,10 @@ export function attachName(machine, child) {
  *  (`{kind:"focus", address}`), else open one (`{kind:"open", target, name}`); null for a node that is not a remote session
  *  with a terminal. `all` are the local terminal records; `attachOf(address, record)` may add a target learned elsewhere (`hc get`). */
 export function remoteClick(node, all, attachOf = () => "") {
-  if (!isObj(node) || !node.machine || !node.hcTerminal) return null;
+  if (!isObj(node) || !node.machine || typeof node.hcTerminal !== "string" || !node.hcTerminal) return null;
   const target = node.hcTerminal.includes("/") ? node.hcTerminal : `${node.machine}/${node.hcTerminal}`;
+  const shape = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._][A-Za-z0-9._-]*$/;
+  if (typeof node.machine !== "string" || !shape.test(target) || !shape.test(`${node.machine}/${target.slice(target.indexOf("/") + 1)}`)) return null;
   const have = (Array.isArray(all) ? all : []).find((k) => isObj(k) && k.state === "live" && typeof k.address === "string" && (parseAttachTarget(k) || attachOf(k.address, k) || "") === target);
   return have ? { kind: "focus", address: have.address } : { kind: "open", target, name: attachName(node.machine, node.key || node.name) };
 }
