@@ -15,6 +15,17 @@ It installs together with `pi-foreman/` (the Agents mod): that mod publishes the
 
 The Agents mod's header has a "📄 Plan" button that brings the panel forward.
 
+## Note tab, diagrams, code
+
+- A `Note` tab appears when the session published a note (`foreman_show`). A note newer than the one seen before opens the panel (selects
+  the block, shows the hidden panel around it) and switches to that tab; the first sight of a session does not. Block and panel ids are
+  found by searching the shown layout for this mod, with the `foreman.json` ids (`panel-body`, `plan`, `panel`) as fallback. When the layout
+  has no such block, a notification says to add `{ "mod": "pi-foreman-plan" }` to a stack.
+- Code fences render in a read-only highlighted editor (language from the info string).
+- A `mermaid` fence whose sha256 (same fence rule as the harness, `tests/fixtures/mermaid-fences.json`) is listed in `fences` of the JSON
+  shows the rendered SVG; otherwise it stays a `mermaid` code block. The SVG is checked against an element allow-list (no script, href,
+  url(), style, foreignObject), then copied to `mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home, where the host reads it.
+
 ## Anchor
 
 The panel shows the foreman of the agent terminal that owns the tab's pane, never the keyboard focus. A focused floating child at most
@@ -30,9 +41,10 @@ re-read when those bytes change or the folder watch fires. Nothing is written.
 
 - Plans written through the shell are not observed; remote child sessions show no tab.
 - Marks stop above 4000 lines per side or 1500 changed lines.
-- Images never load (`![` is escaped everywhere, code spans and fences included); only `https://` links open, through the platform opener.
+- Markdown images never load (`![` is escaped everywhere, code spans and fences included); only checked diagram SVGs are shown; only `https://` links open, through the platform opener.
 - HTML tags are removed except `del, br, sub, sup, kbd`; `<mark>` is shown as bold because the host paints it as a yellow background under the theme's text colour.
-- The SVG cache, once diagrams ship, has no pruning API and grows without bound.
+- The SVG cache has no delete, stat or realpath API: it is not pruned (it grows by two files per distinct diagram) and the cache path is
+  built from the sha and theme only, with the content allow-list as the check.
 - `model.js` holds copies of a few helpers from `../pi-foreman/model.js` (the loader refuses cross-mod imports); `model.parity.test.mjs` keeps them equal.
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.

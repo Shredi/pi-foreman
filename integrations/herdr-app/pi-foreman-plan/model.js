@@ -408,44 +408,81 @@ function sanitizeOnce(md, links, hard) {
   const out = [];
   const st = { comment: false, links, mark: 0, hard };
   let open = null;
+  let openIndent = 0;
   for (let line of lines) {
+    line = line.replace(/[\u0001\u0002]/g, ""); // placeholder bytes never survive, in code spans and fences included
     if (open) {
-      out.push(line);
-      if (fenceCloses(line, open)) open = null;
-      continue;
+      // A fence inside a list item ends where the item does: a text line indented less than the fence is outside it for
+      // the renderer, so here it is prose again (never raw HTML kept as code).
+      const leave = !fenceCloses(line, open) && openIndent > 0 && line.trim() !== "" && /^ */.exec(line)[0].length < openIndent;
+      if (leave) open = null;
+      else {
+        out.push(line);
+        if (fenceCloses(line, open)) open = null;
+        continue;
+      }
     }
     const f = st.comment ? null : fenceOpen(line);
-    if (f) { open = f; out.push(line); continue; }
-    line = line.replace(/[\u0001\u0002]/g, "");
-    // split off inline code spans: a run of n backticks closes at the next run of n backticks on the line
-    let res = "";
-    let i = 0;
-    while (i < line.length) {
-      const m = /`+/.exec(line.slice(i));
-      if (!m) { res += cleanText(line.slice(i), st); break; }
-      const s = i + m.index;
-      const run = m[0].length;
-      let close = -1;
-      for (let p = s + run; p < line.length;) {
-        const q = line.indexOf("`", p);
-        if (q < 0) break;
-        let e = q;
-        while (line[e] === "`") e++;
-        if (e - q === run) { close = q; break; }
-        p = e;
-      }
-      if (close < 0) { res += cleanText(line.slice(i, s + run), st); i = s + run; continue; }
-      res += cleanText(line.slice(i, s), st) + line.slice(s, close + run);
-      i = close + run;
-    }
-    if (st.mark > 0) { res += "\u0002"; st.mark = 0; } // an unclosed <mark> ends with its line
-    out.push(res.replace(/\u0001([^\u0002]*)\u0002/g, (_, t) => {
-      const b = t.trim();
-      return b ? `${t.slice(0, t.length - t.trimStart().length)}**${b}**${t.slice(t.trimEnd().length)}` : t;
-    }));
+    if (f) { open = f; openIndent = /^ */.exec(line)[0].length; out.push(line); continue; }
+    out.push(cleanLine(line, st));
   }
   // fail-safe: no code-span or fence detection decides this one, so every `![` is escaped, code included
   return out.join("\n").replace(/(\\*)!\[/g, (m, b) => (b.length % 2 ? m : `${b}!\\[`)); // `\![` is already inert
+}
+
+/** The backtick runs of a line, found in one pass: `runs` is `[{at, len}]`, `byLen` maps a length to the sorted run indexes. */
+function backtickRuns(line) {
+  const runs = [];
+  const byLen = new Map();
+  for (let i = 0; i < line.length; i++) {
+    if (line.charCodeAt(i) !== 96) continue;
+    let e = i;
+    while (line.charCodeAt(e) === 96) e++;
+    const list = byLen.get(e - i);
+    if (list) list.push(runs.length); else byLen.set(e - i, [runs.length]);
+    runs.push({ at: i, len: e - i });
+    i = e - 1;
+  }
+  return { runs, byLen };
+}
+
+/** The first entry of the sorted `list` above `k`, or -1. */
+function nextAbove(list, k) {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (list[mid] > k) hi = mid; else lo = mid + 1; }
+  return lo < list.length ? list[lo] : -1;
+}
+
+/** One prose line: inline code spans stay as written, the rest goes through cleanText. A run of n backticks closes at the next
+ *  run of n backticks on the line; a backtick after an odd number of backslashes is a literal character, not an opener. The runs
+ *  are scanned once per line, so a long line of runs costs O(n log n), not O(n^2). */
+function cleanLine(line, st) {
+  const { runs, byLen } = backtickRuns(line);
+  let res = "";
+  let i = 0;
+  let k = 0;
+  while (i < line.length) {
+    while (k < runs.length && runs[k].at < i) k++;
+    if (k >= runs.length) { res += cleanText(line.slice(i), st); break; }
+    let s = runs[k].at;
+    let run = runs[k].len;
+    let bs = 0;
+    while (s - bs - 1 >= 0 && line[s - bs - 1] === "\\") bs++;
+    if (bs % 2 === 1) { s++; run--; } // a backslash-escaped backtick is text
+    if (run === 0) { res += cleanText(line.slice(i, s), st); i = s; k++; continue; }
+    const j = byLen.has(run) ? nextAbove(byLen.get(run), k) : -1;
+    if (j < 0) { res += cleanText(line.slice(i, s + run), st); i = s + run; k++; continue; }
+    const close = runs[j].at;
+    res += cleanText(line.slice(i, s), st) + line.slice(s, close + run);
+    i = close + run;
+    k = j + 1;
+  }
+  if (st.mark > 0) { res += "\u0002"; st.mark = 0; } // an unclosed <mark> ends with its line
+  return res.replace(/\u0001([^\u0002]*)\u0002/g, (_, t) => {
+    const b = t.trim();
+    return b ? `${t.slice(0, t.length - t.trimStart().length)}**${b}**${t.slice(t.trimEnd().length)}` : t;
+  });
 }
 
 // ---- anchor --------------------------------------------------------------------------------------------------------
@@ -491,6 +528,7 @@ export function parseMeta(text) {
     title: s(d.title, 300), v: Number.isInteger(d.v) ? d.v : 0, at: Number.isFinite(Date.parse(d.at)) ? Date.parse(d.at) : null,
     hash: s(d.hash, 128), ruledPath: typeof d.ruledPath === "string" ? s(d.ruledPath) : null, ruledHash: s(d.ruledHash, 128),
     prevHash: s(d.prevHash, 128), fences: Array.isArray(d.fences) ? d.fences.filter((f) => typeof f === "string").slice(0, 64) : [],
+    diagrams: checkDiagrams(d.diagrams),
   };
 }
 
@@ -504,4 +542,151 @@ export function isLight(bg) {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(String(bg));
   if (!m) return false;
   return (0.2126 * parseInt(m[1], 16) + 0.7152 * parseInt(m[2], 16) + 0.0722 * parseInt(m[3], 16)) / 255 > 0.5;
+}
+
+// ---- code fences, diagrams -----------------------------------------------------------------------------------------
+
+const LANG_ALIAS = { ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript", py: "python", sh: "bash", zsh: "bash", shell: "bash", yml: "yaml", rs: "rust", md: "markdown" };
+
+/** The language of a fence info string: its first word, lower-cased, common aliases mapped; "" (plain) when empty or no plain identifier. */
+export function fenceLang(info) {
+  const w = String(info ?? "").trim().split(/\s+/)[0].toLowerCase();
+  if (!/^[a-z0-9_+#-]{1,24}$/.test(w)) return "";
+  return LANG_ALIAS[w] ?? w;
+}
+
+const U32 = 0x100000000;
+const primes = (n) => {
+  const out = [];
+  for (let c = 2; out.length < n; c++) if (out.every((p) => c % p !== 0)) out.push(c);
+  return out;
+};
+const K256 = primes(64).map((p) => Math.floor((Math.cbrt(p) % 1) * U32) >>> 0);
+const H256 = primes(8).map((p) => Math.floor((Math.sqrt(p) % 1) * U32) >>> 0);
+
+/** UTF-8 bytes of a string (lone surrogates become U+FFFD, as TextEncoder does). */
+export function utf8(s) {
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i);
+    if (c >= 0xd800 && c < 0xdc00 && i + 1 < s.length && s.charCodeAt(i + 1) >= 0xdc00 && s.charCodeAt(i + 1) < 0xe000) {
+      c = 0x10000 + ((c - 0xd800) << 10) + (s.charCodeAt(++i) - 0xdc00);
+    } else if (c >= 0xd800 && c < 0xe000) c = 0xfffd;
+    if (c < 0x80) out.push(c);
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+  }
+  return out;
+}
+
+/** sha256 of the UTF-8 bytes of `s`, lower-case hex (pure JS: the herdr-app runtime has no hashing API). */
+export function sha256(s) {
+  const bytes = utf8(String(s));
+  const bits = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  for (const x of [Math.floor(bits / U32), bits >>> 0]) bytes.push((x >>> 24) & 255, (x >>> 16) & 255, (x >>> 8) & 255, x & 255);
+  const h = H256.slice();
+  const w = new Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let p = 0; p < bytes.length; p += 64) {
+    for (let i = 0; i < 16; i++) w[i] = ((bytes[p + 4 * i] << 24) | (bytes[p + 4 * i + 1] << 16) | (bytes[p + 4 * i + 2] << 8) | bytes[p + 4 * i + 3]) >>> 0;
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3);
+      const s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10);
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+    let [a, b, c, d, e, f, g, hh] = h;
+    for (let i = 0; i < 64; i++) {
+      const t1 = (hh + (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) + ((e & f) ^ (~e & g)) + K256[i] + w[i]) >>> 0;
+      const t2 = ((rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) + ((a & b) ^ (a & c) ^ (b & c))) >>> 0;
+      hh = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    const add = [a, b, c, d, e, f, g, hh];
+    for (let i = 0; i < 8; i++) h[i] = (h[i] + add[i]) >>> 0;
+  }
+  return h.map((x) => x.toString(16).padStart(8, "0")).join("");
+}
+
+/** What a fence block holds: `{text, lang, closed, mermaid, sha}`. `text` is the inner lines joined by LF; a mermaid fence (shared
+ *  rule with the harness, tests/fixtures/mermaid-fences.json) opens and closes at column 0, `mermaid` is the first info word;
+ *  `sha` is the sha256 of its text, null otherwise. */
+export function fenceInfo(lines, block) {
+  const closed = block.fenceMarkers.length === 2;
+  const text = lines.slice(block.start + 1, closed ? block.end - 1 : block.end).join("\n");
+  const col0 = (l) => /^(?:`{3,}|~{3,})/.test(l ?? "");
+  const mermaid = closed && col0(lines[block.start]) && col0(lines[block.end - 1]) && String(block.info ?? "").trim().split(/\s+/)[0] === "mermaid";
+  return { text, lang: fenceLang(block.info), closed, mermaid, sha: mermaid ? sha256(text) : null };
+}
+
+const SVG_MAX_BYTES = 512 * 1024;
+const SVG_ALLOWED = new Set(["svg", "g", "rect", "path", "text", "tspan", "line", "polyline", "polygon", "circle", "ellipse", "marker", "defs"]);
+const MARKER_REF = /\bmarker-(?:start|mid|end)="url\(#[A-Za-z0-9_-]+\)"/g;
+
+/** The allow-list check of a diagram SVG (the harness runs the same before it writes): null when fine, else the reason. */
+export function validateSvg(svg) {
+  if (typeof svg !== "string") return "not_text";
+  if (utf8(svg).length > SVG_MAX_BYTES) return "too_large";
+  if (!/^\s*<svg[\s>]/.test(svg)) return "not_svg";
+  if (/<!|<\?/.test(svg)) return "declaration";
+  if (/foreignObject|<script/i.test(svg)) return "active_content";
+  if (/\bhref\s*=/i.test(svg)) return "href";
+  if (/\bon[a-z]+\s*=/i.test(svg)) return "event_attribute";
+  if (/url\(/i.test(svg.replace(MARKER_REF, ""))) return "url";
+  if (/var\(/i.test(svg)) return "var";
+  if (/@import|color-mix\(|javascript:/i.test(svg)) return "unsupported";
+  for (const m of svg.matchAll(/<\/?\s*([A-Za-z][\w:-]*)/g)) if (!SVG_ALLOWED.has(m[1])) return `element:${m[1].slice(0, 20)}`;
+  return null;
+}
+
+/** `{w, h}` from the root element's width and height attributes (clamped to 40..4000), or null. */
+export function svgSize(svg) {
+  const tag = /^\s*<svg\b[^>]*>/.exec(String(svg))?.[0] ?? "";
+  const w = Number(/\swidth="([\d.]+)"/.exec(tag)?.[1]);
+  const h = Number(/\sheight="([\d.]+)"/.exec(tag)?.[1]);
+  if (!(w > 0) || !(h > 0)) return null;
+  return { w: Math.min(4000, Math.max(40, w)), h: Math.min(4000, Math.max(40, h)) };
+}
+
+/** A diagrams list from plan.json / note.json to the checked entries `{sha, dark, light}`: sha is 64 hex and both paths are exactly
+ *  `diagrams/<sha>-dark.svg` / `-light.svg` (relative, no `..`). At most 32. */
+export function checkDiagrams(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const d of list) {
+    if (!isObj(d) || typeof d.sha !== "string" || !/^[0-9a-f]{64}$/.test(d.sha)) continue;
+    if (d.dark !== `diagrams/${d.sha}-dark.svg` || d.light !== `diagrams/${d.sha}-light.svg`) continue;
+    out.push({ sha: d.sha, dark: d.dark, light: d.light });
+    if (out.length >= 32) break;
+  }
+  return out;
+}
+
+/** Where the panel block of `mod` sits in a layout tree: `{stack, show}` ids to pass to layout.select (the stack and the block)
+ *  and layout.show (the hidden ancestor, else the stack's parent), or null when the tree has no such block. */
+export function findPanelBlock(tree, mod) {
+  const walk = (n, chain) => {
+    if (!isObj(n)) return null;
+    const here = [...chain, n];
+    if (n.type === "block" && isObj(n.content) && n.content.mod === mod) return { block: n, chain };
+    for (const c of Array.isArray(n.children) ? n.children : []) {
+      const hit = walk(c, here);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const hit = walk(tree, []);
+  if (!hit || typeof hit.block.id !== "string") return null;
+  const up = [...hit.chain].reverse();
+  const si = up.findIndex((n) => n.type === "stack" && typeof n.id === "string");
+  const stack = si >= 0 ? up[si] : null;
+  const hidden = up.find((n) => n.hidden === true && typeof n.id === "string");
+  const show = hidden ?? (si >= 0 ? up.slice(si + 1).find((n) => typeof n.id === "string") : null) ?? null;
+  return { block: hit.block.id, stack: stack?.id ?? null, show: show?.id ?? null };
+}
+
+/** The app-home relative cache path of a diagram, or null for a bad sha or theme. */
+export function cachePath(sha, theme) {
+  return /^[0-9a-f]{64}$/.test(sha) && (theme === "dark" || theme === "light") ? `mods/pi-foreman-plan/cache/${sha}-${theme}.svg` : null;
 }

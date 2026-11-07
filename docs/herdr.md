@@ -752,8 +752,13 @@ dependency; a missing one is traced once per session (`show_diagram`, `module_mi
 
 Limits: a plan written through the shell is not observed; remote child sessions have no live file on this computer, so a parent shows no tab
 for them; marks stop above 4000 lines per side or 1500 changed lines (the header says so); sidecars of older versions stay in the session's show
-dir until the session's live file is gone and the dir is pruned; the mod's SVG
-cache, once diagrams ship, has no pruning API and grows without bound.
+dir until the session's live file is gone and the dir is pruned; the mod copies each checked SVG to
+`mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home (the host reads images only from there) and, with no delete API, never prunes it.
+
+**What the mod does.** A new note (radar `show.note` above the last seen value; a first sight only records it) selects the panel block and shows
+its hidden panel, then switches to the Note tab; block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
+layout has no `pi-foreman-plan` block, one notification says to add it. Fences render in a read-only highlighted editor; a listed mermaid fence
+shows its SVG after the mod's own allow-list check, else a `mermaid` code block.
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.
 
