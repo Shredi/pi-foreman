@@ -558,7 +558,7 @@ machine stays on the radar node, as before: an address is relative to its viewer
 
 The remote `open --machine` path runs over `hc exec --on`; the remote then runs `hc run` locally on that machine (see [sessions](sessions.md#remote-child-sessions)). `sessions.hc.outliveParent` (default `true`) passes `--outlive-parent`,
 so a parent crash never kills a child with uncommitted work; set `false` to let hc end the child with its parent. A child
-nests under the terminal that opened it; `--focus` is ignored for a local child (it has no pane of its own; a remote child's `--focus` runs `herdr-app do agent.focus` here) and `foreman close` still asks
+nests under the terminal that opened it; `--focus` is ignored for a local child (it has no pane of its own; a remote child's `--focus` runs `herdr-app do agent.focus` here, on the local attach terminal when one started) and `foreman close` still asks
 the child over intercom. The child runs as `hc run --json --bg --no-notify --keep --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent] -- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
 `powershell -NoProfile -Command "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID …; $env:PATH = '…'; <the usual PowerShell line>"`.
 Three decisions:
@@ -574,6 +574,13 @@ Three decisions:
 
 A local child gets no `herdr.space` or `herdr.tab` label, so herdr-app shows it as a sub-agent (a floating window) of the
 parent's tab, not in a tab of its own. Keeping it as a tab stays available to the user in herdr-app.
+
+A remote child (`--machine`) lives under the remote machine's hc. When the opener runs inside an hc terminal, a second, local
+terminal is started for it: `hc run … --rm … -- hc attach <machine>/<t>`, named `fm-<machine>-<slug>-<hex4>` (machine lowercased, other characters `-`; at most 32 characters, slug cut first, then machine; so herdr-app shows the machine), with no herdr labels, so
+it floats in the parent's tab like a local child. It uses `--rm` instead of `--keep`: Ctrl+\ (detach), the remote child
+ending, or `close-remote` ends it and no terminal stays. The registry entry records it as `attach: {address}`. Without an hc
+terminal the open prints `attach: hc attach <machine>/<t>` to run by hand. See
+[remote child sessions](sessions.md#remote-child-sessions).
 
 `foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent, space}`
 (`space` is `null` for a local child; a remote child records its machine's space).
