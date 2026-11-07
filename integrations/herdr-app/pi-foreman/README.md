@@ -2,7 +2,7 @@
 
 An Agents view for herdr-app with the foreman rows built in under each agent that is a pi-foreman session. It replaces the
 shipped `agents` block in your cloned layout. Own code on the public mod API (`agents`, `terminals`, `focused`,
-`setAgentOrder`, `run`, `theme`, `exec`); no shipped mod source is copied.
+`setAgentOrder`, `run`, `theme`, `exec`, `setShared`, `readTextFile`); no shipped mod source is copied.
 
 ## What it shows
 
@@ -70,6 +70,14 @@ on Windows, never through `cmd` or a shell), on a chip click, and only for an `h
 whitespace, no `& | ^ < > " '`, no control characters. The URL is taken from radar: a `url` on the PR, else `<repository
 URL>/pull/<number>` from an `https://` `repoUrl`/`repo` that radar provides. The mod never derives a URL from a git remote.
 A chip opens the PR page when the installed pi-foreman reports PR URLs (the `url` of a PR dot in `foreman radar --json`); with an older pi-foreman that gives neither, chips stay plain.
+
+## Plan panel feed
+
+After each radar poll the mod publishes the parsed sessions with `setShared("pi-foreman.radar", …)` (only when their content changed;
+herdr-app keeps shared values in `shared.json`) for the sibling mod `pi-foreman-plan`. A session whose radar node carries `show`
+gets a "📄 plan vN · age" and a "📝 note · age" row; the version and age come from `plan.json` / `note.json` in `show.dir`, read
+with `readTextFile` (every 30 s or when the version hint moves). A click on a row pins the panel to that document and brings it forward
+(`layout.select` on the `panel-body` stack, then `layout.show`). Install the two mods together. See `docs/herdr.md#plan-panel`.
 
 ## Limits
 

@@ -526,6 +526,25 @@ def subtree_sids(data, sid):
     return out
 
 
+SHOW_DIR_MAX = 1024
+
+
+def clean_show(x):
+    """The live file's `show` pointer: only `dir`, `plan` and `note`, each type-checked. A `dir` over SHOW_DIR_MAX chars
+    drops the whole field (a truncated path is a wrong path); a bad version number is omitted."""
+    if not isinstance(x, dict):
+        return None
+    d = x.get("dir")
+    if not isinstance(d, str) or not d or len(d) > SHOW_DIR_MAX:
+        return None
+    out = {"dir": d}
+    for k in ("plan", "note"):
+        v = x.get(k)
+        if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+            out[k] = v
+    return out
+
+
 def new_node(kind, key, name):
     # own/tot: [in, out, cost, uncached]; uncached None = unknown (no usage file with the cache split)
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
@@ -655,6 +674,9 @@ def build(data, now):
             dots.append(dot)
         if dots:
             n["dots"] = dots
+        show = clean_show(d.get("show"))
+        if show:
+            n["show"] = show
         u = data["usage"].get(sid)
         runs = [r for r in (d.get("runs") or []) if isinstance(r, dict)]
         for r in runs:
@@ -1026,6 +1048,8 @@ def to_json_node(n, now, symbols):
             out["asks"] = n["asks"]
         if n.get("dots"):
             out["dots"] = n["dots"]
+        if n.get("show"):
+            out["show"] = n["show"]
         if n.get("repo"):  # the mod joins a feed PR to this session by repo and head branch
             out["repo"] = n["repo"]
         if n.get("branch"):

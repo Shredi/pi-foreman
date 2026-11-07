@@ -171,6 +171,53 @@ export function isPlanPath(raw: unknown, o: PlanOpts): boolean {
   return fold(o.platform)(path.dirname(real)) === fold(o.platform)(scratch) && PLAN_NAME.test(path.basename(real));
 }
 
+/** The real `<handoff dir>/plan.md` when `raw` names it (the file need not exist), else null. A relative `raw` resolves against `o.cwd`. */
+export function handoffPlanPath(raw: unknown, handoffDir: string | null | undefined, o: Pick<PlanOpts, "cwd" | "home" | "platform">): string | null {
+  const dir = handoffDir?.trim();
+  const abs = resolveToolPath(raw, o.cwd, o.home);
+  if (!dir || !path.isAbsolute(dir) || !abs) return null;
+  const f = fold(o.platform);
+  const realDir = realDeep(path.resolve(dir));
+  // Only the directory is resolved: a plan.md that is itself a symlink still matches by name, so the guarded read can refuse it and clear the path.
+  const real = path.join(realDeep(path.dirname(abs)), path.basename(abs));
+  return f(path.dirname(real)) === f(realDir) && path.basename(real) === HANDOFF_PLAN ? path.join(realDir, HANDOFF_PLAN) : null;
+}
+
+export const HANDOFF_PLAN = "plan.md";
+
+/**
+ * Guarded read of `<handoff dir>/plan.md` (a child session's plan): no symlink below the real handoff dir, a regular file with one hard link
+ * of at most 256 KiB, opened with O_NOFOLLOW and checked again by fstat (same inode and size). A file that fails is not read.
+ */
+export function readHandoffPlan(handoffDir: string, platform: string): { plan: { path: string; bytes: Buffer; hash: string } } | { error: string } {
+  const f = fold(platform);
+  if (!path.isAbsolute(handoffDir)) return { error: "the handoff dir is not absolute" };
+  const candidate = path.join(realDeep(path.resolve(handoffDir)), HANDOFF_PLAN);
+  if (f(realDeep(candidate)) !== f(candidate)) return { error: "the path passes through a symlink" };
+  let fd: number;
+  let first: fs.Stats;
+  try {
+    first = fs.lstatSync(candidate);
+    if (!first.isFile()) return { error: "not a regular file" };
+    if (first.nlink !== 1) return { error: "the file has more than one hard link" };
+    if (first.size > PLAN_MAX_BYTES) return { error: "the file is larger than 256 KiB" };
+    fd = fs.openSync(candidate, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return { error: "the file does not exist or cannot be read" };
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1 || st.size > PLAN_MAX_BYTES || st.ino !== first.ino || st.size !== first.size) return { error: "the file changed while it was read" };
+    const bytes = fs.readFileSync(fd);
+    if (bytes.length > PLAN_MAX_BYTES) return { error: "the file is larger than 256 KiB" };
+    return { plan: { path: candidate, bytes, hash: planVersionHash(bytes) } };
+  } catch {
+    return { error: "the file cannot be read" };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Why a builder launch is refused at this tier, or null. `currentHash` null = file gone or no longer valid. */
 export function builderLaunchRefusal(rec: PlanRecord | null | undefined, tier: string, currentHash: string | null): LaunchRefusal | null {
   if (tier !== "heavy") return null;

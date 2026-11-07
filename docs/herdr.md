@@ -686,6 +686,53 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 | `herdr pane open` backend | `foreman_session.py` `open_in_herdr` | replaced by `hc run` | no | TUI support dropped |
 | Remote sessions | `remotesession.ts`, `cmd_open_remote` | replaced by `hc exec --on` and a local `hc run` on the remote | no | done |
 
+## Plan panel
+
+**Experimental.** Two more herdr-app mods show what a session wants you to read, rendered, next to the Files and Changes panels:
+`integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel shows the plan of the foreman that owns the tab, rendered natively (headings, tables, code, task lists, links)
+with the blocks added or changed since the last ruling tinted and labelled NEW or CHANGED, a Diff view with the exact +/- lines, and one
+tab per child session that published a plan. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
+(above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
+click opens the panel on it. Install the panel together with the Agents mod; the two are one install.
+
+Install:
+
+1. Copy `integrations/herdr-app/pi-foreman-plan/` to `~/.config/herdr-app/mods/`, next to `pi-foreman/`; copy `pi-foreman/` again, the Agents
+   mod gained the plan rows and the header button.
+2. In your cloned layout (`~/.config/herdr-app/layouts/foreman.json`) add the panel to the `panel-body` stack, next to `files` and `changes`:
+
+   ```json
+   { "id": "plan", "type": "block", "content": { "mod": "pi-foreman-plan" } }
+   ```
+
+3. The "📄 Plan" button in the Agents header brings the panel forward on its Plan child; the plan and note rows under a session do the same
+   and pin it to that document. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
+   `tabs` mod has no slot for a third panel button, so the button lives in the Agents header.)
+4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman-plan`, then switch to the layout.
+
+**Anchor.** The panel belongs to the tab it sits in: it shows the foreman of the agent terminal that owns the tab's pane, joined to its radar
+session like the Agents mod does, not the terminal that has keyboard focus. A floating or peek child window (a child session opened with
+`hc run` has no tab labels and shows over the parent's tab) never switches the panel away; focusing it at most selects that child's tab
+inside the panel. Child plans are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
+focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session and document until the tab's
+foreman changes.
+
+**Data.** The panel reads `shared("pi-foreman.radar")` (published by the Agents mod after each radar poll, only when the sessions changed;
+herdr-app persists shared values in `shared.json`), and for the session on screen the two files `plan.json` and `note.json` in the `show.dir`
+that radar carries from the session's presence file, then the plan the JSON names and its two snapshots `plan.ruled.md` and `plan.prev.md`.
+Every 5 s it re-reads only the two JSON files and re-reads the documents only when those bytes changed or the watch on the plan's folder
+fired (`watchFolder`, local only; remote spaces poll). It writes nothing. Marks compare the plan with `plan.ruled.md` while it was edited after
+the last ruling, otherwise with `plan.prev.md`; only the body above the first appendix heading (`## Ruling`, `## Addendum`, `## Decision log`) is
+compared, and without a snapshot, or when the snapshot belongs to another plan path, there are no marks and no badge. The markdown is
+sanitised before it renders: `![` is escaped everywhere, code spans and fences included (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
+only when it is `https://`, through the platform opener (never a shell).
+
+Limits: a plan written through the shell is not observed; remote child sessions have no live file on this computer, so a parent shows no tab
+for them; marks stop above 4000 lines per side or 1500 changed lines (the header says so); mermaid fences render as code blocks; the mod's SVG
+cache, once diagrams ship, has no pruning API and grows without bound.
+
+Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.
+
 ## Known limits
 
 - The herdr-app mod's PR row ids are host-blind: two PRs with the same `owner/name#N` on two GitHub hosts get the same row id in the mod and can collide there. The feed and the tracker keep them apart; the mod's ids are to follow.

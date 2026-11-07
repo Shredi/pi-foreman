@@ -89,6 +89,11 @@ Exits: a `foreman_checkpoint` approval at any tier, or the user's `/foreman plan
 
 Child reads per launch: `ceremony.childReads.<role>.perFile` (builder 5, reviewer 2) adds that many reads to the deny for each file beyond 3 in the launch's `size.files`, capped at `max` (120). A builder or reviewer launch may set `reads: <positive int>` to name the deny itself; it is clamped to `max` with a note in the launch result. A group launch carries `reads` per entry only when the runtime supports per-entry bindings; otherwise the config defaults apply and the result says so. Trace `child_read_budget` carries the `allowance`.
 
+Plan publication (see [sessions](sessions.md#presence-files)): each observed save of the plan refreshes `plan.json` in the session's show dir, and the
+snapshots `plan.ruled.md` / `plan.prev.md` roll only at ruling points: a `foreman_checkpoint`, a `[plan-review]` launch that passed the guards
+(for the plan its task text names), and a child's `Plan from <label>: ` message to its parent. A plain save never rolls them, so the herdr-app
+[plan panel](herdr.md#plan-panel) can mark what changed since the version you reviewed, and an appended ruling or addendum is never marked.
+
 ## Pushed branches at finish
 
 When a triaged session finishes with no child run active (and is not waiting for its parent), the finish gate starts a background check of the branches the session pushed. A branch with no PR of any state (one `pr_find`), not the base branch and not already merged into it, gets one display-only warning, `pi-foreman: pushed branch <name> has no pull request (open one)`. The check runs after the gate's early returns, never blocks the finish, never reaches the model, and re-runs a branch at most every 10 minutes until it has an answer. A session that was never triaged passes the gate's first early return and gets the notice only from `/foreman close`. The evaluation order and the `merged` subcommand of `foreman_close.py` are in [close](close.md#pushed-branches-without-a-pr).

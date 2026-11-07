@@ -5,16 +5,18 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
-import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window } from "herdr";
+import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
 const REMOTE_MS = 15000;
 const RETRY_MS = 30000;
 const STUCK_MS = 45000; // a poll older than this is taken as lost
+const SHOW_EVERY_MS = 30000; // plan.json / note.json of a session are re-read this often (sooner when its version hint moves)
 const WATCHDOG_MS = 35000; // a radar exec older than this is given up
 const PRS_EVERY_MS = 30000; // `foreman prs poll` starts this long after its previous run ended
 const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given up
@@ -122,17 +124,69 @@ export default class ForemanAgents extends View {
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
           const doc = r.code === 0 ? parseRadarDoc(r.stdout) : null;
-          next = doc ? { ok: true, tree: buildTree(doc.nodes), openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : null;
+          next = doc ? { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() } : null;
         } catch {
           next = null;
         }
         next = next ?? keepRadar(this.radar.get(key));
         this.radar.set(key, next);
         this.busy.delete(key);
+        this.publish();
         cx.notify();
       });
     }
     this.pollRecords(cx, now);
+    this.pollShows(cx, now);
+  }
+
+  // The sessions of every machine's radar as shared state for the plan panel, rewritten only when they changed (shared values
+  // are persisted and every mod re-renders on a write).
+  publish() {
+    const machines = {};
+    for (const [key, rec] of this.radar) if (rec.ok) machines[key] = slimRadar(rec.nodes ?? []);
+    const text = JSON.stringify(machines);
+    if (text === this.published) return;
+    this.published = text;
+    guard(() => setShared("pi-foreman.radar", { machines }));
+  }
+
+  // plan.json / note.json of each session with a `show` pointer, for the age on its plan and note rows: re-read when the
+  // version hint changed, else every 30 s. A missing or bad file leaves the row without an age.
+  pollShows(cx, now) {
+    this.shows ??= new Map();
+    for (const [mk, rec] of this.radar) {
+      if (!rec.ok) continue;
+      const machine = mk === "local" ? null : mk;
+      for (const n of allSessions(rec.tree)) {
+        const s = n.show;
+        if (!s || (s.plan === undefined && s.note === undefined)) continue;
+        const id = `${mk}|${s.dir}`;
+        const hint = `${s.plan ?? ""}/${s.note ?? ""}`;
+        const have = this.shows.get(id);
+        const bk = `show:${id}`;
+        if (this.busy.has(bk) && now - this.busy.get(bk) > STUCK_MS) this.busy.delete(bk);
+        if (this.busy.has(bk) || (have && have.hint === hint && now - have.read < SHOW_EVERY_MS)) continue;
+        this.busy.set(bk, now);
+        cx.spawn(async (cx) => {
+          const one = async (name) => {
+            try { const text = await readTextFile(joinPath(s.dir, name), { on: machine }); return text === null ? null : parseShowMeta(text); } catch { return null; }
+          };
+          const plan = s.plan === undefined ? null : await one("plan.json");
+          const note = s.note === undefined ? null : await one("note.json");
+          this.shows.set(id, { hint, read: Date.now(), plan, note });
+          this.busy.delete(bk);
+          cx.notify();
+        });
+      }
+    }
+  }
+
+  // A click on a plan or note row: pin the panel to that session and document, bring the plan panel forward.
+  // The header button passes no node: it only brings the panel forward.
+  openPanel(node, kind) {
+    if (node) guard(() => setShared("pi-foreman.show", { key: node.key, kind, n: Date.now() }));
+    guard(() => run("layout.select", { stack: "panel-body", child: "plan" }));
+    guard(() => run("layout.show", { id: "panel" }));
   }
 
   // `foreman prs poll --json` per machine, 30 s after its previous run ended: it polls the tracked PRs and the PR search and writes
@@ -308,7 +362,11 @@ export default class ForemanAgents extends View {
     const line = statusLine(detail);
     const blocked = detail.blocked;
     const prs = root ? item.prs : item.below;
+    const shows = item.node?.show ? showRows(item.node.show, this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`), Date.now()) : [];
     const rows = [
+      ...(shows.length ? [h_flex().pl(ind + 20).pr(8).h(18).flex_none().items_center().gap(10)
+        .children(shows.map((r) => div().id(`show:${r.kind}:${item.id}`).flex_none().cursor_pointer().text_size(10.5).text_color(t.dim).hover((el) => el.text_color(t.foreground))
+          .on_click(() => this.openPanel(item.node, r.kind)).child(r.text)))] : []),
       ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
         .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : line.icon ? t.dim : t.muted).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
       ...(prs.length ? [this.prLine(t, item.node, prs, root, item.id, ind + 20)] : []),
@@ -445,8 +503,10 @@ export default class ForemanAgents extends View {
     const withPid = list.map((a) => ({ ...a, pid: all.find((x) => x.address === a.address)?.foreground?.pid ?? null }));
     const joined = new Map();
     const tops = [];
+    this.machineOf = new Map();
     for (const [key, rec] of this.radar) {
       if (!rec.ok) continue;
+      for (const n of allSessions(rec.tree)) this.machineOf.set(n, key);
       tops.push(...rec.tree);
       for (const [addr, n] of joinAgents(withPid, rec.tree, key === "local" ? null : key)) joined.set(addr, n);
     }
@@ -513,7 +573,11 @@ export default class ForemanAgents extends View {
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
-      .child(div().text_size(12).font_semibold().text_color(t.dim).child("Agents"));
+      .child(div().text_size(12).font_semibold().text_color(t.dim).child("Agents"))
+      .child(div().flex_1())
+      .child(h_flex().id("plan-open").h(22).px(8).items_center().rounded(11).cursor_pointer().text_size(11).text_color(t.muted)
+        .hover((el) => el.bg(t.hover).text_color(t.foreground))
+        .on_click(() => this.openPanel(null, null)).child("📄 Plan"));
     const empty = div().px(14).pb(4).text_size(12).text_color(t.dim).child("No agent status yet.");
     const scroller = v_flex().id("foreman-list").flex_1().min_h(0).px(6).gap(1)
       .overflow_y_scrollbar().mode("always").children(rows);

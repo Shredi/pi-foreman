@@ -109,6 +109,15 @@ export interface LiveFile {
   away?: true;
   /** The owner's presence as the warm tiers see it (presence probe plus the away grace); omitted when the adapter feeds none. */
   owner?: OwnerState;
+  /** The show dir (show.ts) and the versions published there; `dir` is an absolute path and is never truncated. Absent when the scratch root is disabled. */
+  show?: LiveShow;
+}
+
+/** The versions are hints: the reader re-reads plan.json and note.json in `dir`. */
+export interface LiveShow {
+  dir: string;
+  plan?: number;
+  note?: number;
 }
 
 export type OwnerState = "present" | "away" | "grace" | "unknown";
@@ -206,6 +215,8 @@ export class LiveState {
   }
   /** Cached repo and branch of the checkout (where.ts); set by the adapter after start. */
   where: (() => { repo: string | null; branch: string | null }) | null = null;
+  /** The show publisher's field (show.ts); set by the adapter after start. */
+  show: (() => LiveShow | undefined) | null = null;
   private constructor(init: LiveInit, mode: LiveMode, runs: () => RunView[], totals?: () => SessionTotals | null, waits?: () => LiveWait[], pressure?: () => { level: string; reasons: string[] } | null, dots?: () => LiveDot[]) {
     this.runs = runs;
     this.dotsOf = dots;
@@ -415,7 +426,13 @@ export class LiveState {
     } catch {
       // repo and branch are best effort
     }
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}) };
+    let show: LiveShow | undefined;
+    try {
+      show = this.show?.();
+    } catch {
+      // show is best effort
+    }
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}) };
   }
 
   private schedule(): void {

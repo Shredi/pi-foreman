@@ -24,13 +24,22 @@ export const v_flex = () => element("v_flex");
 export const Collapsible = { new: () => element("Collapsible") };
 export const HoverCard = { new: (id) => { const e = element("HoverCard"); e.cardId = id; return e; } };
 
-export const world = { agents: [], terminals: [], execCalls: [] };
+export const TextView = { markdown: (id, text) => { const e = element("TextView"); e.mdId = id; e.md = text; return e; } };
+
+// `files`: path -> text for readTextFile; `shared`: the shared store; `focus` / `panes`: what focused() and panes() answer.
+export const world = { agents: [], terminals: [], execCalls: [], files: new Map(), writes: [], shared: {}, focus: null, panes: [], reads: [], runCalls: [] };
 const palette = new Proxy({}, { get: (_t, k) => (typeof k === "string" ? `#${k}` : undefined) });
 export const agents = () => world.agents;
 export const terminals = () => world.terminals;
-export const focused = () => null;
+export const focused = () => world.focus;
+export const panes = () => world.panes;
+export const shared = (key) => world.shared[key];
+export const setShared = (key, value) => { world.shared[key] = value; return null; };
+export const readTextFile = async (path, options) => { world.reads.push([path, options?.on ?? null]); return world.files.get(path) ?? null; };
+export const writeTextFile = async (path, text) => { world.writes.push([path, text]); world.files.set(path, text); return null; };
+export const watchFolder = () => new Promise(() => {});
 export const spaces = () => [];
-export const run = () => {};
+export const run = (...call) => { world.runCalls.push(call); return null; };
 export const theme = () => palette;
 export const setAgentOrder = () => {};
 export const exec = async (...call) => { world.execCalls.push(call); return { code: 1, stdout: "" }; };
