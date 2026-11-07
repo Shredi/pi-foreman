@@ -35,7 +35,7 @@ test("NUL and 2>nul: no write on win32, a file (outside the child's dirs) on dar
   }
   for (const p of ["win32", "darwin", "linux"]) assert.equal(out("ls 2>/dev/null", p), false, p);
   // NUL names the device only as the whole target
-  assert.equal(out("ls > out/nul", "win32"), true);
+  assert.equal(out("ls > D:/elsewhere/nul", "win32"), true);
 });
 
 test("scratch substitution on win32: $FOREMAN_SCRATCH and a statement-position assignment resolve to the drive form, CRLF line ends included", () => {

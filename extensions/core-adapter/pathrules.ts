@@ -114,7 +114,7 @@ export function rootHolds(root: string, abs: string, platform: string, realpath?
     return !!rr && under(platform, rr, realSpelling(platform, abs, real, true), base) && (link || under(platform, rr, ra, base));
   }
   if (ra === abs) return true;
-  return under(platform, root, ra, base) || (!root.includes("*") && under(platform, longRoot(root), ra, base)) || (win && !root.includes("*") && under(platform, longRoot(root), ra, base));
+  return under(platform, root, ra, base) || (!root.includes("*") && under(platform, longRoot(root), ra, base));
 }
 
 /**

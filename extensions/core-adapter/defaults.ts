@@ -98,6 +98,11 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
   const ec = effectCtx(c.cwd, r.scratch, c.platform);
   ec.root = r.worktree;
   ec.noTmp = r.child || !r.tmpAccess;
+  if (r.realpath) {
+    const real = r.realpath;
+    ec.realpath = real;
+    ec.exists = (p) => real(p) !== null;
+  }
   ec.readRoots = [...(r.child ? [] : r.tmp), ...r.install, ...r.roundFlow, ...r.handoffs, ...(r.child ? [] : (r.workFolders ?? []).map((f) => f.path))];
   return ec;
 }

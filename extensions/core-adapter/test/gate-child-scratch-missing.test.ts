@@ -31,7 +31,8 @@ const outsideTool = (scratch: string, tool: string, input: unknown): boolean => 
   const r = decide(scratch, tool, input).result as { block?: boolean; rule?: string } | undefined;
   return !!r?.block && r.rule === "child-write-outside";
 };
-const outside = (scratch: string, command: string): boolean => outsideTool(scratch, "bash", { command });
+// an unquoted backslash is an escape to the shell parser: on win32 the commands spell paths with `/`
+const outside = (scratch: string, command: string): boolean => outsideTool(scratch, "bash", { command: posix ? command : command.replace(/\\/g, "/") });
 
 // [scratch root as bound, literal spelling of the same dir]: a plain missing dir, then the link and real spellings crossed
 const spellings: Array<[string, string]> = [
