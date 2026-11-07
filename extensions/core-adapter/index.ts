@@ -164,7 +164,7 @@ import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
-import { claimCore, emitReady, installInert, missingBundled, setupInvocation } from "./registry.ts";
+import { claimCore, emitReady, installInert, markCoreStarted, missingBundled, setupInvocation } from "./registry.ts";
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
@@ -1232,6 +1232,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // ------------------------------------------------------------------ events
 
   pi.on("session_start", async (event, ctx) => {
+    markCoreStarted(core.claim); // from here on no other copy may take the claim over (registry.ts)
     toolUsage = new ToolUsageTracker();
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
