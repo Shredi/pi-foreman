@@ -152,7 +152,7 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 | `fm_a2` tasks and watches | `⚙ pr #12 · npm test 3m`: PR watches, CI waits (`foreman_wait` kind `ci`), `foreman_bg` commands and the `bg_run` add-on's tasks of this session |
 | `fm_a3` waits | `? ask 1: topic` for an open ask, then `◷ child r32b 4m`: timer, file, child and pid waits |
 | `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of external items (see Dots) |
-| `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix and ` · away` while a warm window is open and the owner is away |
+| `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix and ` · owner present|away|grace|unknown` (the owner's presence as the cache warms see it) |
 
 A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A child session without its own pane row (a closed
 or idle one, a stale registry entry) is listed on `fm_a1` only while it is live: a session whose state is `idle`,
@@ -270,7 +270,12 @@ turn ended still shows ❓ while a forwarded child ask waits.
 
 **Away field.** The presence file gains the optional `away: true`, written only while a foreman warm window is open and
 the presence probe says the owner is away (read at write time, so it cannot go stale); the radar JSON carries it and
-`fm_meta` shows ` · away`. Absent in files of older versions.
+`fm_meta` shows ` · away` for files without `owner`. Absent in files of older versions.
+
+**Owner field.** The presence file also carries `owner`: `present`, `away`, `grace` or `unknown`, the owner's presence as the
+cache-warm tiers read it (the presence probe, from `presence.ts`, plus a 15-minute grace after the owner goes away; a failed
+or unsampled probe is `unknown`; a child session is always `present`). It is read at write time, for debugging the away
+rule; `presence` and `away` are unchanged. The radar JSON carries `owner` when the file has a valid value.
 
 | `presence` | `state_icon` glyph (unicode / nerd) | Meaning |
 |---|---|---|
@@ -296,7 +301,7 @@ every 5 s by the session or, for a pane it does not push, the daemon; values are
 | `fm_a2` | tasks and watches |
 | `fm_a3` | waits and an open ask |
 | `fm_pr1`..`fm_pr4` | status dots of external items, one cell each: a circle (`pr-fail`, `pr-run`, `pr-ok`, `pr-none` of the glyph set) and the label, ordered red, yellow, green, unknown; cells that do not fit collapse into a last `+n` cell |
-| `fm_meta` | `↑in ↓out · $cost · ✓n` and the pressure suffix and ` · away` (the presence file's `away: true`: a foreman warm window is open and the owner is away, so at most `awayTicks` warms run; kept like the pressure suffix when space runs out); `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. When it does not fit, the `↑↓` counts drop as a whole first, then the text is cut; hidden below 20 columns |
+| `fm_meta` | `↑in ↓out · $cost · ✓n` and the pressure suffix and ` · owner <state>` (the presence file's `owner`: `present`, `away`, `grace` or `unknown`; files without it keep ` · away` for `away: true`; kept like the pressure suffix when space runs out); `in` counts uncached input only (fresh input plus cache writes, from the usage file), `↑~n` marks the raw total incl. cache reads when no usage file has the split; radar and its JSON keep the raw total. When it does not fit, the `↑↓` counts drop as a whole first, then the text is cut; hidden below 20 columns |
 | `fm_state` | `working`, `waiting`, `asking`, `blocked`, `done`, `lost`, `waiting-owner`, `waiting-external`, `idle` or `needs-you`, for your own rules |
 | `fm_block_s` | seconds blocked, set only while blocked, for your own `gt`/`lt` rules |
 | `fm_sort` | parent-first sort key (`r001`, `r001.c001`) |
@@ -554,8 +559,7 @@ machine stays on the radar node, as before: an address is relative to its viewer
 The remote `open --machine` path runs over `hc exec --on`; the remote then runs `hc run` locally on that machine (see [sessions](sessions.md#remote-child-sessions)). `sessions.hc.outliveParent` (default `true`) passes `--outlive-parent`,
 so a parent crash never kills a child with uncommitted work; set `false` to let hc end the child with its parent. A child
 nests under the terminal that opened it; `--focus` is ignored for a local child (it has no pane of its own; a remote child's `--focus` runs `herdr-app do agent.focus` here) and `foreman close` still asks
-the child over intercom. The child runs as `hc run --json --bg --no-notify --keep --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent]
-[--label herdr.space=<space> --label herdr.tab=tb<hex>] -- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
+the child over intercom. The child runs as `hc run --json --bg --no-notify --keep --cwd <dir> --name fm-<slug>-<hex> [--outlive-parent] -- env -u HERDR_ENV -u HERDR_PANE_ID PATH=<opener PATH> K=V… pi …` (argv, no shell). On Windows the argv after `--` is
 `powershell -NoProfile -Command "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID …; $env:PATH = '…'; <the usual PowerShell line>"`.
 Three decisions:
 
@@ -568,12 +572,11 @@ Three decisions:
   folder at the same address; its command is not rerun. A child that exits or is killed is finished, not restarted, and
   `hc rm` removes it.
 
-When the opener's terminal (`hc get`) carries a `herdr.space` label, the child gets that space and a fresh `herdr.tab` id
-(`tb` + 32 hex), so herdr-app shows it in its own tab of the parent's space. Without the label (or when the lookup fails) no
-labels are passed.
+A local child gets no `herdr.space` or `herdr.tab` label, so herdr-app shows it as a sub-agent (a floating window) of the
+parent's tab, not in a tab of its own. Keeping it as a tab stays available to the user in herdr-app.
 
-`foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent, space, tab}`
-(`space` and `tab` are `null` without the label).
+`foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent, space}`
+(`space` is `null` for a local child; a remote child records its machine's space).
 `launch.txt` keeps the usual shell line, so a relaunch is a copy. The final screen of a finished child stays readable (no `--rm`).
 
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;

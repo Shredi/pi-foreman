@@ -59,7 +59,7 @@ configured, model ranked); otherwise the role map decides. Tiers are compared ac
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
 no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. There is no automatic climb.
 
-**Session rank policy.** A session opened by `foreman session open` never runs on a higher rank than the session that opens it: if the chosen model (`--model`, else `session-foreman`, else the own model) has a lower tier number than the opener's, the open is refused (`session open refused [session_rank]`) and nothing is spawned. With no ranks configured there is no check; once ranks exist, an unranked model on either side, or an unknown own model, is refused. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
+**Session model.** A session opened from Pi needs the owner's confirmation, whatever model it runs on (see [sessions](sessions.md)); there is no rank rule for sessions. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
 `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (merges into `<agent dir>/foreman.json`,

@@ -13,11 +13,14 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import foreman_pressure as fp  # noqa: E402
 
 LIMITS = {"maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30}
-OK_HOST = {"loadPerCore": 0.5, "freeMemMB": 8000, "freeDiskGB": 100.0}
+OK_HOST = {"loadPerCore": 0.5, "load1PerCore": 0.5, "freeMemMB": 8000, "freeDiskGB": 100.0}
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def host(**kw):
+    # a load override moves both windows unless the 1-minute value is given too
+    if "loadPerCore" in kw:
+        kw.setdefault("load1PerCore", kw["loadPerCore"])
     return dict(OK_HOST, **kw)
 
 
@@ -46,6 +49,28 @@ class ClassifyTest(unittest.TestCase):
     def test_mixed_takes_worst(self):
         rec = fp.classify(host(loadPerCore=2.0, freeDiskGB=1.0), LIMITS, NOW)
         self.assertEqual((rec["level"], rec["reasons"]), ("critical", ["load", "disk"]))
+
+    def test_load5_high_load1_low_is_ok(self):
+        rec = fp.classify(host(loadPerCore=3.0, load1PerCore=0.5), LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("ok", []))
+
+    def test_load_both_high(self):
+        rec = fp.classify(host(loadPerCore=2.0, load1PerCore=1.6), LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("high", ["load"]))
+
+    def test_load_both_double_is_critical(self):
+        rec = fp.classify(host(loadPerCore=3.0, load1PerCore=3.0), LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("critical", ["load"]))
+
+    def test_load5_double_load1_just_above_limit_is_high(self):
+        rec = fp.classify(host(loadPerCore=3.0, load1PerCore=1.6), LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("high", ["load"]))
+
+    def test_load1_unknown_takes_no_part(self):
+        rec = fp.classify({"loadPerCore": 9.0, "freeMemMB": 8000, "freeDiskGB": 100.0}, LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("ok", []))
+        rec = fp.classify(host(loadPerCore=9.0, load1PerCore=None), LIMITS, NOW)
+        self.assertEqual((rec["level"], rec["reasons"]), ("ok", []))
 
     def test_none_fields_add_no_reason(self):
         rec = fp.classify({"loadPerCore": None, "freeMemMB": None, "freeDiskGB": None}, LIMITS, NOW)
@@ -194,8 +219,8 @@ class FiveMinuteGateTest(unittest.TestCase):
         self.assertEqual(rec["host"]["load1PerCore"], 3.0)
 
     def test_sustained_five_minute_load_fires(self):
-        got = self.sample((0.4, 8.0, 8.0))  # 5-min 2.0/core, 1-min 0.1/core
-        self.assertEqual((got["loadPerCore"], got["load1PerCore"]), (2.0, 0.1))
+        got = self.sample((8.0, 8.0, 8.0))  # 5-min 2.0/core, 1-min 2.0/core
+        self.assertEqual((got["loadPerCore"], got["load1PerCore"]), (2.0, 2.0))
         rec = fp.classify(got, LIMITS, NOW)
         self.assertEqual((rec["level"], rec["reasons"]), ("high", ["load"]))
 

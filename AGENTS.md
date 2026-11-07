@@ -26,6 +26,7 @@ overlays never patch the harness, and nothing from an overlay is ever copied bac
   Code does not load skills from `.agents/skills/` (headless probe, skill not listed).
 - Role ids are neutral: `explorer`, `builder`, `reviewer`,
   `foreman`. Display names are a config preset, never hard-coded.
+- Prompt cache: per-request hooks (`context`, `before_agent_start`, system sections, tool hints) only append; a message already sent stays byte-identical until compaction; a hint for one prompt goes in a message, never the system text. See [docs/cache.md](docs/cache.md#stable-prefix).
 - Generic only. pi-foreman is a harness anyone can use. Nothing specific to the owner's own
   setup goes in here: no particular hosts, machines, operating-system quirks of one
   installation, remote-spawn paths to a named server, homelab tooling, private task suites or

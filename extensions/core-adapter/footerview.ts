@@ -8,19 +8,17 @@ export interface FooterTheme {
 
 /** What the cache bar shows (cachebar.ts numbers, formatted by the adapter); glyphs come from the active symbol set. */
 export interface CacheBarView {
-  /** Share of the TTL left, 0..1; null = unknown (dim, empty cells). */
+  /** Share of the projected warm span left, 0..1; null = unknown (dim, empty cells). */
   share: number | null;
-  /** Time to cold (mm:ss); null = unknown. */
+  /** Countdown to cold at the current TTL (mm:ss); null = unknown. */
   left: string | null;
   /** The cache is cold: empty red cells and the cold word. */
   cold: boolean;
-  /** Warms still to come (at least 1) and the limiter when it is not the window; null = none scheduled. */
-  warms: { count: number; limiter: "budget" | "away" | null } | null;
-  /** Away warms still allowed while the owner is present (awayTicks - used); null = no away cap. Shown as `(away M)` when below the count. */
-  awayLeft?: number | null;
+  /** Warms still to come in the active tier (at least 1) and the tier; null = none scheduled. */
+  warms: { count: number; tier: "half" | "quarter" | null } | null;
   /** The idle model id of the step after the warms; null = no step. */
   step: string | null;
-  glyphs: { keepalive: string; cold: string; downshift: string };
+  glyphs: { keepalive: string; cold: string; downshift: string; half: string; quarter: string };
 }
 
 export interface FooterView {
@@ -124,7 +122,7 @@ function cacheSegment(hit: number, theme: FooterTheme): string {
   return theme.fg(color, `CH ${Math.round(hit)}%`);
 }
 
-/** Cache-timer bar: cells drain with the share of the TTL left (green above 50 %, yellow above 20 %, red at or below, dim unknown); `reduced` keeps cells and time only. */
+/** Cache-timer bar: cells drain with the share of the projected warm span left (green above 50 %, yellow above 20 %, red at or below, dim unknown); `reduced` keeps cells and time only. */
 function cacheBarSegment(c: CacheBarView, cells: number, reduced: boolean, theme: FooterTheme): string {
   if (c.cold) return theme.fg("error", `${"□".repeat(cells)} ${c.glyphs.cold} cold`);
   const color: FooterColor = c.share === null ? "dim" : c.share > 0.5 ? "success" : c.share > 0.2 ? "warning" : "error";
@@ -133,8 +131,7 @@ function cacheBarSegment(c: CacheBarView, cells: number, reduced: boolean, theme
   if (c.left !== null) out += ` ${theme.fg(color, c.left)}`;
   if (!reduced && c.warms) {
     out += ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}`;
-    if (c.warms.limiter) out += ` ${theme.fg("dim", c.warms.limiter)}`;
-    if (typeof c.awayLeft === "number" && c.awayLeft < c.warms.count) out += ` ${theme.fg("dim", `(away ${c.awayLeft})`)}`;
+    if (c.warms.tier) out += ` ${c.warms.tier === "half" ? c.glyphs.half : c.glyphs.quarter}`;
   }
   return out;
 }

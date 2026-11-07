@@ -202,7 +202,7 @@ class Rig:
         _run(["git", "init", "-q"], 60, cwd=str(self.project))
         # the pressure sampler never reads the live host in a rig: an ok host sample unless a case passes its own PI_FOREMAN_PRESSURE_FIXTURE
         self.ok_host = self.root / "host-ok.json"
-        self.ok_host.write_text(json.dumps({"loadPerCore": 0.1, "freeMemMB": 16000, "freeDiskGB": 500}), "utf-8")
+        self.ok_host.write_text(json.dumps({"loadPerCore": 0.1, "load1PerCore": 0.1, "freeMemMB": 16000, "freeDiskGB": 500}), "utf-8")
         self.script = self.root / "script.json"
         self.script.write_text(json.dumps(script, indent=1), "utf-8")
         l2 = {

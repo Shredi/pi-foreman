@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveWarmPolicy } from "../cachepolicy.ts";
-import { cacheDoctorLines, type CacheDoctorInput } from "../doctorcache.ts";
+import { cacheDoctorLines, deprecatedKeepaliveLines, type CacheDoctorInput } from "../doctorcache.ts";
 
 const cfg = (cache: object) => ({ providers: { p: { cache } } });
 const input = (over: Partial<CacheDoctorInput> = {}, cache: object = { ttlSeconds: 3600, billing: "token", keepalive: { enabled: true } }): CacheDoctorInput => ({
@@ -9,7 +9,6 @@ const input = (over: Partial<CacheDoctorInput> = {}, cache: object = { ttlSecond
   policy: resolveWarmPolicy(cfg(cache), "p", "m"),
   promptCache: { short: 300, long: 3600 },
   retention: "long",
-  cacheWarmingIdle: true,
   selfWarmMissed: false,
   hasIdleRung: true,
   ...over,
@@ -30,15 +29,18 @@ test("no declared promptCache leaves the tier check to the existing prerequisite
   assert.deepEqual(cacheDoctorLines(input({ promptCache: undefined })), []);
 });
 
-test("cacheWarming not idle warns for a self-warm policy", () => {
-  const l = cacheDoctorLines(input({ cacheWarmingIdle: false }));
-  assert.equal(l.length, 1);
-  assert.match(l[0], /^WARN Pi cacheWarming is not "idle"/);
+test("Pi's cacheWarming setting is not read: no line either way (pi-foreman sends every warm)", () => {
+  const short = { ttlSeconds: 300, billing: "token" };
+  assert.deepEqual(cacheDoctorLines(input({ promptCache: { short: 300 }, retention: undefined }, short)), []);
 });
 
-test("cacheWarming for a Pi-warm policy stays with the existing prerequisite check", () => {
-  const short = { ttlSeconds: 300, billing: "token" };
-  assert.deepEqual(cacheDoctorLines(input({ cacheWarmingIdle: false, promptCache: { short: 300 }, retention: undefined }, short)), []);
+test("each deprecated keepalive key set in a provider's cache config warns once", () => {
+  const keys = ["beyondPiCap", "windowMinutes", "selfWarmWindowMinutes", "awayTicks", "whileWaiting", "intervalSeconds"];
+  const ka = Object.fromEntries([["enabled", true], ...keys.map((k) => [k, 1])]);
+  const lines = deprecatedKeepaliveLines({ providers: { p: { cache: { keepalive: ka } }, q: { cache: { keepalive: { enabled: true } } } } });
+  assert.equal(lines.length, keys.length);
+  for (const k of keys) assert.ok(lines.some((l) => l.startsWith(`WARN providers.p.cache.keepalive.${k} is deprecated and ignored`)), k);
+  assert.deepEqual(deprecatedKeepaliveLines({}), []);
 });
 
 test("a recorded self-warm miss warns", () => {

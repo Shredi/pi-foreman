@@ -264,6 +264,7 @@ function deps(agentDir: string, over: Partial<SessionDeps> = {}): SessionDeps & 
     python: "/usr/bin/python3",
     spawner: async (_c, args) => (spawned.push(args), { code: 0, stdout: "ok", stderr: "", timedOut: false }),
     send: async (to, text) => (sent.push([to, text]), "sent"),
+    confirm: async () => true,
     sent,
     spawned,
     ...over,

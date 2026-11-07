@@ -873,6 +873,9 @@ function writeTargets(s: ShellSegment): string[] {
     case "git": {
       const { sub, rest } = gitParts(a);
       if (sub === undefined || !GIT_WRITE_SUBS.has(sub)) return [];
+      // read-only list forms name no write target, also under -C
+      if (sub === "branch" && rest.every((w) => BRANCH_LIST.has(w))) return [];
+      if (sub === "stash" && (rest[0] === "list" || rest[0] === "show") && !rest.some((w) => w.startsWith("--output"))) return [];
       const head = a.slice(0, a.indexOf(sub));
       const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
       if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);

@@ -1,5 +1,5 @@
-// Warm budget (docs/cache.md): per idle, the warms may cost at most `budgetShare` x one cold re-cache of the
-// prompt. Pure: no Pi imports. Counts tokens, not dollars, so `spent` is repriced with the same rates as
+// Warm budget (docs/cache.md): per idle stretch, the warms may cost at most a tier share (`budgetShare` for the half tier,
+// half of it for the quarter tier) x one cold re-cache of the prompt, priced at max(cacheWrite, input). Pure: no Pi imports. Counts tokens, not dollars, so `spent` is repriced with the same rates as
 // `cold` (config/prices.json first, else the registry cost; the 1h write rate when the TTL is 3600 s or more).
 import { costAt, tableRate, type PriceTable, type Rate } from "./cost.ts";
 
@@ -18,7 +18,8 @@ export interface WarmTokens {
 }
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-const usable = (r: Rate | null | undefined): r is Rate => !!r && num(r.cacheWrite) > 0;
+/** A cold re-cache is priced at max(cacheWrite, input): a model without a cache-write rate still has a price when its input rate is known. */
+const usable = (r: Rate | null | undefined): r is Rate => !!r && Math.max(num(r.cacheWrite), num(r.input)) > 0;
 
 /** Rates for the budget: the price table first, else the registry's cost (one cacheWrite rate for any TTL); null = unavailable. */
 export function warmRates(o: { table?: PriceTable | null; registry?: Rate | null; model: string | null; promptTokens: number; ttlSeconds: number | null }): Rates | null {
@@ -52,11 +53,11 @@ export class WarmBudget {
     this.warms.push({ input: num(t.input), output: num(t.output), cacheRead: num(t.cacheRead), cacheWrite: num(t.cacheWrite) });
   }
 
-  /** Null when there is no prompt size or no rate (budget unavailable). `next` = last completed warm's cost, else P x cacheRead + 1 output token. */
+  /** Null when there is no prompt size or no rate (budget unavailable). `cold` = P x max(cacheWrite, input); `next` = last completed warm's cost, else P x cacheRead + 1 output token. */
   check(rates: Rates | null, share: number): BudgetCheck | null {
     if (!rates || this.prompt <= 0) return null;
     const spent = this.warms.reduce((a, w) => a + costAt(w, rates).total, 0);
-    const cold = (this.prompt * rates.cacheWrite) / 1e6;
+    const cold = (this.prompt * Math.max(rates.cacheWrite, rates.input)) / 1e6;
     const last = this.warms[this.warms.length - 1];
     const next = last ? costAt(last, rates).total : costAt({ cacheRead: this.prompt, output: 1 }, rates).total;
     return { ok: spent + next <= share * cold, spent, cold, next };

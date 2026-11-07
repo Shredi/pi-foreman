@@ -5,10 +5,9 @@ import { get } from "./config.ts";
 import { resolveWarmPolicy } from "./cachepolicy.ts";
 import { loadPrices } from "./cost.ts";
 import { lookupRate } from "./footer.ts";
-import type { Busy } from "./idlecache.ts";
 import { keepaliveLine } from "./keepalive.ts";
 import { Presence } from "./presence.ts";
-import { SelfWarm } from "./selfwarm.ts";
+import { SelfWarm, type WarmSignals } from "./selfwarm.ts";
 import { appendUsage, pricedLine, type LineContext } from "./usage.ts";
 import { warmRates } from "./warmbudget.ts";
 import { replayWarm, replayable } from "./warmreplay.ts";
@@ -25,15 +24,20 @@ export interface WarmWireOpts {
   config(): unknown;
   usage(): { file: string; line: LineContext };
   trace(r: Record<string, unknown>): void;
-  busy(): Busy;
-  /** Pi's `cacheWarming` setting is "idle". */
-  piIdleMode(): boolean;
-  /** Idle-floor gate + ctx.compact (idleCompact in index.ts). */
+  /** What the session is doing now (tier decision). */
+  signals(): WarmSignals;
+  /** A message is queued. */
+  queued(): boolean;
+  /** Final-warm gate + ctx.compact (idleCompact in index.ts). */
   compact(): { point: number | null; model: string | null } | null;
-  /** The context is above the idle floor (0.5 x runtime point); no side effects. */
-  aboveFloor?(): boolean;
-  /** Context tokens of the foreman session (compactMinTokens gate). */
+  /** Context tokens of the session (final-warm gate, compactMinTokens). */
   contextTokens?(): number | null;
+  /** Context window of the session's model (final-warm gate). */
+  contextWindow?(): number | null;
+  /** A claude-bridge config approval is pending (the replay is skipped). */
+  driftPending?(): boolean;
+  /** The footer's keep-alive glyph. */
+  setGlyph?(on: boolean): void;
 }
 
 export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: SelfWarm } {
@@ -60,11 +64,13 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
     isChild: o.isChild,
     policy,
     presence,
-    busy: () => o.busy(),
-    piIdleMode: () => o.piIdleMode(),
+    signals: () => o.signals(),
+    queued: () => o.queued(),
     compact: () => o.compact(),
     contextTokens: o.contextTokens,
-    aboveFloor: o.aboveFloor,
+    contextWindow: o.contextWindow,
+    driftPending: o.driftPending,
+    setGlyph: o.setGlyph,
     trace: (r) => o.trace(r),
     rates: (promptTokens) => {
       const ctx = o.ctx();

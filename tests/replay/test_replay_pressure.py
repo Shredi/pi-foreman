@@ -27,9 +27,9 @@ from test_replay import REASON, ReplayCase  # noqa: E402
 CONFIG = {"resources": {"sampleSeconds": 5}}
 # default limits: maxLoadPerCore 1.5 (high above it, critical from twice it)
 HOSTS = {
-    "ok": {"loadPerCore": 0.1, "freeMemMB": 16000, "freeDiskGB": 500},
-    "high": {"loadPerCore": 2.0, "freeMemMB": 16000, "freeDiskGB": 500},
-    "critical": {"loadPerCore": 4.0, "freeMemMB": 16000, "freeDiskGB": 500},
+    "ok": {"loadPerCore": 0.1, "load1PerCore": 0.1, "freeMemMB": 16000, "freeDiskGB": 500},
+    "high": {"loadPerCore": 2.0, "load1PerCore": 2.0, "freeMemMB": 16000, "freeDiskGB": 500},
+    "critical": {"loadPerCore": 4.0, "load1PerCore": 4.0, "freeMemMB": 16000, "freeDiskGB": 500},
 }
 PRESSURE_EVENTS = ("launch_narrowed", "launch_deferred", "climb_suppressed", "launch_refused", "wait")
 KEYS = ("event", "width", "reasons", "level", "decision", "toolFamily", "wakeKinds")
@@ -113,7 +113,7 @@ class TestPressure(ReplayCase):
         set_host(rig, "ok")
         wake, recs = wake_and_settle(pi, 90)
         pi.close()
-        original = {"agent": "explorer", "task": "[[replay:cr]] map the repo"}
+        original = {"agent": "builder", "task": "[[replay:cr]] map the repo"}
         self.assertIn("pressure: ok, relaunch with: " + json.dumps(original, separators=(",", ":")), wake)
         # the foreman relaunched with those arguments; nothing launched by itself before
         relaunch = tool_results(recs)

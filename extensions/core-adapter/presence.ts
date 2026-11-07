@@ -168,6 +168,16 @@ export class Presence {
     return this.deps.config().enabled && this.last?.outcome === "away";
   }
 
+  /**
+   * When the owner became away (ms): the moment the idle time crossed `awayAfterMinutes`, from the sample's own idle seconds, so
+   * it is exact even when the probe ran late. Null unless the cached sample says away.
+   */
+  awaySince(): number | null {
+    const s = this.last;
+    if (!this.away() || !s) return null;
+    return s.at - (s.idleSeconds ?? 0) * 1000 + this.deps.config().awayAfterMinutes * 60_000;
+  }
+
   /** The presence gate is switched on. */
   enabled(): boolean {
     return this.deps.config().enabled;

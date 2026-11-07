@@ -549,7 +549,7 @@ def new_node(kind, key, name):
     # own/tot: [in, out, cost, uncached]; uncached None = unknown (no usage file with the cache split)
     return {"kind": kind, "key": key, "name": name, "glyph": "idle", "state": "", "last": None, "started": None,
             "own": [0, 0, 0.0, 0], "children": [], "tot": [0, 0, 0.0, 0], "parent": None, "path": "",
-            "role": None, "rung": None, "model": None, "waits": [], "tasks": [], "pane": None, "hcTerminal": None, "pid": None, "cwd": None, "blockedSince": None, "pressure": None, "away": False,
+            "role": None, "rung": None, "model": None, "waits": [], "tasks": [], "pane": None, "hcTerminal": None, "pid": None, "cwd": None, "blockedSince": None, "pressure": None, "away": False, "owner": None,
             "sid": None, "ended": None, "unc_self": 0}
 
 
@@ -626,6 +626,7 @@ def build(data, now):
         n["pressure"] = ({"level": pr["level"], "reasons": [r for r in (pr.get("reasons") or []) if isinstance(r, str)]}
                          if isinstance(pr, dict) and pr.get("level") in ("high", "critical") else None)
         n["away"] = d.get("away") is True
+        n["owner"] = d.get("owner") if d.get("owner") in ("present", "away", "grace", "unknown") else None
         n["parent"] = d.get("parentIntercom") if isinstance(d.get("parentIntercom"), str) and d.get("parentIntercom") else n["parent"]
         ho = handoff_by_leaf.get(leaf(d.get("handoff")))
         if ho and not n["parent"] and ho["parent"]:
@@ -1057,6 +1058,8 @@ def to_json_node(n, now, symbols):
             out["pressure"] = n["pressure"]
         if n.get("away"):
             out["away"] = True
+        if n.get("owner"):
+            out["owner"] = n["owner"]
     else:
         out["model"] = n["model"]
         out["ended_s"] = None if n["ended"] is None else max(0, int(now - n["ended"]))

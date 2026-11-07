@@ -1,9 +1,9 @@
-"""Replay: child orchestrator sessions (ledger items 6 and 7): parent -> child -> result, and the rank policy.
+"""Replay: child orchestrator sessions (ledger items 6 and 7): parent -> child -> result, and a dry-run open on a higher tier.
 
 The parent waits with `foreman_wait kind child`; the child (a second session with a handoff dir whose
 `parent` file names the parent) sends `Plan from demo: <path>` and later `Result from demo: <path>` over
 intercom; the parent's wait wakes it with `child demo: plan ...` and then `child demo: result ...`. A
-`/foreman session open ... --dry-run --model <higher tier>` in the parent is refused with `[session_rank]`.
+`/foreman session open ... --dry-run --model <higher tier>` in the parent opens (no rank rule, no confirm window on a dry run).
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ RANKS = [{"match": "elite", "tier": 0}, {"match": "foreman", "tier": 1}]
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestSessionTree(ReplayCase):
-    def test_child_plan_and_result_wake_the_parent_and_rank_is_enforced(self):
+    def test_child_plan_and_result_wake_the_parent_and_a_higher_tier_dry_run_opens(self):
         config = {"wait": {"batchWindowSeconds": 0}, "sync": {"runRetro": False},
                   "providers": {"foreman-fake": {"ranks": RANKS}}}
         rig = self.rig("sesstree", load_fixture("session_tree"), config=config, permissions="baseline", intercom=True)
@@ -53,9 +53,9 @@ class TestSessionTree(ReplayCase):
         self.assertIn("child demo: result .workflow/result-demo.md", json.dumps(seen))
         drain_until(parent, "Result seen", 30)
 
-        # Rank policy: the parent session is tier 1; a tier 0 model is refused before anything is spawned.
+        # No rank rule: a tier 0 model opens from a tier 1 parent; a dry run shows no confirm window.
         seen = parent.prompt("/foreman session open demo2 brief.md --dry-run --model foreman-fake/elite", timeout=30)
-        self.assertIn("session open refused [session_rank]", json.dumps(seen))
+        self.assertNotIn("session open refused", json.dumps(seen))
 
         safe = "".join(c for c in psid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
