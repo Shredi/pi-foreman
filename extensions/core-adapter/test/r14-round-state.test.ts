@@ -40,7 +40,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
   const roles = ["explorer", "builder", "reviewer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy", revisionRounds: { heavy: 2 } } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy" } }));
   const sessionId = `r14-rs-${++n}`;
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
   fs.mkdirSync(handoff, { recursive: true });
@@ -164,7 +164,6 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
 }
 
 const planRequired = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_required\]/.test(r.reason ?? "");
-const limitReached = (r: Block): boolean => r?.block === true && /revision limit for heavy reached/.test(r.reason ?? "");
 
 test("approve -> persist -> fresh adapter instance over the same handoff dir -> heavy builder launch allowed, counters intact", async (t) => {
   const w = world(t);
@@ -176,8 +175,7 @@ test("approve -> persist -> fresh adapter instance over the same handoff dir -> 
   assert.equal(await a.launch("builder"), undefined, "revision 1 of 2");
   assert.equal(await a.launch("reviewer"), undefined);
   const s = w.stored();
-  assert.deepEqual(s.chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: true, revisionAnswered: true } });
-  assert.equal(s.reviewCount, 2);
+  assert.deepEqual(s.round, { built: true, reviewOpen: true, revisionAnswered: true });
   assert.equal((s.plan as { hash: string }).hash, w.hash());
   assert.equal("approved" in s || JSON.stringify(s).includes("approved"), false, "no approval is stored");
   await tick();
@@ -187,8 +185,7 @@ test("approve -> persist -> fresh adapter instance over the same handoff dir -> 
   assert.equal(await b.recheck(), "approve", "the plan-review verdict came back with the approval: no plan_review_required");
   assert.equal(await b.launch("builder"), undefined, "approval from the parent's ruling.md; revision 2 of 2");
   assert.equal(await b.launch("reviewer"), undefined);
-  assert.ok(limitReached(await b.launch("builder")), "the count carried over the reload: a third revision is over the limit");
-  assert.equal(w.stored().reviewCount, 3);
+  assert.equal(await b.launch("builder"), undefined, "no revision limit: a third revision is allowed");
 });
 
 test("stale plan hash -> discarded, re-ceremony (builder refused plan_required)", async (t) => {
@@ -220,7 +217,7 @@ test("plan rewritten after the ruling (plan ctime newer than ruling.md) -> re-ce
   fs.writeFileSync(w.planFile, PLAN); // same bytes, same hash: only the ctime moved past the ruling
   const b = await w.adapter();
   assert.ok(planRequired(await b.launch("builder")));
-  assert.deepEqual(w.stored().chains, { main: { revisions: 0, exempt: 0, built: true, reviewOpen: true } }, "dir and hash match: the counters come back, the approval does not");
+  assert.deepEqual(w.stored().round, { built: true, reviewOpen: true }, "dir and hash match: the round state comes back, the approval does not");
 });
 
 test("handoff plan.md rewritten after the ruling -> re-ceremony", async (t) => {
@@ -297,7 +294,7 @@ test("different handoff dir -> discarded", async (t) => {
   const r = await b.launch("builder");
   assert.ok(planRequired(r), JSON.stringify(r));
   assert.equal(w.stored().handoffDir, w.handoff);
-  assert.deepEqual(w.stored().chains, { main: { revisions: 0, exempt: 0, built: false, reviewOpen: false } }, "no counter came back");
+  assert.deepEqual(w.stored().round, { built: false, reviewOpen: false }, "no round state came back");
 });
 
 test("no PI_FOREMAN_HANDOFF_DIR -> no file written", async (t) => {
@@ -311,16 +308,14 @@ test("no PI_FOREMAN_HANDOFF_DIR -> no file written", async (t) => {
   assert.deepEqual(fs.readdirSync(w.handoff).filter((f) => f.includes("round-state")), []);
 });
 
-test("RoundChains.clear -> file counters cleared", async (t) => {
+test("an owner prompt clears the round state in the file", async (t) => {
   const w = world(t);
   const a = await w.adapter();
   assert.equal(await a.checkpoint(), "approve");
   for (const r of ["builder", "reviewer", "builder"]) assert.equal(await a.launch(r), undefined);
-  assert.deepEqual(w.stored().chains, { main: { revisions: 1, exempt: 0, built: true, reviewOpen: false, revisionAnswered: true } });
-  assert.equal(w.stored().reviewCount, 1);
+  assert.deepEqual(w.stored().round, { built: true, reviewOpen: false, revisionAnswered: true });
   await a.ownerPrompt();
-  assert.deepEqual(w.stored().chains, { main: { revisions: 0, exempt: 0, built: false, reviewOpen: false } });
-  assert.equal(w.stored().reviewCount, 0);
+  assert.deepEqual(w.stored().round, { built: false, reviewOpen: false });
   await tick();
   w.rule("ruling.md", "APPROVED\n");
   await a.down();
@@ -330,22 +325,18 @@ test("RoundChains.clear -> file counters cleared", async (t) => {
   assert.equal(await b.launch("builder"), undefined, "revision 1: the cleared count did not come back");
 });
 
-test("negative / non-integer counters -> discarded", async (t) => {
+test("a file of the older shape (chains, counters) restores its main chain's state and drops the counters", async (t) => {
   const w = world(t);
-  const chains = { main: { revisions: -1, exempt: 0, built: true, reviewOpen: true }, P2: { revisions: 1.5, exempt: 0 }, P3: { revisions: 2, exempt: "1" }, P4: { revisions: 2, exempt: 1, built: "yes", reviewOpen: true, used: 9, secOpen: true }, bad: { revisions: 1, exempt: 0 } };
-  w.forge({ handoffDir: w.handoff, plan: null, chain: "P4", chains, reviewCount: -3, planReviewCount: 1.2, refusal: { key: "P4", at: 1 } });
+  const chains = { main: { revisions: 7, exempt: 1, built: true, reviewOpen: true, secOpen: true }, P4: { revisions: 2, exempt: 1, built: false, reviewOpen: false } };
+  w.forge({ handoffDir: w.handoff, plan: null, chain: "P4", chains, reviewCount: 9, planReviewCount: 4, refusal: { key: "P4", at: 1 } });
   const r = restoreRoundState(w.handoff, () => null);
   assert.ok(r);
-  assert.deepEqual([...r.chains], [["P4", { built: false, reviewOpen: true, used: 2, exempt: 1 }]], "only the valid chain, no security flag");
-  assert.equal(r.chain, "P4");
-  assert.equal(r.reviewCount, 0);
-  assert.equal(r.planReviewCount, 0);
+  assert.deepEqual(r.round, { built: true, reviewOpen: true });
   assert.equal(r.approval, null);
-  // through the adapter: the bad chains start fresh, the valid one is the active chain
+  // through the adapter: the counters are gone from the rewritten file
   const b = await w.adapter();
   assert.equal(await b.launch("reviewer"), undefined);
-  assert.deepEqual(w.stored().chains, { P4: { revisions: 2, exempt: 1, built: false, reviewOpen: true } });
-  assert.equal(w.stored().reviewCount, 1);
+  assert.equal("reviewCount" in w.stored() || "chains" in w.stored(), false);
 });
 
 test("a ruling whose mtime is not before the session start is delivered before the launch, not as plan_required (flake cause)", async (t) => {

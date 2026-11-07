@@ -115,8 +115,10 @@ export interface CacheSource {
   nextWarmAt: number | null;
   spanEndAt: number | null;
   warmsLeft: number;
+  /** Warms a fresh idle stretch would allow in the active tier (selfwarm.ts snapshot); absent = 0. */
+  warmsFresh?: number;
   tier: CacheTier | null;
-  /** A turn runs: the bar shows the countdown without warms. */
+  /** A turn runs: the bar shows the warms a fresh idle stretch would allow. */
   running: boolean;
   downshifted: boolean;
   /** Id of the configured idle rung; null = none. */
@@ -137,14 +139,16 @@ export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const p = src?.policy;
   if (!src || !src.enabled || !p || p.billing === "request" || p.ttlSeconds === null) return null;
   if (p.skip === "no_entry" || p.skip === "ttl_unknown" || p.skip === "billing_request") return null;
-  const warming = (!p.skip || (p.skip === "ttl_long" && p.keepaliveOwned)) && !src.running;
+  const allowed = !p.skip || (p.skip === "ttl_long" && p.keepaliveOwned);
+  const warming = allowed && !src.running;
   const bar = cacheBar({ now: src.now, lastTouch: src.lastTouch, ttlSeconds: p.ttlSeconds, stretchStartAt: src.stretchStartAt, spanEndAt: src.spanEndAt, warmsLeft: src.warmsLeft, tier: src.tier, nextWarmAt: warming ? src.nextWarmAt : null });
   const set = symbolSet(src.symbols);
   return {
     share: bar.share,
     left: bar.leftMs === null ? null : formatLeft(bar.leftMs),
     cold: !src.running && (bar.leftMs === null || bar.leftMs <= 0),
-    warms: bar.warmsLeft > 0 ? { count: bar.warmsLeft, tier: bar.tier } : null,
+    // always set while the bar shows: the count a warm would allow (running: a fresh stretch's), 0 when none; the tier that holds now
+    warms: src.running ? { count: allowed ? (src.warmsFresh ?? 0) : 0, tier: src.tier } : bar.warmsLeft > 0 && bar.leftMs !== null && bar.leftMs > 0 ? { count: bar.warmsLeft, tier: bar.tier } : { count: 0, tier: src.tier },
     step: !src.downshifted ? src.idleRung : null,
     glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift, ...tierGlyphs(src.symbols) },
   };

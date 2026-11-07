@@ -602,3 +602,14 @@ test("runHc: an abort kills the child and resolves at once", { skip: process.pla
     else process.env.HC_BIN = old;
   }
 });
+
+test("watcher: a closed notice kills the local attach terminal of the entry; no attach, no kill", async () => {
+  const r = rig([entry({ attach: { address: "t9" } })]);
+  r.w.start();
+  await r.send(ev("1:closed:-:0"));
+  assert.deepEqual(r.calls.filter((c) => c[0] === "kill"), [["kill", "t9"]]);
+  const n = rig();
+  n.w.start();
+  await n.send(ev("1:closed:-:0"));
+  assert.deepEqual(n.calls.filter((c) => c[0] === "kill"), []);
+});

@@ -496,6 +496,16 @@ test("snapshot: tier, warms left, span end and tick", async () => {
   assert.equal(s.nextWarmAt, h.t0 + 270_000);
   assert.deepEqual([s.tier?.tier, s.warmsLeft, s.budget?.share], ["quarter", 4, 0.25]);
   assert.equal(s.spanEndAt, h.t0 + 4 * 270_000 + 300_000);
+  assert.equal(s.warmsFresh, 4);
+});
+
+test("snapshot: the fresh warm count ignores what the stretch has spent", async () => {
+  const h = make({ ttl: 300 });
+  h.open();
+  await h.advance(280_000);
+  const s = h.sw.snapshot();
+  assert.ok(s.warmsLeft < 4, "a warm was spent");
+  assert.equal(s.warmsFresh, 4);
 });
 
 // ---- policy: deprecated keys ------------------------------------------------------------------------------

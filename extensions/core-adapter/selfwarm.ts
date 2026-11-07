@@ -121,6 +121,8 @@ export interface WarmSnapshot {
   tier: TierView | null;
   /** Warms still allowed in the active tier (0 without a budget). */
   warmsLeft: number;
+  /** Warms a fresh idle stretch would allow in the active tier (spent = 0); derived, 0 without a budget. */
+  warmsFresh: number;
   /** End of the TTL of the last allowed warm (ms); null without a touch or a tick. */
   spanEndAt: number | null;
   /** Ms between two warms; null for a TTL of 10 s or less. */
@@ -223,6 +225,7 @@ export class SelfWarm {
     const chk = view ? this.budget.check(this.deps.rates(this.budget.promptTokens()), share) : null;
     const budget = chk ? { ...chk, share } : null;
     const warmsLeft = budget && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
+    const warmsFresh = budget && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold) / budget.next + 1e-9)) : 0;
     const tick = warmDelayMs(p?.ttlSeconds ?? null);
     const ttlMs = (p?.ttlSeconds ?? 0) * 1000;
     return {
@@ -233,6 +236,7 @@ export class SelfWarm {
       budget,
       tier: view,
       warmsLeft,
+      warmsFresh,
       spanEndAt: this.touch === null || tick === null ? null : this.touch + warmsLeft * tick + ttlMs,
       tickMs: tick,
     };

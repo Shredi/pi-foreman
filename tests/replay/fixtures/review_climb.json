@@ -46,7 +46,7 @@
  },
  "reviewer": {
   "r-c2": [{"text": "[[replay:c2]] VERDICT: FAIL\n1. FAIL calc.py:2 off-by-one: add returns a - b\nOverall verdict: FAIL"}],
-  "r-c3": [{"text": "[[replay:c3]] VERDICT: FAIL\n1. FAIL calc.py:2 off-by-one: add still returns a - b\nOverall verdict: FAIL"}],
+  "r-c3": [{"text": "[[replay:c3]] VERDICT: FAIL\n1. FAIL calc.py:7 off-by-one: add still returns a - b\nOverall verdict: FAIL"}],
   "r-p2": [{"text": "[[replay:p2]] VERDICT: PASS\n1. PASS calc.py:2\nOverall verdict: PASS"}],
   "r-q2": [{"text": "[[replay:q2]] VERDICT: PASS\n1. PASS the plan covers item 1\nOverall verdict: PASS"}]
  },
