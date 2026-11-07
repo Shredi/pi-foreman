@@ -384,6 +384,48 @@ def hc_name(child):
     return "fm-%s-%s" % (child[3:-7][:22].strip("-") or "session", child[-6:])
 
 
+def hc_attach_name(machine, child):
+    """The `hc run --name` of the local attach terminal of a remote child: `fm-<machine>-<slug>-<hex4>`, the machine
+    lowercased with characters outside a-z0-9-_ replaced by `-`, the slug as `hc_name` derives it, hex4 the last 4 of
+    the child id. At most 32 characters: the slug is cut first, then the machine; dangling `-` are stripped."""
+    budget = 32 - len("fm---") - 4
+    mach = re.sub(r"[^a-z0-9_-]", "-", machine.lower())[:budget]
+    slug = (child[3:-7].strip("-") or "session")[:max(budget - len(mach), 0)].strip("-")
+    if not slug:
+        mach = mach[:budget - 1]
+        slug = "session"[:budget - len(mach)]
+    mach = mach.strip("-") or "m"
+    return "fm-%s-%s-%s" % (mach, slug, child[-4:])
+
+
+def open_attach(adir, binary, machine, child, remote_address):
+    """Start a local terminal running `hc attach <machine>/<t>` the way a local hc child starts (same nesting under the
+    opener's terminal, no herdr labels, so herdr-app floats it in the parent's tab). Its local address, or None when
+    the opener is not in an hc terminal, hc is missing, or the run fails (the failure goes to stderr)."""
+    if not (binary and os.environ.get("HC_TERMINAL_ID")):
+        return None
+    try:
+        return open_in_hc(binary, hc_attach_name(machine, child), os.getcwd(), [binary, "attach", remote_address],
+                          hc_outlive_parent(sessions_config(adir)), keep=False)["address"]
+    except (HcError, OSError) as e:
+        sys.stderr.write("warning: the local attach terminal did not start (%s)\n" % e)
+        return None
+
+
+def kill_attach(entry):
+    """Best effort: end the local attach terminal of a remote entry (errors ignored; --rm removes it)."""
+    attach = entry.get("attach") if isinstance(entry, dict) else None
+    address = attach.get("address") if isinstance(attach, dict) else None
+    binary = hc_bin()
+    if not binary or not isinstance(address, str) or not VALUE_RE.match(address):
+        return
+    try:
+        subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def herdr_server_up(binary):
     """True when a Herdr server answers a read-only call within DISCOVERY_TIMEOUT seconds."""
     try:
@@ -446,15 +488,16 @@ def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi"):
             + (["--model", model] if model else []) + launch_messages(first, prompt))
 
 
-def hc_run_args(name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False):
+def hc_run_args(name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True):
     """Arguments of `hc run`. --no-notify always: hc would otherwise type the child's notes into the parent's terminal.
     --keep always: the terminal survives core loss and reboot. A local child gets no herdr labels, so herdr-app shows it
     as a sub-agent of the parent's tab; only a remote child passes `space` (its machine's space). `extra_labels` are
-    (key, value) pairs; `no_parent` adds --no-parent (a remote child has no hc parent terminal)."""
+    (key, value) pairs; `no_parent` adds --no-parent (a remote child has no hc parent terminal). `keep=False` passes --rm
+    instead of --keep (the local `hc attach` terminal of a remote child: it is removed once it exits)."""
     labels = ["--label", "herdr.space=" + space] if space else []
     for k, v in extra_labels:
         labels += ["--label", "%s=%s" % (k, v)]
-    return (["run", "--json", "--bg", "--no-notify", "--keep"] + (["--no-parent"] if no_parent else [])
+    return (["run", "--json", "--bg", "--no-notify", "--keep" if keep else "--rm"] + (["--no-parent"] if no_parent else [])
             + ["--cwd", str(cwd), "--name", name] + (["--outlive-parent"] if outlive else []) + labels
             + ["--"] + list(child_argv))
 
@@ -484,8 +527,8 @@ def hc(binary, args, timeout=HC_TIMEOUT):
     return data
 
 
-def open_in_hc(binary, name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False):
-    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive, space, extra_labels, no_parent))
+def open_in_hc(binary, name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True):
+    reply = hc(binary, hc_run_args(name, cwd, child_argv, outlive, space, extra_labels, no_parent, keep))
     parent = reply.get("parent")
     return {"address": reply["address"], "parent": parent if isinstance(parent, str) and VALUE_RE.match(parent) else None,
             "space": space}
@@ -1607,15 +1650,26 @@ def cmd_open_remote(a):
     if made and isinstance(made.get("address"), str) and VALUE_RE.match(made["address"]):
         row.update(backend="hc", hc={"address": "%s/%s" % (name, made["address"]) if "/" not in made["address"] else made["address"],
                                      "space": space, "tab": None})
+    attach_line = None
+    if status == "open" and row.get("hc"):
+        attach_line = "hc attach %s" % row["hc"]["address"]
+        local = open_attach(adir, binary, name, child, row["hc"]["address"])
+        if local:
+            row["attach"] = {"address": local}
+            attach_line = local
     reg = read_registry(adir)
     reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [row]
     write_registry(adir, reg)
     if status == "open":
         print("opened under hc on %s" % name)
+        if attach_line:
+            print("attach: %s" % attach_line)
+        if a.focus and row.get("attach"):
+            herdr_app_json(["do", "agent.focus", json.dumps({"terminal": row["attach"]["address"]})])
         if space:
-            if a.focus and row.get("hc"):
+            if a.focus and row.get("hc") and not row.get("attach"):
                 herdr_app_json(["do", "agent.focus", json.dumps({"terminal": row["hc"]["address"]})])
-        else:
+        elif not row.get("attach"):
             print("not shown: no herdr-app space")
     else:
         print("%s: run this on %s in %s:\n  %s" % ("hc failed" if status == "failed" else "Not started",
@@ -1714,6 +1768,7 @@ def cmd_close_remote(a):
         sys.stderr.write("pi-foreman session: close for %s@%s not sent (%s).\n" % (entry.get("label"), name, why))
         return 1
     mark_entry(adir, entry, status="closing", closeSentAt=time.strftime("%Y-%m-%dT%H:%M:%S"), lastError=None)
+    kill_attach(entry)
     print_json(dict(reply, ok=True))
     return 0
 
