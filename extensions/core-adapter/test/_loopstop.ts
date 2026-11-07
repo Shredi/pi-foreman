@@ -14,8 +14,14 @@ export const loopRefused = (r: Res | string): boolean => /\[review_loop\]/.test(
 export async function codeReview(a: Adapter, report: string, n = 1): Promise<string | null> {
   const r = await a.reviewLaunch(`review items ${n} of the diff`);
   if (r.blocked) return r.blocked;
+  const before = await a.recordedReviews();
   a.endRun(r.id, report);
-  await tick(400); // the review record is written after git reads of the checkout
+  // the review record is written after git reads of the checkout (slow on Windows): wait for it, loop check included
+  const end = Date.now() + 10_000;
+  while ((await a.recordedReviews()) <= before) {
+    assert.ok(Date.now() < end, "the review round was not recorded within 10 s");
+    await tick(25);
+  }
   return null;
 }
 

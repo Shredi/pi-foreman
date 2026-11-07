@@ -123,6 +123,8 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       down,
       ctx,
       checkpoint,
+      /** How many `review_recorded` trace events exist: each is emitted after the round record and the loop check of its review. */
+      recordedReviews: async (): Promise<number> => (await traceEvents()).filter((e) => e.event === "review_recorded").length,
       tool: (name: string) => tools.get(name),
       /** The `[plan-review]` launch: a block reason, or null once started (then `end` ends the run). */
       async reviewLaunch(task = "[plan-review] review .workflow/scratch/plan-widget.md"): Promise<{ blocked: string | null; id: string }> {
