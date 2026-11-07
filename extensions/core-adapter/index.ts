@@ -164,7 +164,7 @@ import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
-import { claimCore, emitReady, installInert, markCoreStarted, missingBundled, setupInvocation } from "./registry.ts";
+import { claimCore, displacedBy, emitReady, isDisplaced, installInert, markCoreStarted, missingBundled, setupInvocation } from "./registry.ts";
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
@@ -452,6 +452,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
+  // A different-root takeover can displace a holder Pi keeps (registry.ts header): its handlers stand down, one adapter stays live.
+  const livePi = pi;
+  let displacedNoted = false;
+  const gatedOn = ((name: string, handler: (...a: unknown[]) => unknown) => (livePi.on as (n: string, h: (...a: unknown[]) => unknown) => void)(name, async (...a: unknown[]) => {
+    if (!isDisplaced(core.claim)) return handler(...a);
+    if (name !== "session_start" || displacedNoted) return undefined;
+    displacedNoted = true;
+    const by = displacedBy(core.claim);
+    (a[1] as ExtensionContext | undefined)?.ui?.notify?.(`pi-foreman: the copy at ${core.claim.pkgRoot} stands down (core_displaced); the copy at ${by?.pkgRoot ?? "?"} is active.`, "warning");
+    return undefined;
+  }));
+  pi = new Proxy(livePi, { get: (t, p) => (p === "on" ? gatedOn : (() => { const v = Reflect.get(t, p, t); return typeof v === "function" ? v.bind(t) : v; })()) });
   // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
