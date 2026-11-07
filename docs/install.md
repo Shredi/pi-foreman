@@ -337,7 +337,10 @@ manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a
 the installed pi-foreman source. Project packages load before global ones and only after project trust (`pi -a` when
 headless). Double-load rule: the checkout wins in its own tree. Without the override Pi exits with a tool conflict
 ("Tool ... conflicts with ..."), because two copies register the same tools. The core adapter also carries a
-once-guard: a second core copy registers nothing and posts one notice naming both roots. The self-host protect
+once-guard: a second core copy registers nothing and posts one notice naming both roots. The override also covers a
+local-path global entry (setup writes its absolute path). Pi loads user packages once before the project is trusted;
+the checkout copy takes over a claim left by that untrusted bootstrap pass when the project settings disable the
+holder and the holder never started a session. The self-host protect
 narrows only when the checkout copy is the active one (see [permissions](permissions.md)). Tests and the replay rig:
 [development](development.md).
 

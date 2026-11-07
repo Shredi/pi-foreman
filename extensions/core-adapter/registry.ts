@@ -2,13 +2,24 @@
 // Two copies of this extension can load in one Pi process (an installed package and a checkout). The first
 // claims a process-wide key; a copy from another root registers nothing but one notice. Pi re-runs the
 // factory on /reload and session replacement, so the same root re-claims and the owner releases at shutdown.
+// Trust bootstrap: Pi first loads the user-level extensions with the project untrusted, then (once the project
+// is trusted) loads the final set and drops pass-1 copies the project disables, without session_shutdown or
+// session_start. In a --develop checkout the installed copy therefore leaves a stale claim before the checkout
+// copy runs. A claimant takes over a held claim only when BOTH hold: the holder never saw session_start (a
+// dropped pass-1 copy never does) and <cwd>/.pi/settings.json disables the holder with an empty-filter package
+// override (the --develop override). The first condition alone is unsafe: two copies of one pass have both not
+// started yet, and the second must stay inert. The second alone would steal from a live session.
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { EventBus } from "./herdr.ts";
+import { piAgentDir } from "./env.ts";
 
 export const CORE_KEY = Symbol.for("pi-foreman.core.v1");
+/** Holds the claim object that saw its session_start (kept apart from CORE_KEY: the claim shape is a public handshake). */
+export const STARTED_KEY = Symbol.for("pi-foreman.core.started.v1");
 export const READY_EVENT = "foreman:ready";
 
 export interface CoreClaim {
@@ -44,11 +55,93 @@ export function inertNotice(activeRoot: string, skippedRoot: string): string {
   return `pi-foreman: two copies are loaded; the one at ${activeRoot} is active and the one at ${skippedRoot} is skipped (it registers nothing). To develop from a checkout, run foreman setup --develop there (docs/install.md#developing).`;
 }
 
-/** Claim the process-wide key for `pkgRoot`, or report the root that holds it. */
-export function claimCore(pkgRoot: string, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>, platform: string = process.platform): ClaimResult {
+/** The active copy saw its first session_start: its claim can no longer be taken over. */
+export function markCoreStarted(claim: CoreClaim, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>): void {
+  g[STARTED_KEY] = claim;
+}
+
+const isForemanRoot = (root: string): boolean => {
+  try {
+    return (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { name?: unknown }).name === "pi-foreman";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Pi's package identity (package-manager.js getPackageIdentity) for the source kinds that matter here: `npm:<name>`,
+ * `git:<host>/<path>`, `local:<resolved path>` (no realpath; case-folded on win32 only). Unparseable => undefined.
+ */
+export function packageIdentity(source: string, baseDir: string, platform: string = process.platform): string | undefined {
+  const src = source.trim();
+  if (src.startsWith("npm:")) {
+    const m = src.slice(4).trim().match(/^(@?[^@]+(?:\/[^@]+)?)(?:@(.+))?$/);
+    return `npm:${m?.[1] ?? src.slice(4).trim()}`;
+  }
+  if (/^(npm|github|http|https|ssh|builtin|file):/.test(src) === false && !src.startsWith("git:")) {
+    const home = os.homedir();
+    const expanded = src === "~" ? home : src.startsWith("~/") ? path.join(home, src.slice(2)) : src;
+    const resolved = path.resolve(baseDir, expanded);
+    return `local:${platform === "win32" ? resolved.toLowerCase() : resolved}`;
+  }
+  let url = src.startsWith("git:") ? src.slice(4).trim() : src;
+  if (!src.startsWith("git:") && !/^(https?|ssh|git):\/\//i.test(url)) return undefined;
+  url = url.replace(/^(https?|ssh|git):\/\//i, "").replace(/^[^/@:]+@/, "").replace(/^([^/:]+):(?!\d+\/)/, "$1/");
+  const slash = url.indexOf("/");
+  if (slash < 0) return undefined;
+  const host = url.slice(0, slash).replace(/:\d+$/, "");
+  const p = url.slice(slash + 1).replace(/@[^/]*$/, "").replace(/#.*$/, "").replace(/\.git$/, "").replace(/^\/+|\/+$/g, "");
+  return host && p.split("/").length >= 2 ? `git:${host}/${p}` : undefined;
+}
+
+const isForemanRemoteIdentity = (id: string): boolean => id === "npm:pi-foreman" || /^git:[^/]+\/(.+\/)?pi-foreman$/.test(id);
+
+const packageEntries = (file: string): { source: string; obj?: Record<string, unknown> }[] => {
+  let pk: unknown;
+  try {
+    pk = (JSON.parse(fs.readFileSync(file, "utf8")) as { packages?: unknown }).packages;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(pk)) return [];
+  const out: { source: string; obj?: Record<string, unknown> }[] = [];
+  for (const e of pk) {
+    if (typeof e === "string") out.push({ source: e });
+    else if (e && typeof e === "object" && typeof (e as { source?: unknown }).source === "string") out.push({ source: (e as { source: string }).source, obj: e as Record<string, unknown> });
+  }
+  return out;
+};
+
+/**
+ * Does Pi drop the holder's user-level entry in favour of an empty-filter project entry? True only when a project entry P
+ * (`extensions: []`, not `autoload: false`) in `<cwd>/.pi/settings.json` and a user entry G in `<agentDir>/settings.json` have
+ * the same Pi package identity AND G is the holder (local: same real path as the holder root; remote: the holder is a
+ * pi-foreman package). Anything uncertain answers false (the claimant stays inert).
+ */
+export function projectDisables(holderRoot: string, claimantRoot: string, cwd: string, platform: string = process.platform, agentDir: string = piAgentDir(process.env, os.homedir())): boolean {
+  const project = packageEntries(path.join(cwd, ".pi", "settings.json")).filter((e) => e.obj && Array.isArray(e.obj.extensions) && e.obj.extensions.length === 0 && e.obj.autoload !== false);
+  if (!project.length) return false;
+  const globals = packageEntries(path.join(agentDir, "settings.json"));
+  for (const p of project) {
+    const pid = packageIdentity(p.source, path.join(cwd, ".pi"), platform);
+    if (!pid) continue;
+    for (const g of globals) {
+      if (packageIdentity(g.source, agentDir, platform) !== pid) continue;
+      if (pid.startsWith("local:")) {
+        const resolved = path.resolve(agentDir, g.source.trim() === "~" ? os.homedir() : g.source.trim().startsWith("~/") ? path.join(os.homedir(), g.source.trim().slice(2)) : g.source.trim());
+        if (rootKey(resolved, platform) === rootKey(holderRoot, platform)) return true;
+      } else if (isForemanRemoteIdentity(pid) && isForemanRoot(holderRoot) && rootKey(holderRoot, platform) !== rootKey(claimantRoot, platform)) return true;
+    }
+  }
+  return false;
+}
+
+/** Claim the process-wide key for `pkgRoot`, or report the root that holds it. `cwd` is where the project settings are read for a takeover. */
+export function claimCore(pkgRoot: string, g: Record<symbol, unknown> = globalThis as unknown as Record<symbol, unknown>, platform: string = process.platform, cwd: string = process.cwd(), agentDir?: string): ClaimResult {
   const held = g[CORE_KEY] as Partial<CoreClaim> | undefined;
   if (held && typeof held.pkgRoot === "string" && rootKey(held.pkgRoot, platform) !== rootKey(pkgRoot, platform)) {
-    return { active: false, activeRoot: held.pkgRoot, notice: inertNotice(held.pkgRoot, pkgRoot) };
+    const stale = g[STARTED_KEY] !== held && projectDisables(held.pkgRoot, pkgRoot, cwd, platform, agentDir);
+    if (!stale) return { active: false, activeRoot: held.pkgRoot, notice: inertNotice(held.pkgRoot, pkgRoot) };
   }
   const claim: CoreClaim = { version: readVersion(pkgRoot), pkgRoot, api: 1 };
   g[CORE_KEY] = claim;

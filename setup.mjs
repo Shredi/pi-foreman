@@ -486,8 +486,9 @@ const isLocalSource = (src) => !/^(npm|git|https?|ssh):/.test(src) && !src.start
 const isBridgeEntry = (e) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(entrySource(e) ?? "");
 const isBundledEntry = (e) => BUNDLED_RE.test(entrySource(e) ?? "");
 const isRemoteForeman = (e) => REMOTE_FOREMAN_RE.test(entrySource(e) ?? "");
+const expandHome = (src) => (src === "~" ? os.homedir() : src.startsWith("~/") ? path.join(os.homedir(), src.slice(2)) : src);
 const resolveLocal = (src, baseDir) => {
-  const r = path.resolve(baseDir, src);
+  const r = path.resolve(baseDir, expandHome(src));
   try {
     return fs.realpathSync(r);
   } catch {
@@ -950,17 +951,23 @@ async function main(argv) {
     const file = path.join(ROOT, ".pi", "settings.json");
     const globalFile = path.join(agentDir, "settings.json");
     const globalPk = (parseJsonObject(readText(globalFile), globalFile) ?? {}).packages;
-    const inst = (Array.isArray(globalPk) ? globalPk : []).find(isRemoteForeman);
+    const globalList = Array.isArray(globalPk) ? globalPk : [];
+    const localInst = globalList.find((e) => {
+      if (isRemoteForeman(e) || !isLocalForeman(e, path.dirname(globalFile))) return false;
+      return resolveLocal(entrySource(e), path.dirname(globalFile)) !== ROOT;
+    });
+    const inst = globalList.find(isRemoteForeman) ?? localInst;
+    const instSource = inst === localInst && inst ? path.resolve(path.dirname(globalFile), expandHome(entrySource(inst))) : inst ? entrySource(inst) : undefined;
     const text = readText(file);
     const cur = parseJsonObject(text, file) ?? {};
     const others = (Array.isArray(cur.packages) ? cur.packages : []).filter((e) => !isForemanEntry(e, path.dirname(file)));
-    const override = inst ? [{ source: entrySource(inst), extensions: [], skills: [], prompts: [], themes: [] }] : [];
+    const override = inst ? [{ source: instSource, extensions: [], skills: [], prompts: [], themes: [] }] : [];
     const next = { ...cur, packages: ["..", ...override, ...others] };
     let changed = false;
     if (text !== null && canonical(next) === canonical(cur)) say(`develop: ${file} already loads this checkout`);
     else {
       changed = true;
-      say(`develop: ${dry ? "would write" : "writing"} ${file}${inst ? ` (overrides the installed ${entrySource(inst)} here)` : ""}`);
+      say(`develop: ${dry ? "would write" : "writing"} ${file}${inst ? ` (overrides the installed ${instSource} here)` : ""}`);
       say(unifiedDiff(".pi/settings.json", text, toJson(next)));
       if (!dry) writeFile(file, toJson(next));
     }
