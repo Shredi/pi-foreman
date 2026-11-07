@@ -58,16 +58,19 @@ test("release on timeout frees the lock and applies the deferred hint", async ()
   assert.match(fs.readFileSync(f, "utf8"), /late hint/);
 });
 
-test("releaseAll frees held calls (session shutdown / blocked call)", () => {
-  const f = ledger();
-  const g = new LedgerGate();
-  g.hold("s1:a");
-  g.hold("s1:b");
-  g.defer(() => void writeHint(f, ["1"], "after shutdown"));
-  g.release("s1:a");
-  assert.ok(!fs.readFileSync(f, "utf8").includes("after shutdown"), "still held by b");
-  g.releaseAll("s1:");
-  assert.match(fs.readFileSync(f, "utf8"), /after shutdown/);
+test("an exclusive queued before the hold runs first; the hold, taken after the handler's last await, then blocks later exclusives (no deadlock via reviewSync)", async () => {
+  const g = new LedgerGate(60_000);
+  const order: string[] = [];
+  // markByReview queued on reviewSync while the tool_call handler is still awaiting it
+  const review = g.exclusive(() => void order.push("review"));
+  await review; // the handler's await reviewSync resolves without any hold in place
+  g.hold("call"); // the handler now returns allow
+  const later = g.exclusive(() => void order.push("later"));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(order, ["review"]);
+  g.release("call"); // tool_execution_end
+  await later;
+  assert.deepEqual(order, ["review", "later"]);
 });
 
 test("exclusive waits for a hold, then runs; a deferred hint lands after the exclusive run", async () => {

@@ -7,6 +7,7 @@
 //   - exclusive(fn): a ledger.py runner run or the upsert rewrite; waits until no hold or other
 //     exclusive work is active.
 //   - defer(fn): a sync hint write; runs at once when idle, else after the lock frees (fn re-reads the file).
+// The gate is per process: a reviewer child's ledger.py in its own process is not serialized with the foreman's hint writes.
 // A hold releases itself after `holdTimeoutMs`, so a lost tool_execution_end never leaks the lock.
 
 import path from "node:path";
@@ -67,11 +68,6 @@ export class LedgerGate {
     clearTimeout(t);
     this.holds.delete(key);
     this.pump();
-  }
-
-  /** Drop every hold whose key starts with `prefix` (session shutdown). */
-  releaseAll(prefix = ""): void {
-    for (const k of [...this.holds.keys()]) if (k.startsWith(prefix)) this.release(k);
   }
 
   /** Run `fn` with no hold and no other exclusive work in flight. */

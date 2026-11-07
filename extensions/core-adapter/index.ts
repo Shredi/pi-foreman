@@ -2589,6 +2589,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === ASK_USER_TOOL) ms.trace?.emit({ event: "dialog", surface: "ask_user" });
     }
     let bashTimeout = null as ChildBashTimeout | null;
+    let wantHold = null as { gate: LedgerGate; key: string; sid: string } | null;
     const res = await (async () => {
     const stopped = ms?.isChild ? repeatStopped.get(ms.id) : undefined;
     if (stopped) return { block: true, reason: stopped };
@@ -2612,13 +2613,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) {
         ps.ledgerBash.add(event.toolCallId);
         const lf = boundLedger(ps.markerDir, ps.id);
-        if (lf && !ledgerHolds.has(event.toolCallId)) {
-          // Held until tool_execution_end (also reached by a blocked call) so no adapter hint write lands between the child's read and its replace.
-          const gate = ledgerGate(lf);
-          const key = `${ps.id}:${event.toolCallId}`;
-          ledgerHolds.set(event.toolCallId, { gate, key, sid: ps.id });
-          gate.hold(key);
-        }
+        // The hold is taken after the handler's last await (below), so a dialog or reviewSync wait cannot expire it or deadlock markByReview.
+        if (lf && !ledgerHolds.has(event.toolCallId)) wantHold = { gate: ledgerGate(lf), key: `${ps.id}:${event.toolCallId}`, sid: ps.id };
       }
     }
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts): a literal path is refused here,
@@ -3158,6 +3154,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.mutating.delete(event.toolCallId);
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
+    }
+    // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
+    if (!res && wantHold) {
+      ledgerHolds.set(event.toolCallId, wantHold);
+      wantHold.gate.hold(wantHold.key);
     }
     // R30 item 8: traced only once the guards let the child's bash call through
     if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
