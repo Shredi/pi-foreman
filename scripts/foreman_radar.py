@@ -29,7 +29,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from foreman_session import agent_dir  # noqa: E402
+from foreman_session import agent_dir, entry_gone, hc_terminal_addresses  # noqa: E402
 
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0
@@ -447,6 +447,20 @@ def prune_done(path, d, now, ttl_min, closed=None):
     return True
 
 
+RADAR_LISTING_TIMEOUT = 3.0
+
+
+def mark_gone(reg, live, now):
+    """Flag `gone` on each local open/closing registry entry whose process and terminal are provably gone (a terminal
+    listing that cannot be read, or that times out, leaves it present)."""
+    cands = [e for e in reg if e.get("status") in ("open", "closing") and not e.get("machine")]
+    if not cands:
+        return reg
+    hc = hc_terminal_addresses(RADAR_LISTING_TIMEOUT) if any(isinstance(e.get("hc"), dict) for e in cands) else None
+    panes = herdr_panes() if any(not isinstance(e.get("hc"), dict) and e.get("pane") for e in cands) else None
+    return [dict(e, gone=True) if e in cands and entry_gone(e, live, now, hc, panes) else e for e in reg]
+
+
 def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
     """Read every source into plain data. No clock, no printing; with now and done_ttl (minutes) it also deletes
     the presence files of sessions that finished longer ago than the TTL. With `only` (a session id) usage and
@@ -471,6 +485,8 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
         live.append(d)
     reg = read_json(base / "state" / "sessions.json")
     reg = [s for s in (reg.get("sessions") if isinstance(reg, dict) else None) or [] if isinstance(s, dict)]
+    if closed is not None and now is not None:  # a real run, not a pure read: registry entries may be over
+        reg = mark_gone(reg, live, now)
     handoffs = {}
     try:
         dirs = sorted(os.listdir(base / "handoffs"))
@@ -727,6 +743,8 @@ def build(data, now):
             live = by_handoff[leaf(e.get("handoff"))]
             if not live["parent"] and isinstance(e.get("parent"), str) and e["parent"]:
                 live["parent"] = e["parent"]
+            if e.get("gone"):
+                live["glyph"], live["state"] = "idle", "closed"
             merged.add(key)
             continue
         ho = handoff_by_leaf.get(leaf(e.get("handoff")))
@@ -743,12 +761,16 @@ def build(data, now):
                     n["asks"] = [{"n": ask["seq"], "topic": "remote"}]
             else:
                 n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
+            if e.get("gone"):  # process and terminal gone: over, not live and not idle
+                n["glyph"], n["state"] = "idle", "closed"
             n["last"] = n["last"] or opened
             n["started"] = opened
             n["path"] = e["handoff"] if isinstance(e.get("handoff"), str) else ""
             if ho and ho.get("piSessionId") and not n["sid"]:
                 n["sid"] = ho["piSessionId"]
             nodes[key] = n
+        elif e.get("gone"):
+            n["glyph"], n["state"] = "idle", "closed"
         if isinstance(e.get("parent"), str) and e["parent"] and not n["parent"]:
             n["parent"] = e["parent"]
         if n["started"] is None:

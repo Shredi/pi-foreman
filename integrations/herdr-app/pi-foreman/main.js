@@ -8,7 +8,7 @@ import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
-  radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  radarBinary, parseRecords, parseAttachTarget, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions,
 } from "./model.js";
 
@@ -227,12 +227,13 @@ export default class ForemanAgents extends View {
       this.busy.set(`hc:${addr}`, now);
       cx.spawn(async (cx) => {
         let recs = [];
+        let attach = "";
         try {
           const r = await exec(radarBinary(this.hcProp, machine, "hc"), ["get", addr.slice(cut + 1), "--json"], { on: machine });
-          if (r.code === 0) recs = parseRecords(r.stdout);
+          if (r.code === 0) { recs = parseRecords(r.stdout); attach = parseAttachTarget(r.stdout); }
         } catch { /* no hc here: no records */ }
         this.busy.delete(`hc:${addr}`);
-        if (this.childPi.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, tried: Date.now() });
+        if (this.childPi.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, attach, tried: Date.now() });
         cx.notify();
       });
     }
@@ -556,7 +557,7 @@ export default class ForemanAgents extends View {
         const node = childJoined.get(term.address) ?? null;
         const recs = this.recs.get(term.address)?.recs ?? [];
         const own = workerStatus(term.status, listedStatus.get(term.address));
-        return { node, recs, own, status: guard(() => agentStatus(own, node, recs), own) };
+        return { node, recs, own, attach: this.recs.get(term.address)?.attach ?? "", status: guard(() => agentStatus(own, node, recs), own) };
       };
       const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys }), []);
       const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys), { root: null, items: [] });
