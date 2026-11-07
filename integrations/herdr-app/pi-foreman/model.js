@@ -466,8 +466,8 @@ export function parseRecords(text) {
 /** The `<machine>/<terminal>` a hand-made `hc attach` terminal follows, from the text of `hc get <terminal> --json` (its `argv`
  *  `["sh","-c","hc attach m/t"]` or its foreground `argv` `["hc","attach","m/t"]`); "" for any other terminal. */
 export function parseAttachTarget(text) {
-  let doc;
-  try { doc = JSON.parse(text); } catch { return ""; }
+  let doc = text;
+  if (typeof text === "string") { try { doc = JSON.parse(text); } catch { return ""; } }
   if (!isObj(doc)) return "";
   const lines = [doc.foreground?.argv, doc.argv].filter(Array.isArray).map((a) => a.filter((x) => typeof x === "string").join(" "));
   for (const line of lines) {
@@ -779,7 +779,7 @@ function recItems(n, recs, skip, id) {
  *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
  *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
  *  `program` for the click and the logo. */
-export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set() } = {}) {
+export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set() } = {}) {
   if (!Array.isArray(all)) return [];
   const seen = new Set([address]);
   // A nameless terminal that follows `hc attach <machine>/<t>`: the attach of that remote session (named in `all`), else hidden.
@@ -796,8 +796,10 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       const below = walk(term.address, depth + 1);
       const id = `hc:${term.address}`;
       const nameless = !(typeof r.label === "string" && r.label) && !(typeof term.name === "string" && term.name);
-      const attach = nameless && !isObj(r.node) && typeof r.attach === "string" ? r.attach : "";
-      if (attach && !attachLabel(attach)) return below; // an attach of nothing we know: no row, its children stay
+      // The attach target comes from the terminal record itself (also for a listed agent, whose label is the remote title), else from `hc get`.
+      const own = !(typeof term.name === "string" && term.name) && !isObj(r.node) ? parseAttachTarget(term) : "";
+      const attach = own || (nameless && !isObj(r.node) && typeof r.attach === "string" ? r.attach : "");
+      if (attach && (!attachLabel(attach) || drawnTargets.has(attach))) return below; // an attach of nothing we know, or of a session already drawn: no row, its children stay
       const label = (attach && `${attachLabel(attach)}`) || (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
       const status = r.status ?? "idle";
       let item;
