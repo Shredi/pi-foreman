@@ -715,7 +715,7 @@ session like the Agents mod does, not the terminal that has keyboard focus. A fl
 `hc run` has no tab labels and shows over the parent's tab) never switches the panel away; focusing it at most selects that child's tab
 inside the panel. Child plans are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
 focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session and document until the tab's
-foreman changes.
+foreman changes; a pin already stored when the panel copy starts (herdr persists shared values) is stale and ignored.
 
 **Data.** The panel reads `shared("pi-foreman.radar")` (published by the Agents mod after each radar poll, only when the sessions changed;
 herdr-app persists shared values in `shared.json`), and for the session on screen the two files `plan.json` and `note.json` in the `show.dir`

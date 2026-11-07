@@ -32,7 +32,7 @@ export default class PlanPanel extends View {
     this.diff = false;
     this.rootKey = null;
     this.anchorAddr = null;
-    this.pinSeen = 0;
+    this.pinSeen = null; // null until the first sync: a pin that predates this copy is stale
     this.pin = null; // {key, anchorKey}: set by a sidebar click until the tab's foreman changes
     this.lastTerm = null;
     this.loadedFor = null;
@@ -81,9 +81,11 @@ export default class PlanPanel extends View {
     this.anchorAddr = anchor;
     const own = anchor ? this.nodeOf(trees, anchor, pidOf(anchor)) : null;
 
-    // A sidebar click pins a session and a document until the tab's foreman changes.
+    // A sidebar click pins a session and a document until the tab's foreman changes. Herdr persists the value, so one already
+    // present at the first sync is stale: its `n` is recorded as seen, never applied.
     const pin = guard(() => shared("pi-foreman.show"), null);
-    if (isObj(pin) && Number.isInteger(pin.n) && pin.n !== this.pinSeen) {
+    if (this.pinSeen === null) this.pinSeen = isObj(pin) && Number.isInteger(pin.n) ? pin.n : 0;
+    else if (isObj(pin) && Number.isInteger(pin.n) && pin.n !== this.pinSeen) {
       this.pinSeen = pin.n;
       this.pin = typeof pin.key === "string" ? { key: pin.key, kind: pin.kind === "note" ? "note" : "plan", anchorKey: own?.node.key ?? null, fresh: true } : null;
     }
