@@ -129,7 +129,7 @@ with a warning. A recorded name that no longer exists warns, skips the picker an
 and `remote-intercom`: the project layer may not switch them on. Safety rules (permissions, git, ops, ceremony gates, bridge) are never
 toggleable. `idle-cache` has no fixed default (cache policy decides per provider): its shipped state is declared `on`, and
 explicit `true` matches the policy except for a provider with a TTL but no billing set, where it turns pings on. `features list`
-and the doctor show `on` for request-billed providers that skip keepalive anyway.
+and the doctor show `on` for a request-billed provider (a `billing: request` entry, such as a legacy Copilot plan) that skips keepalive anyway.
 
 ### Add-ons
 

@@ -55,7 +55,7 @@ The bridge calls the Claude Agent SDK and sets no TTL itself; Claude Code reads 
 
 Switching away from `claude-bridge` restores the earlier value (or removes the variable); other providers are never touched. The variable is process-wide, so a `claude` started from a shell tool inherits it too.
 
-**Keep-alive for children.** A child session on `github-copilot` (or any other token-billed provider) warms its own cache by default; `providers.<p>.cache.keepalive.children: false` stops it (`keepalive skipped child_off`, traced once per session; a project or session may only set `false`). A child session on `claude-bridge` sends no warms by default (`keepalive skipped bridge_child_off`, traced once per session): a bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true` (user or overlay config only: a project or session may only set `false`); the miss contingency below still ends warming after the first warm that does not hit.
+A child on `claude-bridge` sends no keep-alive warms by default; see [Keep-alive for children](#keep-alive-for-children).
 
 Claude Code honours the variable from roughly v2.1.242 (the exact minimum is unconfirmed); older versions ignore it harmlessly and keep their own TTL, so the policy then assumes a TTL the cache does not have.
 
@@ -86,6 +86,17 @@ Since 2026-06-01 GitHub bills Copilot per token (see [models and pricing](https:
 The half tier holds while a subagent, a background task or a wait runs (or the owner is present with a turn, question, dialog or command open); the quarter tier is plain idle. The counts do not depend on the prompt size (cold and warm both scale with it); a measured warm that costs more than the estimate lowers them. `keepalive.budgetShare` (user or overlay config, 0 to 1, default 0.5) raises the limit: at 1 the half tier allows 24 warms (about 108 min on Opus, 10.8 h on Sol) and the quarter tier 12. A project or session may only lower it.
 
 The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt-*", "ttlSeconds": 600, "billing": "request"}` sets for the live policy. They do not apply to the retro cost report: retro passes no model, so only the provider-level cache values (built-in entry and `cache.ttlSeconds` / `cache.billing`) count there, never a `byModel` row. For `claude-bridge` retro derives the TTL of the foreman kind from `bridge.promptCacheTtl` and the retro process's own environment (`FORCE_PROMPT_CACHING_5M`), not the foreman's.
+
+### Keep-alive for children
+
+A child session (`PI_SUBAGENT_CHILD=1`) warms its own cache by the rules of its provider:
+
+- **Other token-billed providers** (for example `github-copilot`): on by default. `providers.<p>.cache.keepalive.children: false` stops it (`keepalive skipped child_off`, traced once per session).
+- **`claude-bridge`**: off by default (`keepalive skipped bridge_child_off`, traced once per session). A bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true`.
+- **Layers.** `true` is accepted from user or overlay config only; a project or session may only set `false`.
+- **Miss contingency.** The miss contingency under [Keep-alive](#keep-alive) still applies: warming ends after the first warm that does not hit.
+
+For Copilot see also [github-copilot billing](#github-copilot-billing).
 
 ## Layers
 
@@ -212,7 +223,7 @@ A provider with no entry and no `cache` config is not traced at all. Add `provid
 |---|---|---|
 | `fired` | `reason` = the activity reason (`subagent`, `bg_task`, `wait`, `question`, `dialog`, `command`, `turn`, `idle`), plus `source` (`foreman`), `tier`, `presence`, `cacheRead`, `cacheWrite`, `cost` | One warm request. |
 | `skipped` | `budget`, `budget_unavailable` | No further warm is allowed by the cost rule (`budget`: extra fields `count`, `phase`, `tier`), or the budget cannot be computed (once). |
-| `skipped` | `not_replayable`, `late`, `claude_cfg_pending`, `bridge_child_off`, `child_off` | The model cannot be replayed (once), the timer fired more than half the margin late, a claude-bridge config approval is pending, or a child on claude-bridge does not warm (once; `keepalive.children`). |
+| `skipped` | `not_replayable`, `late`, `claude_cfg_pending`, `bridge_child_off`, `child_off` | The model cannot be replayed (once), the timer fired more than half the margin late, a claude-bridge config approval is pending, a claude-bridge child without `keepalive.children: true` does not warm (`bridge_child_off`, once), or a child on a non-bridge provider with `keepalive.children: false` does not warm (`child_off`, once). |
 | `skipped` | `ttl_too_short` | The TTL is 10 s or less (once). |
 | `skipped` | `warm_compact_off`, `already_compacted`, `busy`, `cold`, `below_floor` | The final-warm compaction check declined. |
 | `window_end` | `budget`, `compact`, `shutdown`, `model_change`, `not_owned`, `late`, `not_replayable`, `claude_cfg_pending`, `error`, `self_warm_miss` | The stretch ended for that reason. |
