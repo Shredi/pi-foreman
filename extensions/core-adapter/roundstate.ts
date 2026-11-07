@@ -6,7 +6,7 @@
 // approval comes back only from the parent's `ruling.md` (a `plan-version: <hash>` line stamped by the parent pane's harness naming this
 // plan version, else `ruling-plan.md` or `ruling.md` in parentApproval restore mode: first line APPROVED, ctime newer
 // than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
-// // ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). A file of an older version (`chains`, review
+// ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). A file of an older version (`chains`, review
 // counters) restores its main chain's state and drops the counters. The caps-reset
 // watermark (`capsResetAt`, ms epoch of the last parent ruling/brief that lifted the loop stop and the budgets) is kept, so a reload does not apply it twice.
 import * as fs from "node:fs";
