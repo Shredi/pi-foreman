@@ -390,8 +390,8 @@ export function totalCost(node) {
   return sum;
 }
 
-/** A session that is over without the "done" mark: closed by its owner, or lost (its process vanished). */
-export const isEnded = (n) => n.state === "closed" || n.state === "lost";
+/** A session that is over without the "done" mark: closed by its owner, finished (its remote terminal ended), or lost (its process vanished). */
+export const isEnded = (n) => n.state === "closed" || n.state === "lost" || n.state === "finished";
 
 export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;
@@ -468,6 +468,20 @@ export function parseRecords(text) {
   return rows
     .filter((r) => isObj(r) && r.app === "pi-subagents" && (r.state === "working" || r.state === "blocked"))
     .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg) }));
+}
+
+/** The `<machine>/<terminal>` a hand-made `hc attach` terminal follows, from the text of `hc get <terminal> --json` (its `argv`
+ *  `["sh","-c","hc attach m/t"]` or its foreground `argv` `["hc","attach","m/t"]`); "" for any other terminal. */
+export function parseAttachTarget(text) {
+  let doc = text;
+  if (typeof text === "string") { try { doc = JSON.parse(text); } catch { return ""; } }
+  if (!isObj(doc)) return "";
+  const lines = [doc.foreground?.argv, doc.argv].filter(Array.isArray).map((a) => a.filter((x) => typeof x === "string").join(" "));
+  for (const line of lines) {
+    const m = /(?:^|[\s/\\])hc(?:\.exe)?\s+attach\s+([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\s*$/.exec(line);
+    if (m) return m[1];
+  }
+  return "";
 }
 
 // Records radar does not show already: each working radar run cancels one record with the same title.
@@ -772,23 +786,36 @@ function recItems(n, recs, skip, id) {
  *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
  *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
  *  `program` for the click and the logo. */
-export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set() } = {}) {
+export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set() } = {}) {
   if (!Array.isArray(all)) return [];
   const seen = new Set([address]);
+  // A nameless terminal that follows `hc attach <machine>/<t>`: the attach of that remote session (named in `all`), else hidden.
+  const attachLabel = (target) => {
+    const m = /^fm-(.+)-[0-9a-f]{4,6}$/.exec(all.find((k) => isObj(k) && k.address === target)?.name ?? "");
+    return m ? `${m[1]}@${target.slice(0, target.indexOf("/"))}` : "";
+  };
   const walk = (parent, depth) => {
     if (depth > MAX_DEPTH) return [];
     const terms = all.filter((k) => isObj(k) && k.parent === parent && k.state === "live" && typeof k.address === "string" && !seen.has(k.address));
     terms.forEach((k) => seen.add(k.address));
-    return terms.map((term) => {
+    return terms.flatMap((term) => {
       const r = resolve(term) ?? {};
       const below = walk(term.address, depth + 1);
       const id = `hc:${term.address}`;
-      const label = (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
+      const nameless = !(typeof r.label === "string" && r.label) && !(typeof term.name === "string" && term.name);
+      // The attach target comes from the terminal record itself (also for a listed agent, whose label is the remote title), else from `hc get`.
+      const own = !(typeof term.name === "string" && term.name) && !isObj(r.node) ? parseAttachTarget(term) : "";
+      const attach = own || (nameless && !isObj(r.node) && typeof r.attach === "string" ? r.attach : "");
+      if (attach && (!attachLabel(attach) || drawnTargets.has(attach))) return below; // an attach of nothing we know, or of a session already drawn: no row, its children stay
+      const label = (attach && `${attachLabel(attach)}`) || (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
       const status = r.status ?? "idle";
       let item;
       if (isObj(r.node)) {
         item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], skip, skipKeys, extra: below, top: false, id });
-        item.status = status;
+        const ended = isEnded(r.node);
+        if (ended && item.children.length === 0) return []; // an ended child with nothing live below leaves the tree
+        if (ended) item.dim = true; // one that keeps live descendants stays, dimmed
+        item.status = ended ? "idle" : status;
         item.urgent = urgentStatus([status, ...item.children.map((c) => c.urgent)]);
       } else {
         const children = sortItems([...recItems(null, r.recs ?? [], skip, id), ...below]);
@@ -797,7 +824,7 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
           urgent: urgentStatus([status, ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]),
         };
       }
-      return { ...item, elsewhere: "", address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) };
+      return [{ ...item, elsewhere: "", address: term.address, program: term.program ?? null, ...(attach ? { attach: true } : {}), ...(r.pane === undefined ? {} : { pane: r.pane }) }];
     });
   };
   return walk(address, 0);

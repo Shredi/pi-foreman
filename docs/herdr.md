@@ -154,6 +154,8 @@ tokens still publish (see Tokens) but the new snippet does not use them. Nothing
 | `fm_pr1`..`fm_pr4` | `● #17 · ◉ #21`: status dots of external items (see Dots) |
 | `fm_meta` | `↑287k ↓7.4k · $3.32 · ✓3`, plus the host pressure suffix and ` · owner present|away|grace|unknown` (the owner's presence as the cache warms see it) |
 
+In the herdr-app mod's Agents tree a `closed`, `lost` or `finished` child session is ended: its row is dropped unless a live session sits below it (then it stays dimmed). A registry entry whose process and terminal are both gone counts as ended (an unreadable terminal listing counts as present). A hand-made `hc attach <machine>/<t>` terminal shows as the attach of that remote session (`<label>@<machine>`) when the target is a known remote session terminal (`fm-<label>-xxxx`), else it has no row.
+
 A done session shows `done · n runs` on `fm_a1`, a lost one `lost`. A child session without its own pane row (a closed
 or idle one, a stale registry entry) is listed on `fm_a1` only while it is live: a session whose state is `idle`,
 `waiting`, `done`, `lost`, `closed` or `closing` leaves the line and the hidden `+n` count, one that works (starting and
