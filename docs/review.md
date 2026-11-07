@@ -42,7 +42,7 @@ When a reviewer run ends with a verdict, the adapter appends one last line to th
 
 ## Re-review after a FAIL
 
-A review launched after a FAIL checks only the items that failed: the harness prepends the line `[re-review items: 2, 4]` (the `N. FAIL` items of the last FAIL verdict, cleared by a PASS) to a plain `item` review task, and the verdict must list each of them as `N. PASS` or `N. FAIL`; an item is marked from a line `N. PASS` followed by a colon, dash, period or the line end. `ceremony.reviewRuns` (default 3) caps the review runs per user prompt; the next launch is refused `[review_cap]`. A new owner prompt resets the count, as does a parent-written `ruling-<n>.md` or `brief-<x>.md` in the session's handoff dir (newer than the last reset, not written by the session itself). Every review run, re-reviews and panel shadows included, traces `review_done` at its run end. A `reviewer` launched after a FAIL also gets the first line `[pi-foreman re-review] Review the revision diff since <sha of the reviewed head> …` (targeted tests only, no tsc or full suites; "the reviewed head" when the sha is unknown); `[plan-review]`, `[pre-pr]` and `[second-opinion]` tasks get none. The line follows the last FAIL in the session until a PASS or an owner prompt.
+A review launched after a FAIL checks only the items that failed: the harness prepends the line `[re-review items: 2, 4]` (the `N. FAIL` items of the last FAIL verdict, cleared by a PASS) to a plain `item` review task, and the verdict must list each of them as `N. PASS` or `N. FAIL`; an item is marked from a line `N. PASS` followed by a colon, dash, period or the line end. No count caps the review runs: reviews run until one passes, and the loop guard stops a round that repeats the findings of the round before or stalls with no diff and no new finding (`[review_loop]`; a new owner prompt, a `/ceremony` tier change or a parent-written `ruling-<n>.md` or `brief-<x>.md` in the session's handoff dir lifts it; see [ceremony](ceremony.md)). Every review run, re-reviews and panel shadows included, traces `review_done` at its run end. A `reviewer` launched after a FAIL also gets the first line `[pi-foreman re-review] Review the revision diff since <sha of the reviewed head> …` (targeted tests only, no tsc or full suites; "the reviewed head" when the sha is unknown); `[plan-review]`, `[pre-pr]` and `[second-opinion]` tasks get none. The line follows the last FAIL in the session until a PASS or an owner prompt.
 
 ## Critique
 
@@ -115,22 +115,17 @@ below such a heading neither needs a new review nor resets the checkpoint; a bod
 starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the foreman revises the plan
 before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
-`ceremony.planReviewMax` (default 4) caps the `[plan-review]` runs per plan topic per session. At the cap a further launch is refused (`launch_refused:plan_review_cap`) and the checkpoint opens with the latest verdict and `Plan review cap reached (N reviews); the owner decides` (see [ceremony](ceremony.md#plan-state-tier-source-and-plan-phase)).
+The `[plan-review]` runs are not capped; the loop guard stops a plan review that fails twice in a row with the same findings on the same plan version (see [ceremony](ceremony.md)).
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
 (`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.
 
-## Security findings and the revision cap
+## Security findings
 
 The one `reviewer` is modular: `roles.reviewer.skills` names the shipped `security-review` skill (`skills/security-review/SKILL.md`), which the reviewer reads from its catalog and applies when the diff touches secrets, permissions, destructive commands, trust boundaries or untrusted input. There is no separate security reviewer role.
 
 The threat model in that skill is the scope of a security finding. The shell guards are guardrails against accidents by the harness's own agents, not a sandbox against an attacker; a `SECURITY:` line is only for a break of a hard floor (secrets, a child's publish or off-branch push, deletes outside its own worktree, a child changing guard or permission config, injection). Parser bypasses go to the report as `- [later]` CRITIQUE lines.
 
-A reviewer FAIL whose report has a finding line starting `SECURITY:` (the agent file tells
-it to prefix security findings so) makes the builder launches that answer it exempt from `ceremony.revisionRounds`:
-the builder launches after that FAIL, up to the next review verdict (trace `revision_security_exempt`). Every other
-revision counts as before. A hard ceiling stays: exempt and counted revisions together never exceed 2 x
-`ceremony.revisionRounds` per prompt (heavy: 4); past it the launch is refused as usual, and the refusal text names the
-exempt count.
+A finding line starting `SECURITY:` (the agent file tells the reviewer to prefix security findings so) is an ordinary finding for the loop guard and puts the answering revision on the strong rung (`strongOnRevision`); no count limit exists for it to bypass.
 
 ## Per-occasion overrides
 

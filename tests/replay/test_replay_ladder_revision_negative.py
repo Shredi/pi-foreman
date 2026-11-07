@@ -2,8 +2,9 @@
 
 Same config as test_replay_ladder_fail_climb.py. Each case is one fixture:
 - ladder_builder_after_pass: a fresh builder after a reviewer PASS: no `revision` event, no climb.
-- ladder_two_builders_phase: after a FAIL, the second builder in the prompt names another phase (P2):
-  a new round chain, so it is not the same-prompt revision (no second `revision` event, no climb).
+- ladder_two_builders_phase: after a FAIL, the second builder in the prompt names another phase (P2). The
+  phase round chains are gone (review-loop), so it is a revision like any further builder after the FAIL:
+  traced `unchanged`, `rung_top`, and run on the live strong rung.
 - ladder_builder_keyword: after a FAIL, a builder with an explicit model keyword: `revision` decision
   `keyword`, no climb.
 Same prerequisites and skips as test_replay.py.
@@ -46,14 +47,15 @@ class TestLadderRevisionNegative(ReplayCase):
         self.assertEqual(rungs, [])
         self.assertEqual(builders, [("first", "builder"), ("first", "builder")])
 
-    def test_second_builder_naming_another_phase_does_not_climb(self):
+    def test_second_builder_naming_another_phase_is_a_revision_without_chains(self):
         builders, revs, rungs = self.run_case("ladder_two_builders_phase", 4)
-        self.assertEqual(revs, [("climb", "review_fail")])  # only the first builder is a revision
-        self.assertEqual([r["event"] for r in rungs], ["rung_up"])
+        # only the first builder climbs; the P2 builder is traced `unchanged` (no round chains since the revision caps went)
+        self.assertEqual(revs, [("climb", "review_fail"), ("unchanged", "review_fail")])
+        # the P2 builder is a revision too, and the live rung is already strong: traced rung_top, no second rung_up
+        self.assertEqual([r["event"] for r in rungs], ["rung_up", "rung_top"])
         # builders run in parallel and usage lines are written at run end: order varies
         self.assertIn(("first", "builder"), builders)
-        self.assertIn(("strong-relaunch", "finalizer"), builders)
-        self.assertEqual(sorted(m for _, m in builders), ["builder", "builder", "finalizer"])  # the P2 builder stays on the bottom rung
+        self.assertEqual(sorted(builders), [("first", "builder"), ("strong-relaunch", "finalizer"), ("strong-relaunch", "finalizer")])  # the P2 builder takes the live strong rung
 
     def test_explicit_keyword_after_fail_traces_keyword_and_does_not_climb(self):
         builders, revs, rungs = self.run_case("ladder_builder_keyword", 4)

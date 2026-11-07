@@ -1,11 +1,9 @@
-"""Replay: foreman read budget reminders and recheck budget (ceremony.foremanReads, ceremony.recheckBudget)
-on the fake provider.
+"""Replay: foreman read budget reminders (ceremony.foremanReads) on the fake provider.
 
 The read budget only reminds: at warn the result carries a reminder and again every `every` reads, and
 no read is ever refused; a started explorer restarts the count in phase after; a codemode script with
 several nested reads counts once; a supervisor reply window is exempt; `/foreman budget lift` has nothing
-to lift. After a reviewer PASS the foreman gets recheckBudget reads and is told to finish, a reviewer FAIL
-resets, a .workflow/ write does not; the triage result names the finish steps.
+to lift. After a reviewer PASS the foreman's own reads are not refused; the triage result names the finish steps.
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
@@ -20,8 +18,8 @@ from test_launch_policy import is_request, wait_records  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 
-def budget(before=(2, 3), after=(1, 2), recheck=1):
-    return {"ceremony": {"foremanReads": {"before": {"warn": before[0], "every": before[1]}, "after": {"warn": after[0], "every": after[1]}}, "recheckBudget": recheck}}
+def budget(before=(2, 3), after=(1, 2)):
+    return {"ceremony": {"foremanReads": {"before": {"warn": before[0], "every": before[1]}, "after": {"warn": after[0], "every": after[1]}}}}
 
 
 def reminded(res):
@@ -102,9 +100,9 @@ class TestReadBudget(ReplayCase):
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
-class TestRecheckBudget(ReplayCase):
-    def test_refused_after_pass_reset_by_fail_and_triage_names_the_reviewer(self):
-        cfg = budget(after=(8, 9), recheck=1)
+class TestReadsAfterPass(ReplayCase):
+    def test_not_refused_after_pass_and_triage_names_the_reviewer(self):
+        cfg = budget(after=(8, 9))
         cfg["ceremony"]["reviewPerRevision"] = False  # the flow needs a second reviewer after the PASS
         rig = self.rig("rb-recheck", load_fixture("read_budget"), config=cfg)
         (rig.project / "a.txt").write_text("alpha\n", "utf-8")
@@ -115,30 +113,11 @@ class TestRecheckBudget(ReplayCase):
         _, built = pi.wait_child_notify(timeout=180)  # builder done -> rc2 launches the reviewer
         _, passed = pi.wait_child_notify(timeout=180)  # reviewer PASS -> rc3
         res3 = tool_results(passed)
-        self.assertEqual([(n, e) for n, e, _ in res3][:3], [("read", False), ("read", True), ("subagent", False)], res3)
-        self.assertIn("[recheck_budget_exceeded]", res3[1][2])
-        self.assertIn("the reviewer passed; finish now", res3[1][2])
+        self.assertEqual([(n, e) for n, e, _ in res3][:3], [("read", False), ("read", False), ("subagent", False)], res3)
         _, failed = pi.wait_child_notify(timeout=180)  # reviewer FAIL -> rc4
         res4 = tool_results(failed)
         self.assertEqual([(n, e) for n, e, _ in res4], [("read", False), ("read", False)], res4)
         pi.close()
-        got = [(r["action"], r["count"]) for r in events(rig, "recheck_budget")]
-        self.assertEqual(got, [("start", 0), ("deny", 2), ("reset_fail", 1)])
-
-    def test_ledger_write_after_pass_keeps_the_recheck_budget(self):
-        # a .workflow/ note is no project-file change: the PASS stands, the next read is refused
-        rig = self.rig("rb-edit", load_fixture("read_budget"), config=budget(after=(8, 9), recheck=1))
-        (rig.project / "a.txt").write_text("alpha\n", "utf-8")
-        pi = rig.start()
-        pi.prompt("[[replay:ed1]] build it", timeout=60)
-        pi.wait_child_notify(timeout=180)
-        _, passed = pi.wait_child_notify(timeout=180)
-        res = tool_results(passed)
-        pi.close()
-        self.assertEqual([(n, e) for n, e, _ in res], [("read", False), ("write", False), ("read", True)], res)
-        self.assertIn("[recheck_budget_exceeded]", res[2][2])
-        got = [a for a, _ in [(r["action"], r["count"]) for r in events(rig, "recheck_budget")]]
-        self.assertEqual(got, ["start", "deny"])
 
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)

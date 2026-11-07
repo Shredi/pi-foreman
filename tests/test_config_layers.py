@@ -184,15 +184,11 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIs(res["config"]["ladder"]["strongOnRevision"], False)
         self.assertIn("session ladder.strongOnRevision ignored", "\n".join(res["warnings"]))
 
-    def test_revision_rounds_lower_only(self):
-        res = self.load(proj={"ceremony": {"revisionRounds": {"standard": 3, "heavy": 1}}},
-                        session={"ceremony": {"revisionRounds": {"heavy": 4}}})
-        self.assertEqual(res["config"]["ceremony"]["revisionRounds"], {"standard": 1, "heavy": 1})
-        joined = "\n".join(res["warnings"])
-        self.assertIn("project ceremony.revisionRounds.standard ignored: it would loosen", joined)
-        self.assertIn("session ceremony.revisionRounds.heavy ignored: it would loosen", joined)
-        res = self.load(l2={"ceremony": {"revisionRounds": {"heavy": 5}}}, proj={}, session={})
-        self.assertEqual(res["config"]["ceremony"]["revisionRounds"], {"standard": 1, "heavy": 5})
+    def test_removed_review_caps_in_a_layer_load_without_error(self):
+        # reviews run until clean (loop guard): the three old caps have no rule and no default; a layer that still sets them loads
+        old = {"revisionRounds": {"standard": 3}, "reviewRuns": 9, "planReviewMax": 7}
+        res = self.load(l2={"ceremony": old}, proj={"ceremony": old}, session={"ceremony": old})
+        self.assertEqual(res["errors"], [])
 
     def test_timeout_minutes_lower_only(self):
         res = self.load(l2={"roles": {"builder": {"timeoutMinutes": 90}}},
@@ -227,13 +223,13 @@ class LayerRulesTest(unittest.TestCase):
 
     def test_lower_only_below_minimum_is_dropped_with_a_warning(self):
         res = self.load(proj={"roles": {"builder": {"timeoutMinutes": 0}}},
-                        session={"ceremony": {"revisionRounds": {"standard": -1}}})
+                        session={"ceremony": {"heavyFileCount": 0}})
         self.assertEqual(res["errors"], [])
         self.assertEqual(res["config"]["roles"]["builder"]["timeoutMinutes"], 60)
-        self.assertEqual(res["config"]["ceremony"]["revisionRounds"]["standard"], 1)
+        self.assertEqual(res["config"]["ceremony"]["heavyFileCount"], 8)
         joined = "\n".join(res["warnings"])
         self.assertIn("project roles.builder.timeoutMinutes ignored: below the minimum 1", joined)
-        self.assertIn("session ceremony.revisionRounds.standard ignored: below the minimum 0", joined)
+        self.assertIn("session ceremony.heavyFileCount ignored: below the minimum 1", joined)
 
     def test_require_triage_true_only(self):
         res = self.load(proj={"ceremony": {"requireTriage": False}}, session={"ceremony": {"requireTriage": False}})
@@ -323,19 +319,19 @@ class LayerRulesTest(unittest.TestCase):
     def test_ceremony_escalation_keys_tighten_only(self):
         # MINOR-7: signals union only, file count lower only (>= 1), default raise only, wrong types dropped.
         res = self.load(proj={"ceremony": {"heavySignals": ["schema"], "heavyFileCount": 50, "default": "trivial"}},
-                        session={"ceremony": {"heavyFileCount": 0, "revisionRounds": None}})
+                        session={"ceremony": {"heavyFileCount": 0, "trivialBound": None}})
         cer = res["config"]["ceremony"]
         self.assertEqual(res["errors"], [])
         self.assertEqual(cer["heavySignals"][-1], "schema")
         self.assertIn("delete", cer["heavySignals"])
         self.assertEqual((cer["heavyFileCount"], cer["default"]), (8, "standard"))
-        self.assertEqual(cer["revisionRounds"], {"standard": 1, "heavy": 2})
+        self.assertEqual(cer["trivialBound"], {"files": 2, "lines": 40, "newFiles": 0})
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.heavySignals: entries not removed: delete", joined)
         self.assertIn("project ceremony.heavyFileCount ignored: it would loosen", joined)
         self.assertIn("project ceremony.default ignored: it would lower the tier", joined)
         self.assertIn("session ceremony.heavyFileCount ignored: below the minimum 1", joined)
-        self.assertIn("session ceremony.revisionRounds ignored: not an object", joined)
+
         res = self.load(proj={"ceremony": None}, session={"ceremony": {"heavyFileCount": 3, "default": "heavy"}})
         self.assertEqual(res["errors"], [])
         self.assertEqual(len(res["config"]["ceremony"]["heavySignals"]), 7)
@@ -356,17 +352,16 @@ class LayerRulesTest(unittest.TestCase):
         self.assertIn("project ceremony.trivialBound ignored: not an object", "\n".join(res["warnings"]))
 
     def test_frugality_keys_tighten_only(self):
-        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "every": 5}}, "recheckBudget": 9,
+        res = self.load(proj={"ceremony": {"foremanReads": {"before": {"warn": 9, "every": 5}},
                                             "launchWait": "detach", "dedupeNotify": False}},
-                        session={"ceremony": {"foremanReads": {"after": {"warn": 0}}, "recheckBudget": 0}})
+                        session={"ceremony": {"foremanReads": {"after": {"warn": 0}}}})
         c = res["config"]["ceremony"]
         self.assertEqual(res["errors"], [])
         self.assertEqual(c["foremanReads"], {"before": {"warn": 8, "every": 5}, "after": {"warn": 8, "every": 8}})
-        self.assertEqual((c["recheckBudget"], c["launchWait"], c["dedupeNotify"]), (0, "detach", True))
+        self.assertEqual((c["launchWait"], c["dedupeNotify"]), ("detach", True))
         joined = "\n".join(res["warnings"])
         self.assertIn("project ceremony.foremanReads.before.warn ignored: it would loosen", joined)
         self.assertIn("session ceremony.foremanReads.after.warn ignored: below the minimum 1", joined)
-        self.assertIn("project ceremony.recheckBudget ignored: it would loosen", joined)
         self.assertNotIn("project ceremony.launchWait ignored", joined)
         self.assertIn("project ceremony.dedupeNotify ignored: it would loosen", joined)
         res = self.load(proj={"ceremony": {"launchWait": "block"}}, session={})

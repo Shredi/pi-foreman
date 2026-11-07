@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_foreman_config import render_prompt  # noqa: E402
+from test_foreman_config import render_prompt, review_loop_rewrite  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = "b228232"  # origin/main after #15: foreman.md as before the sizing fold
@@ -73,7 +73,7 @@ class SizingPromptTest(unittest.TestCase):
             for old_text, new_text in ROLE_PAIRS:
                 self.assertIn(old_text, want)
                 want = want.replace(old_text, new_text)
-            want = want.replace(old_ask, new_ask)
+            want = review_loop_rewrite(want.replace(old_ask, new_ask))
             self.assertEqual(render_prompt(text, k), want)
         self.assertNotIn("size: {files", render_prompt(text, self.knobs(sizing="off")))
 

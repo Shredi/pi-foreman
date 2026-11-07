@@ -47,9 +47,7 @@ builder's live rung is the bottom one, the finish gate refuses once more without
 The `review_fail` target is the higher of the launch model and the strong rung by provider rank (`providers.<p>.ranks`). A model that ranks above the strong rung stays: the trace is `rung_top` with reason `already above strong rung`. A model below it rises to the strong rung.
 
 `strongOnRevision` (default true) also covers a revision that answers a FAIL with a `SECURITY:` finding: it launches
-on the strong rung. The security exemption (`revision_security_exempt`) is separate: it lifts only the revision cap
-for that round and never climbs by itself; with `strongOnRevision` false the exempt revision stays on the bottom
-rung. On the top rung the revision is a `rung_top`, the finish gate offers no
+on the strong rung; with `strongOnRevision` false it stays on the bottom rung. On the top rung the revision is a `rung_top`, the finish gate offers no
 climb, and the usual two-refusal valve applies: two counted refusals, then `ceremony_incomplete`
 (see [ceremony](ceremony.md)).
 

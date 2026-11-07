@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { REVIEW_ROLES, verdictOf } from "./rounds.ts";
 import type { Verdict } from "./rounds.ts";
+import type { ReviewKind } from "./reviewloop.ts";
 
 export interface ReviewRecord {
   role: string;
@@ -17,9 +18,17 @@ export interface ReviewRecord {
   head: string | null;
   /** Why head is null. */
   why?: NoHeadWhy;
+  /** Loop guard (reviewloop.ts): `code` (a counting item or pre-pr review) or `plan` (a plan review, never a PR-gate verdict). Absent in a record from before the guard. */
+  kind?: ReviewKind;
+  /** What the round reviewed (tree hash of the checkout, or the plan version hash); "" = unknown. */
+  state?: string;
+  /** The finding set of the round's report (reviewloop.ts sigOf). */
+  sig?: string[];
 }
 
 export const MAX_REVIEWS = 50;
+/** Finding keys kept per record. */
+const MAX_SIG = 100;
 const HEAD_TIMEOUT_MS = 2000;
 
 /** Completed reviewer results of a run-end event that carry a verdict, with the cwd they ran in. */
@@ -180,7 +189,7 @@ export function passHeads(list: readonly ReviewRecord[]): string[] {
  * is not a headless PASS. The ledger's review gate takes such a PASS, the PR gate cannot, so a refusal names it.
  */
 export function headlessPass(list: readonly ReviewRecord[]): string | null {
-  const last = list[list.length - 1];
+  const last = list.findLast((r) => r.kind !== "plan");
   return last && last.verdict === "pass" && last.head === null ? last.why ?? "unknown" : null;
 }
 
@@ -191,7 +200,16 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
   for (const r of v as Record<string, unknown>[]) {
     if (!r || typeof r !== "object" || typeof r.role !== "string" || (r.verdict !== "pass" && r.verdict !== "fail")) continue;
     if (r.head !== null && !(typeof r.head === "string" && /^[0-9a-f]{40,64}$/.test(r.head))) continue;
-    out.push({ role: r.role, verdict: r.verdict, head: r.head as string | null, ...(r.head === null && NO_HEAD_WHY.includes(r.why as NoHeadWhy) ? { why: r.why as NoHeadWhy } : {}) });
+    const sig = Array.isArray(r.sig) && r.sig.every((x) => typeof x === "string") ? (r.sig as string[]).slice(0, MAX_SIG) : null;
+    out.push({
+      role: r.role,
+      verdict: r.verdict,
+      head: r.head as string | null,
+      ...(r.head === null && NO_HEAD_WHY.includes(r.why as NoHeadWhy) ? { why: r.why as NoHeadWhy } : {}),
+      ...(r.kind === "plan" || r.kind === "code" ? { kind: r.kind } : {}),
+      ...(typeof r.state === "string" ? { state: r.state } : {}),
+      ...(sig ? { sig } : {}),
+    });
   }
   return out.slice(-MAX_REVIEWS);
 }

@@ -28,13 +28,11 @@ test("r41 recheckexempt: read-only peer commands are exempt, their writing neigh
   for (const c of ["herdr agent prompt 1-2 hi", "herdr pane close 1-2", "herdr pane split 1-2", "foreman worktree sweep", "foreman session close x", "herdr pane read 1-2 > /etc/out.txt", "herdr pane list > out.txt", "foreman session list --out /etc/x"]) assert.equal(bash(c), false, c);
 });
 
-test("r41 recheckexempt: an exempt family counts zero after a PASS, a plain command still counts", () => {
+test("r41 recheckexempt: an exempt family does not count as a read, a plain command does", () => {
   const b = new ReadBudget();
-  b.enterPost();
-  const run = (id: string, name: string, input: unknown) => b.check("bash", id, DEFAULT_READ_LIMITS, 1, recheckExempt(name, input, ctx));
+  const run = (id: string, name: string, input: unknown) => b.check("bash", id, DEFAULT_READ_LIMITS, recheckExempt(name, input, ctx));
   for (let i = 0; i < 5; i++) assert.equal(run(`e${i}`, "bash", { command: "gh pr view 1" }).kind, "allow");
-  assert.equal(b.recheckCount, 0);
+  assert.equal(b.count, 0);
   assert.equal(run("c1", "bash", { command: "git diff" }).kind, "allow");
-  assert.equal(b.recheckCount, 1);
-  assert.equal(run("c2", "bash", { command: "git show" }).kind, "deny");
+  assert.equal(b.count, 1);
 });
