@@ -70,6 +70,17 @@ test("plan and code rounds are separate kinds: a plan FAIL after a code FAIL wit
   assert.equal(await a.launch("builder"), undefined);
 });
 
+test("a builder launched right after the stopping run-end, before the round is recorded, is refused", async (t) => {
+  const w = world(t, standard);
+  const a = await w.adapter("startup");
+  assert.equal(await codeReview(a, FAIL_REPORT, 1), null);
+  assert.equal(await a.launch("builder"), undefined);
+  const r = await a.reviewLaunch("review items 2 of the diff");
+  assert.equal(r.blocked, null);
+  a.endRun(r.id, FAIL_REPORT);
+  assert.ok(loopRefused(await a.launch("builder")), "immediate launch");
+});
+
 test("no count refuses: more than 3 reviews and more than 2 revision rounds in one prompt run through", async (t) => {
   const w = world(t, standard);
   const a = await w.adapter("startup");

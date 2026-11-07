@@ -2835,6 +2835,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             pendingWarn = { event: "budget_warn", cost: Math.round(cost.total * 10000) / 10000, limit: budgetCap(get(s.config.config, "ceremony.budgetUsd")) };
           }
           // Loop guard (reviewloop.ts): a stop refuses a builder or a non-second-opinion reviewer launch until the owner clears it.
+          await s.reviewSync; // a review round still being recorded lands (and may set the stop) before the gate reads it
           if (s.loopStop && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
             return { block: true, reason: loopRefusal(s.loopStop) };
