@@ -13,7 +13,7 @@ const B = "# Plan A\n\n## Goal\nShip it, twice.\n";
 const C = "# Plan A\n\n## Goal\nShip it, thrice.\n";
 
 function env(t: { after: (fn: () => void) => void }) {
-  const root = fs.realpathSync(mkTestTmp("pf-show-"));
+  const root = fs.realpathSync.native(mkTestTmp("pf-show-"));
   t.after(() => rmTestTmp(root));
   const ws = path.join(root, "ws");
   const scratch = path.join(ws, ".workflow/scratch");
