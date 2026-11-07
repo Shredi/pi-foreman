@@ -1113,6 +1113,26 @@ class BriefTest(RemoteBase):
             self.assertEqual(self.send(str(f))[0], 0, name)
             self.assertEqual(counts(), want, name)
 
+    def set_ask(self, ask):
+        reg = self.padir / "pi-foreman" / "state" / "sessions.json"
+        data = json.loads(reg.read_text("utf-8"))
+        for s in data["sessions"]:
+            if s["child"] == self.entry["child"]:
+                s["ask"] = ask
+        reg.write_text(json.dumps(data), "utf-8")
+
+    def test_a_delivered_ruling_clears_the_pending_ask_at_once(self):
+        for ask, name, cleared in (({"seq": 5, "n": 2}, "ruling-2.md", True), ({"seq": 5, "n": 2}, "ruling-3.md", True),
+                                   ({"seq": 5, "n": 2}, "ruling-1.md", False), ({"seq": 5, "n": 2}, "steer-1.md", False),
+                                   ({"seq": 5}, "ruling-1.md", True), ({"seq": 5}, "ruling.md", True),
+                                   ({"seq": 5}, "brief-1.md", False)):
+            self.set_ask(ask)
+            f = self.tmp / name
+            f.write_text("x", "utf-8")
+            self.assertEqual(self.send(str(f))[0], 0, name)
+            got = self.parent_registry()[0].get("ask")
+            self.assertEqual(got is None, cleared, (ask, name))
+
     def test_other_files_become_numbered_briefs(self):
         f = self.tmp / "notes.md"
         f.write_text("some notes", "utf-8")

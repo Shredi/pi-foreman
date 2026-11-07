@@ -613,3 +613,22 @@ test("watcher: a closed notice kills the local attach terminal of the entry; no 
   await n.send(ev("1:closed:-:0"));
   assert.deepEqual(n.calls.filter((c) => c[0] === "kill"), []);
 });
+
+test("watcher: the ask stores n and topic from the ask.md header, never the notice seq", async () => {
+  const r = rig();
+  r.w.start();
+  r.put("ask.md", "# Ask 3: db choice\nwhich?\n");
+  await r.send(ev(label(7, "ask", "# Ask 3: db choice\nwhich?\n")));
+  const ask = r.reg().ask as { seq: number; n?: number; topic?: string };
+  assert.equal(ask.seq, 7);
+  assert.equal(ask.n, 3);
+  assert.equal(ask.topic, "db choice");
+});
+
+test("watcher: an ask.md without the header stores no n", async () => {
+  const r = rig();
+  r.w.start();
+  r.put("ask.md", "which?\n");
+  await r.send(ev(label(2, "ask", "which?\n")));
+  assert.equal((r.reg().ask as { n?: number }).n, undefined);
+});

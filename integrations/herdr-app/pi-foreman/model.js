@@ -484,6 +484,43 @@ export function parseAttachTarget(text) {
   return "";
 }
 
+/** The `hc run --name` of the local attach terminal of a remote child, as `hc_attach_name` in scripts/foreman_session.py:
+ *  `fm-<machine>-<slug>-<hex4>`, at most 32 characters (slug cut first, then machine). */
+export function attachName(machine, child) {
+  const budget = 32 - 5 - 4;
+  let mach = String(machine).toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, budget);
+  let slug = (String(child).slice(3, -7).replace(/^-+|-+$/g, "") || "session").slice(0, Math.max(budget - mach.length, 0)).replace(/^-+|-+$/g, "");
+  if (!slug) { mach = mach.slice(0, budget - 1); slug = "session".slice(0, budget - mach.length); }
+  mach = mach.replace(/^-+|-+$/g, "") || "m";
+  return `fm-${mach}-${slug}-${String(child).slice(-4)}`;
+}
+
+/** What a click on a remote session card does: focus the live local terminal that already follows `hc attach <machine>/<t>`
+ *  (`{kind:"focus", address}`), else open one (`{kind:"open", target, name}`); null for a node that is not a remote session
+ *  with a terminal. `all` are the local terminal records. */
+export function remoteClick(node, all) {
+  if (!isObj(node) || !node.machine || !node.hcTerminal) return null;
+  const target = node.hcTerminal.includes("/") ? node.hcTerminal : `${node.machine}/${node.hcTerminal}`;
+  const have = (Array.isArray(all) ? all : []).find((k) => isObj(k) && k.state === "live" && typeof k.address === "string" && parseAttachTarget(k) === target);
+  return have ? { kind: "focus", address: have.address } : { kind: "open", target, name: attachName(node.machine, node.key || node.name) };
+}
+
+/** Addresses of the listed agents that are a hand-made `hc attach <machine>/<t>` of a target in `targets` (the remote sessions a
+ *  radar node represents): they are no row of their own, the session card is their row (a click on it focuses them).
+ *  `attachOf(address, record)` may add a target learned elsewhere (`hc get`). */
+export function attachNests(list, all, targets, attachOf = () => "") {
+  const out = new Set();
+  if (!Array.isArray(list) || !(targets instanceof Set)) return out;
+  const recs = new Map((Array.isArray(all) ? all : []).filter((k) => isObj(k) && typeof k.address === "string").map((k) => [k.address, k]));
+  for (const a of list) {
+    if (!isObj(a) || typeof a.address !== "string") continue;
+    const rec = recs.get(a.address);
+    const target = (rec ? parseAttachTarget(rec) : "") || attachOf(a.address, rec) || "";
+    if (target && targets.has(target)) out.add(a.address);
+  }
+  return out;
+}
+
 // Records radar does not show already: each working radar run cancels one record with the same title.
 function extraRecords(n, recs) {
   const left = new Map();

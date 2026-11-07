@@ -31,6 +31,7 @@ import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { parseAskHeader } from "./askcontract.ts";
 import { applyRemoteNotice, parseRemoteNotice } from "./remotesession.ts";
 import type { RemoteNotice } from "./remotesession.ts";
 import { readRegistry, writeRegistry } from "./session.ts";
@@ -730,7 +731,11 @@ export class RemoteWatcher {
       Object.assign(e, rest);
       e.noticeSeq = a.seq;
       e.lastError = null;
-      if (a.kind === "ask") e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, rulings: typeof e.rulings === "number" ? e.rulings : 0 };
+      if (a.kind === "ask") {
+        // `n` and `topic` come from the mirrored ask.md header `# Ask <n>: <topic>`; `seq` is only the notice counter
+        const head = buf ? parseAskHeader(buf.toString("utf8")) : null;
+        e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, rulings: typeof e.rulings === "number" ? e.rulings : 0, ...(head ? { n: head.n, topic: head.topic } : {}) };
+      }
       else delete e.ask;
       wake = { kind: hit.kind, path: hit.path };
       if (a.kind === "closed") attach = (e.attach as { address?: unknown } | undefined)?.address;

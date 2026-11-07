@@ -1739,8 +1739,11 @@ def remote_brief(a, adir, entry):
             if kind == "ruling":
                 s["rulings"] = int(s.get("rulings") or 0) + 1  # the watcher clears an ask on a ruling, not on a plain brief
             ask = s.get("ask")
-            if ruling and isinstance(ask, dict) and isinstance(ask.get("n"), int) and int(ruling.group(1)) >= ask["n"]:
-                s["ask"] = None
+            if kind == "ruling" and isinstance(ask, dict):
+                known = isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool)
+                # a delivered ruling answers the ask: its number reaches the ask's, or the ask's number is unknown
+                if not known or (ruling and int(ruling.group(1)) >= ask["n"]):
+                    s["ask"] = None
     write_registry(adir, reg)
     print("pi-foreman session: %s delivered to %s@%s (%s bytes%s)." % (
         file_name, entry.get("label"), name, reply.get("bytes"), "" if reply.get("woke") else "; the child was not woken"))

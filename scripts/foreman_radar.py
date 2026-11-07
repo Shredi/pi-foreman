@@ -29,7 +29,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from foreman_session import agent_dir, entry_gone, hc_terminal_addresses  # noqa: E402
+from foreman_session import STALE_BEAT, agent_dir, entry_gone, hc_terminal_addresses  # noqa: E402
 
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0
@@ -452,13 +452,18 @@ RADAR_LISTING_TIMEOUT = 3.0
 
 def mark_gone(reg, live, now):
     """Flag `gone` on each local open/closing registry entry whose process and terminal are provably gone (a terminal
-    listing that cannot be read, or that times out, leaves it present)."""
-    cands = [e for e in reg if e.get("status") in ("open", "closing") and not e.get("machine")]
+    listing that cannot be read, or that times out, leaves it present). A local `pending` entry (it never published an
+    intercom id) counts once it is older than STALE_BEAT, so a launch still in progress is not hidden."""
+    def stale_pending(e):
+        opened = parse_ts(e.get("opened"))
+        return e.get("status") == "pending" and opened is not None and now - opened > STALE_BEAT
+
+    cands = [e for e in reg if (e.get("status") in ("open", "closing") or stale_pending(e)) and not e.get("machine")]
     if not cands:
         return reg
     hc = hc_terminal_addresses(RADAR_LISTING_TIMEOUT) if any(isinstance(e.get("hc"), dict) for e in cands) else None
     panes = herdr_panes() if any(not isinstance(e.get("hc"), dict) and e.get("pane") for e in cands) else None
-    return [dict(e, gone=True) if e in cands and entry_gone(e, live, now, hc, panes) else e for e in reg]
+    return [dict(e, gone=True) if e in cands and entry_gone(dict(e, status="open") if e.get("status") == "pending" else e, live, now, hc, panes) else e for e in reg]
 
 
 def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
@@ -757,8 +762,10 @@ def build(data, now):
                 n["name"] += "@" + e["machine"]
                 n["glyph"], n["state"] = remote_glyph(e, opened, now)
                 ask = e.get("ask")
-                if n["state"] == "ask" and isinstance(ask.get("seq"), int):
-                    n["asks"] = [{"n": ask["seq"], "topic": "remote"}]
+                # the number and topic come from the ask.md header the watcher stored; `seq` (the notice counter) is never shown
+                if n["state"] == "ask" and isinstance(ask, dict) and isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool):
+                    topic = ask.get("topic")
+                    n["asks"] = [{"n": ask["n"], "topic": topic if isinstance(topic, str) and topic else "remote"}]
             else:
                 n["glyph"], n["state"] = reg_glyph(e.get("status"), opened, now, bool(ho and "result.md" in ho["has"]))
             if e.get("gone"):  # process and terminal gone: over, not live and not idle
