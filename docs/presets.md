@@ -22,8 +22,7 @@ result is validated against the schema and nothing is written when it fails. `--
 | key | value | why |
 |---|---|---|
 | `providers.claude-bridge.cache.ttlSeconds` and `byModel` | none | The TTL is derived from `bridge.promptCacheTtl` (1 h for the foreman, 5 m for subagents; [cache](cache.md#children-through-the-bridge)). An explicit value here would shadow it. |
-| `providers.claude-bridge.cache.keepalive.enabled` | `true` | pi-foreman sends the warms beyond Pi's 30-minute cap itself ([cache](cache.md#self-warm-beyond-pis-cap)). |
-| `providers.claude-bridge.cache.keepalive.awayTicks` | `2` | While the owner is away at most two warms per idle ([presence gate](cache.md#presence-gate)). |
+| `providers.claude-bridge.cache.keepalive.enabled` | `true` | The only switch: pi-foreman sends every idle warm itself ([cache](cache.md#keep-alive)); the owner's presence only lowers the budget tier ([presence gate](cache.md#presence-gate)). Older presets also wrote `awayTicks: 2`, which is ignored now. |
 | `providers.claude-bridge.roles.foreman.idle` | Sonnet 5.5, thinking `medium` | The foreman's idle rung ([ladder](ladder.md#idle-rung-foreman-downshift)). |
 
 Earlier versions of the `claude-bridge` presets wrote `ttlSeconds: 300` and a `claude-*` 3600 s `byModel` row. Applying a preset again does not remove them from your user config; delete both ([migration](cache.md#migration-from-the-old-preset)).
@@ -106,8 +105,8 @@ your user or overlay `foreman.json` (ids are placeholders):
 ```
 
 After the switch the idle model's provider supplies TTL, billing and warms, so `<provider-b>` needs the `cache` entry
-(a 1800 s token-billed cache is warmed by pi-foreman itself, [cache](cache.md#self-warm-beyond-pis-cap)), plus a
-`promptCache` entry for the idle model in Pi's `models.json` and `cacheWarming: "idle"` in Pi's settings. Child roles,
+(a token-billed cache is warmed by pi-foreman itself, [cache](cache.md#keep-alive)), plus a
+`promptCache` entry for the idle model in Pi's `models.json`. Child roles,
 `foreman_session_open` and the rank checks keep using `<provider-a>`'s map ([ladder](ladder.md#idle-rung-foreman-downshift)).
 `foreman doctor` lists the rung with the other mapped models and warns when `<provider-b>` has no cache entry.
 

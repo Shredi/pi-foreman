@@ -1,15 +1,15 @@
 """Replay: idle cache keep-alive and warm compaction (docs/cache.md) on the fake provider.
 
 The fake provider is registered as claude-bridge (FOREMAN_FAKE_BRIDGE=1) and declares `promptCache`
-(FOREMAN_FAKE_PROMPT_CACHE=1); Pi's `cacheWarming` is "idle". The cache policy has a 20 s TTL, a 30 s
-interval and a 1 minute window, so Pi ticks every 10 s and the warm-compaction check lands 30 s after
-the session settles. Pi's reserveTokens is 100000, so the runtime compaction point is the window minus
-100000 = 100000 tokens. The last answer reports 90000 tokens: above the idle floor (50000 = half of the
-point), below Pi's own threshold, so only the idle check compacts (turn_end never requests a compaction:
-there is no compact_tier event and the only compaction trace is warm_idle). Expected
-trace: keepalive fired (once or more), compaction warm_idle, keepalive window_end (reason compact),
-and Pi really ran the compaction (a compaction entry in the session file). Same prerequisites as
-test_replay.py.
+(FOREMAN_FAKE_PROMPT_CACHE=1). pi-foreman's replay sender owns the warming (Pi's own warmer is
+never consulted). The cache policy has a 20 s TTL, so a warm is due 10 s after the last request. Pi's
+reserveTokens is 40000, so Pi's own compaction point is 200000 - 40000 = 160000 tokens. The last answer
+reports 130000 tokens: above the final-warm gate (0.6 x the 200000 window = 120000), below Pi's own
+threshold, so only the final warm compaction runs (turn_end never requests one: there is no compact_tier
+event and the only compaction trace is final_warm). Priced fake models make the budget hold one warm.
+Expected trace: keepalive fired, keepalive skipped (post_warm: no budget for another), compaction
+final_warm, keepalive window_end (reason budget), and Pi really ran the compaction (a compaction entry in
+the session file). Same prerequisites as test_replay.py.
 """
 from __future__ import annotations
 
@@ -27,16 +27,15 @@ from test_replay import GOLDEN, REASON, ReplayCase  # noqa: E402
 BRIDGE = "claude-bridge"
 SCRIPT = {"*": {
     "p1": [{"text": "fake: first reply " + "x" * 400}],
-    "p2": [{"text": "fake: second reply " + "y" * 400, "usage": {"totalTokens": 90000}}],
+    "p2": [{"text": "fake: second reply " + "y" * 400, "usage": {"totalTokens": 130000}}],
 }}
 CONFIG = {
     "providers": {BRIDGE: {"cache": {"ttlSeconds": 20, "billing": "token",
-                                     "keepalive": {"enabled": True, "intervalSeconds": 30, "windowMinutes": 1,
-                                                   "compactMinTokens": 0},  # the fake contexts are tiny
+                                     "keepalive": {"enabled": True, "compactMinTokens": 0},  # the fake contexts are tiny
                                      "warmCompact": True}}},
 }
-SETTINGS = {"cacheWarming": "idle", "compaction": {"keepRecentTokens": 1, "reserveTokens": 100000}}
-KEYS = ("event", "outcome", "reason", "point", "model")
+SETTINGS = {"compaction": {"keepRecentTokens": 1, "reserveTokens": 40000}}
+KEYS = ("event", "outcome", "reason", "point", "model", "tier", "phase", "trigger")
 NEW_KEYS = ("event", "outcome", "reason", "trigger", "from", "to", "cause")
 ENV = {"FOREMAN_FAKE_BRIDGE": "1", "FOREMAN_FAKE_PROMPT_CACHE": "1"}
 
@@ -76,27 +75,26 @@ class TestIdleCache(ReplayCase):
 
     def test_keepalive_then_one_warm_compaction(self):
         rig = self.rig("idlecache", SCRIPT, providers=(BRIDGE,), config=CONFIG, settings=SETTINGS)
-        pi = rig.start(provider=BRIDGE, env={"FOREMAN_FAKE_BRIDGE": "1", "FOREMAN_FAKE_PROMPT_CACHE": "1"})
+        pi = rig.start(provider=BRIDGE, env=dict(ENV, FOREMAN_FAKE_COST="1,1,3,20"))
+        # cold = 16 tokens x 20 = 320e-6, quarter budget 80e-6; one warm costs 16 x 3 + 1 = 49e-6, a second would not fit.
         pi.prompt("[[replay:p1]] hello", timeout=60)
         pi.prompt("[[replay:p2]] again", timeout=60)
 
-        def ended(t):  # the first window (after p1) ends by activity when p2 arrives
-            return any(r.get("event") == "keepalive" and r.get("outcome") == "window_end" and r.get("reason") != "activity" for recs in t.values() for r in recs)
+        def ended(t):  # the stretch after p1 is replaced by p2's request; the one after p2 ends with the final compaction
+            return any(r.get("event") == "keepalive" and r.get("outcome") == "window_end" for recs in t.values() for r in recs)
 
         rig.wait_trace(ended, timeout=180)
         pi.drain(3)
         [recs] = [v for v in rig.traces().values() if v and v[0].get("event") == "session_start"]
         events = idle_events(recs)
-        # The window opened after p1 ends by activity when p2 arrives; the golden starts at the second window's first refresh.
-        events = events[next(i for i, e in enumerate(events) if e.get("outcome") == "fired"):]
         kinds = [e["event"] for e in events]
         self.assertEqual(kinds.count("compaction"), 1, events)
         self.assertNotIn("compact_tier", [r.get("event") for r in recs], "turn_end no longer requests a compaction")
-        self.assertEqual([r.get("reason") for r in recs if r.get("event") == "compaction"], ["warm_idle"], "the idle warm compaction is the only compaction request")
-        self.assertEqual([r.get("point") for r in recs if r.get("event") == "compaction_point"][:1], [100000], "the runtime point is traced at session start")
+        self.assertEqual([r.get("trigger") for r in recs if r.get("event") == "compaction"], ["final_warm"], "the final warm compaction is the only compaction request")
+        self.assertEqual([r.get("point") for r in recs if r.get("event") == "compaction_point"][:1], [160000], "the runtime point is traced at session start")
         self.assertEqual(events[0].get("outcome"), "fired", events)
-        self.assertEqual([(e["event"], e.get("outcome"), e.get("reason")) for e in events[-2:]],
-                         [("compaction", None, "warm_idle"), ("keepalive", "window_end", "compact")], events)
+        self.assertEqual([(e["event"], e.get("outcome"), e.get("reason")) for e in events[-3:]],
+                         [("keepalive", "skipped", "budget"), ("compaction", None, "warm_idle"), ("keepalive", "window_end", "budget")], events)
         self.golden_key("events", events)
 
         # Pi ran the compaction: a compaction entry in the session file.
@@ -104,13 +102,13 @@ class TestIdleCache(ReplayCase):
         self.assertTrue(any('"type":"compaction"' in f.read_text("utf-8").replace(": ", ":") for f in sessions), sessions)
         pi.close()
 
-    def test_budget_exhaustion_compacts_with_trigger_budget(self):
-        """Priced fake models: a warm costs more than the budget's remainder, so the next one is refused
-        (budget) and the compaction runs while the cache is still warm (trigger budget)."""
+    def test_budget_exhaustion_compacts_at_settle_with_trigger_final_warm(self):
+        """Priced fake models: the first warm already costs more than the quarter budget, so none is sent (budget)
+        and the final warm compaction runs at the settle grace (trigger final_warm)."""
         cfg = json.loads(json.dumps(CONFIG))
         cfg["providers"][BRIDGE]["cache"]["keepalive"]["budgetShare"] = 0.5
         rig = self.rig("idlebudget", SCRIPT, providers=(BRIDGE,), config=cfg, settings=SETTINGS)
-        # cold = 16 tokens x 10 = 160e-6, budget 80e-6; the first warm is estimated at 16 x 5 + 1 output (15) = 95e-6: refused.
+        # cold = 16 tokens x 10 = 160e-6, quarter budget 40e-6; the first warm is estimated at 16 x 5 + 1 output (15) = 95e-6: refused.
         pi = rig.start(provider=BRIDGE, env=dict(ENV, FOREMAN_FAKE_COST="3,15,5,10"))
         pi.prompt("[[replay:p1]] hello", timeout=60)
         pi.prompt("[[replay:p2]] again", timeout=60)
@@ -118,25 +116,25 @@ class TestIdleCache(ReplayCase):
         pi.drain(3)
         events = kept(self.session_trace(rig), ("keepalive", "compaction", "budget"))
         events = [e for e in events if not (e["event"] == "keepalive" and e.get("reason") == "activity")]
-        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "budget"}, events)
+        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "final_warm"}, events)
+        self.assertNotIn("fired", [e.get("outcome") for e in events], events)
         self.golden_key("budget", events)
         pi.close()
 
-    def test_away_owner_refuses_warm_and_compacts_with_trigger_away(self):
-        """A fake probe reports an hour of idle input (awayAfterMinutes 1): the first warm is refused (away)
-        and the compaction runs with trigger away."""
+    def test_away_owner_warms_under_the_quarter_tier(self):
+        """A fake probe reports an hour of idle input (awayAfterMinutes 1, past the 15 min grace): the owner is away,
+        the warm still goes out under the quarter tier, then the final warm compaction runs."""
         cfg = json.loads(json.dumps(CONFIG))
         cfg["presence"] = {"enabled": True, "awayAfterMinutes": 1, "command": "echo 3600"}
         rig = self.rig("idleaway", SCRIPT, providers=(BRIDGE,), config=cfg, settings=SETTINGS)
-        pi = rig.start(provider=BRIDGE, env=ENV)
+        pi = rig.start(provider=BRIDGE, env=dict(ENV, FOREMAN_FAKE_COST="1,1,3,20"))
         pi.prompt("[[replay:p1]] hello", timeout=60)
         pi.prompt("[[replay:p2]] again", timeout=60)
         rig.wait_trace(lambda t: any(r.get("event") == "compaction" for recs in t.values() for r in recs), timeout=180)
         pi.drain(3)
-        events = kept(self.session_trace(rig), ("keepalive", "compaction", "presence"))
-        events = [e for e in events if not (e["event"] == "keepalive" and e.get("reason") == "activity")]
-        self.assertIn({"event": "keepalive", "outcome": "skipped", "reason": "away"}, events)
-        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "away"}, events)
+        events = kept(self.session_trace(rig), ("keepalive", "compaction", "presence"), NEW_KEYS + ("tier", "presence"))
+        self.assertIn({"event": "keepalive", "outcome": "fired", "reason": "idle", "tier": "quarter", "presence": "away"}, events)
+        self.assertIn({"event": "compaction", "reason": "warm_idle", "trigger": "final_warm"}, events)
         self.golden_key("away", events)
         pi.close()
 

@@ -2,7 +2,7 @@
 // colours and the once-a-second repaint.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { UsageFooter, type CacheSource } from "../footer.ts";
+import { UsageFooter, tierGlyphs, type CacheSource } from "../footer.ts";
 import { renderFooter, visibleWidth, type CacheBarView, type FooterView } from "../footerview.ts";
 import { resolveWarmPolicy, type CachePolicy } from "../cachepolicy.ts";
 import { symbolSet } from "../symbols.ts";
@@ -20,18 +20,21 @@ const RUNG = "claude-sonnet-5-5";
 
 const policy = (over: Partial<CachePolicy> = {}): CachePolicy => ({ active: true, ttlSeconds: TTL, billing: "token", intervalSeconds: 3240, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, selfWarm: true, ...over });
 
-/** 38:12 left (67 %), 3 warms in the window. */
+const TOUCH = NOW - (SPAN - (38 * 60 + 12) * 1000);
+/** End of the TTL of the last of `n` warms, one tick apart from the touch. */
+const spanEnd = (n: number): number => TOUCH + n * TICK + TTL * 1000;
+
+/** 38:12 left to cold; 3 warms of the half tier ahead, so the span share is 12192 s of 13320 s (9 cells). */
 function source(over: Partial<CacheSource> = {}): CacheSource {
-  const next = NOW + 60_000;
   return {
     policy: policy(),
     now: NOW,
-    lastTouch: NOW - (SPAN - (38 * 60 + 12) * 1000),
-    windowEndAt: next + 2 * TICK + 1,
-    nextWarmAt: next,
-    tickMs: TICK,
-    budget: null,
-    away: null,
+    lastTouch: TOUCH,
+    stretchStartAt: TOUCH,
+    nextWarmAt: NOW + 60_000,
+    spanEndAt: spanEnd(3),
+    warmsLeft: 3,
+    tier: "half",
     running: false,
     downshifted: false,
     idleRung: RUNG,
@@ -60,22 +63,21 @@ for (const which of ["unicode", "emoji", "nerd", "ascii"] as const) {
   const s = (over: Partial<CacheSource> = {}) => source({ symbols: which, ...over });
 
   test(`cache bar goldens (${which})`, () => {
-    assert.equal(line1(s()), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 3 · ${sym.downshift} ${RUNG}`, "warm, 3 left");
-    assert.equal(line1(s({ windowEndAt: NOW + 60_001 })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} last · ${sym.downshift} ${RUNG}`, "last warm");
-    const spent = { spent: 0.3, cold: 1, next: 0.1, share: 0.3 };
-    assert.equal(line1(s({ budget: spent })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "budget spent: counting to cold");
-    assert.equal(line1(s({ budget: { spent: 0.2, cold: 1, next: 0.1, share: 0.3 } })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} last budget · ${sym.downshift} ${RUNG}`, "budget limits");
-    assert.equal(line1(s({ away: { isAway: true, used: 1, ticks: 2 } })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} last away · ${sym.downshift} ${RUNG}`, "away limits");
+    const tg = tierGlyphs(which);
+    assert.equal(line1(s()), `${HEAD}■■■■■■■■■□ 38:12 ${sym.keepalive} 3 ${tg.half} · ${sym.downshift} ${RUNG}`, "warm, 3 left");
+    assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1) })), `${HEAD}■■■■■■■■□□ 38:12 ${sym.keepalive} last ${tg.half} · ${sym.downshift} ${RUNG}`, "last warm");
+    assert.equal(line1(s({ warmsLeft: 0, spanEndAt: spanEnd(0) })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "budget spent: counting to cold");
+    assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1), tier: "quarter" })), `${HEAD}■■■■■■■■□□ 38:12 ${sym.keepalive} last ${tg.quarter} · ${sym.downshift} ${RUNG}`, "quarter tier");
     assert.equal(line1(s({ lastTouch: null, nextWarmAt: null })), `${HEAD}□□□□□□□□□□ ${sym.cold} cold · ${sym.downshift} ${RUNG}`, "cold");
-    assert.equal(line1(s({ downshifted: true })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 3`, "downshifted: no step");
+    assert.equal(line1(s({ downshifted: true })), `${HEAD}■■■■■■■■■□ 38:12 ${sym.keepalive} 3 ${tg.half}`, "downshifted: no step");
     assert.equal(line1(s({ running: true })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "running turn: no warms");
     assert.equal(line1(s({ policy: policy({ active: false, skip: "disabled" }) })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "keep-alive disabled");
     assert.equal(line1(s({ policy: policy({ skip: "ttl_long", selfWarm: false }) })), `${HEAD}■■■■■■■□□□ 38:12 · ${sym.downshift} ${RUNG}`, "ttl_long without self-warm");
     const preset = resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 300, byModel: [{ match: "claude-*", ttlSeconds: 3600 }], keepalive: { enabled: true } } } } }, "claude-bridge", "claude-opus-5-5");
     assert.equal(preset.skip, "ttl_long");
     assert.equal(preset.selfWarm, true);
-    assert.equal(line1(s({ policy: preset })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 3 · ${sym.downshift} ${RUNG}`, "ttl_long with self-warm shows the keepalive count");
-    assert.equal(line1(s({ idleRung: null })), `${HEAD}■■■■■■■□□□ 38:12 ${sym.keepalive} 3`, "no idle rung");
+    assert.equal(line1(s({ policy: preset })), `${HEAD}■■■■■■■■■□ 38:12 ${sym.keepalive} 3 ${tg.half} · ${sym.downshift} ${RUNG}`, "ttl_long with self-warm shows the keepalive count");
+    assert.equal(line1(s({ idleRung: null })), `${HEAD}■■■■■■■■■□ 38:12 ${sym.keepalive} 3 ${tg.half}`, "no idle rung");
   });
 }
 
@@ -105,13 +107,13 @@ test("hidden: no_entry, ttl_unknown, billing request, no model, footer.cacheBar 
 });
 
 const view = (cache: CacheBarView | undefined): FooterView => ({ model: "m", thinking: null, branch: "br", contextPercent: 10, contextWindow: 200_000, cacheHit: 98, usage: null, statuses: [], cache });
-const glyphs = { keepalive: "♨", cold: "❄", downshift: "↓" };
-const warm: CacheBarView = { share: 0.67, left: "38:12", cold: false, warms: { count: 3, limiter: null }, step: RUNG, glyphs };
+const glyphs = { keepalive: "♨", cold: "❄", downshift: "↓", half: "½", quarter: "¼" };
+const warm: CacheBarView = { share: 0.67, left: "38:12", cold: false, warms: { count: 3, tier: "half" }, step: RUNG, glyphs };
 
 test("the five width candidates, in order", () => {
-  const c1 = `m · br · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 · ↓ ${RUNG}`;
-  const c2 = `m · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 · ↓ ${RUNG}`;
-  const c3 = `m · ■□□□□ 10% of 200k · CH 98% · ■■■□□ 38:12 ♨ 3 · ↓ ${RUNG}`;
+  const c1 = `m · br · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 ½ · ↓ ${RUNG}`;
+  const c2 = `m · ■□□□□□□□□□ 10% of 200k · CH 98% · ■■■■■■■□□□ 38:12 ♨ 3 ½ · ↓ ${RUNG}`;
+  const c3 = `m · ■□□□□ 10% of 200k · CH 98% · ■■■□□ 38:12 ♨ 3 ½ · ↓ ${RUNG}`;
   const c4 = "m · ■□□□□ 10% of 200k · CH 98% · ■■■□□ 38:12";
   for (const c of [c1, c2, c3, c4]) assert.equal(plain(renderFooter(view(warm), visibleWidth(c), theme)[0]), c);
   const cut = plain(renderFooter(view(warm), visibleWidth(c4) - 4, theme)[0]);
@@ -135,9 +137,9 @@ test("colour codes of the cells and time at 60 / 40 / 10 % left; unknown is dim"
   assert.ok(cold.includes(`\x1b[${CODE.error}m□□□□□□□□□□ ❄ cold`), cold);
 });
 
-test("the limiter word is dim", () => {
-  const l = renderFooter(view({ ...warm, warms: { count: 1, limiter: "budget" } }), 300, theme)[0];
-  assert.ok(l.includes(`♨ last \x1b[${CODE.dim}mbudget`), l);
+test("the last warm of the quarter tier shows `last ¼`", () => {
+  const l = plain(renderFooter(view({ ...warm, warms: { count: 1, tier: "quarter" } }), 300, theme)[0]);
+  assert.ok(l.includes("♨ last ¼"), l);
 });
 
 // ---- the once-a-second repaint ---------------------------------------------------------------------------

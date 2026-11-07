@@ -87,7 +87,7 @@ test("downshifted: the doctor judges the base model's cache and lists the idle r
   assert.doesNotMatch(text, /idle rung .* has no cache entry/);
 });
 
-test("cache_warming_decision: a self-owned policy answers stop only while no turn runs", async (t) => {
+test("cache_warming_decision: always answers stop, whatever the policy, the turn or Pi's own settings", async (t) => {
   const sw = { providers: { pa: { roles: ROLES("pa"), cache: { ttlSeconds: 1800, billing: "token", keepalive: { enabled: true } } } } };
   let idle = true;
   const r = await r11Rig(t, {}, {
@@ -99,7 +99,7 @@ test("cache_warming_decision: a self-owned policy answers stop only while no tur
   idle = true;
   assert.deepEqual(await r.fire("cache_warming_decision", {}), { action: "stop" });
   idle = false;
-  assert.equal(await r.fire("cache_warming_decision", {}), undefined);
+  assert.deepEqual(await r.fire("cache_warming_decision", {}), { action: "stop" });
 });
 
 test("the doctor warns when the idle rung's provider has no cache entry", async (t) => {

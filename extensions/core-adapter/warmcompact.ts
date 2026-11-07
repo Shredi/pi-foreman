@@ -1,6 +1,6 @@
-// The shared gate of warm compaction (docs/cache.md), used by the idle cache (Pi-sent warms) and the self-warm:
-// warm_compact on, not yet compacted this idle, no running turn, the cache not cold, above the idle floor (half the runtime point), then at least `compactMinTokens` of context. The caller's
-// `compact()` applies the floor again and starts ctx.compact. Pure apart from the callbacks.
+// The gate of the final-warm compaction (docs/cache.md), used by the self-warm: warm_compact on, not yet compacted this idle
+// stretch, not busy, the cache not cold, the context above the final-warm gate (0.6 x the model's context window), then at least
+// `compactMinTokens` of context. The caller's `compact()` starts ctx.compact. Pure apart from the callbacks.
 import type { CachePolicy } from "./cachepolicy.ts";
 
 /** A cache older than this share of its TTL counts as cold. */
@@ -9,7 +9,7 @@ export const COLD_SHARE = 0.95;
 /** Absolute time (ms) the cache is taken as cold: `lastTouch` + 0.95 x TTL. */
 export const coldAt = (lastTouch: number, ttlSeconds: number): number => lastTouch + COLD_SHARE * ttlSeconds * 1000;
 
-export type CompactTrigger = "budget" | "away" | "window";
+export type CompactTrigger = "final_warm";
 
 export interface WarmCompactArgs {
   policy: CachePolicy | null;
@@ -21,11 +21,11 @@ export interface WarmCompactArgs {
   lastTouch: number;
   /** Context tokens of the session (the count the idle floor reads); null/absent = unknown, the minimum does not apply. */
   contextTokens?: () => number | null;
-  /** The context is above the idle floor (0.5 x runtime point); checked before the minimum. Absent = the floor is left to compact(). */
+  /** The context is above the final-warm gate (0.6 x context window); checked before the minimum. Absent = the gate is left to compact(). */
   aboveFloor?: () => boolean;
   compact(): { point: number | null; model: string | null } | null;
   trace(r: Record<string, unknown>): void;
-  /** Set on the budget/away/window triggers of the warm policy; absent keeps the legacy trace shape. */
+  /** Set on the final-warm trigger; absent keeps the plain trace shape. */
   trigger?: CompactTrigger;
   /** Legacy skip traces are `keepalive window_end <reason>`; the refusal triggers use `keepalive skipped <reason>`. */
   skipOutcome?: "window_end" | "skipped";

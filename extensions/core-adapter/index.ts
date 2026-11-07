@@ -137,18 +137,17 @@ import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
-import { CompactionGate, overIdleFloor } from "./compaction.ts";
+import { CompactionGate } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
 import { piModelDataDir } from "./pi-model-data.mjs";
 import { resolveCachePolicy, resolveWarmPolicy } from "./cachepolicy.ts";
-import { bridgeTtlDoctorLines, cacheDoctorLines } from "./doctorcache.ts";
+import { bridgeTtlDoctorLines, cacheDoctorLines, deprecatedKeepaliveLines } from "./doctorcache.ts";
 import { BridgeCacheTtl, bridgeTtlSetting, derivedBridgeTtlS, type BridgeTtlSetting } from "./bridgettl.ts";
 import type { Presence } from "./presence.ts";
-import type { SelfWarm } from "./selfwarm.ts";
+import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
 import { createWarm } from "./warmwire.ts";
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
-import { IdleCache, type Busy } from "./idlecache.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
 import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } from "./hints.ts";
@@ -171,7 +170,7 @@ import { claimCore, emitReady, installInert, missingBundled, setupInvocation } f
 let herdrEvents: EventBus | undefined;
 import { chainKey, checkLaunch, completedAgents, CritiqueCounter, hasSecurityFinding, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, onTierChange, REVIEW_ROLES, RoundChains, rulingReset, securityOf, verdictOf } from "./rounds.ts";
 import type { LaunchRounds } from "./rounds.ts";
-import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks } from "./bg.ts";
+import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -270,6 +269,9 @@ interface Session {
   pendingLaunches: Set<string>;
   /** Foreman only: tool call ids of write/edit/shell calls between their tool_call and tool_result (capsReset waits while any: a parallel call cannot be seen before its self-write is marked). */
   mutating: Set<string>;
+  /** Tool call ids of bash/powershell calls and of ask_user_question/plan_mode_question calls in flight (the warm tier reads them). */
+  commandCalls: Set<string>;
+  questionCalls: Set<string>;
   /** Foreman only: ms epoch of the last parent ruling/brief that lifted the caps (capsReset); persisted with reviewCount. */
   capsResetAt: number;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
@@ -406,15 +408,14 @@ interface Session {
   childReads: ChildReads;
   /** Child scratch dirs of this session's launches (childscratch.ts). */
   scratch: ChildScratch;
-  /** Foreman only: idle prompt-cache keep-alive state (idlecache.ts), its usage sync (keepalive.ts), the latest event context and assistant message time. */
-  idleCache: IdleCache;
+  /** Foreman only: the usage sync of stray Pi warm entries (keepalive.ts), the latest event context and assistant message time. */
   keepalive: KeepaliveLog;
-  /** Foreman only: warm owner (budget, cache touch, self-warm beyond Pi's idle cap) and the presence gate. */
+  /** The warm owner (budget, cache touch, the idle warms of every cache; selfwarm.ts) and the presence gate (the presence probe runs in the foreman only). */
   selfWarm: SelfWarm;
   presence: Presence;
   idleCtx: ExtensionContext | null;
   lastAssistantAt: number | null;
-  /** A turn is running (agent_start .. agent_settled); the footer's cache bar shows no warms. */
+  /** A turn is running (agent_start .. agent_settled): the warm tier's turn signal; the footer's cache bar shows no warms. */
   running: boolean;
   /** Run view of the subagent launches (runs.ts). */
   childRuns: ChildRuns;
@@ -538,19 +539,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!model) return null;
     const policy = resolveWarmPolicy(s.config.config, model.provider, model.id, bridgeTtlS);
     const snap = s.selfWarm.snapshot();
-    const owner = !!policy.selfWarm && s.selfWarm.owns();
-    const pi = s.idleCache.snapshot();
-    const ttl = policy.ttlSeconds ?? 0;
     const rung = idleModel.idleRung();
     return {
       policy,
       now: Date.now(),
       lastTouch: s.selfWarm.lastCacheTouch(),
-      windowEndAt: owner ? snap.windowEndAt : pi.windowEndAt,
-      nextWarmAt: owner ? (snap.state === "watching" ? snap.nextWarmAt : null) : pi.nextWarmAt,
-      tickMs: (owner ? 0.9 * ttl : Math.min(0.9 * ttl, ttl - 10)) * 1000,
-      budget: snap.budget && policy.budgetShare !== undefined ? { spent: snap.budget.spent, cold: snap.budget.cold, next: snap.budget.next, share: policy.budgetShare } : null,
-      away: policy.awayTicks !== undefined && (s.presence.away() || (policy.awayTicks > 0 && s.presence.enabled())) ? { isAway: s.presence.away(), used: snap.awayUsed, ticks: policy.awayTicks } : null,
+      stretchStartAt: snap.stretchStartAt,
+      nextWarmAt: snap.state === "watching" && snap.budget ? snap.nextWarmAt : null,
+      spanEndAt: snap.spanEndAt,
+      warmsLeft: snap.warmsLeft,
+      tier: snap.tier ? snap.tier.tier : null,
       running: s.running,
       downshifted: idleModel.downshifted(),
       idleRung: rung ? rung.id : null,
@@ -680,7 +678,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
-    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), busy: () => idleBusy(s, s.idleCtx), piIdleMode: () => piCacheWarmingIdle(), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, aboveFloor: () => idleAboveFloor(s) });
+    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
     const s: Session = {
       id,
       cwd,
@@ -700,6 +698,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       activeRuns: new Set(),
       pendingLaunches: new Set(),
       mutating: new Set(),
+      commandCalls: new Set(),
+      questionCalls: new Set(),
       capsResetAt: 0,
       pollBash: 0,
       launchNotices: new Map(),
@@ -836,25 +836,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       brief: new ExplorerBrief(),
       childReads: new ChildReads(),
       scratch: new ChildScratch(),
-      idleCache: new IdleCache({
-        now: () => Date.now(),
-        policy: () => (s.idleCtx ? resolveWarmPolicy(s.config.config, s.idleCtx.model?.provider, s.idleCtx.model?.id, bridgeTtlS) : null),
-        piIdleMode: () => piCacheWarmingIdle(),
-        hasPromptCache: () => !!s.idleCtx?.model?.promptCache,
-        busy: () => idleBusy(s, s.idleCtx),
-        trace: (r) => s.trace?.emit(r),
-        compact: () => idleCompact(s),
-        contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null,
-        aboveFloor: () => idleAboveFloor(s),
-        setGlyph: (on) => {
-          if (s.idleCtx) idleBind = { s, ctx: s.idleCtx };
-          idleModel.setWarming(on);
-        },
-        syncKeepalives: () => syncKeepalives(s, s.idleCtx),
-        lastAssistantAt: () => s.lastAssistantAt,
-        isChild,
-        gate: warm.selfWarm,
-      }),
       keepalive: new KeepaliveLog(),
       selfWarm: warm.selfWarm,
       presence: warm.presence,
@@ -887,7 +868,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       const where = new Where({ cwd: () => s.cwd, repo: originRepo, branch: branchOf, changed: () => s.live?.touch() });
       if (s.live) s.live.where = () => where.read();
-      s.live?.setAwayGetter(() => (s.idleCache.state() === "watching" || s.selfWarm.state() === "watching") && s.presence.away());
+      s.live?.setAwayGetter(() => s.selfWarm.state() === "watching" && s.presence.away());
+      s.live?.setOwnerGetter(() => s.selfWarm.ownerPresence());
       s.openPrs = new OpenPrsRefresher({ agentDir, config: () => get(s.config.config, "radar.openPrs"), ghHost: () => { const h = get(s.config.config, "tools.prHost") ?? "auto"; return h === "auto" || h === "gh"; }, gh: realGh(cwd), hosts: () => resolveGithubHosts(s.config.config) });
       s.openPrs.start();
       const live = s.live;
@@ -1425,10 +1407,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.panels.clear();
     s.prWatches.clear();
     s.extStatus.clear();
+    s.selfWarm.onShutdown();
+    addonSeen.delete(s.id);
     if (!s.isChild) {
       syncKeepalives(s, ctx);
-      s.idleCache.onShutdown();
-      s.selfWarm.onShutdown();
       idleModel.stop();
     }
     sweepScratch(s);
@@ -1446,10 +1428,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ps = sessionFor(ctx);
     if (ps) tracePoint(ps, event.model);
     const warmed = sessionFor(ctx);
-    if (warmed && !warmed.isChild) {
-      warmed.selfWarm.invalidate(); // a model change drops the provider cache and starts a new warm budget
-      warmed.selfWarm.onActivity();
-    }
+    if (warmed) warmed.selfWarm.onModelChange(); // a model change drops the provider cache and starts a new warm budget
     bridgeTtl.apply(process.env, ttlSetting, event.model?.provider, process.env.PI_SUBAGENT_CHILD === "1");
     try {
       bridgeIso.apply(process.env, sessionFor(ctx)?.agentDir ?? piAgentDir(process.env, os.homedir()), isoSetting, event.model?.provider);
@@ -1507,8 +1486,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { cancel: true };
   }
   pi.on("session_before_compact", async (_event, ctx) => {
+    sessionFor(ctx)?.selfWarm.onCompactStart(); // no warm goes out while a compaction runs
     const r = await bridgeSummaryGate(ctx, "claude-bridge compaction summary");
     const s = sessionFor(ctx);
+    if (r) s?.selfWarm.onCompactFailed(); // cancelled by the gate: the cache is as warm as before
     if (!r && s && !s.isChild) s.retro.prepare(boundLedger(s.markerDir, s.id));
     return r;
   });
@@ -1517,14 +1498,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s) return;
     compactionGate.reset(s.id);
     s.noticeVerdicts.clear(); // the prefix is rewritten anyway: the next request decides afresh
-    if (!s.isChild) s.idleCache.onCompact();
-    if (!s.isChild) s.selfWarm.onCompact();
+    s.selfWarm.onCompact();
     if (!s.isChild) void onForemanCompact(s, ctx, event.compactionEntry.summary, event.reason);
   });
   pi.on("session_compact_failed", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
     compactionGate.reset(s.id);
+    s.selfWarm.onCompactFailed();
     s.retro.drop();
   });
   /** D8: re-put the section with the digest; append the retro entry (counters + Retro section) and a V hint. */
@@ -1547,46 +1528,32 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
   pi.on("session_before_tree", async (_event, ctx) => bridgeSummaryGate(ctx, "claude-bridge branch summary"));
 
-  // A cache-warming refresh re-sends the last request, which on claude-bridge starts Claude Code.
-  // R0 first: pending config drift stops it (security re-check gate). Then the idle keep-alive policy (idlecache.ts) may override
-  // Pi's own economics with `warm`. Synchronous: no awaits, no file reads beyond R0's.
-  pi.on("cache_warming_decision", async (_event, ctx) => {
-    const s = sessionFor(ctx);
-    if (s && !s.isChild && ctx.model?.provider === BRIDGE_PROVIDER && s.claudeCfg.pending(ctx.cwd).length) {
-      s.idleCache.noteDecision("stop");
-      return { action: "stop" as const };
-    }
-    if (!s || s.isChild) return undefined;
-    const policy = resolveWarmPolicy(s.config.config, ctx.model?.provider, ctx.model?.id, bridgeTtlS);
-    const busyNow = idleBusy(s, ctx);
-    if (policy.selfWarm && !busyNow.notIdle && s.selfWarm.owns()) return { action: "stop" as const }; // pi-foreman sends the warms Pi could not repeat before its idle cap itself; a streaming-phase warm is Pi's
-    if (!policy.active) return undefined;
-    const action = s.idleCache.decide(busyNow);
-    s.idleCache.noteDecision(action);
-    return action ? { action } : undefined;
-  });
-  pi.on("turn_start", async (event, ctx) => {
+  // Pi's own cache warmer is never used: pi-foreman sends every idle warm itself (selfwarm.ts), so Pi is always told `stop`.
+  // It answers first and reads nothing: a throwing hook would make Pi fall back to its own decision.
+  pi.on("cache_warming_decision", async () => ({ action: "stop" as const }));
+  pi.on("turn_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
     // A launch whose tool_result never came does not keep finalization off past its turn.
     s?.pendingLaunches.clear();
     s?.mutating.clear();
-    if (s && !s.isChild) s.idleCache.noteTurnStart(typeof event.timestamp === "number" ? event.timestamp : Date.now());
+    s?.commandCalls.clear();
+    s?.questionCalls.clear();
   });
   pi.on("turn_end", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
+    s.selfWarm.requestFailed(); // the request of this turn is over (a reply already ended it; an error or abort did not)
     toolUsage.noteMessage(event.message);
     flushToolUsage(s);
   });
   pi.on("agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
-    if (!s || s.isChild) return;
+    if (!s) return;
     s.idleCtx = ctx;
-    syncKeepalives(s, ctx);
-    s.idleCache.onAgentStart();
-    s.selfWarm.onActivity();
-    idleBind = { s, ctx };
     s.running = true;
+    if (s.isChild) return;
+    syncKeepalives(s, ctx);
+    idleBind = { s, ctx };
     idleModel.setRunning(true);
   });
 
@@ -1750,6 +1717,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // compaction (its stored head lacks the section, review N2) the cached text is put back.
   pi.on("context_with_system", async (event, ctx) => {
     const s = sessionFor(ctx);
+    if (s?.isChild) s.selfWarm.capture(event.messages); // a child replays its request unchanged
     if (!s || s.isChild) return undefined;
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
@@ -1773,43 +1741,60 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s) s.stopContinued = false;
     s?.live?.onSettled(ctx.isIdle?.());
     radarTouch(s, ctx);
-    if (s && !s.isChild) {
+    if (s) {
       s.idleCtx = ctx;
+      s.selfWarm.requestFailed(); // an errored or aborted request ended no turn: its flag must not hold the warm back
+      s.running = false;
+    }
+    if (s && !s.isChild) {
       syncKeepalives(s, ctx);
-      s.idleCache.start();
       s.selfWarm.start();
       idleBind = { s, ctx };
-      s.running = false;
       idleModel.setRunning(false);
     }
     // Last, so a throw in the wake send skips nothing above. A wake that resolved during this run starts its own run (pi defers a triggerTurn sent while it emits agent_settled), after the stopContinued reset.
     if (s && !s.isChild) waits.settled(s.id);
   });
 
-  /** Pi's `cacheWarming` setting is "idle" (the effective settings through the extension API). */
-  function piCacheWarmingIdle(): boolean {
+  /** Running bg_run tasks of a session, read from disk at most every 2 s (the footer asks on each render). */
+  const addonSeen = new Map<string, { at: number; on: boolean }>();
+  function addonTasksRunning(s: Session): boolean {
+    const now = Date.now();
+    const hit = addonSeen.get(s.id);
+    if (hit && now - hit.at < 2000) return hit.on;
+    let on = false;
     try {
-      return (pi.getSettings() as { cacheWarming?: unknown }).cacheWarming === "idle";
+      on = readOwnAddonTasks(s.cwd, s.id).length > 0;
     } catch {
-      return false;
+      // no task records: none running
+    }
+    addonSeen.set(s.id, { at: now, on });
+    return on;
+  }
+  /** What the session is doing right now, for the warm tier (selfwarm.ts). Synchronous, never throws. */
+  function warmSignals(s: Session): WarmSignals {
+    let idle = true;
+    try {
+      idle = s.idleCtx ? s.idleCtx.isIdle() : true;
+    } catch {
+      idle = false; // a stale context counts as a running turn
+    }
+    const w = waits.active(s.id);
+    const strongA = s.activeRuns.size > 0 || s.pendingLaunches.size > 0 || launchWaits.holding > 0 ? "subagent" : w.some((x) => x.bg) || addonTasksRunning(s) ? "bg_task" : w.length > 0 ? "wait" : null;
+    return { strongA, turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0 };
+  }
+  /** A message is queued in the session (a stale context counts as queued: no warm). */
+  function warmQueued(s: Session): boolean {
+    try {
+      return s.idleCtx ? s.idleCtx.hasPendingMessages() : false;
+    } catch {
+      return true;
     }
   }
-  /** What keeps the session from being idle right now (idlecache.ts). Synchronous. */
-  function idleBusy(s: Session, ctx: ExtensionContext | null): Busy {
-    const safe = (f: () => boolean): boolean => {
-      try {
-        return f();
-      } catch {
-        return true; // a stale context counts as busy
-      }
-    };
-    return {
-      childRun: s.activeRuns.size > 0,
-      wait: waits.active(s.id).length > 0,
-      launchWait: launchWaits.holding > 0,
-      pendingMessages: ctx ? safe(() => ctx.hasPendingMessages()) : false,
-      notIdle: ctx ? safe(() => !ctx.isIdle()) : false,
-    };
+  /** A claude-bridge config approval is pending: the warm replay would start Claude Code on unapproved config (security re-check gate). */
+  function warmDriftPending(s: Session): boolean {
+    const ctx = s.idleCtx;
+    return !!ctx && ctx.model?.provider === BRIDGE_PROVIDER && s.claudeCfg.pending(ctx.cwd).length > 0;
   }
   /** The point Pi's own auto-compaction fires at for a model (window minus the effective reserve); null when off or unknown. */
   function piRuntimePoint(model: { provider?: string; id?: string; contextWindow?: number } | null | undefined): number | null {
@@ -1823,17 +1808,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function tracePoint(s: Session, model: ExtensionContext["model"]): void {
     s.trace?.emit({ event: "compaction_point", model: model ? `${model.provider}/${model.id}` : null, point: piRuntimePoint(model) });
   }
-  /** The context is above half the runtime point (the idle floor); checked before compactMinTokens, no latch. */
-  function idleAboveFloor(s: Session): boolean {
-    const ctx = s.idleCtx;
-    return !!ctx && !s.isChild && overIdleFloor(ctx.getContextUsage(), piRuntimePoint(ctx.model));
-  }
-  /** Warm compaction (item 7): the only ctx.compact() call; foreman sessions only, from half the runtime point. The Retro section rides on this compaction. */
+  /** Final-warm compaction: the only ctx.compact() call of the idle cache; foreman sessions only, above 0.6 x the context window (a null runtime point does not block it). The Retro section rides on this compaction. */
   function idleCompact(s: Session): { point: number | null; model: string | null } | null {
     const ctx = s.idleCtx;
     if (!ctx || s.isChild) return null;
     const point = piRuntimePoint(ctx.model);
-    if (!compactionGate.decideIdle(s.id, ctx.getContextUsage(), point)) return null;
+    if (!compactionGate.decideFinal(s.id, ctx.getContextUsage())) return null;
     ctx.compact({ customInstructions: RETRO_INSTRUCTIONS });
     return { point, model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : null };
   }
@@ -2581,6 +2561,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (ms && !ms.isChild) {
       capsReset(ms, event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
+      if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
+      if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") ms.questionCalls.add(event.toolCallId);
       // ask_user_question comes from the bundled @juicesharp/rpiv-ask-user-question; the harness only counts the dialog
       if (event.toolName === ASK_USER_TOOL) ms.trace?.emit({ event: "dialog", surface: "ask_user" });
     }
@@ -3177,7 +3159,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     })();
     // a blocked call gets no tool_result, so it is not in flight
-    if (res && ms) ms.mutating.delete(event.toolCallId);
+    if (res && ms) {
+      ms.mutating.delete(event.toolCallId);
+      ms.commandCalls.delete(event.toolCallId);
+      ms.questionCalls.delete(event.toolCallId);
+    }
     // R30 item 8: traced only once the guards let the child's bash call through
     if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
     // The launching session reads the open command to tell a test run from an unknown command (opencommand.ts).
@@ -3226,7 +3212,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.trace?.emit({ event: "llm", model: m.provider && m.model ? `${m.provider}/${m.model}` : null, tokensIn: m.usage?.input, tokensOut: m.usage?.output, cacheRead: m.usage?.cacheRead, cacheWrite: m.usage?.cacheWrite, cost: m.usage?.cost?.total, codemode: codemode || undefined });
     if (!s) return undefined;
     if (!s.isChild) s.lastAssistantAt = Date.now();
-    if (!s.isChild) s.selfWarm.noteRequest((Number(m.usage?.input) || 0) + (Number(m.usage?.cacheRead) || 0) + (Number(m.usage?.cacheWrite) || 0));
+    const stopReason = (event.message as { stopReason?: unknown }).stopReason;
+    // an errored or aborted request keeps the last touch, budget and capture: a still-warm cache keeps warming
+    if (stopReason === "error" || stopReason === "aborted") s.selfWarm.requestFailed();
+    else s.selfWarm.noteRequest((Number(m.usage?.input) || 0) + (Number(m.usage?.cacheRead) || 0) + (Number(m.usage?.cacheWrite) || 0));
     if (!s.isChild) {
       s.launchBatch.onAssistant(content, isLaunchArgs, (a) => !explorerOnly(a));
       if (Array.isArray(content)) {
@@ -3277,10 +3266,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const cause = causeOfCustom(m.customType);
     // the starting intercom message of a close turn arrives after close claimed the run: the cause stays "close"
     if (cause && !(cause === "intercom" && s.turn.cause === "close")) s.turn.cause = cause;
-    if (cause) {
-      s.idleCache.onActivity();
-      s.selfWarm.onActivity();
-    }
     if (cause === "wake") s.turn.wakeKinds = [...new Set((m.details as { kinds?: unknown[] } | undefined)?.kinds ?? [])].map(String).join(",");
     // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
@@ -3291,10 +3276,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Turn cause (D9, measurement only): the last trigger before or during a foreman run.
   pi.on("input", async (event, ctx) => {
     const s = sessionFor(ctx);
-    if (s && !s.isChild) {
-      s.idleCache.onActivity();
-      s.selfWarm.onActivity();
-    }
     // pi-subagents 0.76.1+: notices and supervisor requests appended while idle carry no message_end (ledger 11).
     let idleCause: TurnCause | null = null;
     if (s && !s.isChild) {
@@ -3726,11 +3707,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // reaches tool_result, so the outcome is read here: allowed false = a permission refusal.
   pi.on("tool_execution_end", async (event, ctx) => {
     const s = sessionFor(ctx);
-    if (s && !s.isChild) {
-      s.idleCache.onActivity();
-      s.selfWarm.onActivity();
-    }
     s?.mutating.delete(event.toolCallId);
+    s?.commandCalls.delete(event.toolCallId);
+    s?.questionCalls.delete(event.toolCallId);
     if (s && !s.isChild && !event.isError && ownerAnswered(event.toolName, (event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       idleBind = { s, ctx };
       await idleModel.onAnswer(); // the owner is back: the answer's next request runs on the base model
@@ -3789,6 +3768,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (typeof command === "string") void owner.pushNotice.onBash(command, text, typeof code === "number" ? code === 0 : !event.isError, ctx.cwd).catch(() => undefined);
     }
     owner?.mutating.delete(event.toolCallId);
+    owner?.commandCalls.delete(event.toolCallId);
+    owner?.questionCalls.delete(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
@@ -4996,20 +4977,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const cache = resolveCachePolicy(s.config.config, dm?.provider, dm?.id, bridgeTtlS);
     if (cache.active && !s.isChild) {
       const missing: string[] = [];
-      if (settings?.cacheWarming !== "idle" && !piCacheWarmingIdle()) missing.push('Pi settings.json (global): "cacheWarming": "idle"');
       if (!dmModel?.promptCache) missing.push(`models.json (${path.join(s.agentDir, "models.json")}) for ${dm ? `${dm.provider}/${dm.id}` : "the model"}: ${reg.promptCacheSnippet(dm?.provider, dm?.id, cache.ttlSeconds ?? 300)}`);
-      if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${dm?.provider} but inactive: add ${missing.join(" and ")}, or switch it off with providers.${dm?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
-      else ok(`idle cache keep-alive: Pi cacheWarming idle and promptCache declared for ${dm?.provider}`);
+      if (missing.length) out.push(`WARN idle cache keep-alive is on by default for ${dm?.provider} but the model's promptCache is not declared: add ${missing.join(" and ")}, or switch it off with providers.${dm?.provider}.cache.keepalive.enabled: false (docs/cache.md)`);
+      else ok(`idle cache keep-alive: promptCache declared for ${dm?.provider}`);
     }
     if (!s.isChild) {
       const idleSpec = get(s.config.config, `providers.${dm?.provider}.roles.foreman.idle.model`);
       const idleRef = typeof idleSpec === "string" && idleSpec && dm ? splitSpec(idleSpec, dm.provider) : null;
+      out.push(...deprecatedKeepaliveLines(s.config.config));
       out.push(...cacheDoctorLines({
         provider: dm?.provider,
         policy: resolveWarmPolicy(s.config.config, dm?.provider, dm?.id, bridgeTtlS),
         promptCache: dmModel?.promptCache,
         retention: process.env.PI_CACHE_RETENTION,
-        cacheWarmingIdle: settings?.cacheWarming === "idle" || piCacheWarmingIdle(),
         selfWarmMissed: s.selfWarm.missed(),
         hasIdleRung: !!idleSpec,
         idleRung: idleRef ? { spec: String(idleSpec), provider: idleRef.provider, policy: resolveWarmPolicy(s.config.config, idleRef.provider, idleRef.id, bridgeTtlS) } : null,
