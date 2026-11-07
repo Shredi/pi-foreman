@@ -98,6 +98,11 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
   const ec = effectCtx(c.cwd, r.scratch, c.platform);
   ec.root = r.worktree;
   ec.noTmp = r.child || !r.tmpAccess;
+  if (r.realpath) {
+    const real = r.realpath;
+    ec.realpath = real;
+    ec.exists = (p) => real(p) !== null;
+  }
   ec.readRoots = [...(r.child ? [] : r.tmp), ...r.install, ...r.roundFlow, ...r.handoffs, ...(r.child ? [] : (r.workFolders ?? []).map((f) => f.path))];
   return ec;
 }
@@ -930,7 +935,8 @@ function writable(w: string, cwd: string | null, env: DangerEnv, folders = false
 function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
   // work folders count only when every live segment is a built-in default with them as write roots; otherwise today's context
   const fa = folderAware(c, env);
-  const ec = fa ? fa.ec : effectCtxOf(env);
+  // a cp source is a read here: only the destination is a write target (writeTargets)
+  const ec = { ...(fa ? fa.ec : effectCtxOf(env)), cpSourceRead: true };
   for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa, linkOperand(s, w)))) return true;
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;

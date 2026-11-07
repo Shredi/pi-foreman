@@ -28,12 +28,14 @@ test("NUL and 2>nul: no write on win32, a file (outside the child's dirs) on dar
   };
   for (const l of ["ls > NUL", "ls 2>nul", "ls &>Nul"]) {
     assert.equal(out(l, "win32"), false, `win32: ${l}`);
-    assert.equal(out(l, "darwin"), true, `darwin: ${l}`);
-    assert.equal(out(l, "linux"), true, `linux: ${l}`);
+    // the fixture worktree does not exist and a missing base counts by its deepest existing ancestor: the literal file must lie outside it
+    const far = l.replace(/(>\s*)(\w+)$/, "$1/etc/$2");
+    assert.equal(out(far, "darwin"), true, `darwin: ${far}`);
+    assert.equal(out(far, "linux"), true, `linux: ${far}`);
   }
   for (const p of ["win32", "darwin", "linux"]) assert.equal(out("ls 2>/dev/null", p), false, p);
   // NUL names the device only as the whole target
-  assert.equal(out("ls > out/nul", "win32"), true);
+  assert.equal(out("ls > D:/elsewhere/nul", "win32"), true);
 });
 
 test("scratch substitution on win32: $FOREMAN_SCRATCH and a statement-position assignment resolve to the drive form, CRLF line ends included", () => {
