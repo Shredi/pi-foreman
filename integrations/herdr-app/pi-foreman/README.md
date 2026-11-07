@@ -77,7 +77,9 @@ After each radar poll the mod publishes the parsed sessions with `setShared("pi-
 herdr-app keeps shared values in `shared.json`) for the sibling mod `pi-foreman-plan`. A session whose radar node carries `show`
 gets a "📄 plan vN · age" and a "📝 note · age" row; the version and age come from `plan.json` / `note.json` in `show.dir`, read
 with `readTextFile` (every 30 s or when the version hint moves). A click on a row pins the panel to that document and brings it forward
-(`layout.select` on the `panel-body` stack, then `layout.show`). Install the two mods together. See `docs/herdr.md#plan-panel`.
+(`layout.select` on the `panel-body` stack, then `layout.show`). When a session's note version rises and the shown layout (read
+with `layout()`, cached by `shared("layout")` name) has no `pi-foreman-plan` block, the mod posts one notification per version
+saying how to add it. Install the two mods together. See `docs/herdr.md#plan-panel`.
 
 ## Limits
 

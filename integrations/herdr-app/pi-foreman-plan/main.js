@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
-import { readTextFile, writeTextFile, watchFolder, theme, shared, agents, panes, terminals, focused, exec, window, run, layout, notify, appHome, settings } from "herdr";
+import { readTextFile, writeTextFile, watchFolder, theme, shared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
 import {
   buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
   compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince, isLight,
@@ -42,7 +42,6 @@ export default class PlanPanel extends View {
     this.again = false;
     this.cur = { empty: "Waiting for foreman radar" };
     this.noteSeen = new Map(); // root session key -> last note version seen on the radar
-    this.warned = false; // the "no panel block in the layout" hint is posted once
     this.diagOk = new Map(); // app-home relative cache path -> true once written and checked
     this.linksOn = guard(() => typeof TextView.markdown("probe", "").on_link_click === "function", false);
     this.sync();
@@ -159,20 +158,11 @@ export default class PlanPanel extends View {
     cx.notify();
   }
 
-  // Selects this mod's block in its stack and shows the (hidden) panel around it; with no block in the layout, says how to add one.
+  // Selects this mod's block in its stack and shows the (hidden) panel around it. The Agents mod says when the layout has no block.
   openPanel() {
     const tree = guard(() => layout(), null);
     const found = isObj(tree) ? findPanelBlock(tree, MOD) : undefined; // an unreadable layout falls back to the default ids
-    if (found === null) {
-      if (this.warned) return;
-      this.warned = true;
-      guard(() => notify({
-        title: "Foreman note: no plan panel in this layout",
-        body: `Add a block {"mod": "${MOD}"} to a stack in your layout (layouts/<name>.json), for example next to the files block in a hidden panel; see integrations/herdr-app/${MOD}/README.md.`,
-        level: "info",
-      }), null);
-      return;
-    }
+    if (found === null) return;
     const ids = found ? { stack: found.stack ?? DEFAULT_IDS.stack, block: found.block, show: found.show ?? DEFAULT_IDS.show } : DEFAULT_IDS;
     guard(() => run("layout.select", { stack: ids.stack, child: ids.block }), null);
     guard(() => run("layout.show", { id: ids.show }), null);

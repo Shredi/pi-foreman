@@ -5,11 +5,11 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
-import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile } from "herdr";
+import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -83,6 +83,7 @@ const hashOf = (s) => {
 };
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
+const isObjLike = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 export default class ForemanAgents extends View {
   init(p, cx) {
@@ -137,6 +138,44 @@ export default class ForemanAgents extends View {
     }
     this.pollRecords(cx, now);
     this.pollShows(cx, now);
+    this.noteNotice();
+  }
+
+  // A tracked session's note version that rose while the layout has no pi-foreman-plan block: the note is written but nothing shows
+  // it, so say once per version how to add the panel. This mod runs in every layout; the plan mod only where the block exists. The
+  // first sight of a session only records its version. The layout walk is cached by layout name.
+  noteNotice() {
+    this.noteSeen ??= new Map();
+    let blockless;
+    for (const [mk, rec] of this.radar) {
+      if (!rec.ok) continue;
+      for (const n of allSessions(rec.tree)) {
+        const v = Number.isInteger(n.show?.note) ? n.show.note : null;
+        if (v === null) continue;
+        const id = `${mk}|${n.key}`;
+        const seen = this.noteSeen.get(id);
+        this.noteSeen.set(id, v);
+        if (seen === undefined || v <= seen) continue;
+        blockless ??= this.layoutLacksPlan();
+        if (!blockless) continue;
+        guard(() => notify({
+          title: "Foreman note: no plan panel in this layout",
+          body: "Add a block {\"mod\": \"pi-foreman-plan\"} to a stack in your layout (layouts/<name>.json), for example next to the files block in a hidden panel; see docs/herdr.md#notes.",
+          level: "info",
+        }));
+      }
+    }
+  }
+
+  // True only when the layout is readable and has no pi-foreman-plan block; an unreadable layout counts as having one.
+  layoutLacksPlan() {
+    const raw = guard(() => shared("layout"), undefined);
+    const name = typeof raw === "string" ? raw : isObjLike(raw) && typeof raw.name === "string" ? raw.name : "";
+    if (this.layoutCache?.name === name) return this.layoutCache.lacks;
+    const tree = guard(() => layout(), null);
+    const lacks = isObjLike(tree) ? findPanelBlock(tree, "pi-foreman-plan") === null : false;
+    this.layoutCache = { name, lacks };
+    return lacks;
   }
 
   // The sessions of every machine's radar as shared state for the plan panel, rewritten only when they changed (shared values

@@ -100,19 +100,11 @@ test("a new note on the radar opens the panel on the Note tab; the first sight a
   assert.equal(world.runCalls.length, 2);
 });
 
-test("the ids come from the shown layout when it has the block; without it a notice says how to add it, once", async () => {
+test("the ids come from the shown layout when it has the block", async () => {
   reset(1);
   world.layout = { id: "root", type: "column", children: [{ id: "side", type: "column", hidden: true, children: [{ id: "tabs", type: "stack", children: [{ id: "pp", type: "block", content: { mod: "pi-foreman-plan" } }] }] }] };
   let b = boot(); await b.settle();
   b.m.tick(b.cx);
   bump(2); b.m.tick(b.cx);
   assert.deepEqual(world.runCalls, [["layout.select", { stack: "tabs", child: "pp" }], ["layout.show", { id: "side" }]]);
-  reset(1);
-  world.layout = { id: "root", type: "column", children: [{ id: "x", type: "block", content: { mod: "files" } }] };
-  b = boot(); await b.settle();
-  b.m.tick(b.cx);
-  bump(2); b.m.tick(b.cx); bump(3); b.m.tick(b.cx);
-  assert.equal(world.runCalls.length, 0);
-  assert.equal(world.notices.length, 1);
-  assert.match(world.notices[0].body, /"mod": "pi-foreman-plan"/);
 });

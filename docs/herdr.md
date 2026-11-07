@@ -757,7 +757,7 @@ dir until the session's live file is gone and the dir is pruned; the mod copies 
 
 **What the mod does.** A new note (radar `show.note` above the last seen value; a first sight only records it) selects the panel block and shows
 its hidden panel, then switches to the Note tab; block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
-layout has no `pi-foreman-plan` block, one notification says to add it. Fences render in a read-only highlighted editor; a listed mermaid fence
+layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached). Fences render in a read-only highlighted editor; a listed mermaid fence
 shows its SVG after the mod's own allow-list check, else a `mermaid` code block.
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.

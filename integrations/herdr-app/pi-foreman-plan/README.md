@@ -20,7 +20,8 @@ The Agents mod's header has a "📄 Plan" button that brings the panel forward.
 - A `Note` tab appears when the session published a note (`foreman_show`). A note newer than the one seen before opens the panel (selects
   the block, shows the hidden panel around it) and switches to that tab; the first sight of a session does not. Block and panel ids are
   found by searching the shown layout for this mod, with the `foreman.json` ids (`panel-body`, `plan`, `panel`) as fallback. When the layout
-  has no such block, a notification says to add `{ "mod": "pi-foreman-plan" }` to a stack.
+  has no such block this mod is not running; the Agents mod (`pi-foreman`) posts the notification that says to add
+  `{ "mod": "pi-foreman-plan" }` to a stack.
 - Code fences render in a read-only highlighted editor (language from the info string).
 - A `mermaid` fence whose sha256 (same fence rule as the harness, `tests/fixtures/mermaid-fences.json`) is listed in `fences` of the JSON
   shows the rendered SVG; otherwise it stays a `mermaid` code block. The SVG is checked against an element allow-list (no script, href,

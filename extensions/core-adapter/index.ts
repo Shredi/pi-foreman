@@ -1702,6 +1702,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       orientationRoots: "on",
       // A reviewer PASS marks its items (reviewmarks.ts; "off" only renders the eee843d baseline).
       reviewMarks: "on",
+      // The foreman_show explain rule (show.ts; "off" only renders the pre-show baseline).
+      show: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
