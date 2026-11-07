@@ -14,10 +14,11 @@ test("bridge defaults", () => {
   assert.equal(PI_IDLE_CAP_MINUTES, 30);
 });
 
-test("copilot is request-billed", () => {
+test("copilot is token-billed; without a model there is no TTL", () => {
   const p = resolveCachePolicy({}, "github-copilot");
   assert.equal(p.active, false);
-  assert.equal(p.skip, "billing_request");
+  assert.equal(p.billing, "token");
+  assert.equal(p.skip, "ttl_unknown");
 });
 
 test("unknown provider, missing provider and junk config give no_entry", () => {

@@ -55,7 +55,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.cache.keepalive.compactMinTokens   higher only (at least 100000 without an earlier value)
     ladder.idleDownshift.enabled     only false is accepted; .causes: intersect (a project can only remove causes)
     providers.*.cache.keepalive.whileWaiting / beyondPiCap   only false is accepted
-    providers.*.cache.keepalive.children   only false is accepted (true lets claude-bridge children send warms)
+    providers.*.cache.keepalive.children   only false is accepted (false stops a child's warms on any provider; true lets claude-bridge children send warms)
     providers.*.roles.*.idle         ignored (picks the model of a cold idle turn; L1/L3/L2 only)
     presence.enabled                 only true is accepted (more gating is the tightening direction)
     presence.awayAfterMinutes        lower only, minimum 1; without an earlier value at most 11
@@ -341,7 +341,8 @@ LAYER_FLOOR = {"compactMinTokens": 100000}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
 BUILTIN_CACHE = {
     "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
-    "github-copilot": {"ttlSeconds": None, "billing": "request"},
+    # Token billing since 2026-06-01 (legacy annual Pro/Pro+ plans set billing: request); the TTL comes from BUILTIN_BY_MODEL.
+    "github-copilot": {"ttlSeconds": None, "billing": "token"},
 }
 # Smallest TTL Pi could not warm twice before its 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
 SELF_WARM_MIN_TTL_SECONDS = int(30 * 60 / (2 * 0.9)) + 1

@@ -135,11 +135,11 @@ class CachePolicyMirrorTest(unittest.TestCase):
     def test_builtin_matches_ts(self):
         ts = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text()
         self.assertIn('"claude-bridge": { ttlSeconds: 300, billing: "token" }', ts)
-        self.assertIn('"github-copilot": { ttlSeconds: null, billing: "request" }', ts)
+        self.assertIn('"github-copilot": { ttlSeconds: null, billing: "token" }', ts)
 
     def test_cache_policy(self):
         self.assertEqual(fc.cache_policy({}, P), {"ttlSeconds": 300, "billing": "token", "enabled": True})
-        self.assertFalse(fc.cache_policy({}, "github-copilot")["enabled"])
+        self.assertFalse(fc.cache_policy({}, "github-copilot")["enabled"])  # no model: no TTL
         self.assertIsNone(fc.cache_policy({}, "other"))
         self.assertIsNone(fc.cache_policy(None, None))
         self.assertFalse(fc.cache_policy(cache(ttlSeconds=3600), P)["enabled"])
