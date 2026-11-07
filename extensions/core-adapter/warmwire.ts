@@ -40,10 +40,18 @@ export interface WarmWireOpts {
   setGlyph?(on: boolean): void;
 }
 
+/** `providers.claude-bridge.cache.keepalive.children: true` (read without a schema entry): children through the bridge warm. */
+export function bridgeChildrenOn(config: unknown): boolean {
+  const v = get(config, "providers.claude-bridge.cache.keepalive.children");
+  return v === true;
+}
+
 export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: SelfWarm } {
   const policy = () => {
     const m = o.ctx()?.model;
-    return m ? resolveWarmPolicy(o.config(), m.provider, m.id, o.bridgeTtl?.() ?? null) : null;
+    if (!m) return null;
+    const p = resolveWarmPolicy(o.config(), m.provider, m.id, o.bridgeTtl?.() ?? null);
+    return o.isChild && m.provider === "claude-bridge" && p.keepaliveOwned && !bridgeChildrenOn(o.config()) ? { ...p, keepaliveOwned: false, bridgeChildOff: true } : p;
   };
   const presence = new Presence({
     now: () => Date.now(),
@@ -70,6 +78,10 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
     contextTokens: o.contextTokens,
     contextWindow: o.contextWindow,
     driftPending: o.driftPending,
+    sessionKey: () => {
+      const sm = o.ctx()?.sessionManager as { getSessionFile?(): string | undefined; getSessionId?(): string } | undefined;
+      return sm?.getSessionFile?.() || sm?.getSessionId?.() || "process";
+    },
     setGlyph: o.setGlyph,
     trace: (r) => o.trace(r),
     rates: (promptTokens) => {
