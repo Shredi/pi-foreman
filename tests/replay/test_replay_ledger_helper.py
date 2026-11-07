@@ -79,7 +79,7 @@ class TestLedgerHelper(ReplayCase):
         rig, sid, recs = self.run_flow("f", config=cfg)
         res = [(n, e) for n, e, _ in tool_results(recs) if n in ("foreman_ledger", "bash")]
         self.assertEqual(res, [("foreman_ledger", True), ("bash", False), ("bash", False)], tool_results(recs))
-        self.assertIn("- [ ] 2. b", self.ledger(rig, "lf"))
+        self.assertIn("- [x] 2. b", self.ledger(rig, "lf"))  # the second ledger bash ran: no recheck budget refuses it
 
     def test_permission_denied_ledger_bash_traced_not_allowed(self):
         # r79: a ledger line is routine under mode auto and runs (the other tests here), so the denial comes from a user deny rule,
