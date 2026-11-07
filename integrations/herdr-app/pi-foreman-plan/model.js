@@ -361,6 +361,7 @@ function cleanRaw(s, st) {
     if (c === "\\") { out += s.slice(i, i + 2); i += 2; continue; }
     if (c === "!" && s[i + 1] === "[") { out += "!\\["; i += 2; continue; }
     if (c === "<") {
+      if (st.hard) { out += "\\<"; i++; continue; } // the hard round only escapes: removing anything could rejoin `!` and `[`
       const rest = s.slice(i);
       if (rest.startsWith("<!--")) {
         const end = s.indexOf("-->", i + 4);
@@ -382,7 +383,6 @@ function cleanRaw(s, st) {
         continue;
       }
       if (/^<[A-Za-z/!?]/.test(rest)) { out += "\\<"; i++; continue; } // an unfinished tag stays text
-      if (st.hard) { out += "\\<"; i++; continue; }
     }
     out += c;
     i++;
