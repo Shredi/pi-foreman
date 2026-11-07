@@ -122,6 +122,25 @@ export function mentionsLedger(cmd: unknown): boolean {
   return typeof cmd === "string" && /(?:^|[\s;&|(])ledger(?:\s|$)/.test(cmd);
 }
 
+const WIN_RENAME_DENIED = /\[WinError (?:5|32)\]|PermissionError/;
+
+/**
+ * Rerun a ledger.py invocation that failed with a Windows access-denied rename
+ * (a reader or scanner holding the ledger open without share-delete); the failed save leaves the file unchanged.
+ * Any other result returns at once. Up to 10 runs, 10 ms backoff doubling, capped at 200 ms.
+ */
+export async function retryLedgerRun<R extends { code?: number | null; stdout?: string; stderr?: string; error?: unknown; timedOut?: boolean }>(run: () => Promise<R>, sleep: (ms: number) => Promise<void>): Promise<R> {
+  let delay = 10;
+  let r = await run();
+  for (let n = 1; n < 10; n++) {
+    if (r.error || r.timedOut || r.code === 0 || !WIN_RENAME_DENIED.test(`${r.stdout ?? ""}\n${r.stderr ?? ""}`)) return r;
+    await sleep(delay);
+    delay = Math.min(delay * 2, 200);
+    r = await run();
+  }
+  return r;
+}
+
 /**
  * A tool result that is a permission refusal: the gate's and the
  * adapter overlay's deny/ask-denied texts (permoverlay.ts). Blocked calls never reach tool_result,

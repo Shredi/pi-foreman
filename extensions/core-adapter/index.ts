@@ -92,7 +92,7 @@ import type { PanelChecksCache } from "./panelchecks.ts";
 import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
-import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall, rewriteItemText } from "./ledgercall.ts";
+import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
 import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagentAgents, subagentTaskText } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
@@ -151,7 +151,8 @@ import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
-import { citedItems, hintFailTrace, ledgerHint, writeHint, type HintWriteOpts } from "./hints.ts";
+import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
+import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
 import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
@@ -232,6 +233,22 @@ const ORIGINAL_PI_FOREMAN_PYTHON = process.env.PI_FOREMAN_PYTHON;
 
 /** A ledger hint that failed after the rename retries: a `hint_write_failed` trace record, not a silent drop. */
 const hintOpts = (s: Session): HintWriteOpts => hintFailTrace((rec) => s.trace?.emit(rec));
+
+/** A hint write that waits for ledger.py work in flight on the same file (ledgerlock.ts), then re-reads the ledger. */
+function writeHint(ledgerPath: string | null, cited: readonly string[], text: string, log?: HintLog, opts: HintWriteOpts = {}): void {
+  if (!ledgerPath) return;
+  ledgerGate(ledgerPath).defer(() => void writeHintNow(ledgerPath, cited, text, log, opts));
+}
+
+/** Holds taken by foreman bash calls that run `ledger`, by tool call id: released at tool_execution_end or session shutdown. */
+const ledgerHolds = new Map<string, { gate: LedgerGate; key: string; sid: string }>();
+
+function releaseLedgerHold(toolCallId: string): void {
+  const h = ledgerHolds.get(toolCallId);
+  if (!h) return;
+  ledgerHolds.delete(toolCallId);
+  h.gate.release(h.key);
+}
 
 interface Session {
   id: string;
@@ -1399,6 +1416,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s) return;
     asks.get(s.id)?.releaseAll();
     asks.delete(s.id);
+    for (const [id, h] of [...ledgerHolds]) if (h.sid === s.id) releaseLedgerHold(id);
     gateRuntimes.delete(s.id);
     gateOwnerMessages.delete(s.id);
     try {
@@ -2586,6 +2604,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === ASK_USER_TOOL) ms.trace?.emit({ event: "dialog", surface: "ask_user" });
     }
     let bashTimeout = null as ChildBashTimeout | null;
+    let wantHold = null as { gate: LedgerGate; key: string; sid: string } | null;
     const res = await (async () => {
     const stopped = ms?.isChild ? repeatStopped.get(ms.id) : undefined;
     if (stopped) return { block: true, reason: stopped };
@@ -2606,7 +2625,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.toolName === "bash") {
       const ps = sessionFor(ctx);
       if (ps && !ps.isChild && ps.activeRuns.size > 0) ps.pollBash++;
-      if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) ps.ledgerBash.add(event.toolCallId);
+      if (ps && !ps.isChild && mentionsLedger((event.input as { command?: unknown }).command)) {
+        ps.ledgerBash.add(event.toolCallId);
+        const lf = boundLedger(ps.markerDir, ps.id);
+        // The hold is taken after the handler's last await (below), so a dialog or reviewSync wait cannot expire it or deadlock markByReview.
+        if (lf && !ledgerHolds.has(event.toolCallId)) wantHold = { gate: ledgerGate(lf), key: `${ps.id}:${event.toolCallId}`, sid: ps.id };
+      }
     }
     // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts): a literal path is refused here,
     // a line that writes and names a ruling and a handoff dir is an overlay ask (selfRulingAsk, judged in overlayBlock).
@@ -3148,6 +3172,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
     }
+    // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
+    if (!res && wantHold) {
+      ledgerHolds.set(event.toolCallId, wantHold);
+      wantHold.gate.hold(wantHold.key);
+    }
     // R30 item 8: traced only once the guards let the child's bash call through
     if (!res && bashTimeout && ms) ms.trace?.emit({ event: "bash_timeout", action: bashTimeout.action, requested: bashTimeout.requested });
     // The launching session reads the open command to tell a test run from an unknown command (opencommand.ts).
@@ -3678,6 +3707,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // reaches tool_result, so the outcome is read here: allowed false = a permission refusal.
   pi.on("tool_execution_end", async (event, ctx) => {
     const s = sessionFor(ctx);
+    releaseLedgerHold(event.toolCallId);
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
@@ -4320,6 +4350,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // unreadable: the core script reports it below
         }
         if (u.item !== null) {
+          const rewrite = (): void => {
           if (!file || content === null) out.push(`${LEDGER_TOOL}: this session has no ledger of its own.`), (ok = false);
           else {
             const r = rewriteItemText(content, u.item, u.text);
@@ -4334,7 +4365,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
                 } catch {
                   // keep the default mode
                 }
-                fs.renameSync(tmp, file);
+                const rr = renameRetry(tmp, file);
+                if (rr.error) throw rr.error;
                 out.push(`upserted ${u.item}`);
               } catch (err) {
                 try {
@@ -4347,6 +4379,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               }
             }
           }
+          };
+          // The ledger is read inside the lock, so a ledger.py child in flight lands first.
+          if (file) {
+            await ledgerGate(file).exclusive(() => {
+              try {
+                content = fs.readFileSync(file, "utf8");
+              } catch {
+                content = null;
+              }
+              rewrite();
+            });
+          } else rewrite();
         } else {
           const dup = content === null ? null : findItemByText(content, u.text);
           if (dup) {
@@ -4386,7 +4430,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string"));
     env.CLAUDE_CODE_SESSION_ID = s.id;
     env.TMPDIR = s.markerDir;
-    const r = await spawner(py, ["-E", "-s", path.join(PKG_ROOT, "core", "scripts", "ledger.py"), ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 });
+    const lockFile = file ?? boundLedger(s.markerDir, s.id);
+    const run = () => retryLedgerRun(() => spawner(py, ["-E", "-s", path.join(PKG_ROOT, "core", "scripts", "ledger.py"), ...(file ? ["-f", file] : []), ...args], { cwd: s.cwd, env, timeoutMs: 30_000 }), (ms) => new Promise<void>((res) => setTimeout(res, ms)));
+    const r = await (lockFile ? ledgerGate(lockFile).exclusive(run) : run());
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? `ledger: ${r.error.message}` : r.timedOut ? "ledger: timed out" : "");
     return { ok: !r.error && !r.timedOut && r.code === 0, text };
   }

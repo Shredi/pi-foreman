@@ -29,4 +29,18 @@ if [ -n "${PI_FOREMAN_STATE_DIR:-}" ]; then
     TMPDIR="$PI_FOREMAN_STATE_DIR"
     export TMPDIR
 fi
-exec "$py" -E -s "$script" "$@"
+# On Windows a scanner can hold the file ledger.py just renamed: os.replace fails with access denied, so rerun on that marker.
+runs=0
+for delay in 0.01 0.02 0.04 0.08 0.16 0.2 0.2 0.2 0.2 0; do
+    runs=$((runs + 1))
+    rc=0
+    { err=$("$py" -E -s "$script" "$@" 2>&1 1>&3 3>&-); } 3>&1 || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$runs" -lt 10 ]; then
+        case "$err" in
+            *"[WinError 5]"*|*"[WinError 32]"*|*PermissionError*) sleep "$delay" 2>/dev/null || :; continue ;;
+        esac
+    fi
+    break
+done
+[ -n "$err" ] && printf '%s\n' "$err" >&2
+exit "$rc"
