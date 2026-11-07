@@ -135,6 +135,7 @@ const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { LiveState, intercomIdOf } from "./livestate.ts";
+import { Show } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate, overIdleFloor } from "./compaction.ts";
@@ -420,6 +421,8 @@ interface Session {
   childRuns: ChildRuns;
   /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
   live: LiveState | null;
+  /** Plan publication for the side panel (show.ts); null without a presence file or with the scratch dir disabled. */
+  show: Show | null;
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
   pressureSampler: PressureSampler | null;
   pressureQ: { gen: number; entries: unknown[]; started: boolean } | null;
@@ -863,6 +866,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       running: false,
       childRuns: new ChildRuns(new UsageTail(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT))),
       live: null,
+      show: null,
       openPrs: null,
       pressureSampler: null,
       pressureQ: null,
@@ -885,6 +889,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
+      if (s.live) {
+        const live = s.live;
+        s.show = Show.start({ agentDir, sessionId: id, cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir, handoffDir: (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null, trace: (r) => s.trace?.emit(r), onChange: () => live.flush() });
+        const show = s.show;
+        if (show) {
+          live.show = () => show.field();
+          live.flush();
+        }
+      }
       const where = new Where({ cwd: () => s.cwd, repo: originRepo, branch: branchOf, changed: () => s.live?.touch() });
       if (s.live) s.live.where = () => where.read();
       s.live?.setAwayGetter(() => (s.idleCache.state() === "watching" || s.selfWarm.state() === "watching") && s.presence.away());
@@ -1433,6 +1446,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     sweepScratch(s);
     closeChildAsks(s);
+    await s.show?.idle();
     s.live?.stop();
     s.openPrs?.stop();
     await s.pressureSampler?.stop();
@@ -3107,6 +3121,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const r of sizingRecords) s.trace?.emit(r);
       s.reviewCount += pendingReviews;
       s.planReviewCount += pendingPlanReviews;
+      // Plan publication (show.ts): a `[plan-review]` launch is a ruling point for the plan its task names.
+      for (const [e, o] of occasions) if (o === "plan-review" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)) s.show?.planReviewLaunched(String(e.task ?? ""));
       for (const [topic, n] of pendingTopics) s.topicReviews[topic] = (s.topicReviews[topic] ?? 0) + n;
       if (pendingWarn) {
         s.budgetWarned = true;
@@ -3795,6 +3811,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const pending = owner?.pendingChanges.get(event.toolCallId);
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
+    }
+    // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.
+    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) owner.show?.planWritten((event.input as Record<string, unknown>).path);
+    // A child's `Plan from` / `foreman:plan` notice is a ruling point: the snapshots roll.
+    if (owner && !owner.isChild && !event.isError && event.toolName === INTERCOM_TOOL) {
+      const i = event.input as Record<string, unknown>;
+      if (i.action === "send") owner.show?.planSent(i.message);
     }
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
@@ -4498,6 +4521,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
           }
         }
+        s.show?.checkpointed(plan.path); // ruling point (show.ts): the plan the owner is about to see
         if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
           // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
           return done("approve", null, `${name} (${hash8}) is already approved by the owner (${s.plan.by}, ${s.plan.approvedAt}); builders may launch while it stays unchanged.`);

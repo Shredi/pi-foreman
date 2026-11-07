@@ -75,6 +75,12 @@ function normDots(raw, repoUrl) {
   return [...byN.values()];
 }
 
+// The live file's `show` pointer (the folder with plan.json / note.json and the version hints), or null.
+function normShow(raw) {
+  if (!isObj(raw) || typeof raw.dir !== "string" || !raw.dir || raw.dir.length > 1024) return null;
+  return { dir: raw.dir, ...(int(raw.plan) !== null ? { plan: raw.plan } : {}), ...(int(raw.note) !== null ? { note: raw.note } : {}) };
+}
+
 function normNode(raw, depth, budget) {
   if (!isObj(raw) || depth > MAX_DEPTH || budget.left-- <= 0) return null;
   const repoUrl = cleanRepoUrl(raw.repoUrl) || cleanRepoUrl(raw.repo);
@@ -98,6 +104,7 @@ function normNode(raw, depth, budget) {
     blockedS: int(raw.blocked_s), ended: raw.ended_s !== null && raw.ended_s !== undefined,
     cost: own, waits, tasks, asks, prs: normDots(raw.dots, repoUrl), repoUrl, children,
     repo: nameOf(raw.repo), branch: str(raw.branch),
+    ...(normShow(raw.show) ? { show: normShow(raw.show) } : {}),
   };
 }
 
@@ -872,4 +879,45 @@ export function prCard(pr) {
     status,
     note: dotOnly ? "details after the next feed refresh" : "",
   };
+}
+
+// ---- plan panel hand-off -------------------------------------------------------------------------------------------
+
+/** The radar nodes the plan panel needs, as plain data: sessions only, with the join keys and the `show` pointer. Stable
+ *  across polls while no session changes (no ages or costs), so a published copy is rewritten only when something real moved. */
+export function slimRadar(nodes) {
+  const walk = (n, depth) => {
+    if (!isObj(n) || n.kind !== "session" || depth > MAX_DEPTH) return null;
+    return {
+      key: n.key, kind: "session", name: n.name, state: n.state, hcTerminal: n.hcTerminal, pid: n.pid, machine: n.machine, parent: n.parent,
+      ...(n.show ? { show: n.show } : {}), children: listOf(n.children).map((c) => walk(c, depth + 1)).filter(Boolean),
+    };
+  };
+  return listOf(nodes).map((n) => walk(n, 0)).filter(Boolean);
+}
+
+/** The path of the file `name` below `dir`, with the separator `dir` uses. */
+export function joinPath(dir, name) {
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  return dir.replace(/[\\/]+$/, "") + sep + name;
+}
+
+/** `{v, at}` (ms since the epoch or null) from the text of a plan.json or note.json, or null. */
+export function parseShowMeta(text) {
+  let d;
+  try { d = JSON.parse(text); } catch { return null; }
+  if (!isObj(d)) return null;
+  const at = typeof d.at === "string" ? Date.parse(d.at) : NaN;
+  return { v: int(d.v) ?? 0, at: Number.isFinite(at) ? at : null };
+}
+
+/** The sidebar rows of a session's published documents: `[{kind: "plan" | "note", text}]`. `meta` is `{plan, note}` of
+ *  parseShowMeta results (either may be missing, then the row shows without an age). A session without a hint has no row. */
+export function showRows(show, meta, now) {
+  if (!isObj(show)) return [];
+  const out = [];
+  const tail = (m) => (m?.at ? ` · ${fmtSince(now - m.at)}` : "");
+  if (int(show.plan) !== null) out.push({ kind: "plan", text: `📄 plan v${show.plan}${tail(meta?.plan)}` });
+  if (int(show.note) !== null) out.push({ kind: "note", text: `📝 note${tail(meta?.note)}` });
+  return out;
 }
