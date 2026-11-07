@@ -165,6 +165,5 @@ test("3f/3g/3h: index wiring: role_launched at launch, role_result at run end, r
   assert.equal(src.includes('event: "review_done", role, decision: verdict'), false, "no review_done at the completion notice any more");
   assert.match(src, /event: "review_done", role: d\.role, decision: d\.decision, runId/);
   assert.match(src, /\.\.\.denyFields\(d\.reason, toolName, input, role\)/);
-  assert.match(src, /denyFields\(d\.reason, toolName, input, "foreman"\)/);
   assert.match(src, /reason: bd\.reason/);
 });

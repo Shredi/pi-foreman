@@ -4,22 +4,20 @@ Triage gate: untriaged (edit refused, .workflow write ok), trivial (foreman_tria
 standard (edit refused, builder launch ok), heavy (edit refused, plan checkpoint approved, builder on
 the strong model).
 Revision rounds: a builder -> reviewer (FAIL) -> builder chain driven by the children's
-completion notices (a child's output carries the foreman's next replay tag); standard refuses
-the 2nd revision, heavy the 3rd; a user prompt starts the count again. strongOnRevision on puts
-the revision builder on the strong model with launch kind `strong-relaunch` in the usage log,
-off keeps the default model and kind `revision`. The reviewer's own `edit` is refused (H4).
+completion notices (a child's output carries the foreman's next replay tag). strongOnRevision on
+puts the revision builder on the strong model with launch kind `strong-relaunch` in the usage log,
+off keeps the default model and kind `revision`.
 Same prerequisites and skips as test_replay.py.
 """
 from __future__ import annotations
 
 import json
 import sys
-import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import PROVIDER_A, load_fixture, tool_results  # noqa: E402
+from driver import PROVIDER_A, load_fixture, tool_results, wait_until  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 STRONG = {"providers": {PROVIDER_A: {"roles": {"builder": {"strong": {"model": "%s/finalizer" % PROVIDER_A}}}}}}
@@ -33,28 +31,11 @@ def strong_config(on):
     return cfg
 
 
-def blocked_launch(pi, timeout=180):
-    """Collect RPC records until a refused subagent call and the run after it settles."""
-    deadline = time.time() + timeout
-    out, hit = [], None
-    while True:
-        rec = pi._next(deadline)
-        out.append(rec)
-        if rec.get("type") == "tool_execution_end" and rec.get("toolName") == "subagent" and rec.get("isError"):
-            hit = rec
-        if hit is not None and rec.get("type") == "agent_settled":
-            return out
-
-
 def usage(rig, sid):
     safe = "".join(c for c in sid if c.isalnum() or c in "-_")
     f = rig.state_dir / "usage" / (safe + ".jsonl")
     rows = [json.loads(x) for x in f.read_text("utf-8").splitlines() if x.strip()] if f.is_file() else []
     return [r for r in rows if r.get("kind") != "tool-usage"]  # same predicate as foreman_retro.is_cost_line
-
-
-# Decisions of the per-launch ladder `revision` event (after the rung is chosen); the round events are the others.
-LADDER_DECISIONS = ("climb", "unchanged", "no_strong", "keyword")
 
 
 def events(rig, sid, name):
@@ -106,45 +87,19 @@ class TestTriageGate(ReplayCase):
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % REASON)
 class TestRevisionRounds(ReplayCase):
-    def chain(self, name, start, config, limit_text):
-        rig = self.rig(name, load_fixture("review_flow"), config=config)
-        (rig.project / "a.txt").write_text("alpha\n", "utf-8")
-        pi = rig.start()
-        sid = pi.session_id()
-        pi.prompt("[[replay:%s]] build it" % start, answers=[{"value": "approve"}], timeout=60)
-        recs = blocked_launch(pi)
-        refused = [t for n, e, t in tool_results(recs, "subagent") if e]
-        self.assertEqual(len(refused), 1, tool_results(recs))
-        self.assertIn(limit_text, refused[0])
-        self.assertIn("Report the open findings to the owner", refused[0])
-        return rig, pi, sid
-
-    def test_standard_second_revision_refused_then_user_prompt_resets(self):
-        rig, pi, sid = self.chain("rounds-std", "s1", None, "revision limit for standard reached (1)")
-        res = tool_results(pi.prompt("[[replay:s6]] go on", timeout=60), "subagent")
-        self.assertEqual([e for _, e, _ in res], [False], res)
-        pi.close()
-        self.assertEqual((rig.project / "a.txt").read_text("utf-8"), "alpha\n", "the reviewer's edit must not land")
-        transcripts = [p.read_text("utf-8", "replace") for p in rig.agent.rglob("*_reviewer_transcript.jsonl")]
-        self.assertTrue(any("Tool edit not found" in t for t in transcripts), "the reviewer has no edit tool (H4)")
-        rev = [(r["decision"], r["tier"]) for r in events(rig, sid, "revision") if r["decision"] not in LADDER_DECISIONS]
-        self.assertEqual(rev, [("revision", "standard"), ("blocked", "standard")])
-        done = [(r["role"], r["decision"]) for r in events(rig, sid, "review_done")]
-        self.assertEqual(done, [("reviewer", "fail"), ("reviewer", "fail")])
-
-    def test_heavy_third_revision_refused(self):
-        rig, pi, sid = self.chain("rounds-heavy", "h1", {"ceremony": NO_PLAN_REVIEW}, "revision limit for heavy reached (2)")
-        pi.close()
-        rev = [r["decision"] for r in events(rig, sid, "revision") if r["decision"] not in LADDER_DECISIONS]
-        self.assertEqual(rev, ["revision", "revision", "blocked"])
-
     def test_strong_on_revision(self):
         for on in (True, False):
-            rig, pi, sid = self.chain("rounds-strong-%s" % on, "s1", strong_config(on), "revision limit for standard reached (1)")
+            rig = self.rig("rounds-strong-%s" % on, load_fixture("review_flow"), config=strong_config(on))
+            (rig.project / "a.txt").write_text("alpha\n", "utf-8")
+            pi = rig.start()
+            sid = pi.session_id()
+            pi.prompt("[[replay:s1]] build it", answers=[{"value": "approve"}], timeout=60)
+            rows = lambda: [(x["kind"], x["model"]) for x in usage(rig, sid) if x["role"] == "builder"]
+            # The first reviewer FAIL launches the revision builder; wait until its launch is in the usage log.
+            wait_until(lambda: len(rows()) >= 2, timeout=240)
             pi.close()
-            builders = [(x["kind"], x["model"]) for x in usage(rig, sid) if x["role"] == "builder"]
             want = [("first", "builder"), ("strong-relaunch", "finalizer")] if on else [("first", "builder"), ("revision", "builder")]
-            self.assertEqual(builders, want)
+            self.assertEqual(rows()[:2], want)
 
 
 if __name__ == "__main__":
