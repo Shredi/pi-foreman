@@ -703,6 +703,7 @@ export class RemoteWatcher {
       }
     }
     let wake: { kind: string; path: string } | null = null;
+    let attach: unknown;
     let problem = "";
     this.update(w.child, (e) => {
       const mirror = typeof e.mirror === "string" ? e.mirror : "";
@@ -732,6 +733,7 @@ export class RemoteWatcher {
       if (a.kind === "ask") e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, rulings: typeof e.rulings === "number" ? e.rulings : 0 };
       else delete e.ask;
       wake = { kind: hit.kind, path: hit.path };
+      if (a.kind === "closed") attach = (e.attach as { address?: unknown } | undefined)?.address;
       return true;
     });
     if (!wake) {
@@ -740,6 +742,8 @@ export class RemoteWatcher {
       return;
     }
     commit(this.state, w.child, a.seq);
+    // the local `hc attach` terminal of the session ends with it (best effort; `--rm` removes it once it exits)
+    if (typeof attach === "string" && attach) void this.hc(["kill", attach], 10_000, this.abort.signal).catch(() => undefined);
     const done = wake as { kind: string; path: string };
     this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${done.path ? ` ${done.path}` : ""}`, "info");
     this.d.wake(w.label, done.kind, done.path);

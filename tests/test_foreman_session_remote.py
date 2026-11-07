@@ -1520,5 +1520,93 @@ class TrailingNewlineTest(unittest.TestCase):
         self.assertEqual(len(fc.machine_issues({"alpha\n": {}})), 1)
 
 
+class AttachPaneTest(RemoteBase):
+    """The local `hc attach <machine>/<t>` terminal of a remote child."""
+
+    def attach_runs(self):
+        return [c for c in self.hc_calls("run") if "--rm" in c]
+
+    def test_attach_run_argv(self):
+        code, out, err = self.run_main(*self.open_args(), HC_TERMINAL_ID="t0")
+        self.assertEqual(code, 0, err)
+        (run,) = self.attach_runs()
+        head = run[:run.index("--")]
+        self.assertEqual(head[:5], ["run", "--json", "--bg", "--no-notify", "--rm"])
+        self.assertNotIn("--keep", head)
+        self.assertNotIn("--no-parent", head)
+        self.assertIn("--outlive-parent", head)
+        self.assertFalse(any(a.startswith("herdr.") for a in head))
+        self.assertEqual(run[-2:], ["attach", "alpha/t1"])
+        entry = self.parent_registry()[0]
+        name = head[head.index("--name") + 1]
+        self.assertEqual(name, fsn.hc_attach_name("alpha", entry["child"]))
+        self.assertRegex(name, r"^[a-z0-9_-]{1,32}$")
+        self.assertEqual(entry["attach"], {"address": "t2"})
+        self.assertIn("attach: t2", out)
+
+    def test_attach_name_carries_the_machine(self):
+        self.assertEqual(fsn.hc_attach_name("build01", "fm-attach-live-test-ce6dae"), "fm-build01-attach-live-test-6dae")
+        self.assertEqual(fsn.hc_attach_name("Build.Host 1", "fm-x-ce6dae"), "fm-build-host-1-x-6dae")
+
+    def test_not_shown_line_only_without_an_attach_terminal(self):
+        with mock.patch.object(fsn, "machine_space", return_value=None):
+            code, out, err = self.run_main(*self.open_args(), HC_TERMINAL_ID="t0")
+            self.assertEqual(code, 0, err)
+            self.assertNotIn("not shown: no herdr-app space", out)
+            code, out, err = self.run_main(*self.open_args())
+            self.assertEqual(code, 0, err)
+        self.assertIn("not shown: no herdr-app space", out)
+
+    def test_attach_name_stays_valid_and_within_32(self):
+        for machine, child in (("m", "fm-" + "b" * 40 + "-ce6dae"), ("a" * 40, "fm-ab-ce6dae"),
+                               ("a" * 40, "fm-" + "b" * 40 + "-ce6dae"), ("x-" * 12, "fm-y-" + "z-" * 10 + "ce6dae"),
+                               ("-", "fm--ce6dae")):
+            name = fsn.hc_attach_name(machine, child)
+            self.assertRegex(name, r"^fm-[a-z0-9_-]+-6dae$", (machine, child))
+            self.assertLessEqual(len(name), 32, name)
+            self.assertNotIn("--", name)
+
+    def test_focus_targets_the_attach_terminal(self):
+        with mock.patch.object(fsn, "herdr_app_json", return_value=None) as app:
+            code, out, err = self.run_main(*self.open_args("--focus"), HC_TERMINAL_ID="t0")
+        self.assertEqual(code, 0, err)
+        focus = [c.args[0] for c in app.call_args_list if c.args[0][:2] == ["do", "agent.focus"]]
+        self.assertEqual(focus, [["do", "agent.focus", '{"terminal": "t2"}']])
+
+    def test_without_an_hc_terminal_the_manual_line_is_printed(self):
+        code, out, err = self.run_main(*self.open_args())
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.attach_runs(), [])
+        self.assertIn("attach: hc attach alpha/t1", out)
+        self.assertNotIn("attach", self.parent_registry()[0])
+
+    def test_a_failing_attach_run_is_only_a_warning(self):
+        real = fsn.hc
+
+        def failing(binary, args, timeout=fsn.HC_TIMEOUT):
+            if args and args[0] == "run" and "--rm" in args:
+                raise fsn.HcError("hc run exited 1: no core")
+            return real(binary, args, timeout)
+
+        with mock.patch.object(fsn, "hc", side_effect=failing):
+            code, out, err = self.run_main(*self.open_args(), HC_TERMINAL_ID="t0")
+        self.assertEqual(code, 0, err)
+        self.assertIn("attach: hc attach alpha/t1", out)
+        self.assertIn("warning: the local attach terminal did not start", err)
+        self.assertNotIn("attach", self.parent_registry()[0])
+
+    def test_close_kills_the_attach_terminal(self):
+        self.run_main(*self.open_args(), HC_TERMINAL_ID="t0")
+        code, out, err = self.run_main("close-remote", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.hc_calls("kill"), [["kill", "t2"]])
+
+    def test_close_without_an_attach_kills_nothing(self):
+        self.run_main(*self.open_args())
+        code, out, err = self.run_main("close-remote", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.hc_calls("kill"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
