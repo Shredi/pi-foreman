@@ -60,6 +60,8 @@ class SizingPromptTest(unittest.TestCase):
         if old.returncode != 0:
             self.skipTest("base commit not available")
         text = (ROOT / "instructions" / "foreman.md").read_text()
+        # foreman_show line: a tool rule added after the base commit
+        text = "".join(ln for ln in text.splitlines(True) if not ln.startswith("- Whenever the owner asks you to explain"))
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
             k = self.knobs(sizing="off", launchbriefs=brief)
             # round 68: the launch `mcp` field is named in the launch rule

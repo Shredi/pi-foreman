@@ -2,7 +2,7 @@
 // requests (`hiddenDeclarations` of the harness `tool_search`); the model finds them through that tool. Pure functions, no Pi imports.
 
 /** Tools that are never hidden: the search itself, codemode, the core file tools and the routing and supervisor tools. */
-export const DEFERRED_FLOOR: readonly string[] = ["tool_search", "codemode", "read", "bash", "subagent", "foreman_ledger", "foreman_triage", "contact_supervisor", "subagent_supervisor", "ask_user_question"];
+export const DEFERRED_FLOOR: readonly string[] = ["tool_search", "codemode", "read", "bash", "subagent", "foreman_ledger", "foreman_triage", "foreman_show", "contact_supervisor", "subagent_supervisor", "ask_user_question"];
 
 /** The plan-mode tools: matched like any pattern, but declared when plan mode was on at session start. */
 export const PLAN_MODE_TOOLS: readonly string[] = ["plan_mode_question", "plan_mode_complete"];

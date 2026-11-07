@@ -581,6 +581,8 @@ class PackageFilesTest(unittest.TestCase):
         if old.returncode != 0:
             self.skipTest("commit eee843d not available")
         text = (ROOT / "instructions" / "foreman.md").read_text()
+        # foreman_show line: a tool rule added after eee843d, not part of the byte-identity claim
+        text = "".join(ln for ln in text.splitlines(True) if not ln.startswith("- Whenever the owner asks you to explain"))
         # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
         # (the adapter always renders ladder "on"); factRulings "off" = no rule on foreman rulings, reviewMarks "off" = no harness marks after a PASS (both always "on" too).
         knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off", "tools.pr": "off"}
