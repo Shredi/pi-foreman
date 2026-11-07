@@ -314,6 +314,18 @@
       "enable": ""
     },
     {
+      "id": "foreman-show",
+      "area": "tools",
+      "title": "Notes for the side panel",
+      "purpose": "The foreman-only `foreman_show` tool publishes a markdown note (text, tables, code fences, mermaid diagrams) that the Herdr plan panel shows on its Note tab; each call replaces the previous note.",
+      "doc": "docs/herdr.md#notes",
+      "keys": [],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "background-tasks-addon",
       "area": "tools",
       "title": "Background-tasks add-on detection",
