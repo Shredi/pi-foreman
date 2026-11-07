@@ -111,13 +111,14 @@ interface SessionWarm {
   owner: object | null;
   budget: WarmBudget;
   childOffTraced: boolean;
+  notReplayableTraced: boolean;
 }
 const REGISTRY = Symbol.for("pi-foreman.selfwarm.sessions");
 const registry = (): Map<string, SessionWarm> => {
   const g = globalThis as unknown as Record<symbol, Map<string, SessionWarm> | undefined>;
   return (g[REGISTRY] ??= new Map());
 };
-const freshSession = (): SessionWarm => ({ missed: false, owner: null, budget: new WarmBudget(), childOffTraced: false });
+const freshSession = (): SessionWarm => ({ missed: false, owner: null, budget: new WarmBudget(), childOffTraced: false, notReplayableTraced: false });
 
 type St = "off" | "watching" | "ended";
 type Refusal = { reason: "budget" | "budget_unavailable"; budget?: { spent: number; cold: number; share: number } };
@@ -162,7 +163,6 @@ export class SelfWarm {
   private ac: AbortController | null = null;
   private gen = 0;
   private compactedForIdle = false;
-  private notReplayableTraced = false;
   private tooShortTraced = false;
 
   constructor(deps: SelfWarmDeps) {
@@ -313,8 +313,8 @@ export class SelfWarm {
     if (!this.owns() || !this.claim()) {
       if (sh.missed) {
         // a miss ended warming for the session: nothing more to trace
-      } else if (p.keepaliveOwned && !this.notReplayableTraced && sh.owner === null) {
-        this.notReplayableTraced = true;
+      } else if (p.keepaliveOwned && !sh.notReplayableTraced && sh.owner === null) {
+        sh.notReplayableTraced = true;
         d.trace({ event: "keepalive", outcome: "skipped", reason: "not_replayable" });
       } else if (p.active && p.billing === "token" && p.ttlSeconds !== null && warmDelayMs(p.ttlSeconds) === null && !this.tooShortTraced) {
         this.tooShortTraced = true;
@@ -346,6 +346,7 @@ export class SelfWarm {
 
   /** A Pi-sent warm landed in the usage log (Pi's warmer is told `stop`; a stray entry still counts as a touch). */
   noteWarmLine(line: UsageLine): void {
+    if (this.shared().owner !== this) return; // the shared budget is noted once, by the owner
     const at = Date.parse(line.ts);
     if (Number.isFinite(at)) this.touch = Math.max(this.touch ?? 0, at);
     this.budget.note(line);
@@ -450,6 +451,10 @@ export class SelfWarm {
     this.graceTimer = null;
     this.gen += 1;
     this.deps.presence.disarm();
+    if (reason === "not_owned") {
+      const sh = this.shared();
+      if (sh.owner === this) sh.owner = null; // the owner stopped owning: free the claim for an instance that can warm
+    }
     if (this.st !== "watching") return;
     this.deps.trace({ event: "keepalive", outcome: "window_end", reason });
     this.st = reason === "error" || reason === "shutdown" || reason === "model_change" || reason === "not_owned" ? "off" : "ended";

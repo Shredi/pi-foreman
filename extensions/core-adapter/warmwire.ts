@@ -40,7 +40,7 @@ export interface WarmWireOpts {
   setGlyph?(on: boolean): void;
 }
 
-/** `providers.claude-bridge.cache.keepalive.children: true` (read without a schema entry): children through the bridge warm. */
+/** `providers.claude-bridge.cache.keepalive.children: true`: children through the bridge warm. */
 export function bridgeChildrenOn(config: unknown): boolean {
   const v = get(config, "providers.claude-bridge.cache.keepalive.children");
   return v === true;

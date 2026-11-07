@@ -55,6 +55,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.cache.keepalive.compactMinTokens   higher only (at least 100000 without an earlier value)
     ladder.idleDownshift.enabled     only false is accepted; .causes: intersect (a project can only remove causes)
     providers.*.cache.keepalive.whileWaiting / beyondPiCap   only false is accepted
+    providers.*.cache.keepalive.children   only false is accepted (true lets claude-bridge children send warms)
     providers.*.roles.*.idle         ignored (picks the model of a cold idle turn; L1/L3/L2 only)
     presence.enabled                 only true is accepted (more gating is the tightening direction)
     presence.awayAfterMinutes        lower only, minimum 1; without an earlier value at most 11
@@ -278,6 +279,7 @@ LAYER_TIGHTEN = [
     (("providers", "*", "cache", "keepalive", "compactMinTokens"), "higher_only"),
     (("providers", "*", "cache", "keepalive", "whileWaiting"), "false_only"),
     (("providers", "*", "cache", "keepalive", "beyondPiCap"), "false_only"),
+    (("providers", "*", "cache", "keepalive", "children"), "false_only"),
     (("presence", "enabled"), "true_only"),
     (("presence", "awayAfterMinutes"), "lower_only"),
     (("ladder", "strongOnRevision"), "false_only"),

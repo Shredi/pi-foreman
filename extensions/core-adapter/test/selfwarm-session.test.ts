@@ -22,6 +22,7 @@ let seq = 0;
 
 function rig(replies: WarmReply[], instances = 2, key: string | null = `session-${++seq}-${Date.now()}`) {
   const clock = { t: 10_000_000 };
+  const mode = { replayable: true };
   const slots: { fn: () => void; at: number; dead: boolean }[] = [];
   const timers = {
     set: (fn: () => void, ms: number) => {
@@ -49,7 +50,7 @@ function rig(replies: WarmReply[], instances = 2, key: string | null = `session-
       compact: () => null,
       sessionKey: key === null ? undefined : () => key,
       trace: (r) => void traces.push(r),
-      replayable: () => true,
+      replayable: () => mode.replayable,
       replay: async () => replies[Math.min(fired.n++, replies.length - 1)] ?? null,
       record: () => ({ cost: { total: 0.05 } }) as UsageLine,
     });
@@ -72,7 +73,7 @@ function rig(replies: WarmReply[], instances = 2, key: string | null = `session-
     for (const sw of sws) sw.noteRequest(prompt);
   };
   const ev = (event: string, outcome?: string) => traces.filter((r) => r.event === event && (outcome === undefined || r.outcome === outcome));
-  return { sws, advance, request, ev, fired, traces };
+  return { sws, advance, request, ev, fired, traces, mode };
 }
 
 test("two instances of one session: one fires, the other never does; the miss is traced once and honoured by both", async () => {
@@ -155,6 +156,36 @@ test("snapshot of a new stretch prices next from the last measured warm", async 
   h.request(144_875);
   const after = h.sws[0].snapshot().budget!.next;
   assert.ok(after > before, `measured ${after} should exceed the cacheRead-only guess ${before}`);
+});
+
+test("noteWarmLine is noted by the owning instance only (no double count in the shared budget)", () => {
+  const h = rig([HIT]);
+  h.request();
+  const line = { ts: new Date(10_000_000).toISOString(), ...HIT.usage } as unknown as UsageLine;
+  for (const sw of h.sws) sw.noteWarmLine(line);
+  const one = (3 * 5 + 132423 * 0.5 + 12452 * 6.25 + 1 * 25) / 1e6;
+  const spent = h.sws[0].snapshot().budget!.spent;
+  assert.ok(Math.abs(spent - one) < 1e-9, `counted once, got ${spent}`);
+});
+
+test("an owner that stops owning (not_owned) releases the claim so another instance can take over", async () => {
+  const h = rig([HIT]);
+  h.request();
+  h.mode.replayable = false;
+  h.sws[0].noteRequest(100_000);
+  assert.equal(h.sws[0].state(), "off");
+  h.mode.replayable = true;
+  h.sws[1].noteRequest(100_000);
+  assert.equal(h.sws[1].state(), "watching");
+  await h.advance(270_000);
+  assert.equal(h.fired.n, 1);
+});
+
+test("not_replayable is traced by one instance only", () => {
+  const h = rig([HIT]);
+  h.mode.replayable = false;
+  h.request();
+  assert.equal(h.ev("keepalive", "skipped").filter((r) => r.reason === "not_replayable").length, 1);
 });
 
 // ---- child sessions on claude-bridge ---------------------------------------------------------------------

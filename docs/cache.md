@@ -55,7 +55,7 @@ The bridge calls the Claude Agent SDK and sets no TTL itself; Claude Code reads 
 
 Switching away from `claude-bridge` restores the earlier value (or removes the variable); other providers are never touched. The variable is process-wide, so a `claude` started from a shell tool inherits it too.
 
-**Keep-alive for children.** A child session on `claude-bridge` sends no warms by default (`keepalive skipped bridge_child_off`, traced once per session): a bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true` (read without a schema entry); the miss contingency below still ends warming after the first warm that does not hit.
+**Keep-alive for children.** A child session on `claude-bridge` sends no warms by default (`keepalive skipped bridge_child_off`, traced once per session): a bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true` (user or overlay config only: a project or session may only set `false`); the miss contingency below still ends warming after the first warm that does not hit.
 
 Claude Code honours the variable from roughly v2.1.242 (the exact minimum is unconfirmed); older versions ignore it harmlessly and keep their own TTL, so the policy then assumes a TTL the cache does not have.
 
@@ -71,7 +71,7 @@ The request-billed rows document the TTL a `byModel` row such as `{"match": "gpt
 
 ## Layers
 
-The user and overlay layers may set every cache key. The project and session layers can only tighten: `keepalive.enabled` accepts only `false`; `keepalive.budgetShare` only a lower value (at most 0.5); `keepalive.compactMinTokens` only a higher value (at least 100000 without an earlier value); `presence.enabled` accepts only `true` (more gating is the tightening direction), `presence.awayAfterMinutes` only a lower value (at most 11). `presence.command` (it runs a program), `ttlSeconds`, `billing` and `warmCompact` are ignored there. The deprecated keys keep their old layer rule and do nothing. An ignored or loosening value is dropped with a warning, and a `cache` or `keepalive` value that is not an object is dropped with an "expected an object" warning.
+The user and overlay layers may set every cache key. The project and session layers can only tighten: `keepalive.enabled` accepts only `false`; `keepalive.budgetShare` only a lower value (at most 0.5); `keepalive.children` accepts only `false`; `keepalive.compactMinTokens` only a higher value (at least 100000 without an earlier value); `presence.enabled` accepts only `true` (more gating is the tightening direction), `presence.awayAfterMinutes` only a lower value (at most 11). `presence.command` (it runs a program), `ttlSeconds`, `billing` and `warmCompact` are ignored there. The deprecated keys keep their old layer rule and do nothing. An ignored or loosening value is dropped with a warning, and a `cache` or `keepalive` value that is not an object is dropped with an "expected an object" warning.
 
 ## Keep-alive
 
