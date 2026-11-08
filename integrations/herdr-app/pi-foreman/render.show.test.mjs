@@ -15,7 +15,7 @@ const radar = (show) => {
 };
 const mod = (rec) => {
   const m = Object.create(Mod.prototype);
-  m.changed = {}; m.feed = []; m.folded = new Set(); m.busy = new Map(); m.recs = new Map(); m.childPi = new Set();
+  m.changed = {}; m.feed = []; m.folded = new Set(); m.busy = new Map(); m.recs = new Map(); m.childPi = new Set(); m.shows = new Map();
   m.radar = new Map([["local", rec]]);
   m.poll = () => {};
   return m;

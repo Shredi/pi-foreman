@@ -616,7 +616,36 @@ spinner, red when blocked; `explorer · Running bash` from the hc record `msg`; 
    `"props": { "foreman": "<absolute path>" }` (optional when `foreman` is on the PATH of your environment).
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
 
-Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs"`.
+Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"` (both are part of `npm run test:node`).
+
+### Versions
+
+Tested on Herdr app 0.1.14 with core 0.1.19. The mods also load on 0.1.13: every `exec` of a mod passes a `timeout`
+(radar read 30 s, PR poll 600 s, `hc get` 10 s local / 15 s remote, `hc run` attach 15 s, URL opener 10 s). If a host rejects
+that option, the call is repeated once without it and the mod stops passing it (that behaviour on 0.1.13 is not verified here).
+A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure.
+
+Herdr 0.1.14 runs a mod's top level once per source version, shared by all copies of the mod, so per-copy state lives in
+`init`. Two keys stay app-global on purpose (`pi-foreman.radar`, `pi-foreman.show`, and the Agents order).
+
+### Agent row labels
+
+A row is labelled with its tab name. When two or more agents of a space share a tab name, each uses its own terminal title instead
+(falling back to the tab name when it has none), so the rows stay distinguishable.
+
+### Detached processes
+
+What outlives a closed tab, and what does not:
+
+- `foreman_bg` runs are detached with their own process group and survive a tab close. `/foreman close` (and an intercom
+  `foreman:close`) now sends SIGTERM to the group of each still-running run of that session (Windows: best-effort `taskkill /T`).
+  `session_shutdown`, a reload and a cancelled wait do not kill them.
+- A selfclean helper (`selffinish`) outlives pi on purpose.
+- A local `hc run --keep --outlive-parent` session survives by design; `prune` only marks it.
+- The mod's own `hc run` attach is not killed on tab close (the mod has no `close()`); the remote `hc events` ends with pi.
+- Presence and status probes are killed when they time out.
+- The sidebar daemon is started in its own session; `stop` sends SIGTERM and it exits itself when its socket is lost.
+- Gap: `worktree sweep` protects a tree only while a live session file uses it, so a `foreman_bg` run inside a removed tree is not protected.
 
 ### Open PRs
 

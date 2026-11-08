@@ -1018,3 +1018,25 @@ export function findPanelBlock(tree, mod) {
   const show = hidden ?? (si >= 0 ? up.slice(si + 1).find((n) => typeof n.id === "string") : null) ?? null;
   return { block: hit.block.id, stack: stack?.id ?? null, show: show?.id ?? null };
 }
+
+/** Tab name of an agent as a row label: empty when absent or just the tab's number. */
+const tabNameOf = (a) => (typeof a?.tab_name === "string" && !/^\d+$/.test(a.tab_name) ? a.tab_name : "");
+const tabKey = (a) => `${a?.space ?? ""}\u0000${tabNameOf(a)}`;
+
+/** Keys (space + tab name) shared by two or more listed agents: rows under those tabs cannot be told apart by tab name. */
+export function clashingTabs(list) {
+  const seen = new Map();
+  for (const a of Array.isArray(list) ? list : []) {
+    if (!isObj(a) || !tabNameOf(a)) continue;
+    seen.set(tabKey(a), (seen.get(tabKey(a)) ?? 0) + 1);
+  }
+  return new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+}
+
+/** The raw label of an agent row (before the caller strips a leading "π"): its tab name; when `clashes` (clashingTabs) holds
+ *  its tab, the agent's own terminal title instead, falling back to the tab name. Empty when it has neither. */
+export function agentLabel(a, clashes) {
+  const tab = tabNameOf(a);
+  const own = typeof a?.title === "string" ? a.title : "";
+  return tab && clashes?.has(tabKey(a)) ? own || tab : tab || own;
+}

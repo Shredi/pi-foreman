@@ -24,7 +24,7 @@ Running from a checkout instead of the installed package: [install](install.md#d
 ```sh
 python -m unittest discover -s tests -v          # npm test (through the test lock, `--exec` mode)
 node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test "extensions/core-adapter/test/*.test.ts"   # npm run test:node (through scripts/foreman_test_run.mjs)
-node --test "integrations/herdr-app/pi-foreman/*.test.mjs"   # herdr-app mod model (also in npm run test:node)
+node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"   # herdr-app mods (also in npm run test:node)
 node --test "tests/installer/*.test.mjs"          # npm run test:installer
 npm run test:ci                                   # pre-PR: what CI runs and npm test does not (replay, core conformance, installer, bench probe); replay is the slow step
 npm run typecheck                                 # tsc --noEmit

@@ -13,6 +13,7 @@ import {
 } from "./model.js";
 
 const TICK_MS = 1000;
+const OPEN_TIMEOUT_MS = 10000; // exec `timeout` of the URL opener
 const POLL_MS = 5000;
 const MOD = "pi-foreman-plan";
 // the ids of layouts/foreman.json, used when the shown layout cannot be searched
@@ -42,6 +43,7 @@ export default class PlanPanel extends View {
     this.again = false;
     this.cur = { empty: "Waiting for foreman radar" };
     this.noteSeen = new Map(); // root session key -> last note version seen on the radar
+    this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
     this.diagOk = new Map(); // app-home relative cache path -> true once written and checked
     this.linksOn = guard(() => typeof TextView.markdown("probe", "").on_link_click === "function", false);
     this.sync();
@@ -297,7 +299,21 @@ export default class PlanPanel extends View {
     const p = guard(() => window().platform, "");
     const argv = openerArgv(p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux", url);
     if (!argv) return;
-    cx.spawn(async () => { try { await exec(argv[0], argv.slice(1)); } catch { /* no opener: nothing to do */ } });
+    cx.spawn(async () => { try { await this.execT(argv[0], argv.slice(1), {}, OPEN_TIMEOUT_MS); } catch { /* no opener: nothing to do */ } });
+  }
+
+  // exec with a `timeout`; if the call throws or rejects because of the option itself (an app that predates it), it runs once more
+  // without it and this copy stops passing it. Any other rejection goes to the caller.
+  async execT(command, args, options, timeout) {
+    if (this.noTimeout) return exec(command, args, options);
+    try {
+      return await exec(command, args, { ...options, timeout });
+    } catch (e) {
+      const text = String(e?.message ?? e);
+      if (!/timeout/i.test(text) || /took longer than|was stopped/i.test(text)) throw e;
+      this.noTimeout = true;
+      return exec(command, args, options);
+    }
   }
 
   // ---- drawing --------------------------------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -21,6 +21,13 @@ const WATCHDOG_MS = 35000; // a radar exec older than this is given up
 const PRS_EVERY_MS = 30000; // `foreman prs poll` starts this long after its previous run ended
 const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given up
 const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
+// exec `timeout` (ms) per job; the Promise.race watchdogs stay as the backstop for an app that ignores the option (Herdr app 0.1.13)
+const T_RADAR = 30000;
+const T_PRS = 600000; // the cap of exec
+const T_HC_LOCAL = 10000;
+const T_HC_REMOTE = 15000;
+const T_ATTACH = 15000;
+const T_OPEN = 10000;
 const SPINNER = "mods/workspace-chrome/spinner.svg";
 const RING = "mods/pi-foreman/ring.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
@@ -83,6 +90,9 @@ const hashOf = (s) => {
 };
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
+// A rejection about the `timeout` option itself, not the run having been stopped ("... took longer than N s and was stopped").
+const optionError = (e) => /timeout/i.test(String(e?.message ?? e)) && !/took longer than|was stopped/i.test(String(e?.message ?? e));
+const why = (e) => String(e?.message ?? e ?? "").slice(0, 200);
 const isObjLike = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 export default class ForemanAgents extends View {
@@ -97,6 +107,11 @@ export default class ForemanAgents extends View {
     this.hcProp = given.hc;
     this.recs = new Map(); // agent address -> {recs, tried}
     this.childPi = new Set(); // pane-less pi child terminals (set by render), polled for records too
+    this.noteSeen = new Map(); // `${machine}|${session key}` -> last note version seen on the radar
+    this.shows = new Map(); // `${machine}|${dir}` -> what was read of a session's plan.json / note.json
+    this.prsRan = new Map(); // busy key -> when its prs poll last ended
+    this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
+    this.failed = new Set(); // keys of runs whose last try failed: one error notice per failure, not per retry
     this.poll(cx);
     this.pollPrs(cx, Date.now());
     cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); });
@@ -105,6 +120,26 @@ export default class ForemanAgents extends View {
   machines() {
     const names = guard(() => spaces().map((s) => s.machine).filter((m) => typeof m === "string" && m), []);
     return [null, ...new Set(names)];
+  }
+
+  // exec with a `timeout`. If the call throws or rejects because of the option itself (an app that predates it), it runs once more
+  // without it and this copy stops passing it; every other rejection (no binary, a run stopped by the timeout) goes to the caller.
+  async execT(command, args, options, timeout) {
+    if (this.noTimeout) return exec(command, args, options);
+    try {
+      return await exec(command, args, { ...options, timeout });
+    } catch (e) {
+      if (!optionError(e)) throw e;
+      this.noTimeout = true;
+      return exec(command, args, options);
+    }
+  }
+
+  // One error notice when a run starts failing; none while it keeps failing, so a machine without foreman does not toast every round.
+  fail(key, title, e) {
+    if (this.failed.has(key)) return;
+    this.failed.add(key);
+    guard(() => notify({ title, body: why(e), level: "error" }));
   }
 
   poll(cx) {
@@ -121,7 +156,7 @@ export default class ForemanAgents extends View {
         let next;
         try {
           const r = await Promise.race([
-            exec(radarBinary(this.foremanProp, machine), ["radar", "--json"], { on: machine }),
+            this.execT(radarBinary(this.foremanProp, machine), ["radar", "--json"], { on: machine }, T_RADAR),
             cx.sleep(WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
           ]);
           const doc = r.code === 0 ? parseRadarDoc(r.stdout) : null;
@@ -145,7 +180,6 @@ export default class ForemanAgents extends View {
   // it, so say once per version how to add the panel. This mod runs in every layout; the plan mod only where the block exists. The
   // first sight of a session only records its version. The layout walk is cached by layout name.
   noteNotice() {
-    this.noteSeen ??= new Map();
     let blockless;
     for (const [mk, rec] of this.radar) {
       if (!rec.ok) continue;
@@ -186,13 +220,13 @@ export default class ForemanAgents extends View {
     const text = JSON.stringify(machines);
     if (text === this.published) return;
     this.published = text;
+    // Deliberately app-global: the plan panel (another mod, any copy) reads this key; every copy writes the same radar view.
     guard(() => setShared("pi-foreman.radar", { machines }));
   }
 
   // plan.json / note.json of each session with a `show` pointer, for the age on its plan and note rows: re-read when the
   // version hint changed, else every 30 s. A missing or bad file leaves the row without an age.
   pollShows(cx, now) {
-    this.shows ??= new Map();
     for (const [mk, rec] of this.radar) {
       if (!rec.ok) continue;
       const machine = mk === "local" ? null : mk;
@@ -223,15 +257,15 @@ export default class ForemanAgents extends View {
   // A click on a plan or note row: pin the panel to that session and document, bring the plan panel forward.
   // The header button passes no node: it only brings the panel forward.
   openPanel(node, kind) {
+    // Deliberately app-global: the pin is read by the plan panel, a different mod, wherever it sits.
     if (node) guard(() => setShared("pi-foreman.show", { key: node.key, kind, n: Date.now() }));
     guard(() => run("layout.select", { stack: "panel-body", child: "plan" }));
     guard(() => run("layout.show", { id: "panel" }));
   }
 
   // `foreman prs poll --json` per machine, 30 s after its previous run ended: it polls the tracked PRs and the PR search and writes
-  // the store files the radar reads. The mod only runs it; a failure is ignored (the next round tries again).
+  // the store files the radar reads. The mod only runs it; a failure raises one error notice and the next round tries again.
   pollPrs(cx, now) {
-    this.prsRan ??= new Map();
     for (const machine of this.machines()) {
       const key = `prs:${machine ?? "local"}`;
       if (this.busy.has(key) && now - this.busy.get(key) > PRS_STUCK_MS) this.busy.delete(key);
@@ -240,11 +274,13 @@ export default class ForemanAgents extends View {
       this.busy.set(key, now);
       cx.spawn(async (cx) => {
         try {
-          await Promise.race([
-            exec(radarBinary(this.foremanProp, machine), ["prs", "poll", "--json"], { on: machine }),
-            cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "" })),
+          const r = await Promise.race([
+            this.execT(radarBinary(this.foremanProp, machine), ["prs", "poll", "--json"], { on: machine }, T_PRS),
+            cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "", watchdog: true })),
           ]);
-        } catch { /* no foreman here, or the run failed: the next round tries again */ }
+          if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
+          else this.failed.delete(key);
+        } catch (e) { this.fail(key, "Foreman PR poll failed", e); }
         this.prsRan.set(key, Date.now());
         this.busy.delete(key);
       });
@@ -268,7 +304,7 @@ export default class ForemanAgents extends View {
         let recs = [];
         let attach = "";
         try {
-          const r = await exec(radarBinary(this.hcProp, machine, "hc"), ["get", addr.slice(cut + 1), "--json"], { on: machine });
+          const r = await this.execT(radarBinary(this.hcProp, machine, "hc"), ["get", addr.slice(cut + 1), "--json"], { on: machine }, machine ? T_HC_REMOTE : T_HC_LOCAL);
           if (r.code === 0) { recs = parseRecords(r.stdout); attach = parseAttachTarget(r.stdout); }
         } catch { /* no hc here: no records */ }
         this.busy.delete(`hc:${addr}`);
@@ -296,7 +332,10 @@ export default class ForemanAgents extends View {
     }
     const hc = radarBinary(this.hcProp, null, "hc");
     cx.spawn(async () => {
-      try { await exec(hc, ["run", "--json", "--bg", "--no-notify", "--rm", "--name", plan.name, "--", hc, "attach", plan.target]); } catch { /* no hc: nothing to open */ }
+      try {
+        await this.execT(hc, ["run", "--json", "--bg", "--no-notify", "--rm", "--name", plan.name, "--", hc, "attach", plan.target], {}, T_ATTACH);
+        this.failed.delete(`attach:${plan.name}`);
+      } catch (e) { this.fail(`attach:${plan.name}`, "Could not open the remote session", e); }
     });
   }
 
@@ -305,7 +344,7 @@ export default class ForemanAgents extends View {
     const p = guard(() => window().platform, "");
     const argv = openerArgv(p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux", url);
     if (!argv) return;
-    cx.spawn(async () => { try { await exec(argv[0], argv.slice(1)); } catch { /* no opener: nothing to do */ } });
+    cx.spawn(async () => { try { await this.execT(argv[0], argv.slice(1), {}, T_OPEN); } catch { /* no opener: nothing to do */ } });
   }
 
   // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one two-part dot; a click opens its
@@ -497,8 +536,7 @@ export default class ForemanAgents extends View {
     const host = a.address.includes("/") ? a.address.slice(0, a.address.indexOf("/")) : "";
     const since = this.changed[a.address]?.at;
     const quiet = a.status === "idle" && !a.focused;
-    const tab = typeof a.tab_name === "string" && !/^\d+$/.test(a.tab_name) ? a.tab_name : "";
-    const name = stripPi(tab || a.title) || a.program?.name || a.address;
+    const name = stripPi(agentLabel(a, this.clashes)) || a.program?.name || a.address;
     const focusPane = () => run("pane.focus", { pane: a.pane });
     const row = h_flex().id(`agent:${a.address}`).flex_none().h(30).px(8).gap(5).items_center().rounded(8).cursor_pointer();
     const shownStatus = kids && this.folded.has(fid) ? urgentStatus([status, ...items.map((c) => c.urgent)]) : status;
@@ -554,6 +592,8 @@ export default class ForemanAgents extends View {
     const spaceList = guard(() => spaces(), []);
     const now = Date.now();
     guard(() => this.track(list, now));
+    this.clashes = guard(() => clashingTabs(list), new Set());
+    // Deliberately app-global: the one order of the Agents list, the same from every copy.
     guard(() => setAgentOrder(list.map((a) => a.address)));
 
     // Join each machine's radar to its agents; the pid comes from the terminal record when it has one.
@@ -632,8 +672,7 @@ export default class ForemanAgents extends View {
       const resolve = (term) => {
         const tabbed = listedBy.get(term.address);
         if (tabbed) {
-          const tab = typeof tabbed.tab_name === "string" && !/^\d+$/.test(tabbed.tab_name) ? tabbed.tab_name : "";
-          return { node: joined.get(tabbed.address) ?? null, recs: recsOf(tabbed), own: tabbed.status, status: statusOf(tabbed), pane: tabbed.pane, label: stripPi(tab || tabbed.title) };
+          return { node: joined.get(tabbed.address) ?? null, recs: recsOf(tabbed), own: tabbed.status, status: statusOf(tabbed), pane: tabbed.pane, label: stripPi(agentLabel(tabbed, this.clashes)) };
         }
         const node = childJoined.get(term.address) ?? null;
         const recs = this.recs.get(term.address)?.recs ?? [];
