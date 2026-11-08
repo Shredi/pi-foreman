@@ -83,7 +83,7 @@ import { gitProtectedRead, gitReadWrites } from "./effects.ts";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
-import { pubKeyReadWords, sshPublicKey } from "./floors.ts";
+import { READ_PATH_TOOLS, psPubKeyReadWords, pubKeyReadWords, sshPublicKey } from "./floors.ts";
 import { globSegMatch, wildMatch } from "./glob.ts";
 
 export interface PathRule {
@@ -2462,7 +2462,9 @@ function expandWord(w: string, ctx: MatchCtx): string {
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   // a `$env:HOME` / `$env:USERPROFILE` the line binds (any case) stays unexpanded: untrusted
-  return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, (m, n: string) => (bound.has(n.toUpperCase()) ? m : ctx.home));
+  s = s.replace(/^\$(?:env:|\{env:)(USERPROFILE|HOME)\}?(?=$|[\\/])/i, (m, n: string) => (bound.has(n.toUpperCase()) ? m : ctx.home));
+  // `%USERPROFILE%` (cmd, and the Windows spelling the floors read), likewise
+  return ctx.platform === "win32" ? s.replace(/^%USERPROFILE%(?=$|[\\/])/i, (m) => (bound.has("USERPROFILE") ? m : ctx.home)) : s;
 }
 
 const MAX_GLOB = 200;
@@ -3399,7 +3401,10 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
   const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
-  const pubWords = shell === "posix" && /\.pub\b/.test(command) ? pubKeyReadWords(parseAst(command, { cwd: ctx.cwd, platform: ctx.platform }), { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform }) : new Set<string>();
+  const pubEnv = { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform };
+  const pubRaw = !/\.pub\b/.test(command) ? new Set<string>() : shell === "posix" ? pubKeyReadWords(parseAst(command, { cwd: ctx.cwd, platform: ctx.platform }), pubEnv) : psPubKeyReadWords(command, pubEnv);
+  // collect() drops a leading `${env:USERPROFILE}` from the word it checks: a verified word covers that spelling of itself
+  const pubWords = new Set([...pubRaw].flatMap((w) => [w, w.replace(/^\$\{env:USERPROFILE\}/i, "")]));
   // Fail closed: a word with white space is prose only as the value of a known prose option, decided by word position;
   // never for a path tool or a pure read (its words are operands).
   // by position: a string that also occurs outside a prose-option position (`-m "/a b/f" -F "/a b/f"`) is no prose
@@ -4161,9 +4166,6 @@ function toolPaths(toolName: string, input: Record<string, unknown>): { value: s
   return out;
 }
 
-/** The path tools that only read: an SSH public key in ~/.ssh passes their path rules. */
-const READ_PUB_TOOLS = new Set(["read", "grep", "find", "ls"]);
-
 export function checkPathTool(rules: OverlayRules, toolName: string, input: Record<string, unknown>, ctx0: MatchCtx): Decision | null {
   if (!PATH_TOOLS.has(toolName)) return null;
   const ctx: MatchCtx = ctx0.owned || !rules.owned ? ctx0 : { ...ctx0, owned: rules.owned };
@@ -4179,7 +4181,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
     if (scanRootBad(rules, root, ctx)) return scanDeny(rules, root === "." ? ctx.cwd : root, ctx);
   }
   for (const { value, write } of paths) {
-    const hit = pathDeny(rules.pathRules, value, ctx, !write, false, !write && READ_PUB_TOOLS.has(toolName) && /\.pub$/.test(value) && sshPublicKey(value, { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform }));
+    const hit = pathDeny(rules.pathRules, value, ctx, !write, false, !write && READ_PATH_TOOLS.has(toolName) && /\.pub$/.test(value) && sshPublicKey(value, { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform }));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
     const blocked = childBlockHit(rules, value, ctx, !write);
     if (blocked) return childBlockDecision(blocked, value);

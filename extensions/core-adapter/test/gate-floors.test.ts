@@ -90,6 +90,8 @@ test("other floors", () => {
     ["cat /h/me/.ssh/id_ed25519", "floor-secret-path"],
     ["cat ~/.aws/credentials", "floor-secret-path"],
     ["cp /h/me/.pi/agent/auth.json /tmp/x", "floor-secret-path"],
+    // a `.pub` is no blanket exemption: only a verified key directly in ~/.ssh is readable (pubkey-read.test.ts)
+    ["cat ~/.ssh/id_ed25519.pub", "floor-secret-path"],
   ];
   for (const [l, rule] of cases) assert.equal(floor(l), rule, l);
   for (const l of ["rm -rf /w/repo/build", "rm /tmp/x", "rm -rf /s/scr/a", "cat /w/repo/a.pem.txt", "curl https://x -o /tmp/f", "npm test"]) assert.equal(floor(l), null, l);

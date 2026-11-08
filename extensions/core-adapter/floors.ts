@@ -632,7 +632,9 @@ const SSH_PUB_MAX = 16 * 1024;
 export function sshPublicKey(word: string, env: FloorEnv): boolean {
   try {
     const win = (env.platform ?? process.platform) === "win32";
-    const x = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+    let x = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+    // the Windows spellings of the profile (the overlay's `$env:USERPROFILE` form, permoverlay.ts expandWord) are the home dir
+    if (win && env.home) x = x.replace(/^(?:%USERPROFILE%|\$env:USERPROFILE|\$\{env:USERPROFILE\})(?=\/|$)/i, () => slash(env.home!));
     if (!env.home || /[$`*?[{%]/.test(x.replace(/^\$\{?HOME\}?/, ""))) return false;
     const abs = resolveWord(x, env.cwd, env);
     if (abs === null) return false;
@@ -660,7 +662,7 @@ export function sshPublicKey(word: string, env: FloorEnv): boolean {
   }
 }
 
-/** `read`: the word is only read (a read tool's path, a read-only program's operand, a copy source, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
+/** `read`: the word is only read (a read tool's path, a read-only program's operand, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
 export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
@@ -876,10 +878,17 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   return pending;
 }
 
+/** The input keys a path tool call is floored on (the path keys are also what the gate reads for the public-key rule id). */
+export const PATH_KEYS = ["path", "file_path", "filePath"];
+export const PATH_TOOL_KEYS = [...PATH_KEYS, "src", "dst", "glob", "pattern"];
+
+/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (sshPublicKey). One set for the floors, the gate and the overlay. */
+export const READ_PATH_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
+
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
 export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string, readField?: string | null, read = false): FloorHit | null {
   // a configured read tool (gate.readTools): its path field and `glob` only; `pattern`/`patterns` are search patterns
-  const keys = readField !== undefined ? (readField === null ? ["glob"] : [readField, "glob"]) : ["path", "file_path", "filePath", "src", "dst", "glob", "pattern"];
+  const keys = readField !== undefined ? (readField === null ? ["glob"] : [readField, "glob"]) : PATH_TOOL_KEYS;
   for (const k of keys) {
     const v = input[k];
     if (typeof v === "string" && v) {
@@ -1062,32 +1071,58 @@ function copySourceWords(seg: ShellSegment, prog: string): Set<string> {
   const out = new Set<string>();
   if (prog !== "cp" && prog !== "rsync") return out;
   const a = seg.argv;
-  if (a.some((w) => /^--remove-source-files$/.test(w))) return out;
   const target = a.some((w) => w === "-t" || w.startsWith("--target-directory"));
   const pos = a.filter((w) => !w.startsWith("-"));
   (target ? pos : pos.slice(0, -1)).forEach((w) => out.add(w));
   return out;
 }
 
-/** Which operands of a segment are only read: all of a read-only program (not `sort -o`, `--output`, `uniq`, `tree -o`), a copy's sources, `ssh-keygen -l -f`. */
+/** `ssh-keygen` flags of a fingerprint listing: `-l`, `-f`, `-v` (alone or combined, `-lf`) and `-E <alg>`; never `-y`, `-p`, `-c`, `-R`, `-s`. */
+const KEYGEN_READ_FLAG = /^(?:-[lfv]+|-E|--)$/;
+
+/** Which operands of a segment are only read: all of a read-only program (not `sort -o`, `--output`, `uniq`, `tree -o`), `ssh-keygen -l -f`. A copy's sources are not: a copy of a key stays a deny. */
 function readOperands(seg: ShellSegment, prog: string): { argv: (w: string) => boolean } {
   const a = seg.argv;
-  const flagsOnly = new Set(["-l", "-f", "-E", "-v", "--"]);
   const writes = a.some((w) => /^--output(=|$)/.test(w)) || (prog === "sort" && a.some((w) => /^-[A-Za-z]*o|^--output/.test(w))) || (prog === "tree" && a.some((w) => /^-[A-Za-z]*o/.test(w))) || prog === "uniq";
-  const all = (readOnlySegment(seg, prog) && !writes) || (prog === "ssh-keygen" && a.includes("-l") && a.every((w) => !w.startsWith("-") || flagsOnly.has(w)));
-  const src = copySourceWords(seg, prog);
-  return { argv: (w) => all || src.has(w) };
+  const all = (readOnlySegment(seg, prog) && !writes) || (prog === "ssh-keygen" && a.some((w) => /^-[fv]*l[fv]*$/.test(w)) && a.every((w) => !w.startsWith("-") || KEYGEN_READ_FLAG.test(w)));
+  return { argv: () => all };
 }
 
 /**
- * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, copy sources, `<`
+ * A segment whose only opacity is a leading `~`, `$HOME` or `${HOME}` word (shellast.ts makes each `unresolved_var`): no other word holds a variable,
+ * a substitution or a parenthesis. The floors expand these spellings themselves (expandWord).
+ */
+export function homeSpelling(s: ShellSegment): boolean {
+  return s.opaque === "unresolved_var" && [s.program, ...s.argv, ...s.redirects.map((r) => r.target)].every((w) => !/[$`()]/.test(w.replace(/^\$\{?HOME\}?(?=\/|$)/, "")));
+}
+
+/** The programs that read a file in PowerShell and cmd (`Get-Content`, `gc`, `cat`, `type`). */
+const PS_READ_PROGS = new Set(["get-content", "gc", "cat", "type"]);
+
+/**
+ * The public-key words of a PowerShell / cmd line (`Get-Content $env:USERPROFILE\.ssh\k.pub`, `type %USERPROFILE%\.ssh\k.pub`): one plain read command
+ * (no pipe, redirect, separator, substitution or subexpression), its non-flag operands that are `sshPublicKey`. Empty for anything else.
+ */
+export function psPubKeyReadWords(command: string, env: FloorEnv): Set<string> {
+  const out = new Set<string>();
+  if (/[;&|<>`(){}\n\r]|\$\(|\*\*/.test(command.replace(/\$\{env:USERPROFILE\}/gi, ""))) return out;
+  const words = command.trim().split(/\s+/);
+  if (!PS_READ_PROGS.has(words[0].toLowerCase().replace(/\.exe$/, ""))) return out;
+  const ops = words.slice(1).filter((w) => !w.startsWith("-"));
+  const keys = ops.filter((w) => sshPublicKey(w, env));
+  // an operand that is no key (or any `-Path`-style flag value that is not a plain word) keeps the whole line out
+  if (keys.length === 0 || words.slice(1).some((w) => /^-(?!path$|literalpath$|totalcount$|head$|tail$|raw$|encoding$)/i.test(w))) return out;
+  for (const w of keys) out.add(w);
+  return out;
+}
+
+/**
+ * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, `<`
  * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out. For the overlay's path rules.
  */
 export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv): Set<string> {
   const out = new Set<string>();
-  // a leading `~` alone makes a segment `unresolved_var` (shellast.ts): that one reason is fine when no word holds a variable or substitution
-  const tilde = (s: ShellSegment): boolean => s.opaque === "unresolved_var" && ![s.program, ...s.argv, ...s.redirects.map((r) => r.target)].some((w) => /[$`()]/.test(w));
-  if (segments.length === 0 || segments.some((s) => (s.opaque !== null && !tilde(s)) || s.wrappers.length > 0)) return out;
+  if (segments.length === 0 || segments.some((s) => (s.opaque !== null && !homeSpelling(s)) || s.wrappers.length > 0)) return out;
   const written = new Set<string>();
   const cands = new Set<string>();
   for (const s of segments) {

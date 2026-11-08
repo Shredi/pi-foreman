@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -48,8 +48,6 @@ export type GateResult =
 
 const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run"]);
 const PATH_TOOLS = PATH_TOOL_NAMES;
-/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (floors.ts sshPublicKey). */
-const READ_PATH_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
 
 const blocked = (h: FloorHit): GateResult => ({ block: true, reason: h.reason, rule: h.rule, layer: "floor" });
 const askFromFloor = (h: FloorHit): GateResult => ({ ask: true, rule: h.rule, reason: h.reason, cause: "floor" });
@@ -242,13 +240,15 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       }
       const ec = effectCtxOf(dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
-      const builtin = (i: number): string | null => {
+      const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
         if (!s || toolName === "powershell") return null;
-        const r = segmentDefault(s, cmd, dctx, ec);
+        // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
+        const r = opaque ? null : segmentDefault(s, cmd, dctx, ec);
         if (r !== null) return r;
         const pubs = pubKeyReadWords([s], env);
-        if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null")) return PUBKEY_READ_RULE;
+        if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
+        if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin);
@@ -293,8 +293,8 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
   }
 }
 
-/** The path words of a path-tool input (`path`, `file_path`, `filePath`). */
-const pathWords = (inp: Record<string, unknown>): string[] => [inp.path, inp.file_path, inp.filePath].filter((v): v is string => typeof v === "string");
+/** The path words of a path-tool input: the keys `pathFloors` reads for a path (PATH_KEYS). */
+const pathWords = (inp: Record<string, unknown>): string[] => PATH_KEYS.map((k) => inp[k]).filter((v): v is string => typeof v === "string");
 
 /** The result of `gateEvaluate` alone (floors, selfmod, rules, built-in allows). */
 export function gateDecide(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateResult {

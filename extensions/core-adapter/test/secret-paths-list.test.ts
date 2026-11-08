@@ -19,6 +19,7 @@ test("the floor matches the listed key-file spellings", () => {
   }
 });
 
-test("ordinary files stay readable (a `.pub` is no blanket exemption any more: pubkey-read.test.ts)", () => {
+test("a `.pub` outside a verified ~/.ssh key stays denied (pubkey-read.test.ts); ordinary files stay readable", () => {
+  assert.equal(secretPath("/h/me/x/id_ecdsa.pub", env)?.rule, "floor-secret-path");
   for (const w of ["/w/repo/notes.txt", "/w/repo/src/keys.ts"]) assert.equal(secretPath(w, env), null, w);
 });
