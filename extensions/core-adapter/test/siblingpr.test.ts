@@ -8,7 +8,7 @@ import { registerPrPack } from "../gitpack.ts";
 import type { PrPackSession } from "../gitpack.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { Spawner } from "../spawn.ts";
-import { passCheckouts, PR_REFUSALS, prGateRefusal, toplevelOf } from "../reviews.ts";
+import { headlessPass, passCheckouts, passHeads, PR_REFUSALS, prGateRefusal, toplevelOf } from "../reviews.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 
@@ -72,7 +72,7 @@ test("sibling pr_create {cwd}: the upstream-stale rule applies in the sibling ch
     assert.equal(await gate([rec(sib.dir, first), rec(sib.dir, second)]), null);
     // cwd naming the session checkout: the session's rules (PASS heads of any record, headless handling)
     const own = session.g("rev-parse", "HEAD");
-    const same = (records: ReviewRecord[]) => prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed: [], cwd: session.dir, input: {}, checkout: { cwd: session.dir, records } });
+    const same = (records: ReviewRecord[]) => prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed: passHeads(records), headless: headlessPass(records), cwd: session.dir, input: {}, checkout: { cwd: session.dir, records } });
     assert.equal(await same([rec(session.dir, own)]), null);
     assert.equal((await same([]))?.reason, "no_review");
   } finally {
@@ -126,6 +126,19 @@ test("pr_create {cwd} through the pack: refused without a PASS for the checkout,
   } finally {
     rmTestTmp(session.dir);
     rmTestTmp(sib.dir);
+  }
+});
+
+test("pr_create {cwd: <session checkout>} follows the session's reviewed/headless, even without records()", async () => {
+  const session = repo("pf-sib-s-");
+  try {
+    const head = session.g("rev-parse", "HEAD");
+    const gate = (reviewed: string[], headless: string | null = null) => prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed, headless, cwd: session.dir, input: {}, checkout: { cwd: session.dir, records: [] } });
+    assert.equal(await gate([head]), null);
+    assert.equal((await gate([]))?.reason, "no_review");
+    assert.equal((await gate([], "headless"))?.reason, "no_review");
+  } finally {
+    rmTestTmp(session.dir);
   }
 });
 

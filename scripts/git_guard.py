@@ -3167,7 +3167,10 @@ def pr_cli(name, args, ctx, seg=None):
             if (d.level > ALLOW and ctx.mode == "main" and pr_gate_on(ctx) and repos and heads and all(heads)
                     and all(r is not None and not r.dynamic for r in repos)):
                 if d.reason and "[pr_refused:child]" not in d.reason:
-                    return pr_sibling(ctx, repos[-1].text, heads, label)
+                    s = pr_sibling(ctx, repos[-1].text, heads, label)
+                    if s.level > ALLOW and checkout_matches_repo(ctx, ctx.cwd, repos[-1].text):
+                        return d   # -R names the session checkout's own repo: its own decision stands
+                    return s
             return d
     return OK
 

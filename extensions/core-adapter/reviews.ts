@@ -298,16 +298,16 @@ export function isPrToolName(name: string): boolean {
 export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown>; headless?: string | null; checkout?: { cwd: string; records: readonly ReviewRecord[] } }): Promise<{ reason: string; message: string } | null> {
   if (g.isChild) return { reason: "child", message: `pi-foreman: ${g.tool} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
   if (!g.gateOn) return null;
-  if (g.checkout) return siblingRefusal(g.cwd, g.checkout.cwd, g.checkout.records, g.input ?? {});
+  if (g.checkout) return siblingRefusal(g.cwd, g.checkout.cwd, g.checkout.records, g.input ?? {}, g.reviewed, g.headless ?? null);
   return prToolRefusal(g.cwd, g.reviewed, g.input ?? {}, g.headless ?? null);
 }
 
 /** The sibling-checkout test of {@link prGateRefusal}: `dir` is the requested checkout, `session` the session's own. */
-async function siblingRefusal(session: string, dir: string, records: readonly ReviewRecord[], input: Record<string, unknown>): Promise<{ reason: string; message: string } | null> {
+async function siblingRefusal(session: string, dir: string, records: readonly ReviewRecord[], input: Record<string, unknown>, reviewed: readonly string[], headless: string | null): Promise<{ reason: string; message: string } | null> {
   const refuse = (reason: string, why: string) => ({ reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}.` });
   const top = await toplevelOf(dir);
   if (!top) return refuse("cwd_unreviewed", `cwd ${dir} is not inside a git checkout; pr_create {cwd} takes a checkout a reviewer ran in`);
-  if (top === (await toplevelOf(session))) return prToolRefusal(session, passHeads(records), input, headlessPass(records));
+  if (top === (await toplevelOf(session))) return prToolRefusal(session, reviewed, input, headless);
   const mine = records.filter((r) => r.cwd === top);
   const heads = passHeads(mine);
   if (heads.length === 0) return refuse("cwd_unreviewed", `no reviewer PASS is recorded for the checkout ${top}. Run a reviewer with cwd ${top} on its head, then retry pr_create {cwd}`);

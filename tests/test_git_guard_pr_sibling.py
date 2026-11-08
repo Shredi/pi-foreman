@@ -65,7 +65,16 @@ class PrSiblingTest(unittest.TestCase):
         self.assertIn("pr_refused:no_review", d.reason)
         d = self.decide("gh pr create --repo o/session --head feat", [])
         self.assertEqual(d.level, gg.DENY)
-        self.assertIn("pr_refused:", d.reason)
+        self.assertIn("pr_refused:no_review", d.reason)
+
+    def test_own_repo_keeps_session_decision(self):
+        d = self.decide("gh pr create --repo o/session --head feat", [self.entry(self.sib, self.sib_head)])
+        self.assertEqual(d.level, gg.DENY)
+        self.assertIn("pr_refused:no_review", d.reason)
+        head = git(self.session, "rev-parse", "refs/heads/feat")
+        gate = {"enabled": True, "reviewed_heads": [head], "reviewed_checkouts": []}
+        d = gg.decide("gh pr create --repo o/session --head feat", "main", cwd=self.session, pr_gate=gate)
+        self.assertEqual(d.level, gg.ALLOW, d.reason)
 
     def test_none_matches(self):
         for checkouts in ([], [self.entry(self.sib, self.sib_head)]):
