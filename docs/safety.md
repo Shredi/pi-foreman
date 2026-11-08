@@ -46,7 +46,7 @@ values when there is no `-exec`/`-delete`, echo/printf text), but only when ever
 filter command (grep, rg, sed, awk, find, echo, printf, cat, head, tail, wc, sort, uniq, cut, tr, ls, cd, ...) and
 there is no `$(...)`, backtick or process substitution: `echo .git/HEAD | xargs touch` is still refused. A `*` skips
 dot entries as in bash (unless the command mentions `dotglob` or `GLOBIGNORE`) and `\` is no path separator outside
-Windows. The secret path denies still check every word.
+Windows. The secret path denies still check every word; the only read they let through below `~/.ssh` is a valid SSH public key file directly in it (see [permissions](permissions.md)), never a write.
 
 Protected files guard against mistakes by children, not against a hostile child: a child may run its own scratch
 scripts, so the rule is not a sandbox. A protected file named by a read-only unit passes only for plain readers (cat,

@@ -506,9 +506,10 @@ function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): 
   const payload = injection(seg, prog)?.words ?? [];
   const patterns = searchPatterns(seg, prog);
   const words = [...seg.argv, ...seg.redirects.map((r) => r.target)];
+  const reads = readOperands(seg, prog);
   for (const [i, w] of words.entries()) {
     if (dataWord(w) || payload.includes(w) || patterns.has(i)) continue;
-    const s = secretPath(w, env);
+    const s = secretPath(w, env, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
     if (s) return s;
   }
   return null;
@@ -617,13 +618,57 @@ const ENV_BARE = /^\.env(\.[^/]+)?$/i;
 const GIT_CONFIG_FILE = /(^|\/)\.git\/config$/i;
 const ENV_EXEMPT = /\.env\.(example|sample|template)$/i;
 
-export function secretPath(word: string, env: FloorEnv): FloorHit | null {
+/** The OpenSSH public key types (certificates included) a `*.pub` file may start with. */
+const SSH_PUB_TYPES = new Set(["ssh-rsa", "ssh-dss", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com",
+  "ssh-rsa-cert-v01@openssh.com", "ssh-ed25519-cert-v01@openssh.com", "ecdsa-sha2-nistp256-cert-v01@openssh.com", "ecdsa-sha2-nistp384-cert-v01@openssh.com", "ecdsa-sha2-nistp521-cert-v01@openssh.com",
+  "sk-ssh-ed25519-cert-v01@openssh.com", "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com"]);
+const SSH_PUB_MAX = 16 * 1024;
+
+/**
+ * Whether `word` names an SSH public key directly in `<home>/.ssh/`: lexically (parent is exactly `<home>/.ssh`), after symlinks (the real file is a `*.pub`
+ * directly in the real `~/.ssh`) and by content (a regular file of at most 16 KiB whose every line starts with an OpenSSH public key type). Anything
+ * else, a missing file included, is false. Only a read may use it (`secretPath(..., read)`): a write to such a file stays a secret-path deny.
+ */
+export function sshPublicKey(word: string, env: FloorEnv): boolean {
+  try {
+    const win = (env.platform ?? process.platform) === "win32";
+    const x = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+    if (!env.home || /[$`*?[{%]/.test(x.replace(/^\$\{?HOME\}?/, ""))) return false;
+    const abs = resolveWord(x, env.cwd, env);
+    if (abs === null) return false;
+    const px = px_(win);
+    const key = (p: string): string => (foldFor(env) ? slash(p).toLowerCase() : slash(p));
+    const ssh = px.join(env.home, ".ssh");
+    if (!px.basename(abs).endsWith(".pub") || px.basename(abs) === ".pub" || key(px.dirname(abs)) !== key(ssh)) return false;
+    const file = slash(abs);
+    const real = fs.realpathSync(file);
+    const realSsh = fs.realpathSync(slash(ssh));
+    if (!path.basename(real).endsWith(".pub") || (foldFor(env) ? path.dirname(real).toLowerCase() !== realSsh.toLowerCase() : path.dirname(real) !== realSsh)) return false;
+    const fd = fs.openSync(real, "r");
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.size === 0 || st.size > SSH_PUB_MAX) return false;
+      const buf = Buffer.alloc(st.size);
+      if (fs.readSync(fd, buf, 0, st.size, 0) !== st.size) return false;
+      const lines = buf.toString("utf8").split(/\r?\n/).filter((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+      return lines.length > 0 && lines.every((l) => SSH_PUB_TYPES.has(l.trim().split(/\s+/)[0]));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** `read`: the word is only read (a read tool's path, a read-only program's operand, a copy source, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
+export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
-  let bad = bareEnv || (pathLike && !/\.pub$/.test(x) && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
+  if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
+  let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   if (!bad && pathLike) {
     const abs = expandWord(x, env);
     if (abs !== null) {
@@ -832,13 +877,13 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
 }
 
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
-export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string, readField?: string | null): FloorHit | null {
+export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string, readField?: string | null, read = false): FloorHit | null {
   // a configured read tool (gate.readTools): its path field and `glob` only; `pattern`/`patterns` are search patterns
   const keys = readField !== undefined ? (readField === null ? ["glob"] : [readField, "glob"]) : ["path", "file_path", "filePath", "src", "dst", "glob", "pattern"];
   for (const k of keys) {
     const v = input[k];
     if (typeof v === "string" && v) {
-      const h = secretPath(v, env);
+      const h = secretPath(v, env, read);
       if (h) return h;
     }
   }
@@ -1017,9 +1062,44 @@ function copySourceWords(seg: ShellSegment, prog: string): Set<string> {
   const out = new Set<string>();
   if (prog !== "cp" && prog !== "rsync") return out;
   const a = seg.argv;
+  if (a.some((w) => /^--remove-source-files$/.test(w))) return out;
   const target = a.some((w) => w === "-t" || w.startsWith("--target-directory"));
   const pos = a.filter((w) => !w.startsWith("-"));
   (target ? pos : pos.slice(0, -1)).forEach((w) => out.add(w));
+  return out;
+}
+
+/** Which operands of a segment are only read: all of a read-only program (not `sort -o`, `--output`, `uniq`, `tree -o`), a copy's sources, `ssh-keygen -l -f`. */
+function readOperands(seg: ShellSegment, prog: string): { argv: (w: string) => boolean } {
+  const a = seg.argv;
+  const flagsOnly = new Set(["-l", "-f", "-E", "-v", "--"]);
+  const writes = a.some((w) => /^--output(=|$)/.test(w)) || (prog === "sort" && a.some((w) => /^-[A-Za-z]*o|^--output/.test(w))) || (prog === "tree" && a.some((w) => /^-[A-Za-z]*o/.test(w))) || prog === "uniq";
+  const all = (readOnlySegment(seg, prog) && !writes) || (prog === "ssh-keygen" && a.includes("-l") && a.every((w) => !w.startsWith("-") || flagsOnly.has(w)));
+  const src = copySourceWords(seg, prog);
+  return { argv: (w) => all || src.has(w) };
+}
+
+/**
+ * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, copy sources, `<`
+ * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out. For the overlay's path rules.
+ */
+export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv): Set<string> {
+  const out = new Set<string>();
+  // a leading `~` alone makes a segment `unresolved_var` (shellast.ts): that one reason is fine when no word holds a variable or substitution
+  const tilde = (s: ShellSegment): boolean => s.opaque === "unresolved_var" && ![s.program, ...s.argv, ...s.redirects.map((r) => r.target)].some((w) => /[$`()]/.test(w));
+  if (segments.length === 0 || segments.some((s) => (s.opaque !== null && !tilde(s)) || s.wrappers.length > 0)) return out;
+  const written = new Set<string>();
+  const cands = new Set<string>();
+  for (const s of segments) {
+    const prog = base(s.program);
+    const reads = readOperands(s, prog);
+    for (const r of s.redirects) {
+      if (r.op === "<") cands.add(r.target);
+      else if (r.op !== "dup") written.add(r.target);
+    }
+    for (const w of s.argv) (reads.argv(w) ? cands : written).add(w);
+  }
+  for (const w of cands) if (!written.has(w) && sshPublicKey(w, env)) out.add(w);
   return out;
 }
 

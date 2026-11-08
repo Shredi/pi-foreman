@@ -19,6 +19,6 @@ test("the floor matches the listed key-file spellings", () => {
   }
 });
 
-test("public keys and ordinary files stay readable", () => {
-  for (const w of ["/h/me/x/id_ecdsa.pub", "/w/repo/notes.txt", "/w/repo/src/keys.ts"]) assert.equal(secretPath(w, env), null, w);
+test("ordinary files stay readable (a `.pub` is no blanket exemption any more: pubkey-read.test.ts)", () => {
+  for (const w of ["/w/repo/notes.txt", "/w/repo/src/keys.ts"]) assert.equal(secretPath(w, env), null, w);
 });
