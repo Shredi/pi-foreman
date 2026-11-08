@@ -175,7 +175,7 @@ import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
-import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks } from "./bg.ts";
+import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -4123,13 +4123,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     };
   });
 
-  /** Ids of what will wake this foreman session on its own: foreman_wait entries, running or launching subagents, own bg_run tasks that notify and trigger. */
+  /** Ids of what will wake this foreman session on its own: foreman_wait entries, running or launching subagents, bg_run tasks of this pi process that notify and trigger. */
   function pendingWakeSources(s: Session): string[] {
     if (s.isChild) return [];
     const ids = waits.active(s.id).map((w) => `wait:${w.id}`);
     for (const id of [...s.activeRuns, ...s.pendingLaunches]) ids.push(`run:${id}`);
     try {
-      for (const t of readOwnAddonTasks(s.cwd, s.id)) if (!t.silent) ids.push(`bg:${t.id}`);
+      for (const id of wakingBgTaskIds(s.cwd, s.id)) ids.push(`bg:${id}`);
     } catch {
       // no task records: none running
     }

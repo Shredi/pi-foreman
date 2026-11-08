@@ -221,7 +221,7 @@ Worked example:
 
 ### A turn that ends under a wait
 
-A foreman turn that ends while a `foreman_wait` of any kind (timer, file, pid, ci, child) is active, a subagent it launched is running, or one of its `bg_run` tasks that notifies and triggers on completion is running, is a pause, not a finish: each of those starts the next turn by itself, so neither the ledger stop guard nor the ceremony finish gate runs (trace `finish_gate {skipped: pending_wait, runId: <ids>}`; the stop guard's once-per-session reminder and the refusal count stay unspent). When the wait resolves or is cancelled and nothing else is pending, the next turn end is gated as usual. A wait that never resolves keeps the gates quiet until its own timeout wakes the session.
+A foreman turn that ends while a `foreman_wait` of any kind (timer, file, pid, ci, child) is active, a subagent it launched is running, or one of its `bg_run` tasks (bg tasks of this pi process only; records of an earlier crashed process do not count) that notifies and triggers on completion is running, is a pause, not a finish: each of those starts the next turn by itself, so neither the ledger stop guard nor the ceremony finish gate runs (trace `finish_gate {skipped: pending_wait, runId: <ids>}`; the stop guard's once-per-session reminder and the refusal count stay unspent). When the wait resolves or is cancelled and nothing else is pending, the next turn end is gated as usual. A wait that never resolves keeps the gates quiet until its own timeout wakes the session.
 
 ### Steer while a child runs
 

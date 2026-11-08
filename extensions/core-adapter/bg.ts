@@ -237,8 +237,6 @@ export interface AddonTask {
   tail: string[];
   /** The output file relative to the worktree (cwd), when it lies inside .pi/tasks. */
   log?: string;
-  /** Set by readOwnAddonTasks when the record turns notify or trigger off: its end wakes no turn. */
-  silent?: true;
 }
 
 /** Running add-on tasks (status running) of the records under `<cwd>/.pi/tasks/<session>-<pid>/`, newest first; unreadable records are skipped. */
@@ -277,7 +275,7 @@ export function readAddonTasks(cwd: string, now: number = Date.now()): AddonTask
 }
 
 /** Running add-on tasks of one Pi session only: the directories `<sessionId>-<pid>` under `<cwd>/.pi/tasks`; no log tails (`tail` is always empty). */
-export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = Date.now()): AddonTask[] {
+export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = Date.now(), keep?: (rec: Record<string, unknown>, dir: string) => boolean): AddonTask[] {
   const root = path.join(cwd, ".pi", "tasks");
   const own = new RegExp(`^${sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`);
   const out: (AddonTask & { start: number })[] = [];
@@ -298,14 +296,21 @@ export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = 
       try {
         const rec = JSON.parse(fs.readFileSync(path.join(root, dir, f), "utf8")) as Record<string, unknown>;
         if (rec.status !== "running" || typeof rec.id !== "string") continue;
+        if (keep && !keep(rec, dir)) continue;
         const start = typeof rec.startTime === "number" && Number.isFinite(rec.startTime) ? rec.startTime : now;
-        out.push({ id: oneLine(rec.id, 40), label: oneLine(rec.name ?? rec.description ?? rec.command, 80), ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: [], ...(rec.notifyOnCompletion === false || rec.triggerOnCompletion === false ? { silent: true as const } : {}), start });
+        out.push({ id: oneLine(rec.id, 40), label: oneLine(rec.name ?? rec.description ?? rec.command, 80), ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: [], start });
       } catch {
         // a record being rewritten or foreign: skip
       }
     }
   }
   return out.sort((a, b) => b.start - a.start).slice(0, MAX_ADDON_TASKS).map(({ start: _s, ...t }) => t);
+}
+
+/** Ids of running bg_run tasks of this pi process (`<sessionId>-<pid>` dir) that notify and trigger on completion: only those can wake the session. */
+export function wakingBgTaskIds(cwd: string, sessionId: string, pid: number = process.pid): string[] {
+  const mine = `${sessionId}-${pid}`;
+  return readOwnAddonTasks(cwd, sessionId, Date.now(), (rec, dir) => dir === mine && rec.notifyOnCompletion !== false && rec.triggerOnCompletion !== false).map((t) => t.id);
 }
 
 export interface WaitRow {

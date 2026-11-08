@@ -48,7 +48,7 @@ test("active wait: both gates stay silent, the skip is traced with the wait id, 
   assert.deepEqual((r?.entries ?? []).map((e) => e.customType), ["pi-foreman-stop-gate"]);
 });
 
-test("finish gate: a wait spends no refusal; resolved wait re-arms the gate", async (t) => {
+test("finish gate: a wait spends no refusal; a cancelled wait re-arms the gate", async (t) => {
   const { w, a, settle, wait, types } = await rig(t);
   // a closed ledger: only the finish gate (builder + reviewer missing at standard) can hold
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [x] 1. done\n- [x] V. fresh-eyes verification passed\n");
@@ -73,11 +73,33 @@ test("a running subagent skips the gates", async (t) => {
   a.endRun(run.id, "Overall verdict: PASS");
 });
 
-function taskRecord(project: string, sessionId: string, flags: Record<string, boolean>) {
-  const dir = path.join(project, ".pi", "tasks", `${sessionId}-1`);
+test("a timer wait that resolves by itself brings the gates back", async (t) => {
+  const { a, settle } = await rig(t);
+  await a.tool("foreman_wait")!.execute("w", { action: "start", kind: "timer", seconds: 1 }, undefined, undefined, a.ctx);
+  assert.equal(await settle(), undefined, "pending while the timer runs");
+  let r: R;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((res) => setTimeout(res, 100));
+    r = await settle();
+    if (r?.continue) break;
+  }
+  assert.equal(r?.continue, true, "the elapsed timer no longer holds the gates off");
+});
+
+function taskRecord(project: string, sessionId: string, flags: Record<string, boolean>, pid: number = process.pid) {
+  const dir = path.join(project, ".pi", "tasks", `${sessionId}-${pid}`);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "t1.json"), JSON.stringify({ id: "t1", status: "running", name: "build", startTime: Date.now(), ...flags }));
 }
+
+test("bg task: a running record of another pi process (foreign pid dir) is not counted", async (t) => {
+  const { w, a, settle, skips } = await rig(t);
+  const sid = (a.ctx as { sessionManager: { getSessionId(): string } }).sessionManager.getSessionId();
+  taskRecord(w.project, sid, {}, process.pid + 1);
+  const r = await settle();
+  assert.equal(r?.continue, true, "a stale record wakes nobody");
+  assert.deepEqual(await skips(), []);
+});
 
 test("bg task: counted by default, not counted with trigger off", async (t) => {
   const { w, a, settle, skips } = await rig(t);
