@@ -21,6 +21,7 @@ const WATCHDOG_MS = 35000; // a radar exec older than this is given up
 const PRS_EVERY_MS = 30000; // `foreman prs poll` starts this long after its previous run ended
 const PRS_WATCHDOG_MS = 20 * 60000; // a prs poll exec older than this is given up
 const PRS_STUCK_MS = 21 * 60000; // a prs poll older than this is taken as lost
+const PRESS_MS = 1500; // a clicked element shows its pending state this long (the 1 s timer then redraws it)
 // exec `timeout` (ms) per job; the Promise.race watchdogs stay as the backstop for an app that ignores the option (Herdr app 0.1.13)
 const T_RADAR = 30000;
 const T_PRS = 600000; // the cap of exec
@@ -116,9 +117,28 @@ export default class ForemanAgents extends View {
     this.prsRan = new Map(); // busy key -> when its prs poll last ended
     this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
     this.failed = new Set(); // keys of runs whose last try failed: one error notice per failure, not per retry
+    this.pressed = new Map(); // element id -> when it was clicked: the next render shows it pending (visible feedback, same frame)
     this.poll(cx);
     this.pollPrs(cx, Date.now());
-    cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); });
+    cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); this.unpress(cx); });
+  }
+
+  // A click gives feedback in the render it causes: the element lights up and shows "…" until PRESS_MS has passed.
+  press(id, cx) {
+    this.pressed ??= new Map();
+    this.pressed.set(id, Date.now());
+    cx?.notify?.();
+  }
+
+  pressing(id) {
+    const at = this.pressed?.get(id);
+    return at !== undefined && Date.now() - at < PRESS_MS;
+  }
+
+  unpress(cx) {
+    let gone = false;
+    for (const [id, at] of this.pressed ?? []) if (Date.now() - at >= PRESS_MS) { this.pressed.delete(id); gone = true; }
+    if (gone) cx.notify();
   }
 
   machines() {
@@ -265,7 +285,13 @@ export default class ForemanAgents extends View {
   // The header button passes no node: it only brings the panel forward.
   openPanel(node, kind) {
     // Deliberately app-global: the pin is read by the plan panel, a different mod, wherever it sits.
-    if (node) guard(() => setShared("pi-foreman.show", { key: node.key, kind, n: Date.now() }));
+    if (node) {
+      const req = { key: node.key, kind, n: Date.now() };
+      guard(() => setShared("pi-foreman.show", req));
+      // Deliberately app-global too: the plan block is not mounted while its panel is hidden, so it cannot see the change above;
+      // it reads this request when it mounts and clears it (a mounted copy clears it on the change).
+      guard(() => setShared("pi-foreman.show-pending", req));
+    }
     guard(() => run("layout.select", { stack: "panel-body", child: "plan" }));
     guard(() => run("layout.show", { id: "panel" }));
   }
@@ -373,7 +399,7 @@ export default class ForemanAgents extends View {
       .child(prDot(t, st));
     const trigger = !href ? chip : chip.id(`pr-${key}-${pr.number}`).cursor_pointer()
       .hover((x) => x.border_color(t.working).text_color(t.foreground))
-      .on_click((_e, cx) => this.openUrl(href, cx));
+      .on_click((_e, cx) => { this.press(`pr-${key}-${pr.number}`, cx); this.openUrl(href, cx); });
     // The id carries a hash of the card's content: a card is not reused when its content changed.
     const c = prCard(pr);
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
@@ -469,8 +495,12 @@ export default class ForemanAgents extends View {
     const shows = item.node?.show ? showRows(item.node.show, this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`), Date.now()) : [];
     const rows = [
       ...(shows.length ? [h_flex().pl(ind + 20).pr(8).h(18).flex_none().items_center().gap(10)
-        .children(shows.map((r) => div().id(`show:${r.kind}:${item.id}`).flex_none().cursor_pointer().text_size(10.5).text_color(t.dim).hover((el) => el.text_color(t.foreground))
-          .on_click(() => this.openPanel(item.node, r.kind)).child(r.text)))] : []),
+        .children(shows.map((r) => {
+          const id = `show:${r.kind}:${item.id}`;
+          const on = this.pressing(id);
+          return div().id(id).flex_none().cursor_pointer().text_size(10.5).text_color(on ? t.working : t.dim).hover((el) => el.text_color(t.foreground))
+            .on_click((_e, cx) => { this.press(id, cx); this.openPanel(item.node, r.kind); }).child(on ? `${r.text} …` : r.text);
+        }))] : []),
       ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
         .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : line.icon ? t.dim : t.muted).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
       ...(prs.length ? [this.prLine(t, item.node, prs, root, item.id, ind + 20)] : []),
@@ -501,11 +531,13 @@ export default class ForemanAgents extends View {
     }
     const glyphRight = statusGlyph(t, displayStatus(item, this.folded));
     const active = item.address !== undefined && item.address === this.shown;
-    const name = div().id(`name:${item.id}`).flex_1().min_w(0).truncate().text_color(item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(stripPi(item.label));
+    const nameId = `name:${item.id}`;
+    const nameOn = this.pressing(nameId);
+    const name = div().id(nameId).flex_1().min_w(0).truncate().text_color(nameOn ? t.working : item.dim ? t.dim : active ? t.foreground : root ? t.foreground : t.muted).child(nameOn ? `${stripPi(item.label)} …` : stripPi(item.label));
     return row
       .when(active && root, (el) => el.bg(t.raised).rounded(6)) // a card carries the selection itself (see node)
-      .child(item.address !== undefined ? name.cursor_pointer().on_click(() => (item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane })))
-        : item.node?.machine && item.node?.hcTerminal ? name.cursor_pointer().on_click((_e, cx) => this.openRemote(item.node, cx)) : name)
+      .child(item.address !== undefined ? name.cursor_pointer().on_click((_e, cx) => { this.press(nameId, cx); return item.pane === undefined ? run("terminal.peek", { terminal: item.address }) : run("pane.focus", { pane: item.pane }); })
+        : item.node?.machine && item.node?.hcTerminal ? name.cursor_pointer().on_click((_e, cx) => { this.press(nameId, cx); this.openRemote(item.node, cx); }) : name)
       .when(Boolean(item.elsewhere), (el) => el.child(div().flex_none().text_size(10.5).text_color(t.dim).child(item.elsewhere)))
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
@@ -547,13 +579,13 @@ export default class ForemanAgents extends View {
     const since = this.changed[a.address]?.at;
     const quiet = a.status === "idle" && !a.focused;
     const name = stripPi(agentLabel(a, this.clashes)) || a.program?.name || a.address;
-    const focusPane = () => run("pane.focus", { pane: a.pane });
+    const focusPane = (_e, cx) => { this.press(fid, cx); run("pane.focus", { pane: a.pane }); };
     const row = h_flex().id(`agent:${a.address}`).flex_none().h(30).px(8).gap(5).items_center().rounded(8).cursor_pointer();
     const shownStatus = kids && this.folded.has(fid) ? urgentStatus([status, ...items.map((c) => c.urgent)]) : status;
     return row
       .when(kids && !this.folded.has(fid), (el) => el.relative().child(this.rail(t, `${fid}/row`, 16, 23)))
       .child(this.foldSlot(t, fid, kids))
-      .when(a.focused === true, (el) => el.bg(t.selected))
+      .when(a.focused === true || this.pressing(fid), (el) => el.bg(t.selected))
       .hover((el) => el.bg(t.hover))
       .on_click(focusPane)
       .child(div().flex_1().min_w(0).truncate().text_color(quiet ? t.muted : t.foreground).child(name))
@@ -708,7 +740,7 @@ export default class ForemanAgents extends View {
       .child(div().flex_1())
       .child(h_flex().id("plan-open").h(22).px(8).items_center().rounded(11).cursor_pointer().text_size(11).text_color(t.muted)
         .hover((el) => el.bg(t.hover).text_color(t.foreground))
-        .on_click(() => this.openPanel(null, null)).child("📄 Plan"));
+        .on_click((_e, cx) => { this.press("plan-open", cx); this.openPanel(null, null); }).child(this.pressing("plan-open") ? "📄 Plan …" : "📄 Plan"));
     const empty = div().px(14).pb(4).text_size(12).text_color(t.dim).child("No agent status yet.");
     const scroller = v_flex().id("foreman-list").flex_1().min_h(0).px(6).gap(1)
       .overflow_y_scrollbar().mode("always").children(rows);

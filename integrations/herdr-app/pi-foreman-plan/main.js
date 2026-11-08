@@ -1,11 +1,11 @@
 // pi-foreman-plan mod for herdr-app: the plan of the foreman that owns the tab, and the plans of its child sessions, rendered
 // natively in the panel. Reads radar from shared("pi-foreman.radar") (published by the pi-foreman Agents mod), the two JSON files
-// of the session on screen and its markdown documents; writes nothing; the only process it starts is the platform opener, for
-// https links.
+// of the session on screen and its markdown documents; writes nothing but the clearing of the sidebar's pending open request
+// (shared "pi-foreman.show-pending"); the only process it starts is the platform opener, for https links.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
-import { readTextFile, writeTextFile, watchFolder, theme, shared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
+import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
 import {
   buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
   compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince, isLight,
@@ -20,9 +20,12 @@ const MOD = "pi-foreman-plan";
 const DEFAULT_IDS = { stack: "panel-body", block: "plan", show: "panel" };
 const CODE_LINE_PX = 18;
 const CODE_MAX_LINES = 30;
+const DOC_CACHE_MAX = 16;
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+// FNV-1a of a string: the content half of the parsed-document cache key.
+const hashOf = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36); };
 const topicOf = (path) => /^plan-(.+)\.md$/i.exec(String(path ?? "").split(/[\\/]/).pop())?.[1] ?? "";
 
 export default class PlanPanel extends View {
@@ -44,6 +47,7 @@ export default class PlanPanel extends View {
     this.cur = { empty: "Waiting for foreman radar" };
     this.noteSeen = new Map(); // root session key -> last note version seen on the radar
     this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
+    this.parsed = new Map(); // `${path}|${hash of text}|${hash of base}|${fences}` -> {doc, hunks}: a document is parsed once per content
     this.diagOk = new Map(); // app-home relative cache path -> true once written and checked
     this.linksOn = guard(() => typeof TextView.markdown("probe", "").on_link_click === "function", false);
     this.sync();
@@ -85,12 +89,22 @@ export default class PlanPanel extends View {
 
     // A sidebar click pins a session and a document until the tab's foreman changes. Herdr persists the value, so one already
     // present at the first sync is stale: its `n` is recorded as seen, never applied.
+    // While the panel is hidden this block is not mounted and never sees the change; the sidebar also leaves the request in
+    // "pi-foreman.show-pending", which the first sync of a freshly mounted copy applies, once. Any copy clears it after reading it.
     const pin = guard(() => shared("pi-foreman.show"), null);
-    if (this.pinSeen === null) this.pinSeen = isObj(pin) && Number.isInteger(pin.n) ? pin.n : 0;
-    else if (isObj(pin) && Number.isInteger(pin.n) && pin.n !== this.pinSeen) {
+    const pending = guard(() => shared("pi-foreman.show-pending"), null);
+    const valid = (r) => isObj(r) && Number.isInteger(r.n) && typeof r.key === "string";
+    let req = null;
+    if (this.pinSeen === null) {
+      this.pinSeen = isObj(pin) && Number.isInteger(pin.n) ? pin.n : 0;
+      if (valid(pending)) { req = pending; this.pinSeen = Math.max(this.pinSeen, pending.n); }
+    } else if (isObj(pin) && Number.isInteger(pin.n) && pin.n !== this.pinSeen) {
       this.pinSeen = pin.n;
-      this.pin = typeof pin.key === "string" ? { key: pin.key, kind: pin.kind === "note" ? "note" : "plan", anchorKey: own?.node.key ?? null, fresh: true } : null;
+      req = valid(pin) ? pin : null;
+      if (!req) this.pin = null;
     }
+    if (req) this.pin = { key: req.key, kind: req.kind === "note" ? "note" : "plan", anchorKey: own?.node.key ?? null, fresh: true };
+    if (pending !== null && pending !== undefined) guard(() => setShared("pi-foreman.show-pending", null), null);
     if (this.pin && this.pin.anchorKey !== (own?.node.key ?? null)) this.pin = null;
     const pinned = this.pin ? this.find(trees, this.pin.key) : null;
 
@@ -197,6 +211,8 @@ export default class PlanPanel extends View {
     cx.spawn(async (cx) => {
       let changed = false;
       try { changed = await this.refresh(cur, force, cx); } catch { /* keep what was read */ }
+      const rec = this.recs.get(cur.key);
+      if (rec && !rec.ready) { rec.ready = true; changed = true; } // the first read of this session is over: "Loading" ends
       this.busy = false;
       if (changed) cx.notify();
       if (this.again) { this.again = false; this.reload(cx); }
@@ -223,9 +239,11 @@ export default class PlanPanel extends View {
       if (pj !== rec.planJson || JSON.stringify(next) !== JSON.stringify(rec.planDoc)) {
         rec.planJson = pj;
         rec.planDoc = next;
-        rec.plan = text === null ? null : markBlocks(text, base);
-        await this.decorate(rec.plan, meta, dir, cur.machine);
-        rec.hunks = text === null ? null : diffHunks(text, base);
+        const parsed = text === null ? null : this.parse(docPath, text, base, meta);
+        rec.plan = parsed?.doc ?? null;
+        rec.hunks = parsed?.hunks ?? null;
+        rec.rev++;
+        await this.decorateLater(parsed, meta, dir, cur.machine, cx);
         rec.rev++;
         changed = true;
       }
@@ -237,13 +255,36 @@ export default class PlanPanel extends View {
         rec.noteJson = nj;
         rec.noteMeta = meta;
         rec.noteText = text;
-        rec.note = text === null ? null : markBlocks(text, null);
-        await this.decorate(rec.note, meta, dir, cur.machine);
+        const parsed = text === null ? null : this.parse(joinPath(dir, "note.md"), text, null, meta);
+        rec.note = parsed?.doc ?? null;
+        rec.rev++;
+        await this.decorateLater(parsed, meta, dir, cur.machine, cx);
         rec.rev++;
         changed = true;
       }
     }
     return changed;
+  }
+
+  // A document whose fences still need decorating is painted first as plain markdown (one notify), the editors and diagrams
+  // follow when decorate is done (the caller's notify).
+  async decorateLater(parsed, meta, dir, machine, cx) {
+    if (!parsed || parsed.decorated) return;
+    if (parsed.doc.blocks.some((b) => b.kind === "fence")) cx.notify();
+    await this.decorate(parsed.doc, meta, dir, machine);
+    parsed.decorated = true;
+  }
+
+  // The parsed document (blocks, diff hunks) of one path and content, kept per copy: a switch back to unchanged content, or a
+  // version bump over the same text, skips the parse. The fences' picture list is part of the key, since it decides the decoration.
+  parse(path, text, base, meta) {
+    const key = `${path}|${hashOf(text)}|${base === null ? "" : hashOf(base)}|${(meta?.fences ?? []).join(",")}`;
+    const hit = this.parsed.get(key);
+    if (hit) { this.parsed.delete(key); this.parsed.set(key, hit); return hit; }
+    const made = { doc: markBlocks(text, base), hunks: diffHunks(text, base), decorated: false };
+    this.parsed.set(key, made);
+    if (this.parsed.size > DOC_CACHE_MAX) this.parsed.delete(this.parsed.keys().next().value);
+    return made;
   }
 
   // Fence blocks get what drawing needs, made here because host state objects belong in tasks, never in render: a code fence a
@@ -359,6 +400,10 @@ export default class PlanPanel extends View {
 
   render(cx) {
     const t = theme();
+    // A sidebar click (shared state) re-renders this mod at once: follow it here instead of waiting for the 1 s timer, and
+    // start reading a session not read yet; the frame shows its "Loading" state meanwhile.
+    this.sync();
+    if (this.cur?.key && this.cur.key !== this.loadedFor) this.reload(cx);
     const cur = this.cur ?? { empty: "Waiting for foreman radar" };
     const frame = (...kids) => v_flex().id("plan-panel").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(13).children(kids);
@@ -385,7 +430,8 @@ export default class PlanPanel extends View {
       .when(Boolean(meta?.at), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(Date.now() - meta.at))));
 
     let body;
-    if (!doc) body = this.message(t, isNote ? "No note published by this session" : "No plan published by this session");
+    if (!doc && cur.key && !rec?.ready) body = this.message(t, isNote ? "Loading note…" : "Loading plan…");
+    else if (!doc) body = this.message(t, isNote ? "No note published by this session" : "No plan published by this session");
     else if (this.diff && !isNote) body = this.diffView(t, rec.hunks, doc.note);
     else body = v_flex().w_full().gap(2)
       .when(Boolean(doc.note), (e) => e.child(div().px(10).py(2).text_size(11).text_color(t.dim).child(doc.note)))

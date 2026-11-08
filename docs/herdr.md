@@ -628,7 +628,7 @@ that option, the call is repeated once without it and the mod stops passing it (
 A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure. A missing `foreman` (the program does not start: "cannot start ...: program not found" or "cannot run ...: No such file or directory") is a setup state, not a failed poll: the PR poll posts no notice for it, and the radar shows its hint.
 
 Herdr 0.1.14 runs a mod's top level once per source version, shared by all copies of the mod, so per-copy state lives in
-`init`. Three things stay app-global on purpose: the keys `pi-foreman.radar` and `pi-foreman.show`, and the Agents order.
+`init`. Three things stay app-global on purpose: the keys `pi-foreman.radar`, `pi-foreman.show` and `pi-foreman.show-pending`, and the Agents order.
 
 ### Agent row labels
 
@@ -728,7 +728,11 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 with the blocks added or changed since the last ruling tinted and labelled NEW or CHANGED, a Diff view with the exact +/- lines, and one
 tab per child session that published a plan. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
-click opens the panel on it. Install the panel together with the Agents mod; the two are one install.
+click opens the panel on it, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
+panel reads when it mounts, applies once and clears. The panel follows a click in the next render and shows "Loading plan…" until the
+first read is done; a document with code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are
+cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
+in the same render. Install the panel together with the Agents mod; the two are one install.
 
 Install:
 
