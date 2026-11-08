@@ -377,6 +377,15 @@ export async function worktreeTree(cwd: string): Promise<string | null> {
   }
 }
 
+/** True when the working tree of `cwd` differs from the `tree` snapshot in any path outside `.workflow/` (ledger, notes, scratch); false when equal or the check could not run. */
+export async function treeChangedSince(cwd: string, tree: string): Promise<boolean> {
+  const now = await worktreeTree(cwd);
+  const top = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
+  if (!now || !top) return false;
+  const raw = await git(top, ["diff-tree", "-r", "--no-renames", "--name-only", "-z", tree, now]);
+  return raw !== null && raw.split("\0").some((f) => f !== "" && !f.startsWith(".workflow/"));
+}
+
 /**
  * Files changed between the snapshot and the current working tree when every change is
  * comment-only (`.workflow/` ignored: ledger, notes, scratch); null when any change is code, when
