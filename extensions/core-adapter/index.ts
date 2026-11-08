@@ -3524,8 +3524,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const file = boundLedger(s.markerDir, s.id);
     if (!file) return;
     s.reviewSync = s.reviewSync.then(async () => {
-      const r = await markPassItems(text, file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok);
-      if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(",") });
+      const r = await markPassItems(text, file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
+      if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(","), noted: r.noted.join(",") });
     });
   }
 
