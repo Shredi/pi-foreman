@@ -551,7 +551,8 @@
         "childAsk": { "type": "string", "enum": ["parent", "deny"], "description": "Where a subagent child's policy ask goes: the parent's pane (via an ask file the parent answers) or a deny; headless sessions always deny. Default parent." },
         "tmpAccess": { "type": "boolean", "description": "Writes (and for the owner reads) under the OS temp dirs are allowed (default true)." },
         "readTools": { "type": "object", "additionalProperties": { "type": ["string", "null"] }, "description": "Extension tools that read files: tool name to the name of its path field (null when the tool has no path field and reads the cwd). A mapped tool is judged like read/grep. User or overlay config only; a project value is dropped (default {})." },
-        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." }
+        "logMaxBytes": { "type": "integer", "minimum": 1024, "description": "Size at which the gate log rotates (default 20971520, 20 MB)." },
+        "protected": { "type": "object", "additionalProperties": false, "description": "Protected targets (docs/permissions.md#protected-targets): `protected` entries in permissions.json name hosts, paths and commands; a call that acts on one goes to a context check before the owner is asked.", "properties": { "check": { "type": "string", "enum": ["model", "read-only", "ask"], "description": "model (L1): the check may allow read-rated calls and, with the owner present and high confidence, on-task non-reads. read-only: only read-rated allows are accepted; every non-read asks. ask: no model call, every protected touch asks. A project or session layer may only tighten (towards ask)." } } }
       }
     },
     "safety": {

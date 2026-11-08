@@ -17,8 +17,9 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // R46 `allowance` (the child's read deny for its launch in `child_read_budget`).
 // R62 `remote_pull` keys `machine`, `label`, `entries` and `error` (`skipped` and `ms` are pinned fields already).
 // R72 `mcp_child_direct` keys `provider` and `servers` (`count` is a pinned field already).
+// Protected-target check `protected_check`: `kinds`, `globs`, `classes`, `remoteClasses`, `opaque`, `effect`, `confidence`, `accepted`, `away`, `cached`, `entry` (the cited D entry); `entries` the matched P ids.
 // Token diet `tools_deferred` (`names`, comma-joined tool names) and `tool_found` (`name`, `unhidden`; `kind` is a pinned field already).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "ttl"]);
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry"]);
 const MAX_STRING = 120;
 const MAX_NAMES = 600; // the deferred tool names of one session
 const MAX_COMMAND = 200; // a denied command (lane 3h)
@@ -26,7 +27,7 @@ const MAX_COMMAND = 200; // a denied command (lane 3h)
 const DENY_EVENTS = new Set(["read_budget", "recheck_budget", "child_read_budget", "overlay", "launch_refused"]);
 const MAX_MESSAGE = 200; // a tool_error message (lane 7f)
 const UNSCRUBBED = new Set(["model", "models", "primary", "from", "to"]);
-const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny")) || (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-")) || rec.event === "auto_review_allow"; // the overlay's ask dialogs and the auto reviewer's allows (R16) keep their command (`/foreman dialogs`)
+const isDeny = (rec: Record<string, unknown>): boolean => (DENY_EVENTS.has(String(rec.event)) && (rec.event === "launch_refused" || rec.action === "deny" || rec.decision === "deny")) || (rec.event === "guard" && rec.guard === "self_ruling" && rec.decision === "blocked") || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-")) || rec.event === "auto_review_allow" || rec.event === "protected_check" || (rec.event === "guard" && (rec.decision === "deny" || rec.decision === "blocked")); // the overlay's ask dialogs and the auto reviewer's allows (R16) keep their command (`/foreman dialogs`)
 /** R41 item 15: a blocking dialog (a `dialog` record, an overlay `ask-*`) and the owner's flagged ask keep the COMPLETE command, only secret-looking values masked by redactCommand. */
 const fullCommand = (rec: Record<string, unknown>): boolean => rec.event === "ask_flag" || rec.event === "dialog" || (rec.event === "overlay" && typeof rec.decision === "string" && rec.decision.startsWith("ask-"));
 const MAX_REASON = 320; // a deny reason keeps its rule pattern, which sits after the lead-in

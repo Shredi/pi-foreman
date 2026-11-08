@@ -74,6 +74,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
 | [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
+| [protected-targets](#protected-targets) | safety |  | on | `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog. | on by default | [permissions](permissions.md#protected-targets) |
 | [review-critic](#review-critic) | review |  | on | Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
@@ -509,6 +510,14 @@ No config key.
 | `gate.askTimeoutMs` | `900000` | tighten-only (lower only) |
 | `gate.childAsk` | `"parent"` | tighten-only (toward deny; tightest first: deny, parent) |
 
+### protected-targets
+
+**Protected targets with a context check.** `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.
+
+| Key | Default | Layer |
+|---|---|---|
+| `gate.protected.check` | `"model"` | tighten-only (toward ask; tightest first: ask, read-only, model) |
+
 ### review-critic
 
 **Review critic questions.** Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines.
@@ -891,6 +900,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [ceremony-tiers](#ceremony-tiers) | `/ceremony`, `/foreman plan` |
 | [read-budgets](#read-budgets) | `/foreman budget` |
 | [waits](#waits) | `/foreman waits` |
+| [protected-targets](#protected-targets) | `/foreman perms protect add\|remove <host\|path\|command> <glob> [--note ..] [--user]` |
 | [bridge-isolation](#bridge-isolation) | `/foreman trust`, `/foreman trust bridge` |
 | [sessions](#sessions) | `/foreman session`, `foreman session`, `foreman session open --profile` |
 | [herdr-core](#herdr-core) | `foreman session open` |

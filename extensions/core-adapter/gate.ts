@@ -16,6 +16,9 @@ import type { GateRoots } from "./pathrules.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
+import { matchProtected } from "./protected.ts";
+import type { ProtectedMatch } from "./protected.ts";
+import type { ProtectedEntry } from "./permconfig.ts";
 
 export interface GateDeps {
   /** The floor environment for the call's cwd (roots, protected branches, git lookups). */
@@ -28,10 +31,12 @@ export interface GateDeps {
   rules?: { sets: RuleSets; env: RuleEnv };
   /** `gate.readTools`: extension tool name -> path field (null: none); judged like read/grep (Read rules, path floors, owned-path allows). */
   readTools?: ReadToolMap;
+  /** The merged protected targets (permconfig `Resolved.protected`); absent or empty: no protected check. */
+  protected?: ProtectedEntry[];
 }
 
-/** What asks the owner before the mode step: a self-modification rule, an ask-kind floor hit (opaque text), a pattern `ask` rule. */
-export type AskCause = "selfmod" | "floor" | "rule";
+/** What asks the owner before the mode step: a self-modification rule, an ask-kind floor hit (opaque text), a pattern `ask` rule, a protected-target match. */
+export type AskCause = "selfmod" | "floor" | "rule" | "protected";
 
 /**
  * `block`: a floor or a deny rule. `allow`: a built-in allow or an allow rule. `ask`: the dialog / ask path, never a model call and never run under
@@ -40,9 +45,10 @@ export type AskCause = "selfmod" | "floor" | "rule";
 export type GateResult =
   | { block: true; reason: string; rule: string; layer?: "floor" | "rule" }
   | { allow: true; rule: string; layer?: "default" | "rule" }
-  | { ask: true; rule: string; reason: string; cause?: AskCause }
+  | { ask: true; rule: string; reason: string; cause?: AskCause; match?: ProtectedMatch }
   | undefined;
 
+// cause "protected" is the one ask that runs a model first (the protected-target check in index.ts); `match` carries what the check judges.
 const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run"]);
 const PATH_TOOLS = PATH_TOOL_NAMES;
 
@@ -63,6 +69,7 @@ function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
  */
 function childDenied(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): GateResult {
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
+  if (tool === "foreman_protect") return deny("child-protect", "Children never change the protected targets; the owner does, with /foreman perms protect.");
   if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
@@ -206,12 +213,22 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const home = env.home ?? os.homedir();
     const rules0 = deps.rules ?? { sets: { deny: [], ask: [], allow: [] }, env: { cwd, home, platform, checkout: cwd } };
     const rules = readTools ? { sets: rules0.sets, env: { ...rules0.env, readTools } } : rules0;
+    const effectCtx0 = roots ? effectCtxOf({ roots, platform, cwd }) : undefined;
     const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
     /** deny rules and ask rules, then a pending floor ask, then allow rules and the built-in allow `builtin`. */
-    const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null): GateResult => {
-      const first = matchRules({ deny: rules.sets.deny, ask: rules.sets.ask, allow: [] }, call, rules.env);
-      if (first.verdict === "deny" || first.verdict === "ask") return ruleResult(first);
+    const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[]): GateResult => {
+      const denied = matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, call, rules.env);
+      if (denied.verdict === "deny") return ruleResult(denied);
+      if (!pending && deps.protected?.length) {
+        const m = matchProtected(call, segments, deps.protected, { ...rules.env, ec: effectCtx0 });
+        if (m) {
+          const ids = m.entries.map((e) => e.id).join(",");
+          return { ask: true, rule: `protected:${ids}`, reason: `the call touches protected target ${m.entries.map((e) => `${e.id} (${e.kind} ${e.glob})`).join(", ")}`, cause: "protected", match: m };
+        }
+      }
+      const first = matchRules({ deny: [], ask: rules.sets.ask, allow: [] }, call, rules.env);
+      if (first.verdict === "ask") return ruleResult(first);
       if (pending) return askFromFloor(pending);
       return ruleResult(matchRules(rules.sets, call, rules.env, builtin));
     };
@@ -244,7 +261,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         if (r !== null) return r;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };
-      const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin);
+      const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
       if (result) return { result, danger: null, segments: segs };
       return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp, segments: segs, text: cmd }, { roots, platform, cwd, facts }), segments: segs };
     }

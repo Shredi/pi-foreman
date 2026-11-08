@@ -137,6 +137,11 @@ function pathPattern(pattern: string, env: RuleEnv): string {
   return comparableFs(env.platform, p);
 }
 
+/** Whether the path glob (the syntax of `Read(...)` / `Edit(...)` patterns) matches the absolute path `abs`. */
+export function pathGlobMatch(pattern: string, abs: string, env: RuleEnv): boolean {
+  return pathRegex(pathPattern(pattern, env)).test(comparableFs(env.platform, abs));
+}
+
 // ------------------------------------------------------------------ the call
 
 export interface RuleSegment {

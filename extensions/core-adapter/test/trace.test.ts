@@ -7,6 +7,19 @@ import { openTrace, sanitizeTrace, traceFile, TRACE_FIELDS } from "../trace.ts";
 import { sessionTrace } from "../retro.ts";
 import { BINDINGS_ENV, bindLaunch, readBinding } from "../usage.ts";
 
+test("trace: a protected_check allow record keeps command, rule, entry and globs", () => {
+  const out: Record<string, unknown> = sanitizeTrace({ event: "protected_check", rule: "protected:P1", entries: "P1", globs: "prod-*.example.net", entry: "D1", accepted: "allow", command: "ssh prod-1 uptime" });
+  assert.equal(out.command, "ssh prod-1 uptime");
+  assert.deepEqual([out.rule, out.entry, out.globs], ["protected:P1", "D1", "prod-*.example.net"]);
+});
+
+test("trace: a guard deny record keeps command and rule; a guard allow record drops the command", () => {
+  const deny = sanitizeTrace({ event: "guard", guard: "git_guard", decision: "deny", rule: "git_guard", reason: "matched rule git push --force", command: "git push --force" });
+  assert.deepEqual([deny.command, deny.rule, deny.reason], ["git push --force", "git_guard", "matched rule git push --force"]);
+  const allow = sanitizeTrace({ event: "guard", guard: "git_guard", decision: "allow", command: "git status" });
+  assert.equal("command" in allow, false);
+});
+
 test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
   const out = sanitizeTrace({
     event: "guard",
@@ -22,7 +35,8 @@ test("trace: non-allowlisted keys and non-primitive values are dropped", () => {
     model: { id: "nested" },
     cost: Number.NaN,
   });
-  assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41 });
+  // a guard deny keeps its (redacted) command now (protected-review plan: guard blocks go through denyFields)
+  assert.deepEqual(out, { event: "guard", guard: "destructive_guard", decision: "deny", latencyMs: 41, command: "rm -rf x" });
   assert.deepEqual([...TRACE_FIELDS], ["ts", "event", "role", "toolFamily", "guard", "decision", "latencyMs", "model", "tokensIn", "tokensOut", "cost", "exit", "tier", "precondition", "errorKind", "cause", "cacheRead", "cacheWrite", "requested", "wakeKinds", "pollBash", "from", "to", "files", "lines", "newFiles", "missing", "kind", "mode", "reason", "by", "phase", "count", "action", "runId", "outcome", "ms", "codemode", "after", "allowed", "items", "attested", "agent", "signals", "policy", "foreman", "turns", "rung", "cmd", "chars", "cut", "climb_available", "trimmed_lines", "skipped", "bytes", "segments", "class", "family", "rule", "item", "hits", "policy_override", "note", "findingId", "gate", "file", "line", "primary", "models", "ready", "removed", "handover", "occasion", "thinking", "model_overridden", "marker", "pack", "op", "limit", "command", "tool", "message", "width", "reasons", "level"]);
 });
 

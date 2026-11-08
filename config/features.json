@@ -423,6 +423,22 @@
       "enable": ""
     },
     {
+      "id": "protected-targets",
+      "area": "safety",
+      "title": "Protected targets with a context check",
+      "purpose": "`protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.",
+      "doc": "docs/permissions.md#protected-targets",
+      "keys": [
+        "gate.protected.check"
+      ],
+      "commands": [
+        "/foreman perms protect add|remove <host|path|command> <glob> [--note ..] [--user]"
+      ],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "review-critic",
       "area": "review",
       "title": "Review critic questions",
