@@ -9,6 +9,7 @@ const { world } = stubs;
 
 const A = "/w/plan-a.md";
 const C = "/w/plan-c.md";
+const D = "/w/plan-d.md";
 const node = (key, hc, show, parent = "") => ({ key, kind: "session", name: key, hcTerminal: hc, pid: null, parent, state: "working", ...(show ? { show } : {}), children: [] });
 const meta = (path) => JSON.stringify({ path, title: "P", v: 1, at: "2026-11-06T10:00:00Z", hash: "h1", ruledPath: null, prevHash: null, fences: [] });
 
@@ -30,6 +31,7 @@ function reset() {
   world.files = new Gated([
     ["/s/fm/plan.json", meta(A)], [A, "# Plan A\n\nAlpha body.\n"],
     ["/s/c1/plan.json", meta(C)], [C, "# Plan C\n\nGamma body.\n"],
+    ["/s/d/plan.json", meta(D)], [D, "# Plan D\n\nDelta body.\n"],
   ]);
   world.reads = []; world.runCalls = []; world.execCalls = [];
   world.shared = {
@@ -37,7 +39,7 @@ function reset() {
       node("fm", "t1", { dir: "/s/fm", plan: 1 }),
       node("c1", "tc1", { dir: "/s/c1", plan: 1 }, "fm"),
       node("bare", "t8", null),
-      node("bc", "t7", { dir: "/s/c1", plan: 1 }, "bare"),
+      node("bc", "t7", { dir: "/s/d", plan: 1 }, "bare"),
     ] } },
   };
   world.agents = [{ address: "t1", tab: "tabA", pane: "p1" }];
@@ -64,12 +66,12 @@ test("a tab without a document releases the held plan and shows the empty state;
   m.render(cx);
   click("bare"); m.render(cx); await settle();
   m.tab = "c:bc"; m.render(cx); await settle();
-  assert.ok(mds(m.render(cx)).some((t) => t.includes("Gamma body")), "the child tab shows its plan");
+  assert.ok(mds(m.render(cx)).some((t) => t.includes("Delta body")), "the child tab shows its plan");
   m.tab = "plan";
   m.render(cx); await settle();
   const empty = m.render(cx);
   assert.ok(strings(empty).includes("No plan published by this session"), "the empty state shows");
-  assert.ok(!mds(empty).some((t) => t.includes("Gamma body")), "the old body is not held");
+  assert.ok(!mds(empty).some((t) => t.includes("Delta body")), "the old body is not held");
 
   click("fm"); m.render(cx); await settle();
   assert.ok(mds(m.render(cx)).some((t) => t.includes("Alpha body")));
@@ -85,21 +87,24 @@ test("from a planless view a click on a child whose read is pending shows Loadin
   m.render(cx);
   click("bare"); m.render(cx); await settle();
   assert.ok(strings(m.render(cx)).includes("No plan published by this session"));
-  m.recs.delete("local|/s/c1");
-  world.files.hold("/s/c1/plan.json");
+  assert.ok(!m.recs.get("local|/s/d")?.ready, "the child is not read yet");
+  world.files.hold("/s/d/plan.json");
+  m.tick(cx); // the planless root's prefetch starts the child read, which is held
   m.tab = "c:bc";
   const loading = m.render(cx);
   assert.ok(!strings(loading).includes("No plan published by this session"), "no empty state while the read is pending");
   assert.ok(strings(loading).includes("Loading plan…"));
-  world.files.flush("/s/c1/plan.json"); await settle();
-  assert.ok(mds(m.render(cx)).some((t) => t.includes("Gamma body")));
+  world.files.flush("/s/d/plan.json"); await settle();
+  assert.ok(mds(m.render(cx)).some((t) => t.includes("Delta body")));
 });
 
 test("a planless root still prefetches its children", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
   click("bare"); m.render(cx); await settle();
-  assert.ok(m.recs.get("local|/s/c1")?.ready, "child read without being selected");
+  assert.ok(!m.recs.get("local|/s/d")?.ready, "nothing reads the child before the tick");
+  m.tick(cx); await settle();
+  assert.ok(m.recs.get("local|/s/d")?.ready, "child read without being selected");
 });
 
 test("a prefetch read superseded by the click read of the same key neither marks ready nor shows the empty state", async () => {
