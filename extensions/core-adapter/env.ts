@@ -62,12 +62,26 @@ export function buildGuardEnv(input: GuardEnvInput): Record<string, string> {
   return out;
 }
 
+/**
+ * Git Bash (MSYS) rewrites POSIX-looking arguments (`/getConnectState`, `/in:x`) into Windows paths before a native exe sees them.
+ * On win32, `shell.msysNoPathconv` (default true: an absent key counts as on) sets the two switches that stop it. Empty elsewhere.
+ */
+export function msysEnv(platform: string, cfg: unknown): Record<string, string> {
+  if (platform !== "win32") return {};
+  const shell = cfg && typeof cfg === "object" ? (cfg as Record<string, unknown>).shell : undefined;
+  const on = shell && typeof shell === "object" ? (shell as Record<string, unknown>).msysNoPathconv : undefined;
+  return on === false ? {} : { MSYS_NO_PATHCONV: "1", MSYS2_ARG_CONV_EXCL: "*" };
+}
+
 export interface ShellPatchInput {
   env: Env;
   binDir: string;
   python: string | null;
   markerDir: string;
   delimiter?: string;
+  /** Platform and the config object for `msysEnv`; absent = no MSYS switches. */
+  platform?: string;
+  config?: unknown;
 }
 
 /**
@@ -83,6 +97,7 @@ export function patchShellEnv(input: ShellPatchInput): void {
   if (!entries.includes(input.binDir)) env[pathKey] = [input.binDir, ...entries].join(delim);
   if (input.python) env.PI_FOREMAN_PYTHON = input.python;
   env.PI_FOREMAN_STATE_DIR = input.markerDir;
+  Object.assign(env, msysEnv(input.platform ?? "", input.config));
 }
 
 /** Pi agent dir: PI_CODING_AGENT_DIR (tilde expanded) or ~/.pi/agent (Pi config.js getAgentDir). */

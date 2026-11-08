@@ -45,6 +45,8 @@ export interface LaunchBinding {
   ladder?: LadderLimits;
   /** Child scratch dir (childscratch.ts), set in the child as env FOREMAN_SCRATCH. */
   scratch?: string;
+  /** The launching session's own child-side handoff dir (its `PI_FOREMAN_HANDOFF_DIR`; the child's env is stripped of it): the child writes the allow-list names there (pathrules.ts childHandoffWrite). */
+  handoffDir?: string;
   /** The foreman's effective retro was on: the child traces when its `trace.enabled` is null (retro.ts sessionTrace). */
   retro?: boolean;
   /** Launch `mcp` list (r68): narrows roles.<role>.mcp for this child; `[]` = no MCP, absent = the full ceiling. */
@@ -244,10 +246,11 @@ export function readBinding(env: Env): LaunchBinding | null {
     const limit = l ? { ladder: { strongAbove: pos(l.strongAbove), maxTurns: pos(l.maxTurns), bottom: l.bottom === true } } : {};
     const scratch = str(b.scratch);
     const askDir = str(b.askDir);
+    const handoffDir = str(b.handoffDir);
     const pm = isObj(b.perms) && str(b.perms.mode) ? b.perms : null;
     const perms = pm ? { mode: str(pm.mode) as string, ...(str(pm.override) ? { override: str(pm.override) as string } : {}), ...(str(pm.profile) ? { profile: str(pm.profile) as string } : {}), ...(pm.childDeny === true ? { childDeny: true as const } : {}) } : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}) };
   } catch {
     return null;
   }

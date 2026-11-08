@@ -1,6 +1,7 @@
 #!/bin/sh
 # pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|prs|perms|features|knowledge [args]` -> scripts/foreman_<name>.py (features, knowledge: .mjs).
-here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# native Windows path under MSYS (node and python get `C:/...`, not `/c/...`): pwd -W, then cygpath -m, then pwd
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && { pwd -W 2>/dev/null || cygpath -m "$(pwd)" 2>/dev/null || pwd; })
 sub="${1:-}"
 if [ "$sub" = "setup" ]; then
     shift

@@ -37,9 +37,9 @@ export const GRAMMAR = {
   redirects: ["2>&1", ">/dev/null"],
   redirectOps: [">", ">>"],
   // names (assigned or referenced) that make the whole line resolve nothing; `$FOREMAN_SCRATCH` is the one harness ref
-  reserved: ["_", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "PPID", "UID", "EUID", "BASHPID", "GROUPS", "OPTIND", "OPTARG", "PWD", "OLDPWD", "SHLVL", "REPLY", "IFS", "HOME", "PATH", "CDPATH", "ENV", "BASH_ENV"],
+  reserved: ["PI_FOREMAN_HANDOFF_DIR", "_", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "PPID", "UID", "EUID", "BASHPID", "GROUPS", "OPTIND", "OPTARG", "PWD", "OLDPWD", "SHLVL", "REPLY", "IFS", "HOME", "PATH", "CDPATH", "ENV", "BASH_ENV"],
   reservedPrefixes: ["BASH_", "FOREMAN_", "GIT_", "NODE_", "NPM_", "LD_", "DYLD_", "SSH_"],
-  harnessRefs: ["FOREMAN_SCRATCH"],
+  harnessRefs: ["FOREMAN_SCRATCH", "PI_FOREMAN_HANDOFF_DIR"],
   forbidden: ["|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'"],
 };
 
