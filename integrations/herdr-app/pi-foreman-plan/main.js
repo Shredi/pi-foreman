@@ -223,9 +223,12 @@ export default class PlanPanel extends View {
   // Reads one session's documents into its record; the record is ready after its first read, whatever that found.
   async load(job, force, cx) {
     let changed = false;
-    try { changed = await this.refresh(job, force, cx); } catch { /* keep what was read */ }
-    const rec = this.recs.get(job.key);
-    if (rec && !rec.ready) { rec.ready = true; changed = true; }
+    const run = this.refresh(job, force, cx);
+    const rec = this.recs.get(job.key); // refresh has created it and taken its seq before its first await
+    const seq = rec?.seq;
+    try { changed = await run; } catch { /* keep what was read */ }
+    // a read superseded by a newer one of the same session found nothing final: the newer read marks the record ready
+    if (rec && rec.seq === seq && !rec.ready) { rec.ready = true; changed = true; }
     return changed;
   }
 
@@ -239,7 +242,7 @@ export default class PlanPanel extends View {
     if (!jobs.length) return;
     this.prefetching = true;
     cx.spawn(async (cx) => {
-      for (const j of jobs) if (await this.load(j, false, cx)) cx.notify();
+      for (const j of jobs) if (!this.recs.get(j.key)?.ready && await this.load(j, false, cx)) cx.notify();
       this.prefetching = false;
     });
   }
@@ -438,11 +441,12 @@ export default class PlanPanel extends View {
     const frame = (...kids) => v_flex().id("plan-panel").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(13).children(kids);
     if (cur.empty) return frame(this.message(t, cur.empty));
-    // What the frame shows is the selected tab's document once it is read. Until then it keeps the document shown before, as long
-    // as that is the same foreman, so a switch neither blanks the body nor moves the tab row or the header. "Loading" shows only
-    // when nothing was shown yet.
+    // What the frame shows is the selected tab's document once it is read. Until then it keeps the document shown before, so a
+    // switch neither blanks the body nor moves the tab row or the header. The held document is released at once when the target
+    // has no document (nothing to read): then the real state shows, empty message included. "Loading" shows only when nothing
+    // was shown yet.
     const want = cur.key ? this.recs.get(cur.key) : null;
-    if (want?.ready || !this.held) this.held = { tabId: cur.tab.id, key: cur.key, rec: want ?? null };
+    if (want?.ready || !this.held || !cur.key) this.held = { tabId: cur.tab.id, key: cur.key, rec: want ?? null };
     const shown = this.held;
     const rec = shown.rec;
     const planRec = cur.planKey ? this.recs.get(cur.planKey) : null;
