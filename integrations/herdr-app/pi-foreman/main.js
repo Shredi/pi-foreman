@@ -141,6 +141,7 @@ export default class ForemanAgents extends View {
 
   // One error notice when a run starts failing; none while it keeps failing, so a machine without foreman does not toast every round.
   fail(key, title, e) {
+    this.failed ??= new Set();
     if (this.failed.has(key)) return;
     this.failed.add(key);
     guard(() => notify({ title, body: why(e), level: "error" }));
@@ -191,6 +192,7 @@ export default class ForemanAgents extends View {
         const v = Number.isInteger(n.show?.note) ? n.show.note : null;
         if (v === null) continue;
         const id = `${mk}|${n.key}`;
+        this.noteSeen ??= new Map();
         const seen = this.noteSeen.get(id);
         this.noteSeen.set(id, v);
         if (seen === undefined || v <= seen) continue;
@@ -239,6 +241,7 @@ export default class ForemanAgents extends View {
         if (!s || (s.plan === undefined && s.note === undefined)) continue;
         const id = `${mk}|${s.dir}`;
         const hint = `${s.plan ?? ""}/${s.note ?? ""}`;
+        this.shows ??= new Map();
         const have = this.shows.get(id);
         const bk = `show:${id}`;
         if (this.busy.has(bk) && now - this.busy.get(bk) > STUCK_MS) this.busy.delete(bk);
@@ -273,6 +276,7 @@ export default class ForemanAgents extends View {
     for (const machine of this.machines()) {
       const key = `prs:${machine ?? "local"}`;
       if (this.busy.has(key) && now - this.busy.get(key) > PRS_STUCK_MS) this.busy.delete(key);
+      this.prsRan ??= new Map();
       const ended = this.prsRan.get(key);
       if (this.busy.has(key) || (ended !== undefined && now - ended < PRS_EVERY_MS)) continue;
       this.busy.set(key, now);
@@ -283,9 +287,9 @@ export default class ForemanAgents extends View {
             cx.sleep(PRS_WATCHDOG_MS).then(() => ({ code: -1, stdout: "", watchdog: true })),
           ]);
           if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
-          else this.failed.delete(key);
+          else this.failed?.delete(key);
         } catch (e) {
-          if (missingBinary(e)) this.failed.delete(key);
+          if (missingBinary(e)) this.failed?.delete(key);
           else this.fail(key, "Foreman PR poll failed", e);
         }
         this.prsRan.set(key, Date.now());

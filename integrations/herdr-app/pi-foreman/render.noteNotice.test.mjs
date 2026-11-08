@@ -16,7 +16,6 @@ const radar = (note) => {
 const mod = (note) => {
   const m = Object.create(Mod.prototype);
   m.radar = new Map([["local", radar(note)]]);
-  m.noteSeen = new Map(); // what init sets
   return m;
 };
 const withBlock = { id: "root", type: "column", children: [{ id: "tabs", type: "stack", children: [{ id: "pp", type: "block", content: { mod: "pi-foreman-plan" } }] }] };

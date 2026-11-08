@@ -9,7 +9,6 @@ const { default: Mod } = await import("./main.js");
 function mod(machines = [null]) {
   const m = Object.create(Mod.prototype);
   m.radar = new Map(); m.busy = new Map(); m.recs = new Map(); m.childPi = new Set();
-  m.prsRan = new Map(); m.failed = new Set(); // what init sets
   m.foremanProp = undefined; m.hcProp = undefined;
   m.machines = () => machines;
   return m;
