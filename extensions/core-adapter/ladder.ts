@@ -250,6 +250,8 @@ export class LadderState {
   readonly live = new Map<string, string>();
   /** Risk tags of builder launches (sizing.ts) that the next item or pre-pr reviewer is asked to probe for bypasses. */
   readonly probeRisks = new Set<string>();
+  /** Risk tags security / guard / permission of builder launches since the last counted review (reviewerclimb.ts stakeOf). */
+  readonly stakeTags = new Set<string>();
 
   /** A launch passed every check (models written): record each entry's model as its role's live rung. */
   noteLaunched(input: Json): void {

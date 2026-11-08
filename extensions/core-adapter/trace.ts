@@ -19,7 +19,7 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // R72 `mcp_child_direct` keys `provider` and `servers` (`count` is a pinned field already).
 // Protected-target check `protected_check`: `kinds`, `globs`, `classes`, `remoteClasses`, `opaque`, `effect`, `confidence`, `accepted`, `away`, `cached`, `entry` (the cited D entry); `entries` the matched P ids.
 // Token diet `tools_deferred` (`names`, comma-joined tool names) and `tool_found` (`name`, `unhidden`; `kind` is a pinned field already).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry"]);
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry", "tags", "paths", "model_applied"]);
 const MAX_STRING = 120;
 const MAX_NAMES = 600; // the deferred tool names of one session
 const MAX_COMMAND = 200; // a denied command (lane 3h)

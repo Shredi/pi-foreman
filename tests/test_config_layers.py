@@ -405,6 +405,16 @@ class LayerRulesTest(unittest.TestCase):
         res = self.load(l2={"ceremony": {"reviewModel": "p/x", "planReview": {"heavy": False}}, "retro": {"panelThreshold": 5}}, proj={}, session={})
         self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"], res["config"]["retro"]["panelThreshold"]), ("p/x", False, 5))
 
+    def test_high_stakes_user_only(self):
+        hs = {"model": "p/x", "paths": ["infra/**"]}
+        res = self.load(proj={"ceremony": {"highStakes": hs}}, session={})
+        merged = res["config"]["ceremony"].get("highStakes")
+        self.assertTrue(merged is None or (merged.get("model") is None and merged.get("paths") != hs["paths"]), merged)
+        self.assertIn("project ceremony.highStakes ignored", "\n".join(res["warnings"]))
+        res = self.load(l2={"ceremony": {"highStakes": hs}}, proj={}, session={})
+        self.assertEqual(res["config"]["ceremony"]["highStakes"], hs)
+        self.assertEqual([w for w in res["warnings"] if "highStakes ignored" in w], [])
+
     def test_review_model_pair_map_user_only_and_invalid_entries_dropped(self):
         res = self.load(proj={"ceremony": {"reviewModel": {"a/x": "b/y"}}}, session={})
         self.assertIsNone(res["config"]["ceremony"]["reviewModel"])

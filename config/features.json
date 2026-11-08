@@ -193,6 +193,18 @@
       "enable": "{\"ceremony\": {\"reviewByOccasion\": {\"pre-pr\": {\"thinking\": \"high\"}}}}"
     },
     {
+      "id": "review-high-stakes",
+      "area": "review",
+      "title": "High-stakes review model",
+      "purpose": "Sends high-stakes reviews (plan-review, second-opinion, pre-pr on a heavy tier, a security/guard/permission builder risk tag, a sensitive diff path) to `ceremony.highStakes.model`; every other review keeps the pair. Traces `review_stakes` with the rule that fired.",
+      "doc": "docs/review.md#high-stakes",
+      "keys": ["ceremony.highStakes"],
+      "commands": [],
+      "switch": {"key": "ceremony.highStakes.model", "on": "nonempty"},
+      "state": "opt-in",
+      "enable": "{\"ceremony\": {\"highStakes\": {\"model\": \"provider-b/top\"}}}"
+    },
+    {
       "id": "checkpoint-verdict",
       "area": "ceremony",
       "title": "Plan checkpoint verdict by parent file",
