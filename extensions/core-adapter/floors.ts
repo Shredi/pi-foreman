@@ -1108,10 +1108,16 @@ export function psPubKeyReadWords(command: string, env: FloorEnv): Set<string> {
   if (/[;&|<>`(){}\n\r]|\$\(|\*\*/.test(command.replace(/\$\{env:USERPROFILE\}/gi, ""))) return out;
   const words = command.trim().split(/\s+/);
   if (!PS_READ_PROGS.has(words[0].toLowerCase().replace(/\.exe$/, ""))) return out;
-  const ops = words.slice(1).filter((w) => !w.startsWith("-"));
+  const ops: string[] = [];
+  const rest = words.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    // a value-taking flag's value (`-TotalCount 5`) is no operand
+    if (/^-(?:totalcount|head|tail|encoding)$/i.test(rest[i]) && i + 1 < rest.length) i++;
+    else if (!rest[i].startsWith("-")) ops.push(rest[i]);
+  }
   const keys = ops.filter((w) => sshPublicKey(w, env));
   // an operand that is no key (or any `-Path`-style flag value that is not a plain word) keeps the whole line out
-  if (keys.length === 0 || words.slice(1).some((w) => /^-(?!path$|literalpath$|totalcount$|head$|tail$|raw$|encoding$)/i.test(w))) return out;
+  if (keys.length === 0 || keys.length !== ops.length || rest.some((w) => /^-(?!path$|literalpath$|totalcount$|head$|tail$|raw$|encoding$)/i.test(w))) return out;
   for (const w of keys) out.add(w);
   return out;
 }
@@ -1120,9 +1126,11 @@ export function psPubKeyReadWords(command: string, env: FloorEnv): Set<string> {
  * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, `<`
  * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out. For the overlay's path rules.
  */
-export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv): Set<string> {
+export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv, bound?: ReadonlySet<string>): Set<string> {
   const out = new Set<string>();
-  if (segments.length === 0 || segments.some((s) => (s.opaque !== null && !homeSpelling(s)) || s.wrappers.length > 0)) return out;
+  // a line that binds HOME (or USERPROFILE on win32) reads another file than the one verified; a path-qualified program is no known reader
+  if (bound && (bound.has("HOME") || (env.platform === "win32" && bound.has("USERPROFILE")))) return out;
+  if (segments.length === 0 || segments.some((s) => (s.opaque !== null && !homeSpelling(s)) || s.wrappers.length > 0 || /[\\/]/.test(s.program))) return out;
   const written = new Set<string>();
   const cands = new Set<string>();
   for (const s of segments) {

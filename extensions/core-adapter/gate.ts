@@ -11,7 +11,7 @@ import { PATH_KEYS, READ_PATH_TOOLS, lineFloors, opaqueTextFloors, pathFloors, p
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
 import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
-import { relaxPatternWords } from "./permoverlay.ts";
+import { boundNames, relaxPatternWords } from "./permoverlay.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
@@ -246,7 +246,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
         const r = opaque ? null : segmentDefault(s, cmd, dctx, ec);
         if (r !== null) return r;
-        const pubs = pubKeyReadWords([s], env);
+        const pubs = pubKeyReadWords([s], env, boundNames(cmd));
         if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
         if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;

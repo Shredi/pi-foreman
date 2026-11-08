@@ -223,3 +223,32 @@ test("ssh-keygen fingerprint spellings are read-class, key-printing and writing 
   for (const c of [`ssh-keygen -l -f ${K}`, `ssh-keygen -lf ${K}`, `ssh-keygen -l -E md5 -f ${K}`, `ssh-keygen -l -E sha256 -f ${K}`]) assert.equal(line(c), null, c);
   for (const c of [`ssh-keygen -y -f ${K}`, `ssh-keygen -p -f ${K}`, `ssh-keygen -c -f ${K}`, `ssh-keygen -R ${K}`, `ssh-keygen -l -f ${K} -p`]) assert.equal(line(c), "floor-secret-path", c);
 });
+
+// round 2: bare programs only, every PowerShell operand a verified key, no HOME binding
+const gateRule = (command: string): string | undefined => {
+  const roots = { worktree: work, scratch: [], tmp: [], scratchBase: path.join(base, "scr"), owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false } as never;
+  return (gateDecide("bash", { command }, work, { env: () => env, roots: () => roots }) as { rule?: string } | undefined)?.rule;
+};
+
+test("a path-qualified program gets no pubkey rule", () => {
+  for (const c of [`./cat ${K}`, `~/bin/cat ${K}`, `/tmp/x/cat ${ssh}/k.pub`, `${work}/cat ${ssh}/k.pub`]) {
+    assert.notEqual(gateRule(c), "floor-pubkey-read", c);
+  }
+  assert.equal(gateRule(`cat ${K}`), "floor-pubkey-read");
+});
+
+test("a line that binds HOME gets no pubkey rule", () => {
+  for (const c of ["HOME=/x cat $HOME/.ssh/k.pub", `export HOME=/x; cat ${K}`, `HOME=/x; cat ${K}`]) {
+    assert.notEqual(gateRule(c), "floor-pubkey-read", c);
+  }
+});
+
+test("win32 powershell: every operand must be a verified key", () => {
+  const ps = (command: string): string => ov("powershell", { command }, { platform: "win32", shell: "powershell" });
+  assert.equal(ps("Get-Content ${env:USERPROFILE}\\.ssh\\k.pub \\.ssh\\k.pub"), "deny");
+  assert.equal(ps("Get-Content $env:USERPROFILE\\.ssh\\k.pub \\.ssh\\k.pub"), "deny");
+  assert.equal(ps("Get-Content %USERPROFILE%\\.ssh\\k.pub \\.ssh\\k.pub"), "deny");
+  assert.equal(ps("Get-Content \\.ssh\\k.pub"), "deny");
+  for (const w of ["${env:USERPROFILE}\\.ssh\\k.pub", "$env:USERPROFILE\\.ssh\\k.pub", "%USERPROFILE%\\.ssh\\k.pub"]) assert.equal(ps(`Get-Content ${w}`), "pass", w);
+  assert.equal(ps("Get-Content ${env:USERPROFILE}\\.ssh\\k.pub -TotalCount 1"), "pass");
+});

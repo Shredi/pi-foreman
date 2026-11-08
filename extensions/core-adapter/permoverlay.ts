@@ -2238,8 +2238,11 @@ function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
   return lock.length > 0 && into(lock);
 }
 
+/** `${env:USERPROFILE}` as `$env:USERPROFILE`: the braces would split the word in the PowerShell parse (same variable). */
+const psProfile = (s: string): string => s.replace(/\$\{env:USERPROFILE\}(?=[\\/])/gi, "$env:USERPROFILE");
+
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
-  const src = shell === "powershell" ? psDashes(src0) : src0;
+  const src = shell === "powershell" ? psProfile(psDashes(src0)) : src0;
   const parsed = parseShell(src, shell);
   // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
   const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src, out.platform) : new Map<string[], string[]>();
@@ -3402,9 +3405,9 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   }
   const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
   const pubEnv = { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform };
-  const pubRaw = !/\.pub\b/.test(command) ? new Set<string>() : shell === "posix" ? pubKeyReadWords(parseAst(command, { cwd: ctx.cwd, platform: ctx.platform }), pubEnv) : psPubKeyReadWords(command, pubEnv);
-  // collect() drops a leading `${env:USERPROFILE}` from the word it checks: a verified word covers that spelling of itself
-  const pubWords = new Set([...pubRaw].flatMap((w) => [w, w.replace(/^\$\{env:USERPROFILE\}/i, "")]));
+  const pubRaw = !/\.pub\b/.test(command) ? new Set<string>() : shell === "posix" ? pubKeyReadWords(parseAst(command, { cwd: ctx.cwd, platform: ctx.platform }), pubEnv, bound) : psPubKeyReadWords(command, pubEnv);
+  // collect() reads a leading `${env:USERPROFILE}` as `$env:USERPROFILE` (psProfile): the verified word covers that spelling of itself
+  const pubWords = new Set([...pubRaw].map(psProfile));
   // Fail closed: a word with white space is prose only as the value of a known prose option, decided by word position;
   // never for a path tool or a pure read (its words are operands).
   // by position: a string that also occurs outside a prose-option position (`-m "/a b/f" -F "/a b/f"`) is no prose
