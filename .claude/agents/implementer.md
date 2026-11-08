@@ -30,7 +30,7 @@ the trailer lines for commits.
   heredocs) and list them. HARD STOPS (report, do not proceed): any classifier
   or hook denial, a target outside the worktree, wrapping a refused command in a
   script or another shell, anything touching credentials. Never retry past a
-  block; give one ready-to-paste command line for Marc and continue the rest.
+  block; give one ready-to-paste command line for the repo owner and continue the rest.
 
 ## 2. SCOPE + EDITS
 
