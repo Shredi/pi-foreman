@@ -23,6 +23,8 @@ export interface GitFacts {
   pushConfigured: (cwd: string) => boolean;
   /** r79: the branch has an upstream (a `commit --amend` rewrites published history). Absent: no amend is held back. */
   hasUpstream?: (cwd: string) => boolean;
+  /** `branch` is merged: its tip is in `origin/<default>`, or its PR is MERGED at that tip. A lookup of what index.ts computed before the call (the gate never runs gh); absent: false. */
+  branchMerged?: (cwd: string, branch: string) => boolean;
   /** r79 item 3: branches checked out in the other (linked) worktrees of the repo; a plain push of one from a second worktree is as routine as the cwd branch. */
   ownBranches?: (cwd: string) => string[];
   /** The session's own checkout or a worktree it created holds `dir`. Absent: no worktree is held back (the plain git lookups). A push from any other worktree is no default. */
@@ -47,7 +49,7 @@ export const OWN_TOOLS: ReadonlySet<string> = new Set([
 /** Every rule name this module can return (tests walk it). */
 export const DEFAULT_RULES = [
   "default-own-tool", "default-assign", "default-read", "default-build-test", "default-write-in",
-  "default-git-read", "default-git-add", "default-git-commit", "default-git-fetch", "default-git-pull", "default-git-switch", "default-git-push", "default-gh-read",
+  "default-git-read", "default-git-add", "default-git-commit", "default-git-fetch", "default-git-pull", "default-git-switch", "default-git-push", "default-git-branch-merged", "default-gh-read",
   "default-role-launch",
 ] as const;
 
@@ -255,6 +257,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
   switch (sub) {
     case "branch":
+      if (branchDeleteMerged(rest, cwd, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts })) return "default-git-branch-merged";
       return rest.every((w) => BRANCH_LIST.has(w)) ? "default-git-read" : null;
     case "remote":
       return rest.length === 0 || (rest.length === 1 && rest[0] === "-v") ? "default-git-read" : null;
@@ -716,6 +719,33 @@ function pushOwn(rest: string[], cwd: string, env: DangerEnv): boolean {
   });
 }
 
+/**
+ * `git branch -d|-D <b>` with exactly one plain branch name, no other flag: allowed when `<b>` is merged (`facts.branchMerged`, `-d` and `-D` alike), is not
+ * the default or a protected branch, the session is not a child and the repo is not a work folder outside the worktree. No current-branch condition: the gate
+ * judges the whole line before it runs, so in a post-merge chain HEAD is still `<b>`; git itself refuses to delete the checked-out branch.
+ */
+function branchDeleteMerged(rest: string[], cwd: string, env: DangerEnv): boolean {
+  const f = env.facts;
+  if (!f?.branchMerged || env.roots.child || rest.length !== 2 || (rest[0] !== "-d" && rest[0] !== "-D")) return false;
+  const b = rest[1];
+  if (b.startsWith("-") || !NAME.test(b) || b.startsWith("refs/") || b.includes("..")) return false;
+  // a case-insensitive filesystem resolves `Main` to main's loose ref
+  const fold = env.platform === "darwin" || env.platform === "win32" ? (x: string) => x.toLowerCase() : (x: string) => x;
+  if (f.protectedBranches(cwd).some((p) => fold(p) === fold(b)) || /^(?:main|master)$/.test(fold(b))) return false;
+  if (workFolderBarred({ roots: env.roots, facts: f, platform: env.platform, cwd: env.cwd }, cwd)) return false;
+  return f.branchMerged(cwd, b);
+}
+
+/** The key of the merged-branch lookup: the fact is per (segment cwd, branch), never per branch name alone. */
+export function mergedFactKey(cwd: string, branch: string): string {
+  return `${cwd}\0${branch}`;
+}
+
+/** `facts` with `branchMerged` answered from the lookups index.ts made before the call (`mergedFactKey`). */
+export function withMergedFacts(facts: GitFacts, merged: Map<string, boolean>): GitFacts {
+  return { ...facts, branchMerged: (cwd: string, branch: string) => merged.get(mergedFactKey(cwd, branch)) === true };
+}
+
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   if (progOf(s) !== "git") return false;
   const { sub, rest } = gitParts(s.argv);
@@ -732,7 +762,7 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
     case "restore":
       return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
     case "branch":
-      return flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete");
+      return (flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete")) && !(s.cwd !== null && branchDeleteMerged(rest, s.cwd ?? env.cwd, env));
     case "push": {
       // s.cwd is already moved by every `-C` (shellast); null: a `-C` operand that cannot be resolved
       return s.cwd === null || !pushOwn(rest, s.cwd ?? env.cwd, env);

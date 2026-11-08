@@ -65,7 +65,7 @@ export function shellWriteVerdict(run: GuardRun, python: string | null): ShellWr
   return { decision: "refuse", kind: run.status === "ran" ? kindOf(run.stdout) : "unknown", reason };
 }
 
-export type BranchMove = { allow: true } | { allow: false; precondition: string };
+export type BranchMove = { allow: true; reason?: "post_merge" } | { allow: false; precondition: string };
 
 // A word of a plain command: no quotes, globs, expansions, `~`, `^` or braces (those stay refused).
 const PLAIN_WORD = /^[\w./@:-]+$/;
@@ -155,6 +155,25 @@ async function prMerged(cwd: string): Promise<boolean> {
   }
 }
 
+/**
+ * `branch` is merged: its tip is an ancestor of the remote default branch, or its PR is MERGED with that tip as head (a squash or rebase merge).
+ * Computed by index.ts before the gate runs (the gate never spawns gh). A missing branch, no default, any error or the gh timeout: false.
+ */
+export async function branchMergedFact(cwd: string, branch: string): Promise<boolean> {
+  const tip = await runGit(cwd, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]);
+  if (!tip.ok || !tip.out.trim()) return false;
+  const head = await runGit(cwd, ["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"]);
+  if (head.ok && head.out.trim() && (await runGit(cwd, ["merge-base", "--is-ancestor", tip.out.trim(), head.out.trim()])).ok) return true;
+  const pr = await ghRunner(["pr", "view", branch, "--json", "state,headRefOid"], cwd);
+  if (!pr.ok) return false;
+  try {
+    const v = JSON.parse(pr.out) as { state?: unknown; headRefOid?: unknown };
+    return v.state === "MERGED" && v.headRefOid === tip.out.trim();
+  } catch {
+    return false;
+  }
+}
+
 /** The entry at `p`, or null when nothing is there (or it cannot be read). */
 function lstatOf(p: string): fs.Stats | null {
   try {
@@ -189,6 +208,36 @@ async function untrackedClash(cwd: string, ref: string): Promise<string | null> 
   return null;
 }
 
+/** A switch to the local branch `name`: clean tree, the branch exists, no untracked or ignored file it adds would be overwritten. */
+async function switchChecks(dir: string, name: string): Promise<BranchMove> {
+  const dirty = await cleanTree(dir);
+  if (dirty) return { allow: false, precondition: dirty };
+  if (!(await runGit(dir, ["show-ref", "--verify", "--quiet", `refs/heads/${name}`])).ok) return { allow: false, precondition: `no local branch ${name}` };
+  // git switch overwrites an ignored file that the branch adds, so the same clash check as a ref move
+  const clash = await untrackedClash(dir, name);
+  return clash ? { allow: false, precondition: clash } : { allow: true };
+}
+
+/**
+ * The post-merge chain (after a PR merged): `git switch <default> && git pull --ff-only [&& git branch -d|-D <b>]`, every statement plain words joined by `&&`.
+ * <default> is the remote default branch (`origin/HEAD`); the switch runs the same checks as a lone switch. Null: not this shape.
+ */
+async function postMerge(statements: string[], dir: string): Promise<BranchMove | null> {
+  if (statements.length < 2 || statements.length > 3) return null;
+  const words = statements.map((s) => s.trim().split(/\s+/));
+  if (!words.every((w) => w[0] === "git" && w.slice(1).every((x) => PLAIN_WORD.test(x)))) return null;
+  const [sw, pull, del] = words;
+  if (sw.length !== 3 || sw[1] !== "switch" || sw[2].startsWith("-")) return null;
+  if (pull.length !== 3 || pull[1] !== "pull" || pull[2] !== "--ff-only") return null;
+  if (del && !(del.length === 4 && del[1] === "branch" && (del[2] === "-d" || del[2] === "-D") && !del[3].startsWith("-"))) return null;
+  const head = await runGit(dir, ["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"]);
+  const def = head.ok ? head.out.trim().replace(/^origin\//, "") : "";
+  if (!def) return { allow: false, precondition: "default branch unknown" };
+  if (sw[2] !== def) return { allow: false, precondition: `${sw[2]} is not the default branch ${def}` };
+  const moved = await switchChecks(dir, def);
+  return moved.allow ? { allow: true, reason: "post_merge" } : moved;
+}
+
 async function moveToRef(cwd: string, ref: string): Promise<BranchMove> {
   const dirty = await cleanTree(cwd);
   if (dirty) return { allow: false, precondition: dirty };
@@ -202,6 +251,7 @@ async function moveToRef(cwd: string, ref: string): Promise<BranchMove> {
  * r29 foreman branch moves: the guard refuses `git switch|checkout <b>`, `git switch -C <b> <ref>` and `git reset --hard <ref>`;
  * a plain single command of exactly these shapes is allowed when its preconditions hold (branch-only git, no content change).
  * r31: one leading `cd <dir> &&` is allowed when <dir> is the session cwd or its git toplevel (realpath); the checks run there.
+ * The post-merge chain `git switch <default> && git pull --ff-only [&& git branch -d|-D <b>]` (also after one `cd <dir> &&`) is allowed on the same checks; the allow carries `reason: "post_merge"`.
  * Null: not one of these shapes (the refusal stands unchanged). Children never get it (`foreman` false).
  */
 export async function branchMove(command: string, cwd: string, foreman: boolean): Promise<BranchMove | null> {
@@ -215,16 +265,13 @@ export async function branchMove(command: string, cwd: string, foreman: boolean)
     dir = target;
     line = cd[2];
   }
+  const statements = line.split(/[ \t]+&&[ \t]+/);
+  if (statements.length > 1) return postMerge(statements, dir);
   const words = line.split(/\s+/);
   if (words[0] !== "git" || !words.slice(1).every((w) => PLAIN_WORD.test(w))) return null;
   const args = words.slice(1);
   if (args.length === 2 && (args[0] === "switch" || args[0] === "checkout") && !args[1].startsWith("-")) {
-    const dirty = await cleanTree(dir);
-    if (dirty) return { allow: false, precondition: dirty };
-    if (!(await runGit(dir, ["show-ref", "--verify", "--quiet", `refs/heads/${args[1]}`])).ok) return { allow: false, precondition: `no local branch ${args[1]}` };
-    // git switch overwrites an ignored file that the branch adds, so the same clash check as a ref move
-    const clash = await untrackedClash(dir, args[1]);
-    return clash ? { allow: false, precondition: clash } : { allow: true };
+    return switchChecks(dir, args[1]);
   }
   if (args.length === 4 && args[0] === "switch" && args[1] === "-C" && !args[2].startsWith("-") && !args[3].startsWith("-")) return moveToRef(dir, args[3]);
   if (args.length === 3 && args[0] === "reset" && args[1] === "--hard" && !args[2].startsWith("-")) return moveToRef(dir, args[2]);

@@ -168,6 +168,7 @@ test("every named rule is reachable (the list in DEFAULT_RULES matches what the 
   const seen = new Set<string>();
   const lines = ["ls", "npm test", "touch src/n", "git status", "git add -A", "git commit -m x", "git fetch", "git pull --ff-only", "git switch round/41-x", "git push origin HEAD", "gh pr view 1", "CI=1"];
   for (const l of lines) for (const r of (rule(sh(l)) ?? "").split("+")) if (r) seen.add(r);
+  for (const r of (rule(sh("git branch -d round/41-y", { f: { branchMerged: () => true } })) ?? "").split("+")) if (r) seen.add(r);
   seen.add(toolDefault("bg_wait", {})!);
   seen.add(toolDefault("subagent", { agent: "builder", task: "x" }, { child: false })!);
   for (const r of DEFAULT_RULES) assert.ok(seen.has(r), r);
