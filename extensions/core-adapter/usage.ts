@@ -458,13 +458,13 @@ export type TurnCause = "user" | "child" | "intercom" | "wake" | "close" | "othe
 export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
 /**
  * Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js),
- * and pi-intercom's inbound message (0.18.1 fork index.ts:1334-1341).
+ * and pi-intercom's inbound message (fork 5f184cc index.ts:1370-1378).
  */
 export const INTERCOM_MESSAGE_TYPES = ["subagent_supervisor_request", "intercom_message"];
 /**
  * Legacy wake line: on Pi before 1.2.0 pi-intercom appends a message to an idle session without
- * starting a run (no extension `message_end`), then wakes it with this extension prompt (0.18.1 fork
- * index.ts:1347, version switch :163-170). On Pi 1.2.0+ it sends the message with triggerTurn and no
+ * starting a run (no extension `message_end`), then wakes it with this extension prompt (fork 5f184cc
+ * index.ts:1383, version switch :164-170). On Pi 1.2.0+ it sends the message with triggerTurn and no
  * wake line (no `input` event). Hooks find an inbound message through intercomInbound (intercomguard.ts);
  * only the pure classifiers causeOfInput and isOwnerPrompt compare the text.
  */
