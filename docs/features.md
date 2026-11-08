@@ -55,6 +55,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-panel](#review-panel) | review |  | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
 | [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's live model to the next differing rung, else to `ceremony.reviewModel`, which may also be a map pairing each foreman model with a reviewer model. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
+| [review-high-stakes](#review-high-stakes) | review |  | opt-in | Sends high-stakes reviews (plan-review, second-opinion, pre-pr on a heavy tier, a security/guard/permission builder risk tag, a sensitive diff path) to `ceremony.highStakes.model`; every other review keeps the pair. Traces `review_stakes` with the rule that fired. | `{"ceremony": {"highStakes": {"model": "provider-b/top"}}}` | [review](review.md#high-stakes) |
 | [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | A session opened with a parent takes the plan checkpoint verdict from the parent-written `ruling-plan.md` (APPROVED, REVISE <text> or REJECT) instead of a dialog; plan state, the user tier and the plan phase (`/foreman plan`, `--plan-first`) survive `/reload` and resume; `human` keeps the dialog for an attended session. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
@@ -328,6 +329,17 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 | `ceremony.reviewByOccasion.pre-pr.model` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
 | `ceremony.reviewByOccasion.second-opinion.thinking` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
 | `ceremony.reviewByOccasion.second-opinion.model` | unset | not in project/session (the per-occasion reviewer overrides come from the user or overlay config) |
+
+### review-high-stakes
+
+**High-stakes review model.** Sends high-stakes reviews (plan-review, second-opinion, pre-pr on a heavy tier, a security/guard/permission builder risk tag, a sensitive diff path) to `ceremony.highStakes.model`; every other review keeps the pair. Traces `review_stakes` with the rule that fired.
+
+Switch: `ceremony.highStakes.model` is non-empty.
+
+| Key | Default | Layer |
+|---|---|---|
+| `ceremony.highStakes.model` | `null` | not in project/session (the high-stakes reviewer model and sensitive paths come from the user or overlay config) |
+| `ceremony.highStakes.paths` | `[".github/workflows/**"]` | not in project/session (the high-stakes reviewer model and sensitive paths come from the user or overlay config) |
 
 ### checkpoint-verdict
 
@@ -990,6 +1002,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model and the reviewer pair map come from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
+| `ceremony.highStakes` | the high-stakes reviewer model and sensitive paths come from the user or overlay config |
 | `resources.sampleSeconds` | the sampling interval comes from the user or overlay config |
 | `ladder.strongAbove` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.childMaxTurns` | the ladder and the child rank policy come from the user or overlay config |

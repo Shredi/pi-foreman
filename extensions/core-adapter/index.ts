@@ -82,7 +82,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, markPolicyOverrides, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, highStakesConfig, markPolicyOverrides, missingPairWarning, planReviewerClimbs, STAKE_TAGS, stakeOf, type Stake, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
@@ -1196,6 +1196,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * provider at session start; after a model switch to another provider (user, or the foreman
    * model itself) the roles are resolved again for the new one. A failed re-resolve fails closed.
    */
+  /** Once per foreman model (session start, model change): no ceremony.reviewModel pair covers it and the reviewer would be swapped or stay on it (reviewerclimb.ts missingPairWarning). Never blocks. */
+  async function reviewPairNotice(s: Session, ctx: ExtensionContext, model: { provider: string; id: string } | undefined): Promise<void> {
+    if (s.isChild || !model) return;
+    try {
+      const id = `${model.provider}/${model.id}`;
+      const w = missingPairWarning(s.config.config, (await currentRoles(s, ctx)).roles, id);
+      if (w) notifyOnce(s, ctx, `review-pair:${id}`, `pi-foreman: ${w}`);
+    } catch {
+      // advice only
+    }
+  }
+
   async function currentRoles(s: Session, ctx: ExtensionContext): Promise<RoleResolution> {
     const provider = idleModel.baseRef(ctx.model)?.provider; // the base model's map while downshifted: children and the finalizer keep it
     if (s.config.source === "cli" && provider !== s.configProvider) {
@@ -1300,6 +1312,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const gap of modelGaps(s.config.config, provider, registry)) notifyOnce(s, ctx, `model-gap:${gap}`, gap.includes(".roles.foreman.idle)") ? `pi-foreman: ${gap}; the foreman idle rung is unavailable and the downshift stays off. Fix the provider map or the login, then run /foreman doctor.` : `pi-foreman: ${gap}; launches that need it fail. Fix the provider map or the login, then run /foreman doctor.`);
       for (const w of familyWarnings(s.config.roles, provider, registry)) notifyOnce(s, ctx, `family:${w}`, w);
     }
+    await reviewPairNotice(s, ctx, ctx.model);
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
     remoteWatch?.stop();
     remoteWatch = null;
@@ -1463,6 +1476,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const risks = event.model?.provider === BRIDGE_PROVIDER ? projectClaudeRisks(ctx.cwd) : [];
     if (risks.length) ctx.ui.notify(`pi-foreman: project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}. Fix: ${PROJECT_CLAUDE_FIX}`, "error");
+    if (ps) await reviewPairNotice(ps, ctx, event.model);
     if (applyingModel) return;
     if (event.source === "set" || event.source === "cycle") userPickedModel = true;
     if (event.source === "set" || event.source === "cycle") idleModel.onUserPick(); // the user's pick is the base, not ours to restore
@@ -2012,6 +2026,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             // Item-only re-review: the failed items of the latest FAIL verdict, cleared by a pass.
             for (const r of reviewResults) if (r.counts) {
               s.trace?.emit(s.critique.onReview(r.text, r.role, runId, reviewLaunch?.lines));
+              if (r.occasion === "item" || r.occasion === "pre-pr") s.ladder.stakeTags.clear(); // the work diff has been reviewed (a plan-review does not review it)
               const items = failedItemsOf(r.text);
               if (items.length > 0) s.failItems = items;
               else if (r.verdict === "pass") s.failItems = [];
@@ -3073,15 +3088,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // ceremony.reviewByOccasion (reviewerclimb.ts): over the mapped models, before the rank check and the different-model rule.
           const reviewerEntries = launchEntries(input).filter((e) => e.agent === "reviewer" && typeof e.model === "string");
           const pinned = new Map<Json, ReviewPin>(reviewerEntries.filter((e) => explicitReviewers.has(splitLevel(e.model as string).base)).map((e) => [e, "explicit"]));
-          const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking") });
+          // High stakes (reviewerclimb.ts stakeOf): the work diff is the one the security climb takes (taken once per entry).
+          const stakes = new Map<Json, Stake>();
+          for (const [e, o] of occasions) {
+            if (e.agent !== "reviewer") continue;
+            // Already high stakes by occasion: the diff only adds the sensitive_path reason, traced when highStakes.model applies.
+            const needDiff = !(o === "plan-review" || o === "second-opinion") || highStakesConfig(s.config.config).model !== null;
+            const d = needDiff ? await reviewFacts.diffOf(e, input, ctx.cwd) : { diff: null as string | null, untracked: "" };
+            const st = stakeOf(o, s.ceremony.tier, s.ladder.stakeTags, d.diff || d.untracked ? (d.diff ?? "") + d.untracked : null, s.config.config);
+            if (st) stakes.set(e, st);
+          }
+          const occ = applyOccasionOverrides(input, occasions, reviewerClimbs, { config: s.config.config, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), stakes });
           reviewerTraces.push(...occ.traces);
           for (const e of occ.overrode) pinned.set(e, "occasion");
           // [research] / [fact-critical] markers (research.ts): the floor is written before the rank check.
           const marked = markedEntries(input);
           const raised = applyResearchFloor(marked, resolution.roles, s.config.config, get(s.config.config, "maxThinking"), get(s.config.config, "childMaxThinking"));
           const foremanModel = foremanBaseModel(ctx);
+          // An occasion model is used as set (like a pair): its entry skips the rank check, traced policy_override when the policy would refuse it; other entries sharing the model are still checked.
+          for (const [e, rec] of occ.traceOf) if (occ.overrode.has(e) && typeof e.model === "string" && rankRefusalFor(s.config.config, foremanModel, e.model, ["reviewer"]) !== null) rec.policy_override = true;
+          const checked = (m: string): string[] => (occ.overrode.size === 0 ? rolesOfModel(input, m) : launchEntries(input).filter((e) => !occ.overrode.has(e) && typeof e.agent === "string" && e.model === m).map((e) => e.agent as string));
           for (const m of launchedModels(input)) {
-            const no = rankRefusalFor(s.config.config, foremanModel, m, rolesOfModel(input, m));
+            const roles = checked(m);
+            if (occ.overrode.size > 0 && roles.length === 0) continue;
+            const no = rankRefusalFor(s.config.config, foremanModel, m, roles);
             if (!no) continue;
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
@@ -3256,6 +3286,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && ladderRoles) {
         s.ladder.noteLaunched(input);
         for (const p of sizedPlans) for (const t of p.probe) s.ladder.probeRisks.add(t);
+        for (const p of sizedPlans) for (const t of p.risk) if (STAKE_TAGS.includes(t)) s.ladder.stakeTags.add(t);
       }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
@@ -5088,6 +5119,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     out.push(pressureDoctorLine(readPressure(pressurePath(s.agentDir), sampleSecondsOf(s.config.config), pressureNow())));
 
+    if (!s.isChild && ctx.model) {
+      const w = missingPairWarning(s.config.config, (await currentRoles(s, ctx)).roles, `${ctx.model.provider}/${ctx.model.id}`);
+      if (w) out.push(`WARN ${w}`);
+    }
     out.push(`INFO ${providersLine(ctx.modelRegistry as unknown as Parameters<typeof providersLine>[0])}`);
     const providers = get(s.config.config, "providers");
     const names = providers && typeof providers === "object" ? Object.keys(providers as object).filter((p) => p !== "allowed") : [];

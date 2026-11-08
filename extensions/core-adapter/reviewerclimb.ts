@@ -8,9 +8,11 @@
 // Only `reviewer` launches the foreman passed no model for.
 // Off unless ladder.reviewerClimb.enabled is true (the generic default is false).
 // The different-model rule (applyReviewModelRule) applies to every `reviewer` launch, climb or not.
-// Per-occasion overrides (ceremony.reviewByOccasion, applyOccasionOverrides) come before the rank check.
+// Per-occasion overrides (ceremony.reviewByOccasion, applyOccasionOverrides) come before the rank check; the model they write is
+// used as set (the rank check skips it, like a pair; index.ts).
 import { get, type Json } from "./config.ts";
 import { clampLevel, splitLevel, type Thinking } from "./launchmodel.ts";
+import { globSegMatch } from "./glob.ts";
 import { OCCASIONS, type Occasion } from "./occasion.ts";
 import { ranksOf, tierOf } from "./ranks.ts";
 import { hasStrongRung, launchEntries } from "./ladder.ts";
@@ -227,6 +229,66 @@ export interface OccasionOverrideInput {
   config: Json | undefined;
   maxThinking: unknown;
   childMaxThinking: unknown;
+  /** High-stakes launches by entry (stakeOf): they take ceremony.highStakes.model when the occasion has no model of its own. */
+  stakes?: Map<Json, Stake>;
+}
+
+/** ceremony.highStakes: the model high-stakes reviews use (null: none) and the diff path globs that make a review high stakes. */
+export const HIGH_STAKES_PATHS: readonly string[] = [".github/workflows/**"];
+export const STAKE_TAGS: readonly string[] = ["security", "guard", "permission"];
+
+export function highStakesConfig(config: Json | undefined): { model: string | null; paths: string[] } {
+  const raw = get(config, "ceremony.highStakes");
+  const box = isObj(raw) ? raw : {};
+  const model = typeof box.model === "string" && box.model.trim() ? box.model.trim() : null;
+  const paths = Array.isArray(box.paths) ? box.paths.filter((p): p is string => typeof p === "string" && p.trim() !== "") : [...HIGH_STAKES_PATHS];
+  return { model, paths };
+}
+
+/** Why a reviewer launch is high stakes (any rule fires), with the risk tags and the first matching paths. */
+export interface Stake {
+  reasons: string[];
+  tags?: string[];
+  paths?: string[];
+}
+
+/** A path glob: `**` spans any number of segments (also none), `*` `?` and classes stay inside one segment. */
+export function pathGlob(glob: string, path: string): boolean {
+  const walk = (g: string[], p: string[]): boolean => {
+    if (g.length === 0) return p.length === 0;
+    if (g[0] === "**") return walk(g.slice(1), p) || (p.length > 0 && walk(g, p.slice(1)));
+    return p.length > 0 && globSegMatch(g[0], p[0]) && walk(g.slice(1), p.slice(1));
+  };
+  return walk(glob.split("/").filter(Boolean), path.split("/").filter(Boolean));
+}
+
+/** The paths a unified diff touches, in order, without repeats. */
+export function diffPaths(diff: string | null): string[] {
+  const out = new Set<string>();
+  for (const line of (diff ?? "").split(/\r?\n/)) {
+    const m = /^diff --git a\/(.*) b\/(.*)$/.exec(line);
+    if (m) out.add(m[2]);
+  }
+  return [...out];
+}
+
+/**
+ * The high-stakes rules of a reviewer launch: occasion plan-review / second-opinion; pre-pr on the heavy tier; a session builder
+ * risk tag security / guard / permission since the last counted review; a work-diff path matching ceremony.highStakes.paths.
+ * Null when none fires.
+ */
+export function stakeOf(occasion: Occasion | undefined, tier: string | undefined, tags: Iterable<string>, diff: string | null, config: Json | undefined): Stake | null {
+  if (!occasion) return null;
+  const reasons: string[] = [];
+  if (occasion === "plan-review" || occasion === "second-opinion") reasons.push("occasion");
+  if (occasion === "pre-pr" && tier === "heavy") reasons.push("heavy_pre_pr");
+  const hit = [...new Set(tags)].filter((t) => STAKE_TAGS.includes(t));
+  if (hit.length > 0) reasons.push("risk_tag");
+  const globs = highStakesConfig(config).paths;
+  const paths = globs.length === 0 ? [] : diffPaths(diff).filter((p) => globs.some((g) => pathGlob(g, p))).slice(0, 5);
+  if (paths.length > 0) reasons.push("sensitive_path");
+  if (reasons.length === 0) return null;
+  return { reasons, ...(hit.length > 0 ? { tags: hit } : {}), ...(paths.length > 0 ? { paths } : {}) };
 }
 
 /**
@@ -234,38 +296,57 @@ export interface OccasionOverrideInput {
  * `reviewer` entry of an occasion with an override (panel shadows come later and keep theirs). The
  * model replaces the mapped one unless a repeat-fail or security climb raised the entry (the climb
  * wins); thinking replaces the level (also a security climb's rung, written after the rank check),
- * capped by maxThinking and childMaxThinking. Returns `review_occasion {occasion, thinking,
- * model_overridden}` records and the applied level per entry (for the different-model rule).
+ * capped by maxThinking and childMaxThinking. A high-stakes entry (`o.stakes`) whose occasion has no model takes
+ * ceremony.highStakes.model the same way (the occasion's own model wins) and gets `review_stakes {occasion, level, reasons,
+ * tags?, paths?, model_applied}`. Returns `review_occasion {occasion, thinking, model_overridden}` records, the record
+ * that carries the model per entry (the caller marks `policy_override`), and the applied level per entry (for the
+ * different-model rule).
  */
-export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasion>, climbs: ReviewerClimb[], o: OccasionOverrideInput): { traces: Record<string, unknown>[]; thinking: Map<Json, Thinking>; overrode: Set<Json> } {
+export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasion>, climbs: ReviewerClimb[], o: OccasionOverrideInput): { traces: Record<string, unknown>[]; thinking: Map<Json, Thinking>; overrode: Set<Json>; traceOf: Map<Json, Record<string, unknown>> } {
   const table = reviewByOccasion(o.config);
   const traces: Record<string, unknown>[] = [];
   const thinking = new Map<Json, Thinking>();
   const overrode = new Set<Json>();
-  if (table.size === 0) return { traces, thinking, overrode };
+  const traceOf = new Map<Json, Record<string, unknown>>();
+  if (table.size === 0 && !o.stakes?.size) return { traces, thinking, overrode, traceOf };
+  const hs = highStakesConfig(o.config);
   for (const e of launchEntries(input)) {
     const occ = e.agent === "reviewer" ? occasions.get(e) : undefined;
-    const ov = occ ? table.get(occ) : undefined;
-    if (!occ || !ov) continue;
+    if (!occ) continue;
+    const ov = table.get(occ);
+    const stake = o.stakes?.get(e);
+    if (!ov && !stake) continue;
+    const fromStakes = !ov?.model && stake !== undefined && hs.model !== null;
+    const model = ov?.model ?? (fromStakes ? hs.model : null);
     const climb = climbs.find((c) => c.entry === e);
-    const overridden = ov.model !== null && !climb;
+    const overridden = model !== null && !climb;
     if (overridden) {
       overrode.add(e);
       const own = typeof e.model === "string" ? splitLevel(e.model).level : null;
-      const m = splitLevel(ov.model as string);
+      const m = splitLevel(model as string);
       // the override's own level, else the mapped rung's
-      e.model = cappedRung(m.level || !own ? (ov.model as string) : `${m.base}:${own}`, o.maxThinking, o.childMaxThinking);
+      e.model = cappedRung(m.level || !own ? (model as string) : `${m.base}:${own}`, o.maxThinking, o.childMaxThinking);
     }
     let level: Thinking | null = null;
-    if (ov.thinking) {
+    if (ov?.thinking) {
       level = clampLevel(clampLevel(ov.thinking, o.maxThinking), o.childMaxThinking);
       if (typeof e.model === "string" && e.model) e.model = `${baseOf(e.model)}:${level}`;
       if (climb?.reason === "security") climb.model = `${baseOf(climb.model)}:${level}`;
       thinking.set(e, level);
     }
-    traces.push({ event: "review_occasion", role: "reviewer", occasion: occ, thinking: level, model_overridden: overridden });
+    let rec: Record<string, unknown> | undefined;
+    if (ov) {
+      rec = { event: "review_occasion", role: "reviewer", occasion: occ, thinking: level, model_overridden: ov.model !== null && !climb };
+      traces.push(rec);
+    }
+    if (stake) {
+      const st: Record<string, unknown> = { event: "review_stakes", role: "reviewer", occasion: occ, level: "high", reasons: stake.reasons.join(","), ...(stake.tags ? { tags: stake.tags.join(",") } : {}), ...(stake.paths ? { paths: stake.paths.length } : {}), model_applied: fromStakes && overridden };
+      traces.push(st);
+      if (fromStakes) rec = st;
+    }
+    if (rec && overridden) traceOf.set(e, rec);
   }
-  return { traces, thinking, overrode };
+  return { traces, thinking, overrode, traceOf };
 }
 
 export interface ReviewModelInput {
@@ -306,10 +387,12 @@ export type ReviewerReason = "paired" | "distinct" | "same_as_foreman" | "no_alt
  * [roles.reviewer, roles.reviewer.strong], else the string ceremony.reviewModel (`same_as_foreman`), else
  * `no_alternative` (model unchanged). The model is returned as configured, levels not capped.
  */
-export function effectiveReviewer(entryModel: string, roles: Record<string, Json>, config: Json | undefined, foremanModel: string, pinned?: boolean): { model: string; reason: ReviewerReason } {
+export function effectiveReviewer(entryModel: string, roles: Record<string, Json>, config: Json | undefined, foremanModel: string, pinned?: boolean, occasion?: boolean): { model: string; reason: ReviewerReason } {
   const foreman = baseOf(foremanModel);
   const from = baseOf(entryModel);
   const pair = reviewPairs(config).get(foreman);
+  // an occasion model is used as set, except when it is the foreman's own model: then the pair, else the next differing rung
+  if (occasion && from === foreman) pinned = false;
   if (pair) return pinned ? { model: entryModel, reason: "paired_skipped" } : { model: pair, reason: "paired" };
   if (from !== foreman) return { model: entryModel, reason: "distinct" };
   const rungs = reviewerRungs(roles);
@@ -318,6 +401,21 @@ export function effectiveReviewer(entryModel: string, roles: Record<string, Json
   const fallback = typeof set === "string" && set.trim() && baseOf(set.trim()) !== foreman ? set.trim() : null;
   const pick = rungs.slice(own + 1).find((m) => baseOf(m) !== foreman) ?? fallback;
   return pick ? { model: pick, reason: "same_as_foreman" } : { model: entryModel, reason: "no_alternative" };
+}
+
+/**
+ * The warning text when no ceremony.reviewModel pair covers the foreman's live model and the everyday reviewer
+ * would be swapped (`same_as_foreman`) or stay on the foreman's model (`no_alternative`; an unmapped reviewer inherits
+ * it); null when a pair covers it or the reviewer already differs. Advice only, never blocks a launch.
+ */
+export function missingPairWarning(config: Json | undefined, roles: Record<string, Json>, foremanModel: string | null): string | null {
+  if (!foremanModel) return null;
+  const foreman = baseOf(foremanModel);
+  if (!foreman.includes("/") || reviewPairs(config).has(foreman)) return null;
+  const r = effectiveReviewer(rungOf(roles.reviewer) ?? foreman, roles, config, foreman);
+  if (r.reason !== "same_as_foreman" && r.reason !== "no_alternative") return null;
+  const what = r.reason === "same_as_foreman" ? `the reviewer would be swapped to ${baseOf(r.model)} by the different-model rule` : "the reviewer would run on the foreman's own model";
+  return `no reviewer pair for foreman model ${foreman}: ${what}. Set ceremony.reviewModel["${foreman}"] = "<provider>/<model>" in foreman.json to choose the reviewer model for this foreman.`;
 }
 
 /**
@@ -338,7 +436,7 @@ export function applyReviewModelRule(input: Json, roles: Record<string, Json>, o
     if (e.agent !== "reviewer" || typeof e.model !== "string") continue;
     const from = baseOf(e.model);
     const pin = o.pinned?.get(e);
-    const r = effectiveReviewer(e.model, roles, o.config, o.foreman, pin !== undefined);
+    const r = effectiveReviewer(e.model, roles, o.config, o.foreman, pin !== undefined, pin === "occasion");
     if (r.reason === "distinct") continue;
     if (r.reason === "no_alternative" || r.reason === "paired_skipped") {
       out.push({ event: "review_model", role: "reviewer", from, to: from, reason: r.reason, ...(r.reason === "paired_skipped" && pin ? { pin } : {}) });

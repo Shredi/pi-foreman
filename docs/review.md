@@ -74,6 +74,15 @@ not the repeat-fail climb is enabled.
 The rule judges the foreman's **live** model (the model running the turn, which is the idle rung's model while the
 foreman is downshifted, see [ladder](ladder.md#idle-rung-foreman-downshift)), not the base model the rank checks keep.
 
+Roles (`roles.reviewer`, `.strong`), explicit launch models and the security rung keep the rank check and this rule.
+A model written by `ceremony.reviewByOccasion` or `ceremony.highStakes.model` is used as set: see below.
+
+**Missing pair.** When no `ceremony.reviewModel` pair covers the live foreman model and the reviewer would be swapped
+(`same_as_foreman`) or stay on the foreman's model (`no_alternative`, which includes an unmapped reviewer that inherits
+it), the harness warns once per model (at session start and on a model change, a UI notice, never system-prompt text)
+and `/foreman doctor` prints a `WARN` line naming the model and the key `ceremony.reviewModel["<provider>/<model>"]`.
+The warning is advice only and never blocks a launch.
+
 ### Reviewer pairs
 
 `ceremony.reviewModel` may also be a map from a foreman model to a reviewer model, `"<provider>/<model>":
@@ -88,9 +97,12 @@ trace never names a rung the launch does not use). It never overrides three pins
 
 - `explicit`: a model the launch call set and the child rank policy allowed (`explicitModelAllowed`);
 - `security_rung`: the model of a security climb (`ladder.reviewerClimb`);
-- `occasion`: a model set by `ceremony.reviewByOccasion`.
+- `occasion`: a model set by `ceremony.reviewByOccasion` (or by `ceremony.highStakes.model`).
 
-An occasion's thinking override still replaces the level of a pair. Invalid map entries (a value that is not a
+An occasion model that equals the live foreman's base is the exception: that foreman's pair replaces it (`reason:
+paired`), else today's rule moves it to the next differing rung of `roles.reviewer` / `.strong`, else to the string
+`reviewModel`, else `no_alternative`. An occasion model with a differing base stays (`paired_skipped`, pin `occasion`).
+An occasion's thinking override still replaces the level of a pair, and applies to the model moved to. Invalid map entries (a value that is not a
 string, a key without a `/`) are dropped with a config warning; `foreman doctor` checks the pair values against the model
 registry. Two neutral examples:
 
@@ -145,9 +157,27 @@ config only (a project layer's value is dropped with a warning). Default `{}`: n
 override applies after the role map and before the different-model rule, so an overridden model takes part in that
 rule. The thinking level is clamped by `maxThinking` and `childMaxThinking`. A model chosen by the repeat-fail or
 security climb wins over an occasion model; the thinking override still applies. An occasion model is
-written before the rank check, like the role map: with `ranks` set, a model the rank policy refuses (by default
-one not ranked below the foreman) refuses the launch. Trace `review_occasion {occasion,
-thinking, model_overridden}`.
+used as set, like a pair: the rank policy does not refuse it, and when it would have refused it the trace carries
+`policy_override: true`. The skip is per launch entry; another entry of the same launch that carries the same model
+through the role map is still checked. Trace `review_occasion {occasion, thinking, model_overridden}`.
+
+### High stakes
+
+A reviewer launch is high stakes when any rule fires: `occasion` (`plan-review` or `second-opinion`), `heavy_pre_pr`
+(`pre-pr` on the heavy tier), `risk_tag` (a builder launch of this session since the last counted review carried a
+risk tag `security`, `guard` or `permission`) or `sensitive_path` (the work diff the reviewer sees touches a path
+matching `ceremony.highStakes.paths`). Every high-stakes launch writes `review_stakes {role, occasion, level: high,
+reasons, tags?, paths?, model_applied}` (`reasons` and `tags` are comma-joined, `paths` is the number of matching
+paths). Low and medium launches write nothing.
+
+| Key | Values | Meaning |
+|---|---|---|
+| `ceremony.highStakes.model` | `<provider>/<model>[:<level>]`, default `null` | Model of a high-stakes reviewer launch whose occasion has no model of its own. |
+| `ceremony.highStakes.paths` | glob list, default `[".github/workflows/**"]` | Diff paths that make a launch high stakes; a list replaces the default. |
+
+Precedence: the occasion's own `reviewByOccasion.<occasion>.model`, then `ceremony.highStakes.model`, then the pair or
+the different-model rule; the security climb wins over both. `highStakes.model` is used as set, like an occasion
+model. Unset, the model never changes. User or overlay config only; the PR gate and merge flow are unchanged.
 
 ## Review panel
 
@@ -276,3 +306,17 @@ higher thinking level for the pre-PR review:
 ```
 
 An occasion can name a model too: `"reviewByOccasion": {"plan-review": {"model": "<model-id>"}}`.
+
+A neutral overlay with an everyday pair to a mid model and the top model for plan-review and second-opinion:
+
+```json
+{
+  "ceremony": {
+    "reviewModel": { "provider-a/big": "provider-a/mid" },
+    "reviewByOccasion": {
+      "plan-review": { "model": "provider-a/top" },
+      "second-opinion": { "model": "provider-a/top" }
+    }
+  }
+}
+```
