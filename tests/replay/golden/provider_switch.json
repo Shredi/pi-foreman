@@ -59,10 +59,7 @@
    "event": "turn"
   },
   {
-   "event": "guard",
-   "toolFamily": "Stop",
-   "guard": "ledger_guard_stop",
-   "decision": "none"
+   "event": "finish_gate"
   },
   {
    "event": "child_scratch",
@@ -147,10 +144,7 @@
    "event": "turn"
   },
   {
-   "event": "guard",
-   "toolFamily": "Stop",
-   "guard": "ledger_guard_stop",
-   "decision": "none"
+   "event": "finish_gate"
   },
   {
    "event": "child_scratch",

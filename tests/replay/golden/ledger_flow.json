@@ -136,16 +136,16 @@
    "event": "turn"
   },
   {
-   "event": "guard",
-   "role": "foreman",
-   "toolFamily": "Stop",
-   "guard": "ledger_guard_stop",
-   "decision": "deny"
+   "event": "finish_gate"
   },
   {
-   "event": "stop_hold",
-   "guard": "ledger_guard_stop",
-   "decision": "continue"
+   "event": "child_scratch",
+   "role": "explorer"
+  },
+  {
+   "event": "role_result",
+   "role": "explorer",
+   "exit": 0
   },
   {
    "event": "llm",
@@ -156,18 +156,15 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
-   "decision": "none"
+   "decision": "deny"
   },
   {
-   "event": "child_scratch",
-   "role": "explorer"
-  },
-  {
-   "event": "role_result",
-   "role": "explorer",
-   "exit": 0
+   "event": "stop_hold",
+   "guard": "ledger_guard_stop",
+   "decision": "continue"
   },
   {
    "event": "llm",

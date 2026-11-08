@@ -85,8 +85,9 @@ class TestLongWait(ReplayCase):
         for tag, step, names in wake:
             self.assertIn("pi-foreman", names.split(","), (tag, step))
         holds = [r for r in recs if r.get("type") == "entry_appended" and (r.get("entry") or {}).get("customType") == "pi-foreman-stop-gate"]
-        self.assertEqual(len(holds), 2, "one stop hold per run, the wake run included")
-        self.assertIn("LEDGER-second.md", holds[1]["entry"]["content"])
+        # The first run ends with the timer pending: a pause, no hold. The wake run still gets its own hold.
+        self.assertEqual(len(holds), 1, "the paused run spends no hold; the wake run gets one")
+        self.assertIn("LEDGER-second.md", holds[0]["entry"]["content"])
 
 
     def test_section_survives_a_compaction_between_wakes(self):
