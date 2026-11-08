@@ -207,7 +207,7 @@ export default class PlanPanel extends View {
     const cur = this.cur;
     this.loadedFor = cur?.key ?? null;
     this.loadedAt = Date.now();
-    if (!cur?.key) return;
+    if (!cur?.key) { this.prefetch(cx); return; }
     this.busy = true;
     const force = this.dirty;
     this.dirty = false;
@@ -446,7 +446,7 @@ export default class PlanPanel extends View {
     // has no document (nothing to read): then the real state shows, empty message included. "Loading" shows only when nothing
     // was shown yet.
     const want = cur.key ? this.recs.get(cur.key) : null;
-    if (want?.ready || !this.held || !cur.key) this.held = { tabId: cur.tab.id, key: cur.key, rec: want ?? null };
+    if (want?.ready || !this.held?.key || !cur.key) this.held = { tabId: cur.tab.id, key: cur.key, rec: want ?? null };
     const shown = this.held;
     const rec = shown.rec;
     const planRec = cur.planKey ? this.recs.get(cur.planKey) : null;

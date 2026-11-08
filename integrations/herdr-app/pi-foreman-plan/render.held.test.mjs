@@ -79,6 +79,29 @@ test("a tab without a document releases the held plan and shows the empty state;
   assert.ok(strings(foreign).includes("No plan published by this session"));
 });
 
+test("from a planless view a click on a child whose read is pending shows Loading, then the plan", async () => {
+  reset();
+  const { m, cx, settle } = boot(); await settle();
+  m.render(cx);
+  click("bare"); m.render(cx); await settle();
+  assert.ok(strings(m.render(cx)).includes("No plan published by this session"));
+  m.recs.delete("local|/s/c1");
+  world.files.hold("/s/c1/plan.json");
+  m.tab = "c:bc";
+  const loading = m.render(cx);
+  assert.ok(!strings(loading).includes("No plan published by this session"), "no empty state while the read is pending");
+  assert.ok(strings(loading).includes("Loading plan…"));
+  world.files.flush("/s/c1/plan.json"); await settle();
+  assert.ok(mds(m.render(cx)).some((t) => t.includes("Gamma body")));
+});
+
+test("a planless root still prefetches its children", async () => {
+  reset();
+  const { m, cx, settle } = boot(); await settle();
+  click("bare"); m.render(cx); await settle();
+  assert.ok(m.recs.get("local|/s/c1")?.ready, "child read without being selected");
+});
+
 test("a prefetch read superseded by the click read of the same key neither marks ready nor shows the empty state", async () => {
   reset();
   world.files.hold("/s/c1/plan.json");
