@@ -508,14 +508,14 @@ The items fill the dots row in this order (see Dots). Overlay authors: see
 
 ## Optional add-on: background tasks
 
-Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). It is an optional add-on in `config/addons.json` (exact pin, consent only). Install it with `foreman setup --addon background-tasks` (or the picker), or by hand with `pi install npm:pi-background-tasks@2.6.10`, and set the variable in your shell profile:
+Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). It is a default add-on in `config/addons.json` (exact pin); a plain `foreman setup` installs it and writes the variable below into your shell profile (skip with `--skip-addon background-tasks` or `--no-env`). By hand: `pi install npm:pi-background-tasks@2.6.10`, then set the variable in your shell profile:
 
     export PI_BG_FEATURES=process
 
 The add-on reads `PI_BG_FEATURES` when Pi starts, not at install, so a prefix on `pi install` does nothing. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
 named `anthropic` and decides by provider name (`model.provider === 'anthropic'`). A `claude-bridge` provider serving `claude-*` ids is not
 treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
-`foreman setup` prints the consent line and this variable hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).
+`foreman setup` reports what it wrote or leaves a hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).
 
 The add-on reads `PI_BG_FEATURES` when Pi starts, so `foreman session open` passes every `PI_BG_*` variable of the opener
 (`PI_BG_FEATURES` first; names and values checked, one that fails is skipped with a note) into the child's launch line, and

@@ -62,7 +62,7 @@ const lines = (...l) => `${l.join("\n")}\n`;
 
 // Prompt order: profile; "Adjust features?"; one flip prompt per area group (tools, models, review, ceremony, retro, ops, ui and the
 // safety relaxations; a flip is followed by a second prompt for the same group); one y/N per add-on (polish, background-tasks); apply.
-const SESSION = lines("1", "y", "1", "", "", "", "", "", "", "", "", "n", "y", "y");
+const SESSION = lines("1", "y", "1", "", "", "", "", "", "", "", "", "n", "y", "n", "n", "y");
 
 test("the picker takes a profile, a flipped toggle and an add-on, then applies on confirm", () => {
   const env = fresh();
@@ -81,7 +81,7 @@ test("the picker takes a profile, a flipped toggle and an add-on, then applies o
   assert.equal(cfg.roles.foreman.codemode, false);
   assert.equal(cfg.tools.pr, false);
   assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
-  assert.match(r.out, /PI_BG_FEATURES=process permanently in your shell profile/);
+  assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself/);
 });
 
 test("the printed equivalent flag line reproduces the same foreman.json", () => {
@@ -125,7 +125,7 @@ test("the picker opens again with --pick, preselects the recorded profile and ke
   // a recorded profile and no --pick: no picker
   const quiet = run(env, [], "");
   assert.doesNotMatch(quiet.out, /Profiles:/);
-  const r = run(env, ["--pick"], lines("", "n", "n", "n", "y"));
+  const r = run(env, ["--pick"], lines("", "n", "y")); // every add-on is installed by the first run: no add-on prompts
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /Profile \[1\]:/);
   assert.match(r.out, /foreman\.json: no change/);

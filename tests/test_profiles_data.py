@@ -193,11 +193,13 @@ class ProfilesData(unittest.TestCase):
     def test_addons_exact_versions_and_no_recommended(self):
         self.assertEqual(self.addons["version"], 1)
         entries = self.addons["addons"]
-        self.assertEqual([a["id"] for a in entries], ["polish", "background-tasks"])
+        self.assertEqual([a["id"] for a in entries], ["polish", "background-tasks", "quiver", "memory"])
         self.assertEqual({a["id"]: (a["package"], a["version"]) for a in entries},
-                         {"polish": ("pi-polish", "0.1.2"), "background-tasks": ("pi-background-tasks", "2.6.10")})
+                         {"polish": ("pi-polish", "0.1.2"), "background-tasks": ("pi-background-tasks", "2.6.10"),
+                          "quiver": ("pi-quiver", "6.14.2"), "memory": ("pi-memory", "0.4.2")})
         for a in entries:
             self.assertNotIn("recommended", a)
+            self.assertIs(a["default"], True)
             self.assertRegex(a["version"], r"^\d+\.\d+\.\d+$")
             self.assertRegex(a["package"], r"^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$")
             self.assertTrue(a["purpose"] and isinstance(a["clashes"], list))

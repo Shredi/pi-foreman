@@ -70,7 +70,7 @@ test("features addons shows the registry with installed state from both settings
   fs.mkdirSync(path.join(env.cwd, ".pi"));
   fs.writeFileSync(path.join(env.cwd, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-background-tasks"] }));
   const rows = JSON.parse(cli(env, ["addons", "--json"]).stdout);
-  assert.deepEqual(rows.map((r) => [r.id, r.installed.map((i) => i.scope)]), [["polish", ["global"]], ["background-tasks", ["project"]]]);
+  assert.deepEqual(rows.map((r) => [r.id, r.installed.map((i) => i.scope)]), [["polish", ["global"]], ["background-tasks", ["project"]], ["quiver", []], ["memory", []]]);
   assert.equal(rows[1].spec, "npm:pi-background-tasks@2.6.10");
   assert.match(cli(env, ["addons"]).out, /polish +npm:pi-polish@0\.1\.2 +installed \(npm:pi-polish@0\.1\.2, global\)/);
 });
