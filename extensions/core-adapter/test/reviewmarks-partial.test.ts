@@ -32,6 +32,11 @@ test("decorated qualified PASS never marks and is noted; decorated unqualified P
   }
 });
 
+test("control and line-separator characters in a note become spaces", () => {
+  const note = partialItemsOf("2. PARTIAL: a\u0085b c d\x0be\x00f\x7fg\u2028h")[0].note;
+  assert.equal(note, "PARTIAL: a b c d e f g h");
+});
+
 test("FAIL parsing unchanged; V is never marked or noted", () => {
   assert.deepEqual(verdictItemsOf("1. FAIL a\n2. PASS (partial)\n3. FAIL b", "FAIL"), ["1", "3"]);
   assert.deepEqual(passItemsOf("V. PASS"), []);

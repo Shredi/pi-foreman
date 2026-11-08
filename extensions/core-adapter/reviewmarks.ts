@@ -68,7 +68,7 @@ export function partialItemsOf(text: string): { n: string; note: string }[] {
   for (const { n, rest } of itemLines(text)) {
     if (passed.has(n) || seen.has(n) || !(QUALIFIED.test(rest) || /^PARTIAL\b/.test(rest))) continue;
     seen.add(n);
-    out.push({ n, note: rest.replace(/\s+/g, " ").replace(/[\s`*_]+$/, "").slice(0, 200) });
+    out.push({ n, note: rest.replace(/[\x00-\x1f\x7f\x85\u2028\u2029]/g, " ").replace(/\s+/g, " ").replace(/[\s`*_]+$/, "").slice(0, 200) });
   }
   return out;
 }
