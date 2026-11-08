@@ -196,7 +196,7 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval } from "./planstate.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -990,6 +990,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhase: s.planPhase,
       reviews: s.reviews,
       loopStop: s.loopStop,
+      gate: { steps: { ...s.steps }, reviewGate: s.reviewGate, passMark: s.passMark },
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -999,6 +1000,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       // the session file is not writable now: the state stays in memory
     }
+  }
+
+  /**
+   * The finish gate's progress of the same session (never a fork): the recorded `gate`, else, for an entry from before it was
+   * recorded, rebuilt from the newest code review: a PASS counts as builder and reviewer done, and as revised when HEAD moved since.
+   */
+  function restoreGate(s: Session, e: CeremonyStateEntry): void {
+    if (e.gate) {
+      s.steps = { ...e.gate.steps };
+      s.reviewGate = e.gate.reviewGate;
+      s.passMark = e.gate.passMark;
+      s.passSnap = e.gate.passMark?.tree ? { cwd: e.gate.passMark.cwd, tree: e.gate.passMark.tree } : null;
+      return;
+    }
+    const last = e.reviews.findLast((r) => r.kind !== "plan");
+    if (!last || last.verdict !== "pass") return;
+    s.steps = { builder: Math.max(s.steps.builder, 1), reviewer: Math.max(s.steps.reviewer, 1) };
+    s.reviewGate = { last: "pass", revised: false };
+    if (last.head) s.reviewSync = s.reviewSync.then(async () => {
+      const cur = await headOf(s.cwd);
+      if (cur !== last.head && s.reviewGate.last === "pass") s.reviewGate = onRevision(s.reviewGate);
+    });
   }
 
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
@@ -1011,6 +1034,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.planPhase = e.planPhase;
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     s.loopStop = e.loopStop ?? null;
+    if (reason !== "fork") restoreGate(s, e);
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -2048,6 +2072,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(counted);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now(), runId);
+          persistCeremonyState(s);
           if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
@@ -3530,10 +3555,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.reviewGate.last !== "pass") return;
         s.passSnap = tree ? { cwd, tree } : null;
         s.passMark = { cwd, at, head, tree, ledger, builderRuns };
+        persistCeremonyState(s);
       });
     }
     if (s.touchUps.delete(runId)) s.reviewSync = s.reviewSync.then(async () => {
-      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) s.reviewGate = { ...s.reviewGate, revised: false };
+      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) {
+        s.reviewGate = { ...s.reviewGate, revised: false };
+        persistCeremonyState(s);
+      }
     });
   }
 
@@ -3952,7 +3981,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     if (owner && !owner.isChild && !event.isError && (owner.reviewGate.last !== null && !owner.reviewGate.revised) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
-      if (!touchUp) owner.reviewGate = onRevision(owner.reviewGate);
+      if (!touchUp) {
+        owner.reviewGate = onRevision(owner.reviewGate);
+        persistCeremonyState(owner);
+      }
     }
     if (owner && event.toolName === "bash") recordBashLog(owner, event.details);
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
@@ -3999,6 +4031,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (roles.includes("builder")) {
               if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
               s.reviewGate = onRevision(s.reviewGate);
+              persistCeremonyState(s);
             }
             const after = reopened(s.reviewGate);
             if (after) for (const role of roles.filter((r) => REVIEW_ROLES.includes(r))) s.trace?.emit({ event: "rereview", role, after });

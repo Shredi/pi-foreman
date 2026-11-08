@@ -162,6 +162,17 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       fire: (name: string, event: unknown) => handlers.get(name)?.(event, ctx),
       /** The run-end event of a launch started by `reviewLaunch` (its callId), as the harness delivers it. */
       endRun: (id: string, output: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] }),
+      /** A launch of any `agent` that started (a run id came back), or the block reason; `endRunAs` ends it. */
+      async agentLaunch(agent: string, task: string, extra: Record<string, unknown> = {}): Promise<{ blocked: string | null; id: string }> {
+        const id = `c${++calls}`;
+        const input = { agent, task, ...extra };
+        await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } }, ctx);
+        const blocked = (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block;
+        if (blocked) return { blocked: blocked.reason ?? "blocked", id };
+        await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
+        return { blocked: null, id };
+      },
+      endRunAs: (id: string, agent: string, output: string, cwd?: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent, success: true, status: "completed", results: [{ agent, status: "completed", success: true, output, ...(cwd ? { cwd } : {}) }] }),
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
       command: (name: string, args: string) => commands.get(name)!.handler(args, ctx),
       /** A foreman write of the ledger (tool_call, file, tool_result) so the tier header is read. */
