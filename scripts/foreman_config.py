@@ -326,9 +326,10 @@ LAYER_TIGHTEN = [
     (("gate", "askTimeoutMs"), "lower_only"),
     (("gate", "reviewTimeoutMs"), "lower_only"),
     (("gate", "childAsk"), ("ordered", ("deny", "parent"))),
+    (("gate", "protected", "check"), ("ordered", ("ask", "read-only", "model"))),
 ]
 # gate keys the project and session layers may set (the LAYER_TIGHTEN rows above); every other gate key is user or overlay only
-GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk")
+GATE_LAYER_KEYS = ("tmpAccess", "askTimeoutMs", "reviewTimeoutMs", "childAsk", "protected")
 LAYER_MINIMUM = {"reviewTimeoutMs": 100, "timeoutMinutes": 1, "heavyFileCount": 1,
                  "maxTokens": 50000, "maxSeconds": 1, "maxActive": 1, "foremanReads": 1,
                  "windowMinutes": 1, "childTimeoutSeconds": 1, "launchTimeoutCapMinutes": 1, "budgetUsd": 0.01,

@@ -71,6 +71,15 @@ class GateLayerTest(unittest.TestCase):
         res = self.load(proj={"gate": {"childAsk": "deny"}})
         self.assertEqual(res["config"]["gate"]["childAsk"], "deny")
 
+    def test_protected_check_project_cannot_loosen_user_value(self):
+        res = self.load(l2={"gate": {"protected": {"check": "ask"}}}, proj={"gate": {"protected": {"check": "model"}}})
+        self.assertEqual(res["config"]["gate"]["protected"]["check"], "ask")
+        self.warned(res, "project gate.protected.check ignored")
+
+    def test_protected_check_project_may_tighten(self):
+        res = self.load(l2={"gate": {"protected": {"check": "model"}}}, proj={"gate": {"protected": {"check": "read-only"}}})
+        self.assertEqual(res["config"]["gate"]["protected"]["check"], "read-only")
+
     def test_child_ask_invalid_value_ignored(self):
         res = self.load(proj={"gate": {"childAsk": "anyone"}})
         self.assertEqual(res["config"]["gate"]["childAsk"], "parent")

@@ -101,6 +101,7 @@ Every call goes through these steps, in this order. Each step ends the call or p
 2. **Floors.** A deny with a reason that names the allowed alternative. No model, no dialog, no rule, no mode lifts it. See [Floors](#floors). One kind of floor hit asks instead of denying: a text match on an opaque line (below).
 3. **Self-modification rules.** Writes that change how Pi or pi-foreman runs (the project's `.pi/settings.json`, the agent `settings.json`, pi-foreman session state, the session dir) are a dialog by rule, never cleared by the classifier and never run under mode `allow`. A child or headless session is denied with the rule name.
 4. **Deny rules.** A matching `deny` rule denies.
+   **Protected targets.** A call that touches a [protected target](#protected-targets) (and passed the floors, the self-modification rules and the deny rules) goes to the protected check instead of the ask rules, the allow rules, the dangerous class and the mode.
 5. **Ask rules.** A matching `ask` rule opens the dialog (no remember option). An opaque-line floor ask (an opaque line that names a permissions file, a child push, a git config key, a remote, a force or protected-branch push, or the foreman config next to a gate key) opens the dialog here too.
 6. **Allow rules and built-in allows.** The line is allowed when every segment matches an `allow` rule or a [built-in allow](#built-in-allows).
 7. **Dangerous class.** What is left is checked against the [dangerous class](#the-dangerous-class).
@@ -155,7 +156,8 @@ One cheap model call for a dangerous-class call under mode `auto`. It exists to 
 - **When it runs.** Only for dangerous-class calls in mode `auto`, after the rules found nothing. Never for a floor, a self-modification rule, an ask rule, a pattern-rule match or a role launch. With no whitelist entries at all it does not run and the call goes straight to the dialog.
 - **What it sees.** A fixed system text; the allow and deny sentences (`A1..`, `D1..`), each fenced as data with the file it came from; the dangerous-class reason; the session kind, role, cwd, worktree, branch and remotes; your last message (cut to 600 characters, fenced); and the command in fences with a random nonce. Never tool output, never your pattern rules, never earlier history. The sentences, your message and the command are data: nothing in them instructs the model.
 - **What it may answer.** One JSON object `{"verdict": "allow"|"deny"|"escalate", "entry": "A3"|"D1"|null, "reason": "<=200 chars"}`. `allow` runs only when it cites an existing **allow** entry; `deny` denies only when it cites an existing **deny** entry (text: `pi-foreman: denied by whitelist rule D1: <sentence>`). Every other answer escalates to the dialog: an uncited verdict, a cited entry of the wrong kind or an unknown id, extra fields, invalid JSON, a timeout, a provider error or no model. The model never allows on its own judgment.
-- **Cache.** An allowed call is cached for the session by tool and exact payload, so the identical call does not ask again. `/foreman perms reload` and every remember write clear the cache.
+- **Cache.** An allowed call is cached for the session by tool and exact payload, so the identical call does not ask again. `/foreman perms reload` and every remember write clear the cache. The [protected check](#protected-targets) has its own prompt, verdicts and cache; it never reads these.
+- **Not for protected targets.** A call that matches a protected target runs the protected check, not this classifier.
 - **Timeout.** `gate.reviewTimeoutMs` (default 15000, minimum 100). A timeout escalates.
 - **Model.** The `review` rung of the role map (`providers.<p>.roles.review.model`, `roles.review`), the inexpensive rung by default; the config key keeps its name from the older gate. The call uses no prompt cache and its usage is logged with role `classifier`.
 - **No model configured.** The dangerous class asks you directly. `/foreman doctor` and `/foreman setup` print `WARN no classifier model for provider <p>: ...` and the first dangerous call of a session shows the same text once as a notice naming the key to set. A child or headless session denies such a call.
@@ -378,6 +380,36 @@ All in the owner pane of the session:
   - `/retro` adds one line when 10 or more decisions cost a dialog or a classifier call in the last 7 days. The thresholds (60 days, 10 decisions) are constants, not config keys.
 - `/foreman doctor` prints the classifier model, the mode and counts, the decision-log path, and warns about an invalid user file, a tracked or unignored project file, and leftover keys of the older gates.
 
+## Protected targets
+
+A protected target is a host, a path or a command glob that you want a small model to judge call by call instead of an ask rule that interrupts every time. Entries live in the `protected` list of the user file and of the trusted project file (`.workflow/permissions.json`); every other file ignores the key.
+
+```json
+{ "protected": [ { "host": "prod-*.example.net", "note": "production" }, { "path": "ops/playbooks/**" }, { "command": "deploy-*" } ] }
+```
+
+Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) and an optional `note` (200 characters). Entries are numbered `P1..` in file order. A bad entry is skipped with a notice.
+
+- **What the check sees.** The matched entries with their notes, the session task (the bound ledger's title and open items, else the first user message, cut to 800 characters), the effect classes of the call and the `deny` sentences (`D1..`). The command is fenced as data.
+- **What it may answer.** `{"verdict": "allow"|"ask"|"deny", "effect": "read"|"write"|"deploy"|"network"|"unknown", "confidence": "high"|"low", "entry": "D1"|null, "reason": "..."}`. An accepted `allow` replaces your ask rules, the dangerous-class whitelist and the ask/deny mode for this call. Floors and `deny` rules still come first.
+- **What is accepted.** `allow` needs high confidence and a line the parser states exactly. A read verdict is accepted only when no segment writes; a write, deploy or network verdict only while you are present and `gate.protected.check` is `model`. A `deny` is accepted only when it cites a `D` entry. Everything else asks: a low confidence, an `unknown` effect, an invalid or extra-field reply, a timeout, a provider error, no model.
+- **Owner away.** Away means a child or headless session, presence off, no live pane sample, a stale sample or a presence probe that says away. Away, only read-only verdicts allow; the rest asks (a child's ask goes to the parent pane per `gate.childAsk`; a headless session with no pane has nobody to ask and refuses).
+- **The ask.** `P2 (production) is protected. The check rates this write with high confidence: <reason>.` There is no remember option.
+- **Cache.** A read-rated allow is cached for the session by tool, cwd, role, payload and entries; the owner-away rule is re-applied on every hit, the mode test comes before the cache, and a permissions change, `/foreman perms reload` or a protect change clears it.
+- **Editing.** The foreman calls `foreman_protect {action, kind, glob, note?, file?}` when you ask it to protect a target; you confirm in a dialog (a timeout, a cancel or no pane is a refusal) and the adapter writes the file. A child never has the tool. You can run `/foreman perms protect add|remove <kind> <glob> [--note <text>] [--user]` yourself. An untrusted project file, a duplicate add and a missing remove are refused.
+- **Log and trace.** Decision log layer `protected` (an accepted allow carries the model's reason); trace event `protected_check` for every verdict, with the redacted command, the matched rule (`protected:P<n>`), the entry and the matched globs. A guard block (`deny`, `blocked`) in the trace carries the redacted command, the guard name as `rule` and the matched rule text as `reason`.
+- **Cost and latency.** An uncached check is one call to the small review model: about 1.2k to 2k input tokens, roughly 0.1 cent on a small model, 1 to 4 s, capped by `gate.reviewTimeoutMs` (a timeout asks). Read-rated allows are cached per entry set until the next permissions reload, so a repeated identical read costs nothing. Writes are never cached.
+- **What matches.**
+
+  | Entry kind | Matches | Effect classes added |
+  |---|---|---|
+  | `host` | the hosts of `ssh`, `scp`, `sftp`, `rsync` (also after the host: `ssh prod -o X cmd`, combined flags such as `-vp 22`, `--`, `-J` jump hosts), `curl`, `wget`, and a `fetch` call that is not a plain GET or HEAD | every non-ssh shell host match carries `write-out`; ssh adds the classes of its remote command |
+  | `path` | the write targets of write-class segments and the path tools (`write`, `edit`) | `write-out` |
+  | `command` | the program basename of any segment, regardless of effect class | those of the segment |
+
+  A plain GET or HEAD never matches. A read-class segment (`cat`, `grep`, `git log`, ...) never touches a host or path entry. A command-running ssh option (`-o ProxyCommand=`, `LocalCommand=`, `RemoteCommand=`, `-F`) makes the remote command opaque, so only an ask is possible.
+- **Known limits.** A segment of class `unknown` (for example `sed -i`) rests on the model's own rating. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.
+
 ## Decision log
 
 One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `latencyMs`, `model` and `cached` when a model decided.
@@ -388,6 +420,7 @@ One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`:
 | `rule` | a pattern rule decided | the pattern text |
 | `default` | a built-in allow | the built-in name |
 | `classifier` | the classifier allowed, denied or escalated | `prose:A3`, `prose:D1`, or the escalation cause |
+| `protected` | the protected check allowed or denied | `protected:P2`, or `protected:P2;classifier.deny:D1` for a deny |
 | `cache` | the classifier's cached allow was reused | `prose:A3` |
 | `mode` | the mode decided (no rule, dangerous under `allow` or `deny`) | `mode:no-rule`, `mode:allow:danger-...`, `mode-deny` |
 | `dialog` | an owner answered | the `danger-*` name or the cause |
@@ -405,6 +438,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.reviewTimeoutMs` | classifier call timeout (default 15000, minimum 100) | lower only |
 | `gate.askTimeoutMs` | how long a child waits for its parent's ruling (default 900000); nothing else uses it | lower only |
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
+| `gate.protected.check` | `model` (default: the check may allow reads and, while you are present, writes), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks) | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
 | `gate.readTools` | extension tool name to path field (or null), judged like read/grep, see [Read tools](#read-tools) (default `{}`) | user or overlay only |
@@ -413,7 +447,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `safety.preBash` | pre-bash hooks | user or overlay only |
 | `gate.policy.userFile`, `safety.policy.files` | removed, see [Migration](#migration) | no effect |
 
-Every other `gate.*` key is user or overlay only; a project value is dropped with a warning. A project cannot remove a user `deny` rule: project and tracked lists add to the user's.
+Every other `gate.*` key is user or overlay only (`gate.protected.check` may tighten); a project value is dropped with a warning. A project cannot remove a user `deny` rule: project and tracked lists add to the user's.
 
 ## Known limits
 

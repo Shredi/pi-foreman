@@ -23,11 +23,27 @@ import type { ParsedRule, RuleSets } from "./rules.ts";
 export type PermMode = "auto" | "ask" | "allow" | "deny";
 export const PERM_MODES: readonly PermMode[] = ["auto", "ask", "allow", "deny"];
 export const PROSE_MAX = 300;
+export const PROTECTED_NOTE_MAX = 200;
 export const PROFILE_ENV = "PI_FOREMAN_PERMS_PROFILE";
+
+/** One `protected` entry as written: exactly one of host / path / command as a glob, with an optional note. */
+export interface ProtectedRaw {
+  kind: "host" | "path" | "command";
+  glob: string;
+  note?: string;
+}
+
+/** A protected-target entry after merging: `P1`.. in merged order (user file first, then the trusted project file). */
+export interface ProtectedEntry extends ProtectedRaw {
+  id: string;
+  source: string;
+}
 
 /** The file shape both files and profiles share. */
 export interface PermBody {
   mode?: PermMode;
+  /** Protected targets (user file and trusted project file only; dropped everywhere else). */
+  protected?: ProtectedRaw[];
   allow: string[];
   ask: string[];
   deny: string[];
@@ -76,6 +92,10 @@ export interface Resolved {
   rules: RuleSets;
   entries: RuleEntry[];
   prose: { allow: ProseEntry[]; deny: ProseEntry[] };
+  /** Protected targets (user, then trusted project), numbered P1.. */
+  protected: ProtectedEntry[];
+  /** Bumps on every reload and every re-resolve that saw a change (caches key on it). */
+  version: number;
   /** Absolute directories the read roots widen by. */
   additionalDirectories: string[];
   /** Validated work folders of the user file: absolute, normalised, never the home dir or one of its ancestors. */
@@ -119,6 +139,25 @@ export function profileName(config: unknown, env: Record<string, string | undefi
 
 export const userFilePath = (agentDir: string): string => path.join(agentDir, "pi-foreman", "permissions.json");
 
+/** The "Protected" block of `/foreman perms list`: id, kind, glob, note and source of each entry. */
+export function protectedBlock(r: Pick<Resolved, "protected">): string[] {
+  if (r.protected.length === 0) return [];
+  return ["Protected:", ...r.protected.map((e) => `  ${e.id}: ${e.kind} ${e.glob}${e.note ? ` - ${e.note}` : ""} (${e.source})`)];
+}
+
+/** Doctor INFO lines: a `Bash(*<word>*)` ask rule whose word looks like a host or path fragment is a candidate for a `protected` entry (docs/permissions.md "Protected targets"). */
+export function protectHintLines(r: Pick<Resolved, "entries" | "protected">): string[] {
+  const out: string[] = [];
+  for (const e of r.entries) {
+    if (e.kind !== "ask" || e.rule.tool !== "Bash" || !e.rule.pattern) continue;
+    const m = /^\*([A-Za-z0-9._/-]{3,})\*$/.exec(e.rule.pattern);
+    if (!m || !/[./-]|prod|stag/i.test(m[1])) continue;
+    if (r.protected.some((p) => p.glob.includes(m[1]))) continue;
+    out.push(`INFO ${e.rule.text} (${e.source}) asks on every call that names ${m[1]}; a protected entry (\`/foreman perms protect add host|path ${m[1]}\`) lets the small model judge reads and writes instead`);
+  }
+  return out;
+}
+
 /** The "Work folders" block of `/foreman perms list`: each folder with its mode and the spelling matched (the real path when it differs), then the warnings. */
 export function workFoldersBlock(r: Pick<Resolved, "workFolders" | "workFolderNotes">, real: (p: string) => string = (p) => p): string[] {
   if (r.workFolders.length === 0 && r.workFolderNotes.length === 0) return [];
@@ -160,8 +199,48 @@ function strList(v: unknown, where: string, notices: string[]): string[] | null 
   return out;
 }
 
-function parseBody(o: Json, where: string, notices: string[]): PermBody | string {
+/** The `protected` list: each entry has exactly one of host / path / command (a glob of 1-300 characters) and an optional note of at most 200; a bad entry is skipped with a notice naming it. */
+function protectedList(v: unknown, where: string, notices: string[]): ProtectedRaw[] | null {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) return null;
+  const out: ProtectedRaw[] = [];
+  v.forEach((x, i) => {
+    const at = `${where}protected[${i}]`;
+    if (!isObj(x)) {
+      notices.push(`${at} is not an object; skipped`);
+      return;
+    }
+    const kinds = (["host", "path", "command"] as const).filter((k) => x[k] !== undefined);
+    if (kinds.length !== 1) {
+      notices.push(`${at} must have exactly one of host, path or command; skipped`);
+      return;
+    }
+    const kind = kinds[0];
+    const g = x[kind];
+    if (typeof g !== "string" || g.trim() === "" || g.length > PROSE_MAX) {
+      notices.push(`${at} ${kind} '${clip(String(g))}' must be a glob of 1 to ${PROSE_MAX} characters; skipped`);
+      return;
+    }
+    const n = x.note;
+    if (n !== undefined && (typeof n !== "string" || n.length > PROTECTED_NOTE_MAX)) {
+      notices.push(`${at} (${kind} '${clip(g)}') note must be a string of at most ${PROTECTED_NOTE_MAX} characters; skipped`);
+      return;
+    }
+    out.push({ kind, glob: g.trim(), ...(typeof n === "string" && n.trim() !== "" ? { note: n.trim() } : {}) });
+  });
+  return out;
+}
+
+function parseBody(o: Json, where: string, notices: string[], dropped?: string[]): PermBody | string {
   const body: PermBody = { allow: [], ask: [], deny: [], additionalDirectories: [], classifier: { allow: [], deny: [] } };
+  if (o.protected !== undefined) {
+    if (dropped) dropped.push(`${where}protected`);
+    else {
+      const l = protectedList(o.protected, where, notices);
+      if (l === null) return `${where}protected must be a list`;
+      body.protected = l;
+    }
+  }
   if (o.mode !== undefined) {
     if (typeof o.mode === "string" && (PERM_MODES as readonly string[]).includes(o.mode)) body.mode = o.mode as PermMode;
     else notices.push(`${where}mode '${clip(String(o.mode))}' is not auto, ask, allow or deny; ignored`);
@@ -191,10 +270,10 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
   }
   if (!isObj(raw)) return { ok: false, error: "the top level must be an object" };
   const notices: string[] = [];
-  const body = parseBody(raw, "", notices);
+  const dropped: string[] = [];
+  const body = parseBody(raw, "", notices, kind === "tracked" ? dropped : undefined);
   if (typeof body === "string") return { ok: false, error: body };
   const profiles: Record<string, PermBody> = {};
-  const dropped: string[] = [];
   const workFolders: WorkFolder[] = [];
   if (raw.workFolders !== undefined) {
     if (kind !== "user") dropped.push("workFolders");
@@ -222,7 +301,7 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
           continue;
         }
         if (v.workFolders !== undefined) dropped.push(`profiles.${name}.workFolders`);
-        const b = parseBody(v, `profiles.${name}.`, notices);
+        const b = parseBody(v, `profiles.${name}.`, notices, dropped);
         if (typeof b === "string") notices.push(`${b}; profile skipped`);
         else profiles[name] = b;
       }
@@ -269,6 +348,7 @@ export class PermStore {
   private told = new Set<string>();
   private mainCheckout: string | null = null;
   private trust: { sig: string; ok: boolean; why: string } | null = null;
+  private ver = 0;
 
   constructor(env: PermEnv) {
     this.env = env;
@@ -282,8 +362,14 @@ export class PermStore {
     this.cached = null;
   }
 
+  /** Monotonic: grows on every reload, remember write and re-resolve that saw a change. */
+  get version(): number {
+    return this.resolve().version;
+  }
+
   /** `/foreman perms reload` and every remember write: forget everything read so far. */
   reload(): void {
+    this.ver++;
     this.slots = {};
     this.cached = null;
     this.trust = null;
@@ -400,7 +486,8 @@ export class PermStore {
     if (project.parsed?.ok) {
       if (distrust === null) parts.push({ src: "project", body: project.parsed.body, widen: true });
       else {
-        const t = { ...project.parsed.body, allow: [], additionalDirectories: [], classifier: { allow: [], deny: project.parsed.body.classifier.deny } };
+        const t: PermBody = { ...project.parsed.body, allow: [], additionalDirectories: [], classifier: { allow: [], deny: project.parsed.body.classifier.deny }, protected: [] };
+        if (project.parsed.body.protected?.length) this.note(`${this.filePath("project")}: ${distrust}, so protected is not honoured; dropped`);
         parts.push({ src: "project", body: t, widen: false });
         if (project.parsed.body.allow.length || project.parsed.body.additionalDirectories.length || project.parsed.body.classifier.allow.length) {
           this.note(`${this.filePath("project")}: ${distrust}, so only its deny, ask and classifier.deny keys apply (allow, additionalDirectories and classifier.allow are ignored)`);
@@ -413,7 +500,9 @@ export class PermStore {
     const entries: RuleEntry[] = [];
     const prose = { allow: [] as ProseEntry[], deny: [] as ProseEntry[] };
     const dirs: string[] = [];
+    const prot: ProtectedEntry[] = [];
     for (const p of parts) {
+      for (const e of p.body.protected ?? []) prot.push({ ...e, id: `P${prot.length + 1}`, source: p.src });
       for (const kind of ["deny", "ask", "allow"] as const) {
         for (const text of p.body[kind]) {
           const r = parseRule(text);
@@ -456,7 +545,7 @@ export class PermStore {
       mode = this.sessionMode;
       modeSource = "session";
     }
-    const resolved: Resolved = { mode, modeSource, profile, rules: sets, entries, prose, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
+    const resolved: Resolved = { mode, modeSource, profile, rules: sets, entries, prose, protected: prot, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
     this.cached = { sig, resolved };
     return resolved;
   }
@@ -557,6 +646,69 @@ export class PermStore {
     this.reload();
     return { ok: true, file };
   }
+
+  /**
+   * The `protected` writer (foreman_protect, `/foreman perms protect`): adds or removes one entry in the `protected` list of the trusted project file or
+   * the user file, keeping the file's other keys and their order, with the symlink, trust and atomic-write checks of the other writers. The entry is
+   * re-validated here; a duplicate add and a missing remove are refused. Reloads (a version bump that clears the gate caches) on success.
+   */
+  writeProtected(file: "project" | "user", op: "add" | "remove", entry: { kind: string; glob: string; note?: string }): { ok: true; file: string } | { ok: false; reason: string } {
+    const clean = cleanProtected(entry);
+    if (typeof clean === "string") return { ok: false, reason: clean };
+    const target = this.filePath(file);
+    if (file === "project") {
+      this.trust = null;
+      const why = this.projectDistrust();
+      if (why !== null) return { ok: false, reason: `not written: ${why}. Protected entries live in ${target}, which has to be untracked and ignored by git; add \`.workflow/\` to .git/info/exclude.` };
+    }
+    let obj: Json = {};
+    try {
+      if (fs.lstatSync(target).isSymbolicLink()) return { ok: false, reason: `not written: ${target} is a symbolic link` };
+      const v = JSON.parse(fs.readFileSync(target, "utf8"));
+      if (!isObj(v)) return { ok: false, reason: `not written: ${target} is not a JSON object` };
+      obj = v;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") return { ok: false, reason: `not written: ${target} is not valid JSON (${clip((e as Error).message, 80)}); fix it first` };
+    }
+    const cur = obj.protected;
+    if (cur !== undefined && !Array.isArray(cur)) return { ok: false, reason: `not written: protected in ${target} is not a list` };
+    const list: unknown[] = cur === undefined ? [] : (cur as unknown[]);
+    const same = (x: unknown): boolean => isObj(x) && x[clean.kind] === clean.glob && (Object.keys(x).filter((k) => k === "host" || k === "path" || k === "command").length === 1);
+    const at = list.findIndex(same);
+    if (op === "add") {
+      if (at >= 0) return { ok: false, reason: `not written: ${clean.kind} ${clean.glob} is already protected in ${target}` };
+      list.push({ [clean.kind]: clean.glob, ...(clean.note ? { note: clean.note } : {}) });
+    } else {
+      if (at < 0) return { ok: false, reason: `not written: ${clean.kind} ${clean.glob} is not in the protected list of ${target}` };
+      list.splice(at, 1);
+    }
+    obj.protected = list;
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      if (fs.lstatSync(path.dirname(target)).isSymbolicLink()) return { ok: false, reason: `not written: ${path.dirname(target)} is a symbolic link` };
+      const tmp = `${target}.${process.pid}.tmp`;
+      fs.writeFileSync(tmp, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
+      fs.renameSync(tmp, target);
+    } catch (e) {
+      return { ok: false, reason: `not written: ${clip((e as Error).message, 120)}` };
+    }
+    this.reload();
+    return { ok: true, file: target };
+  }
+}
+
+/** Validate one protected entry as foreman_protect and the slash command receive it: one kind, a glob of 1 to 300 characters, a note of at most 200; control characters are stripped from both. */
+export function cleanProtected(e: { kind: unknown; glob: unknown; note?: unknown }): ProtectedRaw | string {
+  if (e.kind !== "host" && e.kind !== "path" && e.kind !== "command") return "kind must be host, path or command";
+  const strip = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
+  if (typeof e.glob !== "string") return "glob must be a string";
+  const glob = strip(e.glob);
+  if (glob === "" || glob.length > PROSE_MAX) return `glob must be 1 to ${PROSE_MAX} characters`;
+  const rawNote = e.note;
+  if (rawNote !== undefined && typeof rawNote !== "string") return "note must be a string";
+  const note = typeof rawNote === "string" ? strip(rawNote) : "";
+  if (note.length > PROTECTED_NOTE_MAX) return `note must be at most ${PROTECTED_NOTE_MAX} characters`;
+  return { kind: e.kind, glob, ...(note ? { note } : {}) };
 }
 
 /**

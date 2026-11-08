@@ -18,9 +18,9 @@ import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
-import { Classifier, CLASSIFIER_ROLE, classifierTarget } from "./classifier.ts";
+import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
-import { PermStore, PERM_MODES, profileName, workFoldersBlock } from "./permconfig.ts";
+import { PermStore, PERM_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
 import { folderRelaxes } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
@@ -119,6 +119,7 @@ import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppr
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
+import { sampleAway } from "./protected.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
@@ -1223,7 +1224,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ? await runGitGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, mode: "main", payload, env, cwd: ctx.cwd, spawner })
       : await runGuard({ python: pyPath(s), coreDir: CORE_DIR, guard, payload, env, cwd: ctx.cwd, spawner });
     const outcome = evaluateRun(guard, r, pyPath(s));
-    s.trace?.emit({ event: "guard", guard, toolFamily, decision: outcome.kind === "failure" ? "error" : outcome.d.decision, latencyMs: Date.now() - started });
+    const decision = outcome.kind === "failure" ? "error" : outcome.d.decision;
+    // a deny keeps its reason and redacted command like the gate's denials (trace.ts isDeny)
+    const deny = decision === "deny" ? { rule: guard, ...denyFields(outcome.kind === "decision" ? outcome.d.reason : "", toolFamily ?? guard, payload && typeof payload === "object" ? (payload as { tool_input?: unknown }).tool_input : undefined, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) } : {};
+    s.trace?.emit({ event: "guard", guard, toolFamily, decision, latencyMs: Date.now() - started, ...deny });
     return outcome;
   }
 
@@ -1639,6 +1643,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let triageHint = "";
     if (prompt !== null) {
       if (!s.isChild) gateOwnerMessages.set(s.id, [prompt, ...(gateOwnerMessages.get(s.id) ?? [])].slice(0, MAX_OWNER_MESSAGES));
+      if (!gateFirstPrompt.has(s.id)) gateFirstPrompt.set(s.id, prompt);
       // D7: a child never triages; only the foreman's request can escalate on a signal.
       const signals = s.isChild ? [] : promptSignals(prompt, get(s.config.config, "ceremony.heavySignals"));
       if (signals.length) {
@@ -1722,6 +1727,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewMarks: "on",
       // The foreman_show explain rule (show.ts; "off" only renders the pre-show baseline).
       show: "on",
+      // The foreman_protect rule in Approvals ("off"/absent only renders the pre-protect baseline).
+      protect: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
@@ -2289,6 +2296,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const gateStopped = new Set<string>();
   /** The owner's prompts of a session, newest first. */
   const gateOwnerMessages = new Map<string, string[]>();
+  /** The first user message of a session: the task text of the protected check when no ledger is bound. */
+  const gateFirstPrompt = new Map<string, string>();
   const gateRuntimeOf = (s: Session): GateRuntime => {
     let rt = gateRuntimes.get(s.id);
     if (!rt) {
@@ -2341,6 +2350,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
       ...(roots ? { roots: () => roots, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
+      ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
     });
     const r = out.result;
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
@@ -2354,9 +2364,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     // no session: no dialog, classifier or log to decide with, and the overlay below is no replacement for the gate; floors and rules ran above
     if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
-    const allowed = (rule: string, layer: GateLayer, label: string, folder = false): undefined => {
+    const allowed = (rule: string, layer: GateLayer, label: string, folder = false, reason?: string): undefined => {
       gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role, ...(folder ? { mode: "auto", source: "workFolder" } : {}) });
-      if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule); // the classifier logs its own record
+      if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule, reason); // the classifier logs its own record
       gateDecided.add(event.toolCallId);
       return undefined;
     };
@@ -2374,7 +2384,62 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const shellWrite = await shellWriteBlock(ctx, event.toolName === "powershell" ? "powershell" : "bash", event.input as Record<string, unknown>);
         if (shellWrite) return shellWrite;
       }
-      // an ask-kind floor, a self-modification rule and an ask rule go to the owner before the mode step (never to the classifier, never run under mode allow)
+      // a protected-target match: the check (a small model, capped by the deterministic classes) decides allow / ask / deny; every failure asks
+      if (r && "ask" in r && r.cause === "protected" && r.match) {
+        const m = r.match;
+        const ids = m.entries.map((e) => e.id).join(",");
+        const rule = `protected:${ids}`;
+        const lead = m.entries[0];
+        const named = `${lead.id}${lead.note ? ` (${lead.note})` : ""}`;
+        const readOnly = !m.opaque && !m.remoteOpaque && m.classes.length > 0 && [...m.classes, ...m.remoteClasses].every((c) => c === "read" || c === "net-read");
+        let away = true;
+        let askCause = `${named} is protected.`;
+        try {
+          // away fails closed: a child or headless session, presence off or unknown, an away or stale sample
+          if (!gs.isChild && ctx.hasUI && get(gs.config.config, "presence.enabled") !== false) {
+            if (!readOnly) await gs.presence.refresh().catch(() => undefined);
+            away = sampleAway(gs.presence.sample(), gs.presence.away(), Number(get(gs.config.config, "presence.awayAfterMinutes")) || 11, Date.now());
+          }
+          const checkRaw = get(gs.config.config, "gate.protected.check");
+          const checkMode: "model" | "read-only" | "ask" = checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model";
+          const ledgerFile = boundLedger(gs.markerDir, gs.id);
+          const ledgerText = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
+          const title = ledgerText ? /^#\s+(.+)$/m.exec(ledgerText)?.[1] : undefined;
+          const task = (ledgerText ? [title ?? "", ...ledgerLines(ledgerText, "")].filter(Boolean).join("\n") : "") || gateFirstPrompt.get(gs.id) || "";
+          const facts = reviewGitFacts(ctx.cwd);
+          const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
+          const v = await rt.classifier.protectedCache.check(
+            { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}) },
+            {
+              prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
+              recordUsage: (u) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, u as never)),
+              notify: (text) => notifyOnce(gs, ctx, "no-classifier-model", text),
+              match: m, task: task.slice(0, 800), denyEntries: resolved.prose.deny.map((e) => ({ id: e.id, text: e.text })), checkMode, version: resolved.version, away,
+            },
+          );
+          gs.trace?.emit({
+            event: "protected_check", rule: v.accepted === "deny" && v.entry ? `${rule};classifier.deny:${v.entry}` : rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
+            opaque: m.opaque || m.remoteOpaque, effect: v.effect, confidence: v.confidence, verdict: v.verdict, accepted: v.accepted, away, cached: v.cached, reason: v.reason, model: v.model, latencyMs: v.latencyMs, role,
+            globs: m.entries.map((e) => e.glob).join(","),
+            ...denyFields(v.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
+            ...(v.accepted === "deny" && v.entry ? { entry: v.entry } : {}),
+          });
+          if (v.accepted === "allow") return allowed(rule, "protected", rule, false, v.reason);
+          if (v.accepted === "deny" && v.entry) return denied(`${rule};classifier.deny:${v.entry}`, "protected", denyText(v.entry, resolved.prose.deny.find((e) => e.id === v.entry)?.text ?? ""));
+          askCause = `${named} is protected. The check rates this ${v.effect} with ${v.confidence} confidence: ${v.reason || v.cause || "no reason given"}.`;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          askCause = `${named} is protected. The check failed (${msg}).`;
+          gs.trace?.emit({
+            event: "protected_check", rule, entries: ids, kinds: m.kinds.join(","), classes: m.classes.join(","), remoteClasses: m.remoteClasses.join(","),
+            opaque: m.opaque || m.remoteOpaque, accepted: "ask", cause: "exception", away, globs: m.entries.map((x) => x.glob).join(","),
+            ...denyFields(msg.slice(0, 200), event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]),
+          });
+        }
+        gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule, role });
+        return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: askCause, noRemember: true });
+      }
+      // an ask-kind floor, a self-modification rule and an ask rule go to the owner before the mode step (never to the classifier, never run under mode allow; only a protected match above runs a check first)
       if (r && "ask" in r) {
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule: r.rule, role });
         const cause = r.cause === "selfmod" ? `self-modification ${r.rule}: ${r.reason}` : r.cause === "rule" ? r.rule : `${r.rule}: ${r.reason}`;
@@ -2541,10 +2606,52 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const e of r.prose.allow) lines.push(`${e.id}: ${e.text} (${e.source})`);
       for (const e of r.prose.deny) lines.push(`${e.id}: ${e.text} (${e.source})`);
       if (r.additionalDirectories.length) lines.push(`additionalDirectories: ${r.additionalDirectories.join(", ")}`);
+      lines.push(...protectedBlock(r));
       lines.push(...workFoldersBlock(r, (p) => { try { return fs.realpathSync(p); } catch { return p; } }));
       return [...lines, ...rt.store.drainNotices()].join("\n");
     }
     return usage;
+  }
+
+  const PROTECT_CONFIRM_MS = 120_000;
+  /**
+   * `foreman_protect` and `/foreman perms protect`: validate, ask the owner (a timeout, a cancel or no UI is a refusal), then write through
+   * PermStore.writeProtected and drop the gate caches. The model never writes the file; the adapter does, after the owner's yes.
+   */
+  async function protectEntry(s: Session, ctx: ExtensionContext, a: { action: unknown; kind: unknown; glob: unknown; note?: unknown; file?: unknown }): Promise<{ ok: boolean; text: string }> {
+    const no = (text: string) => ({ ok: false, text: `pi-foreman: not changed: ${text}` });
+    if (s.isChild) return no("children never change the protected targets; the owner does, with /foreman perms protect.");
+    if (a.action !== "add" && a.action !== "remove") return no("action must be add or remove");
+    if (a.file !== undefined && a.file !== "project" && a.file !== "user") return no("file must be project or user");
+    const clean = cleanProtected({ kind: a.kind, glob: a.glob, note: a.note });
+    if (typeof clean === "string") return no(clean);
+    if (!ctx.hasUI) return no("there is no pane to ask the owner in; the owner runs /foreman perms protect add|remove <kind> <glob> in the foreman session.");
+    const file = a.file === "user" ? "user" : "project";
+    const rt = gateRuntimeOf(s);
+    const cur = rt.store.resolve();
+    const existing = cur.protected.find((e) => e.kind === clean.kind && e.glob === clean.glob);
+    const where = file === "user" ? rt.store.filePath("user") : cur.projectFile;
+    if (a.action === "remove" && !existing) return no(`${clean.kind} ${clean.glob} is not protected`);
+    if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id})`);
+    const text = a.action === "add"
+      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; reads are allowed when the check rates them read-only, writes and deploys only while you are present. Floors and deny rules still apply.`
+      : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
+    let yes = false;
+    try {
+      const confirm = blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), PROTECT_CONFIRM_MS); timer.unref?.(); });
+      yes = (await Promise.race([confirm("Protected target", text), timeout])) === true;
+      if (timer) clearTimeout(timer);
+    } catch {
+      yes = false;
+    }
+    if (!yes) return no("the owner declined or did not answer");
+    const w = rt.store.writeProtected(file, a.action, clean);
+    if (w.ok === false) return no(w.reason);
+    rt.classifier.clearCache();
+    s.trace?.emit({ event: "protected_edit", action: a.action, kind: clean.kind, file });
+    return { ok: true, text: `pi-foreman: ${a.action === "add" ? "protected" : "no longer protected"}: ${clean.kind} ${clean.glob} (${w.file}).` };
   }
 
   /** `/foreman perms suggest|review|adopt <report> <n>...` (the rule workshop): adopt is the owner's command, one select per candidate. */
@@ -4254,6 +4361,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   if (process.env.PI_SUBAGENT_CHILD !== "1") registerSessionOpenTool(pi, { spawner, pkgRoot: PKG_ROOT, session: sessionHost });
 
+  // the owner's protected targets: the foreman proposes, the owner confirms, the adapter writes (never for a child)
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: "foreman_protect",
+      label: "Protect a target",
+      description: "Add or remove a protected target (a host, a path or a command glob) in the owner's permissions, after the owner confirms in a dialog. Use it when the owner asks to protect or guard a target.",
+      parameters: { type: "object", properties: { action: { type: "string", enum: ["add", "remove"] }, kind: { type: "string", enum: ["host", "path", "command"] }, glob: { type: "string", minLength: 1, maxLength: 300 }, note: { type: "string", maxLength: 200 }, file: { type: "string", enum: ["project", "user"], description: "Default project (.workflow/permissions.json)." } }, required: ["action", "kind", "glob"], additionalProperties: false } as never,
+      async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        const r = await protectEntry(s, ctx, { action: params.action, kind: params.kind, glob: params.glob, note: params.note, file: params.file });
+        return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.ok ? "written" : "refused" }, ...(r.ok ? {} : { isError: true }) };
+      },
+    } as never);
+  }
+
   // D10: the foreman records its triage; children never get the tool.
   if (process.env.PI_SUBAGENT_CHILD !== "1") {
     pi.registerTool({
@@ -4789,6 +4911,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           ctx.ui.notify(await workshopCommand(s, ctx, rest), "info");
           return;
         }
+        if (rest[0] === "protect") {
+          const usage = "Usage: /foreman perms protect add|remove <host|path|command> <glob> [--note <text>] [--user]";
+          const args = rest.slice(1);
+          const user = args.includes("--user");
+          const ni = args.indexOf("--note");
+          const note = ni >= 0 ? args.slice(ni + 1).filter((w) => w !== "--user").join(" ") : undefined;
+          const head = (ni >= 0 ? args.slice(0, ni) : args).filter((w) => w !== "--user");
+          if (head.length < 3 || (ni >= 0 && !note)) {
+            ctx.ui.notify(usage, "warning");
+            return;
+          }
+          const r = await protectEntry(s, ctx, { action: head[0], kind: head[1], glob: head.slice(2).join(" "), ...(note ? { note } : {}), file: user ? "user" : "project" });
+          ctx.ui.notify(r.text, r.ok ? "info" : "warning");
+          return;
+        }
         ctx.ui.notify(permsCommand(s, rest), "info");
         return;
       }
@@ -4971,6 +5108,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
     if (isolationOn(isoSetting, ctx.model?.provider)) out.push(...isolationDoctor({ dir: isolationDir(s.agentDir), env: process.env, platform }));
     if (ctx.model?.provider === BRIDGE_PROVIDER) out.push(...bridgeTtlDoctorLines(s.config.config, ttlSetting, process.env));
+    const permsRt = gateRuntimeOf(s);
+    if (permsRt) out.push(...protectHintLines(permsRt.store.resolve()));
     if (ctx.model?.provider === BRIDGE_PROVIDER) {
       const risks = projectClaudeRisks(s.cwd);
       if (risks.length) fail(`project Claude Code config runs in claude-bridge turns: ${risks.join(", ")}`, PROJECT_CLAUDE_FIX);
