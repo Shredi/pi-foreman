@@ -877,6 +877,18 @@ class ParentTest(RemoteBase):
         for removed in ("returnPath", "pulledAt", "remoteLive"):
             self.assertNotIn(removed, entry)
 
+    def test_open_result_says_how_to_fetch_remote_files(self):
+        import shlex
+        for extra in ((), ("--dry-run",)):
+            rc, out, err = self.run_main(*self.open_args(*extra))
+            self.assertEqual(rc, 0, err)
+            (line,) = [l for l in out.splitlines() if l.startswith("fetch remote files: ")]
+            words = shlex.split(line[len("fetch remote files: "):])
+            self.assertEqual(Path(words[0]).name, "hc")
+            self.assertEqual(words[1:4], ["file", "read", "--on"])
+            self.assertEqual(words[4], "alpha")
+            self.assertRegex(words[5], r"/pi-foreman/handoffs/\d{8}-\d{6}-demo/result\.md$")
+
     def test_the_remote_run_carries_the_space_looked_up_by_the_parent(self):
         self.assertEqual(self.run_main(*self.open_args())[0], 0)
         (run,) = self.hc_calls("run")
