@@ -130,7 +130,7 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
-import { ASK_USER_TOOL, writeAskRuling } from "./askhooks.ts";
+import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
@@ -3916,6 +3916,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
+    // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
+    if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
+      s.loopStop = null;
+      persistRounds(s);
+      s.trace?.emit({ event: "cap_reset", by: "ask", count: 1 });
+    }
     if (s && !s.isChild && !event.isError && ownerAnswered(event.toolName, (event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       idleBind = { s, ctx };
       await idleModel.onAnswer(); // the owner is back: the answer's next request runs on the base model
