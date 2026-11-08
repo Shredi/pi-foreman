@@ -148,11 +148,13 @@ test("the gate: a public key read is allowed as floor-pubkey-read, a write is bl
   const roots = { worktree: work, scratch: [], tmp: [], scratchBase: path.join(base, "scr"), owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false } as never;
   const g = (tool: string, input: Record<string, unknown>): unknown => gateDecide(tool, input, work, { env: () => env, roots: () => roots });
   assert.deepEqual(g("read", { path: K }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
-  assert.deepEqual(g("bash", { command: `cat ${ssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
-  assert.deepEqual(g("bash", { command: `ssh-keygen -l -f ${ssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
+  // a shell command spells the absolute path with forward slashes: in bash syntax a backslash is an escape (`D:\a\x` reads `D:ax`)
+  const fssh = ssh.replace(/\\/g, "/");
+  assert.deepEqual(g("bash", { command: `cat ${fssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
+  assert.deepEqual(g("bash", { command: `ssh-keygen -l -f ${fssh}/k.pub` }), { allow: true, rule: "floor-pubkey-read", layer: "rule" });
   assert.equal((g("write", { path: K, content: "x" }) as { rule?: string }).rule, "floor-secret-path");
   assert.equal((g("read", { path: "~/.ssh/id_ed25519" }) as { rule?: string }).rule, "floor-secret-path");
-  assert.notEqual((g("bash", { command: `cat ${ssh}/k.pub /etc/hosts` }) as { rule?: string } | undefined)?.rule, "floor-pubkey-read");
+  assert.notEqual((g("bash", { command: `cat ${fssh}/k.pub /etc/hosts` }) as { rule?: string } | undefined)?.rule, "floor-pubkey-read");
 });
 
 // item 5: windows spellings, the platform simulated over the real temp home
@@ -231,10 +233,15 @@ const gateRule = (command: string): string | undefined => {
 };
 
 test("a path-qualified program gets no pubkey rule", () => {
-  for (const c of [`./cat ${K}`, `~/bin/cat ${K}`, `/tmp/x/cat ${ssh}/k.pub`, `${work}/cat ${ssh}/k.pub`]) {
+  const fwd = (p: string): string => p.replace(/\\/g, "/");
+  for (const c of [`./cat ${K}`, `~/bin/cat ${K}`, `/tmp/x/cat ${fwd(ssh)}/k.pub`, `${fwd(work)}/cat ${fwd(ssh)}/k.pub`]) {
     assert.notEqual(gateRule(c), "floor-pubkey-read", c);
   }
   assert.equal(gateRule(`cat ${K}`), "floor-pubkey-read");
+});
+
+test("a backslash path in a bash line is an escape, so it names no key", () => {
+  for (const c of [`cat ${home}\\.ssh\\k.pub`]) assert.notEqual(gateRule(c), "floor-pubkey-read", c);
 });
 
 test("a line that binds HOME gets no pubkey rule", () => {
