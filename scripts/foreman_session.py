@@ -483,15 +483,19 @@ def hc_outlive_parent(cfg):
     return value if isinstance(value, bool) else True
 
 
-def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi"):
+def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi", banner=None):
     """The child's argv after `--` (no shell, unquoted): the TUI pane identity is dropped, the caller's PATH passed.
-    `pi_word` names the Pi CLI in the PowerShell wrapper (a remote Windows child passes `pi.cmd`)."""
+    `pi_word` names the Pi CLI in the PowerShell wrapper (a remote Windows child passes `pi.cmd`). `banner` (see
+    start_banner) is printed first; on POSIX it makes the argv a `sh -c` wrapper that execs the same argv."""
     if platform == "win32":
         head = "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID -ErrorAction SilentlyContinue; $env:PATH = %s; " % ps_quote(path)
-        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word)]
+        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word, banner)]
     pi = shutil.which("pi") or "pi"
-    return (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
+    argv = (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
             + (["--model", model] if model else []) + launch_messages(first, prompt))
+    if banner:  # the printf result is ignored (`;`): the exec always runs
+        return ["sh", "-c", 'printf "%s\\n" "$1"; shift; exec "$@"', "sh", banner] + argv
+    return argv
 
 
 def hc_run_args(name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True):
@@ -703,7 +707,25 @@ def check_first_commands(cmds):
             raise Refused("--first-command must not contain typographic single quotes (PowerShell reads them as quotes)")
 
 
-def posix_command(env, model, prompt, first=()):
+def start_banner(label, model, machine, brief):
+    """The status line printed in a new pane before Pi starts: ASCII, one line, no env values or tokens.
+    `machine` None (local) says `on this computer`; no model omits that part."""
+    def clean(v):
+        return "".join(c if 32 <= ord(c) < 127 else "?" for c in str(v))
+    parts = ["pi-foreman: starting session %s" % clean(label)]
+    if model:
+        parts.append("(%s)" % clean(model))
+    parts.append("on %s," % (clean(machine) if machine else "this computer"))
+    parts.append("brief %s ..." % clean(brief))
+    return " ".join(parts)
+
+
+def posix_command(env, model, prompt, first=(), banner=None):
+    pre = "printf '%%s\\n' %s; " % shlex.quote(banner) if banner else ""
+    return pre + _posix_command(env, model, prompt, first)
+
+
+def _posix_command(env, model, prompt, first=()):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
     if model:
         parts += ["--model", shlex.quote(model)]
@@ -718,18 +740,18 @@ def ps_quote(v):
     return "'" + "".join(ch * 2 if ch in PS_SINGLE_QUOTES else ch for ch in v) + "'"
 
 
-def powershell_command(env, model, prompt, first=(), pi_word="pi"):
-    sets = ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
+def powershell_command(env, model, prompt, first=(), pi_word="pi", banner=None):
+    sets = (["Write-Host %s" % ps_quote(banner)] if banner else []) + ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
     call = [pi_word] + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 
-def fallback_text(env, model, prompt, cwd, platform, print_all, first=()):
+def fallback_text(env, model, prompt, cwd, platform, print_all, first=(), banner=None):
     out = ["No Herdr here. Run this in a new terminal in %s:" % cwd]
     if print_all or platform != "win32":
-        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt, first)]
+        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt, first, banner)]
     if print_all or platform == "win32":
-        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt, first)]
+        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt, first, banner=banner)]
     return "\n".join(out)
 
 
@@ -938,7 +960,8 @@ def open_session(p, remote=None):
                     profile=p.get("profile"))
     prompt = prompt_text(handoff)
     first = p.get("first") or []
-    command = posix_command(env, model, prompt, first)
+    banner = start_banner(label, model, short_hostname() if remote else None, handoff / "brief.md")
+    command = posix_command(env, model, prompt, first, banner)
     scfg = {}
     if remote:
         backend, binary = "hc", hc_bin()
@@ -949,7 +972,7 @@ def open_session(p, remote=None):
         backend, binary = backend_of(scfg, os.environ)
     platform = host_platform()
     child_argv = (hc_child_argv(env, model, prompt, first, platform, os.environ.get("PATH", ""),
-                                "pi.cmd" if remote and platform == "win32" else "pi") if backend == "hc" else None)
+                                "pi.cmd" if remote and platform == "win32" else "pi", banner) if backend == "hc" else None)
     outlive = False if remote else hc_outlive_parent(scfg)
     space = remote.get("space") if remote else None
     labels = [("fm.child", child), ("fm.parent", parent.split("@", 1)[0])] if remote else ()
@@ -967,7 +990,7 @@ def open_session(p, remote=None):
         elif backend == "herdr":
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
-            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
         return 0, dict(info, status="dryRun")
     handoff.mkdir(parents=True, exist_ok=False)
     if remote:
@@ -978,7 +1001,7 @@ def open_session(p, remote=None):
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, model, prompt, first)
+    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, model, prompt, first, banner=banner)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
@@ -1000,7 +1023,7 @@ def open_session(p, remote=None):
         except HcError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     elif backend == "herdr":
         try:
@@ -1012,10 +1035,10 @@ def open_session(p, remote=None):
         except HerdrError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     else:
-        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
     reg = read_registry(adir)
     reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
     write_registry(adir, reg)
@@ -1497,6 +1520,12 @@ def decode_hc_text(b64):
         return raw.decode("cp850", "replace")
 
 
+def join_remote_path(directory, name):
+    """Join with the separator the remote dir already uses (the remote OS may differ from this one)."""
+    sep = "\\" if "\\" in directory and "/" not in directory else "/"
+    return directory.rstrip(sep) + sep + name
+
+
 def strip_control(text):
     """`text` as a string without C0, C1 and DEL control characters (a remote's text reaches the local terminal)."""
     return "".join(c for c in str(text) if not (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f))
@@ -1539,37 +1568,116 @@ def hc_exec_verb(binary, name, argv, verb, payload, timeout):
     return reply
 
 
-def herdr_app_json(args, timeout=DISCOVERY_TIMEOUT):
-    """Run `herdr-app <args>`; its JSON value, else None (no herdr-app on PATH, or it failed)."""
+NO_HERDR_APP = "herdr-app is not on PATH"
+SPACE_WAIT_ENV = "PI_FOREMAN_SPACE_WAIT"  # seconds to re-list `herdr-app ls` for a space.new that gave no id (default 10)
+
+
+def herdr_app_result(args, timeout=DISCOVERY_TIMEOUT):
+    """Run `herdr-app <args>`: (its JSON value, None), else (None, why it failed)."""
     binary = shutil.which("herdr-app")
     if not binary:
-        return None
+        return None, NO_HERDR_APP
     try:
         r = subprocess.run([binary] + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            stdin=subprocess.DEVNULL, timeout=timeout)
-        return json.loads(r.stdout.decode("utf-8", "replace")) if r.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return None
+    except subprocess.TimeoutExpired:
+        return None, "herdr-app gave no answer within %d s" % timeout
+    except OSError as e:
+        return None, "herdr-app could not be run: %s" % strip_control(str(e))
+    out = r.stdout.decode("utf-8", "replace")
+    try:
+        data = json.loads(out)
+    except ValueError:
+        data = None
+        if r.returncode == 0:
+            return None, "herdr-app printed no JSON: %s" % (strip_control(out.strip())[:200] or "(empty)")
+    if r.returncode != 0:
+        text = data.get("error") if isinstance(data, dict) else None
+        text = text if isinstance(text, str) and text else r.stderr.decode("utf-8", "replace").strip() or out.strip()
+        return None, "herdr-app failed (exit %d): %s" % (r.returncode, strip_control(text)[:200] or "no message")
+    return data, None
 
 
-def machine_space(entry_cfg, name, cwd):
+def herdr_app_json(args, timeout=DISCOVERY_TIMEOUT):
+    """Run `herdr-app <args>`; its JSON value, else None (no herdr-app on PATH, or it failed)."""
+    return herdr_app_result(args, timeout)[0]
+
+
+def machine_space_ids(name):
+    """(ids of the `herdr-app ls` spaces of machine `name`, None), else (None, why `ls` could not be read)."""
+    listing, why = herdr_app_result(["ls"])
+    if why:
+        return None, why
+    spaces = listing.get("spaces") if isinstance(listing, dict) else None
+    if not isinstance(spaces, list):
+        return None, "herdr-app ls printed no spaces list"
+    return [s["id"] for s in spaces if isinstance(s, dict) and s.get("machine") == name
+            and isinstance(s.get("id"), str) and VALUE_RE.match(s["id"])], None
+
+
+def space_wait():
+    try:
+        return max(0.0, float(os.environ.get(SPACE_WAIT_ENV, "10")))
+    except ValueError:
+        return 10.0
+
+
+def space_hint(name):
+    return ("start herdr-app on this computer (run `herdr-app`), check that `hc machine ls` lists %s, "
+            "or pin a space: set sessions.machines.%s.space to a space id from `herdr-app ls` in your foreman config" % (name, name))
+
+
+def machine_space(entry_cfg, name, cwd, created=None):
     """The herdr-app space id a remote child of machine `name` is shown in, else None. `sessions.machines.<name>.space`
-    pins one; else the first space of `herdr-app ls` whose machine is `name`; else one is created with `space.new`."""
+    pins one; else the first space of `herdr-app ls` whose machine is `name`; else one is created with `space.new`
+    (its id is appended to `created`). When `space.new` gives no id, `ls` is re-listed for up to PI_FOREMAN_SPACE_WAIT s."""
     pinned = entry_cfg.get("space")
     if isinstance(pinned, str) and VALUE_RE.match(pinned):
         return pinned
-    listing = herdr_app_json(["ls"])
-    if listing is None:
+    ids, why = machine_space_ids(name)
+    if ids is None:
         return None
-    spaces = listing.get("spaces") if isinstance(listing, dict) else None
-    for s in spaces if isinstance(spaces, list) else []:
-        if isinstance(s, dict) and s.get("machine") == name and isinstance(s.get("id"), str) and VALUE_RE.match(s["id"]):
-            return s["id"]
-    made = herdr_app_json(["do", "space.new", json.dumps({"name": name, "machine": name, "folder": cwd})])
-    sid = dig(made, "space", "id") or dig(made, "result", "space", "id") or dig(made, "id") or dig(made, "result", "id")
+    if ids:
+        return ids[0]
+    made, why = herdr_app_result(["do", "space.new", json.dumps({"name": name, "machine": name, "folder": cwd})])
+    sid = (made.get("space") if isinstance(made, dict) else None)
+    sid = sid if isinstance(sid, str) else (dig(made, "space", "id") or dig(made, "result", "space", "id")
+                                            or dig(made, "id") or dig(made, "result", "id"))
     if isinstance(sid, str) and VALUE_RE.match(sid):
+        if created is not None:
+            created.append(sid)
         return sid
-    raise Refused("no herdr-app space for machine %s and space.new did not create one" % name, "no_remote_space")
+    if not why:
+        why = "space.new returned no space id"
+    # an error exit means no space was made; a timeout, odd output or a missing id may mean it was
+    deadline = time.monotonic() + (0 if why.startswith("herdr-app failed") else space_wait())
+    delay = 0.25
+    while time.monotonic() < deadline:
+        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+        delay = min(delay * 2, 2.0)
+        ids, _ = machine_space_ids(name)
+        if ids:
+            if created is not None:
+                created.append(ids[0])
+            return ids[0]
+    raise Refused("no herdr-app space for machine %s: %s. To fix it: %s" % (name, why, space_hint(name)), "no_remote_space")
+
+
+def space_dry_run_line(entry_cfg, name):
+    """What a real open would do about the space, without creating one."""
+    pinned = entry_cfg.get("space")
+    if isinstance(pinned, str) and VALUE_RE.match(pinned):
+        return "space: %s (pinned)" % pinned
+    ids, why = machine_space_ids(name)
+    if ids is None:
+        return "warning: cannot check the remote space: %s; the open may not show the child (%s)" % (why, space_hint(name))
+    return "space: %s (exists)" % ids[0] if ids else "space: will be created with space.new"
+
+
+def close_space(sid):
+    """None when the space `sid` is closed, else why not."""
+    data, why = herdr_app_result(["do", "space.close", json.dumps({"id": sid, "confirmed": True})])
+    return why
 
 
 def cmd_open_remote(a):
@@ -1623,7 +1731,9 @@ def cmd_open_remote(a):
     seen = probe.get("intercomMachineName")
     if seen != name:
         notes.append("intercom name differs: %s" % (seen if isinstance(seen, str) and MACHINE_RE.match(seen) else "(none)"))
-    space = None if a.dry_run else machine_space(entry_cfg, name, a.cwd)
+    created = []
+    space = None if a.dry_run else machine_space(entry_cfg, name, a.cwd, created)
+    space_line = space_dry_run_line(entry_cfg, name) if a.dry_run else None
     payload = {"label": a.label, "brief": text, "cwd": a.cwd, "model": a.model,
                "planFirst": a.plan_first, "parentAddress": address, "parentName": parent_name, "trust": a.trust,
                "dryRun": a.dry_run}
@@ -1631,17 +1741,29 @@ def cmd_open_remote(a):
         payload["firstCommands"] = first
     if space:
         payload["space"] = space
-    reply = hc_exec_verb(binary, name, argv, "open", payload, OPEN_TIMEOUT)
-    handoff_name, child, status = reply.get("handoffName"), reply.get("child"), reply.get("status")
-    if (not isinstance(handoff_name, str) or not HANDOFF_NAME_RE.match(handoff_name) or ".." in handoff_name
-            or not isinstance(child, str) or not VALUE_RE.match(child) or not isinstance(reply.get("handoff"), str)
-            or status not in ("open", "pending", "failed", "dryRun")):
-        raise Unreachable("remote %s unreachable: its open reply is malformed" % name)
+    try:
+        reply = hc_exec_verb(binary, name, argv, "open", payload, OPEN_TIMEOUT)
+        handoff_name, child, status = reply.get("handoffName"), reply.get("child"), reply.get("status")
+        if (not isinstance(handoff_name, str) or not HANDOFF_NAME_RE.match(handoff_name) or ".." in handoff_name
+                or not isinstance(child, str) or not VALUE_RE.match(child) or not isinstance(reply.get("handoff"), str)
+                or status not in ("open", "pending", "failed", "dryRun")):
+            raise Unreachable("remote %s unreachable: its open reply is malformed" % name)
+    except Refused as e:
+        # the space was made for this open: close it, or say which one stays
+        for sid in created:
+            why = close_space(sid)
+            if why:
+                e.args = ("%s; the herdr-app space %s it created is still open (%s): close it with "
+                          "`herdr-app do space.close '{\"id\":\"%s\",\"confirmed\":true}'`" % (e, sid, why, sid),)
+        raise
     print("remote: %s" % name)
     print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
     print("child intercom id: %s" % child)
+    print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(join_remote_path(strip_control(reply["handoff"]), "result.md"))))
     for note in notes:
         print("warning: %s" % note)
+    if a.dry_run:
+        print(space_line)
     if a.dry_run:
         print("dry run: nothing was written on either machine")
         return 0

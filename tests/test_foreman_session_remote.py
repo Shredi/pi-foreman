@@ -45,12 +45,23 @@ args = sys.argv[1:]
 with open(os.environ["FAKE_APP_LOG"], "a", encoding="utf-8") as f:
     f.write(json.dumps(args) + "\n")
 if args == ["ls"]:
-    print(json.dumps({"spaces": json.loads(os.environ.get("FAKE_APP_SPACES", "[]"))}))
+    spaces = json.loads(os.environ.get("FAKE_APP_SPACES", "[]"))
+    if os.environ.get("FAKE_APP_LATE"):  # these spaces show in `ls` only from the (FAKE_APP_LATE_AFTER + 1)th call on
+        counter = os.environ["FAKE_APP_LOG"] + ".ls"
+        n = (int(open(counter).read()) if os.path.exists(counter) else 0) + 1
+        open(counter, "w").write(str(n))
+        if n > int(os.environ.get("FAKE_APP_LATE_AFTER", "1")):
+            spaces += json.loads(os.environ["FAKE_APP_LATE"])
+    print(json.dumps({"spaces": spaces}))
 elif args[:2] == ["do", "space.new"]:
-    if os.environ.get("FAKE_APP_NEW_FAIL"):
-        sys.stderr.write("cannot create\n")
+    if os.environ.get("FAKE_APP_NEW_FAIL"):  # the real app: {"error": ...} on stdout, exit 1
+        print(json.dumps({"error": "cannot create the space"}))
         sys.exit(1)
-    print(json.dumps({"space": {"id": "sp-new"}}))
+    # the real reply is {"space": "<id>", "tab": .., "terminal": ..}; FAKE_APP_NEW_REPLY overrides the raw stdout
+    print(os.environ.get("FAKE_APP_NEW_REPLY") or json.dumps({"space": "sp-new", "tab": "tb-new", "terminal": "tm-new"}))
+elif args[:2] == ["do", "space.close"] and os.environ.get("FAKE_APP_CLOSE_FAIL"):
+    print(json.dumps({"error": "no such space"}))
+    sys.exit(1)
 else:
     print("{}")
 '''
@@ -114,11 +125,12 @@ class RemoteBase(unittest.TestCase):
                     "FAKE_HC_STATE": str(self.tmp / "hcstate"), "FAKE_HC_MACHINES": json.dumps(HC_MACHINES),
                     "FAKE_APP_LOG": str(self.logs["app"]), "FAKE_APP_SPACES": json.dumps(SPACES),
                     "FAKE_NODE_LOG": str(self.logs["node"]), "FAKE_SCRIPTS": str(SCRIPTS), "FAKE_CLI": str(self.cli),
-                    "FAKE_REMOTE_AGENT": str(self.radir)}
+                    "FAKE_REMOTE_AGENT": str(self.radir), "PI_FOREMAN_SPACE_WAIT": "0"}
         for k in ("HC_TERMINAL_ID", "HC_SCOPE", "HC_TERMINAL_SOCKET", "HC_BIN", "HERDR_PANE_ID", "HERDR_BIN",
                   "PI_INTERCOM_STABLE_ID", "PI_INTERCOM_SESSION_ID", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_REMOTE_PARENT",
                   "PI_FOREMAN_SESSION_MODEL", "FAKE_HC_FAIL", "FAKE_HC_CORE_DOWN", "FAKE_HC_EXEC_MODE", "FAKE_REMOTE_PATH",
-                  "FAKE_SSH_PROTOCOL", "FAKE_REMOTE_HC_DOWN", "FAKE_APP_NEW_FAIL", "FAKE_NODE_EXIT"):
+                  "FAKE_SSH_PROTOCOL", "FAKE_REMOTE_HC_DOWN", "FAKE_APP_NEW_FAIL", "FAKE_NODE_EXIT", "FAKE_APP_NEW_REPLY",
+                  "FAKE_APP_LATE", "FAKE_APP_LATE_AFTER", "FAKE_APP_CLOSE_FAIL"):
             self.env[k] = ""
         for k in os.environ:
             if k.startswith("PI_BG_"):
@@ -386,7 +398,7 @@ class RemoteOpenTest(RemoteBase):
         self.assertEqual(labels, ["herdr.space=sp-alpha", "fm.child=" + reply["child"], "fm.parent=" + PARENT])
         self.assertEqual(head[head.index("--cwd") + 1], str(self.rproj))
         self.assertEqual(head[head.index("--name") + 1], fsn.hc_name(reply["child"]))
-        self.assertEqual(run[run.index("--") + 1], "env" if sys.platform != "win32" else "powershell")
+        self.assertEqual(run[run.index("--") + 1], "sh" if sys.platform != "win32" else "powershell")
 
     def test_a_space_without_a_tab_label(self):
         self.remote_open(space="sp-alpha")
@@ -865,6 +877,27 @@ class ParentTest(RemoteBase):
         for removed in ("returnPath", "pulledAt", "remoteLive"):
             self.assertNotIn(removed, entry)
 
+    def test_open_result_says_how_to_fetch_remote_files(self):
+        import shlex
+        for extra in ((), ("--dry-run",)):
+            rc, out, err = self.run_main(*self.open_args(*extra))
+            self.assertEqual(rc, 0, err)
+            (line,) = [l for l in out.splitlines() if l.startswith("fetch remote files: ")]
+            words = shlex.split(line[len("fetch remote files: "):])
+            self.assertEqual(Path(words[0]).stem.lower(), "hc")  # hc.CMD on Windows
+            self.assertEqual(words[1:4], ["file", "read", "--on"])
+            self.assertEqual(words[4], "alpha")
+            self.assertRegex(words[5], r"[\\/]result\.md$")
+            if not extra:
+                self.assertRegex(words[5], r"[\\/]pi-foreman[\\/]handoffs[\\/]\d{8}-\d{6}-demo[\\/]result\.md$")
+
+    def test_join_remote_path_follows_the_remote_separator(self):
+        join = fsn.join_remote_path
+        self.assertEqual(join("C:\\h\\demo", "result.md"), "C:\\h\\demo\\result.md")
+        self.assertEqual(join("C:\\h\\demo\\", "result.md"), "C:\\h\\demo\\result.md")
+        self.assertEqual(join("/h/demo", "result.md"), "/h/demo/result.md")
+        self.assertEqual(join("C:/h/demo", "result.md"), "C:/h/demo/result.md")
+
     def test_the_remote_run_carries_the_space_looked_up_by_the_parent(self):
         self.assertEqual(self.run_main(*self.open_args())[0], 0)
         (run,) = self.hc_calls("run")
@@ -896,6 +929,60 @@ class ParentTest(RemoteBase):
         self.assertEqual(self.run_main(*self.open_args(), FAKE_APP_SPACES="[]")[0], 0)
         self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["space"], "sp-new")
         self.assertEqual(lines_of(self.logs["app"])[1][:2], ["do", "space.new"])
+
+    def test_the_real_string_space_reply_is_used_and_the_open_succeeds(self):
+        rc, out, err = self.run_main(*self.open_args(), FAKE_APP_SPACES="[]")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.parent_registry()[0]["hc"]["space"], "sp-new")
+        self.assertEqual(calls_of(lines_of(self.logs["app"]), "do")[0][:2], ["do", "space.new"])
+        self.assertEqual(len(lines_of(self.logs["app"])), 2)  # ls, space.new: no re-list needed
+
+    def test_the_legacy_dict_space_reply_still_works(self):
+        rc, out, err = self.run_main(*self.open_args(), FAKE_APP_SPACES="[]",
+                                     FAKE_APP_NEW_REPLY=json.dumps({"space": {"id": "sp-legacy"}}))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["space"], "sp-legacy")
+
+    def test_a_space_that_shows_up_late_is_found_by_re_listing(self):
+        rc, out, err = self.run_main(*self.open_args(), FAKE_APP_SPACES="[]", FAKE_APP_NEW_REPLY="{}",
+                                     FAKE_APP_LATE=json.dumps([{"id": "sp-late", "machine": "alpha"}]),
+                                     FAKE_APP_LATE_AFTER="2", PI_FOREMAN_SPACE_WAIT="5")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(self.exec_calls()[1]["stdin"])["space"], "sp-late")
+        self.assertEqual(len(calls_of(lines_of(self.logs["app"]), "ls")), 3)
+        self.assertEqual(len(calls_of(lines_of(self.logs["app"]), "do")), 1)  # created once
+
+    def test_the_error_text_and_the_instructions_are_in_no_remote_space(self):
+        err = self.refused(*self.open_args(), code="no_remote_space", FAKE_APP_SPACES="[]", FAKE_APP_NEW_FAIL="1")
+        self.assertIn("cannot create the space", err)
+        for text in ("`herdr-app`", "`hc machine ls`", "sessions.machines.alpha.space"):
+            self.assertIn(text, err)
+        self.assertEqual(len(lines_of(self.logs["app"])), 2)  # an error exit is not re-listed
+
+    def test_no_id_and_no_late_space_says_so(self):
+        err = self.refused(*self.open_args(), code="no_remote_space", FAKE_APP_SPACES="[]", FAKE_APP_NEW_REPLY="not json")
+        self.assertIn("printed no JSON", err)
+        err = self.refused(*self.open_args(), code="no_remote_space", FAKE_APP_SPACES="[]", FAKE_APP_NEW_REPLY="{}")
+        self.assertIn("returned no space id", err)
+
+    def test_a_failed_open_closes_the_space_it_created(self):
+        (self.rproj / ".pi").mkdir()  # the remote refuses an untrusted project after the space was made
+        err = self.refused(*self.open_args(), code="remote_untrusted", FAKE_APP_SPACES="[]")
+        close = [c for c in lines_of(self.logs["app"]) if c[:2] == ["do", "space.close"]]
+        self.assertEqual([json.loads(c[2]) for c in close], [{"id": "sp-new", "confirmed": True}])
+        self.assertNotIn("still open", err)
+
+    def test_a_failed_open_leaves_an_existing_space_alone(self):
+        (self.rproj / ".pi").mkdir()
+        self.refused(*self.open_args(), code="remote_untrusted")
+        self.assertEqual([c for c in lines_of(self.logs["app"]) if c[:2] == ["do", "space.close"]], [])
+
+    def test_a_failed_close_names_the_space(self):
+        (self.rproj / ".pi").mkdir()
+        err = self.refused(*self.open_args(), code="remote_untrusted", FAKE_APP_SPACES="[]", FAKE_APP_CLOSE_FAIL="1")
+        self.assertIn("space sp-new", err)
+        self.assertIn("still open", err)
+        self.assertIn("space.close", err)
 
     def test_a_windows_foreman_argv_is_passed_as_words(self):
         words = ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:/Program Files/fm/bin/foreman.ps1"]
@@ -1014,7 +1101,27 @@ class ParentTest(RemoteBase):
         self.assertFalse((self.padir / "pi-foreman").exists())
         self.assertFalse((self.radir / "pi-foreman").exists())
         self.assertEqual(self.hc_calls("run"), [])
-        self.assertEqual(lines_of(self.logs["app"]), [])  # no space is looked up or created
+        self.assertEqual(lines_of(self.logs["app"]), [["ls"]])  # looked up, never created
+        self.assertIn("space: sp-alpha (exists)", out)
+
+    def test_dry_run_reports_a_space_that_space_new_will_create(self):
+        rc, out, err = self.run_main(*self.open_args("--dry-run"), FAKE_APP_SPACES="[]")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("space: will be created with space.new", out)
+        self.assertEqual(lines_of(self.logs["app"]), [["ls"]])
+
+    def test_dry_run_reports_a_pinned_space_without_asking(self):
+        self.write_config({"alpha": {"parentName": "beta", "space": "sp-pin"}})
+        rc, out, err = self.run_main(*self.open_args("--dry-run"))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("space: sp-pin (pinned)", out)
+        self.assertEqual(lines_of(self.logs["app"]), [])
+
+    def test_dry_run_warns_when_the_space_cannot_be_checked(self):
+        rc, out, err = self.run_main(*self.open_args("--dry-run"), PATH=self.path(app=False))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("warning: cannot check the remote space: herdr-app is not on PATH", out)
+        self.assertIn("hc machine ls", out)
 
     def test_unreachable_leaves_no_local_entry(self):
         for mode, text in (("timed_out", "no answer within 15 s"), ("spawn_failed", "spawn_failed"),
