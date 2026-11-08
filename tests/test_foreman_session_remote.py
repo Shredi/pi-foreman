@@ -884,7 +884,7 @@ class ParentTest(RemoteBase):
             self.assertEqual(rc, 0, err)
             (line,) = [l for l in out.splitlines() if l.startswith("fetch remote files: ")]
             words = shlex.split(line[len("fetch remote files: "):])
-            self.assertEqual(Path(words[0]).name, "hc")
+            self.assertEqual(Path(words[0]).stem.lower(), "hc")  # hc.CMD on Windows
             self.assertEqual(words[1:4], ["file", "read", "--on"])
             self.assertEqual(words[4], "alpha")
             self.assertTrue(words[5].endswith("/result.md"), words)
