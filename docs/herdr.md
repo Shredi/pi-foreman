@@ -585,7 +585,7 @@ terminal the open prints `attach: hc attach <machine>/<t>` to run by hand. See
 [remote child sessions](sessions.md#remote-child-sessions).
 
 `foreman session list` shows the address (`hc:t2`); the registry entry has `backend: "hc"` and `hc: {address, parent, space}`
-(`space` is `null` for a local child; a remote child records its machine's space).
+(`space` is `null` for a local child; a remote child records its machine's space, the id as `herdr-app ls` prints it, with the `machine/` prefix; `space.new` returns it as a string `space`).
 `launch.txt` keeps the usual shell line, so a relaunch is a copy. The final screen of a finished child stays readable (no `--rm`).
 
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
