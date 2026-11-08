@@ -21,6 +21,17 @@ test("qualified PASS and PARTIAL never mark and are partial items", () => {
   assert.equal(partialItemsOf(`2. PASS (${"x".repeat(300)})`)[0].note.length, 200);
 });
 
+test("decorated qualified PASS never marks and is noted; decorated unqualified PASS marks", () => {
+  for (const line of ["**1. PASS** (partial)", "1. `PASS` (partial)", "1. `1. PASS` (config part only)", "- **1. PASS** [x]", "**1. PASS** partial"]) {
+    assert.deepEqual(passItemsOf(line), [], line);
+    assert.deepEqual(partialItemsOf(line).map((p) => p.n), ["1"], line);
+  }
+  for (const line of ["**1. PASS** x", "`1. PASS`", "1. `1. PASS` - ok"]) {
+    assert.deepEqual(passItemsOf(line), ["1"], line);
+    assert.deepEqual(partialItemsOf(line), [], line);
+  }
+});
+
 test("FAIL parsing unchanged; V is never marked or noted", () => {
   assert.deepEqual(verdictItemsOf("1. FAIL a\n2. PASS (partial)\n3. FAIL b", "FAIL"), ["1", "3"]);
   assert.deepEqual(passItemsOf("V. PASS"), []);

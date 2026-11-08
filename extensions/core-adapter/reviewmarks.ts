@@ -52,8 +52,8 @@ function itemLines(text: string): { n: string; rest: string }[] {
   return out;
 }
 
-// PASS followed by `(`, `[` or the word partial/partially is a qualified PASS.
-const QUALIFIED = /^PASS\b\s*(?:[(\[]|partial(?:ly)?\b)/i;
+// PASS (closing decoration `, *, _ allowed) followed by `(`, `[` or the word partial/partially is a qualified PASS.
+const QUALIFIED = /^PASS\b[`*_]*\s*(?:[(\[]|partial(?:ly)?\b)/i;
 
 /** Item numbers of the review's unqualified `N. PASS` lines (not `PASS (…)`, `PASS [...]`, `PASS partial`), in order, without repeats. */
 export function passItemsOf(text: string): string[] {
