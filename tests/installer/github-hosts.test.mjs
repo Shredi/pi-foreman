@@ -30,7 +30,8 @@ function fresh() {
 
 // Non-interactive unless `picker` is set (then the readline picker is forced and `input` feeds it).
 function run(env, args, { input, picker = false } = {}) {
-  const r = spawnSync(process.execPath, [SETUP, ...args, "--agent-dir", env.agentDir], {
+  // add-ons install by default; the non-picker runs here are about hosts, so they opt out
+  const r = spawnSync(process.execPath, [SETUP, ...args, ...(picker || args.includes("--addon") ? [] : ["--no-addons"]), "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
     input,
@@ -57,7 +58,7 @@ function writeOverlay(env, hosts) {
 }
 
 // Prompt order as in picker.test.mjs, with the add-on answers: profile, adjust, two add-ons, apply.
-const PICK = ["", "n", "n", "n", "y"];
+const PICK = ["", "n", "n", "n", "n", "n", "y"];
 
 test("(e) --github-hosts writes the list lowercased and deduped; a bad value exits non-zero", () => {
   const env = fresh();

@@ -175,7 +175,7 @@ import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
-import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
+import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -5322,6 +5322,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) out.push(...deferredDoctorLines(deferred.patterns, pi.getAllTools().map((t) => t.name)));
     const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
+    out.push(...optionalAddonsDoctor({ agentDir: s.agentDir, cwd: s.cwd }, pi.getAllTools().map((t) => t.name), process.env));
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
     // The profile and its deviations are read without the project layer (the agent dir has no .pi/foreman.json), so project tightening is not noise.
     const userOnly = s.python.ok ? await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.agentDir, trusted: false, spawner }) : null;

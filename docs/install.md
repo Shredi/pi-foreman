@@ -51,7 +51,7 @@ setup from the clone once: `node <agentDir>/git/github.com/Shredi/pi-foreman/set
 Flags: `--dry-run`, `--project` (project-local settings), `--overlay npm:<pkg>@<exact-version>` (organisation overlay;
 ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `--develop` (see
 [Developing](#developing)), `--remove`, `--agent-dir <dir>` (overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`),
-`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--github-hosts <host>[,<host>]` and `--pick` (see
+`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]` and `--pick` (see
 [Profiles, features and add-ons](#profiles-features-and-add-ons)).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
 
@@ -68,7 +68,9 @@ Setup has a feature axis next to the model-map presets ([presets](presets.md)): 
   ones it names as given, every other one to its shipped state. So `full` followed by `standard` turns the relaxations back off.
 - `--enable <id>[,<id>]` and `--disable <id>[,<id>]`: switch toggleable features after the profile; both are repeatable.
   On Windows repeat the flag instead of using a comma list, because `cmd` splits arguments on commas.
-- `--addon <id>`: install an add-on (repeatable). This flag is the consent; nothing is installed without it or a picker "yes".
+- `--addon <id>`: install exactly the named add-ons (repeatable), instead of the default set.
+- `--no-addons`: install no add-on. `--skip-addon <id>[,<id>]`: install the default set minus these. Both are refused together with `--addon` (and each other).
+- `--no-env`: do not write environment variables into your shell profile (see [Add-ons](#add-ons)).
 - `--github-hosts <host>[,<host>]`: the GitHub hosts the PR tracker covers (`tools.prGithubHosts`, see [GitHub hosts for PR tracking](#github-hosts-for-pr-tracking)); 1 to 20 host names, lowercased and deduplicated. Counts as a flag (the picker does not open); refused with `--remove`, `--preview` and `--pick`.
 - `--pick`: open the picker again.
 - `--preview [screen]`: draw one setup screen (`home`, `plan`, `updates`, `config`, `models`, `workfolders`, `apply`; default `home`) from built-in sample data. On a terminal it opens the full-screen view (`1`-`7` or Tab switch screens, arrows move, `q` quits; the footer shows other keys, but they are inactive); without a terminal it prints one 100x30 frame. It reads and writes nothing of yours, exits 2 for an unknown screen, and cannot be combined with any other flag. Needs Node 22.19+.
@@ -92,7 +94,7 @@ it stays flag-driven. A run that never prompts and has no recorded profile print
 
 Steps: (1) pick a profile, with its summary and off-list; the recorded or `standard` one is preselected and Enter keeps it;
 (2) "Adjust features?" (default no): per area, one checkbox list each (space flips; the readline menu flips by number), safety relaxations in a last group with a warning;
-(3) add-ons not yet installed: purpose, exact spec, clash notes, `y/N` (default no); (4) summary with the `foreman.json` diff,
+(3) add-ons not yet installed: purpose, exact spec, clash notes, `Y/n` (default yes); (4) summary with the `foreman.json` diff,
 the planned `pi install` lines and the equivalent flag line, then `y/N`; (5) after "yes", the GitHub hosts step below. Ctrl-C, end of input or "no" prints "nothing
 written" and exits 0.
 
@@ -133,16 +135,31 @@ and the doctor show `on` for a request-billed provider (a `billing: request` ent
 
 ### Add-ons
 
-`config/addons.json` lists exact-pinned optional Pi packages. Setup installs one only on consent: `pi install
-npm:<package>@<version>` (`-l` with `--project`), and records it under `managed.addons`. If the package is already installed in
-either settings file at any version, setup says "already installed" and runs nothing, because a second copy stops Pi at start.
-Without consent, setup prints one line per add-on that is not installed: purpose, spec, clash notes and how to consent.
+`config/addons.json` lists exact-pinned Pi packages, all marked `default`. A plain `foreman setup` installs every default add-on
+that is not installed yet: `pi install npm:<package>@<version>` (`-l` with `--project`), recorded under `managed.addons`.
+Interactively the picker asks per add-on with yes preselected; non-interactive runs install and say so. Opt out with
+`--no-addons`, `--skip-addon <id>` or by answering no. If the package is already installed in either settings file at any
+version, setup says "already installed" and runs nothing, because a second copy stops Pi at start. The ids offered so far are
+recorded in `managed.addonsOffered`: an add-on added to the list in a later release is offered once on the next run, and one you
+declined (answered no, `--skip-addon`, `--no-addons`) is not offered again; offer it again with `--addon <id>`.
+
+When an add-on needs an environment variable (`env` in `addons.json`), setup writes it persistently: into a marked block
+(`# >>> pi-foreman env >>>` ... `# <<< pi-foreman env <<<`) in `~/.zshrc` (zsh), `~/.bash_profile` (bash on macOS) or `~/.bashrc`
+(bash elsewhere), `~/.config/fish/conf.d/pi-foreman.fish` (fish) or `~/.profile`, and with `setx` on Windows. It is idempotent: an unchanged block
+is not rewritten. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
+alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 
 - `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
 - `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
-  starts**: set it permanently in your shell profile, not as a prefix on `pi install`. Without `process`, its attribution hook
+  starts**: setup writes it into your shell profile (see above). Without `process`, its attribution hook
   takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.5.x;
   the doctor reports that. See [herdr](herdr.md#optional-add-on-background-tasks).
+- `quiver` (`pi-quiver`): `fetch` and `doc_to_md` tools. Session naming, header, fast mode and the stall watchdog are opt-in in its own
+  settings and stay off. No name clash with pi-foreman.
+- `memory` (`pi-memory`): persistent memory tools (`memory_write`, `memory_read`, ..., `scratchpad`). It injects its memory files into
+  every turn and makes one extra model call at shutdown unless `PI_MEMORY_EXIT_SUMMARY=0`. `memory_search` needs the optional `qmd`
+  command (`npm i -g @tobilu/qmd`); without it only that tool is missing, installing works anyway (Windows too), and `/foreman
+  doctor` prints an INFO line.
 
 `--remove` lists installed add-ons as `add-ons installed: <id> (<source>); kept, remove with: pi remove <source>` and runs
 nothing for them.

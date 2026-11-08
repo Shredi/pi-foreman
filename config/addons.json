@@ -5,6 +5,7 @@
       "id": "polish",
       "package": "pi-polish",
       "version": "0.1.2",
+      "default": true,
       "purpose": "Compact Claude Code-style tool output in the terminal (renderers only; it registers no tools).",
       "clashes": [
         "It ships a second extension (`chrome`) that you may filter out in the package entry of `settings.json`."
@@ -14,12 +15,38 @@
       "id": "background-tasks",
       "package": "pi-background-tasks",
       "version": "2.6.10",
+      "default": true,
       "purpose": "Background shell tasks for long-running commands (`bg_run`).",
       "env": { "PI_BG_FEATURES": "process" },
       "clashes": [
-        "PI_BG_FEATURES=process is read when Pi starts, not at install: set it permanently in your shell profile.",
+        "PI_BG_FEATURES=process is read when Pi starts, not at install: setup writes it to your shell profile (POSIX) or user environment (Windows) unless you pass --no-env.",
         "Without `process`, its attribution extension takes over the global anthropic provider slot.",
         "2.6.10 declares a Pi peer range of 0.81 to 0.84 while pi-foreman pins Pi 1.5.x; `/foreman doctor` reports the mismatch."
+      ]
+    },
+    {
+      "id": "quiver",
+      "package": "pi-quiver",
+      "version": "6.14.2",
+      "default": true,
+      "purpose": "Web fetch (`fetch`) and document conversion (`doc_to_md`) tools, plus opt-in session naming, header, fast mode and a provider stall watchdog.",
+      "clashes": [
+        "It registers `fetch` and `doc_to_md` (always on). pi-foreman registers no tool of those names; its web-read rules gate `fetch`, and its role allowlists do not name either tool.",
+        "Session naming, the custom header (`/builtin-header`), fast mode (`/fast`) and the provider stall watchdog are opt-in in its own settings and stay off by default; pi-foreman has no equivalent of them.",
+        "Slack tools are opt-in too and need their own credentials."
+      ]
+    },
+    {
+      "id": "memory",
+      "package": "pi-memory",
+      "version": "0.4.2",
+      "default": true,
+      "purpose": "Persistent memory across sessions (`memory_write`, `memory_read`, `memory_forget`, `memory_restore`, `memory_search`, `memory_status`, `scratchpad`).",
+      "clashes": [
+        "It injects MEMORY.md, SCRATCHPAD.md and the daily logs into every turn and, unless PI_MEMORY_EXIT_SUMMARY=0 is set, makes one extra model call at session shutdown to write a summary.",
+        "`memory_search` needs the optional `qmd` command (npm i -g @tobilu/qmd); without it only that tool is unavailable and `/foreman doctor` says so (INFO). Installing works either way, on Windows too.",
+        "Data lives in PI_MEMORY_DIR (default ~/.pi/agent/memory).",
+        "pi-foreman has no memory tools, so there is no name clash."
       ]
     }
   ]
