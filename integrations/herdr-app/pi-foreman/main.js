@@ -90,8 +90,9 @@ const hashOf = (s) => {
 };
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
-// A rejection about the `timeout` option itself, not the run having been stopped ("... took longer than N s and was stopped").
-const optionError = (e) => /timeout/i.test(String(e?.message ?? e)) && !/took longer than|was stopped/i.test(String(e?.message ?? e));
+// A throw about the `timeout` option itself (a synchronous TypeError for the options argument, or an option message), never a run that
+// timed out or a network text such as `dial tcp ...: i/o timeout`. Same logic as in ../pi-foreman-plan/main.js (separate mod folders, no import).
+const optionError = (e) => e instanceof TypeError || /timeout must|unknown (option|field|key)|invalid option|unexpected (option|field)/i.test(String(e?.message ?? e));
 const why = (e) => String(e?.message ?? e ?? "").slice(0, 200);
 const isObjLike = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -334,8 +335,7 @@ export default class ForemanAgents extends View {
     cx.spawn(async () => {
       try {
         await this.execT(hc, ["run", "--json", "--bg", "--no-notify", "--rm", "--name", plan.name, "--", hc, "attach", plan.target], {}, T_ATTACH);
-        this.failed.delete(`attach:${plan.name}`);
-      } catch (e) { this.fail(`attach:${plan.name}`, "Could not open the remote session", e); }
+      } catch (e) { guard(() => notify({ title: "Could not open the remote session", body: why(e), level: "error" })); }
     });
   }
 

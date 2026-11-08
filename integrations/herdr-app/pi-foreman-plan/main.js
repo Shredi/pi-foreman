@@ -309,8 +309,9 @@ export default class PlanPanel extends View {
     try {
       return await exec(command, args, { ...options, timeout });
     } catch (e) {
+      // Same logic as optionError in ../pi-foreman/main.js (separate mod folders, no import): only errors about the option itself.
       const text = String(e?.message ?? e);
-      if (!/timeout/i.test(text) || /took longer than|was stopped/i.test(text)) throw e;
+      if (!(e instanceof TypeError || /timeout must|unknown (option|field|key)|invalid option|unexpected (option|field)/i.test(text))) throw e;
       this.noTimeout = true;
       return exec(command, args, options);
     }

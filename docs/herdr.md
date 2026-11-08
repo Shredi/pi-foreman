@@ -620,13 +620,15 @@ Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations
 
 ### Versions
 
-Tested on Herdr app 0.1.14 with core 0.1.19. The mods also load on 0.1.13: every `exec` of a mod passes a `timeout`
+Minimum: Herdr app 0.1.13 with core 0.1.18. Recommended and tested: app 0.1.14 with core 0.1.19 (exec timeouts, per-copy state).
+On 0.1.13 the mods load, but an `exec` may not honour `timeout`, so a hung program is only stopped by the mods' own watchdogs,
+and top-level state is shared between copies of a mod. Every `exec` of a mod passes a `timeout`
 (radar read 30 s, PR poll 600 s, `hc get` 10 s local / 15 s remote, `hc run` attach 15 s, URL opener 10 s). If a host rejects
 that option, the call is repeated once without it and the mod stops passing it (that behaviour on 0.1.13 is not verified here).
 A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure.
 
 Herdr 0.1.14 runs a mod's top level once per source version, shared by all copies of the mod, so per-copy state lives in
-`init`. Two keys stay app-global on purpose (`pi-foreman.radar`, `pi-foreman.show`, and the Agents order).
+`init`. Three things stay app-global on purpose: the keys `pi-foreman.radar` and `pi-foreman.show`, and the Agents order.
 
 ### Agent row labels
 
@@ -639,7 +641,9 @@ What outlives a closed tab, and what does not:
 
 - `foreman_bg` runs are detached with their own process group and survive a tab close. `/foreman close` (and an intercom
   `foreman:close`) now sends SIGTERM to the group of each still-running run of that session (Windows: best-effort `taskkill /T`).
-  `session_shutdown`, a reload and a cancelled wait do not kill them.
+  `session_shutdown`, a reload and a cancelled wait do not kill them. Runs started before a `/reload` are not killed by a later
+  close either: waits are not restored after a reload, so the session no longer knows them.
+
 - A selfclean helper (`selffinish`) outlives pi on purpose.
 - A local `hc run --keep --outlive-parent` session survives by design; `prune` only marks it.
 - The mod's own `hc run` attach is not killed on tab close (the mod has no `close()`); the remote `hc events` ends with pi.
