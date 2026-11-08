@@ -237,6 +237,8 @@ export interface AddonTask {
   tail: string[];
   /** The output file relative to the worktree (cwd), when it lies inside .pi/tasks. */
   log?: string;
+  /** Set by readOwnAddonTasks when the record turns notify or trigger off: its end wakes no turn. */
+  silent?: true;
 }
 
 /** Running add-on tasks (status running) of the records under `<cwd>/.pi/tasks/<session>-<pid>/`, newest first; unreadable records are skipped. */
@@ -297,7 +299,7 @@ export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = 
         const rec = JSON.parse(fs.readFileSync(path.join(root, dir, f), "utf8")) as Record<string, unknown>;
         if (rec.status !== "running" || typeof rec.id !== "string") continue;
         const start = typeof rec.startTime === "number" && Number.isFinite(rec.startTime) ? rec.startTime : now;
-        out.push({ id: oneLine(rec.id, 40), label: oneLine(rec.name ?? rec.description ?? rec.command, 80), ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: [], start });
+        out.push({ id: oneLine(rec.id, 40), label: oneLine(rec.name ?? rec.description ?? rec.command, 80), ...(typeof rec.pid === "number" ? { pid: rec.pid } : {}), ageSeconds: Math.max(0, Math.round((now - start) / 1000)), tail: [], ...(rec.notifyOnCompletion === false || rec.triggerOnCompletion === false ? { silent: true as const } : {}), start });
       } catch {
         // a record being rewritten or foreign: skip
       }
