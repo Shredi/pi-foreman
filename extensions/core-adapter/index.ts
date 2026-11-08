@@ -2779,6 +2779,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const prefix = questionPrefix(projectNameOf(ctx.cwd), labelOfHandoff(process.env.PI_FOREMAN_HANDOFF_DIR?.trim()));
         prefixQuestions(event.input, prefix);
         const hint = questionHint(event.input, prefix);
+        questionHints.clear(); // a call blocked later gets no tool_result: drop its stale hint
         if (hint) questionHints.set(event.toolCallId, hint);
         ms.trace?.emit({ event: "question_check", jargon: hint ? 1 : 0 });
       }

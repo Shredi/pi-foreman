@@ -57,6 +57,7 @@ const pathLike = (raw: string): boolean => {
   const t = raw.replace(/^[("'<\[]+|[)"'>\],.;:!?]+$/g, "");
   if (!/[A-Za-z0-9]/.test(t)) return false;
   if (t.includes("/")) return /^(?:\/|\.{1,2}\/|~\/)/.test(t) || t.split("/").length > 2 || EXT.test(t);
+  if (/^[A-Z][A-Za-z0-9]*\.js$/.test(t)) return false; // product names such as Node.js, Next.js
   return /^[\w@-]+(?:\.[\w@-]+)*$/.test(t) && EXT.test(t) && /[A-Za-z]/.test(t.split(".")[0]);
 };
 
@@ -66,7 +67,6 @@ export function jargonHits(text: string, max = 3): string[] {
   const add = (s: string): void => {
     if (!hits.includes(s) && hits.length < max) hits.push(s);
   };
-  const prose = text.split(/\r?\n/).filter((l) => !FENCE.test(l));
   let fenced = false;
   for (const line of text.split(/\r?\n/)) {
     if (FENCE.test(line)) {
@@ -82,7 +82,6 @@ export function jargonHits(text: string, max = 3): string[] {
     for (const m of line.matchAll(/\b[rR]\d{2,3}\b/g)) add(m[0]);
     for (const m of line.matchAll(/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g)) add(m[0]);
   }
-  void prose;
   return hits;
 }
 

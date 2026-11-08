@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { world } from "./_r46world.ts";
 
 const WITH = "# Widget\n\n## For the owner\nWe ship the widget.\nIt takes one builder.\n\n## Goal\nShip it.\n";
@@ -47,17 +48,21 @@ test("ask_user_question: project prefix once, hint on a jargon result, main sess
 
 test("ask_user_question in an opened session carries the session label", async (t) => {
   const w = world(t, { handoff: true });
+  const labelled = path.join(path.dirname(w.handoff), "20260101-120000-widget-ship-abc123");
+  fs.mkdirSync(labelled, { recursive: true });
+  fs.copyFileSync(path.join(w.handoff, "child"), path.join(labelled, "child"));
+  process.env.PI_FOREMAN_HANDOFF_DIR = labelled;
   const a = await w.adapter("startup");
   const input = { questions: [{ question: "Which way?", header: "Q", options: [{ label: "A", description: "a" }, { label: "B", description: "b" }] }] };
   await a.call("ask_user_question", input);
-  assert.match(input.questions[0].question, /^\[[^\]]+\] Which way\?$/);
+  assert.match(input.questions[0].question, /^\[[^\]·]+ · widget-ship\] Which way\?$/);
 });
 
 test("foreman_show: a hint when the note opens with a table, none for a plain opening", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
   const show = a.tool("foreman_show");
-  if (!show) return; // the panel tool is not registered in this rig
+  assert.ok(show, "the panel tool is registered in this rig");
   const run = async (markdown: string) => ((await show.execute("s", { title: "T", markdown }, undefined, undefined, a.ctx)) as { content: { text: string }[] }).content[0].text;
   assert.match(await run("| a | b |\n|---|---|\n"), /plain 2-3 sentence/);
   assert.doesNotMatch(await run("This is about caching. It keeps pages fast.\n\n| a |\n"), /plain 2-3 sentence/);
