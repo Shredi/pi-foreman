@@ -405,7 +405,7 @@ Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) an
   |---|---|---|
   | `host` | the hosts of `ssh`, `scp`, `sftp`, `rsync` (also after the host: `ssh prod -o X cmd`, combined flags such as `-vp 22`, `--`, `-J` jump hosts), `curl`, `wget`, and a `fetch` call that is not a plain GET or HEAD | every non-ssh shell host match carries `write-out`; ssh adds the classes of its remote command |
   | `path` | the write targets of write-class segments and the path tools (`write`, `edit`) | `write-out` |
-  | `command` | the program word of a segment that is not read-class | those of the segment |
+  | `command` | the program basename of any segment, regardless of effect class | those of the segment |
 
   A plain GET or HEAD never matches. A read-class segment (`cat`, `grep`, `git log`, ...) never touches a host or path entry. A command-running ssh option (`-o ProxyCommand=`, `LocalCommand=`, `RemoteCommand=`, `-F`) makes the remote command opaque, so only an ask is possible.
 - **Known limits.** A segment of class `unknown` (for example `sed -i`) rests on the model's own rating. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.

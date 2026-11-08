@@ -1,4 +1,4 @@
-// The protected-target check (classifier.ts checkProtected / ProtectedCache): allow, ask, deny, every failure asks, the hard-floor classes cap the
+// The protected-target check (`ProtectedCache.check`): allow, ask, deny, every failure asks, the hard-floor classes cap the
 // model, the owner-away rule, the mode test before the cache, the version drop, and the one-time no-model notice.
 import { test } from "node:test";
 import assert from "node:assert/strict";
