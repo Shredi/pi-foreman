@@ -48,7 +48,11 @@
    {"text": "Still waiting."},
    {"text": "Done."}
   ],
-  "nextinput": [{"text": "Done."}, {"text": "Done again."}, {"text": "Done once more."}]
+  "nextinput": [{"text": "Done."}, {"text": "Done again."}, {"text": "Done once more."}],
+  "cancelwait": [
+   {"tools": [{"name": "foreman_wait", "arguments": {"action": "cancel", "id": "w1"}}]},
+   {"text": "Done."}, {"text": "Done again."}, {"text": "Done once more."}
+  ]
  },
  "*": {
   "quiet": [{"text": "child: nothing to report"}],

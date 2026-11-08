@@ -219,6 +219,10 @@ Worked example:
 3. The wait wakes; pi-foreman writes `<handoff dir>/.seen` containing `ruling-1.md` and Herdr leaves `blocked`; the child reads `ruling-1.md` and continues.
    The next question is `# Ask 2: …` answered by `ruling-2.md`.
 
+### A turn that ends under a wait
+
+A foreman turn that ends while a `foreman_wait` of any kind (timer, file, pid, ci, child) is active, a subagent it launched is running, or one of its `bg_run` tasks (bg tasks of this pi process only; records of an earlier crashed process do not count) that notifies and triggers on completion is running, is a pause, not a finish: each of those starts the next turn by itself, so neither the ledger stop guard nor the ceremony finish gate runs (trace `finish_gate {skipped: pending_wait, runId: <ids>}`; the stop guard's once-per-session reminder and the refusal count stay unspent). When the wait resolves or is cancelled and nothing else is pending, the next turn end is gated as usual. A wait that never resolves keeps the gates quiet until its own timeout wakes the session.
+
 ### Steer while a child runs
 
 While a foreman's launch-wait holds a child's result, the adapter polls `$PI_FOREMAN_HANDOFF_DIR` every 2 s for a `ruling*.md` or `steer*.md` file that is new or has a newer mtime than the one already delivered (files present when the first wait starts are the baseline). The first one found ends the wait early: the launch result says the run is still running, then the file text (first 4 KB, marked as data, not instructions); continue with `bg_wait <runId>`. Each file version is delivered once. With no `PI_FOREMAN_HANDOFF_DIR` nothing is polled. The `launch_wait` trace event reports `outcome: steer`.

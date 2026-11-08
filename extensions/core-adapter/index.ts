@@ -175,7 +175,7 @@ import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
-import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks } from "./bg.ts";
+import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -4136,6 +4136,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.outcome !== "completed") return undefined;
     const s = await ensureSession(ctx);
     await s.reviewSync; // PASS marks and the comment-only check land before the stop guard reads the ledger
+    // A source that starts a turn by itself when it ends makes this settle a pause, not a finish: neither gate runs (the stop guard's once-per-session reminder and the refusal counter stay unspent).
+    const pending = pendingWakeSources(s);
+    if (pending.length > 0) {
+      s.trace?.emit({ event: "finish_gate", skipped: "pending_wait", runId: pending.join(",") }); // the ids ride in `runId`: `note` is dropped for this event, a new field would change the pinned allowlist
+      return undefined;
+    }
     const outcome = await run(s, ctx, "ledger_guard_stop", stopPayload(payloadCtx(s, ctx), s.stopContinued), "Stop");
     const r = translateStop(outcome);
     if (r.openFailure) notifyOnce(s, ctx, "open:ledger_guard_stop", r.openFailure);
@@ -4147,6 +4153,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       continue: true,
     };
   });
+
+  /** Ids of what will wake this foreman session on its own: foreman_wait entries, running or launching subagents, bg_run tasks of this pi process that notify and trigger. */
+  function pendingWakeSources(s: Session): string[] {
+    if (s.isChild) return [];
+    const ids = waits.active(s.id).map((w) => `wait:${w.id}`);
+    for (const id of [...s.activeRuns, ...s.pendingLaunches]) ids.push(`run:${id}`);
+    try {
+      for (const id of wakingBgTaskIds(s.cwd, s.id)) ids.push(`bg:${id}`);
+    } catch {
+      // no task records: none running
+    }
+    return ids;
+  }
 
   /**
    * D2: a triaged standard/heavy session finishes only after its required steps

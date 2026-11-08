@@ -103,11 +103,15 @@ class TestLedgerFlow(ReplayCase):
         ledger = rig.project / ".workflow" / "LEDGER-replay.md"
         self.assertIn("LEDGER-replay.md: 2 open item(s)", res[1][2])  # `ledger` shim on PATH, same session
         self.assertEqual(Path(marker(rig, sid_a)["ledger"]).resolve(), ledger.resolve())
-        holds = [r["entry"] for r in recs if r.get("type") == "entry_appended" and (r.get("entry") or {}).get("customType") == "pi-foreman-stop-gate"]
+        def stop_holds(records):
+            return [r["entry"] for r in records if r.get("type") == "entry_appended" and (r.get("entry") or {}).get("customType") == "pi-foreman-stop-gate"]
+        # The launching run ends with the child still running: a pause, the stop gate is not spent yet.
+        self.assertEqual(stop_holds(recs), [])
+        notice, more = a.wait_child_notify(timeout=90)
+        self.assertIn("child result", notice)
+        holds = stop_holds(more)  # the run the child's notice starts ends with the items still open
         self.assertEqual(len(holds), 1, "stop gate did not hold exactly once while items are open")
         self.assertIn("still has 2 open item(s)", holds[0]["content"])
-        notice, _ = a.wait_child_notify(timeout=90)
-        self.assertIn("child result", notice)
         a.close()
 
         b = rig.start()

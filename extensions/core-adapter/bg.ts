@@ -306,6 +306,29 @@ export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = 
   return out.sort((a, b) => b.start - a.start).slice(0, MAX_ADDON_TASKS).map(({ start: _s, ...t }) => t);
 }
 
+/** Ids of running bg_run tasks of this pi process (`<sessionId>-<pid>` dir) that notify and trigger on completion: only those can wake the session. */
+export function wakingBgTaskIds(cwd: string, sessionId: string, pid: number = process.pid): string[] {
+  const dir = path.join(cwd, ".pi", "tasks", `${sessionId}-${pid}`);
+  const ids: string[] = [];
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  for (const f of files) {
+    try {
+      const rec = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as Record<string, unknown>;
+      if (rec.status !== "running" || typeof rec.id !== "string") continue;
+      if (rec.notifyOnCompletion === false || rec.triggerOnCompletion === false) continue;
+      ids.push(oneLine(rec.id, 40));
+    } catch {
+      // a record being rewritten or foreign: skip
+    }
+  }
+  return ids;
+}
+
 export interface WaitRow {
   id: string;
   kind: string;

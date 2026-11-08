@@ -164,12 +164,14 @@ class TestWaitingForParent(ReplayCase):
         self.assertEqual([(n, e) for n, e, _ in tool_results(recs)], [("foreman_triage", False), ("foreman_wait", False)], tool_results(recs))
         self.assertEqual(gate_messages(recs), [])
         self.assertEqual(events(rig, sid, "finish_refused"), [])
-        self.assertEqual([r.get("reason") for r in events(rig, sid, "ceremony_gate")], ["waiting_for_parent"])
+        # The pending wait pauses the turn before the ceremony gate runs (the waiting_for_parent valve is not reached).
+        self.assertEqual([r.get("skipped") for r in events(rig, sid, "finish_gate")], ["pending_wait"])
+        self.assertEqual(events(rig, sid, "ceremony_gate"), [])
         self.assertEqual([r["decision"] for r in events(rig, sid, "waiting_for_parent")], ["set"])
-        # Parent input: the gate is active again.
-        again = pi.prompt("[[replay:nextinput]] anything new?", timeout=90)
+        # The wait ends (cancelled): the gate is active again.
+        again = pi.prompt("[[replay:cancelwait]] anything new?", timeout=90)
         pi.close()
-        self.assertTrue(gate_messages(again), "the gate must refuse again after the next input")
+        self.assertTrue(gate_messages(again), "the gate must refuse again once the wait is gone")
         self.assertTrue(events(rig, sid, "finish_refused"))
 
     def test_another_sessions_handoff_does_not_waive_the_gate(self):
@@ -179,8 +181,13 @@ class TestWaitingForParent(ReplayCase):
         pi = rig.start(env={"PI_INTERCOM_STABLE_ID": self.ME})
         sid = pi.session_id()
         recs = pi.prompt("[[replay:handoff]] hand off", timeout=90)
+        # Another session's handoff dir sets no waiting_for_parent; the pending timer still pauses the turn.
+        self.assertEqual(gate_messages(recs), [])
+        self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
+        self.assertEqual([r.get("skipped") for r in events(rig, sid, "finish_gate")], ["pending_wait"])
+        again = pi.prompt("[[replay:cancelwait]] anything new?", timeout=90)
         pi.close()
-        self.assertTrue(gate_messages(recs), "a handoff dir of another session does not waive the gate")
+        self.assertTrue(gate_messages(again), "without the wait the gate refuses; the foreign handoff dir waives nothing")
         self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
 
     def test_plain_timer_wait_without_handoff_context_is_refused(self):
@@ -189,8 +196,14 @@ class TestWaitingForParent(ReplayCase):
         pi = rig.start()
         sid = pi.session_id()
         recs = pi.prompt("[[replay:plainwait]] wait", timeout=90)
+        # A plain timer pauses the turn (pending_wait) without setting waiting_for_parent.
+        self.assertEqual(gate_messages(recs), [])
+        self.assertEqual(events(rig, sid, "finish_refused"), [])
+        self.assertEqual([r.get("skipped") for r in events(rig, sid, "finish_gate")], ["pending_wait"])
+        self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
+        again = pi.prompt("[[replay:cancelwait]] wait is over", timeout=90)
         pi.close()
-        self.assertTrue(gate_messages(recs), "a plain timer wait does not waive the gate")
+        self.assertTrue(gate_messages(again), "once the wait ends the gate refuses")
         self.assertTrue(events(rig, sid, "finish_refused"))
         self.assertEqual(events(rig, sid, "waiting_for_parent"), [])
 
