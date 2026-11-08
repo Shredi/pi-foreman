@@ -1,15 +1,15 @@
 // pi-intercom adoption (Phase 4, ledger items 3, 4, 22): the guard on the `intercom` tool, the
 // inbound-message turn notice and the doctor lines. Facts from pi-intercom 0.18.1 (the fork pin
-// in packages.lock.json, upstream v0.18.1 plus the hc transport; line numbers are the fork's):
-//   - tool `intercom` (index.ts:2597), params incl. action, to, cwd, openProjectPaneIfMissing;
+// in packages.lock.json, fork 5f184cc: upstream main 4b387e8 plus the hc transport; line numbers are the fork's):
+//   - tool `intercom` (index.ts:2642), params incl. action, to, cwd, openProjectPaneIfMissing;
 //     a `to` of the form name@machine is a cross-machine send, over SSH (crossMachine.transport
 //     "herdr", default) or `hc` (transport "hc") (cross-machine-discovery.ts).
 //   - inbound messages: pi.sendMessage({customType: "intercom_message", details: {from, message,
-//     replyCommand?, bodyText}}) (delivery index.ts:1334-1341); on Pi 1.2.0 and newer an idle
+//     replyCommand?, bodyText}}) (delivery index.ts:1370-1378); on Pi 1.2.0 and newer an idle
 //     session gets sendMessage's triggerTurn and no wake line: no `input` event, the message
 //     reaches before_agent_start (messageType "custom") and then message_end; on Pi before 1.2.0
-//     an idle session is woken with pi.sendUserMessage("New intercom message above.") (index.ts:1347)
-//     (version switch index.ts:163-170). A busy session steers the message in (message_end).
+//     an idle session is woken with pi.sendUserMessage("New intercom message above.") (index.ts:1383)
+//     (version switch index.ts:164-170). A busy session steers the message in (message_end).
 //     intercomInbound below reads all three, keyed on the custom message, not on the wake text.
 //   - config: <agentDir>/intercom/config.json (config.ts getConfigPath, broker/paths.ts).
 // Intercom messages are data: no gate is relaxed for a turn they start.
