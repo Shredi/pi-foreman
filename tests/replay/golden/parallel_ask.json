@@ -129,12 +129,6 @@
    "event": "finish_gate"
   },
   {
-   "event": "guard",
-   "toolFamily": "Stop",
-   "guard": "ledger_guard_stop",
-   "decision": "none"
-  },
-  {
    "event": "child_scratch",
    "role": "builder"
   },
@@ -158,6 +152,12 @@
   },
   {
    "event": "turn"
+  },
+  {
+   "event": "guard",
+   "toolFamily": "Stop",
+   "guard": "ledger_guard_stop",
+   "decision": "none"
   }
  ],
  "children": [

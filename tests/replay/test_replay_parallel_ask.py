@@ -30,13 +30,16 @@ def is_stop(e):
 
 
 def relocate_post_reply_stop(events):
-    """The one Stop guard after the supervisor reply, placed directly before the first child_scratch after it. The reply
-    wakes the child and ends the foreman's turn at the same moment, so the Stop is written concurrently with the
-    children's records and may land after that child_scratch, between the two results, or after both."""
+    """The Stop guard of the turn that ends after the supervisor reply, placed directly before the first child_scratch
+    after it. The reply wakes the child and ends the foreman's turn at the same moment, so that Stop is written
+    concurrently with the children's records and may land after that child_scratch or between the two results. Only a
+    Stop before the next `turn` event after that turn is moved; the final turn's own records stay where they are."""
     reply = next((i for i, e in enumerate(events) if e["event"] == "supervisor_request" and e.get("decision") == "replied"), None)
     if reply is None:
         return events
-    stop = next((i for i in range(reply, len(events)) if is_stop(events[i])), None)
+    turns = [i for i in range(reply, len(events)) if events[i]["event"] == "turn"]
+    end = turns[1] if len(turns) > 1 else len(events)
+    stop = next((i for i in range(reply, end) if is_stop(events[i])), None)
     scratch = next((i for i in range(reply, len(events)) if events[i]["event"] == "child_scratch"), None)
     if stop is None or scratch is None or stop < scratch:
         return events
