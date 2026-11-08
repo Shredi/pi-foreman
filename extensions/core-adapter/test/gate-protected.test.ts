@@ -2,7 +2,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { gateDecide, type GateResult } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
@@ -10,15 +9,16 @@ import type { FloorEnv } from "../floors.ts";
 import type { ProtectedEntry } from "../permconfig.ts";
 import { parseRule } from "../rules.ts";
 import type { RuleSets } from "../rules.ts";
+import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
-const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-gate-prot-")));
+const base = fs.realpathSync.native(mkTestTmp("pf-gate-prot-"));
 const wt = path.join(base, "wt");
 const agent = path.join(base, "agent");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
 for (const d of [wt, scr, path.join(agent, "pi-foreman"), path.join(wt, ".git")]) fs.mkdirSync(d, { recursive: true });
-test.after(() => fs.rmSync(base, { recursive: true, force: true }));
+test.after(() => rmTestTmp(base));
 
-const roots: GateRoots = { worktree: wt, scratch: [scr], tmp: [path.join(base, "tmp")], owned: [`${agent}/pi-foreman`], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true, agentDir: agent };
+const roots: GateRoots = { worktree: wt, scratch: [scr], tmp: [path.join(base, "tmp")], owned: [path.join(agent, "pi-foreman")], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true, agentDir: agent };
 const env: FloorEnv = { cwd: wt, home: path.join(base, "home"), agentDir: agent, platform: process.platform, writeRoots: [wt, base] };
 const E = (kind: ProtectedEntry["kind"], glob: string, i: number): ProtectedEntry => ({ id: `P${i}`, kind, glob, source: "user" });
 const prot = [E("host", "prod-*.example.net", 1), E("path", "ops/playbooks/**", 2), E("command", "deploy-*", 3)];

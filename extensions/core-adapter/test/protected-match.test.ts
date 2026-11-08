@@ -10,7 +10,7 @@ import { parseShell } from "../shellast.ts";
 import type { RuleCall } from "../rules.ts";
 
 const cwd = process.cwd();
-const home = path.resolve("/tmp/pf-prot-match/home");
+const home = path.join(cwd, "pf-prot-match", "home");
 const env = { home, platform: process.platform, checkout: cwd, cwd, ec: effectCtx(cwd) };
 const E = (kind: ProtectedEntry["kind"], glob: string, i: number): ProtectedEntry => ({ id: `P${i}`, kind, glob, source: "user" });
 const entries = [E("host", "prod-*.example.net", 1), E("path", "ops/playbooks/**", 2), E("command", "deploy-*", 3)];

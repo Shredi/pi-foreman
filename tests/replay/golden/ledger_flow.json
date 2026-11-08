@@ -32,6 +32,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
    "decision": "deny"
@@ -136,6 +137,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "deny"
@@ -252,6 +254,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Agent",
    "guard": "ledger_guard_spawn",
    "decision": "deny"

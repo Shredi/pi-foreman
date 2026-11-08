@@ -8,7 +8,7 @@ import type { GitRun, PermEnv } from "../permconfig.ts";
 import { sanitizeTrace } from "../trace.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync(mkTestTmp("pf-prot-write-"));
+const root = fs.realpathSync.native(mkTestTmp("pf-prot-write-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 let n = 0;
 

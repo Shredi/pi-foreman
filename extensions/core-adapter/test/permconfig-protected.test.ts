@@ -7,7 +7,7 @@ import { PermStore, protectedBlock, userFilePath } from "../permconfig.ts";
 import type { GitRun, PermEnv } from "../permconfig.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
-const root = fs.realpathSync(mkTestTmp("pf-prot-perm-"));
+const root = fs.realpathSync.native(mkTestTmp("pf-prot-perm-"));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
 let n = 0;
 

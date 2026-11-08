@@ -32,6 +32,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Bash",
    "guard": "destructive_guard",
    "decision": "deny"
@@ -56,6 +57,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Bash",
    "guard": "destructive_guard",
    "decision": "deny"

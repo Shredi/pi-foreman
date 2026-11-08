@@ -51,6 +51,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Stop",
    "guard": "ledger_guard_stop",
    "decision": "deny"
@@ -145,6 +146,7 @@
   },
   {
    "event": "guard",
+   "role": "foreman",
    "toolFamily": "Write",
    "guard": "ledger_guard_write",
    "decision": "deny"
