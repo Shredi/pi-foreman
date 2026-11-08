@@ -279,10 +279,11 @@ function ruleMatchesUnit(rule: ParsedRule, call: RuleCall, u: Unit, env: RuleEnv
 }
 
 /**
- * Evaluate a call. `builtin(i)` names the built-in allow of unit `i` (a segment of the line, a path of the call, 0 for a single-unit call) or
- * returns null; it is asked only for a non-opaque unit no allow rule matched.
+ * Evaluate a call. `builtin(i, opaque)` names the built-in allow of unit `i` (a segment of the line, a path of the call, 0 for a single-unit call) or
+ * returns null; it is asked for a non-opaque unit no allow rule matched, and for an opaque unit with `opaque` true (no allow rule is tried for it:
+ * the callback alone says whether this one built-in covers it).
  */
-export function matchRules(sets: RuleSets, call: RuleCall, env: RuleEnv, builtin?: (unit: number) => string | null): RuleVerdict {
+export function matchRules(sets: RuleSets, call: RuleCall, env: RuleEnv, builtin?: (unit: number, opaque?: boolean) => string | null): RuleVerdict {
   const units = unitsOf(call, env);
   for (const kind of ["deny", "ask"] as const) {
     for (const r of sets[kind]) {
@@ -293,9 +294,8 @@ export function matchRules(sets: RuleSets, call: RuleCall, env: RuleEnv, builtin
   const names: string[] = [];
   for (let i = 0; i < units.length; i++) {
     const u = units[i];
-    if (u.opaque) return { verdict: "none" };
-    const r = sets.allow.find((x) => ruleMatchesUnit(x, call, u, env, true));
-    const name = r ? r.text : (builtin?.(i) ?? null);
+    const r = u.opaque ? undefined : sets.allow.find((x) => ruleMatchesUnit(x, call, u, env, true));
+    const name = r ? r.text : (builtin?.(i, u.opaque ? true : undefined) ?? null);
     if (name === null) return { verdict: "none" };
     if (!names.includes(name)) names.push(name);
   }

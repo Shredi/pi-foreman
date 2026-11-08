@@ -83,6 +83,7 @@ import { gitProtectedRead, gitReadWrites } from "./effects.ts";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
+import { READ_PATH_TOOLS, psPubKeyReadWords, pubKeyReadWords, sshPublicKey } from "./floors.ts";
 import { globSegMatch, wildMatch } from "./glob.ts";
 
 export interface PathRule {
@@ -2237,8 +2238,11 @@ function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
   return lock.length > 0 && into(lock);
 }
 
+/** `${env:USERPROFILE}` as `$env:USERPROFILE`: the braces would split the word in the PowerShell parse (same variable). */
+const psProfile = (s: string): string => s.replace(/\$\{env:USERPROFILE\}(?=[\\/])/gi, "$env:USERPROFILE");
+
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
-  const src = shell === "powershell" ? psDashes(src0) : src0;
+  const src = shell === "powershell" ? psProfile(psDashes(src0)) : src0;
   const parsed = parseShell(src, shell);
   // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
   const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src, out.platform) : new Map<string[], string[]>();
@@ -2461,7 +2465,9 @@ function expandWord(w: string, ctx: MatchCtx): string {
   // Git Bash / MSYS drive paths: /c/dir/x -> c:/dir/x
   if (ctx.platform === "win32") s = s.replace(/^\/([A-Za-z])(?=$|\/)/, "$1:");
   // a `$env:HOME` / `$env:USERPROFILE` the line binds (any case) stays unexpanded: untrusted
-  return s.replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, (m, n: string) => (bound.has(n.toUpperCase()) ? m : ctx.home));
+  s = s.replace(/^\$(?:env:|\{env:)(USERPROFILE|HOME)\}?(?=$|[\\/])/i, (m, n: string) => (bound.has(n.toUpperCase()) ? m : ctx.home));
+  // `%USERPROFILE%` (cmd, and the Windows spelling the floors read), likewise
+  return ctx.platform === "win32" ? s.replace(/^%USERPROFILE%(?=$|[\\/])/i, (m) => (bound.has("USERPROFILE") ? m : ctx.home)) : s;
 }
 
 const MAX_GLOB = 200;
@@ -2567,7 +2573,9 @@ function ownedReadPatterns(ctx: MatchCtx): string[] {
  * The path rule that denies `word`. A catch-all rule (`*`) matches path OPERANDS only: not the parts of a word with white space (command prose,
  * an expression; `proseOk` false for a write target, which is always an operand), and not a read (`readOnly`) below an owned root.
  */
-function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = false, proseOk = true): PathRule | null {
+function pathDeny(rules: PathRule[], word: string, ctx: MatchCtx, readOnly = false, proseOk = true, pubRead = false): PathRule | null {
+  // an SSH public key in ~/.ssh that is only read (floors.ts sshPublicKey): only a rule that names `.pub` itself denies it
+  if (pubRead) rules = rules.filter((r) => r.pattern.includes(".pub"));
   const cands = pathCandidates(word, ctx);
   const denyPats = rules.filter((r) => r.action === "deny").map((r) => r.pattern);
   const prose = proseOk && /\s/.test(word);
@@ -3396,6 +3404,10 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     if (texts.some((t) => bashMatches(pat, t, ctx))) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (command rule '${pat}'). This cannot be approved; use another way.` };
   }
   const targets = new Set([...c.writeTargets!, ...(c.tmpTargets ?? []), ...(c.roTargets ?? [])].flatMap((t) => [t, ...expandBraces(t)]));
+  const pubEnv = { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform };
+  const pubRaw = !/\.pub\b/.test(command) ? new Set<string>() : shell === "posix" ? pubKeyReadWords(parseAst(command, { cwd: ctx.cwd, platform: ctx.platform }), pubEnv, bound) : psPubKeyReadWords(command, pubEnv);
+  // collect() reads a leading `${env:USERPROFILE}` as `$env:USERPROFILE` (psProfile): the verified word covers that spelling of itself
+  const pubWords = new Set([...pubRaw].map(psProfile));
   // Fail closed: a word with white space is prose only as the value of a known prose option, decided by word position;
   // never for a path tool or a pure read (its words are operands).
   // by position: a string that also occurs outside a prose-option position (`-m "/a b/f" -F "/a b/f"`) is no prose
@@ -3404,7 +3416,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
   for (const w of c.proseSkip!) operands.set(w, (operands.get(w) ?? 0) - 1);
   const proseVals = new Set([...operands].filter(([, n]) => n <= 0).flatMap(([w]) => [w, ...expandBraces(w)]));
   for (const w of words) {
-    const hit = pathDeny(rules.pathRules, w, ctx, readOnly || ownedReadOk, !targets.has(w) && proseVals.has(w));
+    const hit = pathDeny(rules.pathRules, w, ctx, readOnly || ownedReadOk, !targets.has(w) && proseVals.has(w), pubWords.has(w));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(w)}'). Secret and policy paths are off limits to the agent, also through shell commands.` };
   }
   if (ctx.role === "child") {
@@ -4172,7 +4184,7 @@ export function checkPathTool(rules: OverlayRules, toolName: string, input: Reco
     if (scanRootBad(rules, root, ctx)) return scanDeny(rules, root === "." ? ctx.cwd : root, ctx);
   }
   for (const { value, write } of paths) {
-    const hit = pathDeny(rules.pathRules, value, ctx, !write, false);
+    const hit = pathDeny(rules.pathRules, value, ctx, !write, false, !write && READ_PATH_TOOLS.has(toolName) && /\.pub$/.test(value) && sshPublicKey(value, { cwd: ctx.cwd, home: ctx.home, platform: ctx.platform }));
     if (hit) return { kind: "deny", reason: `pi-foreman: denied by the permission policy (path rule '${hit.pattern}' matched '${clip(value)}' for ${toolName}).` };
     const blocked = childBlockHit(rules, value, ctx, !write);
     if (blocked) return childBlockDecision(blocked, value);

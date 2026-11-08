@@ -506,9 +506,10 @@ function segmentFloors(seg: ShellSegment, env: FloorEnv, line: ShellSegment[]): 
   const payload = injection(seg, prog)?.words ?? [];
   const patterns = searchPatterns(seg, prog);
   const words = [...seg.argv, ...seg.redirects.map((r) => r.target)];
+  const reads = readOperands(seg, prog);
   for (const [i, w] of words.entries()) {
     if (dataWord(w) || payload.includes(w) || patterns.has(i)) continue;
-    const s = secretPath(w, env);
+    const s = secretPath(w, env, i < seg.argv.length ? reads.argv(w) : seg.redirects[i - seg.argv.length].op === "<");
     if (s) return s;
   }
   return null;
@@ -617,13 +618,59 @@ const ENV_BARE = /^\.env(\.[^/]+)?$/i;
 const GIT_CONFIG_FILE = /(^|\/)\.git\/config$/i;
 const ENV_EXEMPT = /\.env\.(example|sample|template)$/i;
 
-export function secretPath(word: string, env: FloorEnv): FloorHit | null {
+/** The OpenSSH public key types (certificates included) a `*.pub` file may start with. */
+const SSH_PUB_TYPES = new Set(["ssh-rsa", "ssh-dss", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com",
+  "ssh-rsa-cert-v01@openssh.com", "ssh-ed25519-cert-v01@openssh.com", "ecdsa-sha2-nistp256-cert-v01@openssh.com", "ecdsa-sha2-nistp384-cert-v01@openssh.com", "ecdsa-sha2-nistp521-cert-v01@openssh.com",
+  "sk-ssh-ed25519-cert-v01@openssh.com", "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com"]);
+const SSH_PUB_MAX = 16 * 1024;
+
+/**
+ * Whether `word` names an SSH public key directly in `<home>/.ssh/`: lexically (parent is exactly `<home>/.ssh`), after symlinks (the real file is a `*.pub`
+ * directly in the real `~/.ssh`) and by content (a regular file of at most 16 KiB whose every line starts with an OpenSSH public key type). Anything
+ * else, a missing file included, is false. Only a read may use it (`secretPath(..., read)`): a write to such a file stays a secret-path deny.
+ */
+export function sshPublicKey(word: string, env: FloorEnv): boolean {
+  try {
+    const win = (env.platform ?? process.platform) === "win32";
+    let x = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
+    // the Windows spellings of the profile (the overlay's `$env:USERPROFILE` form, permoverlay.ts expandWord) are the home dir
+    if (win && env.home) x = x.replace(/^(?:%USERPROFILE%|\$env:USERPROFILE|\$\{env:USERPROFILE\})(?=\/|$)/i, () => slash(env.home!));
+    if (!env.home || /[$`*?[{%]/.test(x.replace(/^\$\{?HOME\}?/, ""))) return false;
+    const abs = resolveWord(x, env.cwd, env);
+    if (abs === null) return false;
+    const px = px_(win);
+    const key = (p: string): string => (foldFor(env) ? slash(p).toLowerCase() : slash(p));
+    const ssh = px.join(env.home, ".ssh");
+    if (!px.basename(abs).endsWith(".pub") || px.basename(abs) === ".pub" || key(px.dirname(abs)) !== key(ssh)) return false;
+    const file = slash(abs);
+    const real = fs.realpathSync(file);
+    const realSsh = fs.realpathSync(slash(ssh));
+    if (!path.basename(real).endsWith(".pub") || (foldFor(env) ? path.dirname(real).toLowerCase() !== realSsh.toLowerCase() : path.dirname(real) !== realSsh)) return false;
+    const fd = fs.openSync(real, "r");
+    try {
+      const st = fs.fstatSync(fd);
+      if (!st.isFile() || st.size === 0 || st.size > SSH_PUB_MAX) return false;
+      const buf = Buffer.alloc(st.size);
+      if (fs.readSync(fd, buf, 0, st.size, 0) !== st.size) return false;
+      const lines = buf.toString("utf8").split(/\r?\n/).filter((l) => l.trim() !== "" && !l.trim().startsWith("#"));
+      return lines.length > 0 && lines.every((l) => SSH_PUB_TYPES.has(l.trim().split(/\s+/)[0]));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** `read`: the word is only read (a read tool's path, a read-only program's operand, a `<` redirect); then an SSH public key in `~/.ssh` is no secret. */
+export function secretPath(word: string, env: FloorEnv, read = false): FloorHit | null {
   const w = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w);
   const x = m ? m[1] : w;
   const pathLike = x.includes("/") || x.startsWith("~");
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
-  let bad = bareEnv || (pathLike && !/\.pub$/.test(x) && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
+  if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
+  let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
   if (!bad && pathLike) {
     const abs = expandWord(x, env);
     if (abs !== null) {
@@ -831,14 +878,21 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   return pending;
 }
 
+/** The input keys a path tool call is floored on (the path keys are also what the gate reads for the public-key rule id). */
+export const PATH_KEYS = ["path", "file_path", "filePath"];
+export const PATH_TOOL_KEYS = [...PATH_KEYS, "src", "dst", "glob", "pattern"];
+
+/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (sshPublicKey). One set for the floors, the gate and the overlay. */
+export const READ_PATH_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
+
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
-export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string, readField?: string | null): FloorHit | null {
+export function pathFloors(input: Record<string, unknown>, env: FloorEnv, tool?: string, readField?: string | null, read = false): FloorHit | null {
   // a configured read tool (gate.readTools): its path field and `glob` only; `pattern`/`patterns` are search patterns
-  const keys = readField !== undefined ? (readField === null ? ["glob"] : [readField, "glob"]) : ["path", "file_path", "filePath", "src", "dst", "glob", "pattern"];
+  const keys = readField !== undefined ? (readField === null ? ["glob"] : [readField, "glob"]) : PATH_TOOL_KEYS;
   for (const k of keys) {
     const v = input[k];
     if (typeof v === "string" && v) {
-      const h = secretPath(v, env);
+      const h = secretPath(v, env, read);
       if (h) return h;
     }
   }
@@ -1020,6 +1074,75 @@ function copySourceWords(seg: ShellSegment, prog: string): Set<string> {
   const target = a.some((w) => w === "-t" || w.startsWith("--target-directory"));
   const pos = a.filter((w) => !w.startsWith("-"));
   (target ? pos : pos.slice(0, -1)).forEach((w) => out.add(w));
+  return out;
+}
+
+/** `ssh-keygen` flags of a fingerprint listing: `-l`, `-f`, `-v` (alone or combined, `-lf`) and `-E <alg>`; never `-y`, `-p`, `-c`, `-R`, `-s`. */
+const KEYGEN_READ_FLAG = /^(?:-[lfv]+|-E|--)$/;
+
+/** Which operands of a segment are only read: all of a read-only program (not `sort -o`, `--output`, `uniq`, `tree -o`), `ssh-keygen -l -f`. A copy's sources are not: a copy of a key stays a deny. */
+function readOperands(seg: ShellSegment, prog: string): { argv: (w: string) => boolean } {
+  const a = seg.argv;
+  const writes = a.some((w) => /^--output(=|$)/.test(w)) || (prog === "sort" && a.some((w) => /^-[A-Za-z]*o|^--output/.test(w))) || (prog === "tree" && a.some((w) => /^-[A-Za-z]*o/.test(w))) || prog === "uniq";
+  const all = (readOnlySegment(seg, prog) && !writes) || (prog === "ssh-keygen" && a.some((w) => /^-[fv]*l[fv]*$/.test(w)) && a.every((w) => !w.startsWith("-") || KEYGEN_READ_FLAG.test(w)));
+  return { argv: () => all };
+}
+
+/**
+ * A segment whose only opacity is a leading `~`, `$HOME` or `${HOME}` word (shellast.ts makes each `unresolved_var`): no other word holds a variable,
+ * a substitution or a parenthesis. The floors expand these spellings themselves (expandWord).
+ */
+export function homeSpelling(s: ShellSegment): boolean {
+  return s.opaque === "unresolved_var" && [s.program, ...s.argv, ...s.redirects.map((r) => r.target)].every((w) => !/[$`()]/.test(w.replace(/^\$\{?HOME\}?(?=\/|$)/, "")));
+}
+
+/** The programs that read a file in PowerShell and cmd (`Get-Content`, `gc`, `cat`, `type`). */
+const PS_READ_PROGS = new Set(["get-content", "gc", "cat", "type"]);
+
+/**
+ * The public-key words of a PowerShell / cmd line (`Get-Content $env:USERPROFILE\.ssh\k.pub`, `type %USERPROFILE%\.ssh\k.pub`): one plain read command
+ * (no pipe, redirect, separator, substitution or subexpression), its non-flag operands that are `sshPublicKey`. Empty for anything else.
+ */
+export function psPubKeyReadWords(command: string, env: FloorEnv): Set<string> {
+  const out = new Set<string>();
+  if (/[;&|<>`(){}\n\r]|\$\(|\*\*/.test(command.replace(/\$\{env:USERPROFILE\}/gi, ""))) return out;
+  const words = command.trim().split(/\s+/);
+  if (!PS_READ_PROGS.has(words[0].toLowerCase().replace(/\.exe$/, ""))) return out;
+  const ops: string[] = [];
+  const rest = words.slice(1);
+  for (let i = 0; i < rest.length; i++) {
+    // a value-taking flag's value (`-TotalCount 5`) is no operand
+    if (/^-(?:totalcount|head|tail|encoding)$/i.test(rest[i]) && i + 1 < rest.length) i++;
+    else if (!rest[i].startsWith("-")) ops.push(rest[i]);
+  }
+  const keys = ops.filter((w) => sshPublicKey(w, env));
+  // an operand that is no key (or any `-Path`-style flag value that is not a plain word) keeps the whole line out
+  if (keys.length === 0 || keys.length !== ops.length || rest.some((w) => /^-(?!path$|literalpath$|totalcount$|head$|tail$|raw$|encoding$)/i.test(w))) return out;
+  for (const w of keys) out.add(w);
+  return out;
+}
+
+/**
+ * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, `<`
+ * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out. For the overlay's path rules.
+ */
+export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv, bound?: ReadonlySet<string>): Set<string> {
+  const out = new Set<string>();
+  // a line that binds HOME (or USERPROFILE on win32) reads another file than the one verified; a path-qualified program is no known reader
+  if (bound && (bound.has("HOME") || (env.platform === "win32" && bound.has("USERPROFILE")))) return out;
+  if (segments.length === 0 || segments.some((s) => (s.opaque !== null && !homeSpelling(s)) || s.wrappers.length > 0 || /[\\/]/.test(s.program))) return out;
+  const written = new Set<string>();
+  const cands = new Set<string>();
+  for (const s of segments) {
+    const prog = base(s.program);
+    const reads = readOperands(s, prog);
+    for (const r of s.redirects) {
+      if (r.op === "<") cands.add(r.target);
+      else if (r.op !== "dup") written.add(r.target);
+    }
+    for (const w of s.argv) (reads.argv(w) ? cands : written).add(w);
+  }
+  for (const w of cands) if (!written.has(w) && sshPublicKey(w, env)) out.add(w);
   return out;
 }
 
