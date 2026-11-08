@@ -9,6 +9,7 @@ import { injection } from "./floors.ts";
 import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
+import { gitConfigRead } from "./permoverlay.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -665,6 +666,31 @@ function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
   return { sub: a[i], rest: a.slice(i + 1) };
 }
 
+/** `git worktree list` with only its read flags (`--expire` needs its `=value`): names no write target. */
+function gitWorktreeListRead(rest: string[]): boolean {
+  return rest[0] === "list" && rest.slice(1).every((w) => w === "--porcelain" || w === "-v" || w === "--verbose" || w === "-z" || /^--expire=[^\s]+$/.test(w));
+}
+
+const TAG_LIST_FLAGS = new Set(["-l", "--list", "-i", "--ignore-case", "--column", "--no-column"]);
+const TAG_VALUE_OPTS = new Set(["--contains", "--no-contains", "--points-at", "--merged", "--no-merged", "--sort", "--format"]);
+
+/** `git tag` list forms: bare, `-l`/`--list [pattern]`, `-n[N]`, `--contains|--no-contains|--points-at|--merged|--no-merged [commit]`, `--sort`, `--format`, `--column`; a pattern needs `-l`. Anything else (create, `-d`, `-a`, `-s`, `-f`, `-m`, `-F`, `-u`, `-e`, `--output`) is a write. */
+function gitTagListRead(rest: string[]): boolean {
+  let list = false;
+  let pos = 0;
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    if (w === "-l" || w === "--list") list = true;
+    else if (TAG_LIST_FLAGS.has(w) || /^-n\d*$/.test(w) || /^--column=\S+$/.test(w) || /^--(sort|format)=/.test(w)) continue;
+    else if (/^--(contains|no-contains|points-at|merged|no-merged)=\S+$/.test(w)) continue;
+    else if (TAG_VALUE_OPTS.has(w)) {
+      if (i + 1 < rest.length && !rest[i + 1].startsWith("-")) i++;
+    } else if (w.startsWith("-")) return false;
+    else pos++;
+  }
+  return pos === 0 || list;
+}
+
 const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
 const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
@@ -881,6 +907,9 @@ function writeTargets(s: ShellSegment): string[] {
       // read-only list forms name no write target, also under -C
       if (sub === "branch" && rest.every((w) => BRANCH_LIST.has(w))) return [];
       if (sub === "stash" && (rest[0] === "list" || rest[0] === "show") && !rest.some((w) => w.startsWith("--output"))) return [];
+      if (sub === "worktree" && gitWorktreeListRead(rest)) return [];
+      if (sub === "config" && gitConfigRead(rest) && !rest.some((w) => w.startsWith("--output"))) return [];
+      if (sub === "tag" && gitTagListRead(rest)) return [];
       const head = a.slice(0, a.indexOf(sub));
       const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
       if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);

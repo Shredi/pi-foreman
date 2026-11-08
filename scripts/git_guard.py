@@ -1955,11 +1955,91 @@ def worktree_top(path):
         p = up
 
 
+_CFG_MODES = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"}
+_CFG_MODS = {"--local", "--worktree", "--global", "--system", "--includes", "--no-includes", "-z", "--null", "--show-origin",
+             "--show-scope", "--name-only", "--bool", "--int", "--bool-or-int", "--path", "--expiry-date"}
+_TAG_FLAGS = {"-i", "--ignore-case", "--column", "--no-column"}
+_TAG_VALUED = {"--contains", "--no-contains", "--points-at", "--merged", "--no-merged", "--sort", "--format"}
+
+
+def _config_read(t):
+    """defaults.ts gitConfigRead (permoverlay.ts): `git config` words that only read."""
+    mode, ops, i = None, [], 0
+    while i < len(t):
+        a = t[i]
+        if a == "--default":
+            i += 1
+            if i >= len(t):
+                return False
+        elif a.startswith("--type=") or a in _CFG_MODS:
+            pass
+        elif a in _CFG_MODES:
+            if mode is not None:
+                return False
+            mode = "--list" if a == "-l" else a
+        elif a.startswith("-"):
+            return False
+        else:
+            ops.append(a)
+        i += 1
+    if mode is None and ops[:1] in (["get"], ["list"]):
+        mode = "--" + ops.pop(0)
+    if mode == "--list":
+        return not ops
+    if mode == "--get-urlmatch":
+        return len(ops) == 2
+    if mode is None:
+        return len(ops) == 1
+    return 1 <= len(ops) <= 2
+
+
+def _tag_list(t):
+    """defaults.ts gitTagListRead: bare, -l/--list [pattern], -n[N], --contains & co, --sort, --format, --column; a pattern needs -l."""
+    listing, pos, i = False, 0, 0
+    while i < len(t):
+        a = t[i]
+        if a in ("-l", "--list"):
+            listing = True
+        elif a in _TAG_FLAGS or re.fullmatch(r"-n\d*", a) or re.fullmatch(r"--column=\S+", a) or re.match(r"--(sort|format)=", a) \
+                or re.fullmatch(r"--(contains|no-contains|points-at|merged|no-merged)=\S+", a):
+            pass
+        elif a in _TAG_VALUED:
+            if i + 1 < len(t) and not t[i + 1].startswith("-"):
+                i += 1
+        elif a.startswith("-"):
+            return False
+        else:
+            pos += 1
+        i += 1
+    return pos == 0 or listing
+
+
+def read_only_form(s, rest):
+    """The read-only forms of GIT_WRITE_SUBS that name no write target (defaults.ts writeTargets): branch/tag list, stash list|show,
+    worktree list, config reads. Unrecognised (or a computed word) => False, fail closed."""
+    if any(w.dynamic for w in rest):
+        return False
+    t = [w.text for w in rest]
+    if any(a.startswith("--output") for a in t):
+        return False
+    if s == "branch":
+        return all(a in ("-a", "--all", "-r", "--remotes", "-v", "-vv", "--list", "--show-current") for a in t)
+    if s == "stash":
+        return t[:1] in (["list"], ["show"])
+    if s == "worktree":
+        return t[:1] == ["list"] and all(a in ("--porcelain", "-v", "--verbose", "-z") or re.fullmatch(r"--expire=\S+", a) for a in t[1:])
+    if s == "config":
+        return _config_read(t)
+    if s == "tag":
+        return _tag_list(t)
+    return False
+
+
 def foreman_checkout_problem(s, rest, ctx, call):
     """A9: a child's git write verb whose cwd, `-C`, `--git-dir`, `--work-tree` or clone/init destination resolves (realpath) into the foreman's
     checkout (FOREMAN_CHECKOUT from the launch environment). The child's own worktree, even one nested in the checkout, is not the checkout's."""
     d = ctx.env.get("FOREMAN_CHECKOUT") or ""
-    if s not in GIT_WRITE_SUBS or not os.path.isabs(d):
+    if s not in GIT_WRITE_SUBS or not os.path.isabs(d) or read_only_form(s, rest):
         return None
     checkout = os.path.realpath(d)
     own = worktree_top(ctx.start_cwd)
