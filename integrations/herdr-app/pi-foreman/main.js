@@ -94,6 +94,9 @@ const guard = (f, fallback) => { try { return f(); } catch { return fallback; } 
 // timed out or a network text such as `dial tcp ...: i/o timeout`. Same logic as in ../pi-foreman-plan/main.js (separate mod folders, no import).
 const optionError = (e) => e instanceof TypeError || /timeout must|unknown (option|field|key)|invalid option|unexpected (option|field)/i.test(String(e?.message ?? e));
 const why = (e) => String(e?.message ?? e ?? "").slice(0, 200);
+// No foreman on this machine: Herdr 0.1.14's texts for a program that does not start (mods.rs `cannot run`, the core's `cannot start ... program not found`).
+// A setup state, not a failed poll: the radar shows its own hint, so the PR poll stays silent.
+const missingBinary = (e) => /cannot (start|run) [^:]+: (program not found|No such file or directory)/.test(String(e?.message ?? e ?? ""));
 const isObjLike = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
 export default class ForemanAgents extends View {
@@ -281,7 +284,10 @@ export default class ForemanAgents extends View {
           ]);
           if (r?.watchdog) this.fail(key, "Foreman PR poll timed out", `on ${machine ?? "this computer"}`);
           else this.failed.delete(key);
-        } catch (e) { this.fail(key, "Foreman PR poll failed", e); }
+        } catch (e) {
+          if (missingBinary(e)) this.failed.delete(key);
+          else this.fail(key, "Foreman PR poll failed", e);
+        }
         this.prsRan.set(key, Date.now());
         this.busy.delete(key);
       });

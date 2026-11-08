@@ -625,7 +625,7 @@ On 0.1.13 the mods load, but an `exec` may not honour `timeout`, so a hung progr
 and top-level state is shared between copies of a mod. Every `exec` of a mod passes a `timeout`
 (radar read 30 s, PR poll 600 s, `hc get` 10 s local / 15 s remote, `hc run` attach 15 s, URL opener 10 s). If a host rejects
 that option, the call is repeated once without it and the mod stops passing it (that behaviour on 0.1.13 is not verified here).
-A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure.
+A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure. A missing `foreman` (the program does not start: "cannot start ...: program not found" or "cannot run ...: No such file or directory") is a setup state, not a failed poll: the PR poll posts no notice for it, and the radar shows its hint.
 
 Herdr 0.1.14 runs a mod's top level once per source version, shared by all copies of the mod, so per-copy state lives in
 `init`. Three things stay app-global on purpose: the keys `pi-foreman.radar` and `pi-foreman.show`, and the Agents order.
