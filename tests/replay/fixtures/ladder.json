@@ -9,6 +9,7 @@
  },
  "builder": {
   "small": [
+   {"text": "starting", "tools": [{"name": "bash", "arguments": {"command": "echo start"}}], "usage": {"input": 100}},
    {"text": "working", "tools": [{"name": "bash", "arguments": {"command": "echo hi"}}], "usage": {"input": 2000}},
    {"text": "RUNG_UP: context\nDone: half the parser\nRemaining: the tests\nFiles touched: none"}
   ]

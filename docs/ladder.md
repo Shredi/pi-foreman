@@ -16,7 +16,9 @@ second climb after a context climb therefore never reports a stale `from` of the
 
 ## Context climb
 
-A bottom-rung child whose last call's context (input + cacheRead + cacheWrite) passes `strongAbove` is steered once
+A bottom-rung child whose last call's context (input + cacheRead + cacheWrite) has grown by more than `strongAbove`
+above its first call's context is steered once (the first call's context, the system prompt, tool definitions and
+brief, is a fixed baseline a stronger model pays too; the first call is never steered)
 to stop and return a handoff report starting `RUNG_UP: context` (also `RUNG_UP: turns` past `childMaxTurns`, and a
 `STATUS: stuck` or "own checks failed" report). The run is climb-eligible: the foreman's next `model: "strong"`
 launch of that role needs no reason, gets the prior report prepended to its task, and the trace records

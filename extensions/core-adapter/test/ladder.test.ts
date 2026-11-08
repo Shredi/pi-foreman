@@ -17,6 +17,7 @@ test("strongAbove and childMaxTurns: role, then provider, then ladder, then the 
 
 test("child side: context above strongAbove on the bottom rung steers once with RUNG_UP: context", () => {
   const c = new ChildLadder({ bottom: true, strongAbove: 100, maxTurns: 60 });
+  assert.equal(c.onUsage({ input: 0 }), null);
   assert.equal(c.onUsage({ input: 50, cacheRead: 40, cacheWrite: 10 }), null);
   const s = c.onUsage({ input: 50, cacheRead: 40, cacheWrite: 11 });
   assert.deepEqual([s?.trigger, s?.count, s?.rung], ["context", 101, "bottom"]);
