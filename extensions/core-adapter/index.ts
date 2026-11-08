@@ -43,7 +43,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
+import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
@@ -118,7 +118,7 @@ import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
-import { commentOnlySince, worktreeTree, type TreeSnap } from "./commentonly.ts";
+import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { sampleAway } from "./protected.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
@@ -393,6 +393,8 @@ interface Session {
   reviewMarked: Set<string>;
   /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
   passSnap: TreeSnap | null;
+  /** Foreman only: builder runs, HEAD, tree and ledger at the latest review PASS; a reviewer launch is no repeat once one of them changed (bound.ts repeatSignals). */
+  passMark: (PassMark & { cwd: string }) | null;
   /** Foreman only: builder runs launched after a PASS; a comment-only result withdraws their revision. */
   touchUps: Set<string>;
   /** Foreman only: HEAD per directory at launch, by tool call id until the launch result names the run. */
@@ -831,6 +833,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
       passSnap: null,
+      passMark: null,
       touchUps: new Set(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
@@ -2982,8 +2985,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");
           if (dup === "second-opinion") s.trace?.emit({ event: "review_second_opinion", agent });
           else {
-            s.trace?.emit({ event: "review_dup_refused", agent });
-            return { block: true, reason: `pi-foreman: the last review passed and nothing changed — finish, or revise first. Ask for a second review only when warranted: put "[${SECOND_OPINION}]" in the reviewer task text.` };
+            // The mark is taken asynchronously at the PASS; wait for it, then compare builder runs, HEAD, worktree (incl. untracked) and ledger.
+            await s.reviewSync;
+            const mark = s.passMark;
+            const signals = mark ? repeatSignals(mark, { head: await headOf(mark.cwd), tree: mark.tree && (await treeChangedSince(mark.cwd, mark.tree)) ? "changed" : mark.tree, ledger: boundLedger(s.markerDir, s.id), builderRuns: s.steps.builder }) : [];
+            if (signals.length > 0) s.trace?.emit({ event: "review_dup_allowed", agent, signals: signals.join(",") });
+            else {
+              s.trace?.emit({ event: "review_dup_refused", agent });
+              return { block: true, reason: dupRefusalText(mark?.at) };
+            }
           }
         }
         // Lane 3c: budget guard on the summed estimate (foreman + all runs); 3e: review cap and item-only re-review.
@@ -3510,7 +3520,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const passed = s.reviewGate.last === "pass";
       const cwd = reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd;
       s.passSnap = null;
-      if (passed) s.reviewSync = s.reviewSync.then(async () => { const tree = await worktreeTree(cwd); if (s.reviewGate.last === "pass") s.passSnap = tree ? { cwd, tree } : null; });
+      s.passMark = null;
+      const at = Date.now();
+      const ledger = boundLedger(s.markerDir, s.id);
+      const builderRuns = s.steps.builder;
+      if (passed) s.reviewSync = s.reviewSync.then(async () => {
+        const [tree, head] = await Promise.all([worktreeTree(cwd), headOf(cwd)]);
+        if (s.reviewGate.last !== "pass") return;
+        s.passSnap = tree ? { cwd, tree } : null;
+        s.passMark = { cwd, at, head, tree, ledger, builderRuns };
+      });
     }
     if (s.touchUps.delete(runId)) s.reviewSync = s.reviewSync.then(async () => {
       if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) s.reviewGate = { ...s.reviewGate, revised: false };

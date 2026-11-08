@@ -333,3 +333,28 @@ export function dupReview(g: ReviewGate, roles: string[], input: Record<string, 
   if (!(g.last === "pass" && !g.revised) || !roles.some((r) => REVIEW_ROLES.includes(r)) || roles.includes("builder")) return null; // a builder in the same launch is a revision
   return input.reason === SECOND_OPINION || JSON.stringify(input).includes(`[${SECOND_OPINION}]`) ? "second-opinion" : "refuse";
 }
+
+/** The session state at a review PASS (epoch ms); null head/tree/ledger = unknown or none. */
+export interface PassMark {
+  at: number;
+  head: string | null;
+  tree: string | null;
+  ledger: string | null;
+  builderRuns: number;
+}
+
+/** What changed since the PASS: builder, head, tree, ledger (empty = nothing; null on both sides is unchanged, null on one side is changed). */
+export function repeatSignals(mark: PassMark, now: Omit<PassMark, "at">): string[] {
+  const out: string[] = [];
+  if (now.builderRuns > mark.builderRuns) out.push("builder");
+  if (now.head !== mark.head) out.push("head");
+  if (now.tree !== mark.tree) out.push("tree");
+  if (now.ledger !== mark.ledger) out.push("ledger");
+  return out;
+}
+
+/** The refusal of a reviewer launch on unchanged, passed work; names what was compared and when. */
+export function dupRefusalText(at?: number): string {
+  const when = at === undefined ? "" : ` at ${new Date(at).toTimeString().slice(0, 8)}`;
+  return `pi-foreman: the last review passed${when} and nothing changed since (no builder run, HEAD, worktree or ledger change) — finish, or revise first. Ask for a second review only when warranted: put "[${SECOND_OPINION}]" in the reviewer task text.`;
+}

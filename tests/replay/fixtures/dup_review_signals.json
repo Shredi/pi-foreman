@@ -1,0 +1,29 @@
+{
+ "foreman": {
+  "n1": [
+   {"tools": [{"name": "foreman_triage", "arguments": {"tier": "standard", "reason": "a feature"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ns.md", "content": "# Requirements Ledger: ns\n\n- [x] 1. synthetic item\n"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:b-n2]] build item 1"}}]},
+   {"text": "Builder launched."}
+  ],
+  "n2": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-n3]] review item 1"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "n3": [
+   {"text": "Passed."}
+  ],
+  "n4": [
+   {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-n5]] review again"}}]},
+   {"text": "Reviewer launched."}
+  ],
+  "n5": [
+   {"text": "Done."}
+  ]
+ },
+ "*": {
+  "b-n2": [{"text": "[[replay:n2]] built"}],
+  "r-n3": [{"text": "[[replay:n3]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}],
+  "r-n5": [{"text": "[[replay:n5]] VERDICT: PASS\n1. PASS a.txt:1\nOverall verdict: PASS"}]
+ }
+}
