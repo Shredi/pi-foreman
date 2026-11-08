@@ -14,6 +14,7 @@ import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { prGateRefusal } from "./reviews.ts";
+import type { ReviewRecord } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import type { Spawner } from "./spawn.ts";
@@ -181,7 +182,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     description: "Open a pull request for a branch that is already pushed (never pushes). Needs a reviewer PASS on the head. Arms a watch of the new PR in this session (see pr_watch). Answer: number, url, head, base.",
     parameters: {
       type: "object",
-      properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown)." }, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." } },
+      properties: { title: str(256, "Title, one line."), body: { type: "string", maxLength: 65536, description: "Description (markdown)." }, base: str(200, "Base branch (default: the configured or remote default)."), head: str(200, "Head branch (default: the current branch)."), draft: { type: "boolean", description: "Open as draft." }, cwd: str(1000, "Checkout to open the pull request from (default: the session's). Head, base and remote are resolved there. Another checkout than the session's needs a reviewer PASS recorded for it at its current HEAD (run the reviewer with that cwd).") },
       required: ["title", "body"],
       additionalProperties: false,
     },
@@ -274,6 +275,8 @@ export interface PrPackSession {
   reviewed(): Promise<string[]>;
   /** Why the latest verdict is a PASS without a head (reviews.ts headlessPass); null: it is not one. */
   headless?(): Promise<string | null>;
+  /** Awaits the review sync, then every recorded verdict (for the `pr_create {cwd}` checkout test). Absent: none. */
+  records?(): Promise<readonly ReviewRecord[]>;
   watches: PrWatches;
   trace(rec: Record<string, unknown>): void;
   /** The host rule for `host` arguments and the repository of a checkout (prhost.ts). */
@@ -298,9 +301,9 @@ export interface PrPackDeps {
   spawner: Spawner;
   env(): Record<string, string>;
   timeoutMs?: number;
-  preflight?(ctx: ExtensionContext, op: string, callId: string): Promise<{ block: true; reason: string } | undefined>;
+  preflight?(ctx: ExtensionContext, op: string, callId: string, cwd?: string): Promise<{ block: true; reason: string } | undefined>;
   /** The git guard's verdict on a bare `git push` of the current branch: a reason to refuse, else null. */
-  pushRefusal(ctx: ExtensionContext): Promise<string | null>;
+  pushRefusal(ctx: ExtensionContext, cwd?: string): Promise<string | null>;
 }
 
 /**
@@ -348,10 +351,18 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           s.trace({ event: "pr_refused", reason: "child", toolFamily: t.name });
           return failure(`pi-foreman: ${t.name} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.`, { decision: "pr_refused", reason: "child" });
         }
-        const pre = deps.preflight ? await deps.preflight(ctx, t.op, id) : undefined;
+        // pr_create {cwd}: the checkout the pull request comes from; head, base and remote are resolved there (the gate below tests it)
+        let dir: string | undefined;
+        if (t.op === "pr_create" && params.cwd !== undefined) {
+          if (typeof params.cwd !== "string" || params.cwd === "") return failure(`${t.name}: bad arguments (cwd a checkout path); nothing was done.`, { decision: "bad_request" });
+          dir = path.resolve(ctx.cwd, params.cwd);
+          const { cwd: _cwd, ...rest } = params;
+          params = rest;
+        }
+        const pre = deps.preflight ? await deps.preflight(ctx, t.op, id, dir) : undefined;
         if (pre) return failure(`${t.name}: ${pre.reason} Nothing was done.`, { decision: "blocked" });
         s.trace({ event: "tool_pack", pack: GIT_PACK, op: t.name });
-        const run = (op: PrOp, args: Record<string, unknown>): Promise<SafeOpOutcome> => runSafeOp({ python: s.python, script: deps.script, op, args, cwd: ctx.cwd, config: s.config, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs });
+        const run = (op: PrOp, args: Record<string, unknown>): Promise<SafeOpOutcome> => runSafeOp({ python: s.python, script: deps.script, op, args, cwd: dir ?? ctx.cwd, config: s.config, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs });
         const report = (o: SafeOpOutcome) => {
           if (o.kind === "ran") {
             const { ok: _ok, ...rest } = o.result;
@@ -385,19 +396,19 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}` }], details: { decision: "ran" } };
         }
         if (t.op === "pr_create") {
-          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head } });
+          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head }, ...(dir ? { checkout: { cwd: dir, records: (await s.records?.()) ?? [] } } : {}) });
           if (refusal) {
             s.trace({ event: "pr_refused", reason: refusal.reason, toolFamily: "pr_create" });
             return failure(refusal.message, { decision: "pr_refused", reason: refusal.reason });
           }
-          const push = await deps.pushRefusal(ctx);
+          const push = await deps.pushRefusal(ctx, dir);
           if (push) return failure(`pr_create: the git guard would refuse pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
         const outcome = await run(t.op as PrOp, params);
         const res = report(outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
-        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
         const r = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
         const out = armed.tracked ? { ...r, details: { ...r.details, tracked: armed.tracked } } : r;
         if ("duplicate" in armed) return out;
@@ -478,10 +489,10 @@ async function hostRule(s: PrPackSession, ctx: ExtensionContext, tool: string, p
 type PrRun = (op: PrOp, args: Record<string, unknown>) => Promise<SafeOpOutcome>;
 
 /** The watch key of PR `n`: the repository of its URL, else the current one (pr_repo), else number-only (the per-PR ops pick the host from the directory). */
-async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown): Promise<PrKey> {
+async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, cwd: string = ctx.cwd): Promise<PrKey> {
   const k = parsePrUrl(url);
   if (k && k.n === n) return k;
-  const at = await s.tracker?.repoFor?.(ctx.cwd).catch(() => null);
+  const at = await s.tracker?.repoFor?.(cwd).catch(() => null);
   return at ? { host: at.host, repo: at.repo, n } : { host: "", repo: "", n };
 }
 
@@ -507,10 +518,10 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
-  const key = await watchKey(s, ctx, n, url);
+  const key = await watchKey(s, ctx, n, url, cwd);
   if (!isTrackedKey(key, hosts.hosts)) return { error: notTracked(hosts.hosts), hostUnsupported: true };
   const track = async (): Promise<TrackOutcome | undefined> => (s.track ? await s.track(key.repo, key.n, key.host).catch((): TrackOutcome => "unavailable") : undefined);
   let tracked = created ? await track() : undefined;
