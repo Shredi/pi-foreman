@@ -27,6 +27,16 @@ test("growth above strongAbove over the first call steers once with the baseline
   assert.equal(l.onUsage(u(300000)), null);
 });
 
+test("a first call without usage does not pin the baseline at 0", () => {
+  const l = new ChildLadder({ strongAbove: 100000, bottom: true });
+  assert.equal(l.onUsage(u(0)), null);
+  assert.equal(l.onUsage(u(137000)), null);
+  assert.equal(l.onUsage(u(160000)), null);
+  const s = l.onUsage(u(240000));
+  assert.equal(s?.trigger, "context");
+  assert.equal(s?.baseline, 137000);
+});
+
 test("the top rung never context-steers", () => {
   const l = new ChildLadder({ strongAbove: 100000, bottom: false });
   assert.equal(l.onUsage(u(1000)), null);

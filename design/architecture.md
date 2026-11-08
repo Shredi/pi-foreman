@@ -136,9 +136,9 @@ top of `maxThinking`; no L1 default), so no child runs at `max`. `openai.json` (
 ### Role ladder and rank policy
 
 Two rungs per role: `model` -> `strong`. Triggers, each making the run climb-eligible when it ran on its bottom
-rung: (a) context: the child-side hook sees a call whose input + cacheRead + cacheWrite passes `strongAbove`
-(`roles.<id>` > `providers.<p>` > `ladder`, default 100000; Haiku 5.5's long-context price tier starts there)
-and steers the child once to stop and reply with a handoff report whose first line is `RUNG_UP: context`
+rung: (a) context: the child-side hook sees a later call whose input + cacheRead + cacheWrite exceeds the first call's
+context by more than `strongAbove` (`roles.<id>` > `providers.<p>` > `ladder`, default 100000), so the fixed
+prompt baseline does not count, and steers the child once to stop and reply with a handoff report whose first line is `RUNG_UP: context`
 (done / remaining / files touched); (b) turns: past `childMaxTurns` assistant turns (same lookup, default 60) the
 bottom rung hands off with `RUNG_UP: turns`, the top rung is steered to stop and report (`child_turn_cap`); (c)
 stuck: the report says `STATUS: stuck` or "own checks failed"; (d) the foreman passes `model: "strong"` with a

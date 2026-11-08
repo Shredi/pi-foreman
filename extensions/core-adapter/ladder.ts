@@ -110,7 +110,7 @@ export interface ChildSteer {
 
 /**
  * Child side, one instance per child session: counts assistant turns and steers at most once.
- * Bottom rung: context above strongAbove or turns above childMaxTurns -> handoff report marked
+ * Bottom rung: context grown by more than strongAbove over the first call's context or turns above childMaxTurns -> handoff report marked
  * `RUNG_UP: context|turns` (climb-eligible). Top rung (strong, or no strong mapped): turns above
  * childMaxTurns -> stop and report. No limits (no binding, tasks/chain children) = no checks.
  */
@@ -127,14 +127,13 @@ export class ChildLadder {
   onUsage(usage: unknown): ChildSteer | null {
     this.turns++;
     const tokens = contextTokens(usage);
-    const first = this.baseline === null;
-    const baseline = this.baseline ?? tokens;
-    if (first) this.baseline = tokens;
+    const prior = this.baseline;
+    if (prior === null && tokens > 0) this.baseline = tokens;
     if (this.steered) return null;
     const rung = this.o.bottom ? "bottom" : "top";
-    if (!first && this.o.bottom && posInt(this.o.strongAbove) && tokens - baseline > this.o.strongAbove) {
+    if (prior !== null && this.o.bottom && posInt(this.o.strongAbove) && tokens - prior > this.o.strongAbove) {
       this.steered = true;
-      return { trigger: "context", count: tokens, baseline, rung, text: steerText("context", `your context grew by ${tokens - baseline} tokens since your first call (${tokens} now), above strongAbove ${this.o.strongAbove} for this model`) };
+      return { trigger: "context", count: tokens, baseline: prior, rung, text: steerText("context", `your context grew by ${tokens - prior} tokens since your first call (${tokens} now), above strongAbove ${this.o.strongAbove} for this model`) };
     }
     if (posInt(this.o.maxTurns) && this.turns > this.o.maxTurns) {
       this.steered = true;

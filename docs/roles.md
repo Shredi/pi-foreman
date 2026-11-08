@@ -22,8 +22,8 @@ model for notice-driven turns that start on a cold cache, restored on the owner'
 [ladder](ladder.md#idle-rung-foreman-downshift)). A child climbs only through the foreman,
 which relaunches it with `model: "strong"`:
 
-- **Context**: a bottom-rung child whose last call's context (input + cacheRead + cacheWrite) passes
-  `strongAbove` (default 100000) is steered once to stop and return a handoff report starting `RUNG_UP: context`.
+- **Context**: a bottom-rung child whose context (input + cacheRead + cacheWrite) has grown by more than
+  `strongAbove` (default 100000) over its first call's context is steered once to stop and return a handoff report starting `RUNG_UP: context`.
 - **Turns**: past the role's turn limit (`ladder.maxTurns.<role>`: builder 100; otherwise `childMaxTurns`, default 60)
   a bottom-rung child hands off (`RUNG_UP: turns`); a top-rung child is told to stop and report. Trace events:
   `child_turn_cap` and `child_turn_limit {role, turns, limit}`.
