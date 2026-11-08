@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel,
 } from "./model.js";
@@ -398,12 +398,24 @@ export default class ForemanAgents extends View {
       .child(div().child(`⎇ #${pr.number}${more.length ? ` +${more.length}` : ""}`))
       .when(st.conflict, (el) => el.child(conflictMark(t)))
       .child(prDot(t, st));
-    const trigger = !href ? chip : chip.id(`pr-${key}-${pr.number}`).cursor_pointer()
-      .hover((x) => x.border_color(t.working).text_color(t.foreground))
-      .on_click((_e, cx) => { this.press(`pr-${key}-${pr.number}`, cx); this.openUrl(href, cx); });
-    // The id carries a hash of the card's content: a card is not reused when its content changed.
     const c = { ...prCard(pr), more: more.length ? `also ${more.map((p) => `#${p.number}`).join(", ")}` : "" };
+    const id = `pr-${key}-${pr.number}`;
+    // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
+    const onMove = (e, cx) => guard(() => {
+      const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = cx?.viewport_size?.();
+      if (!b || !pos || !loc || !vp) return;
+      const a = placeCard({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
+      this.cardAnchor ??= new Map();
+      if (this.cardAnchor.get(id) !== a) { this.cardAnchor.set(id, a); cx.notify?.(); }
+    }, undefined);
+    // The tooltip names the state in words (the dot's colours); the hover card adds the details.
+    const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
+      .when(Boolean(href), (el) => el.cursor_pointer()
+        .hover((x) => x.border_color(t.working).text_color(t.foreground))
+        .on_click((_e, cx) => { this.press(id, cx); this.openUrl(href, cx); }));
+    // The id carries a hash of the card's content: a card is not reused when its content changed.
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
+      .anchor(this.cardAnchor?.get(id) ?? "top_center")
       .trigger(trigger).content(guard(() => this.cardView(t, c), div().child("")));
   }
 

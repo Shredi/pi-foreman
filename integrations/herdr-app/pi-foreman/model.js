@@ -969,6 +969,30 @@ export function prCard(pr) {
   };
 }
 
+const CARD_W = 300;
+const CARD_MARGIN = 8; // the window margin the host keeps around an anchored surface
+
+/** Estimated height in px of the hover card of `c` (a prCard result plus `more`): an overestimate, so a card placed by it fits. */
+export function prCardHeight(c) {
+  const jobs = listOf(c?.groups).reduce((n, g) => n + 18 + 15 * (g.names?.length ?? 0) + (g.more > 0 ? 15 : 0) + 5, 0);
+  return 20 + 16 + 7 + 16 + (c?.excerpt ? 7 + 45 : 0) + (c?.conflict ? 7 + 16 : 0) + 7 + jobs + (c?.status ? 7 + 16 : 0)
+    + (c?.note ? 7 + 16 : 0) + (c?.more ? 7 + 16 : 0) + (listOf(c?.groups).length === 0 && !c?.status && !c?.note ? 7 + 16 : 0);
+}
+
+/** Which anchor (a gpui-base HoverCard `anchor`) puts a card of `card` {w, h} next to the chip `rect` {x, y, w, h} inside the
+ *  `view` {w, h} without covering the chip: "top_center" = below it, "bottom_center" = above it, else beside it
+ *  ("left_center" = to its right, "right_center" = to its left). The host clamps a card into the window and has no flip
+ *  or offset, so room is checked here: below, then above, then the side with the most room. */
+export function placeCard(rect, view, card = { w: CARD_W, h: 200 }) {
+  const m = CARD_MARGIN;
+  if (!rect || !view || !(view.h > 0)) return "top_center";
+  if (rect.y + rect.h + card.h <= view.h - m) return "top_center";
+  if (rect.y - card.h >= m) return "bottom_center";
+  const right = view.w - (rect.x + rect.w) - m;
+  const left = rect.x - m;
+  return right >= card.w || right >= left ? "left_center" : "right_center";
+}
+
 // ---- plan panel hand-off -------------------------------------------------------------------------------------------
 
 /** The radar nodes the plan panel needs, as plain data: sessions only, with the join keys and the `show` pointer. Stable
