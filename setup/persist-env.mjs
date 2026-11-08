@@ -43,7 +43,7 @@ const defaultSetx = (name, value) => {
  * Makes `vars` permanent. Returns the lines to print. Nothing is written on `dry`.
  * Writes are idempotent: a block that is already correct (or setx, which overwrites) changes nothing.
  */
-export function persistEnv(vars, { platform = process.platform, home, shell = "", env = process.env, setx = defaultSetx, dry = false } = {}) {
+export function persistEnv(vars, { platform = process.platform, home, shell = "", setx = defaultSetx, dry = false } = {}) {
   const out = [];
   const todo = Object.entries(vars);
   const target = envTarget({ platform, home, shell });

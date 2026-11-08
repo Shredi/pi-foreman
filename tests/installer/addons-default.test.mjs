@@ -126,7 +126,7 @@ test("background-tasks writes PI_BG_FEATURES=process once into the shell profile
   assert.ok(text.startsWith("alias x=y\n"));
   assert.equal(text.split(BLOCK_START).length, 2);
   assert.match(text, /export PI_BG_FEATURES='process'/);
-  // already effective in the environment: nothing more is written
+  // unchanged block is not rewritten on re-run
   assert.equal(run(env, ["--addon", "background-tasks"], { PI_BG_FEATURES: "process" }).code, 0);
   assert.equal(fs.readFileSync(path.join(env.home, ".zshrc"), "utf8"), text);
   const off = fresh();
@@ -167,12 +167,12 @@ test("envTarget picks the profile by shell and platform; mergeBlock replaces in 
 });
 
 test("persistEnv reports a failing setx and an unwritable profile as WARN without throwing", () => {
-  const win = persistEnv({ A: "1" }, { platform: "win32", home: "/x", env: {}, setx: () => ({ status: 1, error: "boom" }) });
+  const win = persistEnv({ A: "1" }, { platform: "win32", home: "/x", setx: () => ({ status: 1, error: "boom" }) });
   assert.match(win[0], /^WARN env A: setx failed \(boom\); set it yourself: setx A 1/);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-persist-"));
   const blocker = path.join(dir, "file");
   fs.writeFileSync(blocker, "");
-  const posix = persistEnv({ A: "1" }, { platform: "linux", home: blocker, shell: "/bin/zsh", env: {} });
+  const posix = persistEnv({ A: "1" }, { platform: "linux", home: blocker, shell: "/bin/zsh" });
   assert.match(posix[0], /^WARN env: could not write/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

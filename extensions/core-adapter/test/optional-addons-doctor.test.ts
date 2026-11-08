@@ -25,12 +25,12 @@ test("optionalAddonsDoctor adds the qmd line when memory is present and qmd is n
   install(d.agentDir, "pi-memory");
   const bin = path.join(d.base, "bin");
   fs.mkdirSync(bin);
-  const lines = optionalAddonsDoctor(d, [], { PATH: bin }, "linux");
+  const lines = optionalAddonsDoctor(d, [], { PATH: bin }, process.platform);
   assert.equal(lines[0], "INFO quiver: present");
   assert.equal(lines[1], "INFO memory: present");
   assert.match(lines[2], /qmd not on PATH.*memory_search is unavailable/);
   fs.writeFileSync(path.join(bin, "qmd"), "");
-  assert.equal(optionalAddonsDoctor(d, [], { PATH: bin }, "linux").length, 2);
+  assert.equal(optionalAddonsDoctor(d, [], { PATH: bin }, process.platform).length, 2);
 });
 
 test("onPath honours Windows extensions and the platform's separator", () => {
