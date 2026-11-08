@@ -21,7 +21,7 @@ import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { PermStore, PERM_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
-import { folderRelaxes } from "./defaults.ts";
+import { folderRelaxes, mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
@@ -2370,14 +2370,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (const sg of parseShell(cmdText, { cwd: ctx.cwd, platform })) {
           const i = sg.argv.indexOf("branch");
           if (sg.program !== "git" || sg.opaque !== null || sg.cwd === null || i < 0 || !/^-[dD]$/.test(sg.argv[i + 1] ?? "") || sg.argv.length !== i + 3) continue;
-          const key = `${sg.cwd}\0${sg.argv[i + 2]}`;
+          const key = mergedFactKey(sg.cwd, sg.argv[i + 2]);
           if (!mergedFacts.has(key)) mergedFacts.set(key, await branchMergedFact(sg.cwd, sg.argv[i + 2]));
         }
       } catch {
         mergedFacts.clear();
       }
     }
-    const gateFacts: GitFacts | undefined = sessionFacts && mergedFacts.size > 0 ? { ...sessionFacts, branchMerged: (cwd: string, branch: string) => mergedFacts.get(`${cwd}\0${branch}`) === true } : sessionFacts;
+    const gateFacts: GitFacts | undefined = sessionFacts && mergedFacts.size > 0 ? withMergedFacts(sessionFacts, mergedFacts) : sessionFacts;
     const readTools = gs ? readToolsOf(gs.config.config) : undefined;
     if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {

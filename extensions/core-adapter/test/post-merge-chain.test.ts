@@ -6,8 +6,8 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { branchMergedFact, branchMove, setGhRunnerForTest } from "../shellwriteguard.ts";
-import { gateDecide, type GateResult } from "../gate.ts";
-import type { GitFacts } from "../defaults.ts";
+import { gateDecide, gateEvaluate, type GateResult } from "../gate.ts";
+import { mergedFactKey, withMergedFacts, type GitFacts } from "../defaults.ts";
 import type { GateRoots } from "../pathrules.ts";
 import type { FloorEnv } from "../floors.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
@@ -104,4 +104,45 @@ test("git branch -d|-D <b>: a default only for a merged, non-protected branch, n
   assert.equal(rule(sh("git branch -d round/1-x", { f: { branchMerged: undefined } })), null);
   for (const l of ["git branch -d main", "git branch -D trunk", "git branch -d a b", "git branch -d --force a", "git branch -d -r x", "git branch -d refs/heads/a", "git branch -d a..b", "git branch --delete a", "git branch -d"]) assert.equal(rule(sh(l)), null, l);
   assert.equal(rule(sh("git branch -d round/1-x", { r: { child: true, role: "builder" } })), null);
+});
+
+const dangerOf = (line: string, o: { r?: Partial<GateRoots>; f?: Partial<GitFacts>; cwd?: string } = {}): string | null =>
+  gateEvaluate("bash", { command: line }, o.cwd ?? base2, { env: () => env, roots: () => roots(o.r), facts: facts(o.f) }).danger?.name ?? null;
+
+const CHAIN = "git switch trunk && git pull --ff-only && git branch -D round/1-x";
+
+test("full post-merge chain through gateEvaluate: no danger with the merged fact, danger-git without it", () => {
+  assert.equal(dangerOf(CHAIN), null);
+  assert.equal(dangerOf(CHAIN, { f: { branchMerged: () => false } }), "danger-git");
+});
+
+test("git branch -D in a work folder outside the worktree is barred even with the merged fact", () => {
+  const wf = fs.realpathSync.native(mkTestTmp("pf-postmerge-wf-"));
+  try {
+    const r: Partial<GateRoots> = { workFolders: [{ path: wf, mode: "auto" }] };
+    const out = gateEvaluate("bash", { command: "git branch -D round/1-x" }, wf, { env: () => env, roots: () => roots(r), facts: facts() });
+    assert.notEqual(out.result && "allow" in out.result ? out.result.rule : null, "default-git-branch-merged");
+    assert.notEqual(out.danger, null, "no default applies, so the call falls into the dangerous class");
+    assert.equal(dangerOf("git branch -D round/1-x", { r }), null, "the worktree itself stays allowed");
+  } finally {
+    rmTestTmp(wf);
+  }
+});
+
+test("the merged fact is keyed per (cwd, branch): a fact for cwdA is not used in cwdB", () => {
+  const a = path.join(base2, "a");
+  const b = path.join(base2, "b");
+  const gf = withMergedFacts(facts(), new Map([[mergedFactKey(a, "round/1-x"), true]]));
+  assert.equal(gf.branchMerged?.(a, "round/1-x"), true);
+  assert.equal(gf.branchMerged?.(b, "round/1-x"), false);
+  assert.equal(gf.branchMerged?.(a, "round/2-y"), false);
+});
+
+test("git branch -D Main / MASTER / Trunk are protected case-insensitively on darwin and win32 only", () => {
+  const ruleOn = (platform: string, line: string): string | null => {
+    const e = { ...env, platform };
+    return rule(gateDecide("bash", { command: line }, base2, { env: () => e, roots: () => roots(), facts: facts() }));
+  };
+  for (const p of ["darwin", "win32"]) for (const l of ["git branch -D Main", "git branch -D MASTER", "git branch -D Trunk"]) assert.equal(ruleOn(p, l), null, `${p} ${l}`);
+  assert.equal(ruleOn("linux", "git branch -D Main"), "default-git-branch-merged");
 });

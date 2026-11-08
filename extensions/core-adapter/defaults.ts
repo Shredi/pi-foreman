@@ -729,9 +729,21 @@ function branchDeleteMerged(rest: string[], cwd: string, env: DangerEnv): boolea
   if (!f?.branchMerged || env.roots.child || rest.length !== 2 || (rest[0] !== "-d" && rest[0] !== "-D")) return false;
   const b = rest[1];
   if (b.startsWith("-") || !NAME.test(b) || b.startsWith("refs/") || b.includes("..")) return false;
-  if (f.protectedBranches(cwd).includes(b) || /^(?:main|master)$/.test(b)) return false;
+  // a case-insensitive filesystem resolves `Main` to main's loose ref
+  const fold = env.platform === "darwin" || env.platform === "win32" ? (x: string) => x.toLowerCase() : (x: string) => x;
+  if (f.protectedBranches(cwd).some((p) => fold(p) === fold(b)) || /^(?:main|master)$/.test(fold(b))) return false;
   if (workFolderBarred({ roots: env.roots, facts: f, platform: env.platform, cwd: env.cwd }, cwd)) return false;
   return f.branchMerged(cwd, b);
+}
+
+/** The key of the merged-branch lookup: the fact is per (segment cwd, branch), never per branch name alone. */
+export function mergedFactKey(cwd: string, branch: string): string {
+  return `${cwd}\0${branch}`;
+}
+
+/** `facts` with `branchMerged` answered from the lookups index.ts made before the call (`mergedFactKey`). */
+export function withMergedFacts(facts: GitFacts, merged: Map<string, boolean>): GitFacts {
+  return { ...facts, branchMerged: (cwd: string, branch: string) => merged.get(mergedFactKey(cwd, branch)) === true };
 }
 
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
