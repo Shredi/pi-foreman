@@ -1789,7 +1789,8 @@ def cmd_open_remote(a):
     print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
     print("child intercom id: %s" % child)
     print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(join_remote_path(strip_control(reply["handoff"]), "result.md"))))
-    print("child address: child@%s" % (probe.get("intercomMachineName") or name))
+    seen_name = strip_control(probe.get("intercomMachineName")) if isinstance(probe.get("intercomMachineName"), str) else ""
+    print("child address: child@%s" % (seen_name if MACHINE_RE.match(seen_name) else name))
     for note in notes:
         print("warning: %s" % note)
     for info in infos:

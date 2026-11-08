@@ -9,16 +9,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import shell_write_guard as swg  # noqa: E402
 
-POSIX = os.name != "nt"
 
 
-@unittest.skipUnless(POSIX, "posix paths")
 class HandoffCarveOut(unittest.TestCase):
     def setUp(self):
         base = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-ho-"))
         self.addCleanup(shutil.rmtree, base, True)
-        self.ws = os.path.join(base, "ws")
-        self.h = os.path.join(base, "agent", "handoffs", "h1")
+        self.ws = os.path.join(base, "ws").replace(os.sep, "/")
+        # forward slashes: bash would eat the backslashes of a native Windows path
+        self.h = os.path.join(base, "agent", "handoffs", "h1").replace(os.sep, "/")
         os.makedirs(self.ws)
         os.makedirs(os.path.join(self.h, "work"))
         self.owned = [os.path.join(base, "agent", "handoffs")]
@@ -57,7 +56,10 @@ class HandoffCarveOut(unittest.TestCase):
     def test_symlink_escape_refused(self):
         outside = os.path.join(os.path.dirname(self.h), "other")
         os.makedirs(outside)
-        os.symlink(outside, os.path.join(self.h, "work", "lnk"))
+        try:
+            os.symlink(outside, os.path.join(self.h, "work", "lnk"))
+        except (OSError, NotImplementedError):
+            self.skipTest("no symlinks")
         self.assertIsNotNone(self.d(f"echo x > {self.h}/work/lnk/brief.md"))
 
     def test_handoff_flag_only_when_all_refusals_are_handoff(self):

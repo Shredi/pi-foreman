@@ -760,7 +760,7 @@ class Scope(object):
             return True   # the dir itself
         first = comps[0]
         if self.handoff_nt:
-            if ":" in first or re.search(r"~[0-9]", first):
+            if any(":" in c or re.search(r"~[0-9]", c) for c in comps):
                 return True
             first = first.rstrip(". ")
         if first == "work" and len(comps) > 1:

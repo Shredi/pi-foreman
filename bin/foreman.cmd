@@ -1,5 +1,5 @@
 @echo off
-rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|prs|perms|features|knowledge [args]` for cmd.
+rem pi-foreman: `foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|machine|dialogs|prs|perms|features|knowledge [args]` for cmd.
 setlocal
 set "PF_HERE=%~dp0"
 if /i "%~1"=="setup" goto setup
@@ -24,7 +24,7 @@ if /i "%~1"=="close" set "PF_SCRIPT=foreman_close.py"
 if /i "%~1"=="worktree" set "PF_SCRIPT=foreman_worktree.py"
 set "PF_FIRST="
 if /i "%~1"=="machine" (set "PF_SCRIPT=foreman_session.py" & set "PF_FIRST= machine")
-if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|dialogs^|prs^|perms^|features^|knowledge [args] 1>&2 & exit /b 2)
+if not defined PF_SCRIPT (echo usage: foreman setup^|update-check^|retro^|sync^|session^|radar^|config^|bench^|backlog^|findings^|close^|worktree^|machine^|dialogs^|prs^|perms^|features^|knowledge [args] 1>&2 & exit /b 2)
 shift
 set "PF_ARGS=%PF_FIRST%"
 :collect

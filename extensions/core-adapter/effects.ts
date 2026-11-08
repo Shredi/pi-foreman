@@ -64,6 +64,8 @@ export interface EffectCtx {
   extraWriteRoots?: string[];
   /** True for a path under an extra write root that must stay refused (protected places); consulted by `contained`. */
   extraWriteGuard?: (abs: string) => boolean;
+  /** A child only: `abs` (and its real spelling) names a child-written file of its own handoff dir (pathrules.ts childHandoffWrite); a write there is contained. */
+  handoffWrite?: (abs: string, real: string) => boolean;
   /** A `cp` source is a read for the write-outside check (defaults.ts): it need not lie in an allowed place; only the destination does. */
   cpSourceRead?: boolean;
 }
@@ -196,6 +198,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   const x = px(c);
   const alt = realSpelling(c, abs);
   const real = c.realpath ?? realDefault;
+  if (write && !only && c.handoffWrite?.(abs, alt ?? abs)) return true;
   for (const b of only ?? bases(c, write)) {
     // win32: the word and the base may spell one dir differently (8.3 `RUNNER~1` vs `runneradmin`): compare the real spellings too
     const rb = alt ? longForm(plat(c), x.resolve(c.cwd, b), real) : b;

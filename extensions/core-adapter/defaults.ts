@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
-import { folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
+import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
 import { gitConfigRead } from "./permoverlay.ts";
@@ -104,6 +104,11 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
     const real = r.realpath;
     ec.realpath = real;
     ec.exists = (p) => real(p) !== null;
+  }
+  if (r.child && r.childHandoff) {
+    const root = r.childHandoff;
+    const real = r.realpath ?? realDefault;
+    ec.handoffWrite = (abs, ra) => childHandoffWrite(root, abs, ra, c.platform, real);
   }
   ec.readRoots = [...(r.child ? [] : r.tmp), ...r.install, ...r.roundFlow, ...r.handoffs, ...(r.child ? [] : (r.workFolders ?? []).map((f) => f.path))];
   return ec;

@@ -19,8 +19,8 @@ export const SHELL_WRITE_REFUSAL = "shell write into project files refused: use 
  *  workspace-relative dirs that stay writable (edit mode; the script defaults to `.workflow`).
  *  `ownedDirs`: absolute dirs the foreman owns (owned.ts `allowDirs`; the script's `allow_dirs`), a write
  *  strictly inside one never counts, so `cp -R node_modules ../<repo>.worktrees/<b>/node_modules` passes. */
-export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"], ownedDirs: string[] = [], harness: { handoffDir?: string; scratchDir?: string } = {}): Record<string, unknown> {
-  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}), ...(harness.handoffDir ? { handoff_dir: harness.handoffDir } : {}), ...(harness.scratchDir ? { scratch_dir: harness.scratchDir } : {}) };
+export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"], ownedDirs: string[] = [], harness: { handoffDir?: string } = {}): Record<string, unknown> {
+  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}), ...(harness.handoffDir ? { handoff_dir: harness.handoffDir } : {}) };
 }
 
 export interface ShellWriteRunInput {
