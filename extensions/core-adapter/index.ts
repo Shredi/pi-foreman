@@ -3353,7 +3353,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "child_turn_cap", role: s.usage.line.role, turns: steer.count, rung: steer.rung });
         s.trace?.emit({ event: "child_turn_limit", role: s.usage.line.role, turns: steer.count, limit: steer.limit ?? null });
       }
-      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, rung: steer.rung, reason: "context" });
+      else s.trace?.emit({ event: "rung_up_steer", role: s.usage.line.role, count: steer.count, baseline: steer.baseline ?? null, rung: steer.rung, reason: "context" });
       pi.sendUserMessage(steer.text, { deliverAs: "steer" });
     }
     const usageRecord = usageLine(s.usage.line, event.message);

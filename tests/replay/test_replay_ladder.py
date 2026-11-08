@@ -2,7 +2,7 @@
 
 The builder maps `foreman-fake/builder` -> strong `foreman-fake/senior-reviewer`, strongAbove 1000.
 A strong launch without a reason or trigger is refused. The bottom-rung builder's first call
-reports 2000 input tokens: its adapter steers it once, and it answers with a `RUNG_UP: context`
+reports 100 input tokens (the baseline), its second call 2000: growth above strongAbove, so its adapter steers it once, and it answers with a `RUNG_UP: context`
 handoff report. The held launch result carries the climb hint; the foreman's strong relaunch
 passes with no reason, gets the handoff prepended to its task, and the trace records `rung_up`.
 Same prerequisites and skips as test_replay.py.

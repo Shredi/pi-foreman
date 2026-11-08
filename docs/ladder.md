@@ -16,7 +16,9 @@ second climb after a context climb therefore never reports a stale `from` of the
 
 ## Context climb
 
-A bottom-rung child whose last call's context (input + cacheRead + cacheWrite) passes `strongAbove` is steered once
+A bottom-rung child whose last call's context (input + cacheRead + cacheWrite) has grown by more than `strongAbove`
+above its first call's context is steered once (the first call's context, the system prompt, tool definitions and
+brief, is a fixed baseline a stronger model pays too; the first call is never steered)
 to stop and return a handoff report starting `RUNG_UP: context` (also `RUNG_UP: turns` past `childMaxTurns`, and a
 `STATUS: stuck` or "own checks failed" report). The run is climb-eligible: the foreman's next `model: "strong"`
 launch of that role needs no reason, gets the prior report prepended to its task, and the trace records
@@ -192,5 +194,5 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | `research_rung` | `role, marker, model` (+ `kind`: `single` or `entry`) | Once per marked launch entry, with the model it launches on. `foreman retro` counts explorer launches by model from the usage lines (single launches) and these events (`kind: entry`; tasks and chain children log role `child` in usage). |
 | `launch_entry` | `role, kind, model` | Once per agent entry of a tasks or chain launch that carries no research marker (`kind: entry`; `model` is the entry's base model or null). `foreman retro` counts the `explorer` ones into the explorer line; marked entries emit only `research_rung`, so nothing is counted twice. |
 | `security_rung_unset` | `role, reason, hits` | A security-shaped diff found no security rung. |
-| `rung_up_steer` | `role, count, rung` | A child was steered to hand off (context or turns). |
+| `rung_up_steer` | `role, count, baseline, rung, reason` | A child was steered to hand off (context or turns). |
 | `finish_refused` | `climb_available` | The uncounted refusal while the builder's failure climb is open. |

@@ -83,6 +83,7 @@ test("5e: the default explorer strongAbove is 200000, other roles 100000", () =>
   assert.equal(strongAbove({ roles: d.roles, ladder: d.ladder }, undefined, "explorer"), 200000);
   assert.equal(strongAbove({ roles: d.roles, ladder: d.ladder }, undefined, "builder"), 100000);
   const l = new ChildLadder({ strongAbove: 200000, bottom: true });
+  assert.equal(l.onUsage({ input: 1000 }), null);
   assert.equal(l.onUsage({ input: 150000 }), null);
   assert.equal(l.onUsage({ input: 210000 })?.trigger, "context");
 });
