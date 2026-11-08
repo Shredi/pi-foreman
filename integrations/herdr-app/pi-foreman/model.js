@@ -444,6 +444,19 @@ export function splitPrs(prs) {
   return s.length > INLINE_MAX ? { inline: [], below: s } : { inline: s, below: [] };
 }
 
+/** The chips of a session row's title row, the same for every row: up to INLINE_MAX PRs as chips; more are one chip of the most
+ *  urgent PR with `more` (the others, in order) for its "+N". */
+export function chipPrs(prs) {
+  const s = sortPrs(prs);
+  return s.length > INLINE_MAX ? { chips: [s[0]], more: s.slice(1) } : { chips: s, more: [] };
+}
+
+/** The state a PR's dot shows, in words (the chip's hover card names it): the colours are not explained anywhere else. */
+export function prStateText(pr) {
+  const d = prDotState(pr);
+  return d.fill === "red" ? "CI failing" : d.ring ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
+}
+
 /** The page of a PR: its own URL, else `<https repository URL>/pull/<number>`; "" when radar gives neither (not clickable). */
 export function prUrl(node, pr) {
   if (!isObj(pr)) return "";
@@ -946,6 +959,7 @@ export function prCard(pr) {
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
+    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}`,
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[2].count },

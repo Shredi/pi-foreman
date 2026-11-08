@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, prSummary, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel,
 } from "./model.js";
@@ -385,23 +385,24 @@ export default class ForemanAgents extends View {
 
   // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one two-part dot; a click opens its
   // page when radar gave a URL (or a repository URL to derive it from). Resting on the chip opens the hover card.
-  prChip(t, pr, href, key) {
-    return guard(() => this.prChipRaw(t, pr, href, key), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
+  prChip(t, pr, href, key, more = []) {
+    return guard(() => this.prChipRaw(t, pr, href, key, more), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
   }
 
-  prChipRaw(t, pr, href, key) {
+  // `more`: further PRs of the same row; the chip then reads "#n +k" and its hover card lists them.
+  prChipRaw(t, pr, href, key, more) {
     const st = prDotState(pr);
     const chip = h_flex().flex_none().h(18).px(6).gap(4).items_center().rounded(9)
       .border(1).border_color(st.fill === "red" ? t.blocked : t.border).bg(t.raised)
       .text_size(10.5).font_medium().text_color(st.fill === "red" ? t.blocked : t.muted)
-      .child(div().child(`⎇ #${pr.number}`))
+      .child(div().child(`⎇ #${pr.number}${more.length ? ` +${more.length}` : ""}`))
       .when(st.conflict, (el) => el.child(conflictMark(t)))
       .child(prDot(t, st));
     const trigger = !href ? chip : chip.id(`pr-${key}-${pr.number}`).cursor_pointer()
       .hover((x) => x.border_color(t.working).text_color(t.foreground))
       .on_click((_e, cx) => { this.press(`pr-${key}-${pr.number}`, cx); this.openUrl(href, cx); });
     // The id carries a hash of the card's content: a card is not reused when its content changed.
-    const c = prCard(pr);
+    const c = { ...prCard(pr), more: more.length ? `also ${more.map((p) => `#${p.number}`).join(", ")}` : "" };
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
       .trigger(trigger).content(guard(() => this.cardView(t, c), div().child("")));
   }
@@ -424,8 +425,10 @@ export default class ForemanAgents extends View {
       .when(Boolean(c.status), (el) => el.child(div().text_color(t.foreground).child(c.status)))
       .when(Boolean(c.note), (el) => el.child(div().text_color(t.dim).child(c.note)))
       .when(c.groups.length === 0 && !c.status && !c.note, (el) => el.child(div().text_color(t.dim).child("no job data")));
-    return shell.child(title).when(Boolean(c.excerpt), (el) => el.child(excerpt))
-      .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs);
+    const state = div().text_color(t.foreground).child(c.state);
+    return shell.child(title).child(state).when(Boolean(c.excerpt), (el) => el.child(excerpt))
+      .when(Boolean(c.conflict), (el) => el.child(conflict)).child(jobs)
+      .when(Boolean(c.more), (el) => el.child(div().text_color(t.dim).child(c.more)));
   }
 
   // Session PRs with the title, description and job names of their twin in radar's open-PRs list.
@@ -433,13 +436,12 @@ export default class ForemanAgents extends View {
     return guard(() => enrichPrs(prs, this.feed), prs);
   }
 
-  // A PR line: every chip, wrapping onto further lines; a summary after them.
-  prLine(t, node, prs, withSummary, key, indent) {
-    const shown = this.enrich(prs); // the summary counts the enriched PRs, the ones the chips are drawn from
-    const summary = withSummary ? guard(() => prSummary(shown), "") : "";
-    return h_flex().pl(indent).pr(8).py(2).flex_none().flex_wrap().items_center().gap_x(5).gap_y(4).text_size(11)
-      .children(shown.map((p) => this.prChip(t, p, prUrl(node, p), key)))
-      .when(Boolean(summary), (el) => el.child(div().text_color(t.dim).child(summary)));
+  // The PR chips of a session row, on the right of its title row for every row: up to two chips, more as one chip "#n +k".
+  rowChips(t, item) {
+    const { chips, more } = chipPrs(item.prs ?? []);
+    const shown = this.enrich(chips);
+    const rest = this.enrich(more);
+    return shown.map((p) => this.prChip(t, p, prUrl(item.node, p), item.id, rest).mr(3));
   }
 
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
@@ -481,17 +483,14 @@ export default class ForemanAgents extends View {
     return h_flex().flex_none().items_stretch().child(column).child(this.node(t, item, 0, carded).flex_1().min_w(0));
   }
 
-  // Under a session row: the ask / background / wait line of its node and its PR chips (all on a line at the top, more than
-  // two on a line below for the others).
+  // Under a session row: the show, ask / background / wait lines of its node (the PR chips sit in the row, see nodeRow).
   // `x` is the left of the connector line when children follow (see rail): every extras row then carries it, so the line runs
   // unbroken from the row's chevron through these rows to the first child.
   extras(t, item, ind, x = null) {
     if (item.type !== "session") return [];
-    const root = item.top === true;
     const detail = detailLine(item.node);
     const line = statusLine(detail);
     const blocked = detail.blocked;
-    const prs = root ? item.prs : item.below;
     const shows = item.node?.show ? showRows(item.node.show, this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`), Date.now()) : [];
     const rows = [
       ...(shows.length ? [h_flex().pl(ind + 20).pr(8).h(18).flex_none().items_center().gap(10)
@@ -503,7 +502,6 @@ export default class ForemanAgents extends View {
         }))] : []),
       ...(line.text ? [h_flex().pl(ind + 20).pr(8).h(line.icon ? 16 : 20).flex_none().items_center().gap(6)
         .child(div().truncate().text_size(line.icon ? 10 : 11.5).text_color(blocked ? t.blocked : line.icon ? t.dim : t.muted).child(line.icon ? `${line.icon} ${line.text}` : line.text))] : []),
-      ...(prs.length ? [this.prLine(t, item.node, prs, root, item.id, ind + 20)] : []),
     ];
     return x === null ? rows : rows.map((r, i) => div().relative().flex_none().child(r).child(this.rail(t, `${item.id}/x${i}`, x)));
   }
@@ -542,7 +540,7 @@ export default class ForemanAgents extends View {
       .when(Boolean(item.tier), (el) => el.child(div().text_size(10.5).text_color(t.dim).child(item.tier)))
       .when(Boolean(item.costText), (el) => el.child(div().mr(3).text_size(11).text_color(root ? t.muted : t.dim).child(item.costText)))
       .when(root && item.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${item.sessions} sessions`)))
-      .children(root ? [] : this.enrich(item.inline).map((p) => this.prChip(t, p, prUrl(item.node, p), item.id).mr(3)))
+      .children(guard(() => this.rowChips(t, item), []))
       .child(glyphRight)
       .when(x !== null, (el) => el.relative().child(this.rail(t, `${item.id}/row`, x, Math.floor(((root ? 22 : 26) + 16) / 2))));
   }
@@ -594,6 +592,7 @@ export default class ForemanAgents extends View {
       .when(root !== null && root.sessions > 1, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(`${root.sessions} sessions`)))
       .when(host !== "", (el) => el.child(div().text_size(10).text_color(t.dim).child(host)))
       .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(now - since))))
+      .children(root ? guard(() => this.rowChips(t, root), []) : [])
       .child(statusGlyph(t, shownStatus));
   }
 
