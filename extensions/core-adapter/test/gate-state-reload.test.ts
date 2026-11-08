@@ -144,12 +144,25 @@ function repo(prefix: string, parent: string = os.tmpdir()): { dir: string; g: (
   return { dir, g, commit };
 }
 
+/** Rejects with a named message when `p` has not settled in `ms`; the timer is ref'd, so a pending step keeps the event loop alive and fails here instead of being cancelled. */
+async function within<T>(what: string, p: Promise<T>, ms = 20_000): Promise<T> {
+  let h: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<never>((_, rej) => {
+    h = setTimeout(() => rej(new Error(`${what} did not settle in ${ms} ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, bound]);
+  } finally {
+    clearTimeout(h);
+  }
+}
+
 const gate = async (w: World, session: string, sib: string) => prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed: [], cwd: session, input: {}, checkout: { cwd: sib, records: reviewsOfEntry(lastEntry(w).reviews) } });
 
 test("#129: a PASS in a sibling checkout survives the reload: same head allowed, new head cwd_stale, other session cwd_unreviewed", async (t) => {
   const { w, a } = await standard(t);
   const sib = repo("pf-gsr-sib-", w.project); // a nested checkout: its own git toplevel, inside the project so a launch there needs no dialog
-  const rl = await a.agentLaunch("reviewer", "[pre-pr] review the sibling", { cwd: sib.dir });
+  const rl = await within("the sibling reviewer launch", a.agentLaunch("reviewer", "[pre-pr] review the sibling", { cwd: sib.dir }));
   assert.equal(rl.blocked, null);
   const before = snap(w);
   a.endRunAs(rl.id, "reviewer", "Overall verdict: PASS", sib.dir);
@@ -158,7 +171,7 @@ test("#129: a PASS in a sibling checkout survives the reload: same head allowed,
   const session = repo("pf-gsr-ses-");
   t.after(() => rmTestTmp(session.dir));
   assert.equal(await gate(w, session.dir, sib.dir), null, "before the reload");
-  await reload(w, a);
+  await within("the reload", reload(w, a));
   assert.ok(lastEntry(w).reviews.some((r) => r.cwd === sib.dir), "the reloaded session still holds the checkout of the record");
   assert.equal(await gate(w, session.dir, sib.dir), null, "the entry written before the reload opens the sibling");
   sib.commit("chore: b");
