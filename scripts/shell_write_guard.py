@@ -763,8 +763,8 @@ class Scope(object):
             if ":" in first or re.search(r"~[0-9]", first):
                 return True
             first = first.rstrip(". ")
-        if first == "work":
-            return False
+        if first == "work" and len(comps) > 1:
+            return False   # below work/ only: the bare entry is refused (rm -rf / mv would replace it)
         return not (len(comps) == 1 and (first in HANDOFF_CHILD_NAMES or re.match(r"^ask-[0-9]+\.md$", first)))
 
     def target(self, word, cwd, link=False):

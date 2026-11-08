@@ -131,7 +131,8 @@ export function childHandoffWrite(root: string, abs: string, ra: string, platfor
     const s = segs.map((g) => (win ? g.replace(/[. ]+$/, "") : g));
     if (s.some((g) => g === "" || g === ".." || (win && (g.includes(":") || /~\d/.test(g))))) return false;
     const f = s.map(fold);
-    if (f[0] === "work") return true;
+    // below work/ only: the bare entry stays parent-protected (rm -rf / mv of it would remove or replace it)
+    if (f[0] === "work") return f.length > 1;
     return f.length === 1 && (HANDOFF_CHILD_NAMES.includes(f[0]) || /^ask-\d+\.md$/.test(f[0]));
   };
   return ok(abs) && ok(ra);
