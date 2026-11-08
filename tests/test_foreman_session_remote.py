@@ -887,7 +887,9 @@ class ParentTest(RemoteBase):
             self.assertEqual(Path(words[0]).name, "hc")
             self.assertEqual(words[1:4], ["file", "read", "--on"])
             self.assertEqual(words[4], "alpha")
-            self.assertRegex(words[5], r"/pi-foreman/handoffs/\d{8}-\d{6}-demo/result\.md$")
+            self.assertTrue(words[5].endswith("/result.md"), words)
+            if not extra:
+                self.assertRegex(words[5], r"/pi-foreman/handoffs/\d{8}-\d{6}-demo/result\.md$")
 
     def test_the_remote_run_carries_the_space_looked_up_by_the_parent(self):
         self.assertEqual(self.run_main(*self.open_args())[0], 0)

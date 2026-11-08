@@ -1753,7 +1753,7 @@ def cmd_open_remote(a):
     print("remote: %s" % name)
     print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
     print("child intercom id: %s" % child)
-    print("fetch remote files: %s file read --on %s %s/result.md" % (shlex.quote(binary), name, strip_control(reply["handoff"])))
+    print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(strip_control(reply["handoff"]) + "/result.md")))
     for note in notes:
         print("warning: %s" % note)
     if a.dry_run:
