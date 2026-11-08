@@ -73,7 +73,7 @@ import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
-import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
+import { branchMergedFact, branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
@@ -2362,12 +2362,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionFacts: GitFacts | undefined = gs && roots
       ? sessionGitFacts({ ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] }, ownWorktreeCheck([roots.worktree, ...roundWorktrees(path.join(gs.agentDir, "pi-foreman", "state"), gs.usage.line.foremanSession, platform)], platform))
       : undefined;
+    // merged fact for `git branch -d|-D <b>` (default-git-branch-merged): looked up here, asynchronously, per segment cwd; the gate never spawns gh
+    const mergedFacts = new Map<string, boolean>();
+    const cmdText = typeof (event.input as { command?: unknown } | undefined)?.command === "string" ? (event.input as { command: string }).command : null;
+    if (cmdText && event.toolName === "bash" && gs && !gs.isChild && sessionFacts && /\bbranch\b/.test(cmdText)) {
+      try {
+        for (const sg of parseShell(cmdText, { cwd: ctx.cwd, platform })) {
+          const i = sg.argv.indexOf("branch");
+          if (sg.program !== "git" || sg.opaque !== null || sg.cwd === null || i < 0 || !/^-[dD]$/.test(sg.argv[i + 1] ?? "") || sg.argv.length !== i + 3) continue;
+          const key = `${sg.cwd}\0${sg.argv[i + 2]}`;
+          if (!mergedFacts.has(key)) mergedFacts.set(key, await branchMergedFact(sg.cwd, sg.argv[i + 2]));
+        }
+      } catch {
+        mergedFacts.clear();
+      }
+    }
+    const gateFacts: GitFacts | undefined = sessionFacts && mergedFacts.size > 0 ? { ...sessionFacts, branchMerged: (cwd: string, branch: string) => mergedFacts.get(`${cwd}\0${branch}`) === true } : sessionFacts;
     const readTools = gs ? readToolsOf(gs.config.config) : undefined;
     if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       ...(readTools ? { readTools } : {}),
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
-      ...(roots ? { roots: () => roots, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
+      ...(roots ? { roots: () => roots, facts: gateFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
     });
@@ -3819,7 +3835,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const command = typeof input.command === "string" ? input.command : "";
       const move = await branchMove(command, ctx.cwd, !s.isChild);
       if (move?.allow) {
-        s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
+        s.trace?.emit({ event: "shell_write_allow", reason: move.reason ?? "branch_move", cmd: command });
         return undefined;
       }
       const precondition = move && "precondition" in move ? move.precondition : undefined;
