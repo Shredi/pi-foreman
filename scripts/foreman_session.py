@@ -1520,6 +1520,12 @@ def decode_hc_text(b64):
         return raw.decode("cp850", "replace")
 
 
+def join_remote_path(directory, name):
+    """Join with the separator the remote dir already uses (the remote OS may differ from this one)."""
+    sep = "\\" if "\\" in directory and "/" not in directory else "/"
+    return directory.rstrip(sep) + sep + name
+
+
 def strip_control(text):
     """`text` as a string without C0, C1 and DEL control characters (a remote's text reaches the local terminal)."""
     return "".join(c for c in str(text) if not (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f))
@@ -1753,7 +1759,7 @@ def cmd_open_remote(a):
     print("remote: %s" % name)
     print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
     print("child intercom id: %s" % child)
-    print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(strip_control(reply["handoff"]) + "/result.md")))
+    print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(join_remote_path(strip_control(reply["handoff"]), "result.md"))))
     for note in notes:
         print("warning: %s" % note)
     if a.dry_run:

@@ -887,9 +887,16 @@ class ParentTest(RemoteBase):
             self.assertEqual(Path(words[0]).stem.lower(), "hc")  # hc.CMD on Windows
             self.assertEqual(words[1:4], ["file", "read", "--on"])
             self.assertEqual(words[4], "alpha")
-            self.assertTrue(words[5].endswith("/result.md"), words)
+            self.assertRegex(words[5], r"[\\/]result\.md$")
             if not extra:
-                self.assertRegex(words[5], r"/pi-foreman/handoffs/\d{8}-\d{6}-demo/result\.md$")
+                self.assertRegex(words[5], r"[\\/]pi-foreman[\\/]handoffs[\\/]\d{8}-\d{6}-demo[\\/]result\.md$")
+
+    def test_join_remote_path_follows_the_remote_separator(self):
+        join = fsn.join_remote_path
+        self.assertEqual(join("C:\\h\\demo", "result.md"), "C:\\h\\demo\\result.md")
+        self.assertEqual(join("C:\\h\\demo\\", "result.md"), "C:\\h\\demo\\result.md")
+        self.assertEqual(join("/h/demo", "result.md"), "/h/demo/result.md")
+        self.assertEqual(join("C:/h/demo", "result.md"), "C:/h/demo/result.md")
 
     def test_the_remote_run_carries_the_space_looked_up_by_the_parent(self):
         self.assertEqual(self.run_main(*self.open_args())[0], 0)
