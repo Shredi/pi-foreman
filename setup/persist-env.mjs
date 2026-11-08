@@ -26,8 +26,9 @@ export function renderBlock(vars, fish) {
 
 /** `text` with the marked block replaced in place (appended when absent). Same input gives the same output. */
 export function mergeBlock(text, block) {
-  const s = text.indexOf(BLOCK_START);
-  const e = s >= 0 ? text.indexOf(BLOCK_END, s) : -1;
+  // anchor on the last start before the first end, so an orphan start marker never swallows user lines
+  const e = text.indexOf(BLOCK_END);
+  const s = e >= 0 ? text.lastIndexOf(BLOCK_START, e) : -1;
   if (s >= 0 && e >= 0) return text.slice(0, s) + block + text.slice(e + BLOCK_END.length);
   const sep = text === "" || text.endsWith("\n\n") ? "" : text.endsWith("\n") ? "\n" : "\n\n";
   return `${text}${sep}${block}\n`;
@@ -40,13 +41,11 @@ const defaultSetx = (name, value) => {
 
 /**
  * Makes `vars` permanent. Returns the lines to print. Nothing is written on `dry`.
- * Variables already effective in `env` with the wanted value are left alone.
+ * Writes are idempotent: a block that is already correct (or setx, which overwrites) changes nothing.
  */
 export function persistEnv(vars, { platform = process.platform, home, shell = "", env = process.env, setx = defaultSetx, dry = false } = {}) {
   const out = [];
-  const todo = Object.entries(vars).filter(([k, v]) => env[k] !== v);
-  for (const [k, v] of Object.entries(vars)) if (env[k] === v) out.push(`env ${k}=${v}: already set in this environment, nothing to do`);
-  if (!todo.length) return out;
+  const todo = Object.entries(vars);
   const target = envTarget({ platform, home, shell });
   if (target.kind === "setx") {
     for (const [k, v] of todo) {

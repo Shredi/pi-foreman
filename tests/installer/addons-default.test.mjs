@@ -176,3 +176,40 @@ test("persistEnv reports a failing setx and an unwritable profile as WARN withou
   assert.match(posix[0], /^WARN env: could not write/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("--skip-addon is remembered: a later plain run installs nothing new", () => {
+  const env = fresh();
+  assert.equal(run(env, ["--skip-addon", "memory"]).code, 0);
+  assert.deepEqual(installs(env), specs.slice(0, 3));
+  fs.rmSync(env.log);
+  const again = run(env, []);
+  assert.equal(again.code, 0, again.out);
+  assert.deepEqual(installs(env), []);
+  assert.deepEqual(managed(env).addonsOffered, DEFAULTS);
+});
+
+test("--no-addons is remembered: a later --profile run installs nothing", () => {
+  const env = fresh();
+  assert.equal(run(env, ["--no-addons"]).code, 0);
+  assert.deepEqual(managed(env).addonsOffered, DEFAULTS);
+  const again = run(env, ["--profile", "standard"]);
+  assert.equal(again.code, 0, again.out);
+  assert.deepEqual(installs(env), []);
+});
+
+test("an existing install without addonsOffered gets the newly-default wording", () => {
+  const env = fresh();
+  fs.mkdirSync(path.join(env.agentDir, "pi-foreman"), { recursive: true });
+  fs.writeFileSync(path.join(env.agentDir, "pi-foreman", "managed.json"), `${JSON.stringify({ version: 1, entries: {} })}\n`);
+  const r = run(env, []);
+  assert.match(r.out, /installing newly default add-ons:/);
+});
+
+test("mergeBlock with an orphan start marker keeps the user's lines", () => {
+  const text = `${BLOCK_START}\nmine\n`;
+  const once = mergeBlock(text, renderBlock({ A: "1" }, false));
+  assert.ok(once.startsWith(text));
+  const twice = mergeBlock(once, renderBlock({ A: "2" }, false));
+  assert.ok(twice.startsWith(text), twice);
+  assert.match(twice, /export A='2'/);
+});

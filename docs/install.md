@@ -141,12 +141,12 @@ Interactively the picker asks per add-on with yes preselected; non-interactive r
 `--no-addons`, `--skip-addon <id>` or by answering no. If the package is already installed in either settings file at any
 version, setup says "already installed" and runs nothing, because a second copy stops Pi at start. The ids offered so far are
 recorded in `managed.addonsOffered`: an add-on added to the list in a later release is offered once on the next run, and one you
-declined or removed is not offered again.
+declined (answered no, `--skip-addon`, `--no-addons`) is not offered again; offer it again with `--addon <id>`.
 
 When an add-on needs an environment variable (`env` in `addons.json`), setup writes it persistently: into a marked block
 (`# >>> pi-foreman env >>>` ... `# <<< pi-foreman env <<<`) in `~/.zshrc` (zsh), `~/.bash_profile` (bash on macOS) or `~/.bashrc`
-(bash elsewhere), `~/.config/fish/conf.d/pi-foreman.fish` (fish) or `~/.profile`, and with `setx` on Windows. It is idempotent and
-skipped when the variable is already set to that value. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
+(bash elsewhere), `~/.config/fish/conf.d/pi-foreman.fish` (fish) or `~/.profile`, and with `setx` on Windows. It is idempotent: an unchanged block
+is not rewritten. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
 alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 
 - `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.

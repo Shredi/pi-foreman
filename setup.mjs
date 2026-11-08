@@ -566,7 +566,7 @@ function toggleGroups(features) {
 const isAuto = (f, state) => state === "on" && Object.values(f.toggle.on).some((v) => v === null);
 
 /** The add-on step shared by both pickers: what is installed, or what an add-on does and what it clashes with. */
-export function describeAddon(a, have) {
+function describeAddon(a, have) {
   if (have) return [`Add-on ${a.id}: already installed (${have.source}, ${have.scope})`];
   return [`Add-on ${a.id}: ${a.purpose}`, `  installs npm:${a.package}@${a.version}`, ...a.clashes.map((c) => `  note: ${c}`)];
 }
@@ -1086,15 +1086,18 @@ async function main(argv) {
       diffShown = true;
     } else {
       if (!request.profile && recorded === null) say(NO_PROFILE_HINT);
+      // a declined default counts as offered, so a later plain run does not install it
+      const declined = opts.noAddons ? addonRegistry.filter((a) => a.default && !installedBefore.some((i) => i.id === a.id)).map((a) => a.id) : opts.skipAddon.filter((id) => addonRegistry.some((a) => a.id === id && a.default));
       if (opts.addon.length) offeredNow = [...opts.addon];
       else if (!opts.noAddons && newlyDefault.length) {
         if (st.allowed && !hasFlags && !opts.pick) addonIds = await askNewAddons(addonRegistry.filter((a) => newlyDefault.includes(a.id)));
         else {
           addonIds = [...newlyDefault];
-          say(`add-ons: ${installedBefore.length || offeredBefore.length ? "installing newly default add-ons" : "installing the default add-ons"}: ${newlyDefault.join(", ")} (skip with --skip-addon <id> or --no-addons)`);
+          say(`add-ons: ${installedBefore.length || offeredBefore.length || managedText !== null ? "installing newly default add-ons" : "installing the default add-ons"}: ${newlyDefault.join(", ")} (skip with --skip-addon <id> or --no-addons)`);
         }
         offeredNow = [...newlyDefault];
       }
+      offeredNow = [...new Set([...offeredNow, ...declined])];
     }
 
     // foreman.json first, so the generator below sees it (on --dry-run nothing is written, so they

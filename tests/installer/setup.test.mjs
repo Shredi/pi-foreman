@@ -1360,7 +1360,7 @@ test("--addon background-tasks runs the exact pi install, records managed.addons
   assert.deepEqual(installs(env), []);
 });
 
-test("without --addon nothing is installed; the hint lines name the add-ons", () => {
+test("with --no-addons (the harness default) nothing is installed and the hint lines name the add-ons", () => {
   const env = fresh();
   seed(env);
   const r = run(env, [], NO_PICKER);
