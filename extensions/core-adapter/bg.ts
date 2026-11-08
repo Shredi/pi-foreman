@@ -13,6 +13,8 @@
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
+import { msysEnv } from "./env.ts";
 
 /** One line, control characters dropped, capped (same rule as wait.ts oneLine; kept here to avoid an import cycle). */
 function oneLine(v: unknown, max: number): string {
@@ -31,7 +33,7 @@ const MAX_ADDON_TASKS = 20;
 export const BG_PARAMS = {
   type: "object",
   properties: {
-    command: { type: "string", description: "The shell command to run in the background (detached on POSIX, not detached on win32; same guards as a bash call)." },
+    command: { type: "string", description: "The shell command to run in the background (detached on POSIX, not detached on win32; same guards as a bash call). On win32 it runs in the bash tool's shell (Git Bash, `bash -c`), so write POSIX syntax; cmd.exe only when no bash is found." },
     note: { type: "string", maxLength: 200, description: "Shown in the sidebar, `/foreman waits` and the wake message." },
   },
   required: ["command"],
@@ -46,14 +48,25 @@ export const bgScratchDir = (stateDir: string, sessionId: string): string => pat
 export const bgLogPath = (stateDir: string, sessionId: string, waitId: string): string => path.join(bgScratchDir(stateDir, sessionId), `wait-${safeSegment(waitId)}.log`);
 
 /**
- * The shell that runs the command: bash (else sh) on POSIX, `cmd /d /s /c` on Windows. With `/s /c`, cmd strips the
- * first and the last quote of its command line, so the command is wrapped in one more pair of quotes (what Node's
- * `shell: true` does on win32); without them a quoted `node -e "..."` loses its quotes and cmd parses `<`, `>`, `&`
- * inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting), as cmd parses them itself.
- * Known limit: on Windows the command runs under cmd.exe while the guards classify it as bash (docs/safety.md).
+ * The shell that runs the command: bash (else sh) on POSIX; on Windows the bash tool's shell, Pi's `getShellConfig(shellPath)`
+ * (Git Bash, `-c`), so the guards' bash reading matches what runs. Only when that throws (no bash found) or wants the command on
+ * stdin (legacy WSL bash) it is `cmd /d /s /c`: with `/s /c`, cmd strips the first and the last quote of its command line, so the
+ * command is wrapped in one more pair of quotes (what Node's `shell: true` does on win32); without them a quoted `node -e "..."`
+ * loses its quotes and cmd parses `<`, `>`, `&` inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting).
+ * Known limit: the cmd.exe fallback runs the command under cmd.exe while the guards classify it as bash (docs/safety.md).
  */
-export function shellFor(command: string, platform: string = process.platform): { file: string; args: string[]; verbatim: boolean } {
-  if (platform === "win32") return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
+export type ShellConfigFn = (shellPath?: string) => { shell: string; args: string[]; commandTransport?: string };
+
+export function shellFor(command: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string } = {}): { file: string; args: string[]; verbatim: boolean } {
+  if (platform === "win32") {
+    try {
+      const cfg = (opts.getShellConfig ?? piGetShellConfig)(opts.shellPath || undefined);
+      if (cfg.commandTransport !== "stdin") return { file: cfg.shell, args: [...cfg.args, command], verbatim: false };
+    } catch {
+      // no bash found: cmd.exe below
+    }
+    return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
+  }
   return { file: fs.existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh", args: ["-c", command], verbatim: false };
 }
 
@@ -70,14 +83,14 @@ export function bgSpawnFlags(platform: string = process.platform): { detached: b
 }
 
 /** Spawn `command` detached (bgSpawnFlags) with stdout and stderr appended to `logPath`; the pid, or why not. */
-export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform): { pid: number } | { error: string } {
+export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv } = {}): { pid: number } | { error: string } {
   let fd: number | null = null;
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
     fd = fs.openSync(logPath, "a", 0o600);
-    const sh = shellFor(command, platform);
+    const sh = shellFor(command, platform, opts);
     // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
-    const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: process.env, windowsVerbatimArguments: sh.verbatim });
+    const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
     child.on("error", () => undefined);
     child.unref();
     if (!child.pid) return { error: `${BG_TOOL}: could not start ${sh.file}.` };
@@ -87,6 +100,19 @@ export function spawnDetached(command: string, cwd: string, logPath: string, pla
   } finally {
     if (fd !== null) fs.closeSync(fd);
   }
+}
+
+/** Pi's `shellPath` setting: the project's `.pi/settings.json` over the agent dir's `settings.json`; undefined when unset. */
+export function shellPathSetting(agentDir: string, cwd: string): string | undefined {
+  for (const f of [path.join(cwd, ".pi", "settings.json"), path.join(agentDir, "settings.json")]) {
+    try {
+      const v = (JSON.parse(fs.readFileSync(f, "utf8")) as { shellPath?: unknown }).shellPath;
+      if (typeof v === "string" && v.trim()) return v.trim();
+    } catch {
+      // absent or unreadable: next
+    }
+  }
+  return undefined;
 }
 
 /** Last `n` non-empty lines of a file (reads at most its final 8 KiB); [] when unreadable. */

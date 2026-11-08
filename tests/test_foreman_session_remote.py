@@ -300,7 +300,7 @@ class ProbeTest(RemoteBase):
     def test_probe_reply_shape(self):
         code, r = self.probe()
         self.assertEqual(code, 0)
-        self.assertEqual(r["protocol"], 3)
+        self.assertEqual(r["protocol"], 4)
         self.assertEqual((r["piVersion"], r["platform"]), ("pi 9.9.9", sys.platform))
         self.assertEqual(r["hc"], {"available": True, "coreUp": True, "version": "0.0.0-fake"})
         self.assertEqual((r["agentDir"], r["intercomMachineName"]), (str(self.radir), fsn.short_hostname()))
@@ -867,7 +867,7 @@ class ParentTest(RemoteBase):
         self.assertEqual(entry["hc"], {"address": "alpha/t1", "space": "sp-alpha", "tab": None})
         self.assertEqual(entry["remoteHandoff"], str(self.radir / "pi-foreman" / "handoffs" / handoff_name))
         self.assertEqual((entry["remote"]["protocol"], entry["remote"]["piVersion"], entry["remote"]["platform"]),
-                         (3, "pi 9.9.9", sys.platform))
+                         (4, "pi 9.9.9", sys.platform))
         self.assertTrue(mirror.is_dir() and not list(mirror.iterdir()))
         remote_entry = self.remote_registry()[0]
         self.assertEqual((remote_entry["child"], remote_entry["parent"]), (entry["child"], ADDRESS))
@@ -1066,8 +1066,9 @@ class ParentTest(RemoteBase):
         self.assertEqual(rc, 0, err)
 
     def test_remote_protocol(self):
-        err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="4")
-        self.assertIn("remote alpha speaks protocol 4, this side speaks 3;", err)
+        err = self.refused(*self.open_args(), code="remote_protocol", FAKE_SSH_PROTOCOL="3")
+        self.assertIn("remote alpha speaks protocol 3, this side speaks 4;", err)
+        self.assertIn("pi update", err)
         self.assertEqual(len(self.exec_calls()), 1)
 
     def test_remote_missing(self):
@@ -1372,7 +1373,7 @@ class NoticeTest(NoticeBase):
     def test_footer_commands_run_through_main(self):
         brief = (self.dir / "brief.md").read_text("utf-8")
         cmds = [l.strip() for l in brief.splitlines() if " remote notice " in l and l.startswith("   ")]
-        self.assertEqual([shlex.split(c)[shlex.split(c).index("notice") + 1] for c in cmds], ["result", "update", "closed", "ask"])
+        self.assertEqual([shlex.split(c)[shlex.split(c).index("notice") + 1] for c in cmds], ["result", "update", "ask"])
         by_kind = {shlex.split(c)[shlex.split(c).index("notice") + 1]: shlex.split(c) for c in cmds}
         argv = by_kind["result"]
         self.assertEqual(argv[1:3], ["-E", "-s"])
@@ -1606,7 +1607,7 @@ class FooterTest(unittest.TestCase):
     def test_the_interpreter_is_quoted_when_its_path_has_a_space(self):
         with mock.patch.object(fsn.sys, "executable", "/opt/my python/bin/python3"):
             _, cmds = self.commands(False)
-        self.assertTrue(all(c.startswith("'/opt/my python/bin/python3' -E -s ") for c in cmds), cmds)
+        self.assertTrue(cmds and all(c.startswith("'/opt/my python/bin/python3' -E -s ") for c in cmds), cmds)
 
 
 class RemoteOptionTest(RemoteBase):
@@ -1669,7 +1670,8 @@ class AttachPaneTest(RemoteBase):
         self.assertEqual(name, fsn.hc_attach_name("alpha", entry["child"]))
         self.assertRegex(name, r"^[a-z0-9_-]{1,32}$")
         self.assertEqual(entry["attach"], {"address": "t2"})
-        self.assertIn("attach: t2", out)
+        self.assertIn("attach (local pane): t2", out)
+        self.assertIn("remote terminal: alpha/t1", out)
 
     def test_attach_name_carries_the_machine(self):
         self.assertEqual(fsn.hc_attach_name("build01", "fm-attach-live-test-ce6dae"), "fm-build01-attach-live-test-6dae")

@@ -62,6 +62,7 @@ case "$sub" in
     findings) script="$here/../scripts/foreman_findings.py" ;;
     close) script="$here/../scripts/foreman_close.py" ;;
     worktree) script="$here/../scripts/foreman_worktree.py" ;;
+    machine) script="$here/../scripts/foreman_session.py"; set -- machine "$@" ;; # `foreman machine setup <name>` is a session verb
     *) echo "usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|prs|perms|features|knowledge [args]" >&2; exit 2 ;;
 esac
 shift

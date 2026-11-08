@@ -125,7 +125,7 @@ LAUNCH_FILE = "launch.txt"
 META_SOURCE = "user:pi-foreman"
 META_TTL_MS = 180000
 ENV_REMOTE_PARENT = "PI_FOREMAN_REMOTE_PARENT"
-REMOTE_PROTOCOL = 3
+REMOTE_PROTOCOL = 4
 MAX_STDIN_BYTES = 256 * 1024
 MAX_CONTENT_BYTES = 64 * 1024
 PROBE_TIMEOUT, OPEN_TIMEOUT, DELIVER_TIMEOUT, CLOSE_TIMEOUT = 15, 60, 20, 20
@@ -326,10 +326,7 @@ def remote_footer(label, plan_first):
         "       %s result" % base,
         "%d. A later decision here: append a `## Update` section to result.md and run" % (n + 1),
         "       %s update" % base,
-        "%d. When your result is sent, run" % (n + 2),
-        "       %s closed --close ready" % base,
-        "   (`--close open` when something is left open), then stop.",
-        "   The parent closes the session; `closed` stays available for a manual close.",
+        "%d. When your result is sent, stop. The parent closes the session." % (n + 2),
         "",
         "Ask: write `ask.md` in the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), then run",
         "       %s ask" % base,
@@ -1064,6 +1061,15 @@ def intercom_machine_name(adir):
     return name.strip() if isinstance(name, str) and name.strip() else short_hostname()
 
 
+def intercom_transport(adir):
+    """pi-intercom's `crossMachine.transport` from <agent dir>/intercom/config.json, else None."""
+    try:
+        cfg = json.loads((Path(adir) / "intercom" / "config.json").read_text("utf-8"))
+        return cfg["crossMachine"]["transport"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def session_config(adir):
     """The merged `sessions` config ({} when the config cannot be read)."""
     try:
@@ -1133,7 +1139,21 @@ def remote_probe(adir, params):
     check_parent_address(params)
     return {"protocol": REMOTE_PROTOCOL, "foremanVersion": package_version(Path(__file__).resolve().parent.parent),
             "piVersion": pi_version(), "intercomMachineName": intercom_machine_name(adir), "platform": host_platform(),
-            "hc": hc_status(), "agentDir": str(adir)}
+            "hc": hc_status(), "agentDir": str(adir), "addons": installed_addon_ids(adir)}
+
+
+def installed_addon_ids(adir):
+    """Ids from config/addons.json whose package is listed in <agent dir>/settings.json `packages` (sorted)."""
+    try:
+        catalog = json.loads((Path(__file__).resolve().parent.parent / "config" / "addons.json").read_text("utf-8"))["addons"]
+        packages = json.loads((Path(adir) / "settings.json").read_text("utf-8")).get("packages")
+    except (OSError, ValueError, KeyError, AttributeError):
+        return []
+    texts = []
+    for p in packages if isinstance(packages, list) else []:
+        texts.append(p if isinstance(p, str) else str(p.get("source", "")) if isinstance(p, dict) else "")
+    return sorted(a["id"] for a in catalog if isinstance(a, dict) and isinstance(a.get("id"), str)
+                  and any(re.search(r"(^|[:/])%s(@[^/]*)?$" % re.escape(str(a.get("package"))), t) for t in texts))
 
 
 def project_resources(cwd, adir):
@@ -1717,8 +1737,9 @@ def cmd_open_remote(a):
     asked = {"parentName": parent_name, "parentAddress": address}
     probe = hc_exec_verb(binary, name, argv, "probe", asked, PROBE_TIMEOUT)
     if probe.get("protocol") != REMOTE_PROTOCOL:
-        raise Refused("remote %s speaks protocol %s, this side speaks %d; update pi-foreman on both machines"
-                      % (name, probe.get("protocol"), REMOTE_PROTOCOL), "remote_protocol")
+        raise Refused("remote %s speaks protocol %s, this side speaks %d; update pi-foreman on %s (run `pi update` there, "
+                      "or `pi install <pi-foreman source>`)"
+                      % (name, probe.get("protocol"), REMOTE_PROTOCOL, name), "remote_protocol")
     if not probe.get("piVersion"):
         raise Refused("pi was not found on %s (in its hc exec environment)" % name, "remote_missing")
     remote_hc = probe.get("hc")
@@ -1730,7 +1751,15 @@ def cmd_open_remote(a):
     notes = []
     seen = probe.get("intercomMachineName")
     if seen != name:
-        notes.append("intercom name differs: %s" % (seen if isinstance(seen, str) and MACHINE_RE.match(seen) else "(none)"))
+        notes.append("intercom name differs: %s; replies reach this machine only if it is named %s there. Fix: `hc machine add %s` "
+                     "or `foreman machine setup %s`"
+                     % (seen if isinstance(seen, str) and MACHINE_RE.match(seen) else "(none)", name, seen if isinstance(seen, str) and MACHINE_RE.match(seen) else name, name))
+    mine, theirs = installed_addon_ids(adir), probe.get("addons")
+    infos = []
+    if isinstance(theirs, list) and mine != sorted(x for x in theirs if isinstance(x, str)):
+        infos.append("add-ons differ from this machine; align them with `foreman machine setup %s`" % name)
+    if intercom_transport(adir) != "hc":
+        infos.append("this machine's pi-intercom does not send over hc; run `foreman setup --intercom-hc`")
     created = []
     space = None if a.dry_run else machine_space(entry_cfg, name, a.cwd, created)
     space_line = space_dry_run_line(entry_cfg, name) if a.dry_run else None
@@ -1760,8 +1789,11 @@ def cmd_open_remote(a):
     print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
     print("child intercom id: %s" % child)
     print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(join_remote_path(strip_control(reply["handoff"]), "result.md"))))
+    print("child address: child@%s" % (probe.get("intercomMachineName") or name))
     for note in notes:
         print("warning: %s" % note)
+    for info in infos:
+        print("info: %s" % info)
     if a.dry_run:
         print(space_line)
     if a.dry_run:
@@ -1790,7 +1822,11 @@ def cmd_open_remote(a):
     write_registry(adir, reg)
     if status == "open":
         print("opened under hc on %s" % name)
-        if attach_line:
+        if row.get("hc"):
+            print("remote terminal: %s" % row["hc"]["address"])
+        if row.get("attach"):
+            print("attach (local pane): %s" % row["attach"]["address"])
+        elif attach_line:
             print("attach: %s" % attach_line)
         if a.focus and row.get("attach"):
             herdr_app_json(["do", "agent.focus", json.dumps({"terminal": row["attach"]["address"]})])
@@ -1803,6 +1839,21 @@ def cmd_open_remote(a):
         print("%s: run this on %s in %s:\n  %s" % ("hc failed" if status == "failed" else "Not started",
                                                  name, a.cwd, strip_control(reply.get("launch") or "(see the handoff dir's launch.txt)")))
     return 2 if status == "failed" else 0
+
+
+def cmd_machine_setup(a):
+    """`machine setup <name>`: run this package's `setup` on the remote over `hc exec --on` (add-ons of this machine, hc intercom)."""
+    adir = agent_dir(a.agent_dir)
+    _, argv = machine_entry(adir, a.name)
+    binary = hc_required()
+    cmd = [binary, "exec", "--on", a.name, "--"] + list(argv) + ["setup"]
+    for addon in installed_addon_ids(adir):
+        cmd += ["--addon", addon]
+    cmd += ["--intercom-hc", "--machine-name", a.name]
+    if a.dry_run:
+        print(" ".join(shlex.quote(c) for c in cmd))
+        return 0
+    return subprocess.call(cmd)
 
 
 def find_entry(adir, target):
@@ -2188,6 +2239,12 @@ def main(argv=None):
     nt.add_argument("--close", choices=("ready", "open"))
     nt.add_argument("--reason")
     nt.add_argument("--agent-dir", dest="agent_dir_sub")
+    mc = sub.add_parser("machine")
+    mcs = mc.add_subparsers(dest="mverb")
+    ms = mcs.add_parser("setup")
+    ms.add_argument("name")
+    ms.add_argument("--dry-run", action="store_true")
+    ms.add_argument("--agent-dir", dest="agent_dir_sub")
     cr = sub.add_parser("close-remote")
     cr.add_argument("target")
     cr.add_argument("--path")
@@ -2205,6 +2262,8 @@ def main(argv=None):
         return 1 if e.code else 0
     a.agent_dir = getattr(a, "agent_dir_sub", None) or a.agent_dir
     try:
+        if a.cmd == "machine" and a.mverb == "setup":
+            return cmd_machine_setup(a)
         if a.cmd == "close-remote":
             return cmd_close_remote(a)
         if a.cmd == "open":

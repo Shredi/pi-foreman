@@ -49,6 +49,7 @@ switch ($sub) {
     'findings' { $name = 'foreman_findings.py' }
     'close' { $name = 'foreman_close.py' }
     'worktree' { $name = 'foreman_worktree.py' }
+    'machine' { $name = 'foreman_session.py'; $rest = @('machine') + @($rest) }
     default { [Console]::Error.WriteLine('usage: foreman setup|update-check|retro|sync|session|radar|config|bench|backlog|findings|close|worktree|dialogs|prs|perms|features|knowledge [args]'); exit 2 }
 }
 $script = Join-Path $PSScriptRoot "..\scripts\$name"

@@ -613,6 +613,9 @@ REMOTE_LIVE = {"blocked": ("blocked", "blocked"), "working": ("working", "workin
                "done": ("idle", "idle"), "lost": ("idle", "finished")}  # state "done" would hide the row in the mod
 
 
+RESULT_IDLE = "result delivered, idle"
+
+
 def remote_glyph(e, opened, now):
     """(glyph, state) of a registry entry on a remote machine: an open ask first, then the hc terminal state the parent's
     watcher stored in `remoteLive` (no freshness window: the watcher writes it on change), else the registry status."""
@@ -622,6 +625,9 @@ def remote_glyph(e, opened, now):
     live = e.get("remoteLive")
     word = live.get("state") if isinstance(live, dict) else None
     if status in ("open", "pending", "closing") and word in REMOTE_LIVE:
+        last = e.get("last")
+        if status == "open" and word in ("idle", "done") and isinstance(last, dict) and last.get("kind") == "result":
+            return "idle", RESULT_IDLE  # the remote terminal stays up after the result; the parent closes it
         return REMOTE_LIVE[word]
     return reg_glyph(status, opened, now)
 

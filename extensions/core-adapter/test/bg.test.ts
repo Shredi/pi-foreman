@@ -148,8 +148,12 @@ test("a pid wait with a log lists it; the wake line names it", async (t) => {
   assert.equal(h.handle.active("s1")[0].log, log);
 });
 
+const noBash = (): never => {
+  throw new Error("no bash");
+};
+
 test("shellFor, spawnDetached and lastLines", async (t) => {
-  assert.deepEqual(shellFor("echo x", "win32").args.slice(0, 3), ["/d", "/s", "/c"]);
+  assert.deepEqual(shellFor("echo x", "win32", { getShellConfig: noBash }).args.slice(0, 3), ["/d", "/s", "/c"]);
   const sh = shellFor("echo x", "linux");
   assert.deepEqual(sh.args, ["-c", "echo x"]);
   const dir = tmp(t, "pf-bgsp-");
@@ -163,10 +167,11 @@ test("shellFor, spawnDetached and lastLines", async (t) => {
   if ("pid" in bad) await sleep(50);
 });
 
-test("shellFor win32: cmd /d /s /c with the command wrapped in one more pair of quotes, verbatim; POSIX unchanged", () => {
+test("shellFor win32 without Git Bash: cmd /d /s /c with the command wrapped in one more pair of quotes, verbatim; POSIX unchanged", () => {
+  const win32 = (c: string) => shellFor(c, "win32", { getShellConfig: noBash });
   const command = `node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y"`;
-  assert.deepEqual(shellFor(command, "win32"), { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y""`], verbatim: true });
-  assert.deepEqual(shellFor("echo x", "win32").args, ["/d", "/s", "/c", '"echo x"']);
+  assert.deepEqual(win32(command), { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"node -e "console.log('a b');setTimeout(()=>{},1)" & echo "x y""`], verbatim: true });
+  assert.deepEqual(win32("echo x").args, ["/d", "/s", "/c", '"echo x"']);
   assert.deepEqual(shellFor(command, "linux").args, ["-c", command]);
   assert.equal(shellFor(command, "linux").verbatim, false);
 });
