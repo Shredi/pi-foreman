@@ -113,7 +113,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passCheckouts, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, toplevelOf, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -2064,7 +2064,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const cwd = r.cwd ?? s.cwd;
               const h = reviewedHeadWhy(start, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(h.why ? { why: h.why } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
+              const top = await toplevelOf(cwd);
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
@@ -3170,7 +3171,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (drift) return drift;
         }
         if (guard === "git_guard") await s.reviewSync;
-        const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews) };
+        const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews), reviewed_checkouts: passCheckouts(s.reviews) };
         const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git"), prGate) : preToolPayload(event.toolName, input, pc);
         if (guard === "ledger_guard_spawn") {
           (payload.tool_input as Record<string, unknown>).prompt = callerTask;
@@ -4317,6 +4318,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         await s.reviewSync;
         return headlessPass(s.reviews);
       },
+      records: async () => {
+        await s.reviewSync;
+        return s.reviews;
+      },
       watches: s.prWatches,
       trace: (r) => s.trace?.emit(r),
       tracker: s.prHost,
@@ -4329,13 +4334,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     isChild: process.env.PI_SUBAGENT_CHILD === "1",
     session: prSession,
     script: path.join(PKG_ROOT, "scripts", "safe_ops.py"),
-    preflight: async (ctx, op, callId) => {
+    preflight: async (ctx, op, callId, cwd) => {
       const s = await ensureSession(ctx);
-      return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
+      return safeOpDriftPreflight(s.gitDrift, s.isChild, cwd ?? ctx.cwd, os.homedir(), "foreman_" + op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
     },
-    pushRefusal: async (ctx) => {
+    pushRefusal: async (ctx, cwd) => {
       const s = await ensureSession(ctx);
-      const out = await run(s, ctx, "git_guard", gitGuardPayload("bash", { command: "git push" }, payloadCtx(s, ctx), get(s.config.config, "safety.git"), { enabled: false, reviewed_heads: [] }), "pr_create");
+      const out = await run(s, ctx, "git_guard", gitGuardPayload("bash", { command: "git push" }, { ...payloadCtx(s, ctx), cwd: cwd ?? ctx.cwd }, get(s.config.config, "safety.git"), { enabled: false, reviewed_heads: [] }), "pr_create");
       if (out.kind === "failure") return out.message;
       return out.d.decision === "deny" || out.d.decision === "ask" ? String(out.d.reason ?? out.d.decision) : null;
     },

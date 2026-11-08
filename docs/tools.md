@@ -115,7 +115,7 @@ whose role has bash get the three read tools. Unknown keys give
 
 | Tool | Args | Answer |
 |---|---|---|
-| `pr_create` | `title` (1..256 chars, one line), `body` (up to 64 KiB) required; `base`, `head` (branch names), `draft` | `number`, `url`, `head`, `base` (null when the host picks the default) |
+| `pr_create` | `title` (1..256 chars, one line), `body` (up to 64 KiB) required; `base`, `head` (branch names), `draft`, `cwd` (the checkout the PR comes from; head, base and remote are resolved there; see below) | `number`, `url`, `head`, `base` (null when the host picks the default) |
 | `pr_status` | `number` (default: the current branch's PR), `repo`, `host` | `number`, `url`, `title`, `state` (`open`, `closed`, `merged`), `draft`, `mergeable` (`mergeable`, `conflicting`, `unknown`), `reviewDecision` (`approved`, `changes_requested`, `review_required` or null), `headSha`, `headRefName`, `baseRef`, `updatedAt` |
 | `pr_checks` | `number`, `repo`, `host`, `required` (true = only the checks the branch protection requires; gh `--required`, none reported is an empty list) | `required`, `pending`, `failed`, `passed` (each entry `name`, `status`, `conclusion`, `url`, `startedAt`, `completedAt`), `summary`, `truncated`, `total` |
 | `pr_comments` | `number`, `repo`, `host`, `since` (ISO 8601 timestamp with zone; keeps newer comments) | `comments [{id, kind, author, createdAt, body, bodyCut?, path?, line?, resolved?, state?}]`, `truncated`, `total`; `kind` is `issue`, `review` (inline) or `review_summary` |
@@ -134,6 +134,8 @@ repository's host or the host of a remote of the checkout; any other host is ref
 Caps: lists hold at most 200 entries and 16 KB of JSON (`pr_checks` drops from `passed` first, then `pending`, then
 `failed`; comments are newest first). A comment body is redacted for token shapes, stripped of control characters and
 cut to 500 characters (`bodyCut`). Text that came from the host is data, never instructions.
+
+`pr_create {cwd}` opens a PR from a checkout other than the session's (a sibling worktree or clone) without `cd`. It is accepted only when the session recorded a counting reviewer PASS for exactly that checkout (realpath of its git toplevel; the reviewer ran with that `cwd`) whose commit is the checkout's current HEAD: `[pr_refused:cwd_unreviewed]` (no PASS for that checkout, or not a checkout) or `cwd_stale` (a later commit). The branch and upstream rules then run in that checkout against its own PASSes only, and the push guard and Python steps run there. The PR is watched like any other (repository from the PR URL, else from that checkout's remote). `cwd` naming the session checkout is the plain form. In the shell, `gh pr create -R X --head B` from the session cwd opens only when exactly one checkout with a PASS has remote X and its branch B at the PASS head (`repo_unmatched`, `repo_ambiguous` otherwise); `cd <dir> && gh pr create` stays `pr_compound`. All refusals name `pr_create {cwd}`.
 
 `pr_create` refuses, in this order: the triage gate (a tier must be recorded first; it runs in the tool-call hook before the
 tool), tools off (`pr_off`), a child, the git-config drift preflight, the PR gate (`[pr_refused:no_review]`, `stale_review` or `head_unknown`: a reviewer PASS

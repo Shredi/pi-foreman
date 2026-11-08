@@ -25,7 +25,7 @@ export function mainNeedsGitGuard(command: unknown): boolean {
 const SPLIT_TOKEN = /\.[\s'"\\$+]*g|g[\s'"\\$+]*i[\s'"\\$+]*t[\s'"\\$+]*~|~[\s'"\\+]*\d/i;
 
 /** Core-shaped payload plus the shell flavour, the merged `safety.git` config and the PR gate state. */
-export function gitGuardPayload(piTool: string, input: Record<string, unknown>, pc: PayloadContext, gitConfig?: unknown, prGate?: { enabled: boolean; reviewed_heads: string[] }): Record<string, unknown> {
+export function gitGuardPayload(piTool: string, input: Record<string, unknown>, pc: PayloadContext, gitConfig?: unknown, prGate?: { enabled: boolean; reviewed_heads: string[]; reviewed_checkouts?: { cwd: string; head: string }[] }): Record<string, unknown> {
   const payload: Record<string, unknown> = { ...preToolPayload(piTool, input, pc), shell: piTool === "powershell" ? "powershell" : "bash" };
   if (gitConfig && typeof gitConfig === "object" && !Array.isArray(gitConfig)) payload.foreman_git = gitConfig;
   if (prGate) payload.pr_gate = prGate;

@@ -2965,7 +2965,14 @@ PR_ADVICE = {
     "pr_alias": "this is a gh alias or extension (or defines one); the guard cannot tell whether it creates a "
                 "pull request. Write the gh command out, e.g. gh pr create.",
     "pr_compound": "another segment of this command changes the directory, HEAD or a ref, so the head checked "
-                   "now need not be the head the pull request opens from; run the PR step on its own.",
+                   "now need not be the head the pull request opens from; run the PR step on its own. For a "
+                   "pull request from another checkout use the pr_create tool with {cwd: <that checkout>} "
+                   "instead of cd.",
+    "repo_unmatched": "no checkout with a recorded reviewer PASS has a remote matching --repo and that --head "
+                      "branch at the reviewed commit. Run a reviewer in that checkout, then open the pull "
+                      "request with the pr_create tool and {cwd: <that checkout>}.",
+    "repo_ambiguous": "more than one checkout with a recorded reviewer PASS matches --repo and --head. Open the "
+                      "pull request with the pr_create tool and {cwd: <the checkout it comes from>}.",
     "pr_config": "this stores a push option that opens a pull/merge request on every later push. Pass it to "
                  "one reviewed push with -o instead.",
 }
@@ -3063,6 +3070,55 @@ def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
     return OK
 
 
+def repo_norm(text):
+    """A remote URL or `[HOST/]OWNER/REPO` spelling reduced to `host/owner/repo` (or `owner/repo`), lowercase."""
+    t = text.strip().lower()
+    t = re.sub(r"^[a-z][a-z0-9+.-]*://", "", t)
+    t = re.sub(r"^[^@/]*@", "", t)
+    t = t.replace(":", "/", 1) if "/" not in t.split(":", 1)[0] and ":" in t else t
+    t = re.sub(r"/+$", "", t)
+    return t[:-4] if t.endswith(".git") else t
+
+
+def checkout_matches_repo(ctx, cwd, repo):
+    """True when a remote of the checkout `cwd` is the repository `repo` (OWNER/REPO, HOST/OWNER/REPO or a URL)."""
+    call = GitCall(ctx)
+    call.cwd = cwd
+    out = run_git(call, ctx, ["remote", "-v"])
+    want = repo_norm(repo)
+    if not out or not want:
+        return False
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and (repo_norm(parts[1]) == want or repo_norm(parts[1]).endswith("/" + want)):
+            return True
+    return False
+
+
+def pr_sibling(ctx, repo, heads, what):
+    """`gh pr create --repo X --head B` the session checkout refused: B is looked up among the checkouts with a
+    reviewer PASS (`pr_gate.reviewed_checkouts`: {cwd, head}) whose remote is X. Exactly one whose local branch B
+    is at the PASS head (and not behind an unreviewed upstream) opens it."""
+    gate = ctx.pr_gate if isinstance(ctx.pr_gate, dict) else {}
+    listed = gate.get("reviewed_checkouts")
+    entries = [e for e in listed if isinstance(e, dict) and isinstance(e.get("cwd"), str) and isinstance(e.get("head"), str)
+               and os.path.isdir(e["cwd"])] if isinstance(listed, list) else []
+    found = []
+    for e in entries:
+        if not checkout_matches_repo(ctx, e["cwd"], repo):
+            continue
+        call = GitCall(ctx)
+        call.cwd = e["cwd"]
+        want = e["head"].lower()
+        if all(commit_of(call, ctx, None, "refs/heads/" + b) == want for b in heads):
+            up = [commit_of(call, ctx, None, b + "@{upstream}") for b in heads]
+            if all(u in ("", want) for u in up):
+                found.append(e["cwd"])
+    if len(found) == 1:
+        return OK
+    return pr_refuse("repo_unmatched" if not found else "repo_ambiguous", what)
+
+
 def pr_head_ref(w):
     """Head ref of a `--head` value (`owner:branch` -> `branch`); "" when computed."""
     return "" if w is None or w.dynamic else w.text.rsplit(":", 1)[-1]
@@ -3106,7 +3162,13 @@ def pr_cli(name, args, ctx, seg=None):
             ctx.pr_segs.add(seg)
             opts, _, _, _ = parse_opts(args, short_arg=shorts, long_arg=PR_LONG)
             heads = [pr_head_ref(v) for v in values(opts, *head_opts)]
-            return pr_gate_check(ctx, call, heads, label, upstream=(prog == "gh"))
+            d = pr_gate_check(ctx, call, heads, label, upstream=(prog == "gh"))
+            repos = values(opts, "R", "repo") if prog == "gh" else []
+            if (d.level > ALLOW and ctx.mode == "main" and pr_gate_on(ctx) and repos and heads and all(heads)
+                    and all(r is not None and not r.dynamic for r in repos)):
+                if d.reason and "[pr_refused:child]" not in d.reason:
+                    return pr_sibling(ctx, repos[-1].text, heads, label)
+            return d
     return OK
 
 

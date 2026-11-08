@@ -2,8 +2,9 @@
 // verdict, HEAD of that run's cwd is recorded next to it, only when it equals HEAD at the run's
 // launch (else null: a commit made during the review was not reviewed). Only PASS heads open the PR gate
 // (scripts/git_guard.py `pr_gate`, gitguard.ts). Trust level: role name + verdict token of the
-// run-end event, as for the delegation rounds; a reviewer that ran in another checkout than the
-// branch records another SHA, so the PR is refused (fail closed).
+// run-end event, as for the delegation rounds. The record also names the checkout (realpath of the git toplevel): a PASS
+// opens the session checkout by SHA, and another (sibling) checkout only through `pr_create {cwd}` for exactly that checkout
+// at its current HEAD; a PASS recorded in another checkout opens nothing else (fail closed).
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -16,6 +17,8 @@ export interface ReviewRecord {
   verdict: Verdict;
   /** HEAD of the run's cwd at launch and at the verdict; null when they differ or could not be read. */
   head: string | null;
+  /** The checkout the review ran in: realpath of the git toplevel of the run's cwd. Absent in a record from before the sibling gate or when it could not be read; such a record never opens a sibling checkout. */
+  cwd?: string;
   /** Why head is null. */
   why?: NoHeadWhy;
   /** Loop guard (reviewloop.ts): `code` (a counting item or pre-pr review) or `plan` (a plan review, never a PR-gate verdict). Absent in a record from before the guard. */
@@ -94,6 +97,21 @@ export function commitOf(cwd: string, ref: string): Promise<string | null> {
     execFile("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], { cwd, timeout: HEAD_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
       const sha = err ? "" : String(stdout).trim().toLowerCase();
       resolve(/^[0-9a-f]{40,64}$/.test(sha) ? sha : null);
+    });
+  });
+}
+
+/** Realpath of the git toplevel of `cwd`; null when it is not inside a work tree or cannot be read. */
+export function toplevelOf(cwd: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("git", ["rev-parse", "--show-toplevel"], { cwd, timeout: HEAD_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+      const top = err ? "" : String(stdout).trim();
+      if (!top) return resolve(null);
+      try {
+        resolve(fs.realpathSync.native(top));
+      } catch {
+        resolve(null);
+      }
     });
   });
 }
@@ -184,6 +202,13 @@ export function passHeads(list: readonly ReviewRecord[]): string[] {
   return [...last].filter(([, v]) => v === "pass").map(([h]) => h);
 }
 
+/** Checkouts whose latest verdict at a head is PASS (code reviews with a recorded checkout and head), for the git guard's `pr_gate.reviewed_checkouts`. */
+export function passCheckouts(list: readonly ReviewRecord[]): { cwd: string; head: string }[] {
+  const last = new Map<string, { cwd: string; head: string; verdict: Verdict }>();
+  for (const r of list) if (r.head && r.cwd && r.kind !== "plan") last.set(`${r.cwd}\0${r.head}`, { cwd: r.cwd, head: r.head, verdict: r.verdict });
+  return [...last.values()].filter((e) => e.verdict === "pass").map(({ cwd, head }) => ({ cwd, head }));
+}
+
 /**
  * Why the latest recorded verdict, a PASS, carries no head (`unknown` for a record restored without a reason); null when it
  * is not a headless PASS. The ledger's review gate takes such a PASS, the PR gate cannot, so a refusal names it.
@@ -205,6 +230,7 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       role: r.role,
       verdict: r.verdict,
       head: r.head as string | null,
+      ...(typeof r.cwd === "string" && r.cwd ? { cwd: r.cwd } : {}),
       ...(r.head === null && NO_HEAD_WHY.includes(r.why as NoHeadWhy) ? { why: r.why as NoHeadWhy } : {}),
       ...(r.kind === "plan" || r.kind === "code" ? { kind: r.kind } : {}),
       ...(typeof r.state === "string" ? { state: r.state } : {}),
@@ -215,7 +241,8 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
 }
 
 /** Every `[pr_refused:<reason>]` the git guard (scripts/git_guard.py) and the PR tool gate emit. */
-export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed"] as const;
+export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed", "cwd_unreviewed", "cwd_stale", "repo_unmatched", "repo_ambiguous"] as const;
+/** The reasons of the branch test; `cwd_unreviewed`, `cwd_stale` (pr_create {cwd}) and `repo_unmatched`, `repo_ambiguous` (gh --repo/--head, git_guard.py) come from the sibling-checkout rules. */
 export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 
 /** Arguments of a package PR tool that name the branch the pull request opens from (B-M7). */
@@ -263,11 +290,30 @@ export function isPrToolName(name: string): boolean {
   return /(^|_)(pr|mr|pull_?request|merge_?request)(_|$)/.test(words) && /(create|open)/.test(words);
 }
 
-/** The PR gate for a PR-creating tool call: children never, the review test when ceremony.reviewBeforePr is on. */
-export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown>; headless?: string | null }): Promise<{ reason: string; message: string } | null> {
+/**
+ * The PR gate for a PR-creating tool call: children never, the review test when ceremony.reviewBeforePr is on.
+ * `checkout` (pr_create {cwd}): a checkout other than the session's opens only with a counting reviewer PASS recorded for exactly that
+ * checkout (`records`, matched by realpath of the git toplevel) at its current HEAD; the branch test then runs there against that checkout's PASS heads alone.
+ */
+export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown>; headless?: string | null; checkout?: { cwd: string; records: readonly ReviewRecord[] } }): Promise<{ reason: string; message: string } | null> {
   if (g.isChild) return { reason: "child", message: `pi-foreman: ${g.tool} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
   if (!g.gateOn) return null;
+  if (g.checkout) return siblingRefusal(g.cwd, g.checkout.cwd, g.checkout.records, g.input ?? {});
   return prToolRefusal(g.cwd, g.reviewed, g.input ?? {}, g.headless ?? null);
+}
+
+/** The sibling-checkout test of {@link prGateRefusal}: `dir` is the requested checkout, `session` the session's own. */
+async function siblingRefusal(session: string, dir: string, records: readonly ReviewRecord[], input: Record<string, unknown>): Promise<{ reason: string; message: string } | null> {
+  const refuse = (reason: string, why: string) => ({ reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}.` });
+  const top = await toplevelOf(dir);
+  if (!top) return refuse("cwd_unreviewed", `cwd ${dir} is not inside a git checkout; pr_create {cwd} takes a checkout a reviewer ran in`);
+  if (top === (await toplevelOf(session))) return prToolRefusal(session, passHeads(records), input, headlessPass(records));
+  const mine = records.filter((r) => r.cwd === top);
+  const heads = passHeads(mine);
+  if (heads.length === 0) return refuse("cwd_unreviewed", `no reviewer PASS is recorded for the checkout ${top}. Run a reviewer with cwd ${top} on its head, then retry pr_create {cwd}`);
+  const cur = await commitOf(top, "HEAD");
+  if (!cur || !heads.includes(cur)) return refuse("cwd_stale", `the recorded reviewer PASS for ${top} is for another commit than its HEAD (PASS ${heads[heads.length - 1]}, HEAD ${cur ?? "unreadable"}). Run a reviewer with cwd ${top} on the current head, then retry pr_create {cwd}`);
+  return prToolRefusal(top, heads, input);
 }
 
 /** One line for the review panel block when the PR's checks failed ("" otherwise). */
