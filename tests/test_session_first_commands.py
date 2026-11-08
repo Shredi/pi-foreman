@@ -30,14 +30,14 @@ class FirstCommandsTest(unittest.TestCase):
 
     def test_posix_and_powershell_order_and_quoting(self):
         out = self.launch_line("--first-command", "/plan", "--first-command", "/note it's x")
-        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
+        posix = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("printf ") and "; env " in l][0]
         self.assertIn("pi '/note it'\"'\"'s x' '/plan Read the handoff", posix)
-        ps = [l for l in out.splitlines() if l.strip().startswith("$env:")][0]
+        ps = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("Write-Host ")][0]
         self.assertIn("pi '/note it''s x' '/plan Read the handoff", ps)
 
     def test_plan_mode_is_first_and_deduplicated(self):
         out = self.launch_line("--first-command", "/x", "--plan-mode", "--first-command", "/plan")
-        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
+        posix = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("printf ") and "; env " in l][0]
         self.assertIn("pi /x '/plan Read the handoff", posix)
         self.assertEqual(posix.count("/plan"), 1)
 
@@ -81,7 +81,7 @@ class FirstCommandsTest(unittest.TestCase):
 
     def test_default_launch_line_is_unchanged(self):
         out = self.launch_line()
-        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
+        posix = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("printf ") and "; env " in l][0]
         self.assertIn(" pi 'Read the handoff brief at ", posix)
         code, _, err = self.run_main(*self.open_args())
         self.assertEqual(code, 0, err)
@@ -105,8 +105,8 @@ class FirstCommandsTest(unittest.TestCase):
 
     def test_plan_mode_alone_is_one_merged_word(self):
         out = self.launch_line("--plan-mode")
-        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
-        ps = [l for l in out.splitlines() if l.strip().startswith("$env:")][0]
+        posix = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("printf ") and "; env " in l][0]
+        ps = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("Write-Host ")][0]
         self.assertIn(" pi '/plan Read the handoff brief at ", posix)
         self.assertTrue(posix.endswith(" and proceed.'"), posix)
         self.assertIn(" pi '/plan Read the handoff brief at ", ps)
@@ -116,13 +116,13 @@ class FirstCommandsTest(unittest.TestCase):
     def test_explicit_plan_command_equals_plan_mode(self):
         a = self.launch_line("--plan-mode")
         b = self.launch_line("--first-command", "/plan")
-        pick = lambda o: [l for l in o.splitlines() if l.strip().startswith("env ")][0].split(" pi ", 1)[1].split("'/plan ", 1)[0]
+        pick = lambda o: [l.strip().split("; ", 1)[1] for l in o.splitlines() if l.strip().startswith("printf ") and "; env " in l][0].split(" pi ", 1)[1].split("'/plan ", 1)[0]
         self.assertEqual(pick(a), pick(b))
-        self.assertIn(" pi '/plan Read the handoff", [l for l in b.splitlines() if l.strip().startswith("env ")][0])
+        self.assertIn(" pi '/plan Read the handoff", [l.strip().split("; ", 1)[1] for l in b.splitlines() if l.strip().startswith("printf ") and "; env " in l][0])
 
     def test_plan_start_stays_a_separate_word(self):
         out = self.launch_line("--first-command", "/plan start")
-        posix = [l for l in out.splitlines() if l.strip().startswith("env ")][0]
+        posix = [l.strip().split("; ", 1)[1] for l in out.splitlines() if l.strip().startswith("printf ") and "; env " in l][0]
         self.assertIn(" pi '/plan start' 'Read the handoff", posix)
 
     def test_argv_for_hc_ends_in_one_plan_word(self):

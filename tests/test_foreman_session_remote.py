@@ -398,7 +398,7 @@ class RemoteOpenTest(RemoteBase):
         self.assertEqual(labels, ["herdr.space=sp-alpha", "fm.child=" + reply["child"], "fm.parent=" + PARENT])
         self.assertEqual(head[head.index("--cwd") + 1], str(self.rproj))
         self.assertEqual(head[head.index("--name") + 1], fsn.hc_name(reply["child"]))
-        self.assertEqual(run[run.index("--") + 1], "env" if sys.platform != "win32" else "powershell")
+        self.assertEqual(run[run.index("--") + 1], "sh" if sys.platform != "win32" else "powershell")
 
     def test_a_space_without_a_tab_label(self):
         self.remote_open(space="sp-alpha")

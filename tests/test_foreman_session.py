@@ -111,7 +111,7 @@ class SessionTest(unittest.TestCase):
         self.assertEqual((handoff / "parent").read_text().strip(), "parent-1")
         self.assertEqual((handoff / "child").read_text().strip(), entry["child"])
         self.assertTrue(handoff.parent == self.agent / "pi-foreman" / "handoffs")
-        words = shlex.split(calls[2][3])
+        words = shlex.split(calls[2][3].split("; ", 1)[1])  # after the status-line printf
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
                                  "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener",
                                  "PI_FOREMAN_SESSION_MODEL=prov/model-1", "pi", "--model", "prov/model-1",
@@ -181,8 +181,10 @@ class SessionTest(unittest.TestCase):
         lines = out.splitlines()
         posix = lines[lines.index("POSIX shell:") + 1].strip()
         ps = lines[lines.index("PowerShell:") + 1].strip()
-        self.assertEqual(shlex.split(posix)[:4], ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % entry["handoff"], "PI_FOREMAN_PARENT_INTERCOM=parent-1", "PI_INTERCOM_STABLE_ID=%s" % entry["child"]])
-        self.assertTrue(ps.startswith("$env:PI_FOREMAN_HANDOFF_DIR='%s'; $env:PI_FOREMAN_PARENT_INTERCOM='parent-1'; " % entry["handoff"]), ps)
+        self.assertTrue(posix.startswith("printf '%s\\n' 'pi-foreman: starting session demo "), posix)
+        self.assertEqual(shlex.split(posix.split("; ", 1)[1])[:4], ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % entry["handoff"], "PI_FOREMAN_PARENT_INTERCOM=parent-1", "PI_INTERCOM_STABLE_ID=%s" % entry["child"]])
+        self.assertTrue(ps.startswith("Write-Host 'pi-foreman: starting session demo "), ps)
+        self.assertIn("; $env:PI_FOREMAN_HANDOFF_DIR='%s'; $env:PI_FOREMAN_PARENT_INTERCOM='parent-1'; " % entry["handoff"], ps)
         self.assertIn("; pi 'Read the handoff brief at ", ps)
         code, out, _ = self.run_main(*self.open_args(), HERDR_PANE_ID="")
         self.assertEqual(code, 0)

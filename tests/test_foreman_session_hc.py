@@ -211,14 +211,16 @@ class HcSessionTest(unittest.TestCase):
         self.assertEqual(head, ["run", "--json", "--bg", "--no-notify", "--keep", "--cwd", str(self.proj), "--name", name, "--outlive-parent"])
         self.assertRegex(name, r"^fm-demo-[0-9a-f]{6}$")
         self.assertEqual(name[-6:], entry["child"][-6:])
-        self.assertEqual(tail, [
+        self.assertEqual(tail[:4], ["sh", "-c", 'printf "%s\\n" "$1"; shift; exec "$@"', "sh"])  # status line, then exec
+        self.assertTrue(tail[4].startswith("pi-foreman: starting session demo (prov/model-1) on this computer, brief "))
+        self.assertEqual(tail[5:], [
             "env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + CALLER_PATH,
             "PI_FOREMAN_HANDOFF_DIR=" + handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
             "PI_INTERCOM_STABLE_ID=" + entry["child"], "PI_FOREMAN_PARENT_LABEL=" + fsn.opener_slug(Path.cwd(), fsn.git_top(Path.cwd())),
             "PI_FOREMAN_SESSION_MODEL=prov/model-1", FAKE_PI, "--model", "prov/model-1",
             "/plan Read the handoff brief at %s and proceed." % (Path(handoff) / "brief.md").as_posix()])
         launch = (Path(handoff) / "launch.txt").read_text("utf-8")
-        self.assertTrue(launch.startswith("env PI_FOREMAN_HANDOFF_DIR="), launch)
+        self.assertIn("; env PI_FOREMAN_HANDOFF_DIR=", launch)
 
     def test_no_notify_is_always_passed(self):
         for cfg in ({}, {"hc": {"outliveParent": False}}):
@@ -245,10 +247,12 @@ class HcSessionTest(unittest.TestCase):
         self.assertEqual(len(call), sep + 5)
         script = call[-1]
         self.assertTrue(script.startswith("Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID -ErrorAction SilentlyContinue; "
-                                          "$env:PATH = 'C:\\bin;C:\\it''s'; $env:PI_FOREMAN_HANDOFF_DIR="), script)
+                                          "$env:PATH = 'C:\\bin;C:\\it''s'; Write-Host 'pi-foreman: starting session "), script)
+        self.assertIn("; $env:PI_FOREMAN_HANDOFF_DIR=", script)
         self.assertIn("; pi 'Read the handoff brief at ", script)
         launch = (Path(self.registry()[0]["handoff"]) / "launch.txt").read_text("utf-8")
-        self.assertTrue(launch.startswith("$env:PI_FOREMAN_HANDOFF_DIR="), launch)
+        self.assertTrue(launch.startswith("Write-Host 'pi-foreman: starting session demo "), launch)
+        self.assertIn("; $env:PI_FOREMAN_HANDOFF_DIR=", launch)
 
     def test_name_shape_for_a_long_label(self):
         label = "a" * 40

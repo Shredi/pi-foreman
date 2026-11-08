@@ -483,15 +483,19 @@ def hc_outlive_parent(cfg):
     return value if isinstance(value, bool) else True
 
 
-def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi"):
+def hc_child_argv(env, model, prompt, first, platform, path, pi_word="pi", banner=None):
     """The child's argv after `--` (no shell, unquoted): the TUI pane identity is dropped, the caller's PATH passed.
-    `pi_word` names the Pi CLI in the PowerShell wrapper (a remote Windows child passes `pi.cmd`)."""
+    `pi_word` names the Pi CLI in the PowerShell wrapper (a remote Windows child passes `pi.cmd`). `banner` (see
+    start_banner) is printed first; on POSIX it makes the argv a `sh -c` wrapper that execs the same argv."""
     if platform == "win32":
         head = "Remove-Item Env:HERDR_ENV,Env:HERDR_PANE_ID -ErrorAction SilentlyContinue; $env:PATH = %s; " % ps_quote(path)
-        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word)]
+        return ["powershell", "-NoProfile", "-Command", head + powershell_command(env, model, prompt, first, pi_word, banner)]
     pi = shutil.which("pi") or "pi"
-    return (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
+    argv = (["env", "-u", "HERDR_ENV", "-u", "HERDR_PANE_ID", "PATH=" + path] + ["%s=%s" % kv for kv in env] + [pi]
             + (["--model", model] if model else []) + launch_messages(first, prompt))
+    if banner:  # the printf result is ignored (`;`): the exec always runs
+        return ["sh", "-c", 'printf "%s\\n" "$1"; shift; exec "$@"', "sh", banner] + argv
+    return argv
 
 
 def hc_run_args(name, cwd, child_argv, outlive, space=None, extra_labels=(), no_parent=False, keep=True):
@@ -703,7 +707,25 @@ def check_first_commands(cmds):
             raise Refused("--first-command must not contain typographic single quotes (PowerShell reads them as quotes)")
 
 
-def posix_command(env, model, prompt, first=()):
+def start_banner(label, model, machine, brief):
+    """The status line printed in a new pane before Pi starts: ASCII, one line, no env values or tokens.
+    `machine` None (local) says `on this computer`; no model omits that part."""
+    def clean(v):
+        return "".join(c if 32 <= ord(c) < 127 else "?" for c in str(v))
+    parts = ["pi-foreman: starting session %s" % clean(label)]
+    if model:
+        parts.append("(%s)" % clean(model))
+    parts.append("on %s," % (clean(machine) if machine else "this computer"))
+    parts.append("brief %s ..." % clean(brief))
+    return " ".join(parts)
+
+
+def posix_command(env, model, prompt, first=(), banner=None):
+    pre = "printf '%%s\\n' %s; " % shlex.quote(banner) if banner else ""
+    return pre + _posix_command(env, model, prompt, first)
+
+
+def _posix_command(env, model, prompt, first=()):
     parts = ["env"] + ["%s=%s" % (k, shlex.quote(v)) for k, v in env] + ["pi"]
     if model:
         parts += ["--model", shlex.quote(model)]
@@ -718,18 +740,18 @@ def ps_quote(v):
     return "'" + "".join(ch * 2 if ch in PS_SINGLE_QUOTES else ch for ch in v) + "'"
 
 
-def powershell_command(env, model, prompt, first=(), pi_word="pi"):
-    sets = ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
+def powershell_command(env, model, prompt, first=(), pi_word="pi", banner=None):
+    sets = (["Write-Host %s" % ps_quote(banner)] if banner else []) + ["$env:%s=%s" % (k, ps_quote(v)) for k, v in env]
     call = [pi_word] + (["--model", ps_quote(model)] if model else []) + [ps_quote(m) for m in launch_messages(first, prompt)]
     return "; ".join(sets + [" ".join(call)])
 
 
-def fallback_text(env, model, prompt, cwd, platform, print_all, first=()):
+def fallback_text(env, model, prompt, cwd, platform, print_all, first=(), banner=None):
     out = ["No Herdr here. Run this in a new terminal in %s:" % cwd]
     if print_all or platform != "win32":
-        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt, first)]
+        out += ["POSIX shell:"] * print_all + ["  " + posix_command(env, model, prompt, first, banner)]
     if print_all or platform == "win32":
-        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt, first)]
+        out += ["PowerShell:"] * print_all + ["  " + powershell_command(env, model, prompt, first, banner=banner)]
     return "\n".join(out)
 
 
@@ -938,7 +960,8 @@ def open_session(p, remote=None):
                     profile=p.get("profile"))
     prompt = prompt_text(handoff)
     first = p.get("first") or []
-    command = posix_command(env, model, prompt, first)
+    banner = start_banner(label, model, short_hostname() if remote else None, handoff / "brief.md")
+    command = posix_command(env, model, prompt, first, banner)
     scfg = {}
     if remote:
         backend, binary = "hc", hc_bin()
@@ -949,7 +972,7 @@ def open_session(p, remote=None):
         backend, binary = backend_of(scfg, os.environ)
     platform = host_platform()
     child_argv = (hc_child_argv(env, model, prompt, first, platform, os.environ.get("PATH", ""),
-                                "pi.cmd" if remote and platform == "win32" else "pi") if backend == "hc" else None)
+                                "pi.cmd" if remote and platform == "win32" else "pi", banner) if backend == "hc" else None)
     outlive = False if remote else hc_outlive_parent(scfg)
     space = remote.get("space") if remote else None
     labels = [("fm.child", child), ("fm.parent", parent.split("@", 1)[0])] if remote else ()
@@ -967,7 +990,7 @@ def open_session(p, remote=None):
         elif backend == "herdr":
             say("dry run: would open a tab %r in the Herdr workspace %r and run:\n  %s" % (label, ws_label, command))
         else:
-            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            say("dry run: " + fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
         return 0, dict(info, status="dryRun")
     handoff.mkdir(parents=True, exist_ok=False)
     if remote:
@@ -978,7 +1001,7 @@ def open_session(p, remote=None):
     (handoff / "parent").write_text(parent + "\n", "utf-8")
     (handoff / "child").write_text(child + "\n", "utf-8")
     # the exact launch line (Herdr's pane command, else this platform's fallback line): a relaunch is a copy
-    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, model, prompt, first)
+    launch = command if backend == "herdr" or host_platform() != "win32" else powershell_command(env, model, prompt, first, banner=banner)
     (handoff / LAUNCH_FILE).write_text(launch + "\n", "utf-8")
     entry = {"label": label, "child": child, "parent": parent, "handoff": str(handoff), "cwd": str(cwd),
              "model": model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": "pending", "last": None}
@@ -1000,7 +1023,7 @@ def open_session(p, remote=None):
         except HcError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     elif backend == "herdr":
         try:
@@ -1012,10 +1035,10 @@ def open_session(p, remote=None):
         except HerdrError as e:
             entry["status"] = "failed"
             warn(str(e))
-            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+            say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
             code = 2
     else:
-        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first))
+        say(fallback_text(env, model, prompt, cwd, host_platform(), p["print_all"], first, banner))
     reg = read_registry(adir)
     reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [entry]
     write_registry(adir, reg)
