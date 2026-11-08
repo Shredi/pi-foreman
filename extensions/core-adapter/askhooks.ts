@@ -29,6 +29,13 @@ export function askAnswered(details: unknown, isError: boolean): boolean {
   return d.cancelled === false && (d.error === undefined || d.error === null);
 }
 
+/** Whether a result is an owner answer with at least one answered question (an empty `answers` is not). */
+export function askAnsweredSome(details: unknown, isError: boolean): boolean {
+  if (!askAnswered(details, isError)) return false;
+  const answers = ((details ?? {}) as { answers?: unknown }).answers;
+  return Array.isArray(answers) && answers.length > 0;
+}
+
 /** The text of a tool result's content blocks. */
 export function resultText(content: unknown): string {
   if (!Array.isArray(content)) return "";

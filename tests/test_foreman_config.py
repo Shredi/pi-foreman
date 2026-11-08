@@ -525,7 +525,7 @@ def render_prompt(text, values):
 
 
 LOOP_RULE = ("- Review and revise until a review passes; no count limits the rounds. The adapter stops you with `[review_loop]` when a review FAIL repeats the findings of the round before, "
-             "or brings no new finding and no change to the work since then. Then stop: report the open findings to the owner and ask how to go on. A new owner prompt, a parent ruling or brief, "
+             "or brings no new finding and no change to the work since then. Then stop: report the open findings to the owner and ask with `ask_user_question` (an answer lifts the stop) or wait for a new prompt. A new owner prompt, an answered `ask_user_question`, a parent ruling or brief, "
              "or a `/ceremony` tier change by the user lifts the stop; your own `foreman_triage`, a ledger `Tier:` line or an automatic escalation does not. While it stands, builder and reviewer "
              "launches are refused; `[second-opinion]` and a `resume` are not.\n")
 

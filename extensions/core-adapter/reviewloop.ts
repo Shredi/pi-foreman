@@ -51,5 +51,5 @@ export function loopVerdict(prev: LoopRound | null, cur: LoopRound): LoopRule | 
 export function loopRefusal(stop: LoopStop): string {
   const what = stop.kind === "plan" ? "plan" : "work";
   const why = stop.rule === "repeat" ? `the last two ${stop.kind} review rounds failed with the same findings` : `the last ${stop.kind} review failed again with no new finding and no change to the ${what} since the round before`;
-  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and ask the owner how to go on, and report the open findings. A new owner prompt, a parent ruling or brief, or a /ceremony tier change lifts this; a [second-opinion] review is still allowed.`;
+  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent ruling or brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.`;
 }
