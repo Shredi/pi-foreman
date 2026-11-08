@@ -162,7 +162,8 @@ const gate = async (w: World, session: string, sib: string) => prGateRefusal({ t
 test("#129: a PASS in a sibling checkout survives the reload: same head allowed, new head cwd_stale, other session cwd_unreviewed", async (t) => {
   const { w, a } = await standard(t);
   const sib = repo("pf-gsr-sib-", w.project); // a nested checkout: its own git toplevel, inside the project so a launch there needs no dialog
-  const rl = await within("the sibling reviewer launch", a.agentLaunch("reviewer", "[pre-pr] review the sibling", { cwd: sib.dir }));
+  // launched under the project's own spelling (the world's realpath, short names kept on Windows): a textual match of the workspace root, no dialog; the record keeps sib.dir (native)
+  const rl = await within("the sibling reviewer launch", a.agentLaunch("reviewer", "[pre-pr] review the sibling", { cwd: path.join(w.project, path.basename(sib.dir)) }));
   assert.equal(rl.blocked, null);
   const before = snap(w);
   a.endRunAs(rl.id, "reviewer", "Overall verdict: PASS", sib.dir);
