@@ -32,7 +32,7 @@ function render({ agents = [], terminals = [], spaces = [], noRemote = false }) 
   const mod = Object.create(Mod.prototype);
   mod.changed = {}; mod.feed = []; mod.folded = new Set();
   mod.radar = new Map([["local", { ok: true, tree: [noRemote ? treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5" })) : radarRoot()], openPrs: [], tried: Date.now() }], ["m", { ok: false, tried: Date.now() }]]);
-  mod.busy = new Map(); mod.recs = new Map(); mod.childPi = new Set(); mod.failed = new Set();
+  mod.busy = new Map(); mod.recs = new Map(); mod.childPi = new Set();
   mod.poll = () => {};
   return { mod, root: mod.render({}) };
 }

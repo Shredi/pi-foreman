@@ -45,7 +45,7 @@ test("a missing foreman binary (no such file) posts no PR-poll notice, on a remo
   world.spaces = [];
 });
 
-test("a timeout posts one PR-poll notice, and a missing binary after it does not clear that failure", async () => {
+test("a timeout posts one PR-poll notice; a missing binary after it posts none and clears the failure, so a later timeout notifies again", async () => {
   reset();
   world.execFn = stopped;
   const { m, tasks, cx } = boot();
@@ -58,6 +58,19 @@ test("a timeout posts one PR-poll notice, and a missing binary after it does not
   m.pollPrs(cx, Date.now());
   for (const t of tasks.splice(0)) await t(cx);
   assert.equal(world.notices.length, 1);
+  // the binary goes missing: no notice, and the failure state is cleared
+  world.execFn = notFound;
+  m.prsRan.clear();
+  m.pollPrs(cx, Date.now());
+  for (const t of tasks.splice(0)) await t(cx);
+  assert.equal(world.notices.length, 1);
+  assert.equal(m.failed.has("prs:local"), false);
+  // a later timeout notifies again
+  world.execFn = stopped;
+  m.prsRan.clear();
+  m.pollPrs(cx, Date.now());
+  for (const t of tasks.splice(0)) await t(cx);
+  assert.equal(world.notices.length, 2);
 });
 
 test("a missing binary followed by a timeout still notifies once for the timeout", async () => {
