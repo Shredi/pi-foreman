@@ -561,9 +561,14 @@ export default class ForemanAgents extends View {
     const joined = new Map();
     const tops = [];
     this.machineOf = new Map();
+    // A local session whose hc terminal is live is never ended (a late heartbeat only dims it): isEnded reads this mark.
+    const liveTerms = new Set([...all.filter((x) => x.state === "live"), ...list].map((x) => x.address));
     for (const [key, rec] of this.radar) {
       if (!rec.ok) continue;
-      for (const n of allSessions(rec.tree)) this.machineOf.set(n, key);
+      for (const n of allSessions(rec.tree)) {
+        this.machineOf.set(n, key);
+        n.liveHc = key === "local" && !n.machine && Boolean(n.hcTerminal) && liveTerms.has(n.hcTerminal);
+      }
       tops.push(...rec.tree);
       for (const [addr, n] of joinAgents(withPid, rec.tree, key === "local" ? null : key)) joined.set(addr, n);
     }
