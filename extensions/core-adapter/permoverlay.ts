@@ -1460,7 +1460,7 @@ const CONFIG_MODS = new Set(["--local", "--worktree", "--global", "--system", "-
  * `--get-urlmatch <name> <url>`, `--list`, with the modifiers above and `--default <v>` / `--type=<t>`. `--file`, `--blob`, `set`, `unset`,
  * `--add`, `--replace-all`, `--edit`, any other flag, or a second operand without a --get mode is a write.
  */
-function gitConfigRead(rest: string[]): boolean {
+export function gitConfigRead(rest: string[]): boolean {
   let mode: string | undefined;
   const ops: string[] = [];
   for (let i = 0; i < rest.length; i++) {
