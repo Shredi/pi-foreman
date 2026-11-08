@@ -24,9 +24,14 @@ export function stripLineDecoration(line: string): string {
  * and the doubled bench form "1. `1. PASS`". Lines inside ``` fences, the CRITIQUE block and `PASSED` do not count.
  */
 export function verdictItemsOf(text: string, word: "PASS" | "FAIL"): string[] {
-  const out: string[] = [];
-  let fenced = false;
   const re = new RegExp(`^${word}\\b`);
+  return [...new Set(itemLines(text).filter((l) => re.test(l.rest)).map((l) => l.n))];
+}
+
+/** The per-item `N. <rest>` lines of a review (fences and the CRITIQUE block skipped), item numbers normalised. */
+function itemLines(text: string): { n: string; rest: string }[] {
+  const out: { n: string; rest: string }[] = [];
+  let fenced = false;
   for (const line of withoutCritique(text).split(/\r?\n/)) {
     if (line.trimStart().startsWith("```")) {
       fenced = !fenced;
@@ -42,14 +47,30 @@ export function verdictItemsOf(text: string, word: "PASS" | "FAIL"): string[] {
       n = m[1];
       rest = stripLineDecoration(rest.slice(m[0].length));
     }
-    if (n !== null && re.test(rest)) out.push(String(Number(n)));
+    if (n !== null) out.push({ n: String(Number(n)), rest });
   }
-  return [...new Set(out)];
+  return out;
 }
 
-/** Item numbers of the review's per-item `N. PASS` lines, in order, without repeats. */
+// PASS (closing decoration `, *, _ allowed) followed by `(`, `[` or the word partial/partially is a qualified PASS.
+const QUALIFIED = /^PASS\b[`*_]*\s*(?:[(\[]|partial(?:ly)?\b)/i;
+
+/** Item numbers of the review's unqualified `N. PASS` lines (not `PASS (…)`, `PASS [...]`, `PASS partial`), in order, without repeats. */
 export function passItemsOf(text: string): string[] {
-  return verdictItemsOf(text, "PASS");
+  return [...new Set(itemLines(text).filter((l) => /^PASS\b/.test(l.rest) && !QUALIFIED.test(l.rest)).map((l) => l.n))];
+}
+
+/** Qualified PASS and `N. PARTIAL` lines: item number and the line remainder (one line, max 200 chars); first line per item, none for an item that also has an unqualified PASS. */
+export function partialItemsOf(text: string): { n: string; note: string }[] {
+  const passed = new Set(passItemsOf(text));
+  const seen = new Set<string>();
+  const out: { n: string; note: string }[] = [];
+  for (const { n, rest } of itemLines(text)) {
+    if (passed.has(n) || seen.has(n) || !(QUALIFIED.test(rest) || /^PARTIAL\b/.test(rest))) continue;
+    seen.add(n);
+    out.push({ n, note: rest.replace(/[\x00-\x1f\x7f\x85\u2028\u2029]/g, " ").replace(/\s+/g, " ").replace(/[\s`*_]+$/, "").slice(0, 200) });
+  }
+  return out;
 }
 
 /** Numbered items that are open (`- [ ]`) in a ledger, outside ``` fences. */
@@ -90,10 +111,16 @@ export function reviewerPassOfNotice(text: string): { runId: string; text: strin
   return { runId: runs.ids[0], text };
 }
 
-/** Tick each open `N. PASS` item of `text` through `mark`; null when the review names no PASS item. */
-export async function markPassItems(text: string, ledgerFile: string, mark: (n: string) => Promise<boolean>): Promise<{ items: string[]; skipped: string[] } | null> {
+/** Tick each open `N. PASS` item of `text` through `mark` and note each open qualified/PARTIAL one through `note`; null when there is nothing to mark or note. */
+export async function markPassItems(
+  text: string,
+  ledgerFile: string,
+  mark: (n: string) => Promise<boolean>,
+  note: (n: string, text: string) => Promise<boolean> = async () => false,
+): Promise<{ items: string[]; skipped: string[]; noted: string[] } | null> {
   const wanted = passItemsOf(text);
-  if (wanted.length === 0) return null;
+  const partial = partialItemsOf(text);
+  if (wanted.length === 0 && partial.length === 0) return null;
   let open: Set<string>;
   try {
     open = openItemsOf(fs.readFileSync(ledgerFile, "utf8"));
@@ -103,5 +130,7 @@ export async function markPassItems(text: string, ledgerFile: string, mark: (n: 
   const items: string[] = [];
   const skipped: string[] = [];
   for (const n of wanted) (open.has(n) && (await mark(n)) ? items : skipped).push(n);
-  return { items, skipped };
+  const noted: string[] = [];
+  for (const p of partial) if (open.has(p.n) && (await note(p.n, p.note))) noted.push(p.n);
+  return { items, skipped, noted };
 }
