@@ -17,7 +17,7 @@ export interface ReviewRecord {
   verdict: Verdict;
   /** HEAD of the run's cwd at launch and at the verdict; null when they differ or could not be read. */
   head: string | null;
-  /** The checkout the review ran in: realpath of the git toplevel of the run's cwd. Absent in a record from before the sibling gate or when it could not be read; such a record never opens a sibling checkout. */
+  /** The checkout the review ran in: realpath of the git toplevel of the run's cwd. Persisted with the record (planstate.ts); absent in a record from before the sibling gate or the persisted cwd, or when it could not be read; such a record never opens a sibling checkout. */
   cwd?: string;
   /** Why head is null. */
   why?: NoHeadWhy;
