@@ -36,14 +36,16 @@ const walk = (el, out = []) => { if (el && typeof el === "object") { out.push(el
 const strings = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
 const kinds = (el, kind) => walk(el).filter((e) => e.kind === kind);
 
-test("a sidebar click is followed by the next render, not the 1 s timer, and shows Loading until the read is done", async () => {
+test("a sidebar click is followed by the next render, not the 1 s timer; the previous plan stays until the next is read", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
   assert.equal(m.cur.root.key, "fm");
+  m.render(cx); // the frame that was on screen before the click
   world.shared["pi-foreman.show"] = { n: Date.now(), key: "dead", kind: "plan" }; // the click
   const tree = m.render(cx); // no tick in between
   assert.equal(m.cur.root.key, "dead", "this render already switched");
-  assert.ok(strings(tree).includes("Loading plan…"), "and says so while nothing is read yet");
+  assert.ok(!strings(tree).includes("Loading plan…"), "and does not blank the body to Loading while the previous plan is on screen");
+  assert.ok(!kinds(tree, "TextView").some((v) => v.md === "body"), "the next plan is not shown before it is read");
   await settle();
   const done = m.render(cx);
   assert.ok(kinds(done, "TextView").some((v) => v.md === "body"));

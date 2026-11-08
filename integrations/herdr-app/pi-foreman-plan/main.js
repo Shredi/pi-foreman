@@ -45,6 +45,9 @@ export default class PlanPanel extends View {
     this.busy = false;
     this.again = false;
     this.cur = { empty: "Waiting for foreman radar" };
+    this.held = null; // what the body shows: {tabId, key, rec}; kept while the selected tab is still being read
+    this.titles = new Map(); // planKey -> last Note title seen, so the Note tab label does not change while a note is read
+    this.prefetching = false;
     this.noteSeen = new Map(); // root session key -> last note version seen on the radar
     this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
     this.parsed = new Map(); // `${path}|${hash of text}|${hash of base}|${fences}` -> {doc, hunks}: a document is parsed once per content
@@ -135,7 +138,7 @@ export default class PlanPanel extends View {
     const tab = tabs.find((t) => t.id === this.tab);
     const show = tab.node.show;
     const machine = root.machine === "local" ? null : root.machine;
-    this.cur = { tabs, tab, machine, show, key: show ? `${root.machine}|${show.dir}` : null, root: root.node };
+    this.cur = { tabs, tab, machine, raw: root.machine, planKey: root.node.show ? `${root.machine}|${root.node.show.dir}` : null, show, key: show ? `${root.machine}|${show.dir}` : null, root: root.node };
   }
 
   find(trees, key) {
@@ -209,13 +212,35 @@ export default class PlanPanel extends View {
     const force = this.dirty;
     this.dirty = false;
     cx.spawn(async (cx) => {
-      let changed = false;
-      try { changed = await this.refresh(cur, force, cx); } catch { /* keep what was read */ }
-      const rec = this.recs.get(cur.key);
-      if (rec && !rec.ready) { rec.ready = true; changed = true; } // the first read of this session is over: "Loading" ends
+      const changed = await this.load(cur, force, cx);
       this.busy = false;
       if (changed) cx.notify();
-      if (this.again) { this.again = false; this.reload(cx); }
+      if (this.again) { this.again = false; this.reload(cx); return; }
+      this.prefetch(cx);
+    });
+  }
+
+  // Reads one session's documents into its record; the record is ready after its first read, whatever that found.
+  async load(job, force, cx) {
+    let changed = false;
+    try { changed = await this.refresh(job, force, cx); } catch { /* keep what was read */ }
+    const rec = this.recs.get(job.key);
+    if (rec && !rec.ready) { rec.ready = true; changed = true; }
+    return changed;
+  }
+
+  // The other tabs' sessions are read once, after the first paint, so a switch to one of them finds its record ready.
+  prefetch(cx) {
+    const cur = this.cur;
+    if (!cur?.tabs || this.prefetching) return;
+    const jobs = cur.tabs.filter((x) => x.node.show)
+      .map((x) => ({ key: `${cur.raw}|${x.node.show.dir}`, machine: cur.machine, show: x.node.show }))
+      .filter((j) => j.key !== cur.key && !this.recs.get(j.key)?.ready);
+    if (!jobs.length) return;
+    this.prefetching = true;
+    cx.spawn(async (cx) => {
+      for (const j of jobs) if (await this.load(j, false, cx)) cx.notify();
+      this.prefetching = false;
     });
   }
 
@@ -224,8 +249,11 @@ export default class PlanPanel extends View {
     const dir = cur.show.dir;
     const rec = this.recs.get(cur.key) ?? { rev: 0, planJson: undefined, noteJson: undefined };
     this.recs.set(cur.key, rec);
+    // a read that ends after a newer read of this session started commits nothing: the stale result is dropped
+    const seq = rec.seq = (rec.seq ?? 0) + 1;
     if (!cur.machine) this.watch(dir, false, cx);
     const [pj, nj] = await Promise.all([this.read(joinPath(dir, "plan.json"), cur.machine), this.read(joinPath(dir, "note.json"), cur.machine)]);
+    if (rec.seq !== seq) return false;
     let changed = false;
     if (force || pj !== rec.planJson) {
       const meta = pj === null ? null : parseMeta(pj);
@@ -234,6 +262,7 @@ export default class PlanPanel extends View {
       const text = docPath ? await this.read(docPath, cur.machine) : null;
       const base = text === null || !target ? null
         : await this.read(joinPath(dir, target === "ruled" ? "plan.ruled.md" : "plan.prev.md"), cur.machine);
+      if (rec.seq !== seq) return false;
       if (docPath && !cur.machine) this.watch(dirOf(docPath), true, cx);
       const next = { meta, path: docPath, text, base, target };
       if (pj !== rec.planJson || JSON.stringify(next) !== JSON.stringify(rec.planDoc)) {
@@ -251,6 +280,7 @@ export default class PlanPanel extends View {
     if (force || nj !== rec.noteJson) {
       const meta = nj === null ? null : parseMeta(nj);
       const text = meta ? await this.read(joinPath(dir, "note.md"), cur.machine) : null;
+      if (rec.seq !== seq) return false;
       if (nj !== rec.noteJson || text !== rec.noteText) {
         rec.noteJson = nj;
         rec.noteMeta = meta;
@@ -401,24 +431,33 @@ export default class PlanPanel extends View {
   render(cx) {
     const t = theme();
     // A sidebar click (shared state) re-renders this mod at once: follow it here instead of waiting for the 1 s timer, and
-    // start reading a session not read yet; the frame shows its "Loading" state meanwhile.
+    // start reading a session not read yet. Until that read is done the frame keeps what it showed (see `shown`).
     this.sync();
     if (this.cur?.key && this.cur.key !== this.loadedFor) this.reload(cx);
     const cur = this.cur ?? { empty: "Waiting for foreman radar" };
     const frame = (...kids) => v_flex().id("plan-panel").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(13).children(kids);
     if (cur.empty) return frame(this.message(t, cur.empty));
-    const rec = cur.key ? this.recs.get(cur.key) : null;
-    const isNote = cur.tab.id === "note";
+    // What the frame shows is the selected tab's document once it is read. Until then it keeps the document shown before, as long
+    // as that is the same foreman, so a switch neither blanks the body nor moves the tab row or the header. "Loading" shows only
+    // when nothing was shown yet.
+    const want = cur.key ? this.recs.get(cur.key) : null;
+    if (want?.ready || !this.held) this.held = { tabId: cur.tab.id, key: cur.key, rec: want ?? null };
+    const shown = this.held;
+    const rec = shown.rec;
+    const planRec = cur.planKey ? this.recs.get(cur.planKey) : null;
+    if (planRec?.noteMeta?.title) this.titles.set(cur.planKey, planRec.noteMeta.title);
+    const noteTitle = cur.planKey ? this.titles.get(cur.planKey) : undefined;
+    const isNote = shown.tabId === "note";
     const tabBtn = (id, label, on, fn) => div().id(id).px(8).py(2).rounded(5).cursor_pointer().text_size(11).truncate().max_w(160)
       .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover)).on_click(fn).child(label);
     const tabs = cur.tabs.length > 1 ? h_flex().flex_none().flex_wrap().px(10).py(4).gap(4).border_b(1).border_color(t.border)
-      .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, x.id === "note" && rec?.noteMeta?.title ? `Note: ${rec.noteMeta.title}` : x.label, x.id === this.tab, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
+      .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, x.id === "note" && noteTitle ? `Note: ${noteTitle}` : x.label, x.id === this.tab, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
 
     const meta = isNote ? rec?.noteMeta : rec?.planDoc?.meta;
     const doc = isNote ? rec?.note : rec?.plan;
     const adds = !isNote && doc ? doc.adds : 0;
-    const topic = isNote ? "" : topicOf(rec?.planDoc?.path) || (cur.tab.id.startsWith("c:") ? cur.tab.label : "");
+    const topic = isNote ? "" : topicOf(rec?.planDoc?.path) || (shown.tabId.startsWith("c:") ? (cur.tabs.find((x) => x.id === shown.tabId)?.label ?? "") : "");
     const head = h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
       .child(div().font_semibold().truncate().min_w(0).child(isNote ? "Note" : "Plan"))
       .when(Boolean(topic), (e) => e.child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(topic)))
@@ -430,12 +469,12 @@ export default class PlanPanel extends View {
       .when(Boolean(meta?.at), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(Date.now() - meta.at))));
 
     let body;
-    if (!doc && cur.key && !rec?.ready) body = this.message(t, isNote ? "Loading note…" : "Loading plan…");
+    if (!doc && shown.key && !rec?.ready) body = this.message(t, isNote ? "Loading note…" : "Loading plan…");
     else if (!doc) body = this.message(t, isNote ? "No note published by this session" : "No plan published by this session");
     else if (this.diff && !isNote) body = this.diffView(t, rec.hunks, doc.note);
     else body = v_flex().w_full().gap(2)
       .when(Boolean(doc.note), (e) => e.child(div().px(10).py(2).text_size(11).text_color(t.dim).child(doc.note)))
-      .children(doc.blocks.map((b, i) => this.block(t, b, i, rec, cur.tab.id)));
+      .children(doc.blocks.map((b, i) => this.block(t, b, i, rec, shown.tabId)));
     return frame(
       head,
       ...(tabs ? [tabs] : []),

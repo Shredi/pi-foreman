@@ -729,9 +729,10 @@ with the blocks added or changed since the last ruling tinted and labelled NEW o
 tab per child session that published a plan. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
 click opens the panel on it, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
-panel reads when it mounts, applies once and clears. The panel follows a click in the next render and shows "Loading plan…" until the
-first read is done; a document with code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are
-cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
+panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A plan already read shows at once; a plan
+not read yet keeps the previous body, the tab labels and the header on screen until it is parsed ("Loading plan…" only when nothing is shown
+yet), so a switch does not blank or reflow the panel. The other tabs' plans are read in the background after the first paint. A document with
+code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
 in the same render. Install the panel together with the Agents mod; the two are one install.
 
 Install:
