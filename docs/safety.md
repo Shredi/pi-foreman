@@ -79,7 +79,7 @@ and `runId` (the launch id); see [retro](retro.md). `tasks` and `chain` launches
 The gate's path rules allow the foreman's own artifacts outside the workspace without a prompt, computed at runtime from the session's roots: the handoff
 dirs, the session's `subagent-artifacts`, the worktree root's round dir (`close.worktreeDir`, default `../<repo>.worktrees`; see below), the children's scratch root, reads of
 `<agentDir>/pi-foreman` and the global npm root. The
-gate and the git guard keep children out of the foreman-only dirs (handoffs except the child-written names of its own handoff dir, see [permissions](permissions.md#owned-paths), sibling
+gate and the git guard keep children out of the foreman-only dirs (handoffs except the child-written names of its own handoff dir, sibling
 worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `git worktree`, and the `parent` and
 `child` handoff files still ask. The list and the reasons are in [permissions](permissions.md#owned-paths).
 
