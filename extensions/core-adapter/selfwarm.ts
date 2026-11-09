@@ -91,10 +91,14 @@ export interface SelfWarmDeps {
   /** Pi's isReplayable rule for the current model and thinking level. */
   replayable(): boolean;
   /** Send the replay with maxTokens 1; null when it errored or was aborted. */
-  replay(messages: unknown[], signal: AbortSignal): Promise<WarmReply | null>;
+  replay(messages: unknown[], signal: AbortSignal, onError?: (message: string) => void): Promise<WarmReply | null>;
   /** Append the usage line (kind keepalive, source foreman); null when it could not be written. */
   record(reply: WarmReply): UsageLine | null;
 }
+
+const MAX_ERROR = 200;
+/** A replay error as one short line for the trace: control characters stripped, capped. The provider's error text only, never prompt content. */
+export const cleanError = (m: unknown): string => String(m ?? "").replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_ERROR);
 
 const realTimers: Timers = {
   set: (fn, ms) => {
@@ -257,7 +261,8 @@ export class SelfWarm {
     const chk = view ? this.budget.check(this.deps.rates(this.budget.promptTokens()), share) : null;
     const budget = chk ? { ...chk, share } : null;
     const off = this.missed();
-    const warmsLeft = budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
+    const watching = this.st === "watching";
+    const warmsLeft = watching && budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
     const warmsFresh = budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold) / budget.next + 1e-9)) : 0;
     const tick = warmDelayMs(p?.ttlSeconds ?? null);
     const ttlMs = (p?.ttlSeconds ?? 0) * 1000;
@@ -265,7 +270,7 @@ export class SelfWarm {
       state: this.st,
       touch: this.touch,
       stretchStartAt: this.stretchStart,
-      nextWarmAt: this.dueAt(),
+      nextWarmAt: watching ? this.dueAt() : null,
       budget,
       tier: view,
       warmsLeft,
@@ -445,7 +450,7 @@ export class SelfWarm {
     this.ac = null;
   }
 
-  private end(reason: string): void {
+  private end(reason: string, message?: string): void {
     this.clearTimer();
     this.timers.clear(this.graceTimer);
     this.graceTimer = null;
@@ -456,7 +461,7 @@ export class SelfWarm {
       if (sh.owner === this) sh.owner = null; // the owner stopped owning: free the claim for an instance that can warm
     }
     if (this.st !== "watching") return;
-    this.deps.trace({ event: "keepalive", outcome: "window_end", reason });
+    this.deps.trace({ event: "keepalive", outcome: "window_end", reason, ...(message ? { message } : {}) });
     this.st = reason === "error" || reason === "shutdown" || reason === "model_change" || reason === "not_owned" ? "off" : "ended";
     this.glyph(false);
   }
@@ -558,10 +563,11 @@ export class SelfWarm {
       if (hit) return this.refuse(hit, view, "pre_warm", false);
       const ac = new AbortController();
       this.ac = ac;
-      const reply = await d.replay(this.captured, ac.signal).catch(() => null);
+      let failure: string | null = null;
+      const reply = await d.replay(this.captured, ac.signal, (m) => (failure = cleanError(m))).catch((e) => ((failure = cleanError(e instanceof Error ? e.message : e)), null));
       if (gen !== this.gen || ac.signal.aborted) return; // a real request won the race: not recorded
       this.ac = null;
-      if (!reply) return this.end("error");
+      if (!reply) return this.end("error", failure ?? undefined);
       const line = d.record(reply);
       const u = reply.usage;
       this.touch = d.now();

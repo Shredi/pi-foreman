@@ -571,6 +571,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       warmsFresh: snap.warmsFresh,
       tier: snap.tier ? snap.tier.tier : null,
       running: s.running,
+      waiting: s.questionCalls.size > 0 || s.live?.isBlocked() === true,
       downshifted: idleModel.downshifted(),
       idleRung: rung ? rung.id : null,
       enabled: get(s.config.config, "footer.cacheBar") !== false,
@@ -620,6 +621,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const holds = [...sessions.values()].map((s) => s.live?.hold());
     return () => holds.forEach((release) => release?.());
   });
+  // A question tool call holds an own blocked source from tool_call to tool_execution_end, independent of Pi's ui_prompt_* events (Pi suppresses them under a stuck dialog depth).
+  const questionBlocks = new Map<string, () => void>();
+  const holdQuestion = (id: string, input: unknown): void => {
+    questionBlocks.get(id)?.();
+    const first = (input as { questions?: { header?: unknown }[] } | undefined)?.questions?.[0]?.header;
+    const label = typeof first === "string" && first.trim() ? first : "question";
+    questionBlocks.set(id, blockedShim.own(label));
+  };
+  const releaseQuestion = (id: string): void => {
+    const release = questionBlocks.get(id);
+    questionBlocks.delete(id);
+    release?.();
+  };
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
   const askFlag = new AskFlag(); // /foreman flag-ask (askflag.ts): the last ask the owner answered
@@ -640,7 +654,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.live?.setBlocked(false);
     if (s && (e as { source?: string }).source !== "extension") gateStopped.delete(s.id); // a new user prompt ends a "deny and stop"
   });
-  pi.on("agent_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  pi.on("agent_end", async (_e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.setBlocked(false);
+    s?.questionCalls.forEach(releaseQuestion);
+  });
   pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
     const e = (data ?? {}) as Record<string, unknown>;
     if (e.event === "test_restore") sessions.get(String(e.sessionId))?.trace?.emit({ event: e.event, cmd: e.cmd });
@@ -1605,6 +1623,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.pendingLaunches.clear();
     s?.mutating.clear();
     s?.commandCalls.clear();
+    s?.questionCalls.forEach(releaseQuestion);
     s?.questionCalls.clear();
   });
   pi.on("turn_end", async (event, ctx) => {
@@ -2771,7 +2790,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       capsReset(ms, event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
-      if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") ms.questionCalls.add(event.toolCallId);
+      if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
+        ms.questionCalls.add(event.toolCallId);
+        holdQuestion(event.toolCallId, event.input);
+      }
       // ask_user_question comes from the bundled @juicesharp/rpiv-ask-user-question; the harness only counts the dialog
       if (event.toolName === ASK_USER_TOOL) {
         ms.trace?.emit({ event: "dialog", surface: "ask_user" });
@@ -3376,6 +3398,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.mutating.delete(event.toolCallId);
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
+      releaseQuestion(event.toolCallId);
     }
     // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
     if (!res && wantHold) {
@@ -3931,6 +3954,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
+    releaseQuestion(event.toolCallId);
     // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
     if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       s.loopStop = null;
@@ -3997,6 +4021,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.mutating.delete(event.toolCallId);
     owner?.commandCalls.delete(event.toolCallId);
     owner?.questionCalls.delete(event.toolCallId);
+    releaseQuestion(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();

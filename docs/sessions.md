@@ -574,10 +574,11 @@ One tracker per Pi process counts what is waiting for you:
 - any Pi dialog, from every extension (Pi's `ui_prompt_start` .. `ui_prompt_end`);
 - each permission ask (`permissions:ui_prompt` .. `permissions:decision`, by request id), including a child's ask
   forwarded to this session;
+- an open `ask_user_question` or `plan_mode_question` tool call, from its `tool_call` until its `tool_execution_end` (released as well on `turn_start` and `agent_end`), which counts even when Pi sends no `ui_prompt_*` events;
 - pi-foreman's own asks (checkpoint, guard confirms).
 
 It emits `herdr:blocked {active:true,label}` when the first one opens and `{active:false}` when the last one closes,
-so Herdr's counter stays balanced however they overlap. The end of a turn releases permission and own asks that never
+so Herdr's counter stays balanced however they overlap. The end of a turn releases permission, question and own asks that never
 got their decision (an open Pi dialog stays until Pi closes it); shutdown releases everything. Pi can orphan a
 dialog that a second dialog replaces (it never sends that dialog's end); typed input then releases the stale dialog.
 While such a dialog is unsettled Pi sends no `ui_prompt_start` for later ones, so pi-foreman's own asks also hold the
@@ -588,7 +589,7 @@ Label: for a permission ask `<agent> · <tool> <first word>` (the requesting chi
 cut to its basename; leading `env` and `NAME=value` assignments are skipped (a quoted or `$(…)` value up to its closing quote or paren),
 nothing after an `=` is shown, and a word that is not a plain command name is dropped;
 never the full command), else the dialog title, else pi-foreman's ask title, else the dialog
-kind; at most 80 characters, control characters removed. A later ask keeps the first label (Herdr shows that one).
+kind (a question call: its first question's header, else `question`); at most 80 characters, control characters removed. A later ask keeps the first label (Herdr shows that one).
 
 The shim is off when `HERDR_ENV` is not `1`, when `herdr.blockedShim` is false (default `true`), or when the
 installed Herdr Pi integration (`<agent dir>/extensions/herdr-agent-state.ts`, header `HERDR_INTEGRATION_VERSION`) is

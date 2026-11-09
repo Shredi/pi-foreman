@@ -127,7 +127,7 @@ export function sanitizeTrace(rec: Record<string, unknown>): TraceRecord {
   for (const [k, v] of Object.entries(rec)) {
     if (!ALLOWED.has(k)) continue;
     if (k === "command" && !isDeny(rec) && !fullCommand(rec)) continue; // never a command outside a deny (and the owner's flagged ask, R31c)
-    if (k === "message" && (rec.event !== "tool_error" || typeof v !== "string")) continue; // free text: only a tool_error's redacted message
+    if (k === "message" && ((rec.event !== "tool_error" && !(rec.event === "keepalive" && rec.outcome === "window_end")) || typeof v !== "string")) continue; // free text: only a tool_error's or a failed warm's redacted message
     if (k === "error") {
       if (typeof v === "string") out[k] = scrubPaths(redactCommand(v)).slice(0, MAX_STRING);
       continue;

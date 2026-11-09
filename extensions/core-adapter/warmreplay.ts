@@ -41,6 +41,8 @@ export interface ReplayApi {
   cacheRetention(): unknown;
   /** ctx.modelRegistry.streamSimple */
   streamSimple(model: unknown, context: unknown, options: unknown): { result(): Promise<unknown> };
+  /** The provider's error text of an errored call (raw; the owner cleans and caps it). */
+  onError?(message: string): void;
 }
 
 export async function replayWarm(model: unknown, messages: unknown[], signal: AbortSignal, api: ReplayApi): Promise<WarmReply | null> {
@@ -52,6 +54,7 @@ export async function replayWarm(model: unknown, messages: unknown[], signal: Ab
   if (reasoning) options.reasoning = reasoning;
   if (cacheRetention !== undefined) options.cacheRetention = cacheRetention;
   const msg = await api.streamSimple(model, context, options).result();
+  if (isObj(msg) && msg.stopReason === "error" && !signal.aborted && typeof msg.errorMessage === "string") api.onError?.(msg.errorMessage);
   if (signal.aborted || !isObj(msg) || msg.stopReason === "aborted" || msg.stopReason === "error" || !isObj(msg.usage)) return null;
   return {
     provider: typeof msg.provider === "string" ? msg.provider : null,
