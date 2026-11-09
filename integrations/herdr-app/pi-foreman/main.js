@@ -402,7 +402,8 @@ export default class ForemanAgents extends View {
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
     const onMove = (e, cx) => guard(() => {
-      const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = globalThis.window?.viewport_size?.();
+      // The size is the one render stored (this.vp); a live read from the handler refreshes it after a resize when the host allows it.
+      const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
       if (!b || !pos || !loc || !vp) return;
       const a = placeCard({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
       this.cardAnchor ??= new Map();
@@ -643,6 +644,8 @@ export default class ForemanAgents extends View {
     const shown = guard(() => focused()?.agent, null);
     this.shown = shown;
     const spaceList = guard(() => spaces(), []);
+    // The window's measurements are legal from render by contract (typings.rs), so the hover-card placement reads the size here.
+    this.vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
     const now = Date.now();
     guard(() => this.track(list, now));
     this.clashes = guard(() => clashingTabs(list), new Set());
