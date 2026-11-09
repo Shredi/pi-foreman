@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
 import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
 import {
-  buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, partFor, hasUnseen, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
+  buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, partFor, tabDot, partDot, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
   compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince, isLight,
   fenceInfo, validateSvg, svgSize, cachePath, findPanelBlock,
 } from "./model.js";
@@ -126,7 +126,7 @@ export default class PlanPanel extends View {
       this.pin.fresh = false;
       const hit = tabs.find((t) => t.id.startsWith("c:") && t.node === pinned.node);
       this.tab = hit ? hit.id : pinned.node === root.node && this.pin.kind === "note" && noteHint(root.node) !== null ? "note" : "plan";
-      if (hit && this.pin.kind === "note" && noteHint(hit.node) !== null) this.childPart.set(hit.node.key, "note");
+      if (hit && (this.pin.kind === "note" ? noteHint(hit.node) : planHint(hit.node)) !== null) this.childPart.set(hit.node.key, this.pin.kind);
     }
     // Focus on a floating child window of this foreman selects that child's tab, once per focus change.
     const term = focus.pane ? null : focus.terminal ?? focus.agent ?? null;
@@ -461,9 +461,9 @@ export default class PlanPanel extends View {
     const rec = shown.rec;
     // the header says Loading while the body still shows another tab or part than the selected one
     const pending = shown.tabId !== cur.tab.id || shown.part !== cur.part;
-    const doc0 = shown.part === "note" ? rec?.note : rec?.plan;
+    const doc = shown.part === "note" ? rec?.note : rec?.plan;
     // the version recorded is the one of the document on screen, not the radar's: a newer radar version is still unseen
-    if (!pending && rec && doc0 && shown.tabId.startsWith("c:")) {
+    if (!pending && rec && doc && shown.tabId.startsWith("c:")) {
       const v = shown.part === "note" ? rec.noteMeta?.v : rec.planDoc?.meta?.v;
       if (Number.isInteger(v)) this.seen.set(`${cur.tab.node.key}|${shown.part}`, v);
     }
@@ -473,18 +473,18 @@ export default class PlanPanel extends View {
     const isNote = shown.part === "note";
     const tabBtn = (id, label, on, fn) => div().id(id).px(8).py(2).rounded(5).cursor_pointer().text_size(11).truncate().max_w(160)
       .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover)).on_click(fn).child(label);
-    // a child tab with an unseen plan or note version gets a dot on its label
-    const unseen = (x) => x.id.startsWith("c:") && hasUnseen(x.node, (part) => this.seen.get(`${x.node.key}|${part}`));
+    // a child tab that is not on screen gets a dot on its label while a plan or note version of it is unseen
+    const seenOf = (n) => (part) => this.seen.get(`${n.key}|${part}`);
+    const unseen = (x) => x.id.startsWith("c:") && tabDot(x.node, x.id === shown.tabId, seenOf(x.node));
     const tabs = cur.tabs.length > 1 ? h_flex().flex_none().flex_wrap().px(10).py(4).gap(4).border_b(1).border_color(t.border)
       .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, (x.id === "note" && noteTitle ? `Note: ${noteTitle}` : x.label) + (unseen(x) ? " \u25cf" : ""), x.id === this.tab, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
     // a child with both a plan and a note switches between them on its own tab
     const both = cur.tab.id.startsWith("c:") && planHint(cur.tab.node) !== null && noteHint(cur.tab.node) !== null;
     const key = cur.tab.node.key;
     const parts = both ? h_flex().flex_none().px(10).py(4).gap(4).border_b(1).border_color(t.border)
-      .children([["plan", "Plan"], ["note", "Note"]].map(([p, l]) => tabBtn(`part-${p}`, l, cur.part === p, (_e, cx) => { this.childPart.set(key, p); cx.notify(); }))) : null;
+      .children([["plan", "Plan"], ["note", "Note"]].map(([p, l]) => tabBtn(`part-${p}`, l + (partDot(cur.tab.node, p, shown.part, seenOf(cur.tab.node)) ? " \u25cf" : ""), cur.part === p, (_e, cx) => { this.childPart.set(key, p); cx.notify(); }))) : null;
 
     const meta = isNote ? rec?.noteMeta : rec?.planDoc?.meta;
-    const doc = doc0;
     const adds = !isNote && doc ? doc.adds : 0;
     const topic = isNote ? "" : topicOf(rec?.planDoc?.path) || (shown.tabId.startsWith("c:") ? (cur.tabs.find((x) => x.id === shown.tabId)?.label ?? "") : "");
     const head = h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)

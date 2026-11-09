@@ -20,8 +20,9 @@ The Agents mod's header has a "📄 Plan" button that brings the panel forward.
 - A `Note` tab appears when the session published a note (`foreman_show`). A note newer than the one seen before opens the panel (selects
   the block, shows the hidden panel around it) and switches to that tab; the first sight of a session does not. A child's note opens the
   panel on that child's tab.
-- A child with a plan and a note has a Plan | Note switch on its tab. A child tab with a plan or note newer than the last one shown there
-  gets a ● on its label; a first sight counts as new, and rendering the tab clears it. Block and panel ids are
+- A child with a plan and a note has a Plan | Note switch on its tab. A child tab that is not on screen
+  gets a ● on its label while its plan or note is newer than the last one shown there (a first sight counts as new); showing the tab
+  clears it. On the switch, the button of a part with unseen content carries its own ● until that part is shown. Block and panel ids are
   found by searching the shown layout for this mod, with the `foreman.json` ids (`panel-body`, `plan`, `panel`) as fallback. When the layout
   has no such block this mod is not running; the Agents mod (`pi-foreman`) posts the notification that says to add
   `{ "mod": "pi-foreman-plan" }` to a stack.

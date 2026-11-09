@@ -100,6 +100,7 @@ test("the unseen dot is set on a child's label until its version is rendered, an
   assert.ok(tabLabel(tree, "tab-c:both").endsWith("●"), "the other child keeps its dot");
   world.shared = { "pi-foreman.radar": radar({ nonly: 2 }) };
   m.tick(cx); await settle();
+  m.tab = "plan"; m.render(cx); await settle(); // the dot is off while the tab is on screen
   tree = m.render(cx);
   assert.ok(tabLabel(tree, "tab-c:nonly").endsWith("●"), "a newer note sets the dot again");
 });

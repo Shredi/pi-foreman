@@ -522,7 +522,23 @@ export function partFor(n, picked) {
 /** True when a session has a part (plan or note) whose radar version is above the version last shown of it: `seenOf(part)`
  *  gives that version, undefined when the part was never shown (it counts as unseen). */
 export function hasUnseen(n, seenOf) {
-  return [["plan", planHint(n)], ["note", noteHint(n)]].some(([part, v]) => v !== null && (seenOf(part) === undefined || v > seenOf(part)));
+  return partUnseen(n, "plan", seenOf) || partUnseen(n, "note", seenOf);
+}
+
+/** True when the given part of a session exists and its radar version is above the one last shown of it. */
+export function partUnseen(n, part, seenOf) {
+  const v = part === "note" ? noteHint(n) : planHint(n);
+  return v !== null && (seenOf(part) === undefined || v > seenOf(part));
+}
+
+/** The ● dot of a child tab label: only while the tab is not the one on screen and one of its parts has unseen content. */
+export function tabDot(n, onScreen, seenOf) {
+  return !onScreen && hasUnseen(n, seenOf);
+}
+
+/** The ● dot of a Plan | Note switch button: the part has unseen content and is not the part on screen. */
+export function partDot(n, part, shownPart, seenOf) {
+  return part !== shownPart && partUnseen(n, part, seenOf);
 }
 
 /** The folder of a file path (either separator); "" for a bare name. */
