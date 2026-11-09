@@ -272,10 +272,11 @@ but never anything above the session's workspace or round, and never another rou
 another round's admin dir fails the back-link check. A session started inside a submodule checkout does not lift: its workspace
 is that submodule.
 
-- `git submodule update`, `sync`, `foreach` and `status` are allowed for children when the cwd and every path argument lie inside
-  the round's own tree. A `.gitmodules` URL is resolved the way git resolves it (relative to the superproject's remote); the
-  command is allowed only when that equals the URL already configured, and a submodule's first `update --init` is refused for
-  children (run it as the foreman or owner). `foreach '<cmd>'` classifies the inner command like any child command.
+- `git submodule update`, `sync`, `init`, `foreach` and `status` are allowed for children when the cwd and every path argument lie inside
+  the round's own tree. The URL rule applies only to `sync`, `init` and `update --init`: a `.gitmodules` URL is resolved the way git
+  resolves it (relative to the superproject's remote) and must equal the URL already configured, and a child's first init of an
+  unconfigured submodule is refused (run it as the foreman or owner). Glob or pathspec-magic paths (`*`, `?`, `[`, leading `:`)
+  count as every submodule. `foreach '<cmd>'` classifies the inner command like any child command.
 - `<repo>` for a submodule is the submodule's own checkout name. Each submodule checkout gets its own PR gate and reviewer:
   PASS records are keyed by the checkout's own top level, not the lifted root.
 - Cleanup never deletes nested checkouts pi-foreman did not create ([close](close.md#the-worktree-root)).

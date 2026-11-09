@@ -71,6 +71,34 @@ class SubmodulePathSpellingTest(unittest.TestCase):
 
 
 @unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
+class SubmodulePathspecMagicTest(unittest.TestCase):
+    """Globs and pathspec magic cover every submodule, so the URL rule checks them all."""
+
+    CMDS = ("git submodule sync 'b*'", "git submodule sync ':/b'", "git submodule sync ':(top)b'", "git submodule update --init 'b*'")
+
+    def setUp(self):
+        self.base = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.rig = build_rig(self.base)
+
+    def decide(self, cmd):
+        t = self.rig.tree
+        return gg.decide(cmd, "child", cwd=t, env={"PI_FOREMAN_TREE_CEILING": t})
+
+    def test_pathspec_forms_are_refused_when_a_url_differs(self):
+        path = os.path.join(self.rig.tree, ".gitmodules")
+        Path(path).write_text(Path(path).read_text().replace("/src/b", "/elsewhere/b"))
+        for cmd in self.CMDS:
+            d = self.decide(cmd)
+            self.assertEqual(d.level, 2, (cmd, d.reason))
+
+    def test_pathspec_forms_are_allowed_when_every_url_matches(self):
+        for cmd in self.CMDS:
+            d = self.decide(cmd)
+            self.assertNotEqual(d.level, 2, (cmd, d.reason))
+
+
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class SubmoduleVerbScopeTest(unittest.TestCase):
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp())

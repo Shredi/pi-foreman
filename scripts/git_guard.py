@@ -2097,6 +2097,9 @@ def child_submodule(rest, ctx, call):
     for t in texts[texts.index(verb) + 1:]:
         if t.startswith("-") or t == "--":
             continue
+        if any(ch in t for ch in "*?[") or t.startswith(":"):
+            chosen.append("")
+            continue
         rel = os.path.relpath(os.path.realpath(os.path.join(call.cwd, t)), realtop).replace(os.sep, "/")
         chosen.append("" if rel == "." else rel)
     branch = (run_git(call, ctx, ["symbolic-ref", "--short", "-q", "HEAD"]) or "").strip()
