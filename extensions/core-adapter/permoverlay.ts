@@ -897,13 +897,13 @@ function expandHomePattern(p: string, home: string): string {
   return p;
 }
 
-/** PS's compileWildcardPattern: split on `*`, `?` = one char, trailing " *" makes the args optional. */
 /** The tree root of the call's cwd, lifted out of a nested submodule checkout up to the round (or the workspace) holding it and no further. */
 function treeRootOfCtx(ctx: { cwd: string; roundRoots?: string[] }): string | null {
   const ceiling = (ctx.roundRoots ?? []).find((r) => insideDir(r, ctx.cwd, ctx as never)) ?? workspaceOf(ctx.cwd).root;
   return treeRootOf(ctx.cwd, ceiling);
 }
 
+/** PS's compileWildcardPattern: split on `*`, `?` = one char, trailing " *" makes the args optional. */
 export function wildcardRegExp(pattern: string, opts: { home: string; ignoreCase: boolean; foldSeparators: boolean }): RegExp {
   const key = `${opts.ignoreCase ? "i" : "s"}${opts.foldSeparators ? "f" : "-"}${opts.home}\u0000${pattern}`;
   const hit = reCache.get(key);

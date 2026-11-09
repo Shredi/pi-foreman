@@ -175,6 +175,7 @@ function realFor(p: string, platform: string): string {
 function protectedRoots(mainCheckout: string, o: ResolveOptions, platform: string): string[] {
   const home = o.home ?? os.homedir();
   const list = [mainCheckout, home, o.agentDir ?? piAgentDir(process.env, home), o.pkgRoot ?? PKG_ROOT, o.tmpRoot ?? os.tmpdir(), flavour(platform).parse(mainCheckout).root || "/"];
+  if (platform !== "win32") list.push("/tmp", "/private/tmp");
   if (o.installRoot) list.push(o.installRoot);
   if (o.npmRoot) list.push(o.npmRoot);
   return [...new Set(list.flatMap((r) => [r, realFor(r, platform)]))];
@@ -404,6 +405,23 @@ export function inNestedCheckout(cwd: string): boolean {
   }
 }
 
+/** Whether a launch asks for an isolation worktree (`worktree: true` or the `isolation: "worktree"` alias) anywhere in its arguments and runs in a nested checkout: the session's cwd or any `cwd` the launch itself names. */
+export function launchNeedsNestedRefusal(launch: unknown, cwd: string): boolean {
+  const cwds = [cwd];
+  let isolated = false;
+  const walk = (v: unknown, depth: number): void => {
+    if (depth > 8 || !v || typeof v !== "object") return;
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (k === "worktree" && x === true) isolated = true;
+      else if (k === "isolation" && x === "worktree") isolated = true;
+      else if (k === "cwd" && typeof x === "string" && x) cwds.push(path.resolve(cwd, x));
+      else walk(x, depth + 1);
+    }
+  };
+  walk(launch, 0);
+  return isolated && cwds.some((c) => inNestedCheckout(c));
+}
+
 export interface SessionRootInputs {
   /** Owned read-write roots (spelled and real) of a session whose workspace is the main checkout; absent otherwise (the lexical `<ws>.worktrees` stays). */
   worktreeRoot?: string[];
@@ -456,13 +474,13 @@ function nearestExisting(p: string): string | null {
 }
 
 /** Doctor lines for the worktree root; nothing outside a git repository. Never throws. */
-export function worktreeRootDoctor(config: unknown, cwd: string, platform: string = process.platform): string[] {
+export function worktreeRootDoctor(config: unknown, cwd: string, platform: string = process.platform, opts: ResolveOptions = {}): string[] {
   try {
     const top = workspaceTop(cwd);
     const main = top ? mainCheckoutOf(top) : null;
     if (!main) return [];
     const raw = (config as { close?: { worktreeDir?: unknown } } | null | undefined)?.close?.worktreeDir;
-    const r = resolveWorktreeRoot(main, raw, { platform });
+    const r = resolveWorktreeRoot(main, raw, { ...opts, platform });
     const out: string[] = [];
     const shown = r.real !== r.spelled ? `${r.spelled} (real ${r.real})` : r.spelled;
     out.push(`INFO worktree root: ${shown} (${r.custom ? "configured: close.worktreeDir" : "default"})`);
@@ -483,10 +501,10 @@ export function worktreeRootDoctor(config: unknown, cwd: string, platform: strin
         out.push(`WARN no symlink support under ${base}: pi-subagents links node_modules into worktrees — fix: choose a close.worktreeDir on a filesystem with symlinks.`);
       }
       if (platform !== "win32") {
-        const flip = (p: string): boolean | null => { const f = path.join(p, ".PI-Foreman-Case"); try { fs.writeFileSync(f, ""); const same = fs.existsSync(f.toLowerCase()); fs.rmSync(f, { force: true }); return same; } catch { return null; } };
-        const a = flip(base);
-        const b = flip(main);
-        if (a !== null && b !== null && a !== b) out.push(`WARN case sensitivity of the worktree root differs from the main checkout's — fix: keep both on the same kind of filesystem.`);
+        // the probe file is written only inside the root's nearest existing dir (a temp name); the main checkout is only looked at (its `.git` entry, upper-cased)
+        const rootFolds = ((): boolean | null => { const name = `.pi-foreman-case-${process.pid}`; const f = path.join(base, name); try { fs.writeFileSync(f, ""); const same = fs.existsSync(path.join(base, name.toUpperCase())); fs.rmSync(f, { force: true }); return same; } catch { return null; } })();
+        const mainFolds = ((): boolean | null => { try { fs.lstatSync(path.join(main, ".git")); return fs.existsSync(path.join(main, ".GIT")); } catch { return null; } })();
+        if (rootFolds !== null && mainFolds !== null && rootFolds !== mainFolds) out.push(`WARN case sensitivity of the worktree root differs from the main checkout's — fix: keep both on the same kind of filesystem.`);
       }
     }
     const clash = rootCollision(main, r.spelled);

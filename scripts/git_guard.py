@@ -2062,7 +2062,7 @@ def child_submodule(rest, ctx, call):
     texts = [w.text for w in rest]
     verbs = [t for t in texts if not t.startswith("-")]
     verb = verbs[0] if verbs else ""
-    if verb not in ("update", "sync", "status", "foreach"):
+    if verb not in ("update", "sync", "status", "foreach", "init"):
         return None
     if any(w.dynamic for w in rest):
         return deny("children may not run `git submodule` with computed arguments; write them out.")
@@ -2108,8 +2108,8 @@ def child_submodule(rest, ctx, call):
             if want != have:
                 return deny("children may not run `git submodule %s`: the .gitmodules URL of %s (%s) differs from the configured %s; "
                             "the foreman or owner runs it." % (verb, name, want, have))
-        elif verb == "update" and init:
-            return deny("children may not initialise submodule %s (`git submodule update --init` sets its URL); the foreman or owner runs it." % name)
+        elif verb == "init" or (verb == "update" and init):
+            return deny("children may not initialise submodule %s (`git submodule %s` sets its URL); the foreman or owner runs it." % (name, "init" if verb == "init" else "update --init"))
     return None
 
 

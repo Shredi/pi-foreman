@@ -210,14 +210,16 @@ symlink; both the spelled and the real path are recognised everywhere.
   snapshot of what is there: two repos that start at the same moment on an empty shared root can both pass. The root is
   one owned folder, so it must stay single-repo; rename one checkout or use a relative value. Doctor runs the same scan.
 
-The terminal `foreman session open --worktree` checks only the Python subset of these (it does not know the Pi install
-root or the global npm root); the adapter and doctor check all of them.
+The terminal `foreman session open --worktree` checks only the Python subset of these (main checkout, home, agent dir,
+temp root, `/tmp`, `/`; it does not know the pi-foreman package root, the Pi install root or the global npm root). The
+adapter checks all of them at session start, at a `--worktree` open (before Python runs) and in doctor.
 
-**Across filesystems.** `git worktree add` needs nothing special. A worktree whose removal needs the trash command and
-whose trash fails (typically a different mount) is reported as `remove_failed` and stays in place. When no trash command
-exists a scratch dir is removed with `shutil.rmtree`; the report then carries a note line for it (`notes`), not a
+**Across filesystems.** `git worktree add` needs nothing special, and a worktree is removed with `git worktree remove`
+(never the trash command, never `--force`). The trash command is used only for scratch dirs: if it fails (typically a
+different mount) the removal is reported as `remove_failed` and the dir stays in place; when no trash command exists a
+scratch dir is removed with `shutil.rmtree`, and the report then carries a note line for it (`notes`), not a
 removed-path entry. `npm ci` runs only in a worktree pi-foreman creates and only when it holds a lockfile; a
-`package.json` without one is skipped with a note.
+`package.json` without one is skipped, and the open output says `install: skipped (package.json without a lockfile)`.
 
 **Nested submodule trees.** An outside tool may build a monorepo worktree and nest submodule worktrees inside it
 ([sessions](sessions.md#nested-submodule-worktrees)). Cleanup removes only entries the manifest records. Inner entries go

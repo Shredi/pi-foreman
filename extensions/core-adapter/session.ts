@@ -360,6 +360,8 @@ export interface SessionDeps {
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
   /** Run a `foreman_session.py` verb (see remoteRunner). */
   runRemote?: RunRemote;
+  /** The Pi install root and the global npm root (only this side knows them): protected roots of the worktree-root resolver. */
+  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null };
 }
 
 export const PLAN_MODE_UNAVAILABLE = "session open refused [plan_mode_unavailable]: this session has no /plan command (install a plan-mode package), so the new session cannot open in plan mode. Open it without planMode, or pass the first command your setup provides.";
@@ -455,7 +457,7 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
     const top = workspaceTop(path.resolve(d.cwd, c.cwd ?? "."));
     const main = top ? mainCheckoutOf(top) : null;
     const raw = (d.config as { close?: { worktreeDir?: unknown } } | undefined)?.close?.worktreeDir;
-    const root = main ? resolveWorktreeRoot(main, raw) : null;
+    const root = main ? resolveWorktreeRoot(main, raw, { installRoot: d.protectedRoots?.installRoot, npmRoot: d.protectedRoots?.npmRoot }) : null;
     if (root?.error) return { text: `session open refused [${root.error.code}]: ${root.error.message}`, ok: false };
   }
   // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
@@ -632,6 +634,7 @@ export interface SessionHost {
   config?: Json;
   trace?: (rec: Record<string, unknown>) => void;
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
+  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null };
 }
 
 const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) => c.name) ?? [];
@@ -721,6 +724,7 @@ export function registerSession(
           commands: commandNames(pi),
           trace: s.trace,
           recordWorktree: s.recordWorktree,
+          protectedRoots: s.protectedRoots,
           runRemote: remoteRunner({ python: s.python, spawner: deps.spawner, pkgRoot: deps.pkgRoot, agentDir: s.agentDir }),
         },
         args,
@@ -781,6 +785,7 @@ export function registerSessionOpenTool(
           commands: commandNames(pi),
           trace: s.trace,
           recordWorktree: s.recordWorktree,
+          protectedRoots: s.protectedRoots,
         },
         params,
       );

@@ -16,7 +16,7 @@ import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, openedHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
-import { inNestedCheckout, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
+import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
@@ -695,8 +695,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // Owned dirs (owned.ts): the npm root resolves in the background and rebuilds the overlay once known.
     const tmpRoot = path.dirname(scratchRoot() ?? path.join(os.tmpdir(), "pi-foreman-scratch"));
     // close.worktreeDir (worktreeroot.ts): only a session in the main checkout takes it; a refused value or a collision falls back to the default layout with one visible notice
-    const rootInputs = sessionRootInputs(cwd, get(config.config, "close.worktreeDir"));
-    const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: rootInputs.worktreeGlobs });
+    // the Pi install root and the global npm root are protected roots only this side knows; the npm root joins when it resolves (below)
+    const installRoot = await installRootOfPi();
+    const rootInputsOf = (npmRoot: string | null) => sessionRootInputs(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
+    let rootInputs = rootInputsOf(null);
+    const computeOwned = (npmRoot: string | null): OwnedRoots => {
+      if (npmRoot) rootInputs = rootInputsOf(npmRoot);
+      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: rootInputs.worktreeGlobs });
+    };
     const owned = computeOwned(null);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
@@ -877,6 +883,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!npmRoot) return;
         s.owned = computeOwned(npmRoot);
         s.overlay = buildOverlay(s.owned);
+        if (rootInputs.notice && !isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
       })
       .catch(() => undefined);
     if (!isChild) {
@@ -1737,6 +1744,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let piInstallRoot: Promise<string | null> | undefined;
   /** The roots of the running pi: its coding-agent package dir (resolved from the package itself, never a literal path), the global npm root, this package's root. */
   async function piRootsOf(s: Session): Promise<PiRoots> {
+    return { installRoot: await installRootOfPi(), npmRoot: s.owned.npmRoot ?? null, pkgRoot: PKG_ROOT };
+  }
+  function installRootOfPi(): Promise<string | null> {
     piInstallRoot ??= (async () => {
       try {
         const d = ((await import("@earendil-works/pi-coding-agent")) as { getPackageDir?: () => unknown }).getPackageDir?.();
@@ -1745,7 +1755,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return null;
       }
     })();
-    return { installRoot: await piInstallRoot, npmRoot: s.owned.npmRoot ?? null, pkgRoot: PKG_ROOT };
+    return piInstallRoot;
   }
   /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
   function promptVariants(s: Session): Record<string, string> {
@@ -3019,7 +3029,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
         }
         // D6: pi-subagents' isolation worktree is a plain `git worktree add` of the innermost repo; inside a nested submodule checkout it would not carry the tree
-        if (!s.isChild && isLaunchArgs(input) && JSON.stringify(rawLaunch).includes('"worktree":true') && inNestedCheckout(ctx.cwd)) {
+        if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
           return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
@@ -4488,7 +4498,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
-    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
+    const roots = await piRootsOf(s);
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), protectedRoots: { installRoot: roots.installRoot, npmRoot: roots.npmRoot }, model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
       const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
       await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
     } };
@@ -5166,7 +5177,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
     const reg = await import("./registry.ts"); // doctor-only helpers; keeps the top-level import line untouched
     out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform));
-    out.push(...worktreeRootDoctor(s.config.config, s.cwd, platform));
+    const doctorRoots = await piRootsOf(s);
+    out.push(...worktreeRootDoctor(s.config.config, s.cwd, platform, { installRoot: doctorRoots.installRoot, npmRoot: doctorRoots.npmRoot }));
 
     if (s.config.source === "defaults") fail("config CLI did not run; L1 defaults in use", "fix Python first, then check scripts/foreman_config.py.");
     else if (s.config.errors.length) fail(`config errors: ${s.config.errors.join("; ")}`, "correct the named keys in your foreman.json.");

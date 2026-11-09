@@ -63,7 +63,7 @@ def _glob_re(pattern):
 
 
 def _protected(main_dir, home, agent_dir, tmp_root, extra):
-    first = [main_dir, home, agent_dir, tmp_root, os.path.abspath(os.sep)] + [e for e in extra if e]
+    first = [main_dir, home, agent_dir, tmp_root, os.path.abspath(os.sep)] + ([] if os.name == "nt" else ["/tmp", "/private/tmp"]) + [e for e in extra if e]
     return list(dict.fromkeys(p for r in first for p in (os.path.abspath(r), os.path.realpath(r))))
 
 
@@ -182,6 +182,11 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
         path = os.path.normpath(path)  # git prints `/` on Windows too
         real = os.path.realpath(path)
         if any(o != real and safe_ops.is_inside(o, real) for o in listed):
+            lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
+            continue
+        above = safe_ops.git_dirs_above(os.path.dirname(real))
+        if above and above[0] != os.path.realpath(main_dir):
+            # another checkout (a submodule's superproject, a worktree of some other tool) holds this one: it is not ours to remove
             lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
             continue
         if not any(safe_ops.is_inside(d, real) for d in conv):

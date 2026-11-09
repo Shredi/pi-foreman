@@ -879,6 +879,8 @@ def create_worktree(plan):
     if has_lockfile(plan["path"]):
         rc = run_npm_ci(plan["path"])
         install = "npm ci" if rc == 0 else "failed:%d" % rc
+    elif os.path.isfile(os.path.join(plan["path"], "package.json")):
+        install = "skipped (package.json without a lockfile)"
     return {"path": plan["path"], "branch": plan["branch"], "base": plan["base"], "install": install}
 
 
