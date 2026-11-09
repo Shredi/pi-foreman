@@ -13,7 +13,7 @@
 // sit inside the workspace (its .workflow/ included) or `<agentDir>/pi-foreman/state/wait/`;
 // inside the workspace the overlay's write protection set refuses it too. Owned dirs (owned.ts readWrite:
 // the handoff dirs, subagent-artifacts, the round worktree dir) are accepted when the caller passes them.
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -475,6 +475,11 @@ export class WaitRuntime {
     return [...this.waits.keys()].filter((id) => this.cancel(id));
   }
 
+  /** Pids of the foreman_bg runs of this session that are still waited on. */
+  bgPids(): number[] {
+    return [...this.waits.values()].flatMap((e) => (e.bg && e.pid ? [e.pid] : []));
+  }
+
   list(): { id: string; kind: WaitKind; note: string; ageSeconds: number; leftSeconds: number; log?: string; bg?: true }[] {
     const now = this.d.now();
     return [...this.waits.values()].map((e) => ({ id: e.id, kind: e.kind, note: e.note, ageSeconds: Math.round((now - e.started) / 1000), leftSeconds: Math.max(0, Math.round((e.deadline - now) / 1000)), ...(e.log ? { log: e.log } : {}), ...(e.bg ? { bg: true as const } : {}) }));
@@ -542,6 +547,21 @@ export function ghRunView(runId: string, cwd: string): Promise<CiStatus> {
       }
     });
   });
+}
+
+/**
+ * SIGTERM the process group of a foreman_bg run (detached on POSIX, so `-pid` is its group). win32: the run is not detached;
+ * a best-effort `taskkill /T` (no /F) ends its tree. Already gone or not ours to signal: nothing to do.
+ */
+export function terminateBg(pid: number, platform: string = process.platform): boolean {
+  if (!processAlive(pid)) return false;
+  try {
+    if (platform === "win32") spawn("taskkill", ["/pid", String(pid), "/T"], { windowsHide: true, stdio: "ignore" }).on("error", () => undefined);
+    else process.kill(-pid, "SIGTERM");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function processAlive(pid: number): boolean {
@@ -647,7 +667,13 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     },
     active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
     childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
-    cancelAll: (sessionId: string) => runtimes.get(sessionId)?.rt.cancelAll() ?? [],
+    // Called by the close sequence only (session_shutdown and a reload just dispose the runtime): a closed foreman takes its still-running
+    // foreman_bg runs with it; they would otherwise outlive the tab, detached.
+    cancelAll: (sessionId: string) => {
+      const rt = runtimes.get(sessionId)?.rt;
+      for (const pid of rt?.bgPids() ?? []) terminateBg(pid, deps.platform);
+      return rt?.cancelAll() ?? [];
+    },
     startPressure: async (_ctx: ExtensionContext, _spec: Extract<ValidSpec, { kind: "pressure" }>): Promise<{ id: string } | { error: string }> => ({ error: "pressure waits are for the foreman only" }),
     /** agent_settled (after the adapter reset its per-run state): a wake held during the run goes out as one message that triggers its own run. */
     settled: (sessionId: string): void => {

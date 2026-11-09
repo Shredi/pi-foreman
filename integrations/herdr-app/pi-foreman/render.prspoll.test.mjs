@@ -31,7 +31,7 @@ test("pollPrs execs `foreman prs poll --json` on each machine, once, under the b
   assert.equal(a.tasks.length, 2, "busy: not started twice");
   for (const t of a.tasks) await t(a.cx);
   const calls = prsCalls();
-  assert.deepEqual(calls.map((c) => [c[1], c[2]]), [[["prs", "poll", "--json"], { on: null }], [["prs", "poll", "--json"], { on: "alpha" }]]);
+  assert.deepEqual(calls.map((c) => [c[1], c[2]]), [[["prs", "poll", "--json"], { on: null, timeout: 600000 }], [["prs", "poll", "--json"], { on: "alpha", timeout: 600000 }]]);
   assert.equal(m.busy.size, 0, "the key is freed when the run ends");
 });
 
