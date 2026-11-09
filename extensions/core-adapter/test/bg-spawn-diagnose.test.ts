@@ -9,6 +9,7 @@
 //   directW   the same with the log opened "w"
 //   attached  cmd not detached, log opened "a": the detached flag is what loses the output
 //   detachedW cmd detached, log opened "w": the append-only handle under cmd is what loses the output
+//   builtinW  a shell builtin (`echo`) into a log opened "w", cmd not detached: whether "w" is what lets a bash builtin write
 //   sync      spawnSync of the same shellFor argv with pipes: exit status, stdout, stderr (quoting, cmd errors)
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -64,6 +65,7 @@ async function probes(dir: string, logs: { builtin: string; node: string }): Pro
     directW: await probe(process.execPath, nodeArgs, dir, path.join(dir, "directW.log"), "w", true, false),
     attached: await probe(sh.file, sh.args, dir, path.join(dir, "attached.log"), "a", false, sh.verbatim),
     detachedW: await probe(sh.file, sh.args, dir, path.join(dir, "detachedW.log"), "w", true, sh.verbatim),
+    builtinW: await probe(sh.file, [...sh.args.slice(0, -1), "echo pf-builtinw-ok"], dir, path.join(dir, "builtinW.log"), "w", false, sh.verbatim),
     sync: { status: sync.status, signal: sync.signal, error: sync.error?.message, stdout: sync.stdout, stderr: sync.stderr },
   };
   return `spawnDetached log stayed without the expected line; probes: ${JSON.stringify(out, null, 1)}`;

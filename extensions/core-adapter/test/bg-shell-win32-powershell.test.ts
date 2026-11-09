@@ -6,6 +6,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { shellFor, spawnDetached } from "../bg.ts";
 
+const alive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+};
+
 const LINE = "cd /c/x && powershell.exe -NoProfile -Command Get-Date";
 const bash = { shell: "C:\\Program Files\\Git\\bin\\bash.exe", args: ["-c"] };
 
@@ -24,6 +28,11 @@ test("spawnDetached win32: the injected shell receives the line unchanged as its
   });
   assert.ok("pid" in r, JSON.stringify(r));
   for (let i = 0; i < 100 && !fs.existsSync(out); i++) await new Promise((res) => setTimeout(res, 50));
-  assert.deepEqual(JSON.parse(fs.readFileSync(out, "utf8")), [LINE]);
-  fs.rmSync(d, { recursive: true, force: true });
+  try {
+    assert.deepEqual(JSON.parse(fs.readFileSync(out, "utf8")), [LINE]);
+  } finally {
+    // the child may still hold the dir or the log for a moment (Windows EBUSY): wait for its exit, then remove with retries
+    for (let i = 0; i < 100 && alive(r.pid); i++) await new Promise((res) => setTimeout(res, 50));
+    fs.rmSync(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  }
 });

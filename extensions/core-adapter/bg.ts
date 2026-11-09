@@ -11,6 +11,7 @@
 // package directory); while present, `foreman_bg` refuses with a pointer to `bg_run`, and `/foreman waits` also lists
 // its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
@@ -46,6 +47,16 @@ export const safeSegment = (v: string): string => v.replace(/[^A-Za-z0-9._-]+/g,
 /** `<stateDir>/scratch/<session>`: where foreman_bg logs live. */
 export const bgScratchDir = (stateDir: string, sessionId: string): string => path.join(stateDir, "scratch", safeSegment(sessionId));
 export const bgLogPath = (stateDir: string, sessionId: string, waitId: string): string => path.join(bgScratchDir(stateDir, sessionId), `wait-${safeSegment(waitId)}.log`);
+
+/**
+ * The log path of a new run: `bgLogPath`, or when that file exists (the wait id sequence restarts on a session reload while an older run
+ * may still write its log) a name with a time+random token, so a new run never truncates or interleaves with an earlier run's log.
+ */
+export function freshBgLogPath(stateDir: string, sessionId: string, waitId: string): string {
+  const base = bgLogPath(stateDir, sessionId, waitId);
+  if (!fs.existsSync(base)) return base;
+  return path.join(path.dirname(base), `wait-${safeSegment(waitId)}-${Date.now().toString(36)}${randomBytes(4).toString("hex")}.log`);
+}
 
 /**
  * The shell that runs the command: bash (else sh) on POSIX; on Windows the bash tool's shell, Pi's `getShellConfig(shellPath)`

@@ -117,7 +117,8 @@ export function childHandoffWrite(root: string, abs: string, ra: string, platfor
   const x = px(platform);
   const win = platform === "win32";
   const fold = (s: string): string => (win || platform === "darwin" ? s.toLowerCase() : s);
-  const roots = [x.resolve(root), real(root)].filter((s): s is string => !!s);
+  // the real spelling of `ra` resolves the deepest existing ancestor (8.3 `RUNNER~1` -> long form) even when the handoff dir is not created yet, so the root needs that long form too
+  const roots = [x.resolve(root), real(root), longForm(platform, x.resolve(root), real)].filter((s): s is string => !!s);
   const relOf = (p: string): string[] | null => {
     for (const r of roots) {
       const rel = x.relative(r, x.resolve(p));
