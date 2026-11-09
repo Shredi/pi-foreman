@@ -2058,8 +2058,47 @@ def _gm_resolve(url, base):
 
 _SUB_VALUED = {"--depth", "-j", "--jobs", "--filter", "--reference", "--ref-format"}
 _SUB_FLAGS = {"--init", "--recursive", "--force", "--checkout", "--merge", "--rebase", "--no-fetch", "--remote", "--quiet", "--progress",
-              "--dissociate", "--single-branch", "--no-single-branch", "--recommend-shallow", "--no-recommend-shallow", "--no-progress"}
+              "--require-init", "--dissociate", "--single-branch", "--no-single-branch", "--recommend-shallow", "--no-recommend-shallow", "--no-progress"}
 _SUB_SHORT = set("iqfN")
+_SUB_PATH_VALUED = {"--reference"}
+
+
+def _sub_parse(args):
+    """Parse the tokens after a `git submodule` verb once. Returns (flags, paths, value_paths, unknown): the options seen (names, `=` values dropped),
+    the path tokens (everything after `--`, dash-led ones included), the values of path-valued options (`--reference`, separate or `=` form), and
+    the count of options not recognised. Values of other options (`--depth`, `-j`, `--filter`, `--ref-format`) are never paths."""
+    flags, paths, value_paths, unknown = [], [], [], 0
+    skip = False
+    only_paths = False
+    for t in args:
+        if skip:
+            skip = False
+            if skip_is_path:
+                value_paths.append(t)
+            continue
+        if only_paths or not t.startswith("-") or t == "-":
+            paths.append(t)
+            continue
+        if t == "--":
+            only_paths = True
+            continue
+        name, eq, val = t.partition("=")
+        if t in _SUB_VALUED:
+            flags.append(t)
+            skip, skip_is_path = True, t in _SUB_PATH_VALUED
+        elif eq and name in _SUB_VALUED:
+            flags.append(name)
+            if name in _SUB_PATH_VALUED:
+                value_paths.append(val)
+        elif t.startswith("-j") and not t.startswith("--"):
+            flags.append("-j")
+        elif t in _SUB_FLAGS:
+            flags.append(t)
+        elif not t.startswith("--") and all(c in _SUB_SHORT for c in t[1:]):
+            flags.extend("-" + c for c in t[1:])
+        else:
+            unknown += 1
+    return flags, paths, value_paths, unknown
 
 
 def child_submodule(rest, ctx, call):
@@ -2072,11 +2111,11 @@ def child_submodule(rest, ctx, call):
         return None
     if any(w.dynamic for w in rest):
         return deny("children may not run `git submodule` with computed arguments; write them out.")
+    after = texts[texts.index(verb) + 1:] if verb != "foreach" else []
+    flags, arg_paths, value_paths, unknown = _sub_parse(after)
     if os.path.isabs(ctx.env.get("PI_FOREMAN_TREE_CEILING") or ""):
         tree = tree_top(ctx.start_cwd, ctx)
-        paths = [call.cwd]
-        after = texts[texts.index(verb) + 1:] if verb != "foreach" else []
-        paths += [os.path.join(call.cwd, t) for t in after if not t.startswith("-") and t != "--"]
+        paths = [call.cwd] + [os.path.join(call.cwd, t) for t in arg_paths + value_paths]
         for q in paths:
             real = os.path.realpath(q)
             if not tree or not (real == tree or _inside_strict(tree, real)):
@@ -2085,7 +2124,7 @@ def child_submodule(rest, ctx, call):
         return None
     if "--recursive" in texts:
         return deny("children may not run `git submodule %s --recursive`; the foreman or owner does that." % verb)
-    init = any(t in ("--init", "-i") or (t.startswith("-") and not t.startswith("--") and "i" in t) for t in texts)
+    init = any(f in ("--init", "--require-init", "-i") for f in flags)
     if not (verb in ("sync", "init") or (verb == "update" and init)):
         return None
     top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"]) or "").strip()
@@ -2099,28 +2138,8 @@ def child_submodule(rest, ctx, call):
         name, _, field = k[len("submodule."):].rpartition(".")
         subs.setdefault(name, {})[field] = v
     realtop = os.path.realpath(top)
-    chosen = []
-    skip_value = False
-    only_paths = False
-    for t in texts[texts.index(verb) + 1:]:
-        if skip_value:
-            skip_value = False
-            continue
-        if t == "--":
-            only_paths = True
-            continue
-        if t.startswith("-") and not only_paths:
-            if t in _SUB_VALUED:
-                skip_value = True
-            elif t.startswith("-j") and not t.startswith("--"):
-                pass
-            elif "=" in t and t.split("=", 1)[0] in _SUB_VALUED:
-                pass
-            elif t in _SUB_FLAGS or (not t.startswith("--") and all(c in _SUB_SHORT for c in t[1:])):
-                pass
-            else:
-                chosen.append("")
-            continue
+    chosen = [""] * unknown
+    for t in arg_paths:
         if any(ch in t for ch in "*?[") or t.startswith(":"):
             chosen.append("")
             continue

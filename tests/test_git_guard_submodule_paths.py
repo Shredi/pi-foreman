@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import git_guard as gg  # noqa: E402
-from _submodules import build_rig  # noqa: E402
+from _submodules import build_rig, git  # noqa: E402
 
 
 @unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
@@ -136,6 +136,77 @@ class SubmoduleOptionValueTest(unittest.TestCase):
         for cmd in self.CMDS:
             if "future" in cmd:
                 continue
+            d = self.decide(cmd)
+            self.assertNotEqual(d.level, 2, (cmd, d.reason))
+
+
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
+class SubmoduleOneParserTest(unittest.TestCase):
+    """One parse of the argv feeds both the inside-the-tree check and the URL rule."""
+
+    def setUp(self):
+        self.base = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.base, True)
+        self.rig = build_rig(self.base)
+
+    def decide(self, cmd, cwd=None):
+        t = self.rig.tree
+        return gg.decide(cmd, "child", cwd=cwd or t, env={"PI_FOREMAN_TREE_CEILING": t})
+
+    def differ(self):
+        path = os.path.join(self.rig.tree, ".gitmodules")
+        Path(path).write_text(Path(path).read_text().replace("/src/b", "/elsewhere/b"))
+
+    def test_reference_value_must_lie_inside_the_tree_in_both_forms(self):
+        outside = self.rig.superproject
+        for cmd in ("git submodule update --reference %s" % outside, "git submodule update --reference=%s" % outside,
+                    "git submodule update --reference ../../x", "git submodule update --reference=../../x"):
+            self.assertEqual(self.decide(cmd).level, 2, cmd)
+        inside = os.path.join(self.rig.tree, "libs", "a")
+        for cmd in ("git submodule update --reference %s" % inside, "git submodule update --reference=%s" % inside,
+                    "git submodule update --reference libs/a", "git submodule update --reference=libs/a"):
+            d = self.decide(cmd)
+            self.assertNotEqual(d.level, 2, (cmd, d.reason))
+
+    def test_other_option_values_are_never_paths(self):
+        for cmd in ("git submodule update --depth ../../x", "git submodule update --depth=../../x", "git submodule update -j ../../x",
+                    "git submodule update --filter ../../x", "git submodule update --filter=../../x",
+                    "git submodule update --ref-format ../../x", "git submodule update --ref-format=../../x"):
+            d = self.decide(cmd)
+            self.assertNotEqual(d.level, 2, (cmd, d.reason))
+
+    def test_dash_led_path_after_double_dash_is_checked(self):
+        for cmd in ("git submodule update -- -/../../x", "git submodule update -- -/../../../super", "git submodule status -- -/../../x"):
+            self.assertEqual(self.decide(cmd).level, 2, cmd)
+        self.assertNotEqual(self.decide("git submodule update -- libs/a").level, 2)
+
+    def test_require_init_counts_as_init_for_the_url_rule(self):
+        self.differ()
+        for cmd in ("git submodule update --require-init", "git submodule update --require-init b", "git submodule update --require-init -- b"):
+            self.assertEqual(self.decide(cmd).level, 2, cmd)
+        self.assertNotEqual(self.decide("git submodule update --require-init libs/a").level, 2)
+
+    def test_require_init_refused_for_an_unconfigured_submodule(self):
+        git(self.rig.superproject, "config", "--unset", "submodule.b.url")
+        for cmd in ("git submodule update --require-init", "git submodule update --require-init b", "git submodule update --init b"):
+            self.assertEqual(self.decide(cmd).level, 2, cmd)
+        self.assertNotEqual(self.decide("git submodule update --require-init libs/a").level, 2)
+
+    def test_the_review_probe_set(self):
+        self.differ()
+        refused = ("update --init", "update --init -- b", "update --init --depth b", "update --init -v", "update --init --no-recursive",
+                   "update -i", "update -Ni", "update --init -r", "sync", "init", "init b", "-q update --init", "--quiet update --init",
+                   "update --recursive", "status --recursive", "status --cached --recursive", "sync --recursive",
+                   "update --init --ref-format files", "update --init --ref-format=files", "update --init --filter=blob:none")
+        for rest in refused:
+            cmd = "git submodule " + rest
+            self.assertEqual(self.decide(cmd).level, 2, cmd)
+        self.assertEqual(self.decide("git submodule update '--depth' 1 --init").level, 2)
+        self.assertEqual(self.decide("git submodule update --init && git status").level, 2)
+        self.assertEqual(self.decide("git -C %s submodule update --init" % self.rig.tree).level, 2)
+        for rest in ("update --init libs/a", "update --init -- libs/a", "update --init --depth 1 -- libs/a", "update",
+                     "sync libs/a", "init -- libs/a", "foreach --recursive 'git status'"):
+            cmd = "git submodule " + rest
             d = self.decide(cmd)
             self.assertNotEqual(d.level, 2, (cmd, d.reason))
 

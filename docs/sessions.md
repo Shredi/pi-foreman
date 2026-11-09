@@ -272,12 +272,13 @@ but never anything above the session's workspace or round, and never another rou
 another round's admin dir fails the back-link check. A session started inside a submodule checkout does not lift: its workspace
 is that submodule.
 
-- `git submodule update`, `sync`, `init`, `foreach` and `status` are allowed for children when the cwd and every path argument lie inside
-  the round's own tree. The URL rule applies only to `sync`, `init` and `update --init`: a `.gitmodules` URL is resolved the way git
+- `git submodule update`, `sync`, `init`, `foreach` and `status` are allowed for children when the cwd, every path argument (everything after
+  `--` included, even tokens starting with `-`) and the value of `--reference` (`--reference x` and `--reference=x`) lie inside
+  the round's own tree. The URL rule applies only to `sync`, `init` and `update --init` or `--require-init` (which implies `--init`): a `.gitmodules` URL is resolved the way git
   resolves it (relative to the superproject's remote) and must equal the URL already configured, and a child's first init of an
   unconfigured submodule is refused (run it as the foreman or owner). Glob or pathspec-magic paths (`*`, `?`, `[`, leading `:`)
-  count as every submodule; an option's separate value (`--depth 1`, `-j 2`, `--filter x`, `--reference r`, `--ref-format f`) is not a
-  path and an unknown option counts as every submodule. `update`, `sync`, `init` and `status` with `--recursive` are refused for
+  count as every submodule; the value of any other option (`--depth 1`, `-j 2`, `--filter x`, `--ref-format f`, in the separate, `=` or attached form) is not a
+  path, and an unknown option counts as every submodule. `update`, `sync`, `init` and `status` with `--recursive` are refused for
   children even inside the tree (the foreman or owner runs those). `foreach '<cmd>'` classifies the inner command like any child command.
 - `<repo>` for a submodule is the submodule's own checkout name. Each submodule checkout gets its own PR gate and reviewer:
   PASS records are keyed by the checkout's own top level, not the lifted root.
