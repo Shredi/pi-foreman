@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
-  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCard, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
+  parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel,
 } from "./model.js";
@@ -405,9 +405,10 @@ export default class ForemanAgents extends View {
       // The size is the one render stored (this.vp); a live read from the handler refreshes it after a resize when the host allows it.
       const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
       if (!b || !pos || !loc || !vp) return;
-      const a = placeCard({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
+      const { anchor, maxH } = placeCardBox({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
       this.cardAnchor ??= new Map();
-      if (this.cardAnchor.get(id) !== a) { this.cardAnchor.set(id, a); cx.notify?.(); }
+      this.cardMaxH ??= new Map();
+      if (this.cardAnchor.get(id) !== anchor || this.cardMaxH.get(id) !== maxH) { this.cardAnchor.set(id, anchor); this.cardMaxH.set(id, maxH); cx.notify?.(); }
     }, undefined);
     // The tooltip names the state in words (the dot's colours); the hover card adds the details.
     const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
@@ -417,15 +418,17 @@ export default class ForemanAgents extends View {
     // The id carries a hash of the card's content: a card is not reused when its content changed.
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
       .anchor(this.cardAnchor?.get(id) ?? "top_center")
-      .trigger(trigger).content(guard(() => this.cardView(t, c), div().child("")));
+      .trigger(trigger).content(guard(() => this.cardView(t, c, this.cardMaxH?.get(id)), div().child("")));
   }
 
   // The hover card of a PR: title, description excerpt, conflict line, the jobs grouped failed / running / passed.
-  cardView(t, c) {
+  // `maxH` bounds the card to the room on its side of the chip; what does not fit is clipped (gpui-kit style.rs:95 max_h, gpui `overflow_hidden`).
+  cardView(t, c, maxH = 0) {
     const color = tones(t);
     const tone = { failed: color.red, running: color.amber, passed: color.green };
     const shell = v_flex().w(300).p(10).gap(7).bg(t.popover).border(1).border_color(t.border).rounded(8)
-      .text_size(11).text_color(t.muted);
+      .text_size(11).text_color(t.muted)
+      .when(maxH > 0, (el) => el.max_h(maxH).overflow_hidden());
     const title = div().text_size(12).font_semibold().text_color(t.foreground).child(c.title);
     const excerpt = div().text_color(t.muted).child(c.excerpt);
     const conflict = h_flex().gap(5).items_center().text_color(t.blocked).child(conflictMark(t)).child(c.conflict);

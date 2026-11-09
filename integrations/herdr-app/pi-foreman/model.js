@@ -974,9 +974,15 @@ const CARD_MARGIN = 8; // the window margin the host keeps around an anchored su
 
 /** Estimated height in px of the hover card of `c` (a prCard result plus `more`): an overestimate, so a card placed by it fits. */
 export function prCardHeight(c) {
+  // Text wraps at the card's content width (300 - 2 * 10 padding): about 6.8 px a character at 12 px semibold (title), 6.1 at 11 px.
+  const lines = (s, perLine) => Math.max(1, Math.ceil(String(s ?? "").length / perLine));
+  const inner = CARD_W - 20;
+  const wrapped = (s, fontPx, charPx) => lines(s, Math.floor(inner / (charPx * fontPx / 12)));
   const jobs = listOf(c?.groups).reduce((n, g) => n + 18 + 15 * (g.names?.length ?? 0) + (g.more > 0 ? 15 : 0) + 5, 0);
-  return 20 + 16 + 7 + 16 + (c?.excerpt ? 7 + 45 : 0) + (c?.conflict ? 7 + 16 : 0) + 7 + jobs + (c?.status ? 7 + 16 : 0)
-    + (c?.note ? 7 + 16 : 0) + (c?.more ? 7 + 16 : 0) + (listOf(c?.groups).length === 0 && !c?.status && !c?.note ? 7 + 16 : 0);
+  return 20 + 16 * wrapped(c?.title, 12, 7) + 7 + 16 * wrapped(c?.state, 11, 7) + (c?.excerpt ? 7 + 15 * wrapped(c.excerpt, 11, 7) : 0)
+    + (c?.conflict ? 7 + 16 * wrapped(c.conflict, 11, 7) : 0) + 7 + jobs + (c?.status ? 7 + 15 * wrapped(c.status, 11, 7) : 0)
+    + (c?.note ? 7 + 15 * wrapped(c.note, 11, 7) : 0) + (c?.more ? 7 + 15 * wrapped(c.more, 11, 7) : 0)
+    + (listOf(c?.groups).length === 0 && !c?.status && !c?.note ? 7 + 16 : 0);
 }
 
 /** Which anchor (a gpui-base HoverCard `anchor`) puts a card of `card` {w, h} next to the chip `rect` {x, y, w, h} inside the
@@ -984,13 +990,23 @@ export function prCardHeight(c) {
  *  ("left_center" = to its right, "right_center" = to its left). The host clamps a card into the window and has no flip
  *  or offset, so room is checked here: below, then above, then the side with the most room. */
 export function placeCard(rect, view, card = { w: CARD_W, h: 200 }) {
+  return placeCardBox(rect, view, card).anchor;
+}
+
+/** {anchor, maxH}: the anchor of placeCard plus the height the card is bounded to so it fits the chosen side (the room there
+ *  minus the window margin). The estimate is only a guess, so below needs a clear margin (est * 1.5 or est + 120); else the
+ *  vertical side with more room wins when the estimate fits there; beside only when neither does. */
+export function placeCardBox(rect, view, card = { w: CARD_W, h: 200 }) {
   const m = CARD_MARGIN;
-  if (!rect || !view || !(view.h > 0)) return "top_center";
-  if (rect.y + rect.h + card.h <= view.h - m) return "top_center";
-  if (rect.y - card.h >= m) return "bottom_center";
+  if (!rect || !view || !(view.h > 0)) return { anchor: "top_center", maxH: 0 };
+  const below = view.h - m - (rect.y + rect.h);
+  const above = rect.y - m;
+  if (below >= Math.min(card.h * 1.5, card.h + 120)) return { anchor: "top_center", maxH: Math.floor(below) };
+  const best = Math.max(below, above);
+  if (best >= card.h) return below >= above ? { anchor: "top_center", maxH: Math.floor(below) } : { anchor: "bottom_center", maxH: Math.floor(above) };
   const right = view.w - (rect.x + rect.w) - m;
   const left = rect.x - m;
-  return right >= card.w || right >= left ? "left_center" : "right_center";
+  return { anchor: right >= card.w || right >= left ? "left_center" : "right_center", maxH: Math.floor(view.h - 2 * m) };
 }
 
 // ---- plan panel hand-off -------------------------------------------------------------------------------------------

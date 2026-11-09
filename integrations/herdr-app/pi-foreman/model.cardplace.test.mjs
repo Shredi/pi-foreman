@@ -58,3 +58,37 @@ test("the card height estimate grows with the content", () => {
   const big = prCardHeight({ ...prCard({ number: 1, title: "t", bodyText: "x ".repeat(80), mergeable: "CONFLICTING", checks: ["fail", "ok", "pending"] }), more: "also #2" });
   assert.ok(small > 60 && big > small + 80);
 });
+
+const { placeCardBox } = await import("./model.js");
+const liveCard = () => ({
+  ...prCard({ number: 132, title: "feat: real terminal rendering (colours, native scrollback, stable reading position)", bodyText: "word ".repeat(60), checks: [] }), more: "",
+});
+
+test("the live case (window 1866x1143, chip y 887 h 18, long wrapping title) puts the card above, bounded to fit", () => {
+  const c = liveCard();
+  const r = { x: 323, y: 887, w: 37, h: 18 };
+  const { anchor, maxH } = placeCardBox(r, { w: 1866, h: 1143 }, { w: 300, h: prCardHeight(c) });
+  assert.equal(anchor, "bottom_center");
+  assert.ok(maxH <= r.y - 8 && maxH >= prCardHeight(c));
+});
+
+test("a chip high in the window keeps the card below", () => {
+  const { anchor } = placeCardBox({ x: 323, y: 100, w: 37, h: 18 }, { w: 1866, h: 1143 }, { w: 300, h: prCardHeight(liveCard()) });
+  assert.equal(anchor, "top_center");
+});
+
+test("the card max height never exceeds the room on its side", () => {
+  const v = { w: 1200, h: 800 };
+  for (let y = 0; y <= 780; y += 10) for (const h of [120, 300, 500, 900]) {
+    const r = chip(300, y);
+    const { anchor, maxH } = placeCardBox(r, v, { w: 300, h });
+    const room = anchor === "top_center" ? v.h - 8 - (r.y + r.h) : anchor === "bottom_center" ? r.y - 8 : v.h - 16;
+    assert.ok(maxH <= room, `y ${y} h ${h} ${anchor} ${maxH} > ${room}`);
+  }
+});
+
+test("the estimate counts wrapped title lines", () => {
+  const one = prCardHeight({ ...prCard({ number: 1, title: "short", checks: [] }), more: "" });
+  const two = prCardHeight({ ...prCard({ number: 1, title: "x".repeat(120), checks: [] }), more: "" });
+  assert.ok(two >= one + 32);
+});
