@@ -274,6 +274,8 @@ interface Session {
   skillDirs?: Promise<string[]>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
   owned: OwnedRoots;
+  /** True until `npm root -g` resolved or failed: a custom worktree root is not owned and `--worktree` open is refused meanwhile. */
+  npmRootPending: boolean;
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
@@ -698,12 +700,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // the Pi install root and the global npm root are protected roots only this side knows; the npm root joins when it resolves (below)
     const installRoot = await installRootOfPi();
     const rootInputsOf = (npmRoot: string | null) => sessionRootInputs(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
-    let rootInputs = rootInputsOf(null);
-    const computeOwned = (npmRoot: string | null): OwnedRoots => {
-      if (npmRoot) rootInputs = rootInputsOf(npmRoot);
+    // unresolved until the npm root is known (or failed): no owned custom root, so a root under the npm root is never briefly owned
+    let rootInputs: ReturnType<typeof rootInputsOf> = {};
+    const computeOwned = (npmRoot: string | null, resolved = true): OwnedRoots => {
+      if (resolved) rootInputs = rootInputsOf(npmRoot);
       return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: rootInputs.worktreeGlobs });
     };
-    const owned = computeOwned(null);
+    const owned = computeOwned(null, false);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
@@ -719,6 +722,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       configProvider: provider,
       overlay: buildOverlay(owned),
       owned,
+      npmRootPending: true,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
@@ -880,12 +884,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // `npm root -g` once per session, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
     void resolveNpmRoot({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
       .then((npmRoot) => {
-        if (!npmRoot) return;
         s.owned = computeOwned(npmRoot);
+        s.npmRootPending = false;
         s.overlay = buildOverlay(s.owned);
         if (rootInputs.notice && !isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        s.owned = computeOwned(null);
+        s.npmRootPending = false;
+        s.overlay = buildOverlay(s.owned);
+      });
     if (!isChild) {
       if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
         try {
@@ -4499,7 +4507,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
     const roots = await piRootsOf(s);
-    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), protectedRoots: { installRoot: roots.installRoot, npmRoot: roots.npmRoot }, model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), protectedRoots: { installRoot: roots.installRoot, npmRoot: roots.npmRoot, npmRootPending: s.npmRootPending }, model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
       const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
       await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
     } };

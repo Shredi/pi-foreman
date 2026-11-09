@@ -212,7 +212,9 @@ symlink; both the spelled and the real path are recognised everywhere.
 
 The terminal `foreman session open --worktree` checks only the Python subset of these (main checkout, home, agent dir,
 temp root, `/tmp`, `/`; it does not know the pi-foreman package root, the Pi install root or the global npm root). The
-adapter checks all of them at session start, at a `--worktree` open (before Python runs) and in doctor.
+adapter checks all of them at session start, at a `--worktree` open (before Python runs) and in doctor. The global npm root
+resolves in the background at session start; until it has answered (or failed) the root counts as unresolved: no custom
+root is owned, and a `--worktree` open is refused with `root_unresolved` ("still resolving"; retry in a moment).
 
 **Across filesystems.** `git worktree add` needs nothing special, and a worktree is removed with `git worktree remove`
 (never the trash command, never `--force`). The trash command is used only for scratch dirs: if it fails (typically a

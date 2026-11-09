@@ -157,6 +157,16 @@ def convention_dirs(main_dir, cfg):
             os.path.realpath(os.path.join(main_dir, "..", "worktrees", os.path.basename(main_dir)))]
 
 
+def held_by_gitlink(checkout, real):
+    """True when `real` is a gitlink path of `checkout`, or sits inside one."""
+    try:
+        links = safe_ops.list_gitlinks(checkout)
+    except safe_ops.Precondition:
+        return False
+    rel = os.path.relpath(real, checkout).replace(os.sep, "/")
+    return any(rel == g or rel.startswith(g.rstrip("/") + "/") for g in links)
+
+
 def sweep(cwd, cfg, state, sid, dry_run=False):
     """Lines of the sweep report; raises safe_ops.Precondition when cwd is not a git repo."""
     safe_ops.workspace_root(cwd)
@@ -185,8 +195,8 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
             lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
             continue
         above = safe_ops.git_dirs_above(os.path.dirname(real))
-        if above and above[0] != os.path.realpath(main_dir):
-            # another checkout (a submodule's superproject, a worktree of some other tool) holds this one: it is not ours to remove
+        if above and above[0] != os.path.realpath(main_dir) and held_by_gitlink(above[0], real):
+            # another checkout holds this one as a submodule (a worktree an outside tool nested): it is not ours to remove
             lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
             continue
         if not any(safe_ops.is_inside(d, real) for d in conv):

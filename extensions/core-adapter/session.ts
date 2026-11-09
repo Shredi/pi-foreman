@@ -360,8 +360,8 @@ export interface SessionDeps {
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
   /** Run a `foreman_session.py` verb (see remoteRunner). */
   runRemote?: RunRemote;
-  /** The Pi install root and the global npm root (only this side knows them): protected roots of the worktree-root resolver. */
-  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null };
+  /** The Pi install root and the global npm root (only this side knows them): protected roots of the worktree-root resolver; `npmRootPending` while `npm root -g` has not answered. */
+  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null; npmRootPending?: boolean };
 }
 
 export const PLAN_MODE_UNAVAILABLE = "session open refused [plan_mode_unavailable]: this session has no /plan command (install a plan-mode package), so the new session cannot open in plan mode. Open it without planMode, or pass the first command your setup provides.";
@@ -454,6 +454,7 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   if (c.worktree && !c.machine) {
     // the root the new worktree lands in is checked here, before anything is spawned (worktreeroot.ts resolver; the Python side repeats it)
     if (c.label === "worktrees") return { text: "session open refused [label_reserved]: the label `worktrees` is the folder of pi-subagents isolation worktrees; choose another label", ok: false };
+    if (d.protectedRoots?.npmRootPending) return { text: "session open refused [root_unresolved]: the global npm root is still resolving, so the worktree root cannot be checked yet; retry in a moment", ok: false };
     const top = workspaceTop(path.resolve(d.cwd, c.cwd ?? "."));
     const main = top ? mainCheckoutOf(top) : null;
     const raw = (d.config as { close?: { worktreeDir?: unknown } } | undefined)?.close?.worktreeDir;
@@ -634,7 +635,7 @@ export interface SessionHost {
   config?: Json;
   trace?: (rec: Record<string, unknown>) => void;
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
-  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null };
+  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null; npmRootPending?: boolean };
 }
 
 const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) => c.name) ?? [];
