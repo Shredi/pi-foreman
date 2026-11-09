@@ -135,7 +135,8 @@ import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
-import { LiveState, intercomIdOf } from "./livestate.ts";
+import { LiveState, intercomIdOf, labelOfHandoff } from "./livestate.ts";
+import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -1770,6 +1771,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       show: "on",
       // The foreman_protect rule in Approvals ("off"/absent only renders the pre-protect baseline).
       protect: "on",
+      // Owner-readable plans, questions and notes (ownertext.ts; "off" only drops the added lines).
+      ownerReadable: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
@@ -2770,7 +2773,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
       if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") ms.questionCalls.add(event.toolCallId);
       // ask_user_question comes from the bundled @juicesharp/rpiv-ask-user-question; the harness only counts the dialog
-      if (event.toolName === ASK_USER_TOOL) ms.trace?.emit({ event: "dialog", surface: "ask_user" });
+      if (event.toolName === ASK_USER_TOOL) {
+        ms.trace?.emit({ event: "dialog", surface: "ask_user" });
+        // owner-readable questions: the project and session label in front of each question (in place, idempotent), a jargon hint on the result
+        const prefix = questionPrefix(projectNameOf(ctx.cwd), labelOfHandoff(process.env.PI_FOREMAN_HANDOFF_DIR?.trim()));
+        prefixQuestions(event.input, prefix);
+        const hint = questionHint(event.input, prefix);
+        questionHints.clear(); // a call blocked later gets no tool_result: drop its stale hint
+        if (hint) questionHints.set(event.toolCallId, hint);
+        ms.trace?.emit({ event: "question_check", jargon: hint ? 1 : 0 });
+      }
     }
     let bashTimeout = null as ChildBashTimeout | null;
     let wantHold = null as { gate: LedgerGate; key: string; sid: string } | null;
@@ -3276,7 +3288,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
           if (occasionOf(task) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
-          return planFactsBlock(planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir), planLedger, lg);
+          const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
+          return [planFactsBlock(planPaths, planLedger, lg), ...ownerFactsLines(planPaths, ctx.cwd)].join("\n");
         });
         if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
@@ -3777,6 +3790,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (hash) s.trace?.emit({ event: "plan_ruling_stamped", to: hash.slice(0, 16) });
   }
   const bashRulingSnaps = new Map<string, Map<string, number>>();
+  /** ask_user_question calls whose text read like jargon: the hint is appended to the result (ownertext.ts). */
+  const questionHints = new Map<string, string>();
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
@@ -3998,7 +4013,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
-    const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
+    const qHint = questionHints.get(event.toolCallId);
+    questionHints.delete(event.toolCallId);
+    const withNote = () => (readNote || qHint ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : [])] } : undefined);
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     if (owner && !owner.isChild && !event.isError && (owner.reviewGate.last !== null && !owner.reviewGate.revised) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
@@ -4567,7 +4584,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hint = inHerdr
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
-          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+          const openHint = showHint(markdown);
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
         }
@@ -4803,7 +4821,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;
           s.trace?.emit({ event: "dialog", surface: "checkpoint" });
           try {
-            ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
+            ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
             answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
           } catch {
             answer = undefined;

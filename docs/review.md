@@ -132,6 +132,7 @@ starts a new lineage. The first FAIL of a lineage refuses once with `plan_revisi
 before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
 The `[plan-review]` runs are not capped; the loop guard stops a plan review that fails twice in a row with the same findings on the same plan version (see [ceremony](ceremony.md)).
+The facts block of a `[plan-review]` launch also has one `Owner section (<plan>): ...` line per plan; the reviewer FAILs a plan whose `## For the owner` section is missing, not the first `##` section, too long (over about 10 lines), without the implicit decisions, or full of jargon (see [ceremony](ceremony.md)).
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
 (`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.
 

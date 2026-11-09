@@ -276,6 +276,9 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 characters, markdown up to 256 KiB; larger input is refused with the limit named. It never takes a path. Each call replaces the previous note; the result is
 `shown: <title> (v<n>, <k> diagram(s)) at <path>`, and the trace gets one `show_note` event. `mermaid` fences are rendered to sidecar SVGs after the call returns.
 The tool stays declared whatever `tools.deferred` says. See [Notes](herdr.md#notes).
+When the note does not open with a plain paragraph of at most three sentences, the reply adds a hint to open with a short summary (never a refusal).
+
+`ask_user_question` (from the bundled package) gets two additions from the adapter: each question text is prefixed in place with `[<project> · <session label>] ` (project = the main worktree's folder; the label only in an opened session), and a result gets a hint when a question or option description reads like jargon; see [ceremony](ceremony.md).
 
 ### Deferred tools and searchable skills
 
