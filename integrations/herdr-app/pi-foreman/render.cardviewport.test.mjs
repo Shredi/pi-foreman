@@ -54,3 +54,17 @@ test("the viewport size read during render places the card when the handler cann
     assert.equal(cards(render(mod))[0].props.anchor, "top_center");
   } finally { delete globalThis.window; }
 });
+
+test("the card shell is bounded to the room on its side: max_h of that room and overflow_hidden", () => {
+  globalThis.window = { viewport_size: () => ({ width: 300, height: 800 }) };
+  try {
+    const mod = newMod(root());
+    const first = cards(render(mod))[0];
+    first.props.trigger.props.on_mouse_move(move(780), { notify: () => {} });
+    const [card] = cards(render(mod));
+    assert.equal(card.props.anchor, "bottom_center");
+    // the chip top is at 771 (780 less the 9 px local offset); the room above it is 771 less the 8 px margin
+    assert.equal(card.contentEl.props.max_h, 763);
+    assert.equal(card.contentEl.props.overflow_hidden, true);
+  } finally { delete globalThis.window; }
+});
