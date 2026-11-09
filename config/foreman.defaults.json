@@ -108,7 +108,7 @@
   "python": { "path": null },
   "trace": { "enabled": null, "dir": null },
   "skills": { "visible": [], "hidden": ["pi-subagents", "pi-intercom", "council-mode", "skill-authoring"] },
-  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prWatchSeconds": 60 },
+  "tools": { "git": false, "pr": true, "deferred": ["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"], "prHost": "auto", "prSources": {}, "prWake": [], "prWatchSeconds": 60 },
   "sidebar": { "statusSeconds": 60 },
   "shell": { "msysNoPathconv": true }
 }

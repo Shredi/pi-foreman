@@ -70,6 +70,7 @@ Keys outside safety that the project and session layers cannot loosen either
     roles.*.searchable               intersect only, and a name dropped from roles.*.tools cannot come back through it
     tools.prHost                     ignored (it picks the program the PR tools run)
     tools.prGithubHosts              ignored (it names the hosts the PR tracker polls: user or overlay config only)
+    tools.prSources / prWake         ignored (prSources runs programs, prWake decides what wakes the session: user or overlay config only)
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
     childMaxThinking                 lower only (off < ... < max)
@@ -228,6 +229,8 @@ IGNORED_KEYS = [
     (("providers", "*", "roles", "*", "strong"), "the strong model is picked in the user or overlay config"),
     (("tools", "prHost"), "the PR host program comes from the user or overlay config"),
     (("tools", "prGithubHosts"), "the GitHub hosts of the PR tracker come from the user or overlay config"),
+    (("tools", "prSources"), "PR sources run programs: user or overlay config only"),
+    (("tools", "prWake"), "the wake rules for PR watches come from the user or overlay config"),
     (("skills", "visible"), "it hides every other skill: user or overlay config only"),
     (("sidebar", "statusCommand"), "the sidebar status command runs a program: user or overlay config only"),
     (("sidebar", "statusSeconds"), "the sidebar status interval comes from the user or overlay config"),

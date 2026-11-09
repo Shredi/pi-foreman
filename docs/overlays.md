@@ -76,6 +76,7 @@ and `foreman:ready`. There is no second handshake.
 | Events | `foreman:ready` on `pi.events` (see Handshake); no other `foreman:*` events are emitted |
 | Retro backlog | `retro.backlogDir` points the central backlog elsewhere; `retro.repoBacklog` and `retro.workspaceKey` pick per-workspace stores and keys (see [retro](retro.md)). User or overlay config only. |
 | Sidebar status | `sidebar.statusCommand` and `sidebar.statusSeconds` show a program's items as extra dots on the Herdr sidebar (see [External sidebar status](#external-sidebar-status)). User or overlay config only. |
+| PR sources and wake rules | `tools.prSources` names scripts the PR tracker runs per open PR for checks and comments GitHub lacks, and `tools.prWake` picks which watch events wake the session (see [PR sources and wake rules](#pr-sources-and-wake-rules)). User or overlay config only. |
 | Ceremony, fan-out, fallback | `ceremony.*`, `fanout.max`, `providers.<p>.fallback` |
 | Host pressure limits | `resources.*` (see [resources](resources.md)); a project file may only tighten them |
 
@@ -115,6 +116,19 @@ The CI detail hook is not shipped. Use `tools.prHost` templates (`find`) to adap
 
 Conflict rules and rationale: `design/architecture.md`
 [section 2](../design/architecture.md#2-layers-and-the-overlay-contract).
+
+### PR sources and wake rules
+
+An overlay can teach the PR tracker about an internal CI or a review bot without touching the harness: it ships a script in its own package and names it in `foreman.json`. The script prints one JSON object of checks and comments for the PR it is given; pi-foreman validates it as untrusted data.
+
+```json
+{ "tools": { "prSources": { "internal-ci": {
+  "command": "python3 /path/to/overlay/scripts/ci_status.py --repo {repo} --pr {number} --sha {head}",
+  "repos": ["acme/*"]
+} } } }
+```
+
+The flow stays one-way: the script and its credentials live in the overlay, and the harness only runs it. Output format, trust model, head binding and limits are in [tools](tools.md#sources); the rules that decide which events wake the session are in [tools](tools.md#wake-rules).
 
 ### External sidebar status
 

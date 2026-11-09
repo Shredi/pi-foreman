@@ -501,6 +501,18 @@
       "enable": "{\"tools\": {\"pr\": true}}"
     },
     {
+      "id": "pr-sources",
+      "area": "tools",
+      "title": "PR sources and wake rules",
+      "purpose": "Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only.",
+      "doc": "docs/tools.md#sources",
+      "keys": ["tools.prSources", "tools.prSources.*.command", "tools.prSources.*.repos", "tools.prSources.*.timeoutSeconds", "tools.prSources.*.gates", "tools.prWake"],
+      "commands": [],
+      "switch": {"key": "tools.prSources", "on": "nonempty"},
+      "state": "opt-in",
+      "enable": "{\"tools\": {\"prSources\": {\"ci\": {\"command\": \"ci-status --repo {repo} --pr {number} --sha {head}\"}}}}"
+    },
+    {
       "id": "sidebar-status",
       "area": "ui",
       "title": "External sidebar status",

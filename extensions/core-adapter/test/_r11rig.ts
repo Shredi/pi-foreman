@@ -34,7 +34,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(path.join(project, ".workflow"), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
-  const sessionId = `r11-p2-${++rigs}`;
+  const sessionId = `r11-p2-${process.pid}-${++rigs}`;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   process.env.PI_INTERCOM_SESSION_ID = sessionId;
   delete process.env.PI_INTERCOM_STABLE_ID;

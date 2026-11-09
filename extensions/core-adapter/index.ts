@@ -104,6 +104,7 @@ import type { PrPackSession } from "./gitpack.ts";
 import { addTracked, readStoreEntry } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, watchIntervalMs } from "./prwatch.ts";
+import { parseWakeRules } from "./prwake.ts";
 import { PrHost, branchOf, isTrackedKey, resolveGithubHosts } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
 import { Where, originRepo } from "./where.ts";
@@ -765,6 +766,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prWatches: new PrWatches({
         storeEntry: (key) => readStoreEntry(agentDir, key, Date.now(), prFeedOn(s), resolveGithubHosts(s.config.config)),
         githubHosts: () => resolveGithubHosts(s.config.config),
+        wakeRules: () => parseWakeRules(get(s.config.config, "tools.prWake")).rules,
         retrack: async (key) => {
           const hosts = resolveGithubHosts(s.config.config);
           if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);

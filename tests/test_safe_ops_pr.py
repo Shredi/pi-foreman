@@ -432,13 +432,32 @@ class GhRepoOpsTest(PrCase):
         self.assertEqual(pair(view, "-R"), "ghe.example.com/acme/lib")
         self.assertEqual(api[:4], ["gh", "api", "--method", "GET"])
         self.assertEqual(pair(api, "--hostname"), "ghe.example.com")
-        self.assertEqual(api[-1], "repos/acme/lib/pulls/5/comments?per_page=100")
+        self.assertEqual(api[-7], "repos/acme/lib/pulls/5/comments")
+        self.assertEqual(api[-6:], ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"])
         self.ok(self.pr("pr_comments", number=5, repo="acme/lib"))
         api = argv_of(self.calls()[3])
         self.assertNotIn("--hostname", api)
-        self.assertEqual(api[-1], "repos/acme/lib/pulls/5/comments?per_page=100")
+        self.assertEqual(api[-7], "repos/acme/lib/pulls/5/comments")
+        self.assertEqual(api[-6:], ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"])
         self.ok(self.pr("pr_comments", number=5))
-        self.assertEqual(argv_of(self.calls()[5])[-1], "repos/{owner}/{repo}/pulls/5/comments?per_page=100")
+        api = argv_of(self.calls()[5])
+        self.assertEqual(api[-7], "repos/{owner}/{repo}/pulls/5/comments")
+        self.assertEqual(api[-6:], ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"])
+
+    def test_comments_bot_flag_on_every_kind(self):
+        view = {"comments": [{"id": "IC1", "author": {"id": "A", "is_bot": True, "login": "app-x", "name": ""}, "createdAt": "2026-01-02T00:00:00Z", "body": "b"},
+                             {"id": "IC2", "author": {"id": "B", "is_bot": False, "login": "carol", "name": "C"}, "createdAt": "2026-01-02T01:00:00Z", "body": "h"},
+                             {"id": "IC3", "author": {"login": "dep[bot]"}, "createdAt": "2026-01-02T02:00:00Z", "body": "f"}],
+                "reviews": [{"id": "R1", "author": {"is_bot": True, "login": "rev"}, "submittedAt": "2026-01-03T00:00:00Z", "body": "x", "state": "COMMENTED"},
+                            {"id": "R2", "author": {"is_bot": False, "login": "dave"}, "submittedAt": "2026-01-03T01:00:00Z", "body": "y", "state": "APPROVED"}]}
+        inline = [{"id": 1, "user": {"login": "lint", "type": "Bot"}, "created_at": "2026-01-04T00:00:00Z", "body": "i", "path": "a.py", "line": 1},
+                  {"id": 2, "user": {"login": "erin", "type": "User"}, "created_at": "2026-01-04T01:00:00Z", "body": "j", "path": "a.py", "line": 2}]
+        self.scn({"gh pr view 5": {"stdout": j(view)}, "gh api": {"stdout": j(inline)}})
+        res = self.ok(self.pr("pr_comments", number=5))
+        self.assertEqual({(c["kind"], c["id"]): c["bot"] for c in res["comments"]},
+                         {("issue", "IC1"): True, ("issue", "IC2"): False, ("issue", "IC3"): True,
+                          ("review_summary", "R1"): True, ("review_summary", "R2"): False,
+                          ("review", "1"): True, ("review", "2"): False})
 
     def test_find_by_head_with_state_all_and_host_repo(self):
         found = [{"number": 4, "url": "https://ghe.example.com/acme/lib/pull/4", "state": "MERGED", "title": "t\x85",

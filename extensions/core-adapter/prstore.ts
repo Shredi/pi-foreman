@@ -10,7 +10,7 @@ import path from "node:path";
 import { isTrackedKey, resolveGithubHosts, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
-import type { Bucket, CommentEntry, Mergeable, Run, StoreRead, WatchSnapshot } from "./prwatch.ts";
+import type { Bucket, CommentEntry, Mergeable, Run, SourceStatus, StoreRead, WatchSnapshot } from "./prwatch.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
@@ -56,6 +56,8 @@ export interface StateEntry {
   repo: string;
   number: number;
   snap?: StoredSnap;
+  /** Per source of the config (in scope for this PR): what its last run said. */
+  sources?: Record<string, SourceStatus>;
   meta?: StateMeta;
   okAt?: number;
   error?: string;
@@ -72,9 +74,14 @@ export interface StateDoc {
   off?: true;
   prs: Record<string, StateEntry>;
 }
+/** A PR source's comments for one PR, kept only for the head they were taken on. */
+export interface SourceComments {
+  head: string;
+  comments: CommentEntry[];
+}
 export interface CommentsDoc {
   v: 1;
-  prs: Record<string, { updatedAt: string; comments: CommentEntry[] }>;
+  prs: Record<string, { updatedAt: string; comments: CommentEntry[]; sources?: Record<string, SourceComments> }>;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -183,11 +190,26 @@ function parseSnap(v: unknown): StoredSnap | null {
   const runs: Run[] = [];
   for (const r of v.runs) {
     if (!isObj(r) || typeof r.name !== "string") continue;
-    runs.push({ id: typeof r.id === "string" ? r.id : "", name: r.name, bucket: (BUCKETS.has(r.bucket as string) ? r.bucket : "pending") as Bucket, url: typeof r.url === "string" ? r.url : "" });
+    const run: Run = { id: typeof r.id === "string" ? r.id : "", name: r.name, bucket: (BUCKETS.has(r.bucket as string) ? r.bucket : "pending") as Bucket, url: typeof r.url === "string" ? r.url : "" };
+    if (typeof r.source === "string" && r.source) run.source = r.source;
+    if (typeof r.gates === "boolean") run.gates = r.gates;
+    if (r.noAnswer === true) run.noAnswer = true;
+    runs.push(run);
   }
   const mergeable: Mergeable = v.mergeable === "mergeable" || v.mergeable === "conflicting" ? v.mergeable : "unknown";
   const str = (x: unknown): string => (typeof x === "string" ? x : "");
   return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs };
+}
+
+/** The per-source state of a state entry (`sources.<name>`), invalid entries dropped; undefined when none is left. */
+export function parseSources(v: unknown): Record<string, SourceStatus> | undefined {
+  if (!isObj(v)) return undefined;
+  const out: Record<string, SourceStatus> = {};
+  for (const [name, s] of Object.entries(v)) {
+    if (!isObj(s) || typeof s.head !== "string" || typeof s.gates !== "boolean" || typeof s.ok !== "boolean" || !finite(s.at)) continue;
+    out[name] = { head: s.head, gates: s.gates, ok: s.ok, at: s.at, ...(typeof s.error === "string" ? { error: s.error } : {}) };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 const one = (s: unknown): string => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, 300) : "");
@@ -208,6 +230,8 @@ export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn
   const e = state.prs[k];
   if (!isObj(e)) return { kind: "waiting" };
   const snap = parseSnap(e.snap);
+  const sources = parseSources(e.sources);
+  if (snap && sources) snap.sources = sources;
   const okAt = finite(e.okAt) ? e.okAt : finite(e.endedAt) ? e.endedAt : null;
   if (snap && okAt !== null && snap.state !== "open") return { kind: "entry", snap, okAt };
   if (finite(e.errorAt) && (okAt === null || e.errorAt > okAt)) return { kind: "error", error: one(e.error) || "the tracker's last poll failed", ...(e.gone === true ? { gone: true } : {}) };
@@ -215,7 +239,12 @@ export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn
   if (now - okAt > SERVE_FRESH_MS) return { kind: "stale" };
   const comments = readCached(trackedCommentsFile(agentDir));
   const c = isObj(comments) && isObj(comments.prs) ? comments.prs[k] : undefined;
-  const full: WatchSnapshot = isObj(c) && c.updatedAt === snap.updatedAt && Array.isArray(c.comments) ? { ...snap, comments: c.comments.filter(isObj) as unknown as CommentEntry[] } : snap;
+  const github = isObj(c) && c.updatedAt === snap.updatedAt && Array.isArray(c.comments) ? (c.comments.filter(isObj) as unknown as CommentEntry[]) : null;
+  // a source's comments belong to the head they were taken on; another head's are dropped
+  const fromSources: CommentEntry[] = [];
+  if (isObj(c) && isObj(c.sources))
+    for (const sc of Object.values(c.sources)) if (isObj(sc) && sc.head === snap.head && Array.isArray(sc.comments)) fromSources.push(...(sc.comments.filter(isObj) as unknown as CommentEntry[]));
+  const full: WatchSnapshot = github || fromSources.length > 0 ? { ...snap, comments: [...(github ?? []), ...fromSources] } : snap;
   return { kind: "entry", snap: full, okAt };
 }
 
