@@ -11,6 +11,7 @@ import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import { traceFile } from "./trace.ts";
+import { mainCheckoutOf, nestedCheckout } from "./worktreeroot.ts";
 import { usageFile } from "./usage.ts";
 
 const px = (platform: string): path.PlatformPath => (platform === "win32" ? path.win32 : path.posix);
@@ -54,7 +55,12 @@ export function roundRoots(worktrees: string[], cwd: string, platform: string = 
   // ownership is the INNERMOST git worktree of the cwd, never a prefix match on the round worktree: an isolation worktree nested below a round
   // worktree (or in its isolation dir) is its own root, the round worktree is not
   const inner = worktrees.some((w) => within(w) || within(isolationDir(w, platform))) ? top(cwd) : null;
-  if (inner && !worktrees.some((w) => x.resolve(w) === x.resolve(inner)) && worktrees.some((w) => below(w, inner) || below(isolationDir(w, platform), inner))) return [x.resolve(inner)];
+  if (inner && !worktrees.some((w) => x.resolve(w) === x.resolve(inner))) {
+    // a nested submodule checkout of a round worktree is part of that round's tree (worktreeroot.ts nestedCheckout); bounded by the round, never the isolation branch
+    const tree = worktrees.find((w) => below(w, inner) && nestedCheckout(w, inner));
+    if (tree) return [x.resolve(tree)];
+    if (worktrees.some((w) => below(w, inner) || below(isolationDir(w, platform), inner))) return [x.resolve(inner)];
+  }
   const round = worktrees.find((w) => within(w));
   if (round) return [x.resolve(round)];
   for (const w of worktrees) {
@@ -179,10 +185,21 @@ export function ownUsageReadable(agentDir: string, platform: string = process.pl
  * The main checkout's `.workflow` dir of each round worktree `<repo>.worktrees/<round>`, with its subtree: the round's own ledger and its notes
  * live there, so it is a READ root for every child role of the round (R1). Nothing else of the main checkout, and no write.
  */
+const mainOfRound = new Map<string, string | null>();
+
 export function mainWorkflowReadable(worktrees: string[], platform: string = process.platform): string[] {
   const x = px(platform);
   const out: string[] = [];
   for (const w of worktrees) {
+    // the round's main checkout from the filesystem (memoised per round); the lexical `<repo>.worktrees` spelling is the fallback
+    const key = x.resolve(w);
+    if (!mainOfRound.has(key)) mainOfRound.set(key, platform === process.platform ? mainCheckoutOf(key) : null);
+    const main = mainOfRound.get(key);
+    if (main) {
+      const flow = x.join(main, ".workflow");
+      out.push(flow, `${flow}/*`);
+      continue;
+    }
     const home = x.dirname(x.resolve(w));
     const name = x.basename(home);
     if (!name.endsWith(".worktrees") || name === ".worktrees") continue;

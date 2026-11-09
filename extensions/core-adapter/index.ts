@@ -16,6 +16,7 @@ import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, openedHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
+import { inNestedCheckout, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
@@ -693,7 +694,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const selfHost = isSelfHost(cwd, PKG_ROOT);
     // Owned dirs (owned.ts): the npm root resolves in the background and rebuilds the overlay once known.
     const tmpRoot = path.dirname(scratchRoot() ?? path.join(os.tmpdir(), "pi-foreman-scratch"));
-    const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
+    // close.worktreeDir (worktreeroot.ts): only a session in the main checkout takes it; a refused value or a collision falls back to the default layout with one visible notice
+    const rootInputs = sessionRootInputs(cwd, get(config.config, "close.worktreeDir"));
+    const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: rootInputs.worktreeGlobs });
     const owned = computeOwned(null);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
@@ -922,6 +925,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "protect_selfhost", reason: "dev checkout" });
       if (!s.isChild) notifyOnce(s, ctx, "selfhost", "pi-foreman: dev checkout: package-root write protection narrowed", "info");
     }
+    if (rootInputs.notice && !s.isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
 
     try {
       ensureSessionMarker(markerDir, id, Date.now() / 1000);
@@ -2260,6 +2264,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   function repeatedDeny(s: Session, ctx: ExtensionContext, reason: string): { block: true; reason: string } | undefined {
     if (!s.isChild || !REPEAT_STOP_REASONS.some((re) => re.test(reason))) return undefined;
+    // a path rule of a custom worktree root (s.owned.worktreeGlobs) is a worktree path like `*.worktrees/*`: never stop-eligible
+    if ((s.owned.worktreeGlobs ?? []).some((g) => reason.includes(`path rule '${g}'`))) return undefined;
     const key = `${s.id}\0${reason}`;
     const n = (childDenyCounts.get(key) ?? 0) + 1;
     childDenyCounts.set(key, n);
@@ -2304,8 +2310,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const owned = sessionOwnedRoots(s);
     // each work folder as written and in its real spelling (the same `real()` as tmp), same mode; a child has none
     const workFolders = s.isChild ? [] : folders.flatMap((f) => (real(f.path) !== f.path ? [f, { path: real(f.path), mode: f.mode }] : [f]));
+    // a child in a nested submodule checkout works on the whole tree it belongs to, bounded by its round or workspace (worktreeroot.ts treeRootOf)
+    const tree = s.isChild ? treeRootOf(cwd, treeCeilingOf({ cwd, agentDir: s.agentDir, foremanSession: s.usage.line.foremanSession, binding: launchBinding })) : null;
     return {
-      worktree: workspaceOf(cwd).root,
+      worktree: tree ?? workspaceOf(cwd).root,
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
       tmp: [real(os.tmpdir()), ...(platform === "win32" ? [] : ["/tmp"])],
       scratchBase: s.owned.childScratchRoot,
@@ -3009,6 +3017,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
             if (queued) return { block: true, reason: queued };
           }
+        }
+        // D6: pi-subagents' isolation worktree is a plain `git worktree add` of the innermost repo; inside a nested submodule checkout it would not carry the tree
+        if (!s.isChild && isLaunchArgs(input) && JSON.stringify(rawLaunch).includes('"worktree":true') && inNestedCheckout(ctx.cwd)) {
+          return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
@@ -5154,6 +5166,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
     const reg = await import("./registry.ts"); // doctor-only helpers; keeps the top-level import line untouched
     out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform));
+    out.push(...worktreeRootDoctor(s.config.config, s.cwd, platform));
 
     if (s.config.source === "defaults") fail("config CLI did not run; L1 defaults in use", "fix Python first, then check scripts/foreman_config.py.");
     else if (s.config.errors.length) fail(`config errors: ${s.config.errors.join("; ")}`, "correct the named keys in your foreman.json.");

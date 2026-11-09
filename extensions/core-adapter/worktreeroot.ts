@@ -8,6 +8,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { piAgentDir } from "./env.ts";
 import { realDeep } from "./triage.ts";
+import { workspaceTop } from "./gitdrift.ts";
+import { roundWorktrees } from "./roundsurface.ts";
 
 export const DEFAULT_WORKTREE_DIR = "../<repo>.worktrees";
 export const REPO_PLACEHOLDER = "<repo>";
@@ -348,4 +350,149 @@ export function nestedCheckout(root: string, c: string): boolean {
     if (fs.existsSync(path.join(cur, ".git")) && !acceptsDirectly(roots, cur)) return false;
   }
   return true;
+}
+
+// ------------------------------------------------------------------ bounded lift to the tree root
+
+/**
+ * The tree root of `cwd`: its innermost git top T, lifted while T is a nested checkout (`nestedCheckout`) of the git top above it, never beyond `ceiling`.
+ * No ceiling, or a ceiling not containing `cwd`: no lift, the innermost top (null outside a repo).
+ */
+export function treeRootOf(cwd: string, ceiling: string | null | undefined, top: (dir: string) => string | null = workspaceTop): string | null {
+  let t = top(cwd);
+  const c = ceiling ? (realOrNull(ceiling) ?? ceiling) : null;
+  if (!t || !c || !inside(c, realOrNull(cwd) ?? cwd, "linux")) return t;
+  for (let n = 0; n < 16; n++) {
+    const rt = realOrNull(t) ?? t;
+    if (rt === c || !inside(c, rt, "linux")) break;
+    const p = top(path.dirname(t));
+    if (!p || !inside(c, realOrNull(p) ?? p, "linux") || !nestedCheckout(p, t)) break;
+    t = p;
+  }
+  return t;
+}
+
+/**
+ * The ceiling of a child session (the git guard lifts the start top up to it only): the round worktree of the foreman session holding `cwd`, else the launch
+ * binding's workspace when it holds `cwd`, else the workspace top of `cwd`. Always contains `cwd`; "" for none. Never throws: git-guard is a required
+ * child extension and a failure at its session start would fail the child.
+ */
+export function treeCeilingOf(i: { cwd: string; agentDir: string; foremanSession?: string | null; binding?: { workspace?: string | null } | null }): string {
+  try {
+    const here = realOrNull(i.cwd) ?? i.cwd;
+    const holds = (root: string): boolean => inside(realOrNull(root) ?? root, here, "linux");
+    if (i.foremanSession) {
+      const round = roundWorktrees(path.join(i.agentDir, "pi-foreman", "state"), i.foremanSession).find(holds);
+      if (round) return round;
+    }
+    const ws = i.binding?.workspace;
+    if (ws && holds(ws)) return ws;
+    return workspaceTop(i.cwd) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Whether the git top of `cwd` is a nested checkout of the git top above it. */
+export function inNestedCheckout(cwd: string): boolean {
+  try {
+    const top = workspaceTop(cwd);
+    const p = top ? workspaceTop(path.dirname(top)) : null;
+    return !!top && !!p && nestedCheckout(p, top);
+  } catch {
+    return false;
+  }
+}
+
+export interface SessionRootInputs {
+  /** Owned read-write roots (spelled and real) of a session whose workspace is the main checkout; absent otherwise (the lexical `<ws>.worktrees` stays). */
+  worktreeRoot?: string[];
+  worktreeGlobs?: string[];
+  /** One visible notice: a refused setting or an existing collision made the session fall back to the default layout. */
+  notice?: string;
+}
+
+/**
+ * What the owned paths and the child block take from `close.worktreeDir` for a session in `cwd`. Only a session in the main checkout uses the setting;
+ * a refused value or a root already holding another repo's worktrees falls back to the default layout (children keep the static `*.worktrees/*` block).
+ * Never throws.
+ */
+export function sessionRootInputs(cwd: string, rawSetting: unknown, opts: ResolveOptions = {}): SessionRootInputs {
+  try {
+    const top = workspaceTop(cwd);
+    if (!top) return {};
+    const main = mainCheckoutOf(top);
+    if (!main) return {};
+    // a session in a linked worktree (a round, a child) keeps `<ws>.worktrees` as its owned root but its overlay still blocks the custom root's siblings
+    const linked = (realOrNull(top) ?? top) !== (realOrNull(main) ?? main);
+    const r = resolveWorktreeRoot(main, rawSetting, opts);
+    if (r.error) return linked ? {} : { notice: `pi-foreman: ${r.error.message}; using the default worktree layout (${r.spelled}).` };
+    if (!r.custom) return {};
+    if (linked) return { worktreeGlobs: rootTemplateGlobs(r) };
+    const clash = rootCollision(main, r.spelled);
+    if (clash) return { notice: `pi-foreman: ${clash.message}; using the default worktree layout.` };
+    return { worktreeRoot: [...new Set([r.spelled, r.real])], worktreeGlobs: rootTemplateGlobs(r) };
+  } catch {
+    return {};
+  }
+}
+
+function probeWritable(dir: string): boolean {
+  const probe = path.join(dir, `.pi-foreman-probe-${process.pid}`);
+  try {
+    fs.writeFileSync(probe, "");
+    fs.rmSync(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function nearestExisting(p: string): string | null {
+  for (let cur = p; ; cur = path.dirname(cur)) {
+    if (fs.existsSync(cur)) return cur;
+    if (path.dirname(cur) === cur) return null;
+  }
+}
+
+/** Doctor lines for the worktree root; nothing outside a git repository. Never throws. */
+export function worktreeRootDoctor(config: unknown, cwd: string, platform: string = process.platform): string[] {
+  try {
+    const top = workspaceTop(cwd);
+    const main = top ? mainCheckoutOf(top) : null;
+    if (!main) return [];
+    const raw = (config as { close?: { worktreeDir?: unknown } } | null | undefined)?.close?.worktreeDir;
+    const r = resolveWorktreeRoot(main, raw, { platform });
+    const out: string[] = [];
+    const shown = r.real !== r.spelled ? `${r.spelled} (real ${r.real})` : r.spelled;
+    out.push(`INFO worktree root: ${shown} (${r.custom ? "configured: close.worktreeDir" : "default"})`);
+    if (r.error) out.push(`FAIL close.worktreeDir refused: ${r.error.message} — fix: correct close.worktreeDir; the default layout is in use.`);
+    const exists = fs.existsSync(r.spelled);
+    const base = exists ? r.spelled : nearestExisting(r.spelled);
+    out.push(exists ? `OK   worktree root exists` : `INFO worktree root does not exist yet; it is created with the first worktree (nearest existing parent: ${base ?? "none"})`);
+    if (base) {
+      if (probeWritable(base)) out.push(`OK   worktree root is writable`);
+      else out.push(`FAIL worktree root ${exists ? "is" : "cannot be created: its parent is"} not writable (${base}) — fix: choose a writable close.worktreeDir.`);
+      const dev = (p: string): number | null => { try { return fs.statSync(p).dev; } catch { return null; } };
+      if (dev(base) !== null && dev(base) !== dev(main)) out.push(`INFO worktree root is on a different device than the main checkout (${main})`);
+      const link = path.join(base, `.pi-foreman-link-${process.pid}`);
+      try {
+        fs.symlinkSync(base, link);
+        fs.rmSync(link, { force: true });
+      } catch {
+        out.push(`WARN no symlink support under ${base}: pi-subagents links node_modules into worktrees — fix: choose a close.worktreeDir on a filesystem with symlinks.`);
+      }
+      if (platform !== "win32") {
+        const flip = (p: string): boolean | null => { const f = path.join(p, ".PI-Foreman-Case"); try { fs.writeFileSync(f, ""); const same = fs.existsSync(f.toLowerCase()); fs.rmSync(f, { force: true }); return same; } catch { return null; } };
+        const a = flip(base);
+        const b = flip(main);
+        if (a !== null && b !== null && a !== b) out.push(`WARN case sensitivity of the worktree root differs from the main checkout's — fix: keep both on the same kind of filesystem.`);
+      }
+    }
+    const clash = rootCollision(main, r.spelled);
+    if (clash) out.push(`FAIL ${clash.message} — fix: rename one checkout or use a relative close.worktreeDir.`);
+    return out;
+  } catch {
+    return [];
+  }
 }

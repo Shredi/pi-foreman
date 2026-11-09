@@ -25,6 +25,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { CLOSE_START_FAILED_REASON, CLOSE_TEXT, CLOSED_TEXT, PR_WATCHED_REASON, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
+import { mainCheckoutOf, resolveWorktreeRoot } from "./worktreeroot.ts";
+import { workspaceTop } from "./gitdrift.ts";
 import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
@@ -447,6 +449,15 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const model = explicit ?? d.model;
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
   if (c.machine && !c.cwd) return { text: "pi-foreman session: open --machine needs --cwd (the directory on the remote machine).", ok: false };
+  if (c.worktree && !c.machine) {
+    // the root the new worktree lands in is checked here, before anything is spawned (worktreeroot.ts resolver; the Python side repeats it)
+    if (c.label === "worktrees") return { text: "session open refused [label_reserved]: the label `worktrees` is the folder of pi-subagents isolation worktrees; choose another label", ok: false };
+    const top = workspaceTop(path.resolve(d.cwd, c.cwd ?? "."));
+    const main = top ? mainCheckoutOf(top) : null;
+    const raw = (d.config as { close?: { worktreeDir?: unknown } } | undefined)?.close?.worktreeDir;
+    const root = main ? resolveWorktreeRoot(main, raw) : null;
+    if (root?.error) return { text: `session open refused [${root.error.code}]: ${root.error.message}`, ok: false };
+  }
   // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
   const cwdArg = c.machine ? c.cwd! : path.resolve(d.cwd, c.cwd ?? ".");
   const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", cwdArg, "--parent-id", opener];

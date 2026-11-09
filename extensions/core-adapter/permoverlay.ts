@@ -77,6 +77,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Json } from "./config.ts";
 import { workspaceOf } from "./python.ts";
+import { treeRootOf } from "./worktreeroot.ts";
 import { resolveVars } from "./shellvars.ts";
 import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead, gitReadWrites } from "./effects.ts";
@@ -124,6 +125,8 @@ export interface OwnedRoots {
   childScratchRoot?: string;
   /** The global npm root when resolved (named in the whole-filesystem scan deny). */
   npmRoot?: string;
+  /** Block globs of a custom worktree root (worktreeroot.ts rootTemplateGlobs), added to the child block and its workspace exemption. */
+  worktreeGlobs?: string[];
 }
 
 export interface OverlayRules {
@@ -839,9 +842,9 @@ export function buildOverlayRules(baseline: Baseline, merged: unknown, base: unk
     ],
     pathAsk: hasBase ? without(strs(mp.ask), strs(bp.ask)) : [],
     protect: [...prot(pb?.deny, "deny", true), ...prot(pb?.ask, "ask", true, { readOk: "main" }), ...prot(pb?.childDeny, null, true, { fromChildDeny: true }), ...prot(selfHost ? [...(pb?.writeAsk ?? []).filter((p) => p !== "{pkgRoot}" && p !== "{pkgRoot}/*"), ...(pb?.writeAskSelfHost ?? [])] : pb?.writeAsk, "ask", false, { readOk: "child", fromWriteAsk: true }), ...prot(pb?.removeAsk, "ask", true).map((r) => ({ ...r, removeOnly: true })), ...(sessionDir ? [{ pattern: `${slash(sessionDir)}/*.jsonl`, main: "deny" as const, child: "deny" as const, shell: true, childShell: true, readOk: "main" as const, flat: true }, ...prot(sessionDirChain(slash(sessionDir), `${slash(agentDir)}/sessions`), "ask", true).map((r) => ({ ...r, removeOnly: true }))] : [])],
-    childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
+    childBlock: [...CHILD_BLOCK.map(sub), ...CHILD_BLOCK_WORKTREES, ...(owned?.worktreeGlobs ?? []), ...(owned?.childScratchRoot ? [slash(owned.childScratchRoot), `${slash(owned.childScratchRoot)}/*`] : [])],
     childBlockExcept: CHILD_BLOCK_EXCEPT.map(sub),
-    childBlockInWorkspace: CHILD_BLOCK_WORKTREES,
+    childBlockInWorkspace: [...CHILD_BLOCK_WORKTREES, ...(owned?.worktreeGlobs ?? [])],
     ...(owned ? { owned } : {}),
     probeDirs: probeDirPatterns(baseline.externalDirectory?.probe ?? []),
     floors: { agentDir, ...(pkgRoot ? { pkgRoot } : {}) },
@@ -895,6 +898,12 @@ function expandHomePattern(p: string, home: string): string {
 }
 
 /** PS's compileWildcardPattern: split on `*`, `?` = one char, trailing " *" makes the args optional. */
+/** The tree root of the call's cwd, lifted out of a nested submodule checkout up to the round (or the workspace) holding it and no further. */
+function treeRootOfCtx(ctx: { cwd: string; roundRoots?: string[] }): string | null {
+  const ceiling = (ctx.roundRoots ?? []).find((r) => insideDir(r, ctx.cwd, ctx as never)) ?? workspaceOf(ctx.cwd).root;
+  return treeRootOf(ctx.cwd, ceiling);
+}
+
 export function wildcardRegExp(pattern: string, opts: { home: string; ignoreCase: boolean; foldSeparators: boolean }): RegExp {
   const key = `${opts.ignoreCase ? "i" : "s"}${opts.foldSeparators ? "f" : "-"}${opts.home}\u0000${pattern}`;
   const hit = reCache.get(key);
@@ -4075,7 +4084,7 @@ function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx, readOnl
     if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
     for (const pat of patterns) {
       if (!pathMatches(pat, cand, ctx)) continue;
-      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, ...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])].some((root) => insideDir(root, abs, ctx))) continue;
+      if (rules.childBlockInWorkspace?.includes(pat) && [ctx.cwd, workspaceOf(ctx.cwd).root, treeRootOfCtx(ctx), ...(ctx.roundRoots ?? []), ...(ctx.roundReadRoots ?? [])].some((root) => root && insideDir(root, abs, ctx))) continue;
       return pat;
     }
   }

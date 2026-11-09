@@ -231,7 +231,9 @@ function repoRoots(cwd: string): string[] {
       const st = fs.statSync(dotGit);
       if (st.isDirectory()) return [cur];
       const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, "utf8"));
-      const main = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/]/.exec(m[1].trim())?.[1] : undefined;
+      // a relative link resolves against the file that holds it (git's worktree.useRelativePaths, submodules)
+      const link = m ? path.resolve(cur, m[1].trim()) : "";
+      const main = m ? /^(.*)[\\/]\.git[\\/]worktrees[\\/]/.exec(link)?.[1] : undefined;
       return main ? [cur, main] : [cur];
     } catch {
       const parent = path.dirname(cur);
