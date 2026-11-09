@@ -99,6 +99,7 @@ class SubmoduleInitTest(unittest.TestCase):
             self.assertEqual(d.level, 2, (cmd, d.reason))
 
 
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class CreateWorktreeInstallNoteTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cw_note_")).resolve()

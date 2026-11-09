@@ -2079,6 +2079,9 @@ def child_submodule(rest, ctx, call):
         return None
     if "--recursive" in texts:
         return deny("children may not run `git submodule %s --recursive`; the foreman or owner does that." % verb)
+    init = any(t in ("--init", "-i") or (t.startswith("-") and not t.startswith("--") and "i" in t) for t in texts)
+    if not (verb in ("sync", "init") or (verb == "update" and init)):
+        return None
     top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"]) or "").strip()
     if not top:
         return None
@@ -2089,7 +2092,13 @@ def child_submodule(rest, ctx, call):
         k, _, v = line.partition(" ")
         name, _, field = k[len("submodule."):].rpartition(".")
         subs.setdefault(name, {})[field] = v
-    chosen = [t for t in texts[texts.index(verb) + 1:] if not t.startswith("-") and t != "--"]
+    realtop = os.path.realpath(top)
+    chosen = []
+    for t in texts[texts.index(verb) + 1:]:
+        if t.startswith("-") or t == "--":
+            continue
+        rel = os.path.relpath(os.path.realpath(os.path.join(call.cwd, t)), realtop).replace(os.sep, "/")
+        chosen.append("" if rel == "." else rel)
     branch = (run_git(call, ctx, ["symbolic-ref", "--short", "-q", "HEAD"]) or "").strip()
     remote = (run_git(call, ctx, ["config", "--get", "branch.%s.remote" % branch]) or "").strip() if branch else ""
     base = ""
@@ -2097,9 +2106,9 @@ def child_submodule(rest, ctx, call):
         base = (run_git(call, ctx, ["config", "--get", "remote.%s.url" % r]) or "").strip()
         if base:
             break
-    init = any(t in ("--init", "-i") or (t.startswith("-") and not t.startswith("--") and "i" in t) for t in texts)
     for name, f in sorted(subs.items()):
-        if chosen and not any(c.rstrip("/") == f.get("path", "").rstrip("/") for c in chosen):
+        sp = f.get("path", "").rstrip("/")
+        if chosen and not any(c == "" or sp == c or sp.startswith(c + "/") for c in chosen):
             continue
         url = f.get("url", "")
         want = _gm_resolve(url, base or top) if url.startswith(("./", "../")) else url

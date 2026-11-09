@@ -70,7 +70,7 @@ class NestedTreeTest(unittest.TestCase):
             text = f.read()
         with open(path, "w") as f:
             f.write(text.replace("/src/b", "/elsewhere/b"))
-        d = self.decide("git submodule update", r.tree, r.tree)
+        d = self.decide("git submodule update --init", r.tree, r.tree)
         self.assertEqual(d.level, 2)
         self.assertIn("differs", d.reason)
 

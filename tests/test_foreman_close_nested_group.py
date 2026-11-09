@@ -20,6 +20,7 @@ from _submodules import build_rig, git  # noqa: E402
 SID = "sess-nested-group"
 
 
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class NestedGroupTest(unittest.TestCase):
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="nested_group_"))

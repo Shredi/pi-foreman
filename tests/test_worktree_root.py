@@ -30,6 +30,7 @@ class Base(unittest.TestCase):
         return s.replace("{tmp}", self.tmp)
 
 
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class ResolverTable(Base):
     def test_case_table(self):
         for c in TABLE["cases"]:
@@ -63,6 +64,7 @@ class ResolverTable(Base):
         self.assertEqual(fw.convention_dirs(main, {})[0], os.path.join(self.tmp, "work", "proj.worktrees"))
 
 
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class NestedCheckouts(Base):
     def setUp(self):
         super().setUp()

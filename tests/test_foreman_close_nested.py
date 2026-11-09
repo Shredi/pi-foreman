@@ -23,6 +23,7 @@ from _submodules import build_rig  # noqa: E402
 SID = "sess-nested-1"
 
 
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class NestedCleanupTest(unittest.TestCase):
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="nested_close_"))
@@ -104,6 +105,7 @@ class NestedCleanupTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(d))
 
 
+@unittest.skipIf(os.name == "nt", "POSIX paths and symlinks")
 class NestedSweepTest(unittest.TestCase):
     def setUp(self):
         self.base = os.path.realpath(tempfile.mkdtemp(prefix="nested_sweep_"))
