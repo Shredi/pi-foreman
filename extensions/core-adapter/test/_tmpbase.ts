@@ -6,10 +6,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 function underTmp(p: string): boolean {
-  if (process.platform === "win32") return false;
+  const win = process.platform === "win32";
+  // win32: a foreman writes into the OS temp dir by default (effectCtxOf tmpWrite), in either spelling (8.3 `RUNNER~1` or long); elsewhere /tmp
+  const tmps = win ? [path.resolve(os.tmpdir())] : ["/tmp"];
+  if (win) try { tmps.push(fs.realpathSync.native(os.tmpdir())); } catch { /* literal only */ }
   const cands = [path.resolve(p)];
   try { cands.push(fs.realpathSync.native(p)); } catch { /* missing dir: literal check only */ }
-  return cands.some((c) => c === "/tmp" || c.startsWith("/tmp/"));
+  const norm = (s: string): string => (win ? s.toLowerCase() : s);
+  return cands.some((c) => tmps.some((t) => norm(c) === norm(t) || norm(c).startsWith(norm(t) + (win ? path.sep : "/"))));
 }
 
 /** A fresh mkdtemp dir (caller removes it) whose path is not below /tmp. */

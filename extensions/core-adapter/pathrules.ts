@@ -26,6 +26,8 @@ export interface GateRoots {
   handoffs: string[];
   /** Handoff dirs of sessions this session opened (its id is in the dir's `parent` file): `ruling*.md` and `brief*.md` may be written there. */
   openedHandoffs?: string[];
+  /** The handoff dir where this session is the child side (a subagent child: the launch binding's `handoffDir`): the names of `HANDOFF_CHILD_NAMES` and anything below `work/` may be written there. */
+  childHandoff?: string;
   child: boolean;
   /** `gate.readTools`: extension tools judged like read/grep on their path field. */
   readTools?: ReadToolMap;
@@ -65,6 +67,17 @@ export function under(platform: string, root: string, p: string, base?: string):
   return rs.every((s, i) => s === "*" || s === ps[i]);
 }
 
+/**
+ * The temp roots for the foreman: the real tmpdir, `/tmp` off win32; on win32 also the long-form spelling (`realpathSync.native`
+ * expands an 8.3 `RUNNER~1` that `os.tmpdir()` and the JS realpath keep). Child scratch exclusion works on every spelling (classOf).
+ */
+export function tmpRoots(tmpdir: string, platform: string, real: (p: string) => string, native: (p: string) => string | null = realDefault): string[] {
+  const cur = real(tmpdir);
+  if (platform !== "win32") return [cur, "/tmp"];
+  const long = native(tmpdir);
+  return long && long !== cur ? [cur, long] : [cur];
+}
+
 export function realDefault(p: string): string | null {
   try {
     return fs.realpathSync.native(p);
@@ -92,6 +105,39 @@ export function resolveWord(platform: string, cwd: string, w: unknown): string |
 }
 
 type Dir = "read" | "write";
+
+/** The files of its handoff dir the child side writes (everything else there is the parent's: brief*, ruling*, steer*, close.json, parent, child). */
+export const HANDOFF_CHILD_NAMES: readonly string[] = ["plan.md", "result.md", "ask.md", ".ask", ".seen", ".steer-last-read.json"];
+
+/**
+ * `abs` (and its real spelling `ra`) names a child-written file of the handoff dir `root`: a top-level allow-list name, `ask-<n>.md`, or anything below `work/`.
+ * Both spellings must lie inside `root` (or its real spelling). win32: case-folded, trailing dots and spaces stripped, a `:` (ADS) or an 8.3 `~N` part refused.
+ */
+export function childHandoffWrite(root: string, abs: string, ra: string, platform: string, real: (p: string) => string | null): boolean {
+  const x = px(platform);
+  const win = platform === "win32";
+  const fold = (s: string): string => (win || platform === "darwin" ? s.toLowerCase() : s);
+  // the real spelling of `ra` resolves the deepest existing ancestor (8.3 `RUNNER~1` -> long form) even when the handoff dir is not created yet, so the root needs that long form too
+  const roots = [x.resolve(root), real(root), longForm(platform, x.resolve(root), real)].filter((s): s is string => !!s);
+  const relOf = (p: string): string[] | null => {
+    for (const r of roots) {
+      const rel = x.relative(r, x.resolve(p));
+      if (rel && !rel.startsWith("..") && !x.isAbsolute(rel)) return rel.split(/[\\/]+/).filter(Boolean);
+    }
+    return null;
+  };
+  const ok = (p: string): boolean => {
+    const segs = relOf(p);
+    if (!segs) return false;
+    const s = segs.map((g) => (win ? g.replace(/[. ]+$/, "") : g));
+    if (s.some((g) => g === "" || g === ".." || (win && (g.includes(":") || /~\d/.test(g))))) return false;
+    const f = s.map(fold);
+    // below work/ only: the bare entry stays parent-protected (rm -rf / mv of it would remove or replace it)
+    if (f[0] === "work") return f.length > 1;
+    return f.length === 1 && (HANDOFF_CHILD_NAMES.includes(f[0]) || /^ask-\d+\.md$/.test(f[0]));
+  };
+  return ok(abs) && ok(ra);
+}
 
 /** The parent's notes to a session it opened: `ruling*.md`, `brief*.md` (a plain file name, no separator). */
 const HANDOFF_NOTE = /^(?:ruling|brief)[A-Za-z0-9._-]*\.md$/;
@@ -169,6 +215,7 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
     const sameDir = (h: string, d: string): boolean => under(platform, d, h, r.worktree) && under(platform, h, d, r.worktree);
     const dirs = win ? [px(platform).dirname(abs), px(platform).dirname(ra)] : [px(platform).dirname(abs)];
     if (r.handoffs.some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h)) && (base === "plan.md" || base === "result.md")) return "handoff";
+    if (r.child && r.childHandoff && childHandoffWrite(r.childHandoff, abs, ra, platform, real)) return "handoff";
     if (!r.child && HANDOFF_NOTE.test(base) && (r.openedHandoffs ?? []).some((h) => dirs.some((d) => sameDir(h, d) || (win && !h.includes("*") && sameDir(longRoot(h), d))) && inside(h))) return "handoff-ruling";
   }
   if (r.child) return null;
