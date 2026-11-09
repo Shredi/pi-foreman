@@ -77,7 +77,7 @@ and `runId` (the launch id); see [retro](retro.md). `tasks` and `chain` launches
 ## Owned paths
 
 The gate's path rules allow the foreman's own artifacts outside the workspace without a prompt, computed at runtime from the session's roots: the handoff
-dirs, the session's `subagent-artifacts`, the `../<repo>.worktrees` round dir, the children's scratch root, reads of
+dirs, the session's `subagent-artifacts`, the worktree root's round dir (`close.worktreeDir`, default `../<repo>.worktrees`; see below), the children's scratch root, reads of
 `<agentDir>/pi-foreman` and the global npm root. Children's write permissions are unchanged: the
 gate and the git guard keep children out of the foreman-only dirs (handoffs except `plan.md`/`result.md`, sibling
 worktrees, other children's scratch dirs, `pi-foreman/claude-config`) and off `git worktree`, and the `parent` and
@@ -186,6 +186,12 @@ pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMes
 
 `/sync` pulls, commits (explicit paths only) and pushes the repositories listed in `sync.repos` of your user config (see [sessions](sessions.md)). It never forces a push, runs no repository hooks and refuses a repo whose local config sets any key outside a short allowlist of harmless keys (so filters, hooks, ssh/credential helpers, url rewrites, `http.*`, submodules and similar are refused), or that holds a secret or a linked file. Remote urls must be https, ssh, git or scp-like (local paths, `file://` and helper transports are refused); submodule gitlinks are ignored and refused; the config is re-checked before commit and push. **Known limit:** a child agent or other code running as your user can plant repository state (config, remotes, commits) between syncs; /sync refuses every planted state it knows (git's local file transport is off, remote names must be plain names), but it is not a boundary against such code. List only repositories you trust children not to touch.
 
+## Worktree root and nested checkouts
+
+- **Owned root.** Only a session in the main checkout owns the whole worktree root (`close.worktreeDir`, spelled and real path); a round session keeps its own tree and never owns sibling rounds. For a custom root every child gets a block glob (`<repo>` becomes `*`) next to the default `*.worktrees/*` one, so other repos' rounds under a shared root stay closed; a child's own round stays open. The setting is user or overlay config only, and a value that would cover the main checkout, home, the agent dir, the install dirs, the temp root or `/` is refused (`root_blocks_protected`) and falls back to the default. A root already holding another repo's worktrees is refused (`root_collision`, a snapshot). See [close](close.md#the-worktree-root).
+- **Nested-checkout rule.** A git checkout inside a workspace or round tree counts as part of it only when its `.git` file points into that repo's `modules/` admin area and the admin dir points back at that exact `.git` file (linked submodule worktree), or the submodule's `core.worktree` names the checkout (plain submodule). A forged `.git` file aimed at another round's admin dir fails this check; forging it would need a write under `.git/`, which children cannot make. The lift stops at the session's workspace or round. A round worktree never lifts into the main checkout or another round.
+- **Inside such a tree** the git guard lets a child commit and `restore` in a nested checkout and the push guard treats it as its own. `git submodule update`, `sync`, `foreach` and `status` are allowed for children only with the cwd and every path inside the tree; other `submodule` verbs keep their rules. Because those verbs write URLs into shared git config, a `.gitmodules` URL must resolve to the URL already configured, and a first `update --init` is refused for children. Every other foreign repository stays refused. Cleanup never deletes nested checkouts pi-foreman did not create.
+
 ## Known limit: worktrees on Windows
 
 On Windows pi-subagents cannot spawn a script hook without a shell, so the `foreman-worktree-setup` hook does not run there. Managed worktrees keep a symlinked `node_modules`, and builders must not run `npm ci` in them (it would rewrite the main checkout's `node_modules`). `/foreman doctor` WARNs on a symlinked `node_modules` in a live worktree.
@@ -224,6 +230,6 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `intercom.allowRemote`, `intercom.allowOpenPane` | Allow remote intercom / opening a pane (both default `false`); a project or session can only set false. |
 | `close.from` | Sources a close request is accepted from (default `herdr`, `intercom-parent`); a project or session can only narrow it. |
 | `close.autoClean` | Remove manifest worktrees and scratch at close when the preconditions pass (default `true`); a project or session can only set false. See [close](close.md). |
-| `close.worktreeDir` | Worktree convention directory (default `../<repo>.worktrees`); user or overlay config only. |
+| `close.worktreeDir` | Worktree root (default `../<repo>.worktrees`): relative, absolute or `~` with `<repo>`; it decides an owned read-write root; user or overlay config only. |
 | `python.path` | Python 3.13+ interpreter; `null` auto-detects. It runs every guard, so a project or session value is ignored. |
 | `trace.enabled`, `trace.dir` | The allowlisted trace and its directory. `trace.enabled` defaults to `null`, which follows the effective `retro.enabled` (on in tui and rpc, off in json and print); an explicit `true` or `false` wins, so `false` always turns it off. The directory (`null` = the state dir; a project or session value must resolve inside the workspace). |

@@ -21,6 +21,7 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   So does pi-subagents' default root for managed worktrees (`worktree: true` launches),
   `../worktrees/<repo>/pi-worktree-<runId>-<n>`; the launch-wait result prints the exact path
   (`worktree: <path> (branch <b>)`). Any other linked worktree is `off-convention:` in a sweep.
+- The worktree root is `close.worktreeDir` ([below](#the-worktree-root)); the default and every example here use `../<repo>.worktrees`.
 - Worktree setup hook: `foreman setup` registers `bin/foreman-worktree-setup` as pi-subagents'
   `worktreeSetupHook` (Linux and macOS, only when unset; see [install](install.md)). pi-subagents symlinks the main
   checkout's `node_modules` into each managed worktree before the hook runs; for a repository with a lockfile the hook
@@ -180,6 +181,53 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
   The worktree that contains `--cwd` (default: the current dir) is skipped with `in_use_by_caller`.
   Warning: sweep removes a freshly created worktree that has no commits beyond its base yet; use `--dry-run` first.
 
+## The worktree root
+
+`close.worktreeDir` (user or overlay config only) names the folder a repo's linked worktrees live in. One resolver
+defines it for the TypeScript adapter and the Python scripts; `<repo>` is the basename of the main checkout, a trailing
+`.git` dropped (a submodule resolves to its own checkout, not the superproject).
+
+| Value | Resolves to |
+| --- | --- |
+| `../<repo>.worktrees` (default), `.claude/worktrees`, `../<repo>-wt` | relative to the main checkout |
+| `/srv/build/<repo>` | absolute; each repo gets its own folder under `/srv/build` |
+| `~/worktrees/<repo>` | `~` is your home directory |
+
+An absolute or `~` value must contain `<repo>`. The root may sit on another filesystem than the repository, or behind a
+symlink; both the spelled and the real path are recognised everywhere.
+
+**Refusals.** A refused value falls back to the default layout; the session shows one notice and `/foreman doctor` prints a
+`FAIL` line. The codes:
+
+- `no_repo_placeholder`: an absolute or `~` value without `<repo>`.
+- `root_blocks_protected`: the root, or the block glob made from it (`<repo>` becomes `*`, and `*` crosses `/`), would cover
+  something children must keep reaching: the main checkout, your home directory, the agent dir, the pi-foreman package,
+  the Pi install, the global npm root, the temp root or `/`. `~/<repo>` and `~/Documents/<repo>` are refused;
+  `/srv/build/<repo>` and `~/<repo>.wt` pass.
+- `root_inside_superproject`: a relative value for a submodule session would land inside the superproject's working tree; use
+  an absolute root.
+- `root_collision`: when a worktree is created, the root already holds a worktree of a different repository. This is a
+  snapshot of what is there: two repos that start at the same moment on an empty shared root can both pass. The root is
+  one owned folder, so it must stay single-repo; rename one checkout or use a relative value. Doctor runs the same scan.
+
+The terminal `foreman session open --worktree` checks only the Python subset of these (it does not know the Pi install
+root or the global npm root); the adapter and doctor check all of them.
+
+**Across filesystems.** `git worktree add` needs nothing special. A worktree whose removal needs the trash command and
+whose trash fails (typically a different mount) is reported as `remove_failed` and stays in place. When no trash command
+exists a scratch dir is removed with `shutil.rmtree`; the report then carries a note line for it (`notes`), not a
+removed-path entry. `npm ci` runs only in a worktree pi-foreman creates and only when it holds a lockfile; a
+`package.json` without one is skipped with a note.
+
+**Nested submodule trees.** An outside tool may build a monorepo worktree and nest submodule worktrees inside it
+([sessions](sessions.md#nested-submodule-worktrees)). Cleanup removes only entries the manifest records. Inner entries go
+first (the empty directory is recreated so the outer worktree shows no ` D <path>`), then the outer one; the pre-checks of
+the whole group run before anything is removed, so one dirty inner checkout blocks the group and nothing is deleted. An
+outer worktree that still contains a nested checkout pi-foreman did not create is handed over with
+`contains nested checkouts not created by pi-foreman: <paths>; remove by hand`. Nothing is ever forced; if git refuses the
+outer worktree its message is reported. A dry run lists `would remove <inner…> then <outer>` for a fully recorded group.
+`foreman worktree sweep` skips any worktree that contains nested checkouts or is itself nested in another checkout.
+
 ## Sync
 
 `foreman sync` and `/sync` run the same report and cleanup and show the block at the top of their output (at most
@@ -191,7 +239,7 @@ failure of the block is one line, never an exit code.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `close.autoClean` | `true` | Remove manifest worktrees and scratch at close when the preconditions pass. A project or session may only set `false`; then every entry is a handover with reason `autoClean off`. |
-| `close.worktreeDir` | `../<repo>.worktrees` | Worktree convention directory. User or overlay config only. |
+| `close.worktreeDir` | `../<repo>.worktrees` | The worktree root: relative (to the main checkout), absolute or `~`, the latter two with `<repo>` (for example `/srv/build/<repo>`). Decides an owned read-write root. See [the worktree root](#the-worktree-root). User or overlay config only. |
 | `close.childWaitMs` | `60000` | How long `/foreman close` waits for the session's own child sessions to close (see Child sessions). `0` sends and does not wait. User or overlay config only. |
 
 ## Known gaps
