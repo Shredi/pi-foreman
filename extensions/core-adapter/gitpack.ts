@@ -569,7 +569,8 @@ async function watch(s: PrPackSession, ctx: ExtensionContext, params: Record<str
     return failure(`${tool}: ${armed.error}`, { decision: "error", ...tracked });
   }
   const base = { watching: true, number: n, intervalSeconds: s.watches.intervalSeconds() };
-  const state = armed.snap ? { head: armed.snap.head.slice(0, 7), checks: countRuns(armed.snap.runs), mergeable: armed.snap.mergeable } : {};
+  const srcErrors = Object.entries(armed.snap?.sources ?? {}).filter(([, v]) => !v.ok).map(([name, v]) => `${name}: ${oneLine(v.error ?? "no answer", 100)}`);
+  const state = armed.snap ? { head: armed.snap.head.slice(0, 7), checks: countRuns(armed.snap.runs), mergeable: armed.snap.mergeable, ...(srcErrors.length > 0 ? { sourceErrors: srcErrors } : {}) } : {};
   const lost = armed.tracked === "full" ? `; not tracked: ${FULL_TEXT}` : armed.tracked === "unavailable" ? "; not tracked: could not update the tracked list (busy, unreadable or not writable)" : "";
   return { content: [{ type: "text" as const, text: `pr_watch: ${JSON.stringify({ ...base, ...state })}${armNote(armed)}${lost}` }], details: { decision: "watching", number: n, ...tracked } };
 }

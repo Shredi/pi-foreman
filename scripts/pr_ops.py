@@ -367,6 +367,16 @@ def title_or_none(v):
     return clean_title(v) if isinstance(v, str) else None
 
 
+def is_bot(who, name):
+    """gh's Author `is_bot`, REST `user.type == "Bot"`, else a `[bot]` login suffix."""
+    if isinstance(who, dict):
+        if isinstance(who.get("is_bot"), bool):
+            return who["is_bot"]
+        if isinstance(who.get("type"), str):
+            return who["type"] == "Bot"
+    return isinstance(name, str) and name.endswith("[bot]")
+
+
 def login(v):
     if isinstance(v, dict):
         v = v.get("login") or v.get("username") or v.get("name")
@@ -432,6 +442,7 @@ def norm_comment(c):
         out["resolved"] = c["resolved"]
     if isinstance(c.get("state"), str):
         out["state"] = s_or_none(c["state"], 40)
+    out["bot"] = c.get("bot") is True
     return out
 
 
@@ -535,6 +546,7 @@ def gh_comment_list(view, inline):
     for c in (view.get("comments") if isinstance(view, dict) else None) or []:
         if isinstance(c, dict):
             out.append({"id": c.get("id"), "kind": "issue", "author": login(c.get("author")),
+                        "bot": is_bot(c.get("author"), login(c.get("author"))),
                         "createdAt": c.get("createdAt"), "body": c.get("body")})
     for r in (view.get("reviews") if isinstance(view, dict) else None) or []:
         if not isinstance(r, dict):
@@ -543,10 +555,12 @@ def gh_comment_list(view, inline):
         if state == "PENDING" or (state == "COMMENTED" and not (r.get("body") or "").strip()):
             continue
         out.append({"id": r.get("id"), "kind": "review_summary", "author": login(r.get("author")),
+                    "bot": is_bot(r.get("author"), login(r.get("author"))),
                     "createdAt": r.get("submittedAt") or r.get("createdAt"), "body": r.get("body"), "state": state.lower()})
     for c in inline if isinstance(inline, list) else []:
         if isinstance(c, dict):
             out.append({"id": c.get("id"), "kind": "review", "author": login(c.get("user")),
+                        "bot": is_bot(c.get("user"), login(c.get("user"))),
                         "createdAt": c.get("created_at"), "body": c.get("body"), "path": c.get("path"),
                         "line": c.get("line") if c.get("line") is not None else c.get("original_line")})
     return out
@@ -785,8 +799,8 @@ def op_pr_comments(req):
             if not isinstance(number, int):
                 raise ActionError("pr_host_failed", "gh: printed no pull request number")
         view = gh_view(host, root, number, "comments,reviews", rflag)
-        path = "repos/%s/pulls/%d/comments?per_page=100" % (repo, number) if repo else \
-            "repos/{owner}/{repo}/pulls/%d/comments?per_page=100" % number
+        path = "repos/%s/pulls/%d/comments?per_page=100&sort=created&direction=desc" % (repo, number) if repo else \
+            "repos/{owner}/{repo}/pulls/%d/comments?per_page=100&sort=created&direction=desc" % number
         extra = ["--hostname", api_host] if api_host else []
         code, out, err = run_host([host.program, "api", "--method", "GET"] + extra + [path], root)
         inline = host_json(host, code, out, err, "comments")

@@ -80,6 +80,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
+| [pr-sources](#pr-sources) | tools |  | opt-in | Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only. | `{"tools": {"prSources": {"ci": {"command": "ci-status --repo {repo} --pr {number} --sha {head}"}}}}` | [tools](tools.md#sources) |
 | [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
 | [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -574,6 +575,20 @@ Switch: `tools.pr` is true.
 | `tools.prGithubHosts` | unset | not in project/session (the GitHub hosts of the PR tracker come from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
 
+### pr-sources
+
+**PR sources and wake rules.** Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only.
+
+Switch: `tools.prSources` is non-empty.
+
+| Key | Default | Layer |
+|---|---|---|
+| `tools.prSources.<x>.command` | unset | not in project/session (PR sources run programs: user or overlay config only) |
+| `tools.prSources.<x>.repos` | unset | not in project/session (PR sources run programs: user or overlay config only) |
+| `tools.prSources.<x>.timeoutSeconds` | unset | not in project/session (PR sources run programs: user or overlay config only) |
+| `tools.prSources.<x>.gates` | unset | not in project/session (PR sources run programs: user or overlay config only) |
+| `tools.prWake` | `[]` | not in project/session (the wake rules for PR watches come from the user or overlay config) |
+
 ### sidebar-status
 
 **External sidebar status.** Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only.
@@ -982,6 +997,8 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
 | `tools.prGithubHosts` | the GitHub hosts of the PR tracker come from the user or overlay config |
+| `tools.prSources` | PR sources run programs: user or overlay config only |
+| `tools.prWake` | the wake rules for PR watches come from the user or overlay config |
 | `skills.visible` | it hides every other skill: user or overlay config only |
 | `sidebar.statusCommand` | the sidebar status command runs a program: user or overlay config only |
 | `sidebar.statusSeconds` | the sidebar status interval comes from the user or overlay config |

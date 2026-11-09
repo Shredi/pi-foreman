@@ -660,7 +660,7 @@ requested (`mine`), and the open PRs of configured bot authors inside a configur
 outer ring that animates while any job runs, and an inner fill that is amber while no job has finished, red once one has
 failed, green when every job finished and passed, and dim when unknown. Hovering the dot shows a card (title, the first
 ~200 characters of the description, the jobs grouped failed, running and passed, capped, and a CONFLICTING mark when the PR has
-a merge conflict); a click opens the PR. A PR whose repository and head branch equal the `repo` and `branch` of a live session
+a merge conflict); a click opens the PR. Runs of a [PR source](tools.md#sources) appear as `<source>/<name>` in the chip and the dots; a counting source that has not answered for the current commit shows `<source>/(no answer)` with a running ring. The cut to 20 names keeps GitHub's names first. A PR whose repository and head branch equal the `repo` and `branch` of a live session
 is shown under that session; fork PRs match through `headRepo` (the head repository), so a fork PR gets a chip only on the session whose repo is the fork. An open PR whose number is in a live session's `pr_watch` `prs` (`pr_create` arms such a watch) also gets its chip there when its repo or head repo is the session's, whatever branch the session is on now, so a renamed or switched branch keeps the chip; a PR matching both ways shows one chip. A PR nobody owns or shows (for example one only tracked with `pr_follow`) is listed under **Open PRs**; merged and closed PRs drop.
 
 Owner and overlay config only (a project cannot change the GitHub search):

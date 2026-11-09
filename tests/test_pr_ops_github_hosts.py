@@ -66,7 +66,7 @@ class GithubHostsTest(PrCase):
         view = argv_of(self.calls()[0])
         self.assertNotIn("-R", view)
         self.assertEqual(pair(self.api_argv(), "--hostname"), GHE)
-        self.assertEqual(self.api_argv()[-1], "repos/{owner}/{repo}/pulls/5/comments?per_page=100")
+        self.assertEqual(self.api_argv()[-1], "repos/{owner}/{repo}/pulls/5/comments?per_page=100&sort=created&direction=desc")
 
     def test_comments_without_a_repo_with_a_github_remote_add_no_hostname(self):
         self.comments_scn()
@@ -104,7 +104,7 @@ class GithubHostsTest(PrCase):
         self.ok(self.prh("pr_comments", [GHE, "github.com"], number=5, repo="o/r"))
         self.assertEqual(pair(argv_of(self.calls()[0]), "-R"), GHE + "/o/r")
         self.assertEqual(pair(self.api_argv(), "--hostname"), GHE)
-        self.assertEqual(self.api_argv()[-1], "repos/o/r/pulls/5/comments?per_page=100")
+        self.assertEqual(self.api_argv()[-1], "repos/o/r/pulls/5/comments?per_page=100&sort=created&direction=desc")
 
     def test_comments_with_a_repo_and_the_default_list_add_nothing(self):
         self.comments_scn()

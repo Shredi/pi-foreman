@@ -14,7 +14,10 @@ import type { PythonResolution } from "./python.ts";
 import { resolveGithubHosts } from "./prhost.ts";
 import type { GithubHosts } from "./prhost.ts";
 import { pollWatchBatch } from "./prwatch.ts";
-import type { CommentEntry, RunOp, WatchPoll } from "./prwatch.ts";
+import type { CommentEntry, RunOp, SourceStatus, WatchPoll } from "./prwatch.ts";
+import { inScope, noAnswerRun, parsePrSources, runSource, sourceComments, sourceRuns } from "./prsources.ts";
+import type { PrContext, SourceCfg, SourceResult } from "./prsources.ts";
+import { openTrace } from "./trace.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
@@ -23,6 +26,7 @@ import type { CommentsDoc, StateDoc, StateEntry, StateMeta, TrackedPr } from "./
 import { dropLock, ownsLock, takeLock, writeAtomic } from "./statefile.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
+const SOURCE_CONCURRENCY = 4;
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = path.resolve(HERE, "..", "..");
@@ -58,6 +62,17 @@ export interface PollDeps {
   /** tools.prGithubHosts of the loaded config; absent: github.com only. */
   githubHosts?(config: Json): GithubHosts;
   deadlineMs?: number;
+  /** Runs one PR source (prsources.ts runSource); absent: no source runs. */
+  runSource?(cfg: SourceCfg, ctx: PrContext): Promise<SourceResult>;
+  /** A trace emitter for the loaded config (`pr_source` events); absent: none. */
+  trace?(config: Json): (rec: Record<string, unknown>) => void;
+}
+
+/** What the tracked step needs to run the configured PR sources. */
+interface SourceEnv {
+  cfgs: SourceCfg[];
+  run: NonNullable<PollDeps["runSource"]>;
+  trace: (rec: Record<string, unknown>) => void;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -140,7 +155,11 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
     else if (!py.ok) res.error = `no Python >= 3.13 found (${py.rejected.join("; ") || "none tried"}). ${NO_PYTHON_FIX}`;
     else {
       try {
-        await trackedStep(deps, py.info.executable, res, hosts.hosts);
+        const ps = parsePrSources(get(config.config, "tools.prSources"));
+        if (ps.errors.length > 0) res.error ??= ps.errors[0];
+        const sx: SourceEnv = { cfgs: ps.sources, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
+        if (!deps.runSource) sx.cfgs = [];
+        await trackedStep(deps, py.info.executable, res, hosts.hosts, sx);
       } catch (err) {
         res.error = msg(err);
       }
@@ -156,7 +175,7 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
   return res;
 }
 
-async function trackedStep(deps: PollDeps, python: string, res: PollResult, hosts: string[]): Promise<void> {
+async function trackedStep(deps: PollDeps, python: string, res: PollResult, hosts: string[], sx: SourceEnv): Promise<void> {
   const { agentDir } = deps;
   const start = deps.now();
   const pre = readState(agentDir);
@@ -175,13 +194,13 @@ async function trackedStep(deps: PollDeps, python: string, res: PollResult, host
     return;
   }
   try {
-    await locked_step(deps, python, res, lock, token, hosts);
+    await locked_step(deps, python, res, lock, token, hosts, sx);
   } finally {
     dropLock(lock, token);
   }
 }
 
-async function locked_step(deps: PollDeps, python: string, res: PollResult, lock: string, token: string, hosts: string[]): Promise<void> {
+async function locked_step(deps: PollDeps, python: string, res: PollResult, lock: string, token: string, hosts: string[], sx: SourceEnv): Promise<void> {
   const { agentDir } = deps;
   const t0 = deps.now();
   const state = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
@@ -262,7 +281,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       const row = rows.get(rk);
       const meta = row ? metaOf(row.row) : prev?.meta;
       prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, at: now };
-      if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(-MAX_COMMENTS).map(cap) };
+      if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(0, MAX_COMMENTS).map(cap) };
     } else if ("error" in r && r.error === DEADLINE) {
       // keeps its entry and its turn
     } else {
@@ -272,9 +291,11 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
     }
   });
   res.tracked = items.length;
+  const commentsBefore = JSON.stringify(comments.prs); // sourceStep edits shared comment objects in place
+  await sourceStep(deps, sx, pick, polls, state.prs, prs, newComments, deadline);
 
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
-  if (JSON.stringify(newComments) !== JSON.stringify(comments.prs)) writeAtomic(trackedCommentsFile(agentDir), { v: 1, prs: newComments });
+  if (JSON.stringify(newComments) !== commentsBefore) writeAtomic(trackedCommentsFile(agentDir), { v: 1, prs: newComments });
   writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs });
   if (drop.size) {
     const done = await withTrackedLock(agentDir, () => {
@@ -289,6 +310,98 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       return cur.lines.length - keep.length;
     }, deps.now);
     res.dropped = done?.value ?? 0;
+  }
+}
+
+/**
+ * Run the configured sources for every open PR whose GitHub poll succeeded and merge their answers into `prs` (runs after GitHub's, `sources`) and
+ * `newComments` (`sources`). PRs whose oldest source answer is oldest go first (never-run first); a source not started before the deadline is skipped
+ * and keeps its previous `at`. A PR without a successful poll is left alone, previous `sources` included. `before`: the entries as of the last run.
+ */
+async function sourceStep(deps: PollDeps, sx: SourceEnv, pick: TrackedPr[], polls: WatchPoll[], before: Record<string, StateEntry>, prs: Record<string, StateEntry>, newComments: CommentsDoc["prs"], deadline: number): Promise<void> {
+  if (sx.cfgs.length === 0) {
+    // no source configured: nothing of an earlier run stays
+    for (const [k, e] of Object.entries(prs)) if (e.sources) delete e.sources;
+    for (const c of Object.values(newComments)) if (c.sources) delete c.sources;
+    return;
+  }
+  interface Job {
+    k: string;
+    p: TrackedPr;
+    snapHead: string;
+    base: string;
+    scope: SourceCfg[];
+    oldest: number;
+    results: Map<string, { r: SourceResult | null; at: number; ms: number }>;
+  }
+  const jobs: Job[] = [];
+  pick.forEach((p, i) => {
+    const r = polls[i];
+    if (!r || !("snap" in r) || r.snap.state !== "open") return;
+    const k = storeKey(p.repo, p.number, p.host);
+    const scope = sx.cfgs.filter((c) => inScope(c, p.repo));
+    jobs.push({ k, p, snapHead: r.snap.head, base: r.snap.base, scope, oldest: scope.length ? Math.min(...scope.map((c) => before[k]?.sources?.[c.name]?.at ?? 0)) : 0, results: new Map() });
+  });
+  jobs.sort((a, b) => a.oldest - b.oldest);
+  const tasks: { job: Job; cfg: SourceCfg }[] = jobs.flatMap((job) => job.scope.map((cfg) => ({ job, cfg })));
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const t = tasks[next++];
+      if (!t) return;
+      const prevAt = before[t.job.k]?.sources?.[t.cfg.name]?.at ?? 0;
+      if (deps.now() > deadline) {
+        t.job.results.set(t.cfg.name, { r: null, at: prevAt, ms: 0 });
+        sx.trace({ event: "pr_source", source: t.cfg.name, outcome: "deadline" });
+        continue;
+      }
+      const t0 = deps.now();
+      let r: SourceResult;
+      try {
+        r = await sx.run(t.cfg, { host: t.job.p.host ?? "github.com", repo: t.job.p.repo, number: t.job.p.number, head: t.job.snapHead, base: t.job.base });
+      } catch (err) {
+        r = { outcome: "failed", error: msg(err), checks: [], comments: [] };
+      }
+      const done = deps.now();
+      t.job.results.set(t.cfg.name, { r, at: done, ms: Math.max(0, done - t0) });
+      sx.trace({ event: "pr_source", source: t.cfg.name, outcome: r.outcome, ms: Math.max(0, done - t0) });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SOURCE_CONCURRENCY, tasks.length) }, worker));
+
+  for (const job of jobs) {
+    const entry = prs[job.k];
+    if (!entry?.snap) continue;
+    const runs = [...entry.snap.runs];
+    const sources: Record<string, SourceStatus> = {};
+    const cs: NonNullable<CommentsDoc["prs"][string]["sources"]> = {};
+    for (const cfg of job.scope) {
+      const got = job.results.get(cfg.name);
+      const ok = got?.r?.outcome === "ok";
+      if (ok && got?.r) {
+        runs.push(...sourceRuns(cfg, job.snapHead, got.r.checks));
+        if (got.r.comments.length > 0) cs[cfg.name] = { head: job.snapHead, comments: sourceComments(cfg, got.r.comments) };
+      } else if (cfg.gates) runs.push(noAnswerRun(cfg));
+      sources[cfg.name] = { head: job.snapHead, gates: cfg.gates, ok, ...(ok ? {} : { error: got?.r?.error ?? DEADLINE }), at: got?.at ?? 0 };
+    }
+    entry.snap = { ...entry.snap, runs };
+    if (Object.keys(sources).length > 0) entry.sources = sources;
+    else delete entry.sources;
+    const c = newComments[job.k] ?? { updatedAt: "", comments: [] };
+    const { sources: _old, ...rest } = c;
+    if (Object.keys(cs).length > 0) newComments[job.k] = { ...rest, sources: cs };
+    else if (newComments[job.k]) newComments[job.k] = rest;
+  }
+  // an entry whose PR was not source-run keeps its sources only if it still has a source in config
+  for (const [k, e] of Object.entries(prs)) {
+    if (!e.sources) continue;
+    for (const name of Object.keys(e.sources)) if (!sx.cfgs.some((c) => c.name === name && inScope(c, e.repo))) delete e.sources[name];
+    if (Object.keys(e.sources).length === 0) delete e.sources;
+    const c = newComments[k];
+    if (c?.sources) {
+      for (const name of Object.keys(c.sources)) if (!sx.cfgs.some((cfg) => cfg.name === name && inScope(cfg, e.repo))) delete c.sources[name];
+      if (Object.keys(c.sources).length === 0) delete c.sources;
+    }
   }
 }
 
@@ -314,6 +427,11 @@ export function realDeps(env: NodeJS.ProcessEnv = process.env): PollDeps {
       runSafeOp({ python, script: path.join(PKG_ROOT, "scripts", "safe_ops.py"), op, args, cwd: agentDir, config: { prHost: "gh" }, env: penv, spawner, timeoutMs: OP_TIMEOUT_MS, repoless: true }),
     refresh: (config, hosts) => refreshOpenPrs({ file: openPrsFile(agentDir), config, gh: realGh(agentDir, env), ...(hosts ? { hosts } : {}) }),
     githubHosts: resolveGithubHosts,
+    runSource: (cfg, ctx) => runSource(cfg, ctx, { stateDir: path.join(agentDir, "pi-foreman", "state"), env, platform: process.platform }),
+    trace: (config) => {
+      const w = openTrace({ enabled: get(config, "trace.enabled"), dir: get(config, "trace.dir"), stateDir: path.join(agentDir, "pi-foreman", "state"), sessionId: "pr-tracker" });
+      return (rec) => w?.emit(rec);
+    },
   };
 }
 
