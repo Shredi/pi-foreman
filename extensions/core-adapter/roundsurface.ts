@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { splitChain } from "./shellchain.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import { traceFile } from "./trace.ts";
-import { mainCheckoutOf, nestedCheckout } from "./worktreeroot.ts";
+import { mainCheckoutOf, nestedCheckout, resolveWorktreeRoot } from "./worktreeroot.ts";
 import { usageFile } from "./usage.ts";
 
 const px = (platform: string): path.PlatformPath => (platform === "win32" ? path.win32 : path.posix);
@@ -319,6 +319,8 @@ export function roundWorktreeAdd(command: string, cwd: string, platform: string 
   const target = x.resolve(gitDir, pos[0]);
   const top = repoTop(gitDir);
   if (!top) return null;
-  const home = x.join(x.dirname(x.resolve(top)), `${x.basename(x.resolve(top))}.worktrees`);
+  // the root comes from the resolver (a `.git`-suffixed repo name loses the suffix); a top that is no repository on disk keeps the lexical spelling
+  const main = platform === process.platform ? mainCheckoutOf(top) : null;
+  const home = main ? resolveWorktreeRoot(main, undefined).spelled : x.join(x.dirname(x.resolve(top)), `${x.basename(x.resolve(top))}.worktrees`);
   return x.dirname(target) === home && x.basename(target) !== "" ? target : null;
 }

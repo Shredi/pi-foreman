@@ -152,7 +152,7 @@ export function repoNameOf(mainCheckout: string, platform: string = process.plat
 // ------------------------------------------------------------------ the resolver
 
 /** Same compilation as permoverlay.ts `wildcardRegExp` (`*` crosses `/`, `?` is one char); kept local so this module stays free of that import (a test pins the two together). */
-function globRegExp(pattern: string, ignoreCase: boolean): RegExp {
+export function globRegExp(pattern: string, ignoreCase: boolean): RegExp {
   const escaped = pattern
     .replace(/\\/g, "/")
     .split("*")

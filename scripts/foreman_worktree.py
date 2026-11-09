@@ -132,6 +132,23 @@ def resolve_worktree_root(main_dir, raw=None, home=None, agent_dir=None, tmp_roo
     return asked
 
 
+def root_collision(main_dir, root):
+    """Message when another repo's worktree sits directly in `root` (a child with a `.git` file whose main checkout is not main_dir), else None."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    mine = os.path.realpath(main_dir)
+    for name in names:
+        wt = os.path.join(root, name)
+        if not os.path.isfile(os.path.join(wt, ".git")):
+            continue
+        other = main_checkout(wt)
+        if other and other != mine:
+            return "worktree root `%s` already holds worktrees of `%s`; rename one checkout or use a relative `close.worktreeDir`" % (root, other)
+    return None
+
+
 def convention_dirs(main_dir, cfg):
     raw = (cfg.get("close") or {}).get("worktreeDir")
     root = resolve_worktree_root(main_dir, raw)
@@ -144,17 +161,29 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
     """Lines of the sweep report; raises safe_ops.Precondition when cwd is not a git repo."""
     safe_ops.workspace_root(cwd)
     items = safe_ops.worktrees(cwd)
-    main_dir = os.path.realpath(items[0]["worktree"])
+    main_dir = main_checkout(cwd) or os.path.realpath(items[0]["worktree"])
     conv = convention_dirs(main_dir, cfg)
     ops_cfg = safe_ops.ops_config(cfg)
     caller = os.path.realpath(cwd)
     lines = []
+    def nested_in(tree):
+        # checkouts living inside another worktree of this listing (or holding gitlinks): pi-foreman never removes those here
+        try:
+            gl = safe_ops.list_gitlinks(tree)
+        except safe_ops.Precondition:
+            gl = []
+        return [g for g in gl if os.path.lexists(os.path.join(tree, g, ".git"))]
+
+    listed = [os.path.realpath(os.path.normpath(w["worktree"])) for w in items[1:] if isinstance(w.get("worktree"), str)]
     for w in items[1:]:
         path = w.get("worktree")
         if not isinstance(path, str):
             continue
         path = os.path.normpath(path)  # git prints `/` on Windows too
         real = os.path.realpath(path)
+        if any(o != real and safe_ops.is_inside(o, real) for o in listed):
+            lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
+            continue
         if not any(safe_ops.is_inside(d, real) for d in conv):
             lines.append("off-convention: %s" % path)
         reason, chk = None, None
@@ -172,6 +201,11 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
                 reason = exc.name
             except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
                 reason = "check_failed (%s)" % str(exc)[:80]
+        if reason is None:
+            nested = nested_in(real)
+            if nested:
+                reason = "nested_checkouts (%s)" % ", ".join(nested[:3])
+                chk = None
         if reason is None and dry_run:
             lines.append("would remove: %s" % path)
             continue

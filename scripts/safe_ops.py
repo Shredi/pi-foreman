@@ -505,6 +505,22 @@ def nested_checkout(root, c):
     return True
 
 
+def tree_root_of(cwd, ceiling):
+    """Top of the workspace tree holding cwd: the innermost checkout's top, lifted outward while the checkout above it (at or inside
+    `ceiling`) accepts the current one as nested. No lift without a ceiling; None outside a checkout."""
+    dirs = git_dirs_above(cwd)
+    if not dirs:
+        return None
+    top = dirs[0]
+    ceil = os.path.realpath(ceiling) if ceiling else None
+    while ceil and top != ceil and is_inside(ceil, top):
+        up = git_dirs_above(os.path.dirname(top))
+        if not up or not is_inside(ceil, up[0], True) or not nested_checkout(up[0], top):
+            break
+        top = up[0]
+    return top
+
+
 def list_gitlinks(cwd):
     """Paths (`/`-separated, relative to cwd's checkout) of the gitlink (mode 160000) entries in the index."""
     code, out, err = git(["ls-files", "-s", "-z"], cwd)
@@ -572,6 +588,10 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     if wt.get("locked"):
         raise Precondition("worktree_locked", "the worktree is locked")
     main_dir = os.path.realpath(main["worktree"])
+    dirs = git_dirs_above(target)
+    cw = config_value(os.path.join(dirs[2], "config"), "core", "worktree") if dirs else None
+    if cw:  # a submodule: `worktree list` item 0 is its module git dir; the checkout is core.worktree
+        main_dir = os.path.realpath(os.path.join(dirs[2], cw))
 
     code, out, _ = git(["status", "--porcelain", "-z", "--untracked-files=all"], target)
     if code != 0 or out.strip("\0"):
