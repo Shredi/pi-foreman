@@ -1,7 +1,7 @@
 // `foreman_bg` (ledger item 5) and the optional background-tasks add-on (item 6).
 //
 // `foreman_bg {command, note}` runs one shell command detached (own process group on POSIX, see bgSpawnFlags for win32; stdout and stderr to
-// `<stateDir>/scratch/<session>/wait-<id>.log`) and registers a `pid` wait for it, so the foreman ends its turn and is
+// `<stateDir>/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when the plain name already exists, e.g. after a reload) and registers a `pid` wait for it, so the foreman ends its turn and is
 // woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
 // index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard, destructive and git guard)
 // and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
@@ -99,7 +99,7 @@ export function spawnDetached(command: string, cwd: string, logPath: string, pla
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
     // win32: node's "a" opens the handle with FILE_APPEND_DATA only; the MSYS runtime of Git Bash takes such a handle as not writable, so a bash builtin
-    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access; the log is per run (wait-<id>.log), nothing to keep.
+    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access; the log name is fresh per run (freshBgLogPath: `wait-<id>-<token>.log` when `wait-<id>.log` exists), so "w" never truncates an earlier run's log; nothing to keep.
     fd = fs.openSync(logPath, platform === "win32" ? "w" : "a", 0o600);
     const sh = shellFor(command, platform, opts);
     // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
