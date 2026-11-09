@@ -61,7 +61,7 @@ test("bin/foreman and bin/ledger take the native path on MSYS (stubbed pwd -W)",
     // wrapper shell function: `pwd -W` answers C:/native/bin (like git-bash)
     const wrap = `pwd() { if [ "$1" = "-W" ]; then printf 'C:/native/bin\\n'; else command pwd "$@"; fi; }\n`;
     for (const [n, args] of [["foreman", "session"], ["ledger", "status"]] as const) {
-      const r = spawnSync("sh", ["-c", `${wrap}. ${path.join(bin, n)} ${args}`], { env: { ...process.env, PI_FOREMAN_PYTHON: py }, encoding: "utf8" });
+      const r = spawnSync("sh", ["-c", `${wrap}set -- ${args}; . ${path.join(bin, n)}`], { env: { ...process.env, PI_FOREMAN_PYTHON: py }, encoding: "utf8" });
       assert.match(r.stdout + r.stderr, /C:\/native\/bin\/\.\.\//, `${n}: ${r.stdout}${r.stderr}`);
     }
   } finally {
