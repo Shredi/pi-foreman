@@ -402,7 +402,7 @@ export default class ForemanAgents extends View {
     const id = `pr-${key}-${pr.number}`;
     // The pointer on the chip tells where it is: the card goes below it, above it near the bottom, else beside it (never over it).
     const onMove = (e, cx) => guard(() => {
-      const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = cx?.viewport_size?.();
+      const b = e?.bounds, pos = e?.position, loc = e?.local_position, vp = globalThis.window?.viewport_size?.();
       if (!b || !pos || !loc || !vp) return;
       const a = placeCard({ x: pos.x - loc.x, y: pos.y - loc.y, w: b.width, h: b.height }, { w: vp.width, h: vp.height }, { w: 300, h: prCardHeight(c) });
       this.cardAnchor ??= new Map();
@@ -412,7 +412,7 @@ export default class ForemanAgents extends View {
     const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
       .when(Boolean(href), (el) => el.cursor_pointer()
         .hover((x) => x.border_color(t.working).text_color(t.foreground))
-        .on_click((_e, cx) => { this.press(id, cx); this.openUrl(href, cx); }));
+        .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(id, cx); this.openUrl(href, cx); }));
     // The id carries a hash of the card's content: a card is not reused when its content changed.
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
       .anchor(this.cardAnchor?.get(id) ?? "top_center")

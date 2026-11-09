@@ -45,18 +45,54 @@ test("the anchor starts below the chip and follows its position: near the bottom
   const first = cards(render(mod))[0];
   assert.equal(first.props.anchor, "top_center");
   let notified = 0;
-  const cx = { viewport_size: () => ({ width: 300, height: 800 }), notify: () => { notified++; } };
-  first.props.trigger.props.on_mouse_move(move(780), cx);
-  assert.equal(notified, 1);
-  assert.equal(cards(render(mod))[0].props.anchor, "bottom_center");
-  first.props.trigger.props.on_mouse_move(move(780), cx);
-  assert.equal(notified, 1, "no redraw while the anchor is unchanged");
+  const cx = { notify: () => { notified++; } };
+  globalThis.window = { viewport_size: () => ({ width: 300, height: 800 }) };
+  try {
+    first.props.trigger.props.on_mouse_move(move(780), cx);
+    assert.equal(notified, 1);
+    assert.equal(cards(render(mod))[0].props.anchor, "bottom_center");
+    first.props.trigger.props.on_mouse_move(move(780), cx);
+    assert.equal(notified, 1, "no redraw while the anchor is unchanged");
+  } finally { delete globalThis.window; }
+});
+
+test("the size comes from the global window (a handler's cx has none): near the bottom the anchor flips to bottom_center", () => {
+  const mod = newMod(root());
+  const first = cards(render(mod))[0];
+  globalThis.window = { viewport_size: () => ({ width: 300, height: 800 }) };
+  try {
+    let notified = 0;
+    first.props.trigger.props.on_mouse_move(move(780), { notify: () => { notified++; } });
+    assert.equal(notified, 1);
+    assert.equal(cards(render(mod))[0].props.anchor, "bottom_center");
+    first.props.trigger.props.on_mouse_move(move(60), { notify: () => {} });
+    assert.equal(cards(render(mod))[0].props.anchor, "top_center");
+  } finally { delete globalThis.window; }
+});
+
+test("a chip click in an Agents row does not focus the pane (stop_propagation); a click on the row does", () => {
+  const withUrl = treeOf(sess("f", "foreman-x", { pid: 7, hcTerminal: "t5", dots: [{ ...dot(16, "fail"), url: "https://github.com/o/r/pull/16" }] }, []));
+  const mod = newMod(withUrl);
+  mod.openUrl = () => {};
+  const tree = render(mod);
+  stubs.world.runCalls = [];
+  const [c] = cards(tree);
+  let stopped = 0;
+  c.props.trigger.props.on_click({}, { stop_propagation: () => { stopped++; }, notify() {} });
+  assert.equal(stopped, 1);
+  assert.equal(stubs.world.runCalls.filter((r) => r[0] === "pane.focus").length, 0);
+  const row = walk(tree).find((e) => e.props?.id === "agent:t5");
+  assert.ok(row, "the agent row");
+  row.props.on_click({}, { notify() {} });
+  assert.equal(stubs.world.runCalls.filter((r) => r[0] === "pane.focus").length, 1);
 });
 
 test("a chip high in the window keeps the card below", () => {
   const mod = newMod(root());
   const first = cards(render(mod))[0];
-  const cx = { viewport_size: () => ({ width: 300, height: 800 }), notify: () => {} };
-  first.props.trigger.props.on_mouse_move(move(60), cx);
-  assert.equal(cards(render(mod))[0].props.anchor, "top_center");
+  globalThis.window = { viewport_size: () => ({ width: 300, height: 800 }) };
+  try {
+    first.props.trigger.props.on_mouse_move(move(60), { notify: () => {} });
+    assert.equal(cards(render(mod))[0].props.anchor, "top_center");
+  } finally { delete globalThis.window; }
 });
