@@ -54,7 +54,7 @@ class MachineSetupTest(unittest.TestCase):
             rc = fsn.cmd_machine_setup(args)
         self.assertEqual(rc, 0)
         call.assert_not_called()
-        self.assertEqual(shlex.split(out.getvalue()), ["/bin/hc", "exec", "--on", "alpha", "--", "foreman", "setup", "--addon", "polish",
+        self.assertEqual(shlex.split(out.getvalue()), ["/bin/hc", "exec", "--on", "alpha", "--timeout", "600", "--", "foreman", "setup", "--addon", "polish",
                                                        "--intercom-hc", "--machine-name", "alpha"])
 
     def test_run_calls_hc(self):

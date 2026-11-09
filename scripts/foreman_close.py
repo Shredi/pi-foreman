@@ -247,6 +247,8 @@ def in_use_by(state, sid, path):
     reg = read_json(os.path.join(state, "sessions.json"))
     for s in (reg.get("sessions") if isinstance(reg, dict) else None) or []:
         cwd = s.get("cwd") if isinstance(s, dict) else None
+        if isinstance(s, dict) and s.get("machine") and s.get("status") in ("closing", "closed"):
+            continue  # a remote entry on its way out holds no local directory (its cwd is a path on the other machine)
         if (isinstance(cwd, str) and cwd and s.get("status") in LIVE_REGISTRY
                 and safe_ops.is_inside(os.path.realpath(path), os.path.realpath(cwd), True)):
             return str(s.get("child") or s.get("label"))

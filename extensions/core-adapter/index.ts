@@ -177,6 +177,9 @@ import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
+import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
+import { applyBgShellEnv } from "./bgshell.ts";
+import { shellPathSetting } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
@@ -479,6 +482,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
+  // win32: the pi-background-tasks add-on reads PI_BG_SHELL* in its own factory, which loads after this one; set them now, before any await
+  if (platform === "win32") applyBgShellEnv({ platform, getShellConfig: piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) });
   // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
