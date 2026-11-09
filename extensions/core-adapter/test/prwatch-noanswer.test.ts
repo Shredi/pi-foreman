@@ -105,9 +105,9 @@ test("reordering duplicate-named checks between polls does not replay a failure"
 test("runSource called with the process cwd at the filesystem root finds the source program through PATH", async () => {
   const cwd = process.cwd();
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-noans-state-"));
-  const cfg: SourceCfg = { name: "ci", argv: [path.basename(process.execPath), FIX, "pass"], repos: null, timeoutMs: 20_000, gates: true };
+  const cfg: SourceCfg = { name: "ci", argv: [path.parse(process.execPath).name, FIX, "pass"], repos: null, timeoutMs: 20_000, gates: true };
   const ctx: PrContext = { host: "github.com", repo: REPO, number: 1, head: "abc123", base: "main" };
-  process.chdir("/");
+  process.chdir(path.parse(cwd).root);
   try {
     const r = await runSource(cfg, ctx, { stateDir, env: { PATH: path.dirname(process.execPath) }, platform: process.platform });
     assert.equal(r.outcome, "ok");
