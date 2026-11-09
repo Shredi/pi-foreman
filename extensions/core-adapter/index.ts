@@ -704,7 +704,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let rootInputs: ReturnType<typeof rootInputsOf> = {};
     const computeOwned = (npmRoot: string | null, resolved = true): OwnedRoots => {
       if (resolved) rootInputs = rootInputsOf(npmRoot);
-      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: rootInputs.worktreeGlobs });
+      // while pending: block globs are always safe to add early; only the owned root waits
+      const globs = resolved ? rootInputs.worktreeGlobs : rootInputsOf(null).worktreeGlobs;
+      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
     };
     const owned = computeOwned(null, false);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
