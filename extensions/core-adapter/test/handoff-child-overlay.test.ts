@@ -18,7 +18,7 @@ const baseline = readBaseline(PKG)!;
 const agentDir = path.join(fs.realpathSync(os.tmpdir()), "pf-ho-overlay", ".pi", "agent").replace(/\\/g, "/");
 const H = `${agentDir}/pi-foreman/handoffs/h1`;
 const rules = buildOverlayRules(baseline, {}, {}, agentDir, "/pkg", undefined, false);
-const ctx = (extra: Partial<MatchCtx> = {}): MatchCtx => ({ cwd: "/ws/repo", home: "/home/u", platform: "linux", role: "child", exists: () => false, isDir: () => false, realpath: (p) => p, list: () => [], ...extra });
+const ctx = (extra: Partial<MatchCtx> = {}): MatchCtx => ({ cwd: "/ws/repo", home: "/home/u", platform: process.platform === "win32" ? "win32" : "linux", role: "child", exists: () => false, isDir: () => false, realpath: (p) => p, list: () => [], ...extra });
 const write = (name: string, c: MatchCtx) => checkToolCall(rules, "write", { path: `${H}/${name}`, content: "x" }, c);
 
 test("child with handoffDir: allow-list names pass the childBlock, parent-owned names stay blocked", () => {

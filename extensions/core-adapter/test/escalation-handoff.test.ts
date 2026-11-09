@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolvePython } from "../python.ts";
 import { defaultSpawner } from "../spawn.ts";
+import { shPath } from "./_shpath.ts";
 import { runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "../shellwriteguard.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -20,7 +21,9 @@ fs.mkdirSync(ws, { recursive: true });
 fs.mkdirSync(path.join(handoff, "work"), { recursive: true });
 const pc = { sessionId: "s1", cwd: ws, home: os.homedir() };
 
-async function verdict(command: string) {
+// the shell parser reads a backslash as an escape: a native win32 path in the line must use forward slashes (see _shpath.ts)
+async function verdict(line: string) {
+  const command = shPath(line);
   const payload = shellWriteGuardPayload({ command }, pc, ws, "bash", [".workflow"], [], { handoffDir: handoff });
   const run = await runShellWriteGuard({ python: py, pkgRoot: repo, payload, env: { ...process.env } as Record<string, string>, cwd: ws, spawner: defaultSpawner });
   return shellWriteVerdict(run, py);

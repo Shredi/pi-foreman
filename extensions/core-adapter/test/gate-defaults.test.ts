@@ -63,8 +63,12 @@ test("default-write-in: worktree, scratch, tmp (tmpAccess); not outside, not for
   const w32tmp = fs.realpathSync.native(os.tmpdir());
   const w32g = (line: string, tmp: string): GateResult => gateDecide("bash", { command: line }, wt, { env: () => w32, roots: () => roots({ tmp: [tmp] }), facts: facts() });
   assert.notEqual(kind(w32g("cat a.txt > /tmp/pf41-o.txt", w32tmp)), "allow");
-  // product gap: no default-allowed tmp on win32 (reported r41)
-  assert.notEqual(kind(w32g(`cat a.txt > ${shPath(path.join(w32tmp, "pf41-o.txt"))}`, w32tmp)), "allow");
+  // the owner's win32 tmp default (effectCtxOf tmpWrite, item 6): an absolute temp path is a default write on a win32 host (the stubbed platform
+  // cannot make a POSIX path absolute for the win32 path rules, so elsewhere it stays no default)
+  const tmpLine = `cat a.txt > ${shPath(path.join(w32tmp, "pf41-o.txt"))}`;
+  if (process.platform === "win32") assert.equal(kind(w32g(tmpLine, w32tmp)), "allow");
+  else assert.notEqual(kind(w32g(tmpLine, w32tmp)), "allow");
+  assert.notEqual(kind(gateDecide("bash", { command: tmpLine }, wt, { env: () => w32, roots: () => roots({ tmp: [w32tmp], tmpAccess: false }), facts: facts() })), "allow");
   assert.notEqual(kind(w32g("cat a.txt > C:/Users/x/AppData/Local/Temp/pf41-o.txt", "C:\\Users\\x\\AppData\\Local\\Temp")), "allow");
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: { tmpAccess: false } })), "allow");
   assert.notEqual(kind(sh("cat a.txt > /tmp/pf41-o.txt", { r: CHILD })), "allow");

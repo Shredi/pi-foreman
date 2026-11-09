@@ -87,7 +87,9 @@ export function spawnDetached(command: string, cwd: string, logPath: string, pla
   let fd: number | null = null;
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
-    fd = fs.openSync(logPath, "a", 0o600);
+    // win32: node's "a" opens the handle with FILE_APPEND_DATA only; the MSYS runtime of Git Bash takes such a handle as not writable, so a bash builtin
+    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access; the log is per run (wait-<id>.log), nothing to keep.
+    fd = fs.openSync(logPath, platform === "win32" ? "w" : "a", 0o600);
     const sh = shellFor(command, platform, opts);
     // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
     const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
