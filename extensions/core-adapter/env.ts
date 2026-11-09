@@ -97,7 +97,12 @@ export function patchShellEnv(input: ShellPatchInput): void {
   if (!entries.includes(input.binDir)) env[pathKey] = [input.binDir, ...entries].join(delim);
   if (input.python) env.PI_FOREMAN_PYTHON = input.python;
   env.PI_FOREMAN_STATE_DIR = input.markerDir;
-  Object.assign(env, msysEnv(input.platform ?? "", input.config));
+  const msys = msysEnv(input.platform ?? "", input.config);
+  if (input.platform === "win32" && Object.keys(msys).length === 0) {
+    delete env.MSYS_NO_PATHCONV;
+    delete env.MSYS2_ARG_CONV_EXCL;
+  }
+  Object.assign(env, msys);
 }
 
 /** Pi agent dir: PI_CODING_AGENT_DIR (tilde expanded) or ~/.pi/agent (Pi config.js getAgentDir). */

@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
@@ -56,11 +57,17 @@ class HandoffCarveOut(unittest.TestCase):
     def test_symlink_escape_refused(self):
         outside = os.path.join(os.path.dirname(self.h), "other")
         os.makedirs(outside)
-        try:
-            os.symlink(outside, os.path.join(self.h, "work", "lnk"))
-        except (OSError, NotImplementedError):
-            self.skipTest("no symlinks")
-        self.assertIsNotNone(self.d(f"echo x > {self.h}/work/lnk/brief.md"))
+        link = os.path.join(self.h, "work", "lnk")
+        real = os.path.realpath
+
+        def fake(p, *a, **k):  # simulate a symlink work/lnk -> outside, on any platform
+            p = str(p).replace(os.sep, "/")
+            if p == link.replace(os.sep, "/") or p.startswith(link.replace(os.sep, "/") + "/"):
+                p = outside + p[len(link):]
+            return real(p, *a, **k)
+
+        with mock.patch("os.path.realpath", fake):
+            self.assertIsNotNone(self.d(f"echo x > {self.h}/work/lnk/brief.md"))
 
     def test_handoff_flag_only_when_all_refusals_are_handoff(self):
         hit = self.d(f"echo x > {self.h}/brief.md")

@@ -31,6 +31,16 @@ test("patchShellEnv applies the switches on win32 only", () => {
   assert.equal(p.MSYS_NO_PATHCONV, undefined);
 });
 
+test("patchShellEnv removes the switches when the key turns false (win32 sim)", () => {
+  const env: Record<string, string | undefined> = { Path: "C:\\x" };
+  const mk = (config: unknown) => ({ env, binDir: "C:\\bin", python: null, markerDir: "C:\\m", delimiter: ";", platform: "win32", config });
+  patchShellEnv(mk({}));
+  assert.equal(env.MSYS_NO_PATHCONV, "1");
+  patchShellEnv(mk({ shell: { msysNoPathconv: false } }));
+  assert.equal(env.MSYS_NO_PATHCONV, undefined);
+  assert.equal(env.MSYS2_ARG_CONV_EXCL, undefined);
+});
+
 test("orientation names the shell and the native-path rule on win32 only", () => {
   const base = { files: ["a.txt"], agentsMd: null, readmeMd: null, packageJson: null, reads: { warn: 5, every: 5 }, maxLines: 120 };
   const win = buildOrientation({ ...base, platform: "win32", msysNoPathconv: true });
