@@ -626,8 +626,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const holdQuestion = (id: string, input: unknown): void => {
     questionBlocks.get(id)?.();
     const first = (input as { questions?: { header?: unknown }[] } | undefined)?.questions?.[0]?.header;
-    const label = typeof first === "string" ? first.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 60) : "";
-    questionBlocks.set(id, blockedShim.own(label || "question"));
+    const label = typeof first === "string" && first.trim() ? first : "question";
+    questionBlocks.set(id, blockedShim.own(label));
   };
   const releaseQuestion = (id: string): void => {
     const release = questionBlocks.get(id);
