@@ -252,13 +252,47 @@ A child bundle holds at most 3 items.
 
 `--worktree [--base REF]` (tool: `worktree: true`, `base`) makes `open` create the session's own round worktree and open the session there; `--cwd` (default the opener's cwd) only has to be inside a git checkout, a linked worktree there resolves to the main checkout.
 
-- Path: `<close.worktreeDir>/<label>` (default `../<repo>.worktrees/<label>`). Branch: `<prefix>/<label>`, the prefix from `sessions.worktree.branchPrefix` (default `round`; user or overlay config only; same characters as a label).
+- Path: `<close.worktreeDir>/<label>` (default `../<repo>.worktrees/<label>`; a custom root, relative, absolute or `~`, is described in [close](close.md#the-worktree-root), e.g. `/srv/build/<repo>/<label>`). The label `worktrees` is refused (`label_reserved`): pi-subagents puts its isolation worktrees in `<root>/worktrees/`. A refused root falls back to the default; a root that already holds another repo's worktrees is refused (`root_collision`). The terminal `foreman session open` checks only the Python subset of the root rules. Branch: `<prefix>/<label>`, the prefix from `sessions.worktree.branchPrefix` (default `round`; user or overlay config only; same characters as a label).
 - Base: `--base` (a branch, tag or commit that does not start with `-` and resolves to a commit after the fetch), else the default branch of `origin`: `git fetch origin`, then `refs/remotes/origin/HEAD`, else `git ls-remote --symref origin HEAD`. The worktree is `git worktree add <path> -b <branch> <base>`.
 - Refused before any change: the path exists, the branch exists, no remote `origin`, a bad `--base`, a `--cwd` outside a git checkout, `--base` without `--worktree`, `--worktree` with `--machine` (the worktree would be on the remote machine).
 - Install: only when the new worktree holds `package-lock.json` or `npm-shrinkwrap.json`, `npm ci` runs there (`npm.cmd` on Windows; 540 s limit). A failed install removes nothing: the exit code is reported (`install: failed:<code>`) and the session opens anyway; rerun `npm ci` in the worktree.
 - `--dry-run` prints path, branch, base and the install step and creates nothing (it skips the fetch and uses the refs already known).
 - Output: the info JSON gains `worktree: {path, branch, base, install}` (`install` is `npm ci`, `none` or `failed:<code>`). After a successful open the adapter records the worktree in the opener's manifest (as for a `git worktree add` run through the session, so it is a round worktree and its `.workflow` is readable for the opener's children) and traces `session_worktree {label, path, branch, base, install}`. The session's cwd is the worktree, so the [trust grant](#trust-dialog-for-a-fresh-worktree) applies.
 - Removal: the opener's `foreman close` and `foreman worktree sweep` remove it only under the usual preconditions (clean, merged, no stash, no live session inside), and a worktree stays while the opened session's registry entry is `pending`, `open` or `closing`; close that session first.
+
+### Nested submodule worktrees
+
+A tool outside pi-foreman (never pi-foreman itself) may create a worktree of a monorepo and nest worktrees of its submodules
+inside it. A checkout counts as part of the surrounding tree when its `.git` file points into the monorepo's
+`modules/` admin area and that admin dir points back at the checkout (a linked submodule worktree), or a submodule's
+`core.worktree` names it (a plain submodule checkout); the rule applies recursively. For a session started in the main
+monorepo or in such a worktree, and for its round worktrees, that whole tree is one workspace: owned paths, path rules, the
+git guard (commit, `restore`), round detection and the children's write roots all treat the nested checkouts as inside it,
+but never anything above the session's workspace or round, and never another round's tree. A forged `.git` file that points at
+another round's admin dir fails the back-link check. A session started inside a submodule checkout does not lift: its workspace
+is that submodule.
+
+- `git submodule update`, `sync`, `init`, `foreach` and `status` are allowed for children when the cwd, every path argument (everything after
+  `--` included, even tokens starting with `-`) and the value of `--reference` (`--reference x` and `--reference=x`) lie inside
+  the round's own tree. The URL rule applies only to `sync`, `init` and `update --init` or `--require-init` (which implies `--init`): a `.gitmodules` URL is resolved the way git
+  resolves it (relative to the superproject's remote) and must equal the URL already configured, and a child's first init of an
+  unconfigured submodule is refused (run it as the foreman or owner). Glob or pathspec-magic paths (`*`, `?`, `[`, leading `:`)
+  count as every submodule; the value of any other option (`--depth 1`, `-j 2`, `--filter x`, `--ref-format f`, in the separate, `=` or attached form) is not a
+  path, and an unknown option counts as every submodule. `update`, `sync`, `init` and `status` with `--recursive` are refused for
+  children even inside the tree (the foreman or owner runs those). `foreach '<cmd>'` classifies the inner command like any child command.
+- `<repo>` for a submodule is the submodule's own checkout name. Each submodule checkout gets its own PR gate and reviewer:
+  PASS records are keyed by the checkout's own top level, not the lifted root.
+- Cleanup never deletes nested checkouts pi-foreman did not create ([close](close.md#the-worktree-root)).
+
+**Isolation worktrees (`worktree: true`).** pi-subagents' leaves are not placed by `close.worktreeDir`; no base dir is set
+(setting `PI_SUBAGENTS_WORKTREE_DIR` would force the native provider and fail under worktrunk). For a round at
+`<root>/<label>` the leaves land in `<root>/worktrees/<label>/…`, under the root, which is why the label `worktrees` is
+reserved. A session in the main checkout gets its leaves beside the main checkout, not under the root; under worktrunk they
+land where worktrunk puts them. A leaf of a superproject round has uninitialised submodule directories, not the nested
+worktrees, so nested-submodule work runs without `worktree: true`; a `worktree: true` launch whose cwd is a nested checkout is
+refused. `/foreman doctor` prints the root's lines: the effective root (spelled and real) and whether it is default or
+configured, whether it exists and is writable, refusals and collisions as `FAIL`, a `WARN` for no symlink support or a
+different case sensitivity than the main checkout, and an `INFO` for a different device.
 
 ### Trust dialog for a fresh worktree
 
@@ -649,7 +683,7 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | `wait.batchWindowSeconds` | Window in which wait notices are batched (default 300). |
 | `wait.maxActive` | Concurrent waits allowed (default 8); a project or session can only lower it. |
 | `wait.ci` | CI waits on or off (default `true`); a project or session can only set false. |
-| `close.autoClean`, `close.worktreeDir` | Cleanup at close and the worktree convention directory (see [close](close.md)). `autoClean` can only be turned off by a project or session; `worktreeDir` is user or overlay config only. |
+| `close.autoClean`, `close.worktreeDir` | Cleanup at close and the worktree convention directory (see [close](close.md)). `autoClean` can only be turned off by a project or session; `worktreeDir` is user or overlay config only and accepts relative, absolute and `~` values with `<repo>` (see [close](close.md#the-worktree-root)). |
 | `herdr.blockedShim` | Show any open dialog or permission ask as blocked in Herdr (default `true`); any layer may set it. |
 | `herdr.groupTag` | Herdr group tag on opened child and parent panes (default `true`); any layer may set it. |
 | `ui.symbols` | Glyph set for radar and the Herdr sidebar plugin: `unicode` (default, broadest support), `emoji`, `nerd` (Nerd Font) or `ascii`; an unknown value reads as `unicode`; any layer may set it. |

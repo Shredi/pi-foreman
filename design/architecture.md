@@ -511,7 +511,7 @@ The `foreman` CLI (`bin/foreman`, `.cmd`, `.ps1`; `foreman update-check|retro|sy
 | `intercom.allowRemote`, `intercom.allowOpenPane` | `false` | `true` loosens | any layer may set false; a project or session can only set false |
 | `close.from` | `["herdr","intercom-parent","remote-parent"]` | fewer is tighter | any; project and session intersect |
 | `close.autoClean` | `true` | `true` loosens (removes worktrees and scratch) | any; project and session only false |
-| `close.worktreeDir` | `../<repo>.worktrees` | neutral (names the sweep convention) | L1, L3, L2; project ignored |
+| `close.worktreeDir` | `../<repo>.worktrees` | a custom root loosens: it decides an owned read-write root (refused values fall back to the default) | L1, L3, L2; project ignored |
 | `close.childWaitMs` | `60000` | neutral (how long a close waits for its child sessions) | L1, L3, L2; project ignored |
 | `footer.usage` | `true` | neutral | any |
 | `compaction.maxTokens` | `200000` (`null` = no cap) | higher compacts later (loosens) | user or overlay sets it; project only lowers, minimum 50000; a null is dropped; the session layer is ignored with a warning (setup applies it) |

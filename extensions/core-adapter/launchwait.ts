@@ -83,6 +83,7 @@ export const REPEAT_STOP_REASONS: readonly RegExp[] = [
   /uses a variable this line rebinds; only an unbound \$S/,
   /write target '.*' uses a variable this line binds/,
   /cannot write its own parent's ruling/,
+  // the default `*.worktrees/*` spelling is excluded here; the block globs of a custom worktree root (`worktreeGlobs`) are exempted at the call site in index.ts
   /\(path rule '(?![^']*(?:\.worktrees|scratch))[^']*' matched /,
   /denied by the write protection \(rule '/,
   // R41 gate floors a child only hits by probing: a secret or key path, a policy or harness state file

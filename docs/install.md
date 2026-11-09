@@ -304,6 +304,20 @@ repository therefore cannot loosen your guards. Each key's direction is listed i
 warn, an invalid safety key fails closed to the package values. Rationale: `design/architecture.md`
 [section 3](../design/architecture.md#3-config-schema).
 
+### Worktree root
+
+Round worktrees go to `../<repo>.worktrees` by default. To keep them elsewhere, for example on another disk, set an absolute
+root in your user file (`<agent dir>/foreman.json`) or an overlay; it must contain `<repo>`:
+
+```json
+{ "close": { "worktreeDir": "/srv/build/<repo>" } }
+```
+
+Each repo then gets `/srv/build/<repo>/<label>`. Relative values (`../<repo>-wt`) and `~` values (`~/worktrees/<repo>`) work too.
+A project file cannot set it. A value that would cover protected folders (`~/<repo>`) or a root that already holds another
+repo's worktrees is refused and the default layout is used; `/foreman doctor` shows the effective root and any refusal.
+Details: [close](close.md#the-worktree-root).
+
 ## Updating and removing
 
 ```sh

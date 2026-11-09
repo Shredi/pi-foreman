@@ -1849,7 +1849,8 @@ def restore_path_problem(p, ctx, call):
         return "not inside a git work tree", None
     root = os.path.normcase(os.path.realpath(top.strip()))
     own = run_git(GitCall(ctx), ctx, ["rev-parse", "--show-toplevel"])
-    if not own or os.path.normcase(os.path.realpath(own.strip())) != root:
+    if not own or (os.path.normcase(os.path.realpath(own.strip())) != root and
+                   (tree_top(own.strip(), ctx) or "") != (tree_top(top.strip(), ctx) or "?")):
         return "in another repository than the working directory's", None
     real = os.path.normcase(os.path.realpath(full))
     if real != root and not real.startswith(root.rstrip(os.sep) + os.sep):
@@ -1955,6 +1956,218 @@ def worktree_top(path):
         p = up
 
 
+def _gitfile_target(dot):
+    try:
+        with open(dot, "r", errors="replace") as f:
+            line = f.readline().strip()
+    except OSError:
+        return None
+    if not line.startswith("gitdir:"):
+        return None
+    t = line[7:].strip()
+    return os.path.realpath(t if os.path.isabs(t) else os.path.join(os.path.dirname(dot), t))
+
+
+def _inside_strict(base, p):
+    return p != base and p.startswith(base.rstrip(os.sep) + os.sep)
+
+
+def _modules_roots(p):
+    dot = os.path.join(p, ".git")
+    if os.path.isdir(dot):
+        return [os.path.realpath(os.path.join(dot, "modules"))]
+    admin = _gitfile_target(dot)
+    if not admin:
+        return []
+    roots = [os.path.join(admin, "modules")]
+    try:
+        with open(os.path.join(admin, "commondir")) as f:
+            c = f.read().strip()
+        roots.append(os.path.join(os.path.realpath(os.path.join(admin, c)), "modules"))
+    except OSError:
+        roots.append(os.path.join(os.path.dirname(os.path.dirname(admin)), "modules") if os.path.basename(os.path.dirname(admin)) == "worktrees" else os.path.join(admin, "modules"))
+    return [os.path.realpath(r) for r in roots]
+
+
+def nested_accepts(p, c):
+    """Whether checkout c (a `.git` file) is a submodule checkout or a linked worktree of a submodule of the checkout at p. Both directions are
+    verified: the gitdir lies below p's modules dir and points back at c."""
+    dot = os.path.join(c, ".git")
+    if os.path.islink(dot) or not os.path.isfile(dot):
+        return False
+    admin = _gitfile_target(dot)
+    modules = _modules_roots(p)
+    if not admin or not modules:
+        return False
+    parent = os.path.dirname(admin)
+    if os.path.basename(parent) == "worktrees" and any(_inside_strict(m, os.path.dirname(parent)) for m in modules):
+        try:
+            with open(os.path.join(admin, "gitdir")) as f:
+                back = f.read().strip()
+        except OSError:
+            return False
+        back = back if os.path.isabs(back) else os.path.join(admin, back)
+        return os.path.realpath(os.path.dirname(back)) == os.path.realpath(c) and os.path.basename(back) == ".git"
+    if any(_inside_strict(m, admin) for m in modules):
+        try:
+            with open(os.path.join(admin, "config")) as f:
+                text = f.read()
+        except OSError:
+            return False
+        m = re.search(r"^\s*worktree\s*=\s*(.+?)\s*$", text, re.M)
+        if not m:
+            return False
+        w = m.group(1).strip('"')
+        w = w if os.path.isabs(w) else os.path.join(admin, w)
+        return os.path.realpath(w) == os.path.realpath(c)
+    return False
+
+
+def tree_top(path, ctx):
+    """The workspace tree's top for path: the nearest checkout's top, lifted outward while the checkout above it accepts it as nested, bounded by
+    PI_FOREMAN_TREE_CEILING (launch environment). No ceiling, no lift."""
+    top = worktree_top(path)
+    ceiling = ctx.env.get("PI_FOREMAN_TREE_CEILING") or ""
+    if not top or not os.path.isabs(ceiling):
+        return top
+    ceil = os.path.realpath(ceiling)
+    while top != ceil and _inside_strict(ceil, top):
+        up = worktree_top(os.path.dirname(top))
+        if not up or not (up == ceil or _inside_strict(ceil, up)) or not nested_accepts(up, top):
+            break
+        top = up
+    return top
+
+
+def _gm_resolve(url, base):
+    """A relative submodule URL resolved the way git does against base (a remote URL or the superproject dir)."""
+    base = base.rstrip("/")
+    while url.startswith(("./", "../")):
+        if url.startswith("./"):
+            url = url[2:]
+            continue
+        url = url[3:]
+        cut = max(base.rfind("/"), -1)
+        if cut < 0:
+            cut = base.rfind(":")
+            base = base[:cut] if cut >= 0 else ""
+        else:
+            base = base[:cut]
+    return base + "/" + url
+
+
+_SUB_VALUED = {"--depth", "-j", "--jobs", "--filter", "--reference", "--ref-format"}
+_SUB_FLAGS = {"--init", "--recursive", "--force", "--checkout", "--merge", "--rebase", "--no-fetch", "--remote", "--quiet", "--progress",
+              "--require-init", "--dissociate", "--single-branch", "--no-single-branch", "--recommend-shallow", "--no-recommend-shallow", "--no-progress"}
+_SUB_SHORT = set("iqfN")
+_SUB_PATH_VALUED = {"--reference"}
+
+
+def _sub_parse(args):
+    """Parse the tokens after a `git submodule` verb once. Returns (flags, paths, value_paths, unknown): the options seen (names, `=` values dropped),
+    the path tokens (everything after `--`, dash-led ones included), the values of path-valued options (`--reference`, separate or `=` form), and
+    the count of options not recognised. Values of other options (`--depth`, `-j`, `--filter`, `--ref-format`) are never paths."""
+    flags, paths, value_paths, unknown = [], [], [], 0
+    skip = False
+    only_paths = False
+    for t in args:
+        if skip:
+            skip = False
+            if skip_is_path:
+                value_paths.append(t)
+            continue
+        if only_paths or not t.startswith("-") or t == "-":
+            paths.append(t)
+            continue
+        if t == "--":
+            only_paths = True
+            continue
+        name, eq, val = t.partition("=")
+        if t in _SUB_VALUED:
+            flags.append(t)
+            skip, skip_is_path = True, t in _SUB_PATH_VALUED
+        elif eq and name in _SUB_VALUED:
+            flags.append(name)
+            if name in _SUB_PATH_VALUED:
+                value_paths.append(val)
+        elif t.startswith("-j") and not t.startswith("--"):
+            flags.append("-j")
+        elif t in _SUB_FLAGS:
+            flags.append(t)
+        elif not t.startswith("--") and all(c in _SUB_SHORT for c in t[1:]):
+            flags.extend("-" + c for c in t[1:])
+        else:
+            unknown += 1
+    return flags, paths, value_paths, unknown
+
+
+def child_submodule(rest, ctx, call):
+    """A child's `git submodule update|sync|status|foreach`: inside the actor's own (lifted) tree only; update/sync only with URLs that equal what is
+    configured. None for other verbs (today's rules)."""
+    texts = [w.text for w in rest]
+    verbs = [t for t in texts if not t.startswith("-")]
+    verb = verbs[0] if verbs else ""
+    if verb not in ("update", "sync", "status", "foreach", "init"):
+        return None
+    if any(w.dynamic for w in rest):
+        return deny("children may not run `git submodule` with computed arguments; write them out.")
+    after = texts[texts.index(verb) + 1:] if verb != "foreach" else []
+    flags, arg_paths, value_paths, unknown = _sub_parse(after)
+    if os.path.isabs(ctx.env.get("PI_FOREMAN_TREE_CEILING") or ""):
+        tree = tree_top(ctx.start_cwd, ctx)
+        paths = [call.cwd] + [os.path.join(call.cwd, t) for t in arg_paths + value_paths]
+        for q in paths:
+            real = os.path.realpath(q)
+            if not tree or not (real == tree or _inside_strict(tree, real)):
+                return deny("children run `git submodule %s` only inside their own tree (%s is outside); the foreman runs it elsewhere." % (verb, q))
+    if verb == "foreach":
+        return None
+    if "--recursive" in texts:
+        return deny("children may not run `git submodule %s --recursive`; the foreman or owner does that." % verb)
+    init = any(f in ("--init", "--require-init", "-i") for f in flags)
+    if not (verb in ("sync", "init") or (verb == "update" and init)):
+        return None
+    top = (run_git(call, ctx, ["rev-parse", "--show-toplevel"]) or "").strip()
+    if not top:
+        return None
+    gm = os.path.join(top, ".gitmodules")
+    listing = run_git(call, ctx, ["config", "-f", gm, "--get-regexp", r"^submodule\..*\.(path|url)$"]) or ""
+    subs = {}
+    for line in listing.splitlines():
+        k, _, v = line.partition(" ")
+        name, _, field = k[len("submodule."):].rpartition(".")
+        subs.setdefault(name, {})[field] = v
+    realtop = os.path.realpath(top)
+    chosen = [""] * unknown
+    for t in arg_paths:
+        if any(ch in t for ch in "*?[") or t.startswith(":"):
+            chosen.append("")
+            continue
+        rel = os.path.relpath(os.path.realpath(os.path.join(call.cwd, t)), realtop).replace(os.sep, "/")
+        chosen.append("" if rel == "." else rel)
+    branch = (run_git(call, ctx, ["symbolic-ref", "--short", "-q", "HEAD"]) or "").strip()
+    remote = (run_git(call, ctx, ["config", "--get", "branch.%s.remote" % branch]) or "").strip() if branch else ""
+    base = ""
+    for r in ([remote] if remote else []) + ["origin"]:
+        base = (run_git(call, ctx, ["config", "--get", "remote.%s.url" % r]) or "").strip()
+        if base:
+            break
+    for name, f in sorted(subs.items()):
+        sp = f.get("path", "").rstrip("/")
+        if chosen and not any(c == "" or sp == c or sp.startswith(c + "/") for c in chosen):
+            continue
+        url = f.get("url", "")
+        want = _gm_resolve(url, base or top) if url.startswith(("./", "../")) else url
+        have = (run_git(call, ctx, ["config", "--get", "submodule.%s.url" % name]) or "").strip()
+        if have:
+            if want != have:
+                return deny("children may not run `git submodule %s`: the .gitmodules URL of %s (%s) differs from the configured %s; "
+                            "the foreman or owner runs it." % (verb, name, want, have))
+        elif verb == "init" or (verb == "update" and init):
+            return deny("children may not initialise submodule %s (`git submodule %s` sets its URL); the foreman or owner runs it." % (name, "init" if verb == "init" else "update --init"))
+    return None
+
+
 _CFG_MODES = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"}
 _CFG_MODS = {"--local", "--worktree", "--global", "--system", "--includes", "--no-includes", "-z", "--null", "--show-origin",
              "--show-scope", "--name-only", "--bool", "--int", "--bool-or-int", "--path", "--expiry-date"}
@@ -2042,7 +2255,7 @@ def foreman_checkout_problem(s, rest, ctx, call):
     if s not in GIT_WRITE_SUBS or not os.path.isabs(d) or read_only_form(s, rest):
         return None
     checkout = os.path.realpath(d)
-    own = worktree_top(ctx.start_cwd)
+    own = tree_top(ctx.start_cwd, ctx)
     cands = [call.cwd] + [p.partition("=")[2] for p in call.passthrough]
     if s in ("clone", "init"):
         ops = [w for w in rest if not w.dynamic and not w.text.startswith("-")]
@@ -2052,7 +2265,7 @@ def foreman_checkout_problem(s, rest, ctx, call):
         if "\0" in c:  # a computed path that stays opaque: undecidable here, never a crash
             continue
         real = os.path.realpath(c)
-        if (real == checkout or real.startswith(checkout.rstrip(os.sep) + os.sep)) and worktree_top(real) != own:
+        if (real == checkout or real.startswith(checkout.rstrip(os.sep) + os.sep)) and tree_top(real, ctx) != own:
             return deny("child-write-foreman-checkout: children never write the foreman's checkout (git %s reaches %s). "
                         "Work in your own worktree and report to the foreman." % (s, c))
     return None
@@ -2072,6 +2285,10 @@ def child_rules(s, rest, ctx, call, seg=None, via_xargs=False):
     dynamic = any(w.dynamic for w in rest)
     if dynamic and s in RISKY_DYNAMIC:
         return deny("children may not run `git %s` with computed arguments; write them out." % s)
+    if s == "submodule":
+        d = child_submodule(rest, ctx, call)
+        if d is not None:
+            return d
     if s == "reset":
         opts, _, _, _ = parse_opts(rest, known=("hard", "soft", "mixed", "merge", "keep", "quiet", "patch",
                                                  "pathspec-from-file"), long_arg=("pathspec-from-file",))
@@ -2587,7 +2804,7 @@ def child_message_line_problem(seg, ctx, call, envs):
             start = GitCall(ctx)
             start.cwd = ctx.start_cwd
             home = (run_git(start, ctx, ["rev-parse", "--show-toplevel"], None) or "").strip()
-            if home and os.path.realpath(home) != top:
+            if home and os.path.realpath(home) != top and tree_top(home, ctx) != tree_top(top, ctx):
                 return "`%s` changes into another repository than the worktree the child runs in; %s" % (shown, CHILD_F_FIX)
             continue
         if prog_name(prog) != "git":

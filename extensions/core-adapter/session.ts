@@ -25,6 +25,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { CLOSE_START_FAILED_REASON, CLOSE_TEXT, CLOSED_TEXT, PR_WATCHED_REASON, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
 import type { Json } from "./config.ts";
+import { mainCheckoutOf, resolveWorktreeRoot } from "./worktreeroot.ts";
+import { workspaceTop } from "./gitdrift.ts";
 import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
@@ -358,6 +360,8 @@ export interface SessionDeps {
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
   /** Run a `foreman_session.py` verb (see remoteRunner). */
   runRemote?: RunRemote;
+  /** The Pi install root and the global npm root (only this side knows them): protected roots of the worktree-root resolver; `npmRootPending` while `npm root -g` has not answered. */
+  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null; npmRootPending?: boolean };
 }
 
 export const PLAN_MODE_UNAVAILABLE = "session open refused [plan_mode_unavailable]: this session has no /plan command (install a plan-mode package), so the new session cannot open in plan mode. Open it without planMode, or pass the first command your setup provides.";
@@ -447,6 +451,16 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   const model = explicit ?? d.model;
   const opener = openerIntercomId(d.env, d.agentDir, d.piSessionId);
   if (c.machine && !c.cwd) return { text: "pi-foreman session: open --machine needs --cwd (the directory on the remote machine).", ok: false };
+  if (c.worktree && !c.machine) {
+    // the root the new worktree lands in is checked here, before anything is spawned (worktreeroot.ts resolver; the Python side repeats it)
+    if (c.label === "worktrees") return { text: "session open refused [label_reserved]: the label `worktrees` is the folder of pi-subagents isolation worktrees; choose another label", ok: false };
+    if (d.protectedRoots?.npmRootPending) return { text: "session open refused [root_unresolved]: the global npm root is still resolving, so the worktree root cannot be checked yet; retry in a moment", ok: false };
+    const top = workspaceTop(path.resolve(d.cwd, c.cwd ?? "."));
+    const main = top ? mainCheckoutOf(top) : null;
+    const raw = (d.config as { close?: { worktreeDir?: unknown } } | undefined)?.close?.worktreeDir;
+    const root = main ? resolveWorktreeRoot(main, raw, { installRoot: d.protectedRoots?.installRoot, npmRoot: d.protectedRoots?.npmRoot }) : null;
+    if (root?.error) return { text: `session open refused [${root.error.code}]: ${root.error.message}`, ok: false };
+  }
   // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
   const cwdArg = c.machine ? c.cwd! : path.resolve(d.cwd, c.cwd ?? ".");
   const argv = [path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "open", c.label, path.resolve(d.cwd, c.brief), "--cwd", cwdArg, "--parent-id", opener];
@@ -621,6 +635,7 @@ export interface SessionHost {
   config?: Json;
   trace?: (rec: Record<string, unknown>) => void;
   recordWorktree?: (entry: ManifestEntry) => Promise<void>;
+  protectedRoots?: { installRoot?: string | null; npmRoot?: string | null; npmRootPending?: boolean };
 }
 
 const commandNames = (pi: ExtensionAPI): string[] => pi.getCommands?.().map((c) => c.name) ?? [];
@@ -710,6 +725,7 @@ export function registerSession(
           commands: commandNames(pi),
           trace: s.trace,
           recordWorktree: s.recordWorktree,
+          protectedRoots: s.protectedRoots,
           runRemote: remoteRunner({ python: s.python, spawner: deps.spawner, pkgRoot: deps.pkgRoot, agentDir: s.agentDir }),
         },
         args,
@@ -770,6 +786,7 @@ export function registerSessionOpenTool(
           commands: commandNames(pi),
           trace: s.trace,
           recordWorktree: s.recordWorktree,
+          protectedRoots: s.protectedRoots,
         },
         params,
       );
