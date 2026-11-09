@@ -38,7 +38,7 @@ const top = (kids, over = {}) => treeOf(sess("f", "foreman-x", { pid: 7, hcTermi
 test("(a) a root with a status line and chips: the connector runs through every row before the first child", () => {
   const root = render(top([sess("k", "kid", { hcTerminal: "t9" })]));
   const rails = byId(root, "rail:f/").map((e) => e.props.id);
-  assert.deepEqual(rails.filter((r) => r.startsWith("rail:f/x")), ["rail:f/x0", "rail:f/x1"], "status line and chip line");
+  assert.deepEqual(rails.filter((r) => r.startsWith("rail:f/x")), ["rail:f/x0"], "status line (the chips sit in the row)");
   assert.ok(byId(root, "rail:agent:t5/row").length === 1, "stub under the root chevron");
   for (const r of byId(root, "rail:f/x")) assert.equal(r.props.left, 16, "same x as the chevron of the root row");
   assert.equal(byId(root, "rail:agent:t5/row")[0].props.left, 16);

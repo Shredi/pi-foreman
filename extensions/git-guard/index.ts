@@ -9,7 +9,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildGuardEnv } from "../core-adapter/env.ts";
+import { buildGuardEnv, piAgentDir } from "../core-adapter/env.ts";
+import { treeCeilingOf } from "../core-adapter/worktreeroot.ts";
+import { PARENT_SESSION_ENV, readBinding } from "../core-adapter/usage.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, runGitGuard } from "../core-adapter/gitguard.ts";
 import { resolvePython } from "../core-adapter/python.ts";
 import type { PythonResolution } from "../core-adapter/python.ts";
@@ -45,6 +47,28 @@ export default function gitGuard(pi: ExtensionAPI, deps: GitGuardDeps = {}): voi
   const spawner = deps.spawner ?? defaultSpawner;
   const env = deps.env ?? process.env;
   let python: Promise<PythonResolution> | undefined;
+  // The tree ceiling per session (worktreeroot.ts treeCeilingOf), never in process.env: one runner process can host several children.
+  const ceilings = new Map<string, string>();
+
+  pi.on("session_start", async (_event, ctx) => {
+    try {
+      const sessionId = ctx.sessionManager.getSessionId();
+      const agentDir = piAgentDir(env as NodeJS.ProcessEnv, os.homedir());
+      const binding = readBinding(env);
+      const foremanSession = binding?.foremanSession || (env[PARENT_SESSION_ENV] ?? "").trim() || null;
+      ceilings.set(sessionId, treeCeilingOf({ cwd: ctx.cwd, agentDir, foremanSession, binding }));
+    } catch {
+      // no ceiling: no lift
+    }
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    try {
+      ceilings.delete(ctx.sessionManager.getSessionId());
+    } catch {
+      // nothing to drop
+    }
+  });
 
   pi.on("tool_call", async (event, ctx) => {
     if (!isShellTool(event.toolName)) return undefined;
@@ -56,7 +80,7 @@ export default function gitGuard(pi: ExtensionAPI, deps: GitGuardDeps = {}): voi
       const sessionId = ctx.sessionManager.getSessionId();
       const input = event.input as Record<string, unknown>;
       const payload = gitGuardPayload(event.toolName, input, { sessionId, cwd: ctx.cwd, home: os.homedir() });
-      const guardEnv = buildGuardEnv({ base: env, coreDir: path.join(PKG_ROOT, "core"), sessionId, guard: "git_guard", markerDir: os.tmpdir() });
+      const guardEnv = { ...buildGuardEnv({ base: env, coreDir: path.join(PKG_ROOT, "core"), sessionId, guard: "git_guard", markerDir: os.tmpdir() }), PI_FOREMAN_TREE_CEILING: ceilings.get(sessionId) ?? "" };
       const run = await runGitGuard({ python: exe, pkgRoot: PKG_ROOT, mode: "child", payload, env: guardEnv, cwd: ctx.cwd, spawner });
       const t = await translateToolCall({
         guard: "git_guard",

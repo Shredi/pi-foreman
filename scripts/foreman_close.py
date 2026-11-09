@@ -405,6 +405,27 @@ def remove_scratch(path):
             raise OSError("trash failed: %s" % r.stderr.decode("utf-8", "replace").strip()[:120])
     else:
         shutil.rmtree(real)
+        return "no trash command: removed with rmtree (not recoverable): %s" % real
+    return None
+
+
+def nested_inside(path):
+    """Real paths of the checkouts nested in the worktree at path: populated gitlinks and `.git` files accepted by safe_ops.nested_checkout."""
+    root = os.path.realpath(path)
+    found = {}
+    for d, dirs, _files in os.walk(root):
+        dirs[:] = [x for x in dirs if x not in (".git", "node_modules")]
+        if d != root and os.path.isfile(os.path.join(d, ".git")) and safe_ops.nested_checkout(root, d):
+            found[key(d)] = os.path.realpath(d)
+    try:
+        links = safe_ops.list_gitlinks(root)
+    except safe_ops.Precondition:
+        links = []
+    for g in links:
+        d = os.path.join(root, g)
+        if os.path.lexists(os.path.join(d, ".git")):
+            found[key(d)] = os.path.realpath(d)
+    return sorted(found.values())
 
 
 def check_entry(e, state, sid, ops_cfg):
@@ -426,7 +447,34 @@ def check_entry(e, state, sid, ops_cfg):
 
 
 def cleanup(entries, state, sid, ops_cfg, auto_clean, dry_run):
-    res = {"removed": [], "wouldRemove": [], "kept": [], "handovers": []}
+    res = {"removed": [], "wouldRemove": [], "kept": [], "handovers": [], "notes": [], "groups": []}
+    # worktrees go deepest path first, in the slots the worktree entries already occupy
+    slots = [i for i, e in enumerate(entries) if e["kind"] == "worktree"]
+    ordered = sorted((entries[i] for i in slots), key=lambda e: -len(os.path.realpath(e["path"]).split(os.sep)))
+    entries = list(entries)
+    for i, e in zip(slots, ordered):
+        entries[i] = e
+    recorded = {key(e["path"]) for e in entries if e["kind"] == "worktree"}
+    checked, inners = {}, {}  # key -> (reason, chk) of a worktree entry; key -> its manifest-recorded nested entries
+    for e in entries:
+        if e["kind"] != "worktree" or not auto_clean or not os.path.lexists(e["path"]):
+            continue
+        reason, chk = check_entry(e, state, sid, ops_cfg)
+        if reason is None:
+            nested = nested_inside(e["path"])
+            foreign = [n for n in nested if key(n) not in recorded]
+            inners[key(e["path"])] = [n for n in nested if key(n) in recorded]
+            if foreign:
+                reason = "contains nested checkouts not created by pi-foreman: %s; remove by hand" % ", ".join(foreign[:3])
+        checked[key(e["path"])] = (reason, chk)
+    # a group (outer worktree and the recorded entries nested in it) is removed whole or not at all
+    for outer in list(checked):
+        members = [k for k in checked if k != outer and safe_ops.is_inside(outer, k)]
+        failing = [k for k in [outer] + members if checked[k][0] is not None]
+        if members and failing:
+            for k in [outer] + members:
+                if checked[k][0] is None:
+                    checked[k] = ("group_not_removable (%s: %s)" % (failing[0], checked[failing[0]][0]), None)
     for e in entries:
         path = e["path"]
         if e["kind"] == "handoff":
@@ -439,18 +487,28 @@ def cleanup(entries, state, sid, ops_cfg, auto_clean, dry_run):
         if not auto_clean:
             res["handovers"].append({"path": path, "reason": "autoClean off", "kind": e["kind"], "branch": e.get("branch")})
             continue
-        reason, chk = check_entry(e, state, sid, ops_cfg)
+        reason, chk = checked.get(key(path)) or check_entry(e, state, sid, ops_cfg)
+        inner = inners.get(key(path), [])
         if reason is None and dry_run:
             res["wouldRemove"].append(path)
+            if inner:
+                res["groups"].append({"inner": inner, "path": path})
             continue
         if reason is None:
             try:
                 if e["kind"] == "scratch":
                     reason = scratch_guard(path, state)  # re-check right before the removal
                     if reason is None:
-                        remove_scratch(path)
+                        note = remove_scratch(path)
+                        if note:
+                            res["notes"].append(note)
                 else:
+                    nested_here = bool(safe_ops.git_dirs_above(os.path.dirname(os.path.realpath(path))) and
+                                       safe_ops.nested_checkout(safe_ops.git_dirs_above(os.path.dirname(os.path.realpath(path)))[0], path))
                     safe_ops.remove_worktree(chk)
+                    safe_ops.git(["worktree", "prune"], chk["main_dir"])
+                    if nested_here:  # the outer checkout still lists the gitlink path: leave an empty dir, not ` D <path>`
+                        os.makedirs(chk["target"], exist_ok=True)
             except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
                 reason = "remove_failed (%s)" % str(exc)[:80]
         if reason is None:
@@ -523,7 +581,10 @@ def render_lines(rep):
     lines += ["open item: %s" % t for t in rep["openItems"]]
     lines += ["pending child: %s (%s)" % (c["id"], c["state"]) for c in rep["pendingChildren"]]
     lines += ["removed: %s" % p for p in rep["removed"]]
-    lines += ["would remove: %s" % p for p in rep["wouldRemove"]]
+    grouped = {key(p) for g in rep.get("groups", []) for p in g["inner"] + [g["path"]]}
+    lines += ["would remove: %s" % p for p in rep["wouldRemove"] if key(p) not in grouped]
+    lines += ["would remove: %s then %s" % (" then ".join(g["inner"]), g["path"]) for g in rep.get("groups", [])]
+    lines += ["note: %s" % n for n in rep.get("notes", [])]
     lines += ["kept: %s" % p for p in rep["kept"]]
     lines += ["handover: %s%s%s" % (h["path"], SEP, h["reason"]) for h in rep["handovers"]]
     lines += ["child handover: %s%s%s (from %s)" % (h["path"], SEP, h.get("reason"), h["from"])

@@ -1,0 +1,33 @@
+name: pr-policy
+# PR rules, separate from ci.yml so a body edit reruns only this check. Required on main next to `ci-ok`.
+# pull_request (not _target), read-only token, no checkout: no PR code runs. The body reaches the script through env only.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  pr-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: body has a Changelog section, CHANGELOG.md is untouched
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          node -e '
+          const { execFileSync } = require("node:child_process");
+          const errors = [];
+          const lines = (process.env.BODY || "").split(/\r\n|\r|\n/);
+          const at = lines.findIndex((l) => l.trimEnd() === "## Changelog");
+          let bullet = false;
+          for (let i = at + 1; at >= 0 && i < lines.length && !lines[i].startsWith("## "); i++) if (/^- +\S/.test(lines[i])) bullet = true;
+          if (at < 0) errors.push("the PR body has no \"## Changelog\" section");
+          else if (!bullet) errors.push("the \"## Changelog\" section has no \"- \" bullet");
+          const out = execFileSync("gh", ["api", "repos/" + process.env.GITHUB_REPOSITORY + "/pulls/" + process.env.PR + "/files", "--paginate", "--jq", ".[] | .filename, (.previous_filename // empty)"], { encoding: "utf8" });
+          if (out.split(/\r?\n/).includes("CHANGELOG.md")) errors.push("CHANGELOG.md is in the changed files: list the change under \"## Changelog\" in the PR body instead");
+          for (const e of errors) console.error(e);
+          process.exit(errors.length ? 1 : 0);
+          '

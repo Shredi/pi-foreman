@@ -16,12 +16,13 @@ import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
 import { childHandoffDirs, openedHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
+import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { PermStore, PERM_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
-import { folderRelaxes } from "./defaults.ts";
+import { folderRelaxes, mergedFactKey, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
@@ -73,7 +74,7 @@ import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
-import { branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
+import { branchMergedFact, branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
@@ -130,12 +131,13 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
-import { ASK_USER_TOOL, writeAskRuling } from "./askhooks.ts";
+import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
-import { LiveState, intercomIdOf } from "./livestate.ts";
+import { LiveState, intercomIdOf, labelOfHandoff } from "./livestate.ts";
+import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -175,7 +177,7 @@ import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
-import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
+import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
@@ -196,7 +198,7 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval } from "./planstate.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -273,6 +275,8 @@ interface Session {
   skillDirs?: Promise<string[]>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
   owned: OwnedRoots;
+  /** True until `npm root -g` resolved or failed: a custom worktree root is not owned and `--worktree` open is refused meanwhile. */
+  npmRootPending: boolean;
   registrationVia?: string;
   childExtensions: { id: string; path: string }[];
   stopContinued: boolean;
@@ -570,6 +574,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       warmsFresh: snap.warmsFresh,
       tier: snap.tier ? snap.tier.tier : null,
       running: s.running,
+      waiting: s.questionCalls.size > 0 || s.live?.isBlocked() === true,
       downshifted: idleModel.downshifted(),
       idleRung: rung ? rung.id : null,
       enabled: get(s.config.config, "footer.cacheBar") !== false,
@@ -619,6 +624,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const holds = [...sessions.values()].map((s) => s.live?.hold());
     return () => holds.forEach((release) => release?.());
   });
+  // A question tool call holds an own blocked source from tool_call to tool_execution_end, independent of Pi's ui_prompt_* events (Pi suppresses them under a stuck dialog depth).
+  const questionBlocks = new Map<string, () => void>();
+  const holdQuestion = (id: string, input: unknown): void => {
+    questionBlocks.get(id)?.();
+    const first = (input as { questions?: { header?: unknown }[] } | undefined)?.questions?.[0]?.header;
+    const label = typeof first === "string" && first.trim() ? first : "question";
+    questionBlocks.set(id, blockedShim.own(label));
+  };
+  const releaseQuestion = (id: string): void => {
+    const release = questionBlocks.get(id);
+    questionBlocks.delete(id);
+    release?.();
+  };
   const herdrMeta = installHerdrMeta(pi); // group tag (herdrmeta.ts), started at the end of session_start
   const sidebarLive = installSidebarLive(pi); // session-owned Herdr sidebar row (sidebarlive.ts), same place
   const askFlag = new AskFlag(); // /foreman flag-ask (askflag.ts): the last ask the owner answered
@@ -639,7 +657,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.live?.setBlocked(false);
     if (s && (e as { source?: string }).source !== "extension") gateStopped.delete(s.id); // a new user prompt ends a "deny and stop"
   });
-  pi.on("agent_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  pi.on("agent_end", async (_e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.setBlocked(false);
+    s?.questionCalls.forEach(releaseQuestion);
+  });
   pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
     const e = (data ?? {}) as Record<string, unknown>;
     if (e.event === "test_restore") sessions.get(String(e.sessionId))?.trace?.emit({ event: e.event, cmd: e.cmd });
@@ -693,8 +715,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const selfHost = isSelfHost(cwd, PKG_ROOT);
     // Owned dirs (owned.ts): the npm root resolves in the background and rebuilds the overlay once known.
     const tmpRoot = path.dirname(scratchRoot() ?? path.join(os.tmpdir(), "pi-foreman-scratch"));
-    const computeOwned = (npmRoot: string | null): OwnedRoots => ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot });
-    const owned = computeOwned(null);
+    // close.worktreeDir (worktreeroot.ts): only a session in the main checkout takes it; a refused value or a collision falls back to the default layout with one visible notice
+    // the Pi install root and the global npm root are protected roots only this side knows; the npm root joins when it resolves (below)
+    const installRoot = await installRootOfPi();
+    const rootInputsOf = (npmRoot: string | null) => sessionRootInputs(cwd, get(config.config, "close.worktreeDir"), { installRoot, npmRoot });
+    // unresolved until the npm root is known (or failed): no owned custom root, so a root under the npm root is never briefly owned
+    let rootInputs: ReturnType<typeof rootInputsOf> = {};
+    const computeOwned = (npmRoot: string | null, resolved = true): OwnedRoots => {
+      if (resolved) rootInputs = rootInputsOf(npmRoot);
+      // while pending: block globs are always safe to add early; only the owned root waits
+      const globs = resolved ? rootInputs.worktreeGlobs : rootInputsOf(null).worktreeGlobs;
+      return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
+    };
+    const owned = computeOwned(null, false);
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
@@ -710,6 +743,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       configProvider: provider,
       overlay: buildOverlay(owned),
       owned,
+      npmRootPending: true,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
       childExtensions: [],
       stopContinued: false,
@@ -871,11 +905,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // `npm root -g` once per session, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
     void resolveNpmRoot({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
       .then((npmRoot) => {
-        if (!npmRoot) return;
         s.owned = computeOwned(npmRoot);
+        s.npmRootPending = false;
         s.overlay = buildOverlay(s.owned);
+        if (rootInputs.notice && !isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        s.owned = computeOwned(null);
+        s.npmRootPending = false;
+        s.overlay = buildOverlay(s.owned);
+      });
     if (!isChild) {
       if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
         try {
@@ -922,6 +961,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.trace?.emit({ event: "protect_selfhost", reason: "dev checkout" });
       if (!s.isChild) notifyOnce(s, ctx, "selfhost", "pi-foreman: dev checkout: package-root write protection narrowed", "info");
     }
+    if (rootInputs.notice && !s.isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
 
     try {
       ensureSessionMarker(markerDir, id, Date.now() / 1000);
@@ -990,6 +1030,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       planPhase: s.planPhase,
       reviews: s.reviews,
       loopStop: s.loopStop,
+      gate: { steps: { ...s.steps }, reviewGate: s.reviewGate, passMark: s.passMark },
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -999,6 +1040,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       // the session file is not writable now: the state stays in memory
     }
+  }
+
+  /**
+   * The finish gate's progress of the same session (never a fork): the recorded `gate`, else, for an entry from before it was
+   * recorded, rebuilt from the newest code review: a PASS counts as builder and reviewer done, and as revised when HEAD moved since.
+   */
+  function restoreGate(s: Session, e: CeremonyStateEntry): void {
+    if (e.gate) {
+      s.steps = { ...e.gate.steps };
+      s.reviewGate = e.gate.reviewGate;
+      s.passMark = e.gate.passMark;
+      s.passSnap = e.gate.passMark?.tree ? { cwd: e.gate.passMark.cwd, tree: e.gate.passMark.tree } : null;
+      return;
+    }
+    const last = e.reviews.findLast((r) => r.kind !== "plan");
+    if (!last || last.verdict !== "pass") return;
+    s.steps = { builder: Math.max(s.steps.builder, 1), reviewer: Math.max(s.steps.reviewer, 1) };
+    s.reviewGate = { last: "pass", revised: false };
+    if (last.head) s.reviewSync = s.reviewSync.then(async () => {
+      const cur = await headOf(s.cwd);
+      if (cur !== last.head && s.reviewGate.last === "pass") s.reviewGate = onRevision(s.reviewGate);
+    });
   }
 
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
@@ -1011,6 +1074,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.planPhase = e.planPhase;
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     s.loopStop = e.loopStop ?? null;
+    if (reason !== "fork") restoreGate(s, e);
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -1580,6 +1644,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.pendingLaunches.clear();
     s?.mutating.clear();
     s?.commandCalls.clear();
+    s?.questionCalls.forEach(releaseQuestion);
     s?.questionCalls.clear();
   });
   pi.on("turn_end", async (event, ctx) => {
@@ -1709,6 +1774,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   let piInstallRoot: Promise<string | null> | undefined;
   /** The roots of the running pi: its coding-agent package dir (resolved from the package itself, never a literal path), the global npm root, this package's root. */
   async function piRootsOf(s: Session): Promise<PiRoots> {
+    return { installRoot: await installRootOfPi(), npmRoot: s.owned.npmRoot ?? null, pkgRoot: PKG_ROOT };
+  }
+  function installRootOfPi(): Promise<string | null> {
     piInstallRoot ??= (async () => {
       try {
         const d = ((await import("@earendil-works/pi-coding-agent")) as { getPackageDir?: () => unknown }).getPackageDir?.();
@@ -1717,7 +1785,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return null;
       }
     })();
-    return { installRoot: await piInstallRoot, npmRoot: s.owned.npmRoot ?? null, pkgRoot: PKG_ROOT };
+    return piInstallRoot;
   }
   /** Values for the tagged variant lines of the prompt files (ledgercall.ts applyVariants). */
   function promptVariants(s: Session): Record<string, string> {
@@ -1746,6 +1814,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       show: "on",
       // The foreman_protect rule in Approvals ("off"/absent only renders the pre-protect baseline).
       protect: "on",
+      // Owner-readable plans, questions and notes (ownertext.ts; "off" only drops the added lines).
+      ownerReadable: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
@@ -2048,6 +2118,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
           const verdicts = reviewVerdictsOfRunEnd(counted);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now(), runId);
+          persistCeremonyState(s);
           if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
@@ -2235,6 +2306,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    */
   function repeatedDeny(s: Session, ctx: ExtensionContext, reason: string): { block: true; reason: string } | undefined {
     if (!s.isChild || !REPEAT_STOP_REASONS.some((re) => re.test(reason))) return undefined;
+    // a path rule of a custom worktree root (s.owned.worktreeGlobs) is a worktree path like `*.worktrees/*`: never stop-eligible
+    if ((s.owned.worktreeGlobs ?? []).some((g) => reason.includes(`path rule '${g}'`))) return undefined;
     const key = `${s.id}\0${reason}`;
     const n = (childDenyCounts.get(key) ?? 0) + 1;
     childDenyCounts.set(key, n);
@@ -2279,8 +2352,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const owned = sessionOwnedRoots(s);
     // each work folder as written and in its real spelling (the same `real()` as tmp), same mode; a child has none
     const workFolders = s.isChild ? [] : folders.flatMap((f) => (real(f.path) !== f.path ? [f, { path: real(f.path), mode: f.mode }] : [f]));
+    // a child in a nested submodule checkout works on the whole tree it belongs to, bounded by its round or workspace (worktreeroot.ts treeRootOf)
+    const tree = s.isChild ? treeRootOf(cwd, treeCeilingOf({ cwd, agentDir: s.agentDir, foremanSession: s.usage.line.foremanSession, binding: launchBinding })) : null;
     return {
-      worktree: workspaceOf(cwd).root,
+      worktree: tree ?? workspaceOf(cwd).root,
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
@@ -2363,12 +2438,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionFacts: GitFacts | undefined = gs && roots
       ? sessionGitFacts({ ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] }, ownWorktreeCheck([roots.worktree, ...roundWorktrees(path.join(gs.agentDir, "pi-foreman", "state"), gs.usage.line.foremanSession, platform)], platform))
       : undefined;
+    // merged fact for `git branch -d|-D <b>` (default-git-branch-merged): looked up here, asynchronously, per segment cwd; the gate never spawns gh
+    const mergedFacts = new Map<string, boolean>();
+    const cmdText = typeof (event.input as { command?: unknown } | undefined)?.command === "string" ? (event.input as { command: string }).command : null;
+    if (cmdText && event.toolName === "bash" && gs && !gs.isChild && sessionFacts && /\bbranch\b/.test(cmdText)) {
+      try {
+        for (const sg of parseShell(cmdText, { cwd: ctx.cwd, platform })) {
+          const i = sg.argv.indexOf("branch");
+          if (sg.program !== "git" || sg.opaque !== null || sg.cwd === null || i < 0 || !/^-[dD]$/.test(sg.argv[i + 1] ?? "") || sg.argv.length !== i + 3) continue;
+          const key = mergedFactKey(sg.cwd, sg.argv[i + 2]);
+          if (!mergedFacts.has(key)) mergedFacts.set(key, await branchMergedFact(sg.cwd, sg.argv[i + 2]));
+        }
+      } catch {
+        mergedFacts.clear();
+      }
+    }
+    const gateFacts: GitFacts | undefined = sessionFacts && mergedFacts.size > 0 ? withMergedFacts(sessionFacts, mergedFacts) : sessionFacts;
     const readTools = gs ? readToolsOf(gs.config.config) : undefined;
     if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       ...(readTools ? { readTools } : {}),
       env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
-      ...(roots ? { roots: () => roots, facts: sessionFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
+      ...(roots ? { roots: () => roots, facts: gateFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
     });
@@ -2728,9 +2819,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       capsReset(ms, event.toolCallId);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
-      if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") ms.questionCalls.add(event.toolCallId);
+      if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
+        ms.questionCalls.add(event.toolCallId);
+        holdQuestion(event.toolCallId, event.input);
+      }
       // ask_user_question comes from the bundled @juicesharp/rpiv-ask-user-question; the harness only counts the dialog
-      if (event.toolName === ASK_USER_TOOL) ms.trace?.emit({ event: "dialog", surface: "ask_user" });
+      if (event.toolName === ASK_USER_TOOL) {
+        ms.trace?.emit({ event: "dialog", surface: "ask_user" });
+        // owner-readable questions: the project and session label in front of each question (in place, idempotent), a jargon hint on the result
+        const prefix = questionPrefix(projectNameOf(ctx.cwd), labelOfHandoff(process.env.PI_FOREMAN_HANDOFF_DIR?.trim()));
+        prefixQuestions(event.input, prefix);
+        const hint = questionHint(event.input, prefix);
+        questionHints.clear(); // a call blocked later gets no tool_result: drop its stale hint
+        if (hint) questionHints.set(event.toolCallId, hint);
+        ms.trace?.emit({ event: "question_check", jargon: hint ? 1 : 0 });
+      }
     }
     let bashTimeout = null as ChildBashTimeout | null;
     let wantHold = null as { gate: LedgerGate; key: string; sid: string } | null;
@@ -2969,6 +3072,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const queued = await narrowLaunch(s, ctx, event.toolCallId, input, rawLaunch, p);
             if (queued) return { block: true, reason: queued };
           }
+        }
+        // D6: pi-subagents' isolation worktree is a plain `git worktree add` of the innermost repo; inside a nested submodule checkout it would not carry the tree
+        if (!s.isChild && isLaunchArgs(input) && launchNeedsNestedRefusal(rawLaunch, ctx.cwd)) {
+          return { block: true, reason: "pi-foreman: worktree: true is refused inside a nested submodule checkout (the isolation worktree would hold only that submodule); launch without worktree: true — the round's own tree is the workspace." };
         }
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
@@ -3236,7 +3343,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const factCount = await reviewFacts.augment(input, ctx.cwd, (task) => {
           if (occasionOf(task) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
-          return planFactsBlock(planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir), planLedger, lg);
+          const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
+          return [planFactsBlock(planPaths, planLedger, lg), ...ownerFactsLines(planPaths, ctx.cwd)].join("\n");
         });
         if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
@@ -3323,6 +3431,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ms.mutating.delete(event.toolCallId);
       ms.commandCalls.delete(event.toolCallId);
       ms.questionCalls.delete(event.toolCallId);
+      releaseQuestion(event.toolCallId);
     }
     // Only a call that will really run holds the ledger (no await after this point); released at tool_execution_end or session shutdown.
     if (!res && wantHold) {
@@ -3531,10 +3640,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (s.reviewGate.last !== "pass") return;
         s.passSnap = tree ? { cwd, tree } : null;
         s.passMark = { cwd, at, head, tree, ledger, builderRuns };
+        persistCeremonyState(s);
       });
     }
     if (s.touchUps.delete(runId)) s.reviewSync = s.reviewSync.then(async () => {
-      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) s.reviewGate = { ...s.reviewGate, revised: false };
+      if (s.reviewGate.last === "pass" && s.reviewGate.revised && (await commentOnlyNow(s))) {
+        s.reviewGate = { ...s.reviewGate, revised: false };
+        persistCeremonyState(s);
+      }
     });
   }
 
@@ -3733,6 +3846,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (hash) s.trace?.emit({ event: "plan_ruling_stamped", to: hash.slice(0, 16) });
   }
   const bashRulingSnaps = new Map<string, Map<string, number>>();
+  /** ask_user_question calls whose text read like jargon: the hint is appended to the result (ownertext.ts). */
+  const questionHints = new Map<string, string>();
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
@@ -3828,7 +3943,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const command = typeof input.command === "string" ? input.command : "";
       const move = await branchMove(command, ctx.cwd, !s.isChild);
       if (move?.allow) {
-        s.trace?.emit({ event: "shell_write_allow", reason: "branch_move", cmd: command });
+        s.trace?.emit({ event: "shell_write_allow", reason: move.reason ?? "branch_move", cmd: command });
         return undefined;
       }
       const precondition = move && "precondition" in move ? move.precondition : undefined;
@@ -3883,6 +3998,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.mutating.delete(event.toolCallId);
     s?.commandCalls.delete(event.toolCallId);
     s?.questionCalls.delete(event.toolCallId);
+    releaseQuestion(event.toolCallId);
+    // an answered ask_user_question (at least one answer) is the owner's reply to a [review_loop] stop: it lifts it, like a new owner prompt
+    if (s && !s.isChild && s.loopStop && event.toolName === ASK_USER_TOOL && askAnsweredSome((event.result as { details?: unknown } | undefined)?.details, event.isError)) {
+      s.loopStop = null;
+      persistRounds(s);
+      s.trace?.emit({ event: "cap_reset", by: "ask", count: 1 });
+    }
     if (s && !s.isChild && !event.isError && ownerAnswered(event.toolName, (event.result as { details?: unknown } | undefined)?.details, event.isError)) {
       idleBind = { s, ctx };
       await idleModel.onAnswer(); // the owner is back: the answer's next request runs on the base model
@@ -3943,6 +4065,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.mutating.delete(event.toolCallId);
     owner?.commandCalls.delete(event.toolCallId);
     owner?.questionCalls.delete(event.toolCallId);
+    releaseQuestion(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
@@ -3959,12 +4082,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
-    const withNote = () => (readNote ? { content: [{ type: "text" as const, text: readNote }, ...event.content] } : undefined);
+    const qHint = questionHints.get(event.toolCallId);
+    questionHints.delete(event.toolCallId);
+    const withNote = () => (readNote || qHint ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : [])] } : undefined);
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     if (owner && !owner.isChild && !event.isError && (owner.reviewGate.last !== null && !owner.reviewGate.revised) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const touchUp = owner.reviewGate.last === "pass" && !owner.reviewGate.revised && (await owner.reviewSync, await commentOnlyNow(owner));
-      if (!touchUp) owner.reviewGate = onRevision(owner.reviewGate);
+      if (!touchUp) {
+        owner.reviewGate = onRevision(owner.reviewGate);
+        persistCeremonyState(owner);
+      }
     }
     if (owner && event.toolName === "bash") recordBashLog(owner, event.details);
     if (owner && !owner.isChild && !event.isError && event.toolName === "bg_wait") recordChild(owner, bgWaitLocations(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"), knownRun(owner)));
@@ -4011,6 +4139,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (roles.includes("builder")) {
               if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
               s.reviewGate = onRevision(s.reviewGate);
+              persistCeremonyState(s);
             }
             const after = reopened(s.reviewGate);
             if (after) for (const role of roles.filter((r) => REVIEW_ROLES.includes(r))) s.trace?.emit({ event: "rereview", role, after });
@@ -4433,7 +4562,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // `/foreman session open|brief|close|list` (session.ts): user commands, foreman sessions only.
   const sessionHost: Parameters<typeof registerSession>[1]["session"] = async (ctx) => {
     const s = await ensureSession(ctx);
-    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
+    const roots = await piRootsOf(s);
+    return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), protectedRoots: { installRoot: roots.installRoot, npmRoot: roots.npmRoot, npmRootPending: s.npmRootPending }, model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
       const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
       await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
     } };
@@ -4524,7 +4654,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hint = inHerdr
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
-          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+          const openHint = showHint(markdown);
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
         }
@@ -4760,7 +4891,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const title = `pi-foreman checkpoint: ${name} (${hash8})`;
           s.trace?.emit({ event: "dialog", surface: "checkpoint" });
           try {
-            ctx.ui.notify(planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash) + (reviewed ? `\n${reviewed}` : ""), "info");
+            ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
             answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
           } catch {
             answer = undefined;
@@ -5111,6 +5242,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     else ok(`bundled packages present under ${path.join(PKG_ROOT, "node_modules")}`);
     const reg = await import("./registry.ts"); // doctor-only helpers; keeps the top-level import line untouched
     out.push(...reg.worktreeDoctor(s.agentDir, s.cwd, platform));
+    const doctorRoots = await piRootsOf(s);
+    out.push(...worktreeRootDoctor(s.config.config, s.cwd, platform, { installRoot: doctorRoots.installRoot, npmRoot: doctorRoots.npmRoot }));
 
     if (s.config.source === "defaults") fail("config CLI did not run; L1 defaults in use", "fix Python first, then check scripts/foreman_config.py.");
     else if (s.config.errors.length) fail(`config errors: ${s.config.errors.join("; ")}`, "correct the named keys in your foreman.json.");
@@ -5279,6 +5412,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s.isChild) out.push(...deferredDoctorLines(deferred.patterns, pi.getAllTools().map((t) => t.name)));
     const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
+    out.push(...optionalAddonsDoctor({ agentDir: s.agentDir, cwd: s.cwd }, pi.getAllTools().map((t) => t.name), process.env));
     out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
     // The profile and its deviations are read without the project layer (the agent dir has no .pi/foreman.json), so project tightening is not noise.
     const userOnly = s.python.ok ? await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.agentDir, trusted: false, spawner }) : null;

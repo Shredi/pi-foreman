@@ -114,7 +114,7 @@ function addons(o) {
     return;
   }
   for (const r of rows) {
-    const state = r.installed.length ? `installed (${r.installed.map((i) => `${i.source}, ${i.scope}`).join("; ")})` : `not installed; install with: foreman setup --addon ${r.id}`;
+    const state = r.installed.length ? `installed (${r.installed.map((i) => `${i.source}, ${i.scope}`).join("; ")})` : `not installed; install with: foreman setup --addon ${r.id} (a plain \`foreman setup\` installs the default add-ons)`;
     console.log(`${r.id}  ${r.spec}  ${state}`);
     console.log(`  ${r.purpose}`);
   }

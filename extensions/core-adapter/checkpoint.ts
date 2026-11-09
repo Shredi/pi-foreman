@@ -420,7 +420,7 @@ export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null 
   return `${head} ${name} changed or is gone since the owner approved it. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`;
 }
 
-const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 200);
+export const clean = (s: string): string => s.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 200);
 
 /** What the owner sees before the dialog: title, Goal's first lines, section headings, path, hash prefix (at most 12 lines). */
 export function planSummary(text: string, rel: string, hash: string): string {

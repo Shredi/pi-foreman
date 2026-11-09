@@ -28,8 +28,11 @@ function fresh() {
 const EMPTY_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "pf-pi-ai-data-"));
 after(() => fs.rmSync(EMPTY_DATA, { recursive: true, force: true }));
 
+// Add-ons install by default now; tests that do not name an add-on flag run with --no-addons so they stay about their own subject.
+const ADDON_FLAGS = ["--addon", "--no-addons", "--skip-addon", "--remove", "--preview", "--pick"];
 function run(env, args, extraEnv = {}) {
-  const r = spawnSync(process.execPath, [SETUP, ...args, "--agent-dir", env.agentDir], {
+  const withAddons = args.some((a) => ADDON_FLAGS.includes(a));
+  const r = spawnSync(process.execPath, [SETUP, ...args, ...(withAddons || extraEnv.PI_FOREMAN_PICKER === "force" ? [] : ["--no-addons"]), "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
     env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log, PI_FOREMAN_PI_AI_DATA: EMPTY_DATA, ...extraEnv },
@@ -1130,7 +1133,7 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   fs.mkdirSync(path.join(root, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(root, "extensions", "core-adapter", "profiles.mjs"));
   seed(env, { packages: ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN] });
-  const r = spawnSync(process.execPath, [path.join(root, "setup.mjs"), "--agent-dir", env.agentDir], {
+  const r = spawnSync(process.execPath, [path.join(root, "setup.mjs"), "--no-addons", "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
     env: { ...process.env, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
@@ -1342,7 +1345,7 @@ test("--addon background-tasks runs the exact pi install, records managed.addons
   const r = run(env, ["--addon", "background-tasks"], NO_PICKER);
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
-  assert.match(r.out, /PI_BG_FEATURES=process permanently in your shell profile; Pi reads it when it starts/);
+  assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself, Pi reads it when it starts/);
   const s = readSettings(env);
   assert.ok(s.packages.includes("npm:pi-background-tasks@2.6.10"));
   assert.ok(s.subagents.agentOverrides, "the settings write kept the generated block next to the new package");
@@ -1357,7 +1360,7 @@ test("--addon background-tasks runs the exact pi install, records managed.addons
   assert.deepEqual(installs(env), []);
 });
 
-test("without --addon nothing is installed; the hint lines name the add-ons", () => {
+test("with --no-addons (the harness default) nothing is installed and the hint lines name the add-ons", () => {
   const env = fresh();
   seed(env);
   const r = run(env, [], NO_PICKER);

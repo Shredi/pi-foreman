@@ -393,6 +393,7 @@ shows that status for each pane. It does not read pi-foreman's state directly.
 - Herdr learns working and idle for a Pi pane from its Pi integration. That is a setting on the machine that runs Herdr:
   `herdr integration install pi` (check with `herdr integration status`). Nothing is installed or configured on the phone
   or the remote client for this.
+- An `ask_user_question` or `plan_mode_question` call counts as blocked from its tool call to its end (`tool_execution_end`) on its own, without Pi's `ui_prompt_*` events; `turn_start` and `agent_end` release it too (labelled by the first question's header, else `question`). See [blocked shim](sessions.md#blocked-shim).
 - pi-foreman adds the blocked state (a child's ask, a guard prompt, any dialog) through its `herdr:blocked` event on
   `pi.events`. See [blocked shim](sessions.md#blocked-shim), which also covers when the shim steps aside.
 - Known gap: Pi's trust dialog before the session starts is not covered, so it does not show as blocked
@@ -508,14 +509,14 @@ The items fill the dots row in this order (see Dots). Overlay authors: see
 
 ## Optional add-on: background tasks
 
-Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). It is an optional add-on in `config/addons.json` (exact pin, consent only). Install it with `foreman setup --addon background-tasks` (or the picker), or by hand with `pi install npm:pi-background-tasks@2.6.10`, and set the variable in your shell profile:
+Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in the background with status, logs and kill (`bg_run`). It is a default add-on in `config/addons.json` (exact pin); a plain `foreman setup` installs it and writes the variable below into your shell profile (skip with `--skip-addon background-tasks` or `--no-env`). By hand: `pi install npm:pi-background-tasks@2.6.10`, then set the variable in your shell profile:
 
     export PI_BG_FEATURES=process
 
 The add-on reads `PI_BG_FEATURES` when Pi starts, not at install, so a prefix on `pi install` does nothing. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
 named `anthropic` and decides by provider name (`model.provider === 'anthropic'`). A `claude-bridge` provider serving `claude-*` ids is not
 treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
-`foreman setup` prints the consent line and this variable hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).
+`foreman setup` reports what it wrote or leaves a hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).
 
 The add-on reads `PI_BG_FEATURES` when Pi starts, so `foreman session open` passes every `PI_BG_*` variable of the opener
 (`PI_BG_FEATURES` first; names and values checked, one that fails is skipped with a note) into the child's launch line, and
@@ -591,7 +592,7 @@ terminal the open prints `attach: hc attach <machine>/<t>` to run by hand. See
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
 it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
 gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
-waits; one two-part dot per PR (see Open PRs below), wrapping, then a summary that follows the chip states ("N PRs · k failing · m pending", "all green", or just "N PRs" without CI data); merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
+waits; one two-part dot per PR (see Open PRs below) in a chip on the right of the title row, the same place for the top-level row and every child row: up to two chips, with more PRs one chip of the most urgent PR reading "#n +k" (there is no separate PR line or "N PRs" summary). Resting on a chip shows a tooltip naming the state and the PR ("#16 · CI failing", "CI running", "CI passing", "no CI checks"; `.tooltip(text)`, Herdr 0.1.14) and opens its hover card (0.3 s delay), which adds the details and lists the other PRs of a "+k" chip. The host has no flip or offset for a HoverCard and only clamps it into the window, so the mod picks the card's `anchor` from the chip's window position (`on_mouse_move` bounds, the drawable size from the global `window.viewport_size()`, read as `globalThis.window` because main.js imports herdr's `window` under the same name, and read during `render` (where the host guarantees window measurements) and kept on the instance for the handler; `placeCard` in model.js). The card opens below the chip when it fits there, otherwise on the side with more room, otherwise beside the chip. It is never taller than the room on its side; long text is cut off. The card never covers the chip, which stays clickable. A chip click opens the PR without also focusing the pane (`cx.stop_propagation()`). Known limit: the mod sees only the Herdr window's size, not the screen's (the mod API has no display size). With the window dragged partly below the screen edge, the card can open below the chip off screen. Dot colours: green every finished job passed, red a job failed, amber jobs running with none finished (the outer ring turns while any job runs), grey no CI data; merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
 tree row "🤖 role model" (no status circle inside a card). An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
 session shows. The mod is the only PR and run display: Pi itself draws no PR or run widget and no PR or run parts in its footer,
 and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
@@ -616,7 +617,40 @@ spinner, red when blocked; `explorer · Running bash` from the hc record `msg`; 
    `"props": { "foreman": "<absolute path>" }` (optional when `foreman` is on the PATH of your environment).
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
 
-Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs"`.
+Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"` (both are part of `npm run test:node`).
+
+### Versions
+
+Minimum: Herdr app 0.1.13 with core 0.1.18. Recommended and tested: app 0.1.14 with core 0.1.19 (exec timeouts, per-copy state).
+On 0.1.13 the mods load, but an `exec` may not honour `timeout`, so a hung program is only stopped by the mods' own watchdogs,
+and top-level state is shared between copies of a mod. Every `exec` of a mod passes a `timeout`
+(radar read 30 s, PR poll 600 s, `hc get` 10 s local / 15 s remote, `hc run` attach 15 s, URL opener 10 s). If a host rejects
+that option, the call is repeated once without it and the mod stops passing it (that behaviour on 0.1.13 is not verified here).
+A run stopped by its timeout is no option error; the PR poll and the attach post one error notification per failure. A missing `foreman` (the program does not start: "cannot start ...: program not found" or "cannot run ...: No such file or directory") is a setup state, not a failed poll: the PR poll posts no notice for it, and the radar shows its hint.
+
+Herdr 0.1.14 runs a mod's top level once per source version, shared by all copies of the mod, so per-copy state lives in
+`init`. Three things stay app-global on purpose: the keys `pi-foreman.radar`, `pi-foreman.show` and `pi-foreman.show-pending`, and the Agents order.
+
+### Agent row labels
+
+A row is labelled with its tab name. When two or more agents of a space share a tab name, each uses its own terminal title instead
+(falling back to the tab name when it has none), so the rows stay distinguishable.
+
+### Detached processes
+
+What outlives a closed tab, and what does not:
+
+- `foreman_bg` runs are detached with their own process group and survive a tab close. `/foreman close` (and an intercom
+  `foreman:close`) now sends SIGTERM to the group of each still-running run of that session (Windows: best-effort `taskkill /T`).
+  `session_shutdown`, a reload and a cancelled wait do not kill them. Runs started before a `/reload` are not killed by a later
+  close either: waits are not restored after a reload, so the session no longer knows them.
+
+- A selfclean helper (`selffinish`) outlives pi on purpose.
+- A local `hc run --keep --outlive-parent` session survives by design; `prune` only marks it.
+- The mod's own `hc run` attach is not killed on tab close (the mod has no `close()`); the remote `hc events` ends with pi.
+- Presence and status probes are killed when they time out.
+- The sidebar daemon is started in its own session; `stop` sends SIGTERM and it exits itself when its socket is lost.
+- Gap: `worktree sweep` protects a tree only while a live session file uses it, so a `foreman_bg` run inside a removed tree is not protected.
 
 ### Open PRs
 
@@ -695,7 +729,12 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 with the blocks added or changed since the last ruling tinted and labelled NEW or CHANGED, a Diff view with the exact +/- lines, and one
 tab per child session that published a plan. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
-click opens the panel on it. Install the panel together with the Agents mod; the two are one install.
+click opens the panel on it, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
+panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A plan already read shows at once; a plan
+not read yet keeps the previous body, the tab labels and the header on screen until it is parsed ("Loading plan…" only when nothing is shown
+yet), so a switch does not blank or reflow the panel. The other tabs' plans are read in the background after the first paint. A document with
+code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
+in the same render. Install the panel together with the Agents mod; the two are one install.
 
 Install:
 

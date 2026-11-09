@@ -17,6 +17,8 @@ export interface OwnedRoots {
   childScratchRoot: string;
   /** The global npm root when resolved (also the last `readOnly` entry). */
   npmRoot?: string;
+  /** Block globs of a custom worktree root (worktreeroot.ts rootTemplateGlobs); the overlay adds them to the child block. */
+  worktreeGlobs?: string[];
 }
 
 export interface OwnedInput {
@@ -26,6 +28,10 @@ export interface OwnedInput {
   /** The OS temp dir, resolved the way childscratch.ts resolves it (realpath). */
   tmpRoot: string;
   npmRoot?: string | null;
+  /** A custom worktree root (spelled and real) for a session whose workspace is the main checkout: owned instead of `<ws>.worktrees`. */
+  worktreeRoot?: string[];
+  /** Block globs of the custom root (all repos under it). */
+  worktreeGlobs?: string[];
 }
 
 export function ownedRoots(i: OwnedInput): OwnedRoots {
@@ -33,11 +39,11 @@ export function ownedRoots(i: OwnedInput): OwnedRoots {
   const readWrite = [
     path.join(i.agentDir, "pi-foreman", "handoffs"),
     path.join(i.agentDir, "sessions", "*", "subagent-artifacts"),
-    path.join(path.dirname(ws), `${path.basename(ws)}.worktrees`),
+    ...(i.worktreeRoot?.length ? [...new Set(i.worktreeRoot.map((r) => path.resolve(r)))] : [path.join(path.dirname(ws), `${path.basename(ws)}.worktrees`)]),
   ];
   const readOnly = [path.join(i.agentDir, "pi-foreman"), path.join(i.agentDir, "foreman.json"), path.join(i.agentDir, "settings.json")];
   if (i.npmRoot) readOnly.push(path.resolve(i.npmRoot));
-  return { readWrite, readOnly, childScratchRoot: path.join(i.tmpRoot, SCRATCH_DIR_NAME), ...(i.npmRoot ? { npmRoot: path.resolve(i.npmRoot) } : {}) };
+  return { readWrite, readOnly, childScratchRoot: path.join(i.tmpRoot, SCRATCH_DIR_NAME), ...(i.npmRoot ? { npmRoot: path.resolve(i.npmRoot) } : {}), ...(i.worktreeGlobs?.length ? { worktreeGlobs: i.worktreeGlobs } : {}) };
 }
 
 /** The handoffs root (`<agentDir>/pi-foreman/handoffs`) among the read-write roots, if any. */

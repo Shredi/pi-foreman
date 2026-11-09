@@ -242,7 +242,7 @@ def opener_id(given, adir, env=None):
 PLAN_FIRST_NOTES = [
     "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
     "   Ask the parent questions with `ask_user_question` until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
-    "   `plan.md` has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
+    "   `plan.md` starts with a `## For the owner` section (at most about 10 lines in plain words: the goal, the essential steps, heads-ups, the implicit decisions; no paths or ids), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
 ]
 
 
@@ -655,7 +655,7 @@ def managed_worktree(cwd, adir):
         if gdir == common:  # the main worktree
             return False
         cfg = foreman_config.load_config(agent_dir=str(adir))["config"]
-        root = foreman_worktree.convention_dirs(os.path.dirname(common), cfg)[0]
+        root = foreman_worktree.convention_dirs(foreman_worktree.main_checkout(str(cwd)) or os.path.dirname(common), cfg)[0]
         return os.path.realpath(str(cwd)) != root and os.path.realpath(str(cwd)).startswith(root + os.sep)
     except Exception:  # noqa: BLE001 - trust is a convenience, never blocks the open
         return False
@@ -813,12 +813,20 @@ def plan_worktree(cwd, label, adir, base_arg, fetch=True):
     code, common = git_out(cwd, ["rev-parse", "--git-common-dir"])
     if code != 0 or not common:
         raise Refused("--worktree needs --cwd inside a git checkout: %s" % cwd)
-    repo = os.path.dirname(os.path.realpath(os.path.join(str(cwd), common)))
-    if git_out(repo, ["remote", "get-url", "origin"])[0] != 0:
-        raise Refused("--worktree needs a remote named origin in %s" % repo)
     import foreman_config
     import foreman_worktree
+    if label == "worktrees":
+        raise Refused("the label `worktrees` is the folder of pi-subagents isolation worktrees; choose another label", "label_reserved")
+    repo = foreman_worktree.main_checkout(str(cwd)) or os.path.dirname(os.path.realpath(os.path.join(str(cwd), common)))
+    if git_out(repo, ["remote", "get-url", "origin"])[0] != 0:
+        raise Refused("--worktree needs a remote named origin in %s" % repo)
     cfg = foreman_config.load_config(agent_dir=str(adir))["config"]
+    resolved = foreman_worktree.resolve_worktree_root(repo, (cfg.get("close") or {}).get("worktreeDir"))
+    if resolved.get("error"):
+        raise Refused(resolved["error"]["message"], resolved["error"]["code"])
+    clash = foreman_worktree.root_collision(repo, resolved["real"])
+    if clash:
+        raise Refused(clash, "root_collision")
     path = worktree_target(foreman_worktree.convention_dirs(repo, cfg)[0], label)
     branch = "%s/%s" % (branch_prefix(adir), label)
     check_path_text(path, "the worktree path")
@@ -868,6 +876,8 @@ def create_worktree(plan):
     if has_lockfile(plan["path"]):
         rc = run_npm_ci(plan["path"])
         install = "npm ci" if rc == 0 else "failed:%d" % rc
+    elif os.path.isfile(os.path.join(plan["path"], "package.json")):
+        install = "skipped (package.json without a lockfile)"
     return {"path": plan["path"], "branch": plan["branch"], "base": plan["base"], "install": install}
 
 

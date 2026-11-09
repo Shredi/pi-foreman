@@ -98,12 +98,13 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
       return warmRates({ table: loadPrices(o.pkgRoot), registry: lookupRate(ctx.modelRegistry as never, m.provider, m.id), model: m.id, promptTokens, ttlSeconds: policy()?.ttlSeconds ?? null });
     },
     replayable: () => replayable(o.ctx()?.model as never, o.pi.getThinkingLevel()),
-    replay: async (messages, signal) => {
+    replay: async (messages, signal, onError) => {
       const ctx = o.ctx();
       if (!ctx?.model) return null;
       const { convertToLlm } = await import("@earendil-works/pi-coding-agent");
       const active = new Set(o.pi.getActiveTools());
       return replayWarm(ctx.model, messages, signal, {
+        onError,
         convertToLlm: (m) => convertToLlm(m as never) as unknown[],
         tools: () => o.pi.getAllTools().filter((t) => active.has(t.name)).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
         thinkingLevel: () => o.pi.getThinkingLevel(),

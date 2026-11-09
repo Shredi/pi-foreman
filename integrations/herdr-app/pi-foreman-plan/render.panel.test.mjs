@@ -206,5 +206,5 @@ test("links: only https opens, through the platform opener; markup in the plan i
   handler("https://example.org/a", cx);
   await settle();
   assert.equal(world.execCalls.length, 1);
-  assert.deepEqual(world.execCalls[0], ["xdg-open", ["https://example.org/a"]], "the window stub has no platform: the Linux opener");
+  assert.deepEqual(world.execCalls[0], ["xdg-open", ["https://example.org/a"], { timeout: 10000 }], "the window stub has no platform: the Linux opener");
 });

@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import type { GitFacts } from "./defaults.ts";
 import { linkedWorktrees } from "./gate.ts";
 import { realDeep } from "./triage.ts";
+import { nestedCheckout } from "./worktreeroot.ts";
 
 /** `p` as a comparison key: resolved on the platform's path flavour, trailing separators dropped, case-folded on win32 and darwin (as manifest.ts does). */
 export function pathKey(p: string, platform: string): string {
@@ -43,7 +44,11 @@ export function ownWorktreeCheck(
   const all = new Set(roots.filter(Boolean).map((r) => pathKey(real(r), platform)));
   return (dir) => {
     const t = top(real(dir));
-    return t !== null && all.has(pathKey(real(t), platform));
+    if (t === null) return false;
+    if (all.has(pathKey(real(t), platform))) return true;
+    // a nested submodule checkout of an own tree is part of it (worktreeroot.ts nestedCheckout)
+    const p = top(real(path.dirname(t)));
+    return p !== null && all.has(pathKey(real(p), platform)) && nestedCheckout(p, t);
   };
 }
 

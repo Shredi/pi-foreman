@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -33,30 +35,170 @@ SEP = " — "
 DEFAULT_DIR = "../<repo>.worktrees"
 
 
+_UNSET = object()
+
+
+def main_checkout(path):
+    """Main checkout (real path) of the repository holding path, None outside a repository. From the common git dir: its core.worktree when
+    set (a submodule), else the parent of a `.git` dir, else (separate or bare git dir) `git worktree list` item 0."""
+    dirs = safe_ops.git_dirs_above(path)
+    if not dirs:
+        return None
+    top, _gd, common = dirs
+    cw = safe_ops.config_value(os.path.join(common, "config"), "core", "worktree")
+    if cw:
+        return os.path.realpath(os.path.join(common, cw))
+    if os.path.basename(common) == ".git":
+        return os.path.dirname(common)
+    try:
+        return os.path.realpath(safe_ops.worktrees(top)[0]["worktree"])
+    except (safe_ops.Precondition, IndexError, KeyError, OSError, subprocess.SubprocessError):
+        return None
+
+
+def _glob_re(pattern):
+    parts = pattern.replace("\\", "/").split("*")
+    esc = [re.escape(p).replace(r"\?", ".").replace("/", r"[\\/]") for p in parts]
+    return re.compile("^" + ".*".join(esc) + "$", re.S | (re.I if safe_ops.CASE_INSENSITIVE else 0))
+
+
+def _protected(main_dir, home, agent_dir, tmp_root, extra):
+    first = [main_dir, home, agent_dir, tmp_root, os.path.abspath(os.sep)] + ([] if os.name == "nt" else ["/tmp", "/private/tmp"]) + [e for e in extra if e]
+    return list(dict.fromkeys(p for r in first for p in (os.path.abspath(r), os.path.realpath(r))))
+
+
+def _blocks(spelled, real, template, prot):
+    star = lambda t: t.replace("<repo>", "*").rstrip("/\\") + "/*"
+    pats = [star(template)]
+    i = template.find("<repo>")
+    fixed = (template if i < 0 else template[:max(0, max(template[:i].rfind("/"), template[:i].rfind("\\")) + 1)]).rstrip("/\\")
+    real_fixed = os.path.realpath(fixed or template)
+    if real_fixed != fixed:
+        pats.append(star(template.replace(fixed, real_fixed, 1)))
+    res = [_glob_re(p) for p in dict.fromkeys(pats)]
+    for p in prot:
+        if safe_ops.is_inside(spelled, p, True) or safe_ops.is_inside(real, p, True) or any(r.match(p) or r.match(p.replace("\\", "/")) for r in res):
+            return p
+    segs = re.split(r"[\\/]", template)
+    k = next((n for n, s in enumerate(segs) if "<repo>" in s), -1)
+    if k >= 0 and segs[k] == "<repo>":
+        prefix = os.sep.join(segs[:k]) or os.sep
+        for p in prot:
+            if safe_ops.is_inside(prefix, p, True):
+                return p
+    return None
+
+
+def resolve_worktree_root(main_dir, raw=None, home=None, agent_dir=None, tmp_root=None, superproject=_UNSET, extra_protected=()):
+    """close.worktreeDir for the repo whose main checkout is main_dir (the Python subset of worktreeroot.ts `resolveWorktreeRoot`: no Pi
+    install / package / npm roots). Relative values resolve against main_dir, `~` against home; absolute and `~` values need `<repo>`.
+    A refused value returns the default root with `error` ({code, message}) and `requested`."""
+    home = home or os.path.expanduser("~")
+    agent_dir = agent_dir or os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
+    tmp_root = tmp_root or tempfile.gettempdir()
+    repo = re.sub(r"\.git$", "", os.path.basename(main_dir.rstrip("/\\")))
+    value = raw.strip() if isinstance(raw, str) and raw.strip() else DEFAULT_DIR
+
+    def template_of(v):
+        if v == "~" or v.startswith(("~/", "~\\")):
+            v = os.path.join(home, v[1:].lstrip("/\\"))
+        return os.path.normpath(os.path.join(main_dir, v))
+
+    default_t = template_of(DEFAULT_DIR)
+
+    def mk(t):
+        spelled = t.replace("<repo>", repo)
+        return {"spelled": spelled, "real": os.path.realpath(spelled), "repo": repo, "custom": t != default_t, "template": t}
+
+    def refuse(code, msg, asked):
+        return dict(mk(default_t), custom=False, error={"code": code, "message": msg}, requested=asked["spelled"])
+
+    tilde = value == "~" or value.startswith(("~/", "~\\"))
+    absolute = tilde or os.path.isabs(value)
+    asked = mk(template_of(value))
+    if absolute and "<repo>" not in value:
+        return refuse("no_repo_placeholder", "close.worktreeDir `%s` is an absolute path without `<repo>`; add `<repo>` so each repo gets its own folder" % value, asked)
+    if not absolute:
+        sup = superproject
+        if sup is _UNSET:
+            code, out, _e = safe_ops.git(["rev-parse", "--show-superproject-working-tree"], main_dir)
+            sup = out.splitlines()[0] if code == 0 and out.strip() else None
+        if sup and (safe_ops.is_inside(sup, asked["spelled"], True) or safe_ops.is_inside(sup, asked["real"], True)):
+            return refuse("root_inside_superproject", "close.worktreeDir `%s` puts the worktrees of the submodule %s inside its superproject (%s); use an absolute root such as `~/worktrees/<repo>`" % (value, repo, sup), asked)
+    if asked["template"] != default_t:
+        bad = _blocks(asked["spelled"], asked["real"], asked["template"], _protected(main_dir, home, agent_dir, tmp_root, extra_protected))
+        if bad:
+            return refuse("root_blocks_protected", "close.worktreeDir `%s` would cover %s, which children must keep reaching; choose a root that holds only worktrees" % (value, bad), asked)
+    return asked
+
+
+def root_collision(main_dir, root):
+    """Message when another repo's worktree sits directly in `root` (a child with a `.git` file whose main checkout is not main_dir), else None."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    mine = os.path.realpath(main_dir)
+    for name in names:
+        wt = os.path.join(root, name)
+        if not os.path.isfile(os.path.join(wt, ".git")):
+            continue
+        other = main_checkout(wt)
+        if other and other != mine:
+            return "worktree root `%s` already holds worktrees of `%s`; rename one checkout or use a relative `close.worktreeDir`" % (root, other)
+    return None
+
+
 def convention_dirs(main_dir, cfg):
     raw = (cfg.get("close") or {}).get("worktreeDir")
-    raw = raw if isinstance(raw, str) and raw.strip() else DEFAULT_DIR
-    raw = os.path.expanduser(raw.replace("<repo>", os.path.basename(main_dir)))
+    root = resolve_worktree_root(main_dir, raw)
     # third root: pi-subagents' managed worktrees, `{dirname(repo)}/worktrees/<project>/pi-worktree-<run>-<n>`
-    return [os.path.realpath(os.path.join(main_dir, raw)), os.path.realpath(os.path.join(main_dir, ".claude", "worktrees")),
+    return [root["real"], os.path.realpath(os.path.join(main_dir, ".claude", "worktrees")),
             os.path.realpath(os.path.join(main_dir, "..", "worktrees", os.path.basename(main_dir)))]
+
+
+def held_by_gitlink(checkout, real):
+    """True when `real` is a gitlink path of `checkout`, or sits inside one."""
+    try:
+        links = safe_ops.list_gitlinks(checkout)
+    except safe_ops.Precondition:
+        return False
+    rel = os.path.relpath(real, checkout).replace(os.sep, "/")
+    return any(rel == g or rel.startswith(g.rstrip("/") + "/") for g in links)
 
 
 def sweep(cwd, cfg, state, sid, dry_run=False):
     """Lines of the sweep report; raises safe_ops.Precondition when cwd is not a git repo."""
     safe_ops.workspace_root(cwd)
     items = safe_ops.worktrees(cwd)
-    main_dir = os.path.realpath(items[0]["worktree"])
+    main_dir = main_checkout(cwd) or os.path.realpath(items[0]["worktree"])
     conv = convention_dirs(main_dir, cfg)
     ops_cfg = safe_ops.ops_config(cfg)
     caller = os.path.realpath(cwd)
     lines = []
+    def nested_in(tree):
+        # checkouts living inside another worktree of this listing (or holding gitlinks): pi-foreman never removes those here
+        try:
+            gl = safe_ops.list_gitlinks(tree)
+        except safe_ops.Precondition:
+            gl = []
+        return [g for g in gl if os.path.lexists(os.path.join(tree, g, ".git"))]
+
+    listed = [os.path.realpath(os.path.normpath(w["worktree"])) for w in items[1:] if isinstance(w.get("worktree"), str)]
     for w in items[1:]:
         path = w.get("worktree")
         if not isinstance(path, str):
             continue
         path = os.path.normpath(path)  # git prints `/` on Windows too
         real = os.path.realpath(path)
+        if any(o != real and safe_ops.is_inside(o, real) for o in listed):
+            lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
+            continue
+        above = safe_ops.git_dirs_above(os.path.dirname(real))
+        if above and above[0] != os.path.realpath(main_dir) and held_by_gitlink(above[0], real):
+            # another checkout holds this one as a submodule (a worktree an outside tool nested): it is not ours to remove
+            lines.append("skipped: %s%s%s" % (path, SEP, "nested_worktree"))
+            continue
         if not any(safe_ops.is_inside(d, real) for d in conv):
             lines.append("off-convention: %s" % path)
         reason, chk = None, None
@@ -74,6 +216,11 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
                 reason = exc.name
             except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
                 reason = "check_failed (%s)" % str(exc)[:80]
+        if reason is None:
+            nested = nested_in(real)
+            if nested:
+                reason = "nested_checkouts (%s)" % ", ".join(nested[:3])
+                chk = None
         if reason is None and dry_run:
             lines.append("would remove: %s" % path)
             continue

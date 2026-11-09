@@ -139,6 +139,31 @@ export function addonPresent(toolNames: readonly string[], dirs: { agentDir: str
   return candidates.some((d) => fs.existsSync(path.join(d, "package.json")));
 }
 
+/** Whether an executable `name` is on `pathEnv` (win32: also the `.cmd`/`.exe`/`.ps1` shims npm writes). */
+export function onPath(name: string, pathEnv: string | undefined, platform: string = process.platform): boolean {
+  const exts = platform === "win32" ? ["", ".cmd", ".exe", ".ps1", ".bat"] : [""];
+  for (const dir of (pathEnv ?? "").split(platform === "win32" ? ";" : ":").filter(Boolean)) {
+    for (const ext of exts) {
+      if (fs.existsSync(path.join(dir, name + ext))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Doctor INFO lines for the optional pi-quiver and pi-memory add-ons: present or absent, and for pi-memory whether `qmd`
+ * (needed only by `memory_search`) is on PATH. Never a WARN or FAIL.
+ */
+export function optionalAddonsDoctor(dirs: { agentDir: string; cwd: string }, toolNames: readonly string[], env: NodeJS.ProcessEnv, platform: string = process.platform): string[] {
+  const has = (pkg: string): boolean => [path.join(dirs.agentDir, "npm", "node_modules", pkg), path.join(dirs.cwd, ".pi", "npm", "node_modules", pkg)].some((d) => fs.existsSync(path.join(d, "package.json")));
+  const out: string[] = [];
+  out.push(`INFO quiver: ${has("pi-quiver") || toolNames.includes("doc_to_md") ? "present" : "absent"}`);
+  const memory = has("pi-memory") || toolNames.includes("memory_write");
+  out.push(`INFO memory: ${memory ? "present" : "absent"}`);
+  if (memory && !onPath("qmd", env.PATH ?? env.Path, platform)) out.push("INFO memory: qmd not on PATH, memory_search is unavailable (the other memory tools work; install with: npm i -g @tobilu/qmd)");
+  return out;
+}
+
 /** Installed add-on package directory (agent npm root first, then the project's), or null. */
 export function addonPackageDir(dirs: { agentDir: string; cwd: string }): string | null {
   const candidates = [path.join(dirs.agentDir, "npm", "node_modules", ADDON_PACKAGE), path.join(dirs.cwd, ".pi", "npm", "node_modules", ADDON_PACKAGE)];

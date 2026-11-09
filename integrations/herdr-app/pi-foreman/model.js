@@ -444,6 +444,19 @@ export function splitPrs(prs) {
   return s.length > INLINE_MAX ? { inline: [], below: s } : { inline: s, below: [] };
 }
 
+/** The chips of a session row's title row, the same for every row: up to INLINE_MAX PRs as chips; more are one chip of the most
+ *  urgent PR with `more` (the others, in order) for its "+N". */
+export function chipPrs(prs) {
+  const s = sortPrs(prs);
+  return s.length > INLINE_MAX ? { chips: [s[0]], more: s.slice(1) } : { chips: s, more: [] };
+}
+
+/** The state a PR's dot shows, in words (the chip's hover card names it): the colours are not explained anywhere else. */
+export function prStateText(pr) {
+  const d = prDotState(pr);
+  return d.fill === "red" ? "CI failing" : d.ring ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
+}
+
 /** The page of a PR: its own URL, else `<https repository URL>/pull/<number>`; "" when radar gives neither (not clickable). */
 export function prUrl(node, pr) {
   if (!isObj(pr)) return "";
@@ -946,6 +959,7 @@ export function prCard(pr) {
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
+    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}`,
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[2].count },
@@ -953,6 +967,46 @@ export function prCard(pr) {
     status,
     note: dotOnly ? "details after the next feed refresh" : "",
   };
+}
+
+const CARD_W = 300;
+const CARD_MARGIN = 8; // the window margin the host keeps around an anchored surface
+
+/** Estimated height in px of the hover card of `c` (a prCard result plus `more`): an overestimate, so a card placed by it fits. */
+export function prCardHeight(c) {
+  // Text wraps at the card's content width (300 - 2 * 10 padding): about 6.8 px a character at 12 px semibold (title), 6.1 at 11 px.
+  const lines = (s, perLine) => Math.max(1, Math.ceil(String(s ?? "").length / perLine));
+  const inner = CARD_W - 20;
+  const wrapped = (s, fontPx, charPx) => lines(s, Math.floor(inner / (charPx * fontPx / 12)));
+  const jobs = listOf(c?.groups).reduce((n, g) => n + 18 + 15 * (g.names?.length ?? 0) + (g.more > 0 ? 15 : 0) + 5, 0);
+  return 20 + 16 * wrapped(c?.title, 12, 7) + 7 + 16 * wrapped(c?.state, 11, 7) + (c?.excerpt ? 7 + 15 * wrapped(c.excerpt, 11, 7) : 0)
+    + (c?.conflict ? 7 + 16 * wrapped(c.conflict, 11, 7) : 0) + 7 + jobs + (c?.status ? 7 + 15 * wrapped(c.status, 11, 7) : 0)
+    + (c?.note ? 7 + 15 * wrapped(c.note, 11, 7) : 0) + (c?.more ? 7 + 15 * wrapped(c.more, 11, 7) : 0)
+    + (listOf(c?.groups).length === 0 && !c?.status && !c?.note ? 7 + 16 : 0);
+}
+
+/** Which anchor (a gpui-base HoverCard `anchor`) puts a card of `card` {w, h} next to the chip `rect` {x, y, w, h} inside the
+ *  `view` {w, h} without covering the chip: "top_center" = below it, "bottom_center" = above it, else beside it
+ *  ("left_center" = to its right, "right_center" = to its left). The host clamps a card into the window and has no flip
+ *  or offset, so room is checked here: below, then above, then the side with the most room. */
+export function placeCard(rect, view, card = { w: CARD_W, h: 200 }) {
+  return placeCardBox(rect, view, card).anchor;
+}
+
+/** {anchor, maxH}: the anchor of placeCard plus the height the card is bounded to so it fits the chosen side (the room there
+ *  minus the window margin). The estimate is only a guess, so below needs a clear margin (est * 1.5 or est + 120); else the
+ *  vertical side with more room wins when the estimate fits there; beside only when neither does. */
+export function placeCardBox(rect, view, card = { w: CARD_W, h: 200 }) {
+  const m = CARD_MARGIN;
+  if (!rect || !view || !(view.h > 0)) return { anchor: "top_center", maxH: 0 };
+  const below = view.h - m - (rect.y + rect.h);
+  const above = rect.y - m;
+  if (below >= Math.min(card.h * 1.5, card.h + 120)) return { anchor: "top_center", maxH: Math.floor(below) };
+  const best = Math.max(below, above);
+  if (best >= card.h) return below >= above ? { anchor: "top_center", maxH: Math.floor(below) } : { anchor: "bottom_center", maxH: Math.floor(above) };
+  const right = view.w - (rect.x + rect.w) - m;
+  const left = rect.x - m;
+  return { anchor: right >= card.w || right >= left ? "left_center" : "right_center", maxH: Math.floor(view.h - 2 * m) };
 }
 
 // ---- plan panel hand-off -------------------------------------------------------------------------------------------
@@ -1017,4 +1071,26 @@ export function findPanelBlock(tree, mod) {
   const hidden = up.find((n) => n.hidden === true && typeof n.id === "string");
   const show = hidden ?? (si >= 0 ? up.slice(si + 1).find((n) => typeof n.id === "string") : null) ?? null;
   return { block: hit.block.id, stack: stack?.id ?? null, show: show?.id ?? null };
+}
+
+/** Tab name of an agent as a row label: empty when absent or just the tab's number. */
+const tabNameOf = (a) => (typeof a?.tab_name === "string" && !/^\d+$/.test(a.tab_name) ? a.tab_name : "");
+const tabKey = (a) => `${a?.space ?? ""}\u0000${tabNameOf(a)}`;
+
+/** Keys (space + tab name) shared by two or more listed agents: rows under those tabs cannot be told apart by tab name. */
+export function clashingTabs(list) {
+  const seen = new Map();
+  for (const a of Array.isArray(list) ? list : []) {
+    if (!isObj(a) || !tabNameOf(a)) continue;
+    seen.set(tabKey(a), (seen.get(tabKey(a)) ?? 0) + 1);
+  }
+  return new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+}
+
+/** The raw label of an agent row (before the caller strips a leading "π"): its tab name; when `clashes` (clashingTabs) holds
+ *  its tab, the agent's own terminal title instead, falling back to the tab name. Empty when it has neither. */
+export function agentLabel(a, clashes) {
+  const tab = tabNameOf(a);
+  const own = typeof a?.title === "string" ? a.title : "";
+  return tab && clashes?.has(tabKey(a)) ? own || tab : tab || own;
 }

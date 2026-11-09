@@ -51,7 +51,8 @@ const USAGE = [
   "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
   "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
   "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
-  "  --addon        install an optional Pi add-on from config/addons.json (repeatable; installed only on this consent)",
+  "  --addon        install exactly these Pi add-ons from config/addons.json (repeatable); without it the default add-ons are installed (polish, background-tasks, quiver, memory)",
+  "  --no-addons    install no add-on; --skip-addon <id> leaves one out (repeatable); --no-env does not write PI_BG_FEATURES to your shell profile or Windows user environment",
   "  --github-hosts the GitHub hosts the PR tracker covers (tools.prGithubHosts, 1-20 host names, comma list); the picker asks for them, a fresh install without the flag writes github.com",
   "  --pick         open the terminal picker again (needs a terminal; PI_FOREMAN_PICKER=off disables it, =force is a test aid)",
   "  --preview      draw a setup screen (home, plan, updates, config, models, workfolders, apply) from sample data; changes nothing and cannot be combined with other flags",
@@ -123,7 +124,7 @@ function hostsToWrite(merged, answer, fresh) {
 const withGithubHosts = (cfg, hosts) => (hosts ? { ...cfg, tools: { ...(isObj(cfg.tools) ? cfg.tools : {}), prGithubHosts: hosts } } : cfg);
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], githubHosts: null, pick: false, preview: null };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], noAddons: false, skipAddon: [], noEnv: false, githubHosts: null, pick: false, preview: null };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -149,6 +150,9 @@ function parseArgs(argv) {
     else if (flag === "--enable") o.enable.push(...csv(value()));
     else if (flag === "--disable") o.disable.push(...csv(value()));
     else if (flag === "--addon") o.addon.push(...csv(value()));
+    else if (flag === "--no-addons") o.noAddons = true;
+    else if (flag === "--skip-addon") o.skipAddon.push(...csv(value()));
+    else if (flag === "--no-env") o.noEnv = true;
     else if (flag === "--github-hosts") {
       const r = validateHosts(csv(value()));
       if (!r.hosts) throw new Fatal(`${flag}: ${r.error}.\n${USAGE}`, 2);
@@ -160,7 +164,7 @@ function parseArgs(argv) {
     else throw new Fatal(`Unknown argument: ${argv[i]}\n${USAGE}`, 2);
   }
   if (o.preview !== null) {
-    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.githubHosts && "--github-hosts", o.pick && "--pick"].filter(Boolean);
+    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.noAddons && "--no-addons", o.skipAddon.length && "--skip-addon", o.noEnv && "--no-env", o.githubHosts && "--github-hosts", o.pick && "--pick"].filter(Boolean);
     if (others.length) throw new Fatal(`--preview cannot be combined with ${others.join(", ")}.`, 2);
     return o;
   }
@@ -171,7 +175,7 @@ function parseArgs(argv) {
   if (o.machineName !== null && !o.intercomHc) throw new Fatal("--machine-name needs --intercom-hc.", 2);
   if (o.intercomHc && (o.noIntercom || o.remove)) throw new Fatal("--intercom-hc cannot be combined with --no-intercom or --remove.", 2);
   if (o.develop && (o.remove || o.project)) throw new Fatal("--develop cannot be combined with --remove or --project.", 2);
-  const named = [o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.githubHosts && "--github-hosts"].filter(Boolean);
+  const named = [o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.noAddons && "--no-addons", o.skipAddon.length && "--skip-addon", o.githubHosts && "--github-hosts"].filter(Boolean);
   if (o.remove && (named.length || o.pick)) throw new Fatal(`${[...named, o.pick && "--pick"].filter(Boolean).join(", ")} cannot be combined with --remove.`, 2);
   if (o.pick && named.length) throw new Fatal(`--pick cannot be combined with ${named.join(", ")}: the picker opens only without feature or add-on flags.`, 2);
   const plan = planChanges({}, { profile: o.profile ?? undefined, enable: o.enable, disable: o.disable });
@@ -179,6 +183,10 @@ function parseArgs(argv) {
   const addonIds = loadAddons().addons.map((a) => a.id);
   const badAddon = o.addon.filter((id) => !addonIds.includes(id));
   if (badAddon.length) throw new Fatal(`unknown add-on ${badAddon.join(", ")}; valid: ${addonIds.join(", ")}`, 2);
+  const badSkip = o.skipAddon.filter((id) => !addonIds.includes(id));
+  if (badSkip.length) throw new Fatal(`unknown add-on ${badSkip.join(", ")} in --skip-addon; valid: ${addonIds.join(", ")}`, 2);
+  if (o.addon.length && (o.noAddons || o.skipAddon.length)) throw new Fatal("--addon names exactly the add-ons to install and cannot be combined with --no-addons or --skip-addon.", 2);
+  if (o.noAddons && o.skipAddon.length) throw new Fatal("--no-addons already skips every add-on; drop --skip-addon.", 2);
   return o;
 }
 
@@ -636,7 +644,7 @@ async function askHostsInquirer(prefill, { checkbox, input }) {
  * The arrow-key picker on @inquirer/prompts: select (profile), confirm (adjust), checkbox per area, confirm per add-on, summary, confirm.
  * Resolves like runPickerReadline; Ctrl-C (ExitPromptError) and a declined confirm give null.
  */
-async function runPickerInquirer({ currentText, currentConfig, recorded, installed, project }, { select, checkbox, confirm, input }, githubHosts = null) {
+async function runPickerInquirer({ currentText, currentConfig, recorded, installed, project, defaults = [] }, { select, checkbox, confirm, input }, githubHosts = null) {
   const features = loadFeatures();
   const profiles = loadProfiles().profiles;
   const names = Object.keys(profiles);
@@ -664,7 +672,7 @@ async function runPickerInquirer({ currentText, currentConfig, recorded, install
     for (const a of loadAddons().addons) {
       const have = installed.find((i) => i.id === a.id);
       for (const l of describeAddon(a, have)) say(l);
-      if (!have && (await confirm({ message: `Install ${a.id}?`, default: false }))) addons.push(a.id);
+      if (!have && (await confirm({ message: `Install ${a.id}?`, default: defaults.includes(a.id) }))) addons.push(a.id);
     }
     printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project, hosts: githubHosts?.pending });
     if (!(await confirm({ message: "Apply?", default: false }))) return null;
@@ -683,7 +691,7 @@ async function runPickerInquirer({ currentText, currentConfig, recorded, install
  * The fallback picker (plain readline, numbered ASCII menus): profile, optional per-area toggles, add-on consent, summary, confirm.
  * Resolves to { profile, enable, disable, addons } (enable/disable relative to the profile), or null on "no", EOF or Ctrl-C.
  */
-async function runPickerReadline({ currentText, currentConfig, recorded, installed, project }, githubHosts = null) {
+async function runPickerReadline({ currentText, currentConfig, recorded, installed, project, defaults = [] }, githubHosts = null) {
   const features = loadFeatures();
   const profiles = loadProfiles().profiles;
   const names = Object.keys(profiles);
@@ -701,7 +709,10 @@ async function runPickerReadline({ currentText, currentConfig, recorded, install
     if (done) throw new Aborted();
     return String(value).trim();
   };
-  const yes = async (question) => /^y/i.test(await ask(question));
+  const yes = async (question, dflt = false) => {
+    const a = await ask(question);
+    return a === "" ? dflt : /^y/i.test(a);
+  };
   try {
     say("Profiles:");
     names.forEach((n, i) => {
@@ -739,7 +750,8 @@ async function runPickerReadline({ currentText, currentConfig, recorded, install
     for (const a of loadAddons().addons) {
       const have = installed.find((i) => i.id === a.id);
       for (const l of describeAddon(a, have)) say(l);
-      if (!have && (await yes(`Install ${a.id}? [y/N]: `))) addons.push(a.id);
+      const dflt = defaults.includes(a.id);
+      if (!have && (await yes(`Install ${a.id}? ${dflt ? "[Y/n]" : "[y/N]"}: `, dflt))) addons.push(a.id);
     }
     printPickerSummary({ currentText, currentConfig, profile, enable, disable, addons, project, hosts: githubHosts?.pending });
     if (!(await yes("Apply? [y/N]: "))) return null;
@@ -775,6 +787,40 @@ async function runPickerReadline({ currentText, currentConfig, recorded, install
   } finally {
     rl.close();
   }
+}
+
+/** Re-run offer for add-ons that became default since the last run: one pre-checked yes/no per add-on; Ctrl-C or EOF declines the rest. */
+async function askNewAddons(list) {
+  const picked = [];
+  let confirm = null;
+  if (pickerKind({ tty: !!(process.stdin.isTTY && process.stdout.isTTY) }) === "inquirer") {
+    try {
+      ({ confirm } = await import("@inquirer/prompts"));
+    } catch {
+      say(INQUIRER_MISSING_NOTE);
+    }
+  }
+  const rl = confirm ? null : createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (const a of list) {
+      for (const l of describeAddon(a, null)) say(l);
+      let yes;
+      if (confirm) yes = await confirm({ message: `Install ${a.id}?`, default: true });
+      else {
+        // EOF (closed stdin) declines instead of leaving the question pending
+        const eof = new Promise((resolve) => rl.once("close", () => resolve(null)));
+        const answer = await Promise.race([rl.question(`Install ${a.id}? [Y/n]: `), eof]);
+        if (answer === null) break;
+        yes = !/^n/i.test(answer);
+      }
+      if (yes) picked.push(a.id);
+    }
+  } catch {
+    say("");
+  } finally {
+    rl?.close();
+  }
+  return picked;
 }
 
 /** What the environment allows for the picker: PI_FOREMAN_PICKER=force (test and automation aid) overrides the TTY and CI tests, =off disables it. */
@@ -1015,22 +1061,44 @@ async function main(argv) {
 
     // choices: flags, or the picker (terminal only, first run or --pick)
     const st = pickerState();
-    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length || opts.githubHosts);
+    const hasFlags = !!(opts.profile || opts.enable.length || opts.disable.length || opts.addon.length || opts.noAddons || opts.skipAddon.length || opts.githubHosts);
     let request = { profile: opts.profile, enable: opts.enable, disable: opts.disable };
     let addonIds = [...opts.addon];
     let diffShown = false;
+    // add-ons: --addon names exactly what to install, --no-addons none; otherwise the registry's defaults, offered once each (managed.addonsOffered)
+    const addonRegistry = loadAddons().addons;
+    const installedBefore = addonsInstalled();
+    const offeredBefore = Array.isArray(managed.addonsOffered) ? managed.addonsOffered.filter((x) => typeof x === "string") : [];
+    const defaultIds = addonRegistry.filter((a) => a.default && !opts.skipAddon.includes(a.id)).map((a) => a.id);
+    const newlyDefault = defaultIds.filter((id) => !offeredBefore.includes(id) && !installedBefore.some((i) => i.id === id));
+    let offeredNow = [];
     if (st.allowed && !hasFlags && (recorded === null || opts.pick)) {
       if (parseErr) throw parseErr;
-      const picked = await runPicker({ currentText: curText, currentConfig: curCfg, recorded, installed: addonsInstalled(), project: opts.project }, undefined, { githubHosts: { prefill: mergedState?.hosts ?? [DEFAULT_HOST], pending: pendingHosts } });
+      const picked = await runPicker({ currentText: curText, currentConfig: curCfg, recorded, installed: installedBefore, project: opts.project, defaults: defaultIds }, undefined, { githubHosts: { prefill: mergedState?.hosts ?? [DEFAULT_HOST], pending: pendingHosts } });
       if (!picked) {
         say("nothing written");
         return;
       }
       request = { profile: picked.profile, enable: picked.enable, disable: picked.disable };
       addonIds = picked.addons;
+      offeredNow = addonRegistry.map((a) => a.id).filter((id) => !installedBefore.some((i) => i.id === id));
       hostsAnswer = picked.githubHosts ?? null;
       diffShown = true;
-    } else if (!request.profile && recorded === null) say(NO_PROFILE_HINT);
+    } else {
+      if (!request.profile && recorded === null) say(NO_PROFILE_HINT);
+      // a declined default counts as offered, so a later plain run does not install it
+      const declined = opts.noAddons ? addonRegistry.filter((a) => a.default && !installedBefore.some((i) => i.id === a.id)).map((a) => a.id) : opts.skipAddon.filter((id) => addonRegistry.some((a) => a.id === id && a.default));
+      if (opts.addon.length) offeredNow = [...opts.addon];
+      else if (!opts.noAddons && newlyDefault.length) {
+        if (st.allowed && !hasFlags && !opts.pick) addonIds = await askNewAddons(addonRegistry.filter((a) => newlyDefault.includes(a.id)));
+        else {
+          addonIds = [...newlyDefault];
+          say(`add-ons: ${installedBefore.length || offeredBefore.length || managedText !== null ? "installing newly default add-ons" : "installing the default add-ons"}: ${newlyDefault.join(", ")} (skip with --skip-addon <id> or --no-addons)`);
+        }
+        offeredNow = [...newlyDefault];
+      }
+      offeredNow = [...new Set([...offeredNow, ...declined])];
+    }
 
     // foreman.json first, so the generator below sees it (on --dry-run nothing is written, so they
     // reflect the file on disk, one run behind the diff shown here)
@@ -1107,7 +1175,6 @@ async function main(argv) {
     for (const w of want) say(`  package ${w.label}: ${todo.includes(w) ? "to install" : "already recorded"}`);
     const installArgs = todo.map((w) => ["install", w.spec, ...(opts.project ? ["-l"] : [])]);
     // add-ons: only on consent, queued before the fresh settings re-read so setup never overwrites the packages entry the install adds
-    const addonRegistry = loadAddons().addons;
     const already = addonsInstalled();
     const addonNew = [];
     for (const id of addonIds) {
@@ -1120,8 +1187,9 @@ async function main(argv) {
         installArgs.push(["install", spec, ...(opts.project ? ["-l"] : [])]);
         addonNew.push({ id, spec });
       }
-      for (const [k, v] of Object.entries(a.env ?? {})) say(`  add-on ${id}: set ${k}=${v} permanently in your shell profile; Pi reads it when it starts, not at install.`);
     }
+    const offeredNext = [...new Set([...offeredBefore, ...offeredNow])];
+    if (offeredNext.length !== offeredBefore.length) anyChange = true;
     if (installArgs.length) anyChange = true;
     const planned = [...list0.filter((e) => !stale.includes(e)), ...todo.map((w) => w.spec)];
     // --no-intercom: filter on the pi-foreman entry
@@ -1499,6 +1567,7 @@ async function main(argv) {
         if (!isObj(managed.addons)) managed.addons = {};
         managed.addons[a.id] = { spec: a.spec, installedAt: new Date().toISOString() };
       }
+      if (offeredNext.length !== offeredBefore.length) managed.addonsOffered = offeredNext;
       let finalBlock = pick(next.subagents);
       if (!same || filtered || reordered || comp.changed || searchOff) {
         // pi edits `packages` in the same file, so merge into what is on disk now
@@ -1533,6 +1602,17 @@ async function main(argv) {
 
     if (finalPackages.some(isBridgeEntry)) say(BRIDGE_HINT.replace("<agent dir>", agentDir));
     const present = addonsInstalled();
+    // add-on environment variables (PI_BG_FEATURES=process): Pi reads them at start, so they must outlive this shell
+    const envVars = {};
+    for (const a of addonRegistry) if (present.some((i) => i.id === a.id) || addonNew.some((n) => n.id === a.id)) Object.assign(envVars, a.env ?? {});
+    if (Object.keys(envVars).length) {
+      const home = process.env.PI_FOREMAN_HOME || os.homedir();
+      const sandboxed = !process.env.PI_FOREMAN_HOME && agentDir !== path.join(os.homedir(), ".pi", "agent");
+      const manual = Object.entries(envVars).map(([k, v]) => `${k}=${v}`).join(", ");
+      if (opts.noEnv) say(`env: not written (--no-env); set ${manual} permanently in your shell profile, Pi reads it when it starts.`);
+      else if (sandboxed) say(`env: custom agent dir, your shell profile is left alone; set ${manual} permanently yourself, Pi reads it when it starts.`);
+      else for (const l of (await import("./setup/persist-env.mjs")).persistEnv(envVars, { home, shell: process.env.SHELL ?? "", platform: process.env.PI_FOREMAN_PLATFORM || process.platform, setx: process.env.PI_FOREMAN_SETX_BIN ? (k, v) => { const r = spawnSync(process.execPath, [process.env.PI_FOREMAN_SETX_BIN, k, v], { encoding: "utf8" }); return { status: r.status, error: (r.stderr || "").trim() }; } : undefined, dry })) say(`  ${l}`);
+    }
     for (const a of addonRegistry) {
       if (present.some((i) => i.id === a.id) || addonNew.some((n) => n.id === a.id)) continue;
       say(`optional add-on ${a.id}: ${a.purpose} Spec npm:${a.package}@${a.version}. ${a.clashes.join(" ")} Install with: foreman setup --addon ${a.id}`);

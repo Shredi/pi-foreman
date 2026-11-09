@@ -19,6 +19,7 @@ import type { Verdict } from "./rounds.ts";
 import { reviewsOfEntry } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import type { LoopStop } from "./reviewloop.ts";
+import type { PassMark, ReviewGate, StepCounts } from "./bound.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
 
@@ -43,6 +44,13 @@ export interface PersistedLineage {
   reviews: number;
 }
 
+/** The finish gate's progress (index.ts Session.steps, reviewGate, passMark): restored on /reload of the same session, never on a fork. */
+export interface PersistedGate {
+  steps: StepCounts;
+  reviewGate: ReviewGate;
+  passMark: (PassMark & { cwd: string }) | null;
+}
+
 export interface CeremonyStateEntry {
   v: 1;
   plan: PersistedPlan | null;
@@ -57,13 +65,15 @@ export interface CeremonyStateEntry {
   reviews: ReviewRecord[];
   /** The loop guard's stop (reviewloop.ts), absent when none is set. */
   loopStop?: LoopStop;
+  /** Absent in an entry from before the gate progress was recorded (index.ts rebuilds it from the PASS reviews). */
+  gate?: PersistedGate;
 }
 
 export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -73,8 +83,9 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tier: o.tier ?? null,
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
-    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}) })),
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}) })),
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
+    ...(o.gate ? { gate: o.gate } : {}),
   };
 }
 
@@ -111,9 +122,32 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     out.reviews = reviewsOfEntry(d.reviews);
     const ls = d.loopStop as Record<string, unknown> | null | undefined;
     if (ls && typeof ls === "object" && (ls.rule === "repeat" || ls.rule === "stalled") && (ls.kind === "plan" || ls.kind === "code") && Array.isArray(ls.sig) && ls.sig.every((x) => typeof x === "string")) out.loopStop = { rule: ls.rule, kind: ls.kind, sig: ls.sig as string[] };
+    const g = gateOfEntry(d.gate);
+    if (g) out.gate = g;
     return out;
   }
   return null;
+}
+
+const nullable = (v: unknown): v is string | null => v === null || typeof v === "string";
+
+/** The gate progress of an entry, shape-checked; null (the field is ignored) when anything is off. */
+function gateOfEntry(v: unknown): PersistedGate | null {
+  const g = v as Record<string, unknown> | null | undefined;
+  if (!g || typeof g !== "object") return null;
+  const st = g.steps as Record<string, unknown> | null | undefined;
+  const rg = g.reviewGate as Record<string, unknown> | null | undefined;
+  const builder = count(st?.builder);
+  const reviewer = count(st?.reviewer);
+  if (builder === null || reviewer === null || !rg || typeof rg !== "object") return null;
+  if (!(rg.last === null || rg.last === "pass" || rg.last === "fail" || rg.last === "none") || typeof rg.revised !== "boolean") return null;
+  const reviewGate: ReviewGate = { last: rg.last as ReviewGate["last"], revised: rg.revised, ...(typeof rg.failAt === "number" && Number.isFinite(rg.failAt) ? { failAt: rg.failAt } : {}), ...(typeof rg.passRun === "string" ? { passRun: rg.passRun } : {}) };
+  const m = g.passMark as Record<string, unknown> | null | undefined;
+  const br = count(m?.builderRuns);
+  const passMark = m && typeof m === "object" && typeof m.cwd === "string" && typeof m.at === "number" && Number.isFinite(m.at) && nullable(m.head) && nullable(m.tree) && nullable(m.ledger) && br !== null
+    ? { cwd: m.cwd, at: m.at, head: m.head as string | null, tree: m.tree as string | null, ledger: m.ledger as string | null, builderRuns: br }
+    : null;
+  return { steps: { builder, reviewer }, reviewGate, passMark };
 }
 
 /** True when `<dir>/<name>` is a regular file whose first line is APPROVED (no ctime binding: an Addendum edit does not void it). */
