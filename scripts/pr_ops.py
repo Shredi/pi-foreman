@@ -799,10 +799,11 @@ def op_pr_comments(req):
             if not isinstance(number, int):
                 raise ActionError("pr_host_failed", "gh: printed no pull request number")
         view = gh_view(host, root, number, "comments,reviews", rflag)
-        path = "repos/%s/pulls/%d/comments?per_page=100&sort=created&direction=desc" % (repo, number) if repo else \
-            "repos/{owner}/{repo}/pulls/%d/comments?per_page=100&sort=created&direction=desc" % number
+        path = "repos/%s/pulls/%d/comments" % (repo, number) if repo else \
+            "repos/{owner}/{repo}/pulls/%d/comments" % number
         extra = ["--hostname", api_host] if api_host else []
-        code, out, err = run_host([host.program, "api", "--method", "GET"] + extra + [path], root)
+        query = ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"]
+        code, out, err = run_host([host.program, "api", "--method", "GET"] + extra + [path] + query, root)
         inline = host_json(host, code, out, err, "comments")
         return finish_comments(gh_comment_list(view, inline), since)
     if number is None:

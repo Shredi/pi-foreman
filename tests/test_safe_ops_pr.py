@@ -432,13 +432,17 @@ class GhRepoOpsTest(PrCase):
         self.assertEqual(pair(view, "-R"), "ghe.example.com/acme/lib")
         self.assertEqual(api[:4], ["gh", "api", "--method", "GET"])
         self.assertEqual(pair(api, "--hostname"), "ghe.example.com")
-        self.assertEqual(api[-1], "repos/acme/lib/pulls/5/comments?per_page=100&sort=created&direction=desc")
+        self.assertEqual(api[-7], "repos/acme/lib/pulls/5/comments")
+        self.assertEqual(api[-6:], ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"])
         self.ok(self.pr("pr_comments", number=5, repo="acme/lib"))
         api = argv_of(self.calls()[3])
         self.assertNotIn("--hostname", api)
-        self.assertEqual(api[-1], "repos/acme/lib/pulls/5/comments?per_page=100&sort=created&direction=desc")
+        self.assertEqual(api[-7], "repos/acme/lib/pulls/5/comments")
+        self.assertEqual(api[-6:], ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"])
         self.ok(self.pr("pr_comments", number=5))
-        self.assertEqual(argv_of(self.calls()[5])[-1], "repos/{owner}/{repo}/pulls/5/comments?per_page=100&sort=created&direction=desc")
+        api = argv_of(self.calls()[5])
+        self.assertEqual(api[-7], "repos/{owner}/{repo}/pulls/5/comments")
+        self.assertEqual(api[-6:], ["-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"])
 
     def test_comments_bot_flag_on_every_kind(self):
         view = {"comments": [{"id": "IC1", "author": {"id": "A", "is_bot": True, "login": "app-x", "name": ""}, "createdAt": "2026-01-02T00:00:00Z", "body": "b"},
