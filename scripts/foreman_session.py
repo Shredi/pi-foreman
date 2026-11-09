@@ -2393,7 +2393,7 @@ def main(argv=None):
     cr.add_argument("target")
     cr.add_argument("--path")
     cr.add_argument("--json", action="store_true")
-    cr.add_argument("--force", action="store_true", help="also accept a `closing` entry: kill and remove its remote terminal, mark it closed")
+    cr.add_argument("--force", action="store_true", help="also accept a `closing` entry: kill and remove its remote terminal, mark it closed; if the terminal cannot be removed, warn and mark it closed anyway (remove the leftover with hc rm <address>)")
     cr.add_argument("--agent-dir", dest="agent_dir_sub")
     ls = sub.add_parser("list")
     ls.add_argument("--json", action="store_true")

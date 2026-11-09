@@ -163,10 +163,16 @@ class UnknownReapReportedTest(ReapBase):
 
     def test_prune_warns_once_for_several_unknown_entries(self):
         self.seed("closed")
+        path = self.padir / "pi-foreman" / "state" / "sessions.json"
+        reg = json.loads(path.read_text("utf-8"))
+        reg["sessions"].append(dict(reg["sessions"][0], label="other", child="fm-other-abc123",
+                                    hc={"address": "alpha/t8", "space": None, "tab": None}))
+        path.write_text(json.dumps(reg), "utf-8")
         code, out, err = self.run_main("prune", FAKE_HC_FAIL="1")
         self.assertEqual(code, 0, err)
         self.assertEqual(err.count("could not be removed"), 1)
-        self.assertEqual(self.row()["status"], "closed")
+        self.assertIn("demo, other", err)
+        self.assertEqual([s["status"] for s in self.parent_registry()], ["closed", "closed"])
 
     def test_prune_warns_for_a_closing_entry_too(self):
         self.seed("closing")
