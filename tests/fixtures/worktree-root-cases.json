@@ -1,0 +1,27 @@
+{
+  "_doc": "One case table for the worktree-root resolver, read by extensions/core-adapter/test/worktree-root.test.ts and tests/test_worktree_root.py. {tmp} is a real temp dir. Layout: home={tmp}/home, agent dir={tmp}/home/.pi/agent, tmp root={tmp}/tmpdir, main checkout={tmp}/work/proj unless a case sets main. 'superproject' is passed explicitly (null = none). 'expect.spelled' is the resolved root, the default root on an error.",
+  "home": "{tmp}/home",
+  "agentDir": "{tmp}/home/.pi/agent",
+  "tmpRoot": "{tmp}/tmpdir",
+  "main": "{tmp}/work/proj",
+  "cases": [
+    {"name": "default layout", "setting": "../<repo>.worktrees", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false}},
+    {"name": "unset falls back to the default", "setting": null, "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false}},
+    {"name": "blank falls back to the default", "setting": "   ", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false}},
+    {"name": "relative with placeholder", "setting": "../wt/<repo>", "expect": {"spelled": "{tmp}/work/wt/proj", "custom": true}},
+    {"name": "relative without placeholder", "setting": "../wt-fixed", "expect": {"spelled": "{tmp}/work/wt-fixed", "custom": true}},
+    {"name": "absolute with placeholder", "setting": "{tmp}/roots/<repo>", "expect": {"spelled": "{tmp}/roots/proj", "custom": true}},
+    {"name": "absolute with placeholder affix", "setting": "{tmp}/roots/<repo>.wt", "expect": {"spelled": "{tmp}/roots/proj.wt", "custom": true}},
+    {"name": "tilde with placeholder", "setting": "~/worktrees/<repo>", "expect": {"spelled": "{tmp}/home/worktrees/proj", "custom": true}},
+    {"name": "absolute without placeholder is refused", "setting": "{tmp}/roots", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false, "code": "no_repo_placeholder", "requested": "{tmp}/roots"}},
+    {"name": "tilde without placeholder is refused", "setting": "~/worktrees", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false, "code": "no_repo_placeholder", "requested": "{tmp}/home/worktrees"}},
+    {"name": "root over the home folder is refused", "setting": "~/<repo>", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false, "code": "root_blocks_protected", "requested": "{tmp}/home/proj"}},
+    {"name": "root holding the main checkout is refused", "setting": "..", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false, "code": "root_blocks_protected", "requested": "{tmp}/work"}},
+    {"name": "root over the agent dir is refused", "setting": "{tmp}/home/.pi/<repo>", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false, "code": "root_blocks_protected", "requested": "{tmp}/home/.pi/proj"}},
+    {"name": "root directly under the temp base is refused", "setting": "{tmp}/<repo>", "expect": {"spelled": "{tmp}/work/proj.worktrees", "custom": false, "code": "root_blocks_protected", "requested": "{tmp}/proj"}},
+    {"name": "submodule: relative root inside the superproject is refused", "main": "{tmp}/work/super/sub", "superproject": "{tmp}/work/super", "setting": "../<repo>.worktrees", "expect": {"spelled": "{tmp}/work/super/sub.worktrees", "custom": false, "code": "root_inside_superproject", "requested": "{tmp}/work/super/sub.worktrees"}},
+    {"name": "submodule: relative root outside the superproject", "main": "{tmp}/work/super/sub", "superproject": "{tmp}/work/super", "setting": "../../wt/<repo>", "expect": {"spelled": "{tmp}/work/wt/sub", "custom": true}},
+    {"name": "submodule: absolute root", "main": "{tmp}/work/super/sub", "superproject": "{tmp}/work/super", "setting": "~/worktrees/<repo>", "expect": {"spelled": "{tmp}/home/worktrees/sub", "custom": true}},
+    {"name": "same basename gives the same root (collision is a separate scan)", "main": "{tmp}/other/proj", "setting": "{tmp}/roots/<repo>", "expect": {"spelled": "{tmp}/roots/proj", "custom": true}}
+  ]
+}

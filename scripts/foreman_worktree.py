@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -33,12 +35,108 @@ SEP = " — "
 DEFAULT_DIR = "../<repo>.worktrees"
 
 
+_UNSET = object()
+
+
+def main_checkout(path):
+    """Main checkout (real path) of the repository holding path, None outside a repository. From the common git dir: its core.worktree when
+    set (a submodule), else the parent of a `.git` dir, else (separate or bare git dir) `git worktree list` item 0."""
+    dirs = safe_ops.git_dirs_above(path)
+    if not dirs:
+        return None
+    top, _gd, common = dirs
+    cw = safe_ops.config_value(os.path.join(common, "config"), "core", "worktree")
+    if cw:
+        return os.path.realpath(os.path.join(common, cw))
+    if os.path.basename(common) == ".git":
+        return os.path.dirname(common)
+    try:
+        return os.path.realpath(safe_ops.worktrees(top)[0]["worktree"])
+    except (safe_ops.Precondition, IndexError, KeyError, OSError, subprocess.SubprocessError):
+        return None
+
+
+def _glob_re(pattern):
+    parts = pattern.replace("\\", "/").split("*")
+    esc = [re.escape(p).replace(r"\?", ".").replace("/", r"[\\/]") for p in parts]
+    return re.compile("^" + ".*".join(esc) + "$", re.S | (re.I if safe_ops.CASE_INSENSITIVE else 0))
+
+
+def _protected(main_dir, home, agent_dir, tmp_root, extra):
+    first = [main_dir, home, agent_dir, tmp_root, os.path.abspath(os.sep)] + [e for e in extra if e]
+    return list(dict.fromkeys(p for r in first for p in (os.path.abspath(r), os.path.realpath(r))))
+
+
+def _blocks(spelled, real, template, prot):
+    star = lambda t: t.replace("<repo>", "*").rstrip("/\\") + "/*"
+    pats = [star(template)]
+    i = template.find("<repo>")
+    fixed = (template if i < 0 else template[:max(0, max(template[:i].rfind("/"), template[:i].rfind("\\")) + 1)]).rstrip("/\\")
+    real_fixed = os.path.realpath(fixed or template)
+    if real_fixed != fixed:
+        pats.append(star(template.replace(fixed, real_fixed, 1)))
+    res = [_glob_re(p) for p in dict.fromkeys(pats)]
+    for p in prot:
+        if safe_ops.is_inside(spelled, p, True) or safe_ops.is_inside(real, p, True) or any(r.match(p) or r.match(p.replace("\\", "/")) for r in res):
+            return p
+    segs = re.split(r"[\\/]", template)
+    k = next((n for n, s in enumerate(segs) if "<repo>" in s), -1)
+    if k >= 0 and segs[k] == "<repo>":
+        prefix = os.sep.join(segs[:k]) or os.sep
+        for p in prot:
+            if safe_ops.is_inside(prefix, p, True):
+                return p
+    return None
+
+
+def resolve_worktree_root(main_dir, raw=None, home=None, agent_dir=None, tmp_root=None, superproject=_UNSET, extra_protected=()):
+    """close.worktreeDir for the repo whose main checkout is main_dir (the Python subset of worktreeroot.ts `resolveWorktreeRoot`: no Pi
+    install / package / npm roots). Relative values resolve against main_dir, `~` against home; absolute and `~` values need `<repo>`.
+    A refused value returns the default root with `error` ({code, message}) and `requested`."""
+    home = home or os.path.expanduser("~")
+    agent_dir = agent_dir or os.environ.get("PI_CODING_AGENT_DIR") or os.path.join(home, ".pi", "agent")
+    tmp_root = tmp_root or tempfile.gettempdir()
+    repo = re.sub(r"\.git$", "", os.path.basename(main_dir.rstrip("/\\")))
+    value = raw.strip() if isinstance(raw, str) and raw.strip() else DEFAULT_DIR
+
+    def template_of(v):
+        if v == "~" or v.startswith(("~/", "~\\")):
+            v = os.path.join(home, v[1:].lstrip("/\\"))
+        return os.path.normpath(os.path.join(main_dir, v))
+
+    default_t = template_of(DEFAULT_DIR)
+
+    def mk(t):
+        spelled = t.replace("<repo>", repo)
+        return {"spelled": spelled, "real": os.path.realpath(spelled), "repo": repo, "custom": t != default_t, "template": t}
+
+    def refuse(code, msg, asked):
+        return dict(mk(default_t), custom=False, error={"code": code, "message": msg}, requested=asked["spelled"])
+
+    tilde = value == "~" or value.startswith(("~/", "~\\"))
+    absolute = tilde or os.path.isabs(value)
+    asked = mk(template_of(value))
+    if absolute and "<repo>" not in value:
+        return refuse("no_repo_placeholder", "close.worktreeDir `%s` is an absolute path without `<repo>`; add `<repo>` so each repo gets its own folder" % value, asked)
+    if not absolute:
+        sup = superproject
+        if sup is _UNSET:
+            code, out, _e = safe_ops.git(["rev-parse", "--show-superproject-working-tree"], main_dir)
+            sup = out.splitlines()[0] if code == 0 and out.strip() else None
+        if sup and (safe_ops.is_inside(sup, asked["spelled"], True) or safe_ops.is_inside(sup, asked["real"], True)):
+            return refuse("root_inside_superproject", "close.worktreeDir `%s` puts the worktrees of the submodule %s inside its superproject (%s); use an absolute root such as `~/worktrees/<repo>`" % (value, repo, sup), asked)
+    if asked["template"] != default_t:
+        bad = _blocks(asked["spelled"], asked["real"], asked["template"], _protected(main_dir, home, agent_dir, tmp_root, extra_protected))
+        if bad:
+            return refuse("root_blocks_protected", "close.worktreeDir `%s` would cover %s, which children must keep reaching; choose a root that holds only worktrees" % (value, bad), asked)
+    return asked
+
+
 def convention_dirs(main_dir, cfg):
     raw = (cfg.get("close") or {}).get("worktreeDir")
-    raw = raw if isinstance(raw, str) and raw.strip() else DEFAULT_DIR
-    raw = os.path.expanduser(raw.replace("<repo>", os.path.basename(main_dir)))
+    root = resolve_worktree_root(main_dir, raw)
     # third root: pi-subagents' managed worktrees, `{dirname(repo)}/worktrees/<project>/pi-worktree-<run>-<n>`
-    return [os.path.realpath(os.path.join(main_dir, raw)), os.path.realpath(os.path.join(main_dir, ".claude", "worktrees")),
+    return [root["real"], os.path.realpath(os.path.join(main_dir, ".claude", "worktrees")),
             os.path.realpath(os.path.join(main_dir, "..", "worktrees", os.path.basename(main_dir)))]
 
 

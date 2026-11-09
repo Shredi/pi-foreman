@@ -406,6 +406,113 @@ def worktrees(cwd):
     return items
 
 
+# ---------------------------------------------------------- nested checkouts (submodules)
+
+def _read(p):
+    try:
+        with open(p, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def gitfile_target(path):
+    """Directory a `gitdir:` file points to (relative values resolved against the file's own dir), else None."""
+    m = re.search(r"^gitdir:\s*(.+)$", _read(path) or "", re.M)
+    return os.path.normpath(os.path.join(os.path.dirname(path), m.group(1).strip())) if m else None
+
+
+def config_value(path, section, key):
+    """Value of `key` in the plain `[section]` of a git config file (no includes or subsections), else None."""
+    text = _read(path)
+    if text is None:
+        return None
+    inside, found = False, None
+    for raw in text.splitlines():
+        line = raw.strip()
+        head = re.match(r'^\[\s*([A-Za-z0-9.-]+)(\s+"[^"]*")?\s*\]', line)
+        if head:
+            inside = not head.group(2) and head.group(1).lower() == section
+            continue
+        kv = re.match(r"^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$", line) if inside else None
+        if not kv or kv.group(1).lower() != key:
+            continue
+        v = re.sub(r"\s+[#;].*$", "", kv.group(2)).strip()
+        found = v[1:-1] if len(v) >= 2 and v[0] == '"' and v[-1] == '"' else v
+    return found
+
+
+def git_dirs_above(start):
+    """(top, git_dir, common_dir) as real paths for the nearest `.git` entry at or above start, else None."""
+    cur = os.path.abspath(start)
+    for _ in range(64):
+        dot = os.path.join(cur, ".git")
+        if os.path.lexists(dot):
+            target = gitfile_target(dot) if os.path.isfile(dot) and not os.path.islink(dot) else dot
+            if not target or not os.path.exists(target):
+                return None
+            gd = os.path.realpath(target)
+            rel = (_read(os.path.join(gd, "commondir")) or "").strip()
+            common = os.path.realpath(os.path.join(gd, rel)) if rel else gd
+            return os.path.realpath(cur), gd, common
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+    return None
+
+
+def _accepts_directly(modules, c):
+    dot = os.path.join(c, ".git")
+    if not os.path.isfile(dot) or os.path.islink(dot):
+        return False
+    target = gitfile_target(dot)
+    if not target or not os.path.isdir(target):
+        return False
+    admin = os.path.realpath(target)
+    wt_dir = os.path.dirname(admin)
+    if os.path.basename(wt_dir) == "worktrees" and any(is_inside(m, os.path.dirname(wt_dir)) for m in modules):
+        back = (_read(os.path.join(admin, "gitdir")) or "").strip()
+        if back:
+            b = os.path.normpath(os.path.join(admin, back))
+            if os.path.join(os.path.realpath(os.path.dirname(b)), os.path.basename(b)) == os.path.join(os.path.realpath(c), ".git"):
+                return True
+    if any(is_inside(m, admin) for m in modules):
+        cw = config_value(os.path.join(admin, "config"), "core", "worktree")
+        if cw and os.path.realpath(os.path.join(admin, cw)) == os.path.realpath(c):
+            return True
+    return False
+
+
+def nested_checkout(root, c):
+    """True when c is a git checkout strictly inside the workspace tree at root whose `.git` file points to a submodule admin dir below
+    `<common(root)>/modules/` or `<gitdir(root)>/modules/` that names it back (linked submodule worktree: `gitdir` back-link; plain
+    submodule checkout: `core.worktree`). Transitive: every checkout between root and c must be accepted too."""
+    r, cc = os.path.realpath(root), os.path.realpath(c)
+    if r == cc or not is_inside(r, cc):
+        return False
+    dirs = git_dirs_above(r)
+    if not dirs or dirs[0] != r:
+        return False
+    modules = [os.path.realpath(os.path.join(d, "modules")) for d in dict.fromkeys((dirs[2], dirs[1]))]
+    if not _accepts_directly(modules, cc):
+        return False
+    cur = os.path.dirname(cc)
+    while cur != r and is_inside(r, cur):
+        if os.path.lexists(os.path.join(cur, ".git")) and not _accepts_directly(modules, cur):
+            return False
+        cur = os.path.dirname(cur)
+    return True
+
+
+def list_gitlinks(cwd):
+    """Paths (`/`-separated, relative to cwd's checkout) of the gitlink (mode 160000) entries in the index."""
+    code, out, err = git(["ls-files", "-s", "-z"], cwd)
+    if code != 0:
+        raise Precondition("not_a_git_repo", "git ls-files failed: %s" % err.strip())
+    return [f.partition("\t")[2] for f in out.split("\0") if f.startswith("160000 ")]
+
+
 def disposable(path, patterns):
     """True when a component of the git-relative `path` matches a disposable pattern."""
     is_dir = path.endswith("/")
