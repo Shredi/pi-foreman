@@ -727,12 +727,12 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 **Experimental.** Two more herdr-app mods show what a session wants you to read, rendered, next to the Files and Changes panels:
 `integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel shows the plan of the foreman that owns the tab, rendered natively (headings, tables, code, task lists, links)
 with the blocks added or changed since the last ruling tinted and labelled NEW or CHANGED, a Diff view with the exact +/- lines, and one
-tab per child session that published a plan. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
+tab per child session that published a plan or a note. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
 click opens the panel on it, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
 panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A plan already read shows at once; a plan
 not read yet keeps the previous body, the tab labels and the header on screen until it is parsed ("Loading plan…" only when nothing is shown
-yet), so a switch does not blank or reflow the panel. The other tabs' plans are read in the background after the first paint. A document with
+yet), so a switch does not blank or reflow the panel. A child with a plan and a note has a Plan | Note switch on its tab (Plan by default; Note when it has only a note). A child tab that is not on screen shows a ● on its label while its plan or note version is above the one last rendered there; showing the tab clears it, and on the Plan | Note switch the button of a part with unseen content carries its own ● until that part is shown. A sidebar pin of kind plan or note on a child selects that part when the child has it. The header says Loading while the body still shows another tab or part. The other tabs' plans are read in the background after the first paint. A document with
 code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
 in the same render. Install the panel together with the Agents mod; the two are one install.
 
@@ -797,7 +797,7 @@ dir until the session's live file is gone and the dir is pruned; the mod copies 
 `mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home (the host reads images only from there) and, with no delete API, never prunes it.
 
 **What the mod does.** A new note (radar `show.note` above the last seen value; a first sight only records it) selects the panel block and shows
-its hidden panel, then switches to the Note tab; block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
+its hidden panel, then switches to the Note tab; a child's note opens the panel on that child's tab, on its Note part. Block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
 layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached). Fences render in a read-only highlighted editor; a listed mermaid fence
 shows its SVG after the mod's own allow-list check, else a `mermaid` code block.
 

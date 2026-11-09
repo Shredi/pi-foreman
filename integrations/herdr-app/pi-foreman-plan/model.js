@@ -498,9 +498,9 @@ export function anchorAgent(agents, panes, focus, prev = null) {
   return (own.find((a) => a.pane === focus.pane) ?? own.find((a) => a.address === prev) ?? own[0] ?? null)?.address ?? null;
 }
 
-/** Sessions below `node` (depth first, by radar `parent`) that publish a plan: `[{node, label}]`. */
+/** Sessions below `node` (depth first, by radar `parent`) that publish a plan or a note: `[{node, label}]`. */
 export function childPlans(node) {
-  return allSessions(node ? [node] : []).slice(1).filter((n) => planHint(n) !== null).map((n) => ({ node: n, label: n.name || n.key }));
+  return allSessions(node ? [node] : []).slice(1).filter((n) => planHint(n) !== null || noteHint(n) !== null).map((n) => ({ node: n, label: n.name || n.key }));
 }
 
 /** The `show.plan` version hint of a session node, or null. */
@@ -510,6 +510,35 @@ export function planHint(n) {
 
 export function noteHint(n) {
   return Number.isInteger(n?.show?.note) ? n.show.note : null;
+}
+
+/** The part a child tab shows: the picked one ("plan" | "note") when the session has it, else plan when it has one, else note. */
+export function partFor(n, picked) {
+  const has = { plan: planHint(n) !== null, note: noteHint(n) !== null };
+  if (picked && has[picked]) return picked;
+  return has.plan ? "plan" : "note";
+}
+
+/** True when a session has a part (plan or note) whose radar version is above the version last shown of it: `seenOf(part)`
+ *  gives that version, undefined when the part was never shown (it counts as unseen). */
+export function hasUnseen(n, seenOf) {
+  return partUnseen(n, "plan", seenOf) || partUnseen(n, "note", seenOf);
+}
+
+/** True when the given part of a session exists and its radar version is above the one last shown of it. */
+export function partUnseen(n, part, seenOf) {
+  const v = part === "note" ? noteHint(n) : planHint(n);
+  return v !== null && (seenOf(part) === undefined || v > seenOf(part));
+}
+
+/** The ● dot of a child tab label: only while the tab is not the one on screen and one of its parts has unseen content. */
+export function tabDot(n, onScreen, seenOf) {
+  return !onScreen && hasUnseen(n, seenOf);
+}
+
+/** The ● dot of a Plan | Note switch button: the part has unseen content and is not the part on screen. */
+export function partDot(n, part, shownPart, seenOf) {
+  return part !== shownPart && partUnseen(n, part, seenOf);
 }
 
 /** The folder of a file path (either separator); "" for a bare name. */
