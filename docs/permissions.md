@@ -457,7 +457,7 @@ Every other `gate.*` key is user or overlay only (`gate.protected.check` may tig
 - The `bash` tool is parsed as bash. When the resolved shell is not a bash binary (a custom `shellPath`, or the Unix `sh` fallback) the gate treats the tool as opaque.
 - The decision is made on the command string, not at run time: another local user can swap a `/tmp` path for a symlink in between.
 - Git config in the repository (`diff.external`, a pager) still applies to `git diff` and `git log`.
-- Windows: shell writes to the system temp dir are dangerous class; no default-allowed tmp on win32 yet.
+- Windows: `/tmp` is no write base. For the foreman the system temp dir is the write target, in its real and its long spelling (an 8.3 `RUNNER~1` expands); a child's shell writes there stay dangerous class.
 - `tasks` and `chain` launches carry no launch binding, so their children get no `FOREMAN_CHECKOUT` and no `child-write-foreman-checkout` fence; they still get `child-write-outside` for a write outside their worktree and scratch dir.
 - The bundled pi-subagents (`long-running-guard.js`, `isMutatingTool`) has no exception for `/dev/null`, so a bash call that redirects to it counts as a mutating tool for its "mutating tool failures" attention signal. That signal is upstream of the gate: the gate's null-device rule (no write) does not change it.
 - The gate judges a command line, not the files it runs (see the honest gap under [Floors](#floors)). Under mode `allow` the classifier does not run, so whitelist deny sentences do not apply; `deny` rules and floors still do.

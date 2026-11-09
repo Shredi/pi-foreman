@@ -198,7 +198,7 @@ On Windows pi-subagents cannot spawn a script hook without a shell, so the `fore
 
 ## Known limit: background runs on Windows
 
-On Windows a `foreman_bg` command runs under `cmd.exe` (`cmd /d /s /c "<command>"`), and the add-on's `bg_run` also runs its commands under `cmd.exe`, while the overlay rules, the shell-write guard, the destructive guard and the git guard classify the command as bash. cmd syntax the bash scanner does not model (`&` as a separator, `^` escapes, `%VAR%` expansion, cmd built-ins such as `del`, `rd` or `copy`) can therefore pass with a verdict that is wrong for what actually runs. Keep background commands on Windows to plain program calls (`node …`, `npm test`). Running them through `bash.exe -c` (Git Bash), so the guards and the shell agree, is a later item.
+On Windows a `foreman_bg` command runs in the bash tool's shell (Git Bash, `-c`), so the guards' bash reading matches what runs. Only when no bash is found (or the shell wants the command on stdin) it falls back to `cmd.exe` (`cmd /d /s /c "<command>"`), and the add-on's `bg_run` always runs its commands under `cmd.exe`; in those cases the overlay rules, the shell-write guard, the destructive guard and the git guard classify the command as bash. cmd syntax the bash scanner does not model (`&` as a separator, `^` escapes, `%VAR%` expansion, cmd built-ins such as `del`, `rd` or `copy`) can therefore pass with a verdict that is wrong for what actually runs. In those cases keep background commands to plain program calls (`node …`, `npm test`).
 
 ## Known limit: remote machine trust boundary
 
