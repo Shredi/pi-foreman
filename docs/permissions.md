@@ -209,8 +209,8 @@ Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `fore
 - the worktree, the session's scratch dir and the OS temp dirs (`gate.tmpAccess`; for a child only its own `$FOREMAN_SCRATCH`);
 - reads of the Pi install dir, the global npm root, the bundled package roots and the owned roots (state dirs, handoffs, sibling worktrees, your `additionalDirectories`);
 - the registered parent's `.workflow` dir, read-only, for a session opened by another session;
-- the session's own handoff dir: `plan.md` and `result.md` may be written;
-- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree and scratch dir, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
+- the session's own handoff dir: the session and its subagent children may write `plan.md`, `result.md`, `ask.md`/`ask-<n>.md`, `.ask`, `.seen`, `.steer-last-read.json` and anything below `work/`; everything else there (the bare `work` entry included) belongs to the parent. On Windows names are compared case-folded; streams and 8.3 names are refused;
+- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree, scratch dir and those handoff names, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
 
 A path write outside every root is `danger-write-outside`. Secret paths are floors and never reach this step.
 
