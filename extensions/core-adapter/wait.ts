@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isBriefName, isRulingName, rulingFresh } from "./ruling.ts";
-import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, bgLogPath, spawnDetached } from "./bg.ts";
+import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, freshBgLogPath, shellPathSetting, spawnDetached } from "./bg.ts";
 import { get } from "./config.ts";
 import { underOwned } from "./owned.ts";
 import { isProtectedPath } from "./permoverlay.ts";
@@ -828,7 +828,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     name: BG_TOOL,
     label: "Background run",
     description:
-      "Run one shell command in the background (detached on POSIX, not detached on win32; stdout and stderr go to a log file under the pi-foreman state scratch dir) and wait for it without model turns: registers a pid wait, returns the wait id and the log path at once, and you are woken when the process has exited. The command is guarded exactly like a bash call. Parameters: command, note (shown in the sidebar and `/foreman waits`).",
+      "Run one shell command in the background (detached on POSIX, not detached on win32; runs in bash on POSIX and in the bash tool's shell, Git Bash, on win32; stdout and stderr go to a log file under the pi-foreman state scratch dir) and wait for it without model turns: registers a pid wait, returns the wait id and the log path at once, and you are woken when the process has exited. The command is guarded exactly like a bash call. Parameters: command, note (shown in the sidebar and `/foreman waits`).",
     parameters: BG_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
@@ -853,8 +853,8 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if (full) return refuse(full);
       const id = rt.nextId();
       const note = oneLine(params.note, NOTE_MAX) || oneLine(command, 60);
-      const log = bgLogPath(path.join(s.agentDir, "pi-foreman", "state"), s.id, id);
-      const run = spawnDetached(command, ctx.cwd, log, deps.platform);
+      const log = freshBgLogPath(path.join(s.agentDir, "pi-foreman", "state"), s.id, id);
+      const run = spawnDetached(command, ctx.cwd, log, deps.platform, { shellPath: shellPathSetting(s.agentDir, ctx.cwd), config: s.config() });
       if ("error" in run) return refuse(run.error);
       const spec: ValidSpec = { kind: "pid", pid: run.pid, note, log, bg: true };
       const r = rt.start(spec);

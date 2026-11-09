@@ -684,6 +684,13 @@
         "prWake": { "type": "array", "maxItems": 64, "items": { "type": "object", "additionalProperties": false, "required": ["wake"], "properties": { "source": { "type": "string" }, "repos": { "type": "array", "items": { "type": "string" } }, "events": { "type": "array", "items": { "enum": ["issue", "review", "review_summary", "check_failed", "checks_settled", "mergeable", "no_checks"] } }, "authors": { "oneOf": [{ "enum": ["bot", "human", "any"] }, { "type": "array", "items": { "type": "string" } }] }, "checks": { "type": "array", "items": { "type": "string" } }, "wake": { "type": "boolean" } } }, "description": "Ordered wake rules for pr_watch, evaluated after the built-in defaults; the last matching rule decides whether an event wakes the session (docs/tools.md#wake-rules). User or overlay config only." },
         "prWatchSeconds": { "type": "integer", "minimum": 5, "maximum": 3600, "description": "Seconds between two pr_watch reads of the PR tracker's store (default 60; floored to 30 at runtime). A watch gets news at the `foreman prs poll` cycle plus up to one such tick." }
       }
+    },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "msysNoPathconv": { "type": "boolean", "description": "Windows only: set MSYS_NO_PATHCONV=1 and MSYS2_ARG_CONV_EXCL=* in the bash tool and foreman_bg env, so Git Bash passes POSIX-looking arguments (/switch words) to native exes unconverted. Write C:/x/y.py, not /c/x/y.py. Default true." }
+      }
     }
   }
 }

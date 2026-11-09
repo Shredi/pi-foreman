@@ -47,6 +47,14 @@ export const RESTART_MS = 60_000;
 /** No line (heartbeats arrive about every 20 s) for this long: the stream is dead and the poll fallback starts. */
 export const STREAM_SILENCE_MS = 90_000;
 const REFRESH_MS = 10_000;
+/** After a `closed` notice: `hc get` every 3 s for up to 120 s until the remote terminal is finished, then `hc rm`. */
+export const REAP_POLL_MS = 3_000;
+export const REAP_POLLS = 40;
+/** After the shell-in-foreground `hc kill`: up to 15 s for `finished` before the `hc rm`. */
+export const REAP_KILL_POLLS = 5;
+/** Foreground program names (case-folded, `.exe` stripped) that mean pi is gone and `--keep` left a shell in its place. */
+const SHELL_NAMES = new Set(["sh", "bash", "zsh", "fish", "dash", "ash", "ksh", "tcsh", "csh", "cmd", "powershell", "pwsh"]);
+export const isShellName = (name: unknown): boolean => typeof name === "string" && SHELL_NAMES.has(name.trim().toLowerCase().replace(/^.*[\\/]/, "").replace(/\.exe$/, ""));
 const GET_TIMEOUT_MS = 10_000;
 const MAX_FETCH_BYTES = 8 * 1024 * 1024;
 
@@ -602,6 +610,48 @@ export class RemoteWatcher {
     for (const a of actions) this.enqueue(() => this.handle(a));
   }
 
+  /** One `hc get` of the remote terminal: finished, gone (not_found), live with its foreground name, or unknown (error). */
+  private async peek(address: string): Promise<{ s: "finished" | "gone" | "live" | "unknown"; fg?: unknown }> {
+    const r = await this.hc(["get", address, "--json"], GET_TIMEOUT_MS, this.abort.signal);
+    if (r.code === 3 && notFound(r.stderr)) return { s: "gone" };
+    if (r.code !== 0) return { s: "unknown" };
+    try {
+      const o = objOf(JSON.parse(r.stdout.toString("utf8")));
+      if (o?.state === "finished") return { s: "finished" };
+      if (o?.state === "live") return { s: "live", fg: objOf(o.foreground)?.name };
+    } catch {
+      // unreadable reply: keep polling
+    }
+    return { s: "unknown" };
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((res) => void this.timer(res, ms));
+  }
+
+  /** After `closed`: poll until the terminal is finished, then `hc rm`. At the bound a shell in the foreground is killed first; anything else is reported. */
+  private async reap(address: string): Promise<void> {
+    const rm = async (): Promise<void> => void (await this.hc(["rm", address], 10_000, this.abort.signal));
+    let last: { s: string; fg?: unknown } = { s: "unknown" };
+    for (let i = 0; i <= REAP_POLLS && !this.stopped; i++) {
+      last = await this.peek(address);
+      if (last.s === "gone") return;
+      if (last.s === "finished") return rm();
+      if (i < REAP_POLLS) await this.sleep(REAP_POLL_MS);
+    }
+    if (this.stopped) return;
+    if (last.s === "live" && isShellName(last.fg)) {
+      await this.hc(["kill", address], 10_000, this.abort.signal);
+      for (let i = 0; i < REAP_KILL_POLLS && !this.stopped; i++) {
+        await this.sleep(REAP_POLL_MS);
+        const k = await this.peek(address);
+        if (k.s === "gone") return;
+        if (k.s === "finished") return rm();
+      }
+    }
+    this.d.notify?.(`remote terminal ${address} is still ${last.s} after the session closed; left alone (remove it with \`hc rm ${address}\` once pi has exited)`, "warning");
+  }
+
   private async pollOne(child: string): Promise<void> {
     const w = this.state.get(child);
     if (!w) return;
@@ -749,6 +799,8 @@ export class RemoteWatcher {
     commit(this.state, w.child, a.seq);
     // the local `hc attach` terminal of the session ends with it (best effort; `--rm` removes it once it exits)
     if (typeof attach === "string" && attach) void this.hc(["kill", attach], 10_000, this.abort.signal).catch(() => undefined);
+    // the remote terminal (`--keep`) outlives pi: remove it once pi has exited (never killed while pi is still closing)
+    if (a.kind === "closed") void this.reap(w.address).catch(() => undefined);
     const done = wake as { kind: string; path: string };
     this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${done.path ? ` ${done.path}` : ""}`, "info");
     this.d.wake(w.label, done.kind, done.path);

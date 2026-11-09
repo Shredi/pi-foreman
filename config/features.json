@@ -642,10 +642,22 @@
       "purpose": "`foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The child reports with `foreman session remote notice`, which sets the `fm.notice` label on its own hc terminal; the parent watches the hc events stream, fetches the named file with `hc file read` (`sessions.remote.fetchTimeoutSeconds`), checks it and mirrors it. A Windows machine works as a remote (`pi.cmd`, the full `hc.exe` path, a PowerShell `foremanArgv`; see Windows remotes). User or overlay config only.",
       "doc": "docs/sessions.md#remote-child-sessions",
       "keys": ["sessions.machines", "sessions.remote.fetchTimeoutSeconds"],
-      "commands": ["foreman session remote", "foreman session remote notice", "foreman session close-remote"],
+      "commands": ["foreman session remote", "foreman session remote notice", "foreman session close-remote", "foreman machine"],
       "switch": {"key": "sessions.machines", "on": "nonempty"},
       "state": "opt-in",
       "enable": "{\"sessions\": {\"machines\": {\"alpha\": {}}}}"
+    },
+    {
+      "id": "msys-no-pathconv",
+      "area": "sessions",
+      "title": "Git Bash argument conversion off on Windows",
+      "purpose": "On Windows the bash tool and `foreman_bg` set `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms.",
+      "doc": "docs/safety.md#known-limit-background-runs-on-windows",
+      "keys": ["shell.msysNoPathconv"],
+      "commands": [],
+      "switch": {"key": "shell.msysNoPathconv", "on": "true"},
+      "state": "on",
+      "enable": "{\"shell\": {\"msysNoPathconv\": true}}"
     },
     {
       "id": "round-state",

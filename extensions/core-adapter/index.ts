@@ -38,7 +38,7 @@ import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
-import { PATH_TOOL_NAMES } from "./pathrules.ts";
+import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
@@ -85,7 +85,7 @@ import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, highStakesConfig, markPolicyOverrides, missingPairWarning, planReviewerClimbs, STAKE_TAGS, stakeOf, type Stake, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
-import { buildGuardEnv, patchShellEnv, piAgentDir } from "./env.ts";
+import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
 import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./childenv.ts";
 import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepScratch } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
@@ -971,7 +971,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ctx.ui.notify(`pi-foreman: could not write the session marker in ${markerDir} (${(err as Error).message}); the ledger gates treat this session as unbound.`, "warning");
     }
     refreshLedgerTier(s);
-    patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir });
+    patchShellEnv({ env: process.env, binDir: BIN_DIR, python: pyPath(s), markerDir, platform, config: s.config.config });
     if (s.isChild && get(config.config, "safety.children.mayPush") !== true) patchChildGitEnv(process.env);
     if (!s.isChild) patchForemanGitEnv(process.env);
     if (!s.isChild && ledgerHelperMode(get(config.config, "ceremony.ledgerHelper")) !== "off") {
@@ -1764,7 +1764,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (instructionsCache === null) notifyOnce(s, ctx, "instructions", "pi-foreman: instructions/foreman.md is missing; the foreman runs without its rules.");
     if (s.orientation === undefined) {
       // Once per session, so every later turn (and a compaction re-put) carries identical bytes.
-      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120), roots: await piRootsOf(s) });
+      s.orientation = get(s.config.config, "ceremony.orientation.enabled") === false ? "" : await collectOrientation(ctx.cwd, { reads: readLimits(get(s.config.config, "ceremony.foremanReads")).before, maxLines: Math.max(1, Number(get(s.config.config, "ceremony.orientation.maxLines")) || 120), roots: await piRootsOf(s), platform, msysNoPathconv: Object.keys(msysEnv(platform, s.config.config)).length > 0 });
       s.trace?.emit({ event: "orientation", lines: s.orientation ? s.orientation.split("\n").length : 0 });
     }
     const text = [applyVariants(instructionsCache ?? "", promptVariants(s)), tierLine(s.ceremony), finishLine({ [s.ceremony.tier]: requiredOf(s, s.ceremony.tier) }, s.ceremony.tier)].concat(s.orientation).filter(Boolean).join("\n\n");
@@ -2283,7 +2283,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
     if (s.isChild) s.skillDirs ??= childSkillDirs(get(s.config.config, "roles"), launchBinding?.role, ctx.cwd, os.homedir());
     const skillDirs = s.isChild ? await s.skillDirs : undefined;
-    const mctx: MatchCtx = { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild && launchBinding?.install ? { install: true } : {}), ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(skillDirs?.length ? { skillDirs } : {}), ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }, s.usage.line.foremanSession), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) };
+    const mctx: MatchCtx = { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild && launchBinding?.handoffDir ? { handoffDir: launchBinding.handoffDir } : {}), ...(s.isChild && launchBinding?.install ? { install: true } : {}), ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(skillDirs?.length ? { skillDirs } : {}), ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }, s.usage.line.foremanSession), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) };
     const d0 = checkToolCall(s.overlay, toolName, input, mctx);
     if (s.isChild && toolName === "bash" && typeof input.command === "string" && mctx.install && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
     // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
@@ -2359,12 +2359,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return {
       worktree: tree ?? workspaceOf(cwd).root,
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
-      tmp: [real(os.tmpdir()), ...(platform === "win32" ? [] : ["/tmp"])],
+      tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
       owned: [...owned.write, ...owned.read, ...extraReadDirs],
       install: [pi.installRoot, pi.npmRoot, ...BUNDLED_PACKAGE_ROOTS.map((r) => path.join(PKG_ROOT, r))].filter((x): x is string => !!x),
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
+      ...(s.isChild && launchBinding?.handoffDir ? { childHandoff: launchBinding.handoffDir } : {}),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
@@ -3922,13 +3923,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (children are not checked). */
+  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. */
+  function ownChildHandoff(s: Session): string | undefined {
+    const env = (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim();
+    const dir = env || childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))[0];
+    return dir && (path.isAbsolute(dir) || path.win32.isAbsolute(dir)) ? dir : undefined;
+  }
+
   async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);
       if (s.isChild) return undefined;
       const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard: "shell_write_guard", markerDir: s.markerDir });
       const { mode, scratchDir } = editModeOfSession(s);
-      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite));
+      const ownHandoff = ownChildHandoff(s);
+      const payload = shellWriteGuardPayload(input, payloadCtx(s, ctx), workspaceOf(ctx.cwd).root, toolName, allowedShellDirs(mode, scratchDir, ctx.cwd, platform), s.isChild ? [] : literalOwnedDirs(s.owned.readWrite), { ...(ownHandoff ? { handoffDir: ownHandoff } : {}) });
       const v = shellWriteVerdict(await runShellWriteGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, payload, env, cwd: ctx.cwd, spawner }), pyPath(s));
       if (v.decision === "allow") return undefined;
       if (v.decision !== "refuse") return { block: true, reason: v.reason };
@@ -3942,7 +3951,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const precondition = move && "precondition" in move ? move.precondition : undefined;
       const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : v.reason;
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
-      const more = onEditRefused(s, mode, "shell");
+      // a refusal caused only by a parent-owned name in the own handoff dir is no sign the task needs a builder: no tier escalation
+      const more = v.handoffOnly ? "" : onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -3956,6 +3966,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
     launchScratch(s, input, b);
+    const ownHandoff = ownChildHandoff(s);
+    if (!s.isChild && ownHandoff) b.handoffDir = ownHandoff;
     if (!s.isChild && get(s.config.config, "gate.childAsk") === "parent" && ctx.hasUI) {
       // a parent with its own pane gives the child an ask dir; a headless parent gives none, so its children deny
       const askDir = childAskDir(s.agentDir, s.id, b.launchId);

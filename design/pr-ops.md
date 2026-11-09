@@ -222,7 +222,7 @@ After args, the checks run in this order:
    3. Else `symbolic-ref --quiet --short refs/remotes/<remote>/HEAD`, with `<remote>/` stripped.
    4. Else none.
 4. `base == head` gives `base_is_head (base <b> is the branch the PR comes from)`.
-5. `<head>@{upstream}` missing gives `unpushed (<head> has no upstream; push it first, pi-foreman does not push)`. If the upstream sha is not the head sha: `unpushed (<head> differs from its upstream <up>; push first)`.
+5. The pushed head is the same-named remote branch (`<head>@{push}`, `origin/<head>`, or `<head>@{upstream}` only when its branch name equals `<head>`; an upstream of another name is the base and is ignored). None exists: `unpushed (<head> has no same-named remote branch (origin/<head>); push first, pi-foreman does not push)`. One whose sha is not the head sha: `unpushed (<head> differs from its same-named remote branch <ref>; push first)`, naming the ref that differs.
 6. Resolve the host, then create.
 
 Nothing pushes, ever.

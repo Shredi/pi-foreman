@@ -1,7 +1,7 @@
 // `foreman_bg` (ledger item 5) and the optional background-tasks add-on (item 6).
 //
 // `foreman_bg {command, note}` runs one shell command detached (own process group on POSIX, see bgSpawnFlags for win32; stdout and stderr to
-// `<stateDir>/scratch/<session>/wait-<id>.log`) and registers a `pid` wait for it, so the foreman ends its turn and is
+// `<stateDir>/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when the plain name already exists, e.g. after a reload) and registers a `pid` wait for it, so the foreman ends its turn and is
 // woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
 // index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard, destructive and git guard)
 // and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
@@ -11,8 +11,11 @@
 // package directory); while present, `foreman_bg` refuses with a pointer to `bg_run`, and `/foreman waits` also lists
 // its running tasks from `<cwd>/.pi/tasks/<session>-<pid>/<task-id>.json`.
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
+import { msysEnv } from "./env.ts";
 
 /** One line, control characters dropped, capped (same rule as wait.ts oneLine; kept here to avoid an import cycle). */
 function oneLine(v: unknown, max: number): string {
@@ -31,7 +34,7 @@ const MAX_ADDON_TASKS = 20;
 export const BG_PARAMS = {
   type: "object",
   properties: {
-    command: { type: "string", description: "The shell command to run in the background (detached on POSIX, not detached on win32; same guards as a bash call)." },
+    command: { type: "string", description: "The shell command to run in the background (detached on POSIX, not detached on win32; same guards as a bash call). On win32 it runs in the bash tool's shell (Git Bash, `bash -c`), so write POSIX syntax; cmd.exe only when no bash is found." },
     note: { type: "string", maxLength: 200, description: "Shown in the sidebar, `/foreman waits` and the wake message." },
   },
   required: ["command"],
@@ -46,14 +49,35 @@ export const bgScratchDir = (stateDir: string, sessionId: string): string => pat
 export const bgLogPath = (stateDir: string, sessionId: string, waitId: string): string => path.join(bgScratchDir(stateDir, sessionId), `wait-${safeSegment(waitId)}.log`);
 
 /**
- * The shell that runs the command: bash (else sh) on POSIX, `cmd /d /s /c` on Windows. With `/s /c`, cmd strips the
- * first and the last quote of its command line, so the command is wrapped in one more pair of quotes (what Node's
- * `shell: true` does on win32); without them a quoted `node -e "..."` loses its quotes and cmd parses `<`, `>`, `&`
- * inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting), as cmd parses them itself.
- * Known limit: on Windows the command runs under cmd.exe while the guards classify it as bash (docs/safety.md).
+ * The log path of a new run: `bgLogPath`, or when that file exists (the wait id sequence restarts on a session reload while an older run
+ * may still write its log) a name with a time+random token, so a new run never truncates or interleaves with an earlier run's log.
  */
-export function shellFor(command: string, platform: string = process.platform): { file: string; args: string[]; verbatim: boolean } {
-  if (platform === "win32") return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
+export function freshBgLogPath(stateDir: string, sessionId: string, waitId: string): string {
+  const base = bgLogPath(stateDir, sessionId, waitId);
+  if (!fs.existsSync(base)) return base;
+  return path.join(path.dirname(base), `wait-${safeSegment(waitId)}-${Date.now().toString(36)}${randomBytes(4).toString("hex")}.log`);
+}
+
+/**
+ * The shell that runs the command: bash (else sh) on POSIX; on Windows the bash tool's shell, Pi's `getShellConfig(shellPath)`
+ * (Git Bash, `-c`), so the guards' bash reading matches what runs. Only when that throws (no bash found) or wants the command on
+ * stdin (legacy WSL bash) it is `cmd /d /s /c`: with `/s /c`, cmd strips the first and the last quote of its command line, so the
+ * command is wrapped in one more pair of quotes (what Node's `shell: true` does on win32); without them a quoted `node -e "..."`
+ * loses its quotes and cmd parses `<`, `>`, `&` inside it as redirections. The arguments go verbatim (no MSVCRT re-quoting).
+ * Known limit: the cmd.exe fallback runs the command under cmd.exe while the guards classify it as bash (docs/safety.md).
+ */
+export type ShellConfigFn = (shellPath?: string) => { shell: string; args: string[]; commandTransport?: string };
+
+export function shellFor(command: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string } = {}): { file: string; args: string[]; verbatim: boolean } {
+  if (platform === "win32") {
+    try {
+      const cfg = (opts.getShellConfig ?? piGetShellConfig)(opts.shellPath || undefined);
+      if (cfg.commandTransport !== "stdin") return { file: cfg.shell, args: [...cfg.args, command], verbatim: false };
+    } catch {
+      // no bash found: cmd.exe below
+    }
+    return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", `"${command}"`], verbatim: true };
+  }
   return { file: fs.existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh", args: ["-c", command], verbatim: false };
 }
 
@@ -70,14 +94,16 @@ export function bgSpawnFlags(platform: string = process.platform): { detached: b
 }
 
 /** Spawn `command` detached (bgSpawnFlags) with stdout and stderr appended to `logPath`; the pid, or why not. */
-export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform): { pid: number } | { error: string } {
+export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv } = {}): { pid: number } | { error: string } {
   let fd: number | null = null;
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
-    fd = fs.openSync(logPath, "a", 0o600);
-    const sh = shellFor(command, platform);
+    // win32: node's "a" opens the handle with FILE_APPEND_DATA only; the MSYS runtime of Git Bash takes such a handle as not writable, so a bash builtin
+    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access; the log name is fresh per run (freshBgLogPath: `wait-<id>-<token>.log` when `wait-<id>.log` exists), so "w" never truncates an earlier run's log; nothing to keep.
+    fd = fs.openSync(logPath, platform === "win32" ? "w" : "a", 0o600);
+    const sh = shellFor(command, platform, opts);
     // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
-    const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: process.env, windowsVerbatimArguments: sh.verbatim });
+    const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
     child.on("error", () => undefined);
     child.unref();
     if (!child.pid) return { error: `${BG_TOOL}: could not start ${sh.file}.` };
@@ -87,6 +113,19 @@ export function spawnDetached(command: string, cwd: string, logPath: string, pla
   } finally {
     if (fd !== null) fs.closeSync(fd);
   }
+}
+
+/** Pi's `shellPath` setting: the project's `.pi/settings.json` over the agent dir's `settings.json`; undefined when unset. */
+export function shellPathSetting(agentDir: string, cwd: string): string | undefined {
+  for (const f of [path.join(cwd, ".pi", "settings.json"), path.join(agentDir, "settings.json")]) {
+    try {
+      const v = (JSON.parse(fs.readFileSync(f, "utf8")) as { shellPath?: unknown }).shellPath;
+      if (typeof v === "string" && v.trim()) return v.trim();
+    } catch {
+      // absent or unreadable: next
+    }
+  }
+  return undefined;
 }
 
 /** Last `n` non-empty lines of a file (reads at most its final 8 KiB); [] when unreadable. */

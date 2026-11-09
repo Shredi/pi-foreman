@@ -23,6 +23,21 @@ export interface OrientInput {
   maxLines: number;
   /** Roots of the running pi (resolved at runtime, never a literal path); absent = the lines say they are unresolved. */
   roots?: PiRoots;
+  /** `win32` adds the shell lines (the bash tool is git-bash; MSYS argument conversion). */
+  platform?: string;
+  /** The adapter sets MSYS_NO_PATHCONV for the bash tool (`shell.msysNoPathconv`). */
+  msysNoPathconv?: boolean;
+}
+
+/** Windows-only lines: which shell the tools run in and how native exes see their arguments. */
+export function win32Lines(platform: string | undefined, msysNoPathconv: boolean | undefined): string[] {
+  if (platform !== "win32") return [];
+  return [
+    "Windows shell: the bash tool and foreman_bg run commands in the bash tool's git-bash (`bash -c`), not cmd.exe.",
+    msysNoPathconv
+      ? "Windows-native exes get their arguments unconverted (MSYS path conversion is off): write `C:/x/y.py`, not `/c/x/y.py`; a word like `/switch` stays as written."
+      : "MSYS path conversion is on: git-bash rewrites POSIX-looking arguments for native exes; write `C:/x/y.py`, not `/c/x/y.py`.",
+  ];
 }
 
 /** Where the running pi and its packages live; each null when it could not be resolved. */
@@ -104,7 +119,7 @@ export function buildOrientation(inp: OrientInput): string {
   const doc = inp.agentsMd !== null ? { name: "AGENTS.md", text: inp.agentsMd } : inp.readmeMd !== null ? { name: "README.md", text: inp.readmeMd } : null;
   const head = ["# Orientation (not a tool call; it does not count against your read budget)", "", "## Tracked files (dir, count; depth 2)"];
   const tool = toolchainLines(files, inp.packageJson);
-  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read reminder before the first launch comes after ${inp.reads.warn} reads, then every ${inp.reads.every} reads.`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`, ...rootsLines(inp.roots)];
+  const tail = [...(tool.length ? ["", "## Toolchain", ...tool.map((t) => `- ${t}`)] : []), "", `Deeper exploration: launch the explorer. Your read reminder before the first launch comes after ${inp.reads.warn} reads, then every ${inp.reads.every} reads.`, `Bundled package roots (pi-foreman package root, not this repo; read there, never \`find\` over the agent dir): ${BUNDLED_PACKAGE_ROOTS.map((r) => `\`${r}\``).join(", ")}.`, ...rootsLines(inp.roots), ...win32Lines(inp.platform, inp.msysNoPathconv)];
   const tree = treeLines(files);
   let docBlock: string[] = [];
   if (doc) {
@@ -136,7 +151,7 @@ function readHead(cwd: string, name: string): string | null {
 }
 
 /** Collect from `cwd` (the repo root is expected); "" when not a git repo or git is missing. */
-export async function collectOrientation(cwd: string, opts: { reads: { warn: number; every: number }; maxLines: number; roots?: PiRoots }): Promise<string> {
+export async function collectOrientation(cwd: string, opts: { reads: { warn: number; every: number }; maxLines: number; roots?: PiRoots; platform?: string; msysNoPathconv?: boolean }): Promise<string> {
   const out = await git(cwd, ["ls-files", "-z"]);
   if (out === null) return "";
   const files = out.split("\0").filter(Boolean);

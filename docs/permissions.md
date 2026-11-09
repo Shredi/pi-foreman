@@ -209,8 +209,8 @@ Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `fore
 - the worktree, the session's scratch dir and the OS temp dirs (`gate.tmpAccess`; for a child only its own `$FOREMAN_SCRATCH`);
 - reads of the Pi install dir, the global npm root, the bundled package roots and the owned roots (state dirs, handoffs, sibling worktrees, your `additionalDirectories`);
 - the registered parent's `.workflow` dir, read-only, for a session opened by another session;
-- the session's own handoff dir: `plan.md` and `result.md` may be written;
-- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree and scratch dir, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
+- the session's own handoff dir: through the path tools the session may write `plan.md` and `result.md`; a subagent child may also write `ask.md`/`ask-<n>.md`, `.ask`, `.seen`, `.steer-last-read.json` and anything below `work/` in its launch's handoff dir; everything else there (the bare `work` entry included) belongs to the parent. The session's own shell guard (`shell_write_guard.py`) applies the longer list to the handoff dir where that session is the child side (its `PI_FOREMAN_HANDOFF_DIR`), when it has one. On Windows names are compared case-folded; streams and 8.3 names are refused;
+- a child never writes a handoff dir's `parent` or `child` files, the parent's `.workflow`, or anything outside its own worktree, scratch dir and those handoff names, and never opens a pull or merge request (`pr_create`, `gh pr create`, `glab mr create`). These child denies run before any allow rule, built-in allow or classifier verdict, in every mode.
 
 A path write outside every root is `danger-write-outside`. Secret paths are floors and never reach this step.
 
@@ -457,7 +457,7 @@ Every other `gate.*` key is user or overlay only (`gate.protected.check` may tig
 - The `bash` tool is parsed as bash. When the resolved shell is not a bash binary (a custom `shellPath`, or the Unix `sh` fallback) the gate treats the tool as opaque.
 - The decision is made on the command string, not at run time: another local user can swap a `/tmp` path for a symlink in between.
 - Git config in the repository (`diff.external`, a pager) still applies to `git diff` and `git log`.
-- Windows: shell writes to the system temp dir are dangerous class; no default-allowed tmp on win32 yet.
+- Windows: `/tmp` is no write base. For the foreman the system temp dir is the write target, in its real and its long spelling (an 8.3 `RUNNER~1` expands); a child's shell writes there stay dangerous class.
 - `tasks` and `chain` launches carry no launch binding, so their children get no `FOREMAN_CHECKOUT` and no `child-write-foreman-checkout` fence; they still get `child-write-outside` for a write outside their worktree and scratch dir.
 - The bundled pi-subagents (`long-running-guard.js`, `isMutatingTool`) has no exception for `/dev/null`, so a bash call that redirects to it counts as a mutating tool for its "mutating tool failures" attention signal. That signal is upstream of the gate: the gate's null-device rule (no write) does not change it.
 - The gate judges a command line, not the files it runs (see the honest gap under [Floors](#floors)). Under mode `allow` the classifier does not run, so whitelist deny sentences do not apply; `deny` rules and floors still do.

@@ -92,6 +92,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [session-worktree](#session-worktree) | sessions |  | on | `foreman session open <label> <brief> --worktree [--base REF]` (and `foreman_session_open` with `worktree: true`) creates the session's own linked worktree at `<close.worktreeDir>/<label>` on the branch `<prefix>/<label>` from the fetched default branch, installs dependencies with `npm ci` only when a lockfile is declared, and opens the session there. `sessions.worktree.branchPrefix` (default `round`) sets the prefix. User or overlay config only. | on by default | [sessions](sessions.md#worktree-for-a-new-session) |
 | [open-prs](#open-prs) | sessions |  | on | The only PR and run data source: a tracked list (`pr_follow`, and the PRs `pr_create` and `pr_watch` handle) that `foreman prs poll` (herdr-app runs it) polls for checks and drops once merged or closed, and the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 120, one refresher per machine) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk with title, branch, a redacted description excerpt, mergeability and up to 20 check names. `foreman radar --json` reports them as `openPrs` for the herdr-app mod, which draws one dot per PR; radar polls never call the network. On by default; GitHub only (GitLab users get no PR display). User or overlay config only. | `{"radar": {"openPrs": {"enabled": true}}}` | [herdr](herdr.md#open-prs) |
 | [remote-sessions](#remote-sessions) | sessions |  | opt-in | `foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The child reports with `foreman session remote notice`, which sets the `fm.notice` label on its own hc terminal; the parent watches the hc events stream, fetches the named file with `hc file read` (`sessions.remote.fetchTimeoutSeconds`), checks it and mirrors it. A Windows machine works as a remote (`pi.cmd`, the full `hc.exe` path, a PowerShell `foremanArgv`; see Windows remotes). User or overlay config only. | `{"sessions": {"machines": {"alpha": {}}}}` | [sessions](sessions.md#remote-child-sessions) |
+| [msys-no-pathconv](#msys-no-pathconv) | sessions |  | on | On Windows the bash tool and `foreman_bg` set `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms. | `{"shell": {"msysNoPathconv": true}}` | [safety](safety.md#known-limit-background-runs-on-windows) |
 | [round-state](#round-state) | sessions |  | on | In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan. | on by default | [sessions](sessions.md#child-orchestrator-sessions) |
 | [remote-intercom](#remote-intercom) | sessions | toggle, relaxes safety | off | Allows intercom across machines and opening panes; both are off by default. | `{"intercom": {"allowRemote": true}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [sync](#sync) | ops |  | opt-in | `/sync` runs the retro, then pulls, commits (explicit paths only) and pushes the repositories you list, and prints the CLOSE report; it does nothing until you list one. | `{"sync": {"repos": [{"path": "<absolute path of a repository you trust>", "branch": "main", "paths": ["<glob of paths to sync>"]}]}}` | [sessions](sessions.md#commands) |
@@ -707,6 +708,16 @@ Switch: `sessions.machines` is non-empty.
 | `sessions.machines.<x>.parentName` | unset | not in project/session (the machines a session may open on over hc come from the user or overlay config) |
 | `sessions.remote.fetchTimeoutSeconds` | `30` | not in project/session (the fetch timeout of a remote child's notice file comes from the user or overlay config) |
 
+### msys-no-pathconv
+
+**Git Bash argument conversion off on Windows.** On Windows the bash tool and `foreman_bg` set `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*`, so Git Bash passes POSIX-looking arguments (`/switch` words) to native executables unconverted. Write `C:/x/y.py`, not `/c/x/y.py`. On by default; `shell.msysNoPathconv: false` restores the conversion. No effect on other platforms.
+
+Switch: `shell.msysNoPathconv` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `shell.msysNoPathconv` | `true` | any layer |
+
 ### round-state
 
 **Reload-safe round state.** In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval returns from the session's own state entry, or from the parent's `ruling-plan.md` or `ruling.md` newer than both the plan and the handoff plan.
@@ -933,7 +944,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [herdr-core](#herdr-core) | `foreman session open` |
 | [session-worktree](#session-worktree) | `foreman session open` |
 | [open-prs](#open-prs) | `foreman radar --json`, `foreman prs` |
-| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session remote notice`, `foreman session close-remote` |
+| [remote-sessions](#remote-sessions) | `foreman session remote`, `foreman session remote notice`, `foreman session close-remote`, `foreman machine` |
 | [sync](#sync) | `/sync`, `foreman sync` |
 | [retro](#retro) | `/retro`, `/foreman flag-ask`, `foreman retro`, `foreman backlog` |
 | [close](#close) | `/foreman close`, `foreman close`, `foreman worktree` |

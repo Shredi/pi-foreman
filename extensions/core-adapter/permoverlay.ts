@@ -86,6 +86,7 @@ import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
 import { READ_PATH_TOOLS, psPubKeyReadWords, pubKeyReadWords, sshPublicKey } from "./floors.ts";
 import { globSegMatch, wildMatch } from "./glob.ts";
+import { childHandoffWrite, realDefault, realSpelling } from "./pathrules.ts";
 
 export interface PathRule {
   pattern: string;
@@ -193,6 +194,8 @@ export interface MatchCtx {
   dotGlob?: boolean;
   /** Child only: its scratch dir (childscratch.ts); `$FOREMAN_SCRATCH` expands to it and cd may enter it. */
   scratch?: string;
+  /** Child only: the handoff dir where the session is the child side (launch binding `handoffDir`); its child-written names are no childBlock hit (pathrules.ts childHandoffWrite). */
+  handoffDir?: string;
   /** Owned roots; `owned.childScratch` stands in for `scratch`. Defaults to the rules' own. */
   owned?: OwnedRoots;
   /**
@@ -4080,6 +4083,7 @@ function childBlockHit(rules: OverlayRules, word: string, ctx: MatchCtx, readOnl
     // the spelling as written (`../<repo>.worktrees/<round>/x`) is relative: the exemptions look at where it points
     const abs = pp.isAbsolute(cand) ? cand : pp.resolve(ctx.cwd, cand);
     if (scratch && insideDir(scratch, abs, ctx)) continue;
+    if (ctx.handoffDir && childHandoffWrite(ctx.handoffDir, abs, realSpelling(ctx.platform, abs, realDefault), ctx.platform, realDefault)) continue;
     if (readOnly && ctx.readable?.some((pat) => pathMatches(pat, abs, ctx))) continue;
     if (rules.childBlockExcept?.some((pat) => pathMatches(pat, cand, ctx))) continue;
     for (const pat of patterns) {

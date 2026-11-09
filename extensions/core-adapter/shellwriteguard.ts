@@ -19,8 +19,8 @@ export const SHELL_WRITE_REFUSAL = "shell write into project files refused: use 
  *  workspace-relative dirs that stay writable (edit mode; the script defaults to `.workflow`).
  *  `ownedDirs`: absolute dirs the foreman owns (owned.ts `allowDirs`; the script's `allow_dirs`), a write
  *  strictly inside one never counts, so `cp -R node_modules ../<repo>.worktrees/<b>/node_modules` passes. */
-export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"], ownedDirs: string[] = []): Record<string, unknown> {
-  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}) };
+export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"], ownedDirs: string[] = [], harness: { handoffDir?: string } = {}): Record<string, unknown> {
+  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}), ...(harness.handoffDir ? { handoff_dir: harness.handoffDir } : {}) };
 }
 
 export interface ShellWriteRunInput {
@@ -40,7 +40,7 @@ export function runShellWriteGuard(input: ShellWriteRunInput): Promise<GuardRun>
 
 export type ShellWriteVerdict =
   | { decision: "allow" }
-  | { decision: "refuse"; kind: string; reason: string }
+  | { decision: "refuse"; kind: string; reason: string; handoffOnly?: true }
   | { decision: "failure"; reason: string };
 
 /** The write form named by the script (`kind`), reduced to a short slug: it goes to the trace. */
@@ -56,13 +56,25 @@ function kindOf(stdout: string): string {
   return "unknown";
 }
 
+/** The script marked the refusal as caused only by the own handoff dir's allow-list (every other target was fine). */
+function handoffOnly(stdout: string): boolean {
+  for (const line of stdout.trim().split(/\r?\n/).reverse()) {
+    try {
+      return (JSON.parse(line) as { handoff?: unknown }).handoff === true;
+    } catch {
+      // not the JSON line
+    }
+  }
+  return false;
+}
+
 /** Script run -> verdict. Anything but a clean answer (no Python, timeout, crash, garbage, an ask) refuses. */
 export function shellWriteVerdict(run: GuardRun, python: string | null): ShellWriteVerdict {
   const outcome = evaluateRun("shell_write_guard", run, python);
   if (outcome.kind === "failure") return { decision: "failure", reason: `${outcome.message} The call is blocked.` };
   if (outcome.d.decision === "none" || outcome.d.decision === "allow") return { decision: "allow" };
   const reason = outcome.d.reason || `pi-foreman: ${SHELL_WRITE_REFUSAL}`;
-  return { decision: "refuse", kind: run.status === "ran" ? kindOf(run.stdout) : "unknown", reason };
+  return { decision: "refuse", kind: run.status === "ran" ? kindOf(run.stdout) : "unknown", reason, ...(run.status === "ran" && handoffOnly(run.stdout) ? { handoffOnly: true as const } : {}) };
 }
 
 export type BranchMove = { allow: true; reason?: "post_merge" } | { allow: false; precondition: string };

@@ -237,10 +237,10 @@ GRAMMAR_SPLITTERS = (";", "&&", "||", "\n")
 GRAMMAR_REDIRECTS = ("2>&1", ">/dev/null")
 GRAMMAR_REDIRECT_OPS = (">", ">>")   # followed by one plain word (attached or as the next word)
 # names (assigned or referenced) that make the whole line resolve nothing; `$FOREMAN_SCRATCH` is the one harness ref
-GRAMMAR_RESERVED = ("_", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "PPID", "UID", "EUID", "BASHPID", "GROUPS", "OPTIND",
+GRAMMAR_RESERVED = ("PI_FOREMAN_HANDOFF_DIR", "_", "RANDOM", "SRANDOM", "SECONDS", "LINENO", "PPID", "UID", "EUID", "BASHPID", "GROUPS", "OPTIND",
                     "OPTARG", "PWD", "OLDPWD", "SHLVL", "REPLY", "IFS", "HOME", "PATH", "CDPATH", "ENV", "BASH_ENV")
 GRAMMAR_RESERVED_PREFIXES = ("BASH_", "FOREMAN_", "GIT_", "NODE_", "NPM_", "LD_", "DYLD_", "SSH_")
-GRAMMAR_HARNESS_REFS = ("FOREMAN_SCRATCH",)
+GRAMMAR_HARNESS_REFS = ("FOREMAN_SCRATCH", "PI_FOREMAN_HANDOFF_DIR")
 GRAMMAR_FORBIDDEN = ("|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'")
 _G_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
 # a value starts with `/` or a prefix: a bare word such as `IFS=Z` is no path
@@ -670,6 +670,16 @@ def absolute(text, cwd, lexical=True):
 
 
 DEFAULT_ALLOWED_DIRS = [".workflow"]
+HANDOFF_CHILD_NAMES = ("plan.md", "result.md", "ask.md", ".ask", ".seen", ".steer-last-read.json")
+
+
+def _native_dir(d):
+    """An absolute dir of a payload (POSIX, `C:\\x`, `C:/x`, or on Windows the MSYS `/c/x`), else None."""
+    if os.name == "nt":
+        m = re.match(r"^/([A-Za-z])(/.*)?$", d)
+        if m:
+            return "%s:%s" % (m.group(1).upper(), m.group(2) or "/")
+    return d if (os.path.isabs(d) or _drive_path(d)) else None
 
 
 def _allowed_rel(d):
@@ -683,7 +693,17 @@ def _allowed_rel(d):
 
 
 class Scope(object):
-    def __init__(self, workspace, allowed_dirs=None, scratch_dir=None, allow_dirs=None):
+    def __init__(self, workspace, allowed_dirs=None, scratch_dir=None, allow_dirs=None, handoff_dir=None):
+        self.handoff = None
+        self.handoff_lex = None
+        self.handoff_nt = False
+        self.ignore_handoff = False   # second pass of decide(): handoff refusals are set aside
+        if isinstance(handoff_dir, str) and handoff_dir.strip():
+            hd = _native_dir(handoff_dir)
+            if hd and os.path.normpath(hd) != os.path.sep:
+                self.handoff_lex = os.path.normpath(hd)
+                self.handoff = os.path.realpath(hd)
+                self.handoff_nt = os.name == "nt" or _drive_path(hd)
         self.allow_abs = [os.path.realpath(d) for d in (allow_dirs or [])
                           if isinstance(d, str) and d.strip() and os.path.isabs(d) and os.path.normpath(d) != os.path.sep]
         self.scratch = os.path.realpath(scratch_dir) if scratch_dir else None
@@ -703,6 +723,10 @@ class Scope(object):
             real = os.path.join(os.path.realpath(os.path.dirname(abs_path)), os.path.basename(abs_path))
         else:
             real = os.path.realpath(abs_path)
+        if self.handoff and not self.ignore_handoff and self.in_handoff(abs_path):
+            if self._handoff_refuses(abs_path, real):
+                return True
+            return False   # a child-written name: writable before the allow_abs / outside-workspace returns
         if self.scratch and _inside(self.scratch, real) and _fold(os.path.normpath(real)) != _fold(self.scratch):
             return False
         for owned in self.allow_abs:
@@ -714,6 +738,34 @@ class Scope(object):
             if _inside(allowed, real) and _fold(os.path.normpath(real)) != _fold(allowed):
                 return False
         return True
+
+    def in_handoff(self, abs_path):
+        """`abs_path` (lexically or by realpath) is the child-side handoff dir or below it."""
+        if not self.handoff or abs_path is None:
+            return False
+        return (_inside(self.handoff_lex, abs_path) or _inside(self.handoff, abs_path)
+                or _inside(self.handoff, os.path.realpath(abs_path)))
+
+    def _handoff_refuses(self, abs_path, real):
+        """True for a target inside the own child-side handoff dir that is not child-written: the allow-list is
+        plan.md, result.md, ask.md, ask-<n>.md, .ask, .seen, .steer-last-read.json and anything below work/.
+        Judged on the realpath; a target whose parent resolves outside the dir is refused too (a symlinked
+        `work`). On Windows the first name is compared case-folded without trailing dots and spaces; an NTFS
+        stream (`name:s`) or a short name (`NAME~1`) never matches."""
+        if not _inside(self.handoff, real):
+            return True
+        rel = _fold(os.path.normpath(real))[len(_fold(self.handoff)):].strip("\\/")
+        comps = [c for c in re.split(r"[\\/]+", rel) if c]
+        if not comps:
+            return True   # the dir itself
+        first = comps[0]
+        if self.handoff_nt:
+            if any(":" in c or re.search(r"~[0-9]", c) for c in comps):
+                return True
+            first = first.rstrip(". ")
+        if first == "work" and len(comps) > 1:
+            return False   # below work/ only: the bare entry is refused (rm -rf / mv would replace it)
+        return not (len(comps) == 1 and (first in HANDOFF_CHILD_NAMES or re.match(r"^ask-[0-9]+\.md$", first)))
 
     def target(self, word, cwd, link=False):
         """True when writing to `word` (a Word or str) counts as a project write."""
@@ -1374,6 +1426,19 @@ class Analyzer(object):
             return
         if prog == "rsync" and not dest.unresolvable and re.match(r"^[^/\\]*:", dest.text) and not _drive_path(dest.text):
             return   # remote destination host:path
+        if s.handoff and not dest.unresolvable:
+            dpath = absolute(dest.text, cwd, lexical=False)
+            if dpath is not None and s.in_handoff(dpath) and (re.search(r"[\\/]$", dest.text) or os.path.isdir(dpath)):
+                # a copy into a directory of the handoff dir writes `dest/<source name>`: judge that name
+                for w in srcs:
+                    if w.unresolvable:
+                        raise Found(prog, _show(w))
+                    named = lit(dest.text.rstrip("/\\") + "/" + re.split(r"[\\/]", w.text.rstrip("/\\"))[-1])
+                    _hit(s, prog, named, cwd)
+                if prog == "mv":
+                    for w in srcs:
+                        _hit(s, prog, w, cwd)
+                return
         _hit(s, prog, dest, cwd)
         if prog == "mv":
             for w in srcs:
@@ -1990,13 +2055,39 @@ def _ps_split(word):
 # --------------------------------------------------------------------------- entry
 
 SCRATCH_VAR = re.compile(r"\$(?:\{FOREMAN_SCRATCH\}|FOREMAN_SCRATCH(?![A-Za-z0-9_]))")
+HANDOFF_VAR = re.compile(r"\$(?:\{PI_FOREMAN_HANDOFF_DIR\}|PI_FOREMAN_HANDOFF_DIR(?![A-Za-z0-9_]))")
 SCRATCH_UNSAFE = re.compile(r"[\s'\"\\$`*?\[\]{}()<>|;&!#~]")
+# an 8.3 short-name tilde (`RUNNER~1`) sits inside a word, where bash never expands it
+_SHORT_TILDE = re.compile(r"(?<=[A-Za-z0-9])~(?=[0-9])")
+
+
+def subst_form(d):
+    """The text a harness dir is substituted as: a native `C:\\x\\y` with forward slashes (bash would eat the
+    backslashes), else as is; None when it holds shell characters."""
+    if not d:
+        return None
+    if re.match(r"^[A-Za-z]:[\\/]", d):
+        d = d.replace("\\", "/")
+    return None if SCRATCH_UNSAFE.search(_SHORT_TILDE.sub("", d)) else d
 
 
 def expand_scratch(command, scratch_dir):
     """`$FOREMAN_SCRATCH` outside single quotes -> the scratch dir (bash only; a dir holding shell
     characters is not substituted, so the word stays unresolvable and counts)."""
-    if not scratch_dir or SCRATCH_UNSAFE.search(scratch_dir):
+    return expand_ref(command, SCRATCH_VAR, subst_form(scratch_dir))
+
+
+def expand_handoff(command, handoff_dir):
+    """`$PI_FOREMAN_HANDOFF_DIR` -> the handoff dir. Left alone (so every use stays unresolvable) when the name
+    occurs in any other form: an assignment, `export`/`unset`, `${NAME:-x}`."""
+    rest = HANDOFF_VAR.sub("", command)
+    if "PI_FOREMAN_HANDOFF_DIR" in rest:
+        return command
+    return expand_ref(command, HANDOFF_VAR, subst_form(handoff_dir))
+
+
+def expand_ref(command, var, scratch_dir):
+    if not scratch_dir:
         return command
     out, i, single, double = [], 0, False, False
     while i < len(command):
@@ -2009,7 +2100,7 @@ def expand_scratch(command, scratch_dir):
             single = not single
         elif c == '"' and not single:
             double = not double
-        m = SCRATCH_VAR.match(command, i) if c == "$" and not single else None
+        m = var.match(command, i) if c == "$" and not single else None
         if m:
             out.append(scratch_dir)
             i = m.end()
@@ -2019,22 +2110,55 @@ def expand_scratch(command, scratch_dir):
     return "".join(out)
 
 
-def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratch_dir=None, allow_dirs=None):
+def _harness_dir(d):
+    """A payload dir as an absolute native path, else None."""
+    if not (isinstance(d, str) and d.strip()):
+        return None
+    d = _native_dir(d)
+    return d if d and (os.path.isabs(d) or os.name == "nt") else None
+
+
+class Decision(tuple):
+    """(kind, target); `.handoff` is True when every refused target lies in the own handoff dir."""
+    handoff = False
+
+
+def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratch_dir=None, allow_dirs=None,
+           handoff_dir=None):
     """None (no project write) or (kind, target). `shell`: "bash" or "powershell".
     `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"]).
-    `scratch_dir`: absolute child scratch dir; writes strictly inside it never count."""
-    if scratch_dir is not None and not (isinstance(scratch_dir, str) and os.path.isabs(scratch_dir)):
-        scratch_dir = None
-    if scratch_dir and shell != "powershell":
-        command = expand_scratch(command, scratch_dir)
-    scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs)
-    try:
+    `scratch_dir`: absolute child scratch dir; writes strictly inside it never count.
+    `handoff_dir`: absolute child-side handoff dir; only its child-written names (HANDOFF_CHILD_NAMES, work/)
+    are writable, `$PI_FOREMAN_HANDOFF_DIR` resolves to it."""
+    scratch_dir = _harness_dir(scratch_dir)
+    handoff_dir = _harness_dir(handoff_dir)
+    if shell != "powershell":
+        if scratch_dir:
+            command = expand_scratch(command, scratch_dir)
+        if handoff_dir:
+            command = expand_handoff(command, handoff_dir)
+
+    def run(ignore_handoff):
+        scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs, handoff_dir)
+        scope.ignore_handoff = ignore_handoff
         a = Analyzer(scope)
         (a.ps_text if shell == "powershell" else a.text)(command, os.path.normpath(os.path.abspath(cwd)), 0)
+        return scope
+
+    try:
+        run(False)
     except Found as f:
-        return f.kind, f.target
+        out = Decision((f.kind, f.target))
+        if handoff_dir:
+            # refused only because of the handoff allow-list when nothing else is refused with it set aside
+            try:
+                run(True)
+                out.handoff = True
+            except (Found, Unreadable):
+                out.handoff = False
+        return out
     except Unreadable:
-        return "unreadable", "<command>"
+        return Decision(("unreadable", "<command>"))
     return None
 
 
@@ -2061,13 +2185,15 @@ def main(argv=None):
         else:
             del args[:1]
     hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed,
-                 payload.get("scratch_dir"), owned)
+                 payload.get("scratch_dir"), owned, payload.get("handoff_dir"))
     if hit is None:
         return 0
     kind, target = hit
     out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                   "permissionDecisionReason": "pi-foreman: %s (%s: %s)" % (REFUSAL, kind, target[:200])},
            "kind": kind}
+    if getattr(hit, "handoff", False):
+        out["handoff"] = True
     sys.stdout.write(json.dumps(out) + "\n")
     return 0
 

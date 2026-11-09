@@ -58,10 +58,14 @@ export interface EffectCtx {
   role?: NetRole;
   /** The dirs a network read may write an output file into (`curl -o`, `>`): the orchestrator's ceremony scratch dir, a child's role scratch. None = no output. */
   netOut?: string[];
+  /** win32 foreman only: the temp dirs (real and long spelling) as write targets, since `/tmp` is no write base there. */
+  tmpWrite?: string[];
   /** Work folders (auto mode) as extra places for writes only; set only by the folder-aware evaluation (defaults.ts). */
   extraWriteRoots?: string[];
   /** True for a path under an extra write root that must stay refused (protected places); consulted by `contained`. */
   extraWriteGuard?: (abs: string) => boolean;
+  /** A child only: `abs` (and its real spelling) names a child-written file of its own handoff dir (pathrules.ts childHandoffWrite); a write there is contained. */
+  handoffWrite?: (abs: string, real: string) => boolean;
   /** A `cp` source is a read for the write-outside check (defaults.ts): it need not lie in an allowed place; only the destination does. */
   cpSourceRead?: boolean;
 }
@@ -184,7 +188,7 @@ function resolveWord(c: EffectCtx, cwd: string | null, word: string): string | n
 }
 
 function bases(c: EffectCtx, write: boolean): string[] {
-  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && !c.noTmp && plat(c) !== "win32" ? ["/tmp"] : []), ...(write ? (c.extraWriteRoots ?? []) : (c.readRoots ?? []))];
+  return [...(c.root ? [c.root] : []), ...(c.scratch ?? []), ...(write && !c.noTmp ? (plat(c) !== "win32" ? ["/tmp"] : (c.tmpWrite ?? [])) : []), ...(write ? (c.extraWriteRoots ?? []) : (c.readRoots ?? []))];
 }
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
@@ -194,6 +198,7 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   const x = px(c);
   const alt = realSpelling(c, abs);
   const real = c.realpath ?? realDefault;
+  if (write && !only && c.handoffWrite?.(abs, alt ?? abs)) return true;
   for (const b of only ?? bases(c, write)) {
     // win32: the word and the base may spell one dir differently (8.3 `RUNNER~1` vs `runneradmin`): compare the real spellings too
     const rb = alt ? longForm(plat(c), x.resolve(c.cwd, b), real) : b;
@@ -673,7 +678,8 @@ export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null,
   if (nullDevice(platform, r.target)) return true;
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;
-  return platform !== "win32" && !c?.noTmp && tmpDest(r.target);
+  if (platform === "win32") return !!c && !c.noTmp && !!c.tmpWrite?.length && insideScratch(r.target, c.tmpWrite, platform);
+  return !c?.noTmp && tmpDest(r.target);
 }
 
 /** True for an operand naming an editor backup: `*~`, `*.bak`, `*.orig`, `*.swp` or `.#*` (by its last path part). */
