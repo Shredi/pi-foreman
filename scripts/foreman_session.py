@@ -1858,7 +1858,10 @@ def cmd_machine_setup(a):
     _, argv = machine_entry(adir, a.name)
     binary = hc_required()
     cmd = [binary, "exec", "--on", a.name, "--"] + list(argv) + ["setup"]
-    for addon in installed_addon_ids(adir):
+    addons = installed_addon_ids(adir)
+    if not addons:
+        cmd.append("--no-addons")
+    for addon in addons:
         cmd += ["--addon", addon]
     cmd += ["--intercom-hc", "--machine-name", a.name]
     if a.dry_run:
