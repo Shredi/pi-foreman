@@ -278,19 +278,18 @@ export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch"
 /**
  * The reviewed-head test for one branch argument: null when accepted, else the refusal with the shas it names.
  * The PASS may be the branch's local ref, its same-named remote branch (a push the local ref lags behind:
- * `@{push}`, `origin/<branch>`, the upstream when it has that name), or, for ref HEAD only, HEAD of the workspace
- * (`cur`; a named head never opens through the checkout's own HEAD). A reviewed
+ * `@{push}`, `origin/<branch>`, the upstream when it has that name). A reviewed
  * local ref whose same-named remote branch is another, unreviewed commit is refused (B-M3). An upstream of
  * another name (the base) neither refuses nor accepts.
  */
-async function headRefusal(cwd: string, ref: string, reviewed: readonly string[], cur: string | null): Promise<{ reason: PrRefusal; passed: string; head: string } | null> {
+async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]): Promise<{ reason: PrRefusal; passed: string; head: string } | null> {
   const head = await commitOf(cwd, ref);
   if (!head) return { reason: "head_unknown", passed: "", head: "" };
   const branch = ref === "HEAD" ? await currentBranchOf(cwd) : ref;
   const remotes = branch ? await remoteCounterparts(cwd, branch) : [];
   const unreviewed = remotes.find((s) => !reviewed.includes(s));
   if (reviewed.includes(head) && unreviewed) return { reason: "stale_review", passed: head, head: unreviewed };
-  if ([head, ...remotes, cur].some((s) => s !== null && reviewed.includes(s))) return null;
+  if ([head, ...remotes].some((s) => reviewed.includes(s))) return null;
   return { reason: reviewed.length === 0 ? "no_review" : "stale_review", passed: reviewed[reviewed.length - 1] ?? "", head };
 }
 
@@ -302,9 +301,8 @@ async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]
 export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}, headless: string | null = null): Promise<{ reason: PrRefusal; message: string } | null> {
   const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
   const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
-  const cur = named.length === 0 ? await commitOf(cwd, "HEAD") : null;
   for (const ref of refs) {
-    const f = await headRefusal(cwd, ref, reviewed, cur);
+    const f = await headRefusal(cwd, ref, reviewed);
     if (!f) continue;
     const unbound = `the latest reviewer PASS carries no commit (${headless}: HEAD changed while the reviewer ran, or its launch directory or checkout could not be matched or read), so it cannot open the gate`;
     const why = { no_review: headless ? unbound : "no reviewer PASS is recorded in this session", stale_review: headless ? unbound : `the recorded reviewer PASS is for another commit than this head (PASS ${f.passed}, head ${f.head})`, head_unknown: "the head could not be resolved in the workspace" }[f.reason];
