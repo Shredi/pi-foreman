@@ -7,7 +7,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
 import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
 import {
-  buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
+  buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, partFor, hasUnseen, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
   compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince, isLight,
   fenceInfo, validateSvg, svgSize, cachePath, findPanelBlock,
 } from "./model.js";
@@ -45,10 +45,12 @@ export default class PlanPanel extends View {
     this.busy = false;
     this.again = false;
     this.cur = { empty: "Waiting for foreman radar" };
-    this.held = null; // what the body shows: {tabId, key, rec}; kept while the selected tab is still being read
+    this.held = null; // what the body shows: {tabId, part, key, rec}; kept while the selected tab's session is still being read
+    this.childPart = new Map(); // child session key -> the part its tab shows, as picked on its Plan | Note switch
+    this.seen = new Map(); // `${child key}|${part}` -> the version of that part last shown on its tab (the ● dot compares with it)
     this.titles = new Map(); // planKey -> last Note title seen, so the Note tab label does not change while a note is read
     this.prefetching = false;
-    this.noteSeen = new Map(); // root session key -> last note version seen on the radar
+    this.noteSeen = new Map(); // session key -> last note version seen on the radar
     this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
     this.parsed = new Map(); // `${path}|${hash of text}|${hash of base}|${fences}` -> {doc, hunks}: a document is parsed once per content
     this.diagOk = new Map(); // app-home relative cache path -> true once written and checked
@@ -124,6 +126,7 @@ export default class PlanPanel extends View {
       this.pin.fresh = false;
       const hit = tabs.find((t) => t.id.startsWith("c:") && t.node === pinned.node);
       this.tab = hit ? hit.id : pinned.node === root.node && this.pin.kind === "note" && noteHint(root.node) !== null ? "note" : "plan";
+      if (hit && this.pin.kind === "note" && noteHint(hit.node) !== null) this.childPart.set(hit.node.key, "note");
     }
     // Focus on a floating child window of this foreman selects that child's tab, once per focus change.
     const term = focus.pane ? null : focus.terminal ?? focus.agent ?? null;
@@ -137,8 +140,9 @@ export default class PlanPanel extends View {
 
     const tab = tabs.find((t) => t.id === this.tab);
     const show = tab.node.show;
+    const part = tab.id.startsWith("c:") ? partFor(tab.node, this.childPart.get(tab.node.key)) : tab.id;
     const machine = root.machine === "local" ? null : root.machine;
-    this.cur = { tabs, tab, machine, raw: root.machine, planKey: root.node.show ? `${root.machine}|${root.node.show.dir}` : null, show, key: show ? `${root.machine}|${show.dir}` : null, root: root.node };
+    this.cur = { tabs, tab, part, machine, raw: root.machine, planKey: root.node.show ? `${root.machine}|${root.node.show.dir}` : null, show, key: show ? `${root.machine}|${show.dir}` : null, root: root.node };
   }
 
   find(trees, key) {
@@ -163,16 +167,22 @@ export default class PlanPanel extends View {
     if (this.cur?.key !== this.loadedFor || Date.now() - this.loadedAt >= POLL_MS) this.reload(cx);
   }
 
-  // A note newer than the one seen before on the tab's foreman opens the panel on the Note tab. The first sight of a session only
-  // records its version, so starting the app does not pop the panel.
+  // A note newer than the one seen before on any session of the tab's tree opens the panel: the root's Note tab, or the child's tab on
+  // its Note part. The first sight of a session only records its version, so starting the app does not pop the panel.
   noteWatch(cx) {
     const root = this.cur?.root;
-    const v = root ? noteHint(root) : null;
-    if (!root || v === null) return;
-    const seen = this.noteSeen.get(root.key);
-    this.noteSeen.set(root.key, v);
-    if (seen === undefined || v <= seen) return;
-    this.tab = "note";
+    if (!root) return;
+    let fresh = null;
+    for (const n of allSessions([root])) {
+      const v = noteHint(n);
+      if (v === null) continue;
+      const seen = this.noteSeen.get(n.key);
+      this.noteSeen.set(n.key, v);
+      if (seen !== undefined && v > seen) fresh = n;
+    }
+    if (!fresh) return;
+    if (fresh === root) this.tab = "note";
+    else { this.childPart.set(fresh.key, "note"); this.tab = `c:${fresh.key}`; }
     this.sync();
     this.openPanel();
     this.reload(cx);
@@ -446,20 +456,35 @@ export default class PlanPanel extends View {
     // has no document (nothing to read): then the real state shows, empty message included. "Loading" shows only when nothing
     // was shown yet.
     const want = cur.key ? this.recs.get(cur.key) : null;
-    if (want?.ready || !this.held?.key || !cur.key) this.held = { tabId: cur.tab.id, key: cur.key, rec: want ?? null };
+    if (want?.ready || !this.held?.key || !cur.key) this.held = { tabId: cur.tab.id, part: cur.part, key: cur.key, rec: want ?? null };
     const shown = this.held;
     const rec = shown.rec;
+    // the header says Loading while the body still shows another tab or part than the selected one
+    const pending = shown.tabId !== cur.tab.id || shown.part !== cur.part;
+    const doc0 = shown.part === "note" ? rec?.note : rec?.plan;
+    // the version recorded is the one of the document on screen, not the radar's: a newer radar version is still unseen
+    if (!pending && rec && doc0 && shown.tabId.startsWith("c:")) {
+      const v = shown.part === "note" ? rec.noteMeta?.v : rec.planDoc?.meta?.v;
+      if (Number.isInteger(v)) this.seen.set(`${cur.tab.node.key}|${shown.part}`, v);
+    }
     const planRec = cur.planKey ? this.recs.get(cur.planKey) : null;
     if (planRec?.noteMeta?.title) this.titles.set(cur.planKey, planRec.noteMeta.title);
     const noteTitle = cur.planKey ? this.titles.get(cur.planKey) : undefined;
-    const isNote = shown.tabId === "note";
+    const isNote = shown.part === "note";
     const tabBtn = (id, label, on, fn) => div().id(id).px(8).py(2).rounded(5).cursor_pointer().text_size(11).truncate().max_w(160)
       .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover)).on_click(fn).child(label);
+    // a child tab with an unseen plan or note version gets a dot on its label
+    const unseen = (x) => x.id.startsWith("c:") && hasUnseen(x.node, (part) => this.seen.get(`${x.node.key}|${part}`));
     const tabs = cur.tabs.length > 1 ? h_flex().flex_none().flex_wrap().px(10).py(4).gap(4).border_b(1).border_color(t.border)
-      .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, x.id === "note" && noteTitle ? `Note: ${noteTitle}` : x.label, x.id === this.tab, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
+      .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, (x.id === "note" && noteTitle ? `Note: ${noteTitle}` : x.label) + (unseen(x) ? " \u25cf" : ""), x.id === this.tab, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
+    // a child with both a plan and a note switches between them on its own tab
+    const both = cur.tab.id.startsWith("c:") && planHint(cur.tab.node) !== null && noteHint(cur.tab.node) !== null;
+    const key = cur.tab.node.key;
+    const parts = both ? h_flex().flex_none().px(10).py(4).gap(4).border_b(1).border_color(t.border)
+      .children([["plan", "Plan"], ["note", "Note"]].map(([p, l]) => tabBtn(`part-${p}`, l, cur.part === p, (_e, cx) => { this.childPart.set(key, p); cx.notify(); }))) : null;
 
     const meta = isNote ? rec?.noteMeta : rec?.planDoc?.meta;
-    const doc = isNote ? rec?.note : rec?.plan;
+    const doc = doc0;
     const adds = !isNote && doc ? doc.adds : 0;
     const topic = isNote ? "" : topicOf(rec?.planDoc?.path) || (shown.tabId.startsWith("c:") ? (cur.tabs.find((x) => x.id === shown.tabId)?.label ?? "") : "");
     const head = h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
@@ -469,6 +494,7 @@ export default class PlanPanel extends View {
       .child(div().flex_1())
       .when(!isNote, (e) => e.child(tabBtn("t-r", "Rendered", !this.diff, (_e, cx) => { this.diff = false; cx.notify(); }))
         .child(tabBtn("t-d", "Diff", this.diff, (_e, cx) => { this.diff = true; cx.notify(); })))
+      .when(pending, (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child("Loading…")))
       .when(Boolean(meta?.v), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(`v${meta.v}`)))
       .when(Boolean(meta?.at), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(Date.now() - meta.at))));
 
@@ -482,6 +508,7 @@ export default class PlanPanel extends View {
     return frame(
       head,
       ...(tabs ? [tabs] : []),
+      ...(parts ? [parts] : []),
       div().id("plan-body").flex_1().min_h(0).overflow_y_scrollbar().p(10).child(body),
     );
   }
