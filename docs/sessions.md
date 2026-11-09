@@ -276,7 +276,9 @@ is that submodule.
   the round's own tree. The URL rule applies only to `sync`, `init` and `update --init`: a `.gitmodules` URL is resolved the way git
   resolves it (relative to the superproject's remote) and must equal the URL already configured, and a child's first init of an
   unconfigured submodule is refused (run it as the foreman or owner). Glob or pathspec-magic paths (`*`, `?`, `[`, leading `:`)
-  count as every submodule. `foreach '<cmd>'` classifies the inner command like any child command.
+  count as every submodule; an option's separate value (`--depth 1`, `-j 2`, `--filter x`, `--reference r`, `--ref-format f`) is not a
+  path and an unknown option counts as every submodule. `update`, `sync`, `init` and `status` with `--recursive` are refused for
+  children even inside the tree (the foreman or owner runs those). `foreach '<cmd>'` classifies the inner command like any child command.
 - `<repo>` for a submodule is the submodule's own checkout name. Each submodule checkout gets its own PR gate and reviewer:
   PASS records are keyed by the checkout's own top level, not the lifted root.
 - Cleanup never deletes nested checkouts pi-foreman did not create ([close](close.md#the-worktree-root)).

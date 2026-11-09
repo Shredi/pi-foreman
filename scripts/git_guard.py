@@ -2056,6 +2056,12 @@ def _gm_resolve(url, base):
     return base + "/" + url
 
 
+_SUB_VALUED = {"--depth", "-j", "--jobs", "--filter", "--reference", "--ref-format"}
+_SUB_FLAGS = {"--init", "--recursive", "--force", "--checkout", "--merge", "--rebase", "--no-fetch", "--remote", "--quiet", "--progress",
+              "--dissociate", "--single-branch", "--no-single-branch", "--recommend-shallow", "--no-recommend-shallow", "--no-progress"}
+_SUB_SHORT = set("iqfN")
+
+
 def child_submodule(rest, ctx, call):
     """A child's `git submodule update|sync|status|foreach`: inside the actor's own (lifted) tree only; update/sync only with URLs that equal what is
     configured. None for other verbs (today's rules)."""
@@ -2094,8 +2100,26 @@ def child_submodule(rest, ctx, call):
         subs.setdefault(name, {})[field] = v
     realtop = os.path.realpath(top)
     chosen = []
+    skip_value = False
+    only_paths = False
     for t in texts[texts.index(verb) + 1:]:
-        if t.startswith("-") or t == "--":
+        if skip_value:
+            skip_value = False
+            continue
+        if t == "--":
+            only_paths = True
+            continue
+        if t.startswith("-") and not only_paths:
+            if t in _SUB_VALUED:
+                skip_value = True
+            elif t.startswith("-j") and not t.startswith("--"):
+                pass
+            elif "=" in t and t.split("=", 1)[0] in _SUB_VALUED:
+                pass
+            elif t in _SUB_FLAGS or (not t.startswith("--") and all(c in _SUB_SHORT for c in t[1:])):
+                pass
+            else:
+                chosen.append("")
             continue
         if any(ch in t for ch in "*?[") or t.startswith(":"):
             chosen.append("")
