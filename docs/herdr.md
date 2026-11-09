@@ -513,7 +513,7 @@ Nothing in pi-foreman requires it. `pi-background-tasks` runs shell commands in 
 
     export PI_BG_FEATURES=process
 
-The add-on reads `PI_BG_FEATURES` when Pi starts, not at install, so a prefix on `pi install` does nothing. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
+On Windows pi-foreman also sets `PI_BG_SHELL=bash` and `PI_BG_SHELL_PATH=<Git Bash>` when its extension loads, unless you set either yourself, so `bg_run` runs under Git Bash instead of `cmd.exe`; `foreman setup` keeps pi-foreman ahead of the add-on in `packages` for that. The add-on reads `PI_BG_FEATURES` when Pi starts, not at install, so a prefix on `pi install` does nothing. `PI_BG_FEATURES=process` selects the process features only. Its other feature, an attribution hook, overrides the provider
 named `anthropic` and decides by provider name (`model.provider === 'anthropic'`). A `claude-bridge` provider serving `claude-*` ids is not
 treated as an Anthropic route by that check, but the override takes over the global `anthropic` provider slot, so keep attribution off.
 `foreman setup` reports what it wrote or leaves a hint; see [Profiles, features and add-ons](install.md#profiles-features-and-add-ons).

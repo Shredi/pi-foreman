@@ -492,6 +492,7 @@ function isRecorded(settings, spec) {
 
 const isLocalSource = (src) => !/^(npm|git|https?|ssh):/.test(src) && !src.startsWith("git@");
 const isBridgeEntry = (e) => /(^|[/:@])pi-claude-bridge(@|$|\/)/.test(entrySource(e) ?? "");
+const isBgTasksEntry = (e) => /(^|[/:@])pi-background-tasks(@|$|\/)/.test(entrySource(e) ?? "");
 const isBundledEntry = (e) => BUNDLED_RE.test(entrySource(e) ?? "");
 const isRemoteForeman = (e) => REMOTE_FOREMAN_RE.test(entrySource(e) ?? "");
 const expandHome = (src) => (src === "~" ? os.homedir() : src.startsWith("~/") ? path.join(os.homedir(), src.slice(2)) : src);
@@ -533,7 +534,8 @@ function withoutIntercom(e) {
  */
 function foremanBeforeBridge(list, baseDir) {
   if (!Array.isArray(list)) return null;
-  const bridge = list.findIndex(isBridgeEntry);
+  // also before pi-background-tasks: pi-foreman sets PI_BG_SHELL* in its factory, which the add-on reads in its own
+  const bridge = list.findIndex((e) => isBridgeEntry(e) || isBgTasksEntry(e));
   const foreman = list.findIndex((e) => isForemanEntry(e, baseDir));
   if (bridge < 0 || foreman < 0 || foreman < bridge) return null;
   const out = list.filter((_, i) => i !== foreman);

@@ -631,7 +631,15 @@ export class RemoteWatcher {
 
   /** After `closed`: poll until the terminal is finished, then `hc rm`. At the bound a shell in the foreground is killed first; anything else is reported. */
   private async reap(address: string): Promise<void> {
-    const rm = async (): Promise<void> => void (await this.hc(["rm", address], 10_000, this.abort.signal));
+    // `hc rm` is checked: one retry after a poll interval, then the leftover is reported (prune removes it later)
+    const rm = async (): Promise<void> => {
+      for (let i = 0; i < 2 && !this.stopped; i++) {
+        const r = await this.hc(["rm", address], 10_000, this.abort.signal);
+        if (r.code === 0 || (r.code === 3 && notFound(r.stderr))) return;
+        if (i === 0) await this.sleep(REAP_POLL_MS);
+      }
+      if (!this.stopped) this.d.notify?.(`remote terminal ${address} is finished but \`hc rm\` failed; left alone (\`foreman session prune\` or \`hc rm ${address}\` removes it)`, "warning");
+    };
     let last: { s: string; fg?: unknown } = { s: "unknown" };
     for (let i = 0; i <= REAP_POLLS && !this.stopped; i++) {
       last = await this.peek(address);
