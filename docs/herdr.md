@@ -393,6 +393,7 @@ shows that status for each pane. It does not read pi-foreman's state directly.
 - Herdr learns working and idle for a Pi pane from its Pi integration. That is a setting on the machine that runs Herdr:
   `herdr integration install pi` (check with `herdr integration status`). Nothing is installed or configured on the phone
   or the remote client for this.
+- An `ask_user_question` or `plan_mode_question` call counts as blocked from its tool call to its end on its own, without Pi's `ui_prompt_*` events (labelled by the first question's header, else `question`).
 - pi-foreman adds the blocked state (a child's ask, a guard prompt, any dialog) through its `herdr:blocked` event on
   `pi.events`. See [blocked shim](sessions.md#blocked-shim), which also covers when the shim steps aside.
 - Known gap: Pi's trust dialog before the session starts is not covered, so it does not show as blocked
