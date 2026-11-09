@@ -3,20 +3,16 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent / "scripts"))
 import git_guard as gg  # noqa: E402
-import test_git_guard_pr_gate_head as head_tests  # noqa: E402
+from test_git_guard_pr_gate_head import PrGateHeadTest  # noqa: E402
 
 CMD = "git push -o merge_request.create origin round/x"
 
 
-class PushOptionHeadTest(unittest.TestCase):
-    setUp = head_tests.PrGateHeadTest.setUp
-    tearDown = head_tests.PrGateHeadTest.tearDown
-    git = head_tests.PrGateHeadTest.git
-    commit = head_tests.PrGateHeadTest.commit
-    decide = head_tests.PrGateHeadTest.decide
-
+class PushOptionHeadTest(PrGateHeadTest):
     def test_pass_only_on_remote_with_unreviewed_local_is_denied(self):
         pushed = self.commit(self.wt, "feat: x")
         self.git(self.wt, "push", "-q", "origin", "round/x")

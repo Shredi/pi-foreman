@@ -882,15 +882,18 @@ def op_pr_create(req):
     up_name = up_name[len("refs/heads/"):] if up_name.startswith("refs/heads/") else up_name
     refs = [head + "@{push}", "origin/" + head] + ([head + "@{upstream}"] if up_name == head else [])
     remote = []
+    names = {}
     for r in refs:
         code, rsha, _ = git_read(["rev-parse", "--verify", "--quiet", r + "^{commit}"], root)
         if code == 0 and rsha.strip() and rsha.strip() not in remote:
             remote.append(rsha.strip())
+            code, ab, _ = git_read(["rev-parse", "--abbrev-ref", r], root)
+            names[rsha.strip()] = ab.strip() if code == 0 and ab.strip() else r
     if not remote:
-        raise Precondition("unpushed", "%s has no upstream (no same-named remote branch); push it first, pi-foreman does not push" % head)
+        raise Precondition("unpushed", "%s has no same-named remote branch (origin/%s); push first, pi-foreman does not push" % (head, head))
     if remote != [sha.strip()]:
-        note = "; it has no upstream configured" if not up_name else ""
-        raise Precondition("unpushed", "%s differs from its upstream (the same-named remote branch)%s; push first" % (head, note))
+        differing = next((names[r] for r in remote if r != sha.strip()), "origin/" + head)
+        raise Precondition("unpushed", "%s differs from its same-named remote branch %s; push first" % (head, differing))
     host = resolve_host(pr_host, "create", root)
     path = None
     try:
