@@ -12,7 +12,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import git_guard as gg  # noqa: E402
 
 
-@unittest.skipIf(shutil.which("git") is None, "git not on PATH")
 class PrGateHeadTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="pf-gg-prhead-")).resolve()
@@ -53,7 +52,6 @@ class PrGateHeadTest(unittest.TestCase):
         head = self.commit(self.wt, "feat: x")
         self.git(self.wt, "push", "-q", "origin", "round/x")
         self.assertNotEqual(head, self.base)
-        # (from the main checkout, whose own HEAD is the reviewed base, `--head` is accepted by the workspace-HEAD rule)
         for cmd, cwd in (("gh pr create --fill", self.wt), ("gh pr create --head round/x --fill", self.wt)):
             d = self.decide(cmd, cwd, [self.base])
             self.assertEqual(d.level, gg.DENY, (cmd, cwd))
@@ -61,6 +59,17 @@ class PrGateHeadTest(unittest.TestCase):
         # detached HEAD: no branch, no remote counterpart
         self.git(self.wt, "checkout", "-q", "--detach")
         self.assertIn("pr_refused:stale_review", self.decide("gh pr create --fill", self.wt, [self.base]).reason)
+
+    def test_named_head_from_main_checkout_needs_its_own_commit(self):
+        head = self.commit(self.wt, "feat: x")
+        self.git(self.wt, "push", "-q", "origin", "round/x")
+        for cmd in ("gh pr create --head round/x --fill", "gh pr create --head owner:round/x --fill",
+                    "glab mr create --source-branch round/x --fill"):
+            d = self.decide(cmd, self.main, [self.base])
+            self.assertEqual(d.level, gg.DENY, cmd)
+            self.assertIn("pr_refused:stale_review", d.reason, cmd)
+            self.assertEqual(self.decide(cmd, self.main, [head]).level, gg.ALLOW, cmd)
+        self.assertEqual(self.decide("gh pr create --fill", self.main, [self.base]).level, gg.ALLOW)
 
     def test_same_named_upstream_still_refuses_when_ahead(self):
         head = self.commit(self.wt, "feat: x")

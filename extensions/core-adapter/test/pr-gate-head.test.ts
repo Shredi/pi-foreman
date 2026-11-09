@@ -88,3 +88,20 @@ test("same-named upstream: ahead and unreviewed refuses; local behind a reviewed
     rmTestTmp(r.root);
   }
 });
+
+test("from the main checkout a named head opens only via its own commit, never via the checkout's HEAD", async () => {
+  const r = rig();
+  try {
+    const base = r.g(r.main, "rev-parse", "HEAD");
+    const head = r.commit(r.wt, "feat: x");
+    r.g(r.wt, "push", "-q", "origin", "round/x");
+    for (const input of [{ head: "round/x" }, { head: "owner:round/x" }, { source_branch: "round/x" }]) {
+      assert.equal((await prToolRefusal(r.main, [base], input))?.reason, "stale_review", JSON.stringify(input));
+      assert.equal((await prGateRefusal({ tool: "pr_create", isChild: false, gateOn: true, reviewed: [base], cwd: r.main, input }))?.reason, "stale_review");
+      assert.equal(await prToolRefusal(r.main, [head], input), null, JSON.stringify(input));
+    }
+    assert.equal(await prToolRefusal(r.main, [base]), null);
+  } finally {
+    rmTestTmp(r.root);
+  }
+});

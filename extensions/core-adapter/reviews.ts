@@ -278,7 +278,8 @@ export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch"
 /**
  * The reviewed-head test for one branch argument: null when accepted, else the refusal with the shas it names.
  * The PASS may be the branch's local ref, its same-named remote branch (a push the local ref lags behind:
- * `@{push}`, `origin/<branch>`, the upstream when it has that name), or HEAD of the workspace (`cur`). A reviewed
+ * `@{push}`, `origin/<branch>`, the upstream when it has that name), or, for ref HEAD only, HEAD of the workspace
+ * (`cur`; a named head never opens through the checkout's own HEAD). A reviewed
  * local ref whose same-named remote branch is another, unreviewed commit is refused (B-M3). An upstream of
  * another name (the base) neither refuses nor accepts.
  */
@@ -301,7 +302,7 @@ async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]
 export async function prToolRefusal(cwd: string, reviewed: readonly string[], input: Record<string, unknown> = {}, headless: string | null = null): Promise<{ reason: PrRefusal; message: string } | null> {
   const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
   const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
-  const cur = await commitOf(cwd, "HEAD");
+  const cur = named.length === 0 ? await commitOf(cwd, "HEAD") : null;
   for (const ref of refs) {
     const f = await headRefusal(cwd, ref, reviewed, cur);
     if (!f) continue;

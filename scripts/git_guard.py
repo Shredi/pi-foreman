@@ -3059,7 +3059,7 @@ def remote_counterparts(call, ctx, envs, branch):
 def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
     """`refs`: head refs of the pull request (None = HEAD, "" = unreadable). A head is reviewed when the
     PASS is its local ref, its same-named remote branch (`@{push}`, `origin/<branch>`, the upstream when it has
-    that name) or HEAD of the workspace. `upstream`: a reviewed local ref whose same-named remote branch is
+    that name) or, for ref HEAD only (no named head), HEAD of the workspace. `upstream`: a reviewed local ref whose same-named remote branch is
     another, unreviewed commit is refused (gh opens the PR from the remote branch, B-M3). An upstream of
     another name (the base) neither refuses nor accepts."""
     if ctx.mode == "child":
@@ -3073,6 +3073,7 @@ def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
     passed = listed[-1] if listed else ""
     cur = commit_of(call, ctx, envs, "HEAD")
     for ref in refs or [None]:
+        cur_ok = ref is None
         ref = "HEAD" if ref is None else ref
         sha = commit_of(call, ctx, envs, ref)
         if not sha:
@@ -3082,7 +3083,7 @@ def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
         stale = [r for r in remotes if r not in reviewed]
         if upstream and sha in reviewed and stale:
             return pr_refuse("stale_review", what, stale[0], sha)
-        if not reviewed.intersection(c for c in [sha] + remotes + [cur] if c):
+        if not reviewed.intersection(c for c in [sha] + remotes + [cur if cur_ok else None] if c):
             return pr_refuse("stale_review" if reviewed else "no_review", what, sha, passed)
     return OK
 

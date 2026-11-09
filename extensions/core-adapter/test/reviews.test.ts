@@ -59,9 +59,9 @@ test("headOf and prToolRefusal against a real repository, and head_unknown outsi
     g("branch", "feat");
     g("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "chore: y");
     const newer = g("rev-parse", "HEAD");
-    // r29 item 1: the reviewed HEAD accepts a branch argument whose own ref is older (the ruling).
-    assert.equal(await prToolRefusal(dir, [newer], { head: "feat" }), null);
-    assert.equal(await prToolRefusal(dir, [newer], { sourceBranch: "owner:feat" }), null);
+    // A named head opens only via its own commit or its same-named remote counterpart; the checkout's HEAD does not accept it.
+    assert.equal((await prToolRefusal(dir, [newer], { head: "feat" }))?.reason, "stale_review");
+    assert.equal((await prToolRefusal(dir, [newer], { sourceBranch: "owner:feat" }))?.reason, "stale_review");
     assert.equal(await prToolRefusal(dir, [head], { source_branch: "feat" }), null);
     assert.equal((await prToolRefusal(dir, [newer], { branch: "nosuch" }))?.reason, "head_unknown");
     assert.equal((await prToolRefusal(dir, [newer], { head_branch: 7 }))?.reason, "head_unknown");
@@ -116,7 +116,7 @@ test("prGateRefusal: child, gate off, and a pushed upstream that was not reviewe
   }
 });
 
-test("prToolRefusal accepts the reviewed sha via the local ref, origin/<b>, or HEAD (r29 item 1)", async () => {
+test("prToolRefusal accepts the reviewed sha via the local ref or origin/<b>, never via HEAD for a named head", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-reviews-"));
   try {
     const g = (...a: string[]) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
@@ -130,7 +130,8 @@ test("prToolRefusal accepts the reviewed sha via the local ref, origin/<b>, or H
     const c = g("rev-parse", "HEAD");
     g("branch", "feat", a); // the local ref lags; HEAD is c
     assert.equal(await prToolRefusal(dir, [a], { head: "feat" }), null, "local ref");
-    assert.equal(await prToolRefusal(dir, [c], { head: "feat" }), null, "HEAD only");
+    // A named head does not open via the checkout's HEAD (its own commit or same-named remote counterpart only).
+    assert.equal((await prToolRefusal(dir, [c], { head: "feat" }))?.reason, "stale_review", "HEAD only");
     g("update-ref", "refs/remotes/origin/feat", b); // the push that carries b
     assert.equal(await prToolRefusal(dir, [b], { head: "feat" }), null, "origin/feat only");
     const f = "f".repeat(40);

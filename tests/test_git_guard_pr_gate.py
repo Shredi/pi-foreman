@@ -95,13 +95,13 @@ class PrGateTest(unittest.TestCase):
             self.assertIn("pr_refused:stale_review", d.reason, cmd)
 
     def test_head_ref_is_resolved(self):
-        # r29 item 1: `--head feat` points at the older commit; the reviewed HEAD accepts it (the ruling).
-        self.assertEqual(self.decide("gh pr create --head feat", [self.newer]).level, gg.ALLOW)
+        # A named head opens only via its own commit or its same-named remote counterpart; the checkout's HEAD does not accept it.
+        self.assertIn("pr_refused:stale_review", self.decide("gh pr create --head feat", [self.newer]).reason)
         self.assertEqual(self.decide("gh pr create --head feat", [self.head]).level, gg.ALLOW)
         self.assertIn("head_unknown", self.decide("gh pr create --head nosuch", [self.head]).reason)
 
     def test_reviewed_sha_via_local_ref_origin_or_head(self):
-        # r29 item 1: the PASS may be the local branch ref, its origin ref, its upstream or HEAD.
+        # The PASS may be the local branch ref or its same-named origin ref, never the checkout's HEAD for a named head.
         with tempfile.TemporaryDirectory(prefix="pf-gg-pr-") as repo:
             git(repo, "init", "-q", "-b", "main")
             git(repo, "config", "user.email", "t@example.invalid")
@@ -117,7 +117,7 @@ class PrGateTest(unittest.TestCase):
                 return gg.decide("gh pr create --head feat", "main", cwd=repo,
                                  pr_gate={"enabled": True, "reviewed_heads": heads})
             self.assertEqual(gate([a]).level, gg.ALLOW, "local ref")
-            self.assertEqual(gate([c]).level, gg.ALLOW, "HEAD only")
+            self.assertEqual(gate([c]).level, gg.DENY, "HEAD only")
             git(repo, "update-ref", "refs/remotes/origin/feat", b)  # the push that carries b
             self.assertEqual(gate([b]).level, gg.ALLOW, "origin/feat only")
             f = "f" * 40
