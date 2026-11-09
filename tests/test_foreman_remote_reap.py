@@ -152,5 +152,73 @@ class InUseByTest(unittest.TestCase):
             self.assertEqual(fcl.in_use_by(str(state), "caller", str(wt)), "c1")
 
 
+class UnknownReapReportedTest(ReapBase):
+    def test_close_remote_warns_when_hc_fails_but_stays_rc0(self):
+        self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        with mock.patch.object(fsn, "reap_remote_terminal", return_value="unknown"):
+            code, out, err = self.run_main("close-remote", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertIn("could not be removed (hc get/rm failed)", err)
+        self.assertEqual(self.row()["status"], "closing")
+
+    def test_prune_warns_once_for_several_unknown_entries(self):
+        self.seed("closed")
+        code, out, err = self.run_main("prune", FAKE_HC_FAIL="1")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(err.count("could not be removed"), 1)
+        self.assertEqual(self.row()["status"], "closed")
+
+    def test_prune_warns_for_a_closing_entry_too(self):
+        self.seed("closing")
+        code, out, err = self.run_main("prune", FAKE_HC_FAIL="1")
+        self.assertEqual(code, 0, err)
+        self.assertIn("could not be removed", err)
+        self.assertEqual(self.row()["status"], "closing")
+
+
+class RmNotFoundTest(unittest.TestCase):
+    def run_with(self, rm_rc, rm_err):
+        def fake_run(cmd, **kw):
+            if cmd[1] == "rm":
+                return mock.Mock(returncode=rm_rc, stdout=b"", stderr=rm_err)
+            return mock.Mock(returncode=0, stdout=b'{"state": "finished"}', stderr=b"")
+        entry = {"hc": {"address": "alpha/t9"}}
+        with mock.patch.object(fsn, "hc_bin", return_value="/x/hc"), \
+                mock.patch.object(fsn.subprocess, "run", side_effect=fake_run):
+            return fsn.reap_remote_terminal(entry)
+
+    def test_rm_not_found_means_gone(self):
+        self.assertEqual(self.run_with(3, b'{"error": {"kind": "not_found"}}'), "gone")
+
+    def test_other_rm_failure_is_unknown(self):
+        self.assertEqual(self.run_with(1, b"boom"), "unknown")
+        self.assertEqual(self.run_with(3, b"boom"), "unknown")
+
+
+class ForceDropTest(ReapBase):
+    def test_force_drops_with_a_warning_when_hc_fails(self):
+        self.seed("closing")
+        code, out, err = self.run_main("close-remote", "demo", "--force", FAKE_HC_FAIL="1")
+        self.assertEqual(code, 0, err)
+        self.assertIn("was not removed", err)
+        self.assertIn("marked closed anyway", err)
+        self.assertEqual(self.row()["status"], "closed")
+        self.assertTrue(self.row()["reaped"])
+
+    def test_force_drops_with_a_warning_when_the_address_is_invalid(self):
+        self.seed("closing", address="bad address;")
+        code, out, err = self.run_main("close-remote", "demo", "--force")
+        self.assertEqual(code, 0, err)
+        self.assertIn("no usable remote terminal address", err)
+        self.assertEqual(self.row()["status"], "closed")
+
+    def test_a_clean_force_prints_no_warning(self):
+        self.seed("closing")
+        self.set_terminal("alpha/t9", "finished")
+        code, out, err = self.run_main("close-remote", "demo", "--force")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("was not removed", err)
+
+
 if __name__ == "__main__":
     unittest.main()

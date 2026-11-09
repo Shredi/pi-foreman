@@ -466,10 +466,12 @@ def reap_remote_terminal(entry, polls=0):
             return "gone"
         if state == "finished":
             try:
-                r = subprocess.run([binary, "rm", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                r = subprocess.run([binary, "rm", address], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
             except (OSError, subprocess.TimeoutExpired):
                 return "unknown"
+            if r.returncode == 3 and b"not_found" in r.stderr + r.stdout:  # the watcher's reap won the race
+                return "gone"
             return "removed" if r.returncode == 0 else "unknown"
         if i < polls:
             time.sleep(REAP_POLL_SECONDS)
@@ -478,12 +480,18 @@ def reap_remote_terminal(entry, polls=0):
 
 def force_close_remote(adir, entry):
     """`close-remote --force` on a `closing` entry: kill the remote terminal when it still runs, remove it, end the attach
-    terminal, mark the entry `closed`. Returns 0, or 1 when the terminal could not be removed (the entry stays `closing`)."""
+    terminal, mark the entry `closed`. A terminal that cannot be removed is reported on stderr and dropped (the entry is
+    closed and reaped regardless). Returns 0."""
     label = entry.get("label")
     at = entry.get("hc") if isinstance(entry.get("hc"), dict) else {}
     address = at.get("address")
     binary = hc_bin()
-    if isinstance(address, str) and VALUE_RE.match(address) and binary:
+    skipped = None
+    if not (isinstance(address, str) and VALUE_RE.match(address)):
+        skipped = "the entry has no usable remote terminal address"
+    elif not binary:
+        skipped = "hc is not available"
+    else:
         if hc_terminal_state(binary, address) == "live":
             try:
                 subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -492,9 +500,10 @@ def force_close_remote(adir, entry):
                 pass
         result = reap_remote_terminal(entry, polls=2)
         if result not in ("removed", "gone"):
-            sys.stderr.write("pi-foreman session: remote terminal %s of %s is still %s; %s stays closing (retry --force)\n"
-                             % (address, label, result, label))
-            return 1
+            skipped = "it is still %s (machine unreachable or hc rm failed)" % result
+    if skipped:
+        sys.stderr.write("pi-foreman session: remote terminal %s of %s was not removed: %s; %s is marked closed anyway\n"
+                         % (address, label, skipped, label))
     kill_attach(entry)
     mark_entry(adir, entry, status="closed", reaped=True, note="closed by --force")
     print_json({"ok": True, "forced": True, "label": label})
@@ -2057,6 +2066,9 @@ def cmd_close_remote(a):
     result = reap_remote_terminal(entry, polls=REAP_POLLS)
     if result == "live":
         sys.stderr.write("pi-foreman session: remote terminal still running; prune will remove it\n")
+    elif result == "unknown":
+        sys.stderr.write("pi-foreman session: remote terminal could not be removed (hc get/rm failed); "
+                         "prune or close-remote --force retries\n")
     print_json(dict(reply, ok=True))
     return 0
 
@@ -2205,6 +2217,7 @@ def cmd_prune(a):
 def prune_remote_terminals(adir):
     """Machine entries in `closing`, or `closed` with a terminal not yet reaped: remove the finished remote terminal
     (`not_found` counts) and mark a `closing` entry `closed`. A terminal that still runs is left alone."""
+    failed = []
     for s in read_registry(adir)["sessions"]:
         if not isinstance(s, dict) or not s.get("machine") or s.get("reaped"):
             continue
@@ -2217,8 +2230,11 @@ def prune_remote_terminals(adir):
                 fields.update(status="closed", note="pruned: remote terminal finished")
             mark_entry(adir, s, **fields)
             print("reaped %s  %s  %s" % (s.get("label"), s.get("child"), result))
-        elif result == "unknown" and s.get("status") == "closed":
-            sys.stderr.write("pi-foreman session: remote terminal of %s could not be removed; retry prune\n" % s.get("label"))
+        elif result == "unknown":
+            failed.append(str(s.get("label")))
+    if failed:
+        sys.stderr.write("pi-foreman session: remote terminal could not be removed (hc get/rm failed) for %s; "
+                         "prune or close-remote --force retries\n" % ", ".join(failed))
 
 
 def cmd_list(a):
