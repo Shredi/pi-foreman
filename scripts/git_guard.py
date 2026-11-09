@@ -3040,11 +3040,28 @@ def commit_of(call, ctx, envs, rev):
     return sha if re.match(r"^[0-9a-f]{40,64}$", sha) else ""
 
 
+def remote_counterparts(call, ctx, envs, branch):
+    """Commits of the remote branch a push of local `branch` lands on: `<branch>@{push}`, `origin/<branch>`, and the
+    upstream only when its branch name equals `branch` (an upstream of another name is the base, not the head)."""
+    if not branch:
+        return []
+    refs = [branch + "@{push}", "origin/" + branch]
+    if upstream_branch(call, ctx, envs, branch) == branch:
+        refs.append(branch + "@{upstream}")
+    out = []
+    for r in refs:
+        sha = commit_of(call, ctx, envs, r)
+        if sha and sha not in out:
+            out.append(sha)
+    return out
+
+
 def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
     """`refs`: head refs of the pull request (None = HEAD, "" = unreadable). A head is reviewed when the
-    PASS is its local ref, its origin ref, its upstream or HEAD of the workspace. `upstream`: a reviewed
-    local ref whose upstream is another, unreviewed commit is refused (gh opens the PR from the remote
-    branch, B-M3)."""
+    PASS is its local ref, its same-named remote branch (`@{push}`, `origin/<branch>`, the upstream when it has
+    that name) or HEAD of the workspace. `upstream`: a reviewed local ref whose same-named remote branch is
+    another, unreviewed commit is refused (gh opens the PR from the remote branch, B-M3). An upstream of
+    another name (the base) neither refuses nor accepts."""
     if ctx.mode == "child":
         return pr_refuse("child", what)
     gate = ctx.pr_gate
@@ -3060,12 +3077,12 @@ def pr_gate_check(ctx, call, refs, what, envs=None, upstream=False):
         sha = commit_of(call, ctx, envs, ref)
         if not sha:
             return pr_refuse("head_unknown", what)
-        branch = "" if ref == "HEAD" else ref
-        up = commit_of(call, ctx, envs, branch + "@{upstream}")
-        if upstream and sha in reviewed and up and up not in reviewed:
-            return pr_refuse("stale_review", what, up, sha)
-        remote = commit_of(call, ctx, envs, "origin/" + branch) if branch else ""
-        if not reviewed.intersection(c for c in (sha, remote, up, cur) if c):
+        branch = (current_branch(call, ctx, envs) or "") if ref == "HEAD" else ref
+        remotes = remote_counterparts(call, ctx, envs, branch)
+        stale = [r for r in remotes if r not in reviewed]
+        if upstream and sha in reviewed and stale:
+            return pr_refuse("stale_review", what, stale[0], sha)
+        if not reviewed.intersection(c for c in [sha] + remotes + [cur] if c):
             return pr_refuse("stale_review" if reviewed else "no_review", what, sha, passed)
     return OK
 
@@ -3111,8 +3128,7 @@ def pr_sibling(ctx, repo, heads, what):
         call.cwd = e["cwd"]
         want = e["head"].lower()
         if all(commit_of(call, ctx, None, "refs/heads/" + b) == want for b in heads):
-            up = [commit_of(call, ctx, None, b + "@{upstream}") for b in heads]
-            if all(u in ("", want) for u in up):
+            if all(r == want for b in heads for r in remote_counterparts(call, ctx, None, b)):
                 found.append(e["cwd"])
     if len(found) == 1:
         return OK

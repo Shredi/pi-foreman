@@ -101,6 +101,33 @@ export function commitOf(cwd: string, ref: string): Promise<string | null> {
   });
 }
 
+function gitOut(cwd: string, args: string[]): Promise<string> {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, timeout: HEAD_TIMEOUT_MS, windowsHide: true }, (err, stdout) => resolve(err ? "" : String(stdout).trim()));
+  });
+}
+
+/** The checked-out branch name of `cwd`; "" when HEAD is detached or unreadable. */
+function currentBranchOf(cwd: string): Promise<string> {
+  return gitOut(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+}
+
+/**
+ * The commits of the remote branch a push of local `branch` lands on: `<branch>@{push}`, `origin/<branch>`, and the
+ * upstream only when its branch name equals `branch` (an upstream of another name is the base, not the pushed head).
+ */
+async function remoteCounterparts(cwd: string, branch: string): Promise<string[]> {
+  const merge = await gitOut(cwd, ["config", "--get", `branch.${branch}.merge`]);
+  const upName = merge.startsWith("refs/heads/") ? merge.slice("refs/heads/".length) : merge;
+  const refs = [`${branch}@{push}`, `origin/${branch}`, ...(upName === branch ? [`${branch}@{upstream}`] : [])];
+  const out: string[] = [];
+  for (const r of refs) {
+    const sha = await commitOf(cwd, r);
+    if (sha && !out.includes(sha)) out.push(sha);
+  }
+  return out;
+}
+
 /** Realpath of the git toplevel of `cwd`; null when it is not inside a work tree or cannot be read. */
 export function toplevelOf(cwd: string): Promise<string | null> {
   return new Promise((resolve) => {
@@ -250,18 +277,19 @@ export const PR_BRANCH_ARGS = ["head", "source_branch", "sourceBranch", "branch"
 
 /**
  * The reviewed-head test for one branch argument: null when accepted, else the refusal with the shas it names.
- * The PASS may be the branch's local ref, its remote-tracking ref (a push the local ref lags behind), its
- * upstream, or HEAD of the workspace (`cur`). A reviewed local ref whose upstream is another, unreviewed
- * commit is refused (B-M3).
+ * The PASS may be the branch's local ref, its same-named remote branch (a push the local ref lags behind:
+ * `@{push}`, `origin/<branch>`, the upstream when it has that name), or HEAD of the workspace (`cur`). A reviewed
+ * local ref whose same-named remote branch is another, unreviewed commit is refused (B-M3). An upstream of
+ * another name (the base) neither refuses nor accepts.
  */
 async function headRefusal(cwd: string, ref: string, reviewed: readonly string[], cur: string | null): Promise<{ reason: PrRefusal; passed: string; head: string } | null> {
   const head = await commitOf(cwd, ref);
   if (!head) return { reason: "head_unknown", passed: "", head: "" };
-  const branch = ref === "HEAD" ? "" : ref;
-  const up = await commitOf(cwd, branch + "@{upstream}");
-  if (reviewed.includes(head) && up && !reviewed.includes(up)) return { reason: "stale_review", passed: head, head: up };
-  const remote = branch ? await commitOf(cwd, "origin/" + branch) : null;
-  if ([head, remote, up, cur].some((s) => s !== null && reviewed.includes(s))) return null;
+  const branch = ref === "HEAD" ? await currentBranchOf(cwd) : ref;
+  const remotes = branch ? await remoteCounterparts(cwd, branch) : [];
+  const unreviewed = remotes.find((s) => !reviewed.includes(s));
+  if (reviewed.includes(head) && unreviewed) return { reason: "stale_review", passed: head, head: unreviewed };
+  if ([head, ...remotes, cur].some((s) => s !== null && reviewed.includes(s))) return null;
   return { reason: reviewed.length === 0 ? "no_review" : "stale_review", passed: reviewed[reviewed.length - 1] ?? "", head };
 }
 
