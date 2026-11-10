@@ -40,6 +40,8 @@ interface ChildOpts {
   loadFirst?: boolean;
   /** Tools already active before the first prompt (a resumed session). */
   already?: string[];
+  /** The api has `getMcpServers` (none registered) and, as in Pi, every config read is followed by it, once more after the first turn. */
+  piOrder?: boolean;
 }
 
 async function child(t: T, o: ChildOpts = {}) {
@@ -59,9 +61,12 @@ async function child(t: T, o: ChildOpts = {}) {
     getActiveTools: () => [...active],
     setActiveTools: (names: string[]) => void active.splice(0, active.length, ...names),
     getAllTools: () => tools.map((x) => ({ name: x.name, exposure: x.exposure ?? "deferred" })),
+    ...(o.piOrder ? { getMcpServers: () => [] } : {}),
   };
+  let proxied: { getMcpServers?: () => unknown } | undefined;
   let loadConfig: ((ctx: unknown) => { servers: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[] }) | undefined;
   const createMcp = (options: { loadConfig: typeof loadConfig }) => (pi: { registerTool(def: unknown): void }) => {
+    proxied = pi as never;
     loadConfig = options.loadConfig;
     for (const x of tools) pi.registerTool({ name: x.name, label: x.label });
   };
@@ -70,11 +75,13 @@ async function child(t: T, o: ChildOpts = {}) {
   const trace: Record<string, unknown>[] = [];
   mcp.install();
   await mcp.start(ROLES, (r) => trace.push(r), o.direct ?? ["p1"], o.max);
-  if (o.loadFirst) loadConfig!({ cwd: root, isProjectTrusted: () => false });
+  if (o.loadFirst || o.piOrder) loadConfig!({ cwd: root, isProjectTrusted: () => false });
+  if (o.piOrder) proxied!.getMcpServers!();
   const turn = async () => {
     for (const hook of hooks) await hook({}, { model: o.noProvider ? undefined : { provider: o.provider ?? "p1" } });
   };
   await turn();
+  if (o.piOrder) proxied!.getMcpServers!();
   const config = loadConfig!({ cwd: root, isProjectTrusted: () => false }).servers;
   const mcpActive = () => active.filter((n) => n.startsWith("mcp__"));
   return { mcp, active, trace, config, turn, mcpActive };
@@ -435,4 +442,39 @@ test("k: a named tool already active before preload is listed as declared, neith
   assert.deepEqual(c.mcpActive(), ["mcp__alpha__echo"]);
   assert.deepEqual(c.trace, []);
   assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: mcp__alpha__echo. ${SEARCH}`);
+});
+
+// ---------------------------------------------------------------- Pi's call order: loadConfig, then getMcpServers (twice)
+
+test("k: Pi's later getMcpServers reads do not erase a hidden tool: [alpha/echo] with echo hidden still says hidden", async (t) => {
+  const servers = [{ name: "alpha", config: { exposure: "deferred", toolExposure: { echo: "hidden" } } }];
+  const c = await child(t, { launch: ["alpha/echo"], tools: [], servers, piOrder: true });
+  const note = c.mcp.note() ?? "";
+  assert.equal(note, "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch. Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.");
+  assert.doesNotMatch(note, /did not answer/);
+});
+
+test("k: [alpha, alpha/echo] with the server hidden: no tool_search sentence for alpha, hidden wording", async (t) => {
+  const servers = [{ name: "alpha", config: { exposure: "hidden" } }];
+  const c = await child(t, { launch: ["alpha", "alpha/echo"], tools: [], servers, piOrder: true });
+  const note = c.mcp.note() ?? "";
+  assert.equal(note, "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch. Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.");
+  assert.doesNotMatch(note, /tool_search|did not answer/);
+});
+
+test("k: a server that registers nothing in time still gets 'did not answer in time' with Pi's call order", async (t) => {
+  const c = await child(t, { launch: ["alpha/echo"], tools: [], piOrder: true });
+  assert.match(c.mcp.note() ?? "", /MCP server alpha did not answer in time, so its named tools \(alpha\/echo\) are not declared/);
+});
+
+test("k: named tools only: a first turn on a direct provider after another provider waits and traces nothing more", async (t) => {
+  const c = await child(t, { launch: ["alpha/echo", "beta/probe"], tools: [{ name: "mcp__beta__probe", label: "beta/probe" }], provider: "p2" });
+  const note = c.mcp.note();
+  const traced = c.trace.length;
+  const start = Date.now();
+  await c.mcp.preload("p1");
+  const took = Date.now() - start;
+  assert.ok(took < 60, `no second readiness wait (took ${took} ms)`);
+  assert.equal(c.trace.length, traced);
+  assert.equal(c.mcp.note(), note);
 });

@@ -202,7 +202,7 @@ export class McpChild {
         if (prop === "getMcpServers") {
           return () => {
             const list = typeof target.getMcpServers === "function" ? ((target.getMcpServers as () => { name: string; config: Record<string, unknown> }[]).call(target) ?? []) : [];
-            return this.filterLoaded({ servers: list as never, errors: [] }).servers;
+            return filterMcpConfig({ servers: list as never, errors: [] }, this.allowed).servers;
           };
         }
         const value = target[prop as string];
@@ -230,11 +230,7 @@ export class McpChild {
   private loadConfig(ctx: ExtensionContext): McpLoadedLike {
     if (mcpEmpty(this.allowed) || !this.loader || this.unsupported) return { servers: [], errors: [] };
     const loaded = this.loader({ agentDir: piAgentDir(this.opts.env ?? process.env, os.homedir()), cwd: ctx.cwd, projectTrusted: ctx.isProjectTrusted() });
-    return this.filterLoaded(loaded);
-  }
-
-  /** `filterMcpConfig` of the allowed set; remembers which servers of the list it dropped, so `preload` can tell a hidden server from a silent one. */
-  private filterLoaded<T extends McpLoadedLike>(loaded: T): T {
+    // only Pi's own config list decides what is dropped: the extension-registered list read right after it must not erase that
     const out = filterMcpConfig(loaded, this.allowed);
     const kept = new Set(out.servers.map((s) => serverKey(s.name)));
     this.dropped = new Set(loaded.servers.map((s) => serverKey(s.name)).filter((key) => !kept.has(key)));
@@ -266,6 +262,11 @@ export class McpChild {
     if (!doNamed && !direct) {
       // nothing is declared on this provider: the same text on every turn here; a later turn on a direct provider declares tools and replaces it
       if (this.stage === null) this.line = upfrontLine([], this.allowed.servers, []);
+      return;
+    }
+    if (!doNamed && this.allowed.servers.length === 0) {
+      // the named part is done and no server is named whole: nothing is left to decide, so no wait
+      this.bulkDone = true;
       return;
     }
     const wanted = (): string[] => [...this.labels].filter(([, label]) => mcpCallAllowed(this.allowed, label)).map(([name]) => name);
@@ -332,7 +333,7 @@ export class McpChild {
       this.line = null;
     } else if (!this.namedOver) {
       const bulkServers = new Set(bulkDeclared ? bulk.map(serverOf) : []);
-      const search = this.allowed.servers.filter((server) => !bulkServers.has(serverKey(server)));
+      const search = this.allowed.servers.filter((server) => !bulkServers.has(serverKey(server)) && !this.dropped.has(serverKey(server)));
       const whole = [...bulkServers].map((key) => ({ server: this.allowed.servers.find((s) => serverKey(s) === key) ?? key, count: bulk.filter((name) => serverOf(name) === key).length }));
       this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, this.stage?.silent ?? [], this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? []);
     }
