@@ -21,6 +21,11 @@
       "description": "pi-intercom is a fork pin (git+https spec) carrying the hc transport; updates are taken by rebasing the fork, see docs/install.md. Remove this rule when pi-foreman returns to upstream."
     },
     {
+      "matchPackageNames": ["@juicesharp/rpiv-ask-user-question"],
+      "enabled": false,
+      "description": "@juicesharp/rpiv-ask-user-question is a temporary fork pin (git+https spec) that marks the session as blocked while a question is open, see docs/install.md. Remove this rule when the pin returns to npm."
+    },
+    {
       "groupName": "npm devDependencies",
       "matchManagers": ["npm"],
       "matchDepTypes": ["devDependencies"],

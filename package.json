@@ -41,7 +41,7 @@
   "type": "module",
   "dependencies": {
     "@inquirer/prompts": "8.7.4",
-    "@juicesharp/rpiv-ask-user-question": "2.15.0",
+    "@juicesharp/rpiv-ask-user-question": "git+https://github.com/Shredi/rpiv-ask-user-question.git#62ad77de8ba3b7dc1b407bfab7be4fac8a69fa41",
     "pi-intercom": "git+https://github.com/Shredi/pi-intercom.git#5f184cce7e2811a130dc44ebac745db7562a1543",
     "pi-subagents": "0.78.0",
     "unbash": "6.0.1"

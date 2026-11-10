@@ -37,6 +37,9 @@ SOFTWARE.
 
 The bundled dependency @juicesharp/rpiv-ask-user-question (the structured ask_user_question tool),
 Copyright (c) 2026 juicesharp, is released under the MIT License (its LICENSE ships in node_modules).
+The bundled copy is a temporary fork (https://github.com/Shredi/rpiv-ask-user-question) with one change
+(the question dialog reports the session as blocked); the pin returns to the npm package when upstream
+releases the fix.
 
 The ledger and gate rules in instructions/foreman.md are partly derived from the
 instruction text of that core, and are released under the same MIT License.
