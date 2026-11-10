@@ -108,6 +108,8 @@ export interface McpChildOpts {
   createMcp?: unknown;
   /** Injectable for tests: how long `preload` waits for the allowed servers' tools (default 10 s, Pi's own startup wait). */
   preloadWaitMs?: number;
+  /** Injectable for tests: the pause between two readiness polls of `preload` (default a 50 ms timer). */
+  preloadPause?: () => Promise<void>;
   /** How many skills are hidden from this child's prompt and findable through `tool_search` (default none). */
   hiddenSkills?: () => number;
 }
@@ -127,7 +129,8 @@ export const namedCapNote = (count: number, cap: number): string =>
  * declared in bulk with their tool count), where the tools of the servers named whole and not declared (`search`) are
  * found, which named tool the server lacks. `silent` are servers with named tools of which none registered in time;
  * `overCap` are the bulk tools (`bulk`) of the servers named whole that, with the `named` tools declared, did not fit under `cap`;
- * `hidden` are named tools (`server/tool`) the child cannot have because the MCP config hides them.
+ * `hidden` are named tools (`server/tool`) the child cannot have because the MCP config hides them; `hiddenServers` are servers named
+ * whole, without a named tool, that the MCP config hides.
  */
 export function upfrontLine(
   upfront: readonly string[],
@@ -137,6 +140,7 @@ export function upfrontLine(
   silent: readonly { server: string; tools: readonly string[] }[] = [],
   overCap: { named: number; bulk: number; cap: number } | null = null,
   hidden: readonly string[] = [],
+  hiddenServers: readonly string[] = [],
 ): string {
   const items = [...upfront, ...whole.map((w) => `all ${w.count} tools of server ${w.server}`)];
   const have = items.length > 0 ? items.join(", ") : "none";
@@ -146,9 +150,10 @@ export function upfrontLine(
       : "No other MCP tool is reachable in this launch.";
   const lacking = missing.length > 0 ? ` Named but not found on the server: ${missing.join(", ")}; name it under Friction in your report.` : "";
   const unavailable = hidden.length > 0 ? ` Named but not available in this child (hidden in the MCP config): ${hidden.join(", ")}; name it under Friction in your report.` : "";
+  const gone = hiddenServers.length > 0 ? ` MCP server${hiddenServers.length > 1 ? "s" : ""} named but not available in this child (hidden in the MCP config): ${hiddenServers.join(", ")}; name it under Friction in your report.` : "";
   const quiet = silent.map((s) => ` MCP server ${s.server} did not answer in time, so its named tools (${s.tools.join(", ")}) are not declared; they may be found with tool_search later; name it under Friction in your report.`).join("");
   const over = overCap ? ` ${overCap.named > 0 ? `With the ${overCap.named} named tool${overCap.named === 1 ? "" : "s"}, the` : "The"} ${overCap.bulk} MCP tools of the servers named whole are over the cap of ${overCap.cap} (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.` : "";
-  return `pi-foreman: MCP tools declared in your tool list: ${have}. ${rest}${lacking}${unavailable}${quiet}${over}`;
+  return `pi-foreman: MCP tools declared in your tool list: ${have}. ${rest}${lacking}${unavailable}${gone}${quiet}${over}`;
 }
 
 export class McpChild {
@@ -168,7 +173,7 @@ export class McpChild {
   private stage: { upfront: string[]; count: number; missing: string[]; hidden: string[]; silent: { server: string; tools: string[] }[] } | null = null;
   /** Set once a turn on a direct provider decided the bulk part (or nothing is left to decide). */
   private bulkDone = false;
-  /** Servers (`serverKey`) the config filter dropped from Pi's list, e.g. because all their named tools are hidden. */
+  /** Servers (`serverKey`) the config filter dropped from Pi's list, e.g. because all their named tools are hidden; both config paths only add to it. */
   private dropped = new Set<string>();
   private trace: (record: Record<string, unknown>) => void = () => {};
   /** Why MCP is refused in this child (loader missing, extension not creatable), else null. */
@@ -202,7 +207,9 @@ export class McpChild {
         if (prop === "getMcpServers") {
           return () => {
             const list = typeof target.getMcpServers === "function" ? ((target.getMcpServers as () => { name: string; config: Record<string, unknown> }[]).call(target) ?? []) : [];
-            return filterMcpConfig({ servers: list as never, errors: [] }, this.allowed).servers;
+            const out = filterMcpConfig({ servers: list as never, errors: [] }, this.allowed);
+            this.noteDropped(list, out.servers);
+            return out.servers;
           };
         }
         const value = target[prop as string];
@@ -226,14 +233,24 @@ export class McpChild {
     }
   }
 
+  /** Adds the servers of `listed` that are missing from `kept` to `dropped`; never removes one a call found before. */
+  private noteDropped(listed: readonly { name: string }[], kept: readonly { name: string }[]): void {
+    const keptKeys = new Set(kept.map((s) => serverKey(s.name)));
+    for (const s of listed) if (!keptKeys.has(serverKey(s.name))) this.dropped.add(serverKey(s.name));
+  }
+
+  /** The servers named whole that the model can find with `tool_search` (all but `bulk` and the dropped ones), and those named whole only and dropped as hidden. */
+  private reach(bulk: ReadonlySet<string>, namedServers: ReadonlySet<string>): { search: string[]; hiddenServers: string[] } {
+    const gone = this.allowed.servers.filter((server) => this.dropped.has(serverKey(server)));
+    return { search: this.allowed.servers.filter((server) => !bulk.has(serverKey(server)) && !this.dropped.has(serverKey(server))), hiddenServers: gone.filter((server) => !namedServers.has(serverKey(server))) };
+  }
+
   /** Pi's loader result reduced to the allowed set; `servers: []` when nothing is allowed or the loader is missing. */
   private loadConfig(ctx: ExtensionContext): McpLoadedLike {
     if (mcpEmpty(this.allowed) || !this.loader || this.unsupported) return { servers: [], errors: [] };
     const loaded = this.loader({ agentDir: piAgentDir(this.opts.env ?? process.env, os.homedir()), cwd: ctx.cwd, projectTrusted: ctx.isProjectTrusted() });
-    // only Pi's own config list decides what is dropped: the extension-registered list read right after it must not erase that
     const out = filterMcpConfig(loaded, this.allowed);
-    const kept = new Set(out.servers.map((s) => serverKey(s.name)));
-    this.dropped = new Set(loaded.servers.map((s) => serverKey(s.name)).filter((key) => !kept.has(key)));
+    this.noteDropped(loaded.servers, out.servers);
     return out;
   }
 
@@ -259,9 +276,13 @@ export class McpChild {
     const direct = directProviders(this.configuredDirect).includes(provider);
     // the named part is done once, at the first prompt with a provider; the bulk part waits for a turn on a direct provider
     const doNamed = this.stage === null && entries.length > 0;
+    const namedServers = new Set(entries.map((n) => serverKey(n.server)));
     if (!doNamed && !direct) {
       // nothing is declared on this provider: the same text on every turn here; a later turn on a direct provider declares tools and replaces it
-      if (this.stage === null) this.line = upfrontLine([], this.allowed.servers, []);
+      if (this.stage === null) {
+        const { search, hiddenServers } = this.reach(new Set(), namedServers);
+        this.line = upfrontLine([], search, [], [], [], null, [], hiddenServers);
+      }
       return;
     }
     if (!doNamed && this.allowed.servers.length === 0) {
@@ -274,17 +295,17 @@ export class McpChild {
     const seen = (): Set<string> => new Set(wanted().map(serverOf));
     const ready = (): boolean => {
       const have = seen();
-      return [...this.allowed.servers, ...Object.keys(this.allowed.tools)].every((server) => have.has(serverKey(server)));
+      return [...this.allowed.servers, ...Object.keys(this.allowed.tools)].every((server) => have.has(serverKey(server)) || this.dropped.has(serverKey(server)));
     };
     const deadline = Date.now() + (this.opts.preloadWaitMs ?? PRELOAD_WAIT_MS);
-    while (!ready() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    const pause = this.opts.preloadPause ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
+    while (!ready() && Date.now() < deadline) await pause();
     const exposure = new Map(this.pi.getAllTools().map((tool) => [tool.name, (tool as { exposure?: string }).exposure]));
     const active = this.pi.getActiveTools();
     const isNamed = (name: string): boolean => {
       const e = splitEntry(this.labels.get(name));
       return !!e && entries.some((n) => serverKey(n.server) === serverKey(e.server) && n.tool === e.tool);
     };
-    const namedServers = new Set(entries.map((n) => serverKey(n.server)));
     const inactive = wanted().filter((name) => !active.includes(name));
     const named = doNamed ? inactive.filter((name) => isNamed(name) && ["deferred", "codemode"].includes(exposure.get(name) ?? "")) : [];
     const activeNamed = doNamed ? wanted().filter((name) => active.includes(name) && isNamed(name)) : [];
@@ -333,9 +354,9 @@ export class McpChild {
       this.line = null;
     } else if (!this.namedOver) {
       const bulkServers = new Set(bulkDeclared ? bulk.map(serverOf) : []);
-      const search = this.allowed.servers.filter((server) => !bulkServers.has(serverKey(server)) && !this.dropped.has(serverKey(server)));
+      const { search, hiddenServers } = this.reach(bulkServers, namedServers);
       const whole = [...bulkServers].map((key) => ({ server: this.allowed.servers.find((s) => serverKey(s) === key) ?? key, count: bulk.filter((name) => serverOf(name) === key).length }));
-      this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, this.stage?.silent ?? [], this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? []);
+      this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, this.stage?.silent ?? [], this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? [], hiddenServers);
     }
   }
 

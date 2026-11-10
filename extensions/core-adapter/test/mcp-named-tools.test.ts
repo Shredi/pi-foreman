@@ -42,6 +42,10 @@ interface ChildOpts {
   already?: string[];
   /** The api has `getMcpServers` (none registered) and, as in Pi, every config read is followed by it, once more after the first turn. */
   piOrder?: boolean;
+  /** Servers registered by an extension (`getMcpServers` of the api; needs `piOrder`). */
+  ext?: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[];
+  /** Counts the readiness polls of `preload` (each pause really waits 50 ms). */
+  polls?: { count: number };
 }
 
 async function child(t: T, o: ChildOpts = {}) {
@@ -51,6 +55,7 @@ async function child(t: T, o: ChildOpts = {}) {
   fs.mkdirSync(path.dirname(loaderFile), { recursive: true });
   fs.writeFileSync(loaderFile, "");
   const tools = o.tools ?? TOOLS;
+  const state = { servers: o.servers, ext: o.ext ?? [] };
   const active = ["read", "tool_search", ...(o.already ?? [])];
   const hooks: ((e: unknown, ctx: unknown) => Promise<void>)[] = [];
   const api = {
@@ -61,7 +66,7 @@ async function child(t: T, o: ChildOpts = {}) {
     getActiveTools: () => [...active],
     setActiveTools: (names: string[]) => void active.splice(0, active.length, ...names),
     getAllTools: () => tools.map((x) => ({ name: x.name, exposure: x.exposure ?? "deferred" })),
-    ...(o.piOrder ? { getMcpServers: () => [] } : {}),
+    ...(o.piOrder ? { getMcpServers: () => state.ext } : {}),
   };
   let proxied: { getMcpServers?: () => unknown } | undefined;
   let loadConfig: ((ctx: unknown) => { servers: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[] }) | undefined;
@@ -70,8 +75,8 @@ async function child(t: T, o: ChildOpts = {}) {
     loadConfig = options.loadConfig;
     for (const x of tools) pi.registerTool({ name: x.name, label: x.label });
   };
-  const importFile = async () => ({ loadMcpConfig: () => ({ servers: o.servers ?? [{ name: "alpha", config: { exposure: "deferred" } }, { name: "beta", config: { exposure: "deferred" } }], errors: [] }) });
-  const mcp = new McpChild(api as never, { binding: { role: o.role ?? "builder", ...(o.launch ? { mcp: o.launch } : {}) }, createMcp, resolveRoot: () => root, importFile, preloadWaitMs: 100 });
+  const importFile = async () => ({ loadMcpConfig: () => ({ servers: state.servers ?? [{ name: "alpha", config: { exposure: "deferred" } }, { name: "beta", config: { exposure: "deferred" } }], errors: [] }) });
+  const mcp = new McpChild(api as never, { binding: { role: o.role ?? "builder", ...(o.launch ? { mcp: o.launch } : {}) }, createMcp, resolveRoot: () => root, importFile, preloadWaitMs: 100, preloadPause: () => { if (o.polls) o.polls.count++; return new Promise<void>((resolve) => setTimeout(resolve, 50)); } });
   const trace: Record<string, unknown>[] = [];
   mcp.install();
   await mcp.start(ROLES, (r) => trace.push(r), o.direct ?? ["p1"], o.max);
@@ -84,7 +89,11 @@ async function child(t: T, o: ChildOpts = {}) {
   if (o.piOrder) proxied!.getMcpServers!();
   const config = loadConfig!({ cwd: root, isProjectTrusted: () => false }).servers;
   const mcpActive = () => active.filter((n) => n.startsWith("mcp__"));
-  return { mcp, active, trace, config, turn, mcpActive };
+  const read = () => {
+    loadConfig!({ cwd: root, isProjectTrusted: () => false });
+    proxied!.getMcpServers?.();
+  };
+  return { mcp, active, trace, config, turn, mcpActive, state, read };
 }
 
 // ---------------------------------------------------------------- a-e: what is declared, searchable, callable
@@ -467,14 +476,58 @@ test("k: a server that registers nothing in time still gets 'did not answer in t
   assert.match(c.mcp.note() ?? "", /MCP server alpha did not answer in time, so its named tools \(alpha\/echo\) are not declared/);
 });
 
-test("k: named tools only: a first turn on a direct provider after another provider waits and traces nothing more", async (t) => {
-  const c = await child(t, { launch: ["alpha/echo", "beta/probe"], tools: [{ name: "mcp__beta__probe", label: "beta/probe" }], provider: "p2" });
+test("k: named tools only: a first turn on a direct provider after another provider does not wait again and traces nothing more", async (t) => {
+  const polls = { count: 0 };
+  const c = await child(t, { launch: ["alpha/echo", "beta/probe"], tools: [{ name: "mcp__beta__probe", label: "beta/probe" }], provider: "p2", polls });
   const note = c.mcp.note();
   const traced = c.trace.length;
-  const start = Date.now();
+  const first = polls.count;
+  assert.ok(first > 0, "the first turn waited for alpha/echo");
   await c.mcp.preload("p1");
-  const took = Date.now() - start;
-  assert.ok(took < 60, `no second readiness wait (took ${took} ms)`);
+  assert.equal(polls.count, first, "no second readiness wait");
   assert.equal(c.trace.length, traced);
   assert.equal(c.mcp.note(), note);
+});
+
+// ---------------------------------------------------------------- servers the config drops as hidden: one dropped set for both config paths
+
+const GONE = " MCP server named but not available in this child (hidden in the MCP config): alpha; name it under Friction in your report.";
+const NONE_REACHABLE = "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch.";
+const alphaHidden = [{ name: "alpha", config: { exposure: "hidden" } }];
+
+test("k: [alpha] with alpha hidden: the line says not available, on a provider outside directProviders and on a direct one", async (t) => {
+  for (const provider of ["p2", "p1"]) {
+    const c = await child(t, { launch: ["alpha"], tools: [], servers: alphaHidden, piOrder: true, provider });
+    const note = c.mcp.note() ?? "";
+    assert.equal(note, `${NONE_REACHABLE}${GONE}`, provider);
+    assert.doesNotMatch(note, /tool_search|did not answer/);
+  }
+});
+
+test("k: [alpha, beta] with alpha hidden on p2: the search sentence names beta only, alpha is not available", async (t) => {
+  const tools = TOOLS.filter((x) => x.label.startsWith("beta/"));
+  const c = await child(t, { launch: ["alpha", "beta"], tools, servers: [...alphaHidden, { name: "beta", config: { exposure: "deferred" } }], piOrder: true, provider: "p2" });
+  assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server beta are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).${GONE}`);
+});
+
+test("k: a hidden server registered by an extension and named alpha/echo is not available, not 'did not answer'", async (t) => {
+  const c = await child(t, { launch: ["alpha/echo"], tools: [], servers: [], ext: alphaHidden, piOrder: true });
+  const note = c.mcp.note() ?? "";
+  assert.equal(note, `${NONE_REACHABLE} Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.`);
+  assert.doesNotMatch(note, /did not answer|tool_search/);
+});
+
+test("k: a later empty getMcpServers or loadConfig result does not erase what the other path found", async (t) => {
+  const viaExt = await child(t, { launch: ["alpha"], tools: [], servers: [], ext: alphaHidden, piOrder: true, provider: "p2" });
+  assert.equal(viaExt.mcp.note(), `${NONE_REACHABLE}${GONE}`);
+  viaExt.state.ext = [];
+  viaExt.read();
+  await viaExt.turn();
+  assert.equal(viaExt.mcp.note(), `${NONE_REACHABLE}${GONE}`, "loadConfig and getMcpServers listing nothing keep the finding of the extension list");
+  const viaConfig = await child(t, { launch: ["alpha"], tools: [], servers: alphaHidden, piOrder: true, provider: "p2" });
+  assert.equal(viaConfig.mcp.note(), `${NONE_REACHABLE}${GONE}`);
+  viaConfig.state.servers = [];
+  viaConfig.read();
+  await viaConfig.turn();
+  assert.equal(viaConfig.mcp.note(), `${NONE_REACHABLE}${GONE}`, "an empty getMcpServers after loadConfig keeps the finding of the loader list");
 });
