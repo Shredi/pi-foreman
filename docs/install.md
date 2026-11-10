@@ -335,11 +335,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.5.1, range 1.5.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.5.2, range 1.5.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.5.1
+npm i -g @earendil-works/pi-coding-agent@1.5.2
 foreman setup --dry-run && foreman setup
 ```
 

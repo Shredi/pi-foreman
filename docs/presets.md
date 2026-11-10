@@ -28,7 +28,7 @@ result is validated against the schema and nothing is written when it fails. `--
 Earlier versions of the `claude-bridge` presets wrote `ttlSeconds: 300` and a `claude-*` 3600 s `byModel` row. Applying a preset again does not remove them from your user config; delete both ([migration](cache.md#migration-from-the-old-preset)).
 Pi needs the matching `promptCache` tier for the model (`long: 3600`, with `PI_CACHE_RETENTION=long`); `foreman doctor`
 warns when they differ. Pi's own warmer is always told `stop`, so its `cacheWarming` setting (including the `idle`
-default of Pi 1.5.1) is not read and adds no warms.
+default of Pi 1.5.2) is not read and adds no warms.
 
 ## The inexpensive preset
 
