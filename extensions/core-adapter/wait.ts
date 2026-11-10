@@ -279,6 +279,8 @@ export interface RuntimeDeps {
   briefs?: (dir: string) => { name: string; mtimeMs: number }[];
   /** A file wait on a ruling file woke (the harness writes `.seen`; ask contract). */
   onRulingWake?: (file: string) => void;
+  /** A foreman_bg wait ended: `exited` (the process is gone) or `cancelled` (the wait was dropped; the run may live on). */
+  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled") => void;
 }
 
 interface Entry {
@@ -447,6 +449,7 @@ export class WaitRuntime {
     const e = this.drop(id);
     if (!e) return;
     this.d.trace({ event: "wait", decision: "resolved", toolFamily: e.kind });
+    if (e.bg) this.d.onBgEnd?.(e.id, e.note, "exited");
     this.governor.resolved({ id: e.id, kind: e.kind, note: e.note, outcome: e.log ? `${outcome}; log ${e.log}` : outcome });
   }
 
@@ -454,6 +457,7 @@ export class WaitRuntime {
     const e = this.drop(id);
     if (!e) return false;
     this.d.trace({ event: "wait", decision: "cancelled", toolFamily: e.kind });
+    if (e.bg) this.d.onBgEnd?.(e.id, e.note, "cancelled");
     this.governor.check();
     return true;
   }
@@ -623,6 +627,8 @@ export interface WaitSession {
   onStart?: (spec: ValidSpec, id: string) => void;
   /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
   onCancel?: (id: string) => void;
+  /** A foreman_bg wait ended (bgrecords.ts posts or clears the task's hc record). */
+  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled") => void;
   /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
   onRulingWake?: (file: string) => void;
   /** Appends a pending steer.md (steer.ts) to a wake message text. */
@@ -734,6 +740,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       mtime: fileMtime,
       briefs: dirBriefs,
       onRulingWake: (file) => s.onRulingWake?.(file),
+      onBgEnd: (id, note, how) => s.onBgEnd?.(id, note, how),
       alive: processAlive,
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
       ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
