@@ -98,6 +98,10 @@ import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagent
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
+import { beginRun, decideScript, newScriptState, proposeScript, recordRun, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptStatus, shortHash } from "./scriptapproval.ts";
+import type { ScriptRefusalCode, ScriptState } from "./scriptapproval.ts";
+import { runScript as runOwnerScript } from "./scriptrun.ts";
+import type { ScriptRunKind } from "./scriptrun.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
@@ -412,6 +416,8 @@ interface Session {
   launchHeads: Map<string, Map<string, string | null>>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a session opened by another session reloads an approval only from the parent's ruling.md, roundstate.ts). */
   plan: PlanRecord | null;
+  /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
+  script: ScriptState;
   /** Foreman only: `[plan-review]` verdicts per plan lineage (planreview.ts; ceremony.planReview gates the checkpoint). */
   planReviews: PlanReviews;
   /** Foreman only: read budget (budget.ts), in memory only. */
@@ -882,6 +888,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
       plan: null,
+      script: newScriptState(),
       planReviews: new PlanReviews(),
       budget: new ReadBudget(),
       readNotices: new Map(),
@@ -1825,6 +1832,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       show: "on",
       // The foreman_protect rule in Approvals ("off"/absent only renders the pre-protect baseline).
       protect: "on",
+      // The foreman_script rules ("off"/absent only renders the baseline before owner scripts).
+      ownerScript: "on",
       // Owner-readable plans, questions and notes (ownertext.ts; "off" only drops the added lines).
       ownerReadable: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
@@ -4948,6 +4957,126 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         rec.status = "rejected";
         if (!verdict) ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
         return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
+      },
+    } as never);
+  }
+
+  // Owner script (scriptapproval.ts, scriptrun.ts): the owner approves a script's bytes in a dialog, the harness runs them. Never in a
+  // subagent child, never approved without the owner's own answer (no ruling file, no timeout). The script text is not inspected.
+  if (process.env.PI_SUBAGENT_CHILD !== "1") {
+    pi.registerTool({
+      name: SCRIPT_TOOL,
+      label: "Owner script",
+      // Never in parallel with other tool calls of the same message: no write lands while the owner decides or the script runs.
+      executionMode: "sequential",
+      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal; these three take no path. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["propose", "dry", "run", "status"] },
+          path: { type: "string", minLength: 1, description: "propose only: path of the script in the scratch dir." },
+          description: { type: "string", description: "propose only: one paragraph on what the script changes, at most 600 characters; the owner sees it whole." },
+          risk: { type: "string", description: "propose only: what can go wrong, at most 300 characters." },
+          undo: { type: "string", description: "propose only: how the change is undone, at most 300 characters." },
+          timeoutSeconds: { type: "number", minimum: 1, maximum: 3600, description: "Time limit of the run, default 600." },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      } as never,
+      async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+        const s = await ensureSession(ctx);
+        const out = (decision: string, text: string, extra: Record<string, unknown> = {}, isError = false) => ({ content: [{ type: "text" as const, text }], details: { decision, ...extra }, ...(isError ? { isError: true } : {}) });
+        const refusal = (r: { code: ScriptRefusalCode; error: string }) => out("refused", r.error, { code: r.code }, true);
+        if (s.isChild) return refusal({ code: "script_child", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_child): a subagent child never proposes or runs an owner script; report the needed change to the foreman.` });
+        const o = planOpts(s, ctx);
+        const action = params.action;
+
+        /** A dry or real run of the proposal's own script: fix rule, runner, state, trace. */
+        const runNow = async (kind: ScriptRunKind) => {
+          const limit = get(s.config.config, "safety.scripts.silentFixLines");
+          const plan = beginRun(s.script, kind, o, Date.now(), typeof limit === "number" ? limit : SCRIPT_FIX_LINES_DEFAULT);
+          if (plan.fix) {
+            ctx.ui.notify(plan.fix.notice, "warning");
+            s.trace?.emit({ event: "script_fix", from: plan.fix.from, to: plan.fix.to, added: plan.fix.added, removed: plan.fix.removed });
+          }
+          if ("error" in plan) return refusal(plan);
+          const r = await runOwnerScript({ bytes: plan.bytes, kind, cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd) });
+          if ("code" in r) {
+            // refused before anything spawned: not one of the real attempts
+            if (kind === "run" && s.script.proposal) s.script.proposal.attempts = Math.max(0, s.script.proposal.attempts - 1);
+            return refusal(r);
+          }
+          const exit = r.error ? null : r.exitCode;
+          const status = recordRun(s.script, kind, plan.hash, exit);
+          s.trace?.emit({ event: "script_run", kind, hash: shortHash(plan.hash), exit, seconds: r.seconds });
+          const p = s.script.proposal;
+          const how = r.error ?? (r.timedOut ? "stopped at the time limit" : r.aborted ? "aborted" : exit === null ? `ended by ${r.signal ?? "a signal"}` : `exit ${exit}`);
+          const head = `${kind === "dry" ? "Dry run" : "Real run"} of ${p?.rel ?? "the script"} (sha256 ${shortHash(plan.hash)}): ${how} after ${r.seconds} s. Log: ${r.logPath}`;
+          const next =
+            kind === "dry"
+              ? exit === 0
+                ? `Read this output before ${SCRIPT_TOOL} run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description.`
+                : "The dry run did not pass, so no real run is possible. Fix the script (a small fix reruns with a notice to the owner; a larger one needs a new propose), then call dry."
+              : exit === 0
+                ? "The approval is used up; another run needs a new propose."
+                : status === "consumed"
+                  ? `The real run failed and the approval is used up (${SCRIPT_MAX_ATTEMPTS} attempts); another run needs a new propose.`
+                  : `The real run failed; ${Math.max(0, SCRIPT_MAX_ATTEMPTS - (p?.attempts ?? 0))} attempt(s) left.`;
+          return out(kind, `${head}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { status, exit, logPath: r.logPath, hash: plan.hash }, exit !== 0);
+        };
+
+        if (action === "dry" || action === "run" || action === "status") {
+          if (params.path !== undefined) return refusal({ code: "script_path", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_path): ${action} takes no path; it uses the script of the proposal. A different script needs a new propose.` });
+          if (action !== "status") return runNow(action);
+          const st = scriptStatus(s.script, Date.now());
+          return out("status", st ? JSON.stringify(st, null, 2) : "No script is proposed in this session.", { status: st?.status ?? null });
+        }
+        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run or status.`, {}, true);
+
+        const done = (decision: string, by: string | null, hash: string | null, text: string, isError = false) => {
+          s.trace?.emit({ event: "script", decision, by, hash });
+          return out(decision, text, { by }, isError);
+        };
+        const proposed = proposeScript(s.script, params, o);
+        if ("error" in proposed) return done("refused", null, null, proposed.error, true);
+        // Pending first: a crash, an abort or no answer leaves it pending, never approved.
+        const p = proposed.proposal;
+        const short = shortHash(p.hash);
+        const pendingText = `No answer from the owner; the proposal of ${p.rel} (${short}) stays pending and nothing ran — ask the owner in your reply, then call ${SCRIPT_TOOL} propose again.`;
+        // Only the owner's own answer in this session's dialog approves: no ruling file, no parent verdict, no timeout.
+        if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, short, pendingText);
+        const title = scriptSelectTitle(p);
+        s.trace?.emit({ event: "dialog", surface: "script" });
+        let answer: string | undefined;
+        try {
+          ctx.ui.notify(scriptNoticeLines(p).join("\n"), "info");
+          answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
+        } catch {
+          answer = undefined;
+        }
+        // A newer proposal replaced this one while the dialog was open: this answer is not applied.
+        if (s.script.proposal !== p || answer === undefined || !(SCRIPT_CHOICES as readonly string[]).includes(answer)) return done("pending", null, short, pendingText);
+        if (answer === "reject") {
+          decideScript(s.script, { kind: "reject" }, o, Date.now());
+          return done("reject", null, short, `The owner rejected ${p.rel}. Nothing ran: do not make this change another way; report to the owner and ask how to go on.`);
+        }
+        if (answer === "revise") {
+          let note: string | undefined;
+          try {
+            note = await withBlocked(herdrEvents, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
+          } catch {
+            note = undefined;
+          }
+          decideScript(s.script, { kind: "revise", note: note ?? "" }, o, Date.now());
+          return done("revise", null, short, `The owner asked for a revision of ${p.rel}. The owner's words:\n${p.note || "(no note given)"}\nNothing ran. Change the script or its description, then call ${SCRIPT_TOOL} propose again.`);
+        }
+        // The owner approved the bytes whose hash the dialog showed: other bytes on disk now leave the proposal pending.
+        const decided = decideScript(s.script, { kind: "approve" }, o, Date.now());
+        if ("error" in decided) return done("pending", null, short, decided.error);
+        const by = ctx.mode === "tui" ? "user" : "rig";
+        s.trace?.emit({ event: "script", decision: "approve", by, hash: short });
+        const dry = await runNow("dry");
+        return { ...dry, content: [{ type: "text" as const, text: `The owner approved ${p.rel} (sha256 ${short}).\n${dry.content[0].text}` }], details: { ...dry.details, decision: "approve", by } };
       },
     } as never);
   }

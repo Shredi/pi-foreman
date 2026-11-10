@@ -832,6 +832,18 @@
       "enable": ""
     },
     {
+      "id": "owner-script",
+      "area": "safety",
+      "title": "Owner script approval",
+      "purpose": "For a change the guards close to every agent (user config, global installs, protected files) the foreman proposes a script with `foreman_script`: a dialog shows its description, risk, undo, path and hash (not the script body) with revise, reject and approve. On approve the harness runs the dry run, then on request the real run, from a private copy of the approved bytes. An approved script runs with the owner's rights and no guard reads it. A fix of up to `safety.scripts.silentFixLines` changed lines reruns with a notice; a larger one needs a new dialog. Without an answer the proposal stays pending; subagent children never propose.",
+      "doc": "docs/safety.md#owner-scripts",
+      "keys": ["safety.scripts.silentFixLines"],
+      "commands": [],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "knowledge",
       "area": "install",
       "title": "Knowledge sources",

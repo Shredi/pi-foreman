@@ -387,6 +387,19 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 `foreman_wait` (timers, files, processes, CI runs, children) and `foreman_bg` (a detached shell run with a pid wait) are foreman-only; see
 [sessions](sessions.md#background-runs). `foreman_bg` and the optional add-on's `bg_run` are guarded like `bash`.
 
+### foreman_script
+
+`foreman_script({action, path?, description?, risk?, undo?, timeoutSeconds?})` asks the owner to approve a script for a change the guards close to every agent, then runs it (foreman sessions only, never a subagent child; a deferred tool, found with `tool_search`). The script is POSIX sh with LF line endings, lies in the scratch dir, does not rely on `$0` or sibling files and honours `--dry-run` or `DRY_RUN=1`.
+
+| action | does |
+| --- | --- |
+| `propose` | checks the path and the texts, opens the owner's dialog (revise, reject, approve); on approve runs the dry run and returns its output |
+| `dry` | reruns the dry run; after a small fix of the script it applies the silent-fix rule first |
+| `run` | the real run; needs a passed dry run of the same text |
+| `status` | the proposal, its hashes, state, attempts and log paths |
+
+`dry`, `run` and `status` take no path. Without an answer the proposal stays pending. Refusal codes: `script_child`, `script_path`, `script_text`, `script_no_dry_run`, `script_pending`, `script_changed`, `script_dry_required`, `script_consumed`, `script_expired`, `no_posix_shell`. An approved script runs with the owner's rights and no guard reads it; see [safety](safety.md#owner-scripts) for the mechanics and the limits.
+
 ### foreman_show
 
 `foreman_show({title, markdown})` publishes a note for the owner's side panel (foreman sessions, including child foreman sessions opened with `foreman session open`, get it; subagent children such as explorer, builder and reviewer do not). Title up to 120
