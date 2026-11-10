@@ -8,7 +8,7 @@ import { h_flex, v_flex, Collapsible, HoverCard } from "gpui-base";
 import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, props, window, setShared, readTextFile, shared, layout, notify } from "herdr";
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
-  radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, prUrl, fmtSince, workerStatus, childTerminals,
+  radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel,
 } from "./model.js";
 
@@ -379,8 +379,15 @@ export default class ForemanAgents extends View {
     if (!isSafeHttpsUrl(url)) return;
     const p = guard(() => window().platform, "");
     const argv = openerArgv(p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux", url);
-    if (!argv) return;
-    cx.spawn(async () => { try { await this.execT(argv[0], argv.slice(1), {}, T_OPEN); } catch { /* no opener: nothing to do */ } });
+    const fail = (body) => guard(() => notify({ title: "Could not open the link", body, level: "error" }));
+    if (!argv) { fail("no opener for this platform"); return; }
+    cx.spawn(async () => {
+      try {
+        const r = await this.execT(argv[0], argv.slice(1), {}, T_OPEN);
+        const bad = openFailure(r);
+        if (bad) fail(bad);
+      } catch (e) { fail(openFailure(e) || "the opener could not run"); }
+    });
   }
 
   // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one two-part dot; a click opens its

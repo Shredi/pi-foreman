@@ -51,4 +51,5 @@ export const appHome = () => "/app";
 export const settings = () => ({ font_family: "Mono" });
 export const layout = () => world.layout ?? null;
 export const notify = (n) => { (world.notices ??= []).push(n); return "n1"; };
-export const window = {};
+// `world.platform` ("macos" | "linux" | "windows") is what window() reports; unset, window() throws like a host without it.
+export const window = () => { if (!world.platform) throw new Error("no window"); return { platform: world.platform }; };
