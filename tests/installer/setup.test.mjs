@@ -308,7 +308,7 @@ test("Pi outside 1.5.x is refused and nothing is written", () => {
   const r = run(env, [], { FAKE_PI_VERSION: "1.2.0" });
   assert.notEqual(r.code, 0);
   assert.match(r.out, /outside the supported range 1\.5\.x/);
-  assert.match(r.out, /pi-coding-agent@1\.5\.0 \(pinned\)/);
+  assert.match(r.out, /pi-coding-agent@1\.5\.1 \(pinned\)/);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
 });
@@ -1454,4 +1454,20 @@ exec python3 "$@"
   assert.match(r.out, /nothing was written/);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
+});
+
+test("compaction: claude-bridge/claude-fable-5-2 follows the live window; a 200K-derived reserve is rewritten when the listing turns 1M", () => {
+  const env = fresh();
+  seed(env);
+  writeCfg(env, { ...CAP150, providers: { "claude-bridge": { roles: { builder: { model: "claude-bridge/claude-fable-5-2" } } } } });
+  const base = { api: { ...ANTHROPIC.api, "chat:claude-fable-5-2": { contextWindow: 1000000, cost: { tiers: [{ inputTokensAbove: 272000 }] } } } };
+  const key = "claude-bridge/claude-fable-5-2";
+  const first = run(env, [], { ...dataDir(env, { anthropic: base }), ...listing(env, [["claude-bridge", "claude-fable-5-2", "200K"]]) });
+  assert.equal(first.code, 0, first.out);
+  assert.equal(overrides(readSettings(env))[key].reserveTokens, 50000);
+  assert.deepEqual(derivedOf(env), { [key]: 50000 });
+  const second = run(env, [], { ...dataDir(env, { anthropic: base }), ...listing(env, [["claude-bridge", "claude-fable-5-2", "1M"]]) });
+  assert.equal(second.code, 0, second.out);
+  assert.equal(overrides(readSettings(env))[key].reserveTokens, 850000);
+  assert.deepEqual(derivedOf(env), { [key]: 850000 });
 });

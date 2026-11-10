@@ -335,11 +335,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.5.0, range 1.5.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.5.1, range 1.5.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.5.0
+npm i -g @earendil-works/pi-coding-agent@1.5.1
 foreman setup --dry-run && foreman setup
 ```
 
@@ -348,8 +348,9 @@ reads it, so a Pi update that moves or renames it refuses MCP in children with `
 binary has no such file). Check it after each Pi update. MCP changes (`mcp.json`, `roles.<id>.mcp`) need no setup re-run;
 the one exception is the upgrade from the older `mcp:` grant, where one `foreman setup` rewrites the generated agent files.
 
-If you use the Claude bridge, also install pi-claude-bridge 0.9.2 or later (`pi install npm:pi-claude-bridge@0.9.2`):
+If you use the Claude bridge, also install pi-claude-bridge 0.11.0 or later (`pi install npm:pi-claude-bridge@0.11.0`):
 earlier versions drop Pi's custom prompt sections, which carry the foreman's rules.
+pi-claude-bridge registers `claude-fable-5-2` with a 200K context window until its upstream fix (pi-claude-bridge PR #256) is released; `claude-fable-5-2[1m]` serves 1M, but `foreman setup` writes no compaction override for a `[1m]` id.
 
 ## Developing
 

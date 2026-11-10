@@ -113,7 +113,7 @@ overlay config only (a project or session value is ignored) and unset by default
 - **Another provider.** The rung may name `<other-provider>/<model>`. After the switch the idle model's own provider
   entry supplies TTL, billing, keep-alive and warm budget (`providers.<q>.cache`). It needs a `cache` entry with a TTL
   and billing for that provider (without one there is no cache bar and no warms while downshifted; `foreman doctor`
-  warns), a `promptCache` entry for the idle model in Pi's `models.json`, and Pi's `cacheWarming: "idle"`. The model and
+  warns), and a `promptCache` entry for the idle model in Pi's `models.json` (Pi's own warmer is always told `stop`; its `cacheWarming` setting is not read). The model and
   its provider login must exist; `foreman doctor` lists the rung with the other mapped models (label `.idle`). The
   thinking level is capped by `maxThinking` like any rung.
 - **Switch timing.** The switch happens on the first notice turn that finds the cache cold, not at the end of the warm
