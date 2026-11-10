@@ -27,6 +27,24 @@ function piPackageOf(file) {
 }
 
 /**
+ * `npm root -g`: the answer recorded in the slot is reused ("" when npm failed; only a successful npm answer counts, unlike
+ * owned.ts `resolveNpmRoot`, which falls back to a prefix guess); npm starts only when none is recorded, and the answer is
+ * recorded for owned.ts `npmRootOnce`, so a process starts one `npm root -g` for both lookups. Exception: this sync call while
+ * the first session's async lookup is still in flight (at most 4 s) cannot wait and starts its own. The answer and the test seam
+ * (`seed`, set by the test preload) live in the slot owned.ts documents at `npmRootOnce`.
+ */
+function npmRootGlobal() {
+  const slot = ((globalThis[Symbol.for("pi-foreman.npm-root")] ??= {}));
+  if (slot.seed !== undefined) return slot.seed ?? "";
+  if (slot.npmAnswer === undefined) {
+    const r = spawnSync(WIN ? "npm.cmd" : "npm", ["root", "-g"], { encoding: "utf8", timeout: 30_000, shell: WIN, windowsHide: true });
+    const last = r.status === 0 ? (r.stdout || "").trim().split(/\r?\n/).pop() : "";
+    slot.npmAnswer ??= last && path.isAbsolute(last) ? last : "";
+  }
+  return slot.npmAnswer;
+}
+
+/**
  * Pi's model data folder (<provider>.json files), found by plain path lookup: no module resolution, no network.
  * Order: PI_FOREMAN_PI_AI_DATA (the folder itself; also the test hook), PI_FOREMAN_PI_BIN, every `pi` on PATH that
  * resolves into the pi-coding-agent package (a plain-file launcher is skipped), then `npm root -g`.
@@ -55,8 +73,7 @@ export function piModelDataDir() {
         if (pkg) return pkg;
       }
     }
-    const r = spawnSync(WIN ? "npm.cmd" : "npm", ["root", "-g"], { encoding: "utf8", timeout: 30_000, shell: WIN, windowsHide: true });
-    const root = r.status === 0 ? (r.stdout || "").trim().split(/\r?\n/).pop() : "";
+    const root = npmRootGlobal();
     const pkg = root ? path.join(root, "@earendil-works", "pi-coding-agent") : null;
     return pkg && fs.existsSync(pkg) ? pkg : null;
   };

@@ -11,6 +11,10 @@ import { childSkillDirs } from "../skilldirs.ts";
 import { bashPath } from "./_bashpath.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup, cached per module with no seam; PI_OFFLINE makes
+// that lookup return null without starting npm.
+process.env.PI_OFFLINE = "1";
+
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const baseline = readBaseline(PKG)!;
 const ENV_KEYS = ["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR"] as const;

@@ -8,6 +8,10 @@ import { buildEffectiveSystemPrompt } from "../../../node_modules/pi-subagents/s
 import type { AgentConfig } from "../../../node_modules/pi-subagents/src/agents/agents.js";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup, cached per module with no seam; PI_OFFLINE makes
+// that lookup return null without starting npm.
+process.env.PI_OFFLINE = "1";
+
 const ENV_KEYS = ["HOME", "USERPROFILE", "PI_CODING_AGENT_DIR"] as const;
 let saved: Record<string, string | undefined> = {};
 let tmp = "";

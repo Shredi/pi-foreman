@@ -8,6 +8,10 @@ import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
 import { usageDir } from "../usage.ts";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup, cached per module with no seam; PI_OFFLINE makes
+// that lookup return null without starting npm.
+process.env.PI_OFFLINE = "1";
+
 type T = { after(fn: () => void | Promise<void>): void };
 type Def = { name: string; execute(id: string, p: Record<string, unknown>): Promise<{ content: { text: string }[] }> };
 

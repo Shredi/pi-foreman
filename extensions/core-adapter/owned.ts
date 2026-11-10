@@ -136,7 +136,7 @@ export const NPM_ROOT_TIMEOUT_MS = 4000;
  * The global npm root: `npm root -g` (4 s cap), else `npm_config_prefix`, else the prefix of the
  * running node binary, POSIX `<prefix>/lib/node_modules`, Windows `<prefix>\node_modules` or
  * `%AppData%\npm\node_modules`. Null when nothing resolves. No environment override of the
- * result. The caller runs it once per session and keeps the promise.
+ * result. Callers go through `npmRootOnce`, which runs it once per process.
  */
 export async function resolveNpmRoot(i: NpmRootInput): Promise<string | null> {
   const win = i.platform === "win32";
@@ -156,4 +156,42 @@ export async function resolveNpmRoot(i: NpmRootInput): Promise<string | null> {
   }
   const base = prefix || (i.execPath ? impl.dirname(impl.dirname(i.execPath)) : "");
   return base ? impl.join(base, "lib", "node_modules") : null;
+}
+
+/** Process-wide npm-root state on `globalThis[Symbol.for("pi-foreman.npm-root")]`; see `npmRootOnce`. */
+interface NpmRootSlot {
+  /** Test seam: the root every lookup of this process answers with (null = none); set only by the test preload (_hermetic-env.mjs). */
+  seed?: string | null;
+  pending?: Promise<string | null>;
+  /** The raw answer of `npm root -g` in this process: the absolute path npm printed, "" when it failed, timed out or printed nothing usable; unset until known. */
+  npmAnswer?: string;
+}
+
+/**
+ * `resolveNpmRoot`, run at most once per process: every session shares the one promise. The sync model-data lookup of
+ * pi-model-data.mjs shares the one `npm root -g` answer through `npmAnswer` in a slot on `globalThis` under
+ * `Symbol.for("pi-foreman.npm-root")`: a known answer is reused (a known "" goes on to the prefix fallback like a failed npm), and
+ * this function records the answer it gets. The one case that cannot share is a sync model-data lookup while the first session's
+ * lookup is still in flight (at most 4 s): it cannot wait, so it starts its own npm. The slot also carries, as the test seam, `seed`,
+ * set by the test preload so that no test session starts `npm`. There is no environment override of the result.
+ */
+export function npmRootOnce(i: NpmRootInput): Promise<string | null> {
+  const g = globalThis as Record<symbol, NpmRootSlot | undefined>;
+  const key = Symbol.for("pi-foreman.npm-root");
+  const slot = (g[key] ??= {});
+  if (slot.seed !== undefined) return Promise.resolve(slot.seed);
+  if (slot.pending) return slot.pending;
+  const win = i.platform === "win32";
+  const known = slot.npmAnswer;
+  const spawn: Spawner =
+    known !== undefined
+      ? async () => (known ? { code: 0, stdout: `${known}\n`, stderr: "", timedOut: false } : { code: 1, stdout: "", stderr: "", timedOut: false })
+      : async (command, args, options) => {
+          const r = await i.spawn(command, args, options);
+          const last = r.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop();
+          const ok = !r.error && !r.timedOut && r.code === 0 && !!last && (win ? path.win32 : path.posix).isAbsolute(last);
+          slot.npmAnswer ??= ok ? last : "";
+          return r;
+        };
+  return (slot.pending = resolveNpmRoot({ ...i, spawn }));
 }
