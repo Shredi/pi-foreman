@@ -308,7 +308,7 @@ test("Pi outside 1.5.x is refused and nothing is written", () => {
   const r = run(env, [], { FAKE_PI_VERSION: "1.2.0" });
   assert.notEqual(r.code, 0);
   assert.match(r.out, /outside the supported range 1\.5\.x/);
-  assert.match(r.out, /pi-coding-agent@1\.5\.1 \(pinned\)/);
+  assert.match(r.out, /pi-coding-agent@1\.5\.2 \(pinned\)/);
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
 });
