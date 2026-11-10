@@ -154,7 +154,9 @@ function normOpenPrs(raw) {
   return out;
 }
 
-const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ""; } };
+// host with its port, as the watch key spells it (`host:8443`); URL.host is lowercase and drops a default port
+const hostOf = (u) => { try { return new URL(u).host.toLowerCase(); } catch { return ""; } };
+const keyHost = (h) => (h ? hostOf(`https://${h}`) : "");
 
 /** Flags `unreviewed` on the PRs of a session node that its watch reported past the last reviewer PASS (`waits[].unreviewed`),
  *  matched by number, repository and host (an unknown repository or host on either side matches). Followed-only PRs have no entry. */
@@ -164,7 +166,7 @@ function markUnreviewed(n) {
   n.prs = listOf(n.prs).map((pr) => {
     const repo = nameOf(pr.repo || n.repoUrl).toLowerCase();
     const host = hostOf(pr.url) || hostOf(pr.repo) || hostOf(n.repoUrl);
-    const hit = marks.some((u) => u.n === pr.number && (!repo || !u.repo || repo === u.repo.toLowerCase()) && (!host || !u.host || host === u.host.toLowerCase()));
+    const hit = marks.some((u) => u.n === pr.number && (!repo || !u.repo || repo === u.repo.toLowerCase()) && (!host || !u.host || host === keyHost(u.host)));
     return hit ? { ...pr, unreviewed: true } : pr;
   });
 }

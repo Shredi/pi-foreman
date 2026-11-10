@@ -660,9 +660,9 @@ export class PrWatches {
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming" } });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) } });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
@@ -688,11 +688,6 @@ export class PrWatches {
   reviewOf(key: PrKey): string | null {
     const w = this.find(key);
     return w ? w.state.reviewedHead ?? "" : null;
-  }
-
-  /** The session's PASS heads for the pr_status line (empty without the dep). */
-  passed(): ReadonlySet<string> {
-    return this.passedSet() ?? new Set();
   }
 
   private register(r: WatchRecord): Watch {
@@ -913,7 +908,7 @@ export class PrWatches {
     }
     // a pending start: comments count as reported, CI does not (failed runs and a settled result are sent once), and mergeable has
     // no baseline: a first CONFLICTING is news, a first MERGEABLE is the baseline
-    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const } : w.state;
+    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const, ...(w.state.reviewedHead ? { reviewedHead: w.state.reviewedHead } : {}) } : w.state;
     const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined);
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;

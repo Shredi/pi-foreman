@@ -13,7 +13,7 @@ import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
-import { prGateRefusal } from "./reviews.ts";
+import { commitOf, headOf, prGateRefusal } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
@@ -408,7 +408,8 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
-        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        const openedOn = typeof params.head === "string" && params.head ? await commitOf(dir ?? ctx.cwd, params.head) : await headOf(dir ?? ctx.cwd);
+        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
         const r = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
         const out = armed.tracked ? { ...r, details: { ...r.details, tracked: armed.tracked } } : r;
         if ("duplicate" in armed) return out;
@@ -493,7 +494,8 @@ async function withReview(s: PrPackSession, o: SafeOpOutcome): Promise<SafeOpOut
   if (o.kind !== "ran" || typeof o.result.headSha !== "string" || !o.result.headSha || !validNumber(o.result.number)) return o;
   try {
     const key = parsePrUrl(o.result.url);
-    const last = s.watches.reviewOf(key && key.n === o.result.number ? key : { host: "", repo: "", n: o.result.number });
+    // an address that does not parse names no repository: never look a watch up by number alone
+    const last = key && key.n === o.result.number ? s.watches.reviewOf(key) : null;
     return { ...o, result: { ...o.result, review: reviewFact(o.result.headSha, new Set(await s.reviewed()), last ?? "") } };
   } catch {
     return o;
@@ -530,7 +532,7 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = await watchKey(s, ctx, n, url, cwd);
@@ -550,7 +552,11 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     }
     tracked ??= await track();
     if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt);
-    else s.watches.startPending(key);
+    else {
+      // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
+      const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
+      s.watches.startPending(key, undefined, seed);
+    }
     s.trace({ event: "pr_watch", outcome: "started" });
     return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked };
   } catch (err) {
