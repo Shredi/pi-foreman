@@ -5,10 +5,10 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
-import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings } from "herdr";
+import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings, notify } from "herdr";
 import {
   buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, partFor, tabDot, partDot, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
-  compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, fmtSince, isLight,
+  compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, openFailure, fmtSince, isLight,
   fenceInfo, validateSvg, svgSize, cachePath, findPanelBlock,
 } from "./model.js";
 
@@ -382,8 +382,15 @@ export default class PlanPanel extends View {
     if (!isSafeHttpsUrl(url)) return;
     const p = guard(() => window().platform, "");
     const argv = openerArgv(p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux", url);
-    if (!argv) return;
-    cx.spawn(async () => { try { await this.execT(argv[0], argv.slice(1), {}, OPEN_TIMEOUT_MS); } catch { /* no opener: nothing to do */ } });
+    const fail = (body) => guard(() => notify({ title: "Could not open the link", body, level: "error" }));
+    if (!argv) { fail("no opener for this platform"); return; }
+    cx.spawn(async () => {
+      try {
+        const r = await this.execT(argv[0], argv.slice(1), {}, OPEN_TIMEOUT_MS);
+        const bad = openFailure(r);
+        if (bad) fail(bad);
+      } catch (e) { fail(openFailure(e) || "the opener could not run"); }
+    });
   }
 
   // exec with a `timeout`; if the call throws or rejects because of the option itself (an app that predates it), it runs once more

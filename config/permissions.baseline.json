@@ -25,6 +25,7 @@
     "pr_follow": "allow",
     "foreman_triage": "allow",
     "foreman_dialogs": "allow",
+    "foreman_script": "allow",
     "ask_user_question": "allow",
     "foreman_checkpoint": "allow",
     "foreman_ledger": "allow",

@@ -26,6 +26,7 @@ layer: it goes through the same rules. Neither can set a key that is not in the 
     safety.git.commit.messagePattern ignored (a pattern can loosen the lint)
     safety.git.commit.checkCommand   ignored (it executes a program; L3/L2 only)
     safety.ops.copyMaxBytes          lower = tighter; only a lower value is accepted
+    safety.scripts.silentFixLines    lower = tighter; only a lower value is accepted
     safety.ops.worktreeDisposable    loosens: ignored with a warning
     safety.ops.baseBranch            loosens: ignored with a warning
     safety.subagents.allowWorkflow   loosening key: ignored with a warning
@@ -195,6 +196,7 @@ TIGHTEN = {
     ("git", "commit", "requiredTrailers"): "union",
     ("git", "commit", "forbiddenTrailers"): "union",
     ("ops", "copyMaxBytes"): "lower_only",
+    ("scripts", "silentFixLines"): "lower_only",
 }
 
 # safety.* keys that only loosen: never from the project or session layer

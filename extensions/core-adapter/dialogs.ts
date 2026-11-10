@@ -5,11 +5,11 @@
 // itself keeps only the redacted, path-scrubbed `command` (trace.ts), which is what the report prints as literal lines.
 import * as fs from "node:fs";
 
-export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_refusal", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow", "checkpoint", "ask_user_question", "guard_ask", "drift_ask"] as const;
+export const DIALOG_FAMILIES = ["state_usage_read", "trace_read", "self_ruling_refusal", "pi_scratch_read", "toolchain_probe", "own_run_dir", "own_bg_output", "own_bash_output_log", "owned_scratch", "hub_ledger_read", "other", "auto_review_allow", "checkpoint", "ask_user_question", "guard_ask", "drift_ask", "script"] as const;
 /** The families that are no blocking dialog: an ask the auto reviewer allowed without one, and a refusal. Everything else counts in `total`. */
 const NOT_BLOCKING = new Set<string>(["auto_review_allow", "self_ruling_refusal"]);
 /** `dialog` record `surface` -> family. */
-const SURFACE_FAMILY: Record<string, DialogFamily> = { checkpoint: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask" };
+const SURFACE_FAMILY: Record<string, DialogFamily> = { checkpoint: "checkpoint", ask_user: "ask_user_question", drift: "drift_ask", script: "script" };
 export type DialogFamily = (typeof DIALOG_FAMILIES)[number];
 
 /** The regression family of a dialog's command (raw text, before the trace scrubs it). */

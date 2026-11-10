@@ -32,6 +32,13 @@ branch, push it to the fork and run the fork's tests, then set the new commit in
 returns to the upstream `pi-intercom` at the first release that contains the transport: pin that version again in both
 files and delete the `pi-intercom` rule in `renovate.json`.
 
+**`@juicesharp/rpiv-ask-user-question` is a temporary fork pin.** It is the published 2.15.0 plus one commit that
+passes `blocked: { kind: "question", message }` to both dialog calls (inline and overlay), so Pi reports the session as
+blocked while a question is open (upstream request: https://github.com/juicesharp/rpiv-mono/issues/345).
+`foreman update-check` prints the fork-pin line for it and Renovate is off for it. At the first upstream release with
+the fix, pin that version again in `package.json`, `package-lock.json` and `packages.lock.json`, restore the NOTICE
+line and delete its rule in `renovate.json`.
+
 Then run setup once:
 
 ```sh
@@ -335,11 +342,11 @@ Pi's install does and leaves it unchanged.
 
 ### Updating Pi
 
-The pinned Pi version lives in `packages.lock.json` (currently 1.5.1, range 1.5.x); `setup.mjs` refuses a Pi
+The pinned Pi version lives in `packages.lock.json` (currently 1.5.2, range 1.5.x); `setup.mjs` refuses a Pi
 outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
-npm i -g @earendil-works/pi-coding-agent@1.5.1
+npm i -g @earendil-works/pi-coding-agent@1.5.2
 foreman setup --dry-run && foreman setup
 ```
 

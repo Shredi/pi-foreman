@@ -2,7 +2,7 @@
   "schema": 1,
   "pi": {
     "name": "@earendil-works/pi-coding-agent",
-    "version": "1.5.1",
+    "version": "1.5.2",
     "range": "1.5.x",
     "mode": "checked",
     "notes": "https://github.com/earendil-works/pi/releases/tag/v{version}"
@@ -10,7 +10,7 @@
   "packages": [
     { "name": "pi-subagents", "version": "0.78.0", "mode": "bundled", "notes": "https://github.com/nicobailon/pi-subagents/releases/tag/v{version}" },
     { "name": "pi-intercom", "version": "git+https://github.com/Shredi/pi-intercom.git#5f184cce7e2811a130dc44ebac745db7562a1543", "mode": "bundled", "notes": "fork pin, branch hc-transport-2 on upstream main 4b387e8 (https://github.com/Shredi/pi-intercom/tree/hc-transport-2); upstream releases: https://github.com/nicobailon/pi-intercom/releases/tag/v{version}" },
-    { "name": "@juicesharp/rpiv-ask-user-question", "version": "2.15.0", "mode": "bundled", "notes": "https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question/v/{version}" },
+    { "name": "@juicesharp/rpiv-ask-user-question", "version": "git+https://github.com/Shredi/rpiv-ask-user-question.git#62ad77de8ba3b7dc1b407bfab7be4fac8a69fa41", "mode": "bundled", "notes": "fork pin, one commit on the unchanged 2.15.0 import (https://github.com/Shredi/rpiv-ask-user-question), temporary until upstream releases the fix (https://github.com/juicesharp/rpiv-mono/issues/345); upstream releases: https://www.npmjs.com/package/@juicesharp/rpiv-ask-user-question/v/{version}" },
     { "name": "@inquirer/prompts", "version": "8.7.4", "mode": "bundled", "notes": "https://github.com/SBoudrias/Inquirer.js/releases/tag/%40inquirer%2Fprompts%40{version}" },
     { "name": "unbash", "version": "6.0.1", "mode": "bundled", "notes": "https://github.com/webpro-nl/unbash/releases/tag/{version}" }
   ]
