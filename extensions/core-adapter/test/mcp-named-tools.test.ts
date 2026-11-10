@@ -34,6 +34,12 @@ interface ChildOpts {
   max?: unknown;
   /** The first turn runs with no model provider (it may be unset at session start). */
   noProvider?: boolean;
+  /** The server list of Pi's loader (default alpha and beta, both deferred). */
+  servers?: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[];
+  /** Pi's MCP extension reads its config before the first prompt (as at session_start). */
+  loadFirst?: boolean;
+  /** Tools already active before the first prompt (a resumed session). */
+  already?: string[];
 }
 
 async function child(t: T, o: ChildOpts = {}) {
@@ -43,7 +49,7 @@ async function child(t: T, o: ChildOpts = {}) {
   fs.mkdirSync(path.dirname(loaderFile), { recursive: true });
   fs.writeFileSync(loaderFile, "");
   const tools = o.tools ?? TOOLS;
-  const active = ["read", "tool_search"];
+  const active = ["read", "tool_search", ...(o.already ?? [])];
   const hooks: ((e: unknown, ctx: unknown) => Promise<void>)[] = [];
   const api = {
     on: (event: string, handler: (e: unknown, ctx: unknown) => Promise<void>) => {
@@ -59,11 +65,12 @@ async function child(t: T, o: ChildOpts = {}) {
     loadConfig = options.loadConfig;
     for (const x of tools) pi.registerTool({ name: x.name, label: x.label });
   };
-  const importFile = async () => ({ loadMcpConfig: () => ({ servers: [{ name: "alpha", config: { exposure: "deferred" } }, { name: "beta", config: { exposure: "deferred" } }], errors: [] }) });
+  const importFile = async () => ({ loadMcpConfig: () => ({ servers: o.servers ?? [{ name: "alpha", config: { exposure: "deferred" } }, { name: "beta", config: { exposure: "deferred" } }], errors: [] }) });
   const mcp = new McpChild(api as never, { binding: { role: o.role ?? "builder", ...(o.launch ? { mcp: o.launch } : {}) }, createMcp, resolveRoot: () => root, importFile, preloadWaitMs: 100 });
   const trace: Record<string, unknown>[] = [];
   mcp.install();
   await mcp.start(ROLES, (r) => trace.push(r), o.direct ?? ["p1"], o.max);
+  if (o.loadFirst) loadConfig!({ cwd: root, isProjectTrusted: () => false });
   const turn = async () => {
     for (const hook of hooks) await hook({}, { model: o.noProvider ? undefined : { provider: o.provider ?? "p1" } });
   };
@@ -361,4 +368,71 @@ test("j: servers and tools keep their meaning for the call gate and the config f
   const out = filterMcpConfig({ servers: [{ name: "alpha", config: { exposure: "direct" } }], errors: [] }, allowed);
   assert.equal(out.servers[0]?.config.exposure, "deferred");
   assert.deepEqual(wholeOnlyServers({ b: { mcp: ["alpha", "beta"] } }, "b", ["alpha", "alpha/echo", "beta"]), ["beta"]);
+});
+
+// ---------------------------------------------------------------- k: the named part once, the bulk at the first direct turn; hidden and already-active named tools
+
+const SEARCH = "The other tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).";
+
+test("k: [alpha, beta/probe], p2 then p1, alpha under the cap: probe once, alpha's tools at the direct turn, the line true before and after", async (t) => {
+  const c = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2" });
+  assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
+  const before = `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH}`;
+  assert.equal(c.mcp.note(), before);
+  await c.turn();
+  assert.equal(c.mcp.note(), before, "the same text on the second turn on p2");
+  await c.mcp.preload("p1");
+  assert.deepEqual(c.mcpActive().sort(), ["mcp__alpha__echo", "mcp__alpha__shout", "mcp__alpha__whisper", "mcp__beta__probe"]);
+  assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: mcp__beta__probe, all 3 tools of server alpha. No other MCP tool is reachable in this launch.");
+  assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p2", servers: "beta", count: 1 }, { event: "mcp_child_direct", provider: "p1", servers: "alpha", count: 3 }]);
+  await c.mcp.preload("p1");
+  assert.equal(c.trace.length, 2, "decided once");
+});
+
+test("k: the same with alpha over the cap: the cap sentence after p1, probe not declared twice", async (t) => {
+  const c = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2", max: 3 });
+  assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH}`);
+  await c.mcp.preload("p1");
+  assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
+  assert.equal(
+    c.mcp.note(),
+    `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH} With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.`,
+  );
+  assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p2", servers: "beta", count: 1 }, { event: "mcp_child_direct_capped", provider: "p1", count: 4, cap: 3 }]);
+});
+
+test("k: the same launch with two turns on p2: the same text, nothing more declared", async (t) => {
+  const c = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2" });
+  const first = c.mcp.note();
+  await c.turn();
+  await c.turn();
+  assert.equal(c.mcp.note(), first);
+  assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
+  assert.equal(c.trace.length, 1);
+});
+
+test("k: a named tool hidden in a server named whole is named in the line as not available", async (t) => {
+  const tools = TOOLS.map((x) => (x.name === "mcp__alpha__echo" ? { ...x, exposure: "hidden" } : x));
+  const c = await child(t, { launch: ["alpha", "alpha/echo"], tools });
+  assert.deepEqual(c.mcpActive(), []);
+  assert.equal(
+    c.mcp.note(),
+    "pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.",
+  );
+});
+
+test("k: [alpha/echo] with echo hidden: the server is dropped by the filter and the line says hidden, not that it did not answer", async (t) => {
+  const servers = [{ name: "alpha", config: { exposure: "deferred", toolExposure: { echo: "hidden" } } }];
+  const c = await child(t, { launch: ["alpha/echo"], tools: [], servers, loadFirst: true });
+  assert.deepEqual(c.config, []);
+  const note = c.mcp.note() ?? "";
+  assert.equal(note, "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch. Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.");
+  assert.doesNotMatch(note, /did not answer/);
+});
+
+test("k: a named tool already active before preload is listed as declared, neither activated nor traced again", async (t) => {
+  const c = await child(t, { launch: ["alpha", "alpha/echo"], already: ["mcp__alpha__echo"] });
+  assert.deepEqual(c.mcpActive(), ["mcp__alpha__echo"]);
+  assert.deepEqual(c.trace, []);
+  assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: mcp__alpha__echo. ${SEARCH}`);
 });

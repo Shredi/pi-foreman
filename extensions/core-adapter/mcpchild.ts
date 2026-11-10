@@ -126,7 +126,8 @@ export const namedCapNote = (count: number, cap: number): string =>
  * The prompt line of a launch that named MCP: which MCP tools are up front (`upfront` tool names, then `whole` servers
  * declared in bulk with their tool count), where the tools of the servers named whole and not declared (`search`) are
  * found, which named tool the server lacks. `silent` are servers with named tools of which none registered in time;
- * `overCap` are the bulk tools (`bulk`) of the servers named whole that, with the `named` tools declared, did not fit under `cap`.
+ * `overCap` are the bulk tools (`bulk`) of the servers named whole that, with the `named` tools declared, did not fit under `cap`;
+ * `hidden` are named tools (`server/tool`) the child cannot have because the MCP config hides them.
  */
 export function upfrontLine(
   upfront: readonly string[],
@@ -135,6 +136,7 @@ export function upfrontLine(
   whole: readonly { server: string; count: number }[] = [],
   silent: readonly { server: string; tools: readonly string[] }[] = [],
   overCap: { named: number; bulk: number; cap: number } | null = null,
+  hidden: readonly string[] = [],
 ): string {
   const items = [...upfront, ...whole.map((w) => `all ${w.count} tools of server ${w.server}`)];
   const have = items.length > 0 ? items.join(", ") : "none";
@@ -143,9 +145,10 @@ export function upfrontLine(
       ? `${items.length > 0 ? "The other tools" : "The tools"} of the MCP server${search.length > 1 ? "s" : ""} ${search.join(", ")} are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).`
       : "No other MCP tool is reachable in this launch.";
   const lacking = missing.length > 0 ? ` Named but not found on the server: ${missing.join(", ")}; name it under Friction in your report.` : "";
+  const unavailable = hidden.length > 0 ? ` Named but not available in this child (hidden in the MCP config): ${hidden.join(", ")}; name it under Friction in your report.` : "";
   const quiet = silent.map((s) => ` MCP server ${s.server} did not answer in time, so its named tools (${s.tools.join(", ")}) are not declared; they may be found with tool_search later; name it under Friction in your report.`).join("");
   const over = overCap ? ` ${overCap.named > 0 ? `With the ${overCap.named} named tool${overCap.named === 1 ? "" : "s"}, the` : "The"} ${overCap.bulk} MCP tools of the servers named whole are over the cap of ${overCap.cap} (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.` : "";
-  return `pi-foreman: MCP tools declared in your tool list: ${have}. ${rest}${lacking}${quiet}${over}`;
+  return `pi-foreman: MCP tools declared in your tool list: ${have}. ${rest}${lacking}${unavailable}${quiet}${over}`;
 }
 
 export class McpChild {
@@ -161,7 +164,12 @@ export class McpChild {
   private namedOver: { count: number; cap: number } | null = null;
   /** The prompt line of a launch that named MCP, set by `preload`: the same text on every turn on one provider; it can change only at a turn where the model provider changes to a direct one: tools get declared, or the over-the-cap note replaces the line (null until `preload` ran with a provider, and when only the over-the-cap note applies). */
   private line: string | null = null;
-  private preloaded = false;
+  /** The named part of `preload`, done at the first prompt with a provider: what the line says about the named tools (null until then, and for a launch without named tools). */
+  private stage: { upfront: string[]; count: number; missing: string[]; hidden: string[]; silent: { server: string; tools: string[] }[] } | null = null;
+  /** Set once a turn on a direct provider decided the bulk part (or nothing is left to decide). */
+  private bulkDone = false;
+  /** Servers (`serverKey`) the config filter dropped from Pi's list, e.g. because all their named tools are hidden. */
+  private dropped = new Set<string>();
   private trace: (record: Record<string, unknown>) => void = () => {};
   /** Why MCP is refused in this child (loader missing, extension not creatable), else null. */
   unsupported: string | null = null;
@@ -194,7 +202,7 @@ export class McpChild {
         if (prop === "getMcpServers") {
           return () => {
             const list = typeof target.getMcpServers === "function" ? ((target.getMcpServers as () => { name: string; config: Record<string, unknown> }[]).call(target) ?? []) : [];
-            return filterMcpConfig({ servers: list as never, errors: [] }, this.allowed).servers;
+            return this.filterLoaded({ servers: list as never, errors: [] }).servers;
           };
         }
         const value = target[prop as string];
@@ -222,7 +230,15 @@ export class McpChild {
   private loadConfig(ctx: ExtensionContext): McpLoadedLike {
     if (mcpEmpty(this.allowed) || !this.loader || this.unsupported) return { servers: [], errors: [] };
     const loaded = this.loader({ agentDir: piAgentDir(this.opts.env ?? process.env, os.homedir()), cwd: ctx.cwd, projectTrusted: ctx.isProjectTrusted() });
-    return filterMcpConfig(loaded, this.allowed);
+    return this.filterLoaded(loaded);
+  }
+
+  /** `filterMcpConfig` of the allowed set; remembers which servers of the list it dropped, so `preload` can tell a hidden server from a silent one. */
+  private filterLoaded<T extends McpLoadedLike>(loaded: T): T {
+    const out = filterMcpConfig(loaded, this.allowed);
+    const kept = new Set(out.servers.map((s) => serverKey(s.name)));
+    this.dropped = new Set(loaded.servers.map((s) => serverKey(s.name)).filter((key) => !kept.has(key)));
+    return out;
   }
 
   /**
@@ -236,20 +252,22 @@ export class McpChild {
    * plus bulk fit under the cap, else none of the bulk (a partial set would fail in less visible ways). A server named
    * whole together with named tools never declares its remainder; it stays findable through `tool_search`. Only tools
    * inside the child's MCP scope are loaded. `provider` is the model provider at that prompt (it may be unset at session
-   * start); without one nothing is loaded yet. The prompt line (`note`) is the same text on every turn on one provider; it can change only at a turn where the
+   * start); without one nothing is loaded yet. The named part is done once, at the first prompt with a provider; the bulk part stays pending until a turn on a direct provider decides it.
+   * A named tool already active (resumed) is listed as declared, not activated again; one whose exposure is neither `deferred` nor `codemode`, or whose server the config filter dropped, is listed as hidden. The prompt line (`note`) is the same text on every turn on one provider; it can change only at a turn where the
    * model provider changes to a direct one: tools get declared, or the over-the-cap note replaces the line (the request prefix changes there anyway).
    * With only bare servers over the cap, `note` gives the over-the-cap note instead of a line.
    */
   async preload(provider: string | undefined): Promise<void> {
-    if (provider === undefined || this.preloaded || mcpEmpty(this.allowed) || this.unsupported) return;
+    if (provider === undefined || this.bulkDone || mcpEmpty(this.allowed) || this.unsupported) return;
     const entries = namedEntries(this.allowed);
     const direct = directProviders(this.configuredDirect).includes(provider);
-    if (!direct && entries.length === 0) {
+    // the named part is done once, at the first prompt with a provider; the bulk part waits for a turn on a direct provider
+    const doNamed = this.stage === null && entries.length > 0;
+    if (!doNamed && !direct) {
       // nothing is declared on this provider: the same text on every turn here; a later turn on a direct provider declares tools and replaces it
-      this.line = upfrontLine([], this.allowed.servers, []);
+      if (this.stage === null) this.line = upfrontLine([], this.allowed.servers, []);
       return;
     }
-    this.preloaded = true;
     const wanted = (): string[] => [...this.labels].filter(([, label]) => mcpCallAllowed(this.allowed, label)).map(([name]) => name);
     const serverOf = (name: string): string => serverKey(this.labels.get(name)?.split("/", 1)[0] ?? "");
     const seen = (): Set<string> => new Set(wanted().map(serverOf));
@@ -267,32 +285,47 @@ export class McpChild {
     };
     const namedServers = new Set(entries.map((n) => serverKey(n.server)));
     const inactive = wanted().filter((name) => !active.includes(name));
-    const named = inactive.filter((name) => isNamed(name) && ["deferred", "codemode"].includes(exposure.get(name) ?? ""));
+    const named = doNamed ? inactive.filter((name) => isNamed(name) && ["deferred", "codemode"].includes(exposure.get(name) ?? "")) : [];
+    const activeNamed = doNamed ? wanted().filter((name) => active.includes(name) && isNamed(name)) : [];
     const bulk = direct ? inactive.filter((name) => exposure.get(name) === "deferred" && !namedServers.has(serverOf(name))) : [];
-    const loadable = inactive.filter((name) => named.includes(name) || bulk.includes(name));
     const cap = directMaxTools(this.configuredMax);
-    const registered = [...this.labels.values()].map((label) => splitEntry(label));
-    const missingEntries = entries.filter((n) => !registered.some((e) => e && serverKey(e.server) === serverKey(n.server) && e.tool === n.tool));
-    const answered = (server: string): boolean => registered.some((e) => e && serverKey(e.server) === serverKey(server));
-    const missing = missingEntries.filter((n) => answered(n.server)).map((n) => `${n.server}/${n.tool}`);
-    const silent = [...new Set(missingEntries.filter((n) => !answered(n.server)).map((n) => n.server))].map((server) => ({ server, tools: missingEntries.filter((n) => n.server === server).map((n) => `${n.server}/${n.tool}`) }));
+    if (doNamed) {
+      const registered = [...this.labels.values()].map((label) => splitEntry(label));
+      const missingEntries = entries.filter((n) => !registered.some((e) => e && serverKey(e.server) === serverKey(n.server) && e.tool === n.tool));
+      const answered = (server: string): boolean => registered.some((e) => e && serverKey(e.server) === serverKey(server));
+      const label = (n: { server: string; tool: string }): string => `${n.server}/${n.tool}`;
+      const unanswered = missingEntries.filter((n) => !answered(n.server));
+      const quiet = unanswered.filter((n) => !this.dropped.has(serverKey(n.server)));
+      this.stage = {
+        upfront: [],
+        count: activeNamed.length + named.length,
+        missing: missingEntries.filter((n) => answered(n.server)).map(label),
+        // registered but neither deferred nor codemode, and a server the filter dropped because its named tools are all hidden
+        hidden: [...inactive.filter((name) => isNamed(name) && !named.includes(name)).map((name) => this.labels.get(name) ?? name), ...unanswered.filter((n) => this.dropped.has(serverKey(n.server))).map(label)],
+        silent: [...new Set(quiet.map((n) => n.server))].map((server) => ({ server, tools: quiet.filter((n) => n.server === server).map(label) })),
+      };
+    }
+    const count = this.stage?.count ?? 0;
     const declared: string[] = [];
     let bulkDeclared = false;
-    if (named.length > cap) {
-      this.namedOver = { count: named.length, cap };
-      this.trace({ event: "mcp_child_named_capped", provider, count: named.length, cap });
+    if (count > cap) {
+      this.namedOver = { count, cap };
+      this.bulkDone = true;
+      this.trace({ event: "mcp_child_named_capped", provider, count, cap });
     } else {
-      bulkDeclared = bulk.length > 0 && named.length + bulk.length <= cap;
+      bulkDeclared = bulk.length > 0 && count + bulk.length <= cap;
       // in the order Pi registered them
-      declared.push(...loadable.filter((name) => named.includes(name) || (bulkDeclared && bulk.includes(name))));
+      declared.push(...inactive.filter((name) => named.includes(name) || (bulkDeclared && bulk.includes(name))));
+      if (this.stage && doNamed) this.stage.upfront = wanted().filter((name) => activeNamed.includes(name) || named.includes(name));
+      if (direct) this.bulkDone = true;
       if (declared.length > 0) {
         this.pi.setActiveTools([...active, ...declared]);
         const servers = [...new Set(declared.map((name) => this.labels.get(name)?.split("/", 1)[0] ?? ""))].sort();
         this.trace({ event: "mcp_child_direct", provider, servers: servers.join(","), count: declared.length });
       }
       if (bulk.length > 0 && !bulkDeclared) {
-        this.capped = { count: named.length + bulk.length, cap };
-        this.trace({ event: "mcp_child_direct_capped", provider, count: named.length + bulk.length, cap });
+        this.capped = { count: count + bulk.length, cap };
+        this.trace({ event: "mcp_child_direct_capped", provider, count: count + bulk.length, cap });
       }
     }
     if (!this.namedOver && entries.length === 0 && this.capped) {
@@ -301,7 +334,7 @@ export class McpChild {
       const bulkServers = new Set(bulkDeclared ? bulk.map(serverOf) : []);
       const search = this.allowed.servers.filter((server) => !bulkServers.has(serverKey(server)));
       const whole = [...bulkServers].map((key) => ({ server: this.allowed.servers.find((s) => serverKey(s) === key) ?? key, count: bulk.filter((name) => serverOf(name) === key).length }));
-      this.line = upfrontLine(declared.filter((name) => named.includes(name)), search, missing, whole, silent, this.capped ? { named: named.length, bulk: bulk.length, cap } : null);
+      this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, this.stage?.silent ?? [], this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? []);
     }
   }
 
