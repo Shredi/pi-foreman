@@ -596,7 +596,7 @@ pi-foreman installs as a Pi package; details in `docs/install.md`.
 
 | Capability | Choice | Version tested | Evidence summary |
 |---|---|---|---|
-| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.5.0 | All runs; signatures read from installed types |
+| Runtime | adopt Pi | `@earendil-works/pi-coding-agent` 1.5.1 | All runs; signatures read from installed types |
 | Subagents | **adopt** `pi-subagents`, every role detached | 0.75.0 | Hands-on: package roles discovered and launched; provider switch changes child model; full-id thinking override; codemode in child; required child extension blocks; strict tool allowlist. FAIL: foreground ask forwarding. |
 | Subagents (fallback) | fallback `@gotgenes/pi-subagents`, used only if the primary blocks | 22.0.0 | Hands-on: forwards foreground asks. Role and provider features not tested. |
 | Permission map | **replaced** by the own tool gate (r41); formerly `@gotgenes/pi-permission-system` 39.0.2 | n/a | Hands-on in the earlier layer notes; see `docs/permissions.md` |
