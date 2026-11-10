@@ -22,7 +22,7 @@ type Api = { getAllTools(): Tool[]; getActiveTools(): string[]; setActiveTools(n
 interface Setup {
   /** `roles.builder.mcp` and friends in the user's foreman.json. */
   roles?: Record<string, unknown>;
-  /** The launch binding's `mcp` (absent = no narrowing). */
+  /** The launch binding's `mcp` (absent = no MCP). */
   launchMcp?: string[];
   /** Replaces the fixture server entry of mcp.json. */
   server?: Record<string, unknown>;
@@ -94,7 +94,7 @@ const mcpTools = (api: Api): string[] => api.getAllTools().filter(({ name }) => 
 const quiet = (ms = 1500): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 test("a builder allowed fx starts the server, has tool_search active and mcp__fx__echo registered but not active; tool_search loads it", async () => {
-  await withChild({ roles: { builder: { mcp: ["fx"] } } }, async ({ api, startMarker }) => {
+  await withChild({ roles: { builder: { mcp: ["fx"] } }, launchMcp: ["fx"] }, async ({ api, startMarker }) => {
     assert.equal(await waitFor(() => fs.existsSync(startMarker)), true, "the server did not start");
     assert.equal(await waitFor(() => mcpTools(api).includes("mcp__fx__echo")), true, `registered: ${mcpTools(api).join(", ")}`);
     assert.ok(api.getActiveTools().includes("tool_search"), `active: ${api.getActiveTools().join(", ")}`);
@@ -108,7 +108,7 @@ test("a builder allowed fx starts the server, has tool_search active and mcp__fx
 });
 
 test("the server is shut down when the child ends", async () => {
-  const { exited } = await withChild({ roles: { builder: { mcp: ["fx"] } } }, async ({ api, startMarker }) => {
+  const { exited } = await withChild({ roles: { builder: { mcp: ["fx"] } }, launchMcp: ["fx"] }, async ({ api, startMarker }) => {
     assert.equal(await waitFor(() => fs.existsSync(startMarker)), true);
     assert.equal(await waitFor(() => mcpTools(api).length > 0), true);
   });
@@ -116,7 +116,7 @@ test("the server is shut down when the child ends", async () => {
 });
 
 test("an fx/echo entry leaves mcp__fx__shout hidden", async () => {
-  await withChild({ roles: { builder: { mcp: ["fx/echo"] } } }, async ({ api }) => {
+  await withChild({ roles: { builder: { mcp: ["fx/echo"] } }, launchMcp: ["fx/echo"] }, async ({ api }) => {
     assert.equal(await waitFor(() => mcpTools(api).includes("mcp__fx__echo")), true);
     const shout = api.getAllTools().find(({ name }) => name === "mcp__fx__shout");
     assert.ok(!shout || shout.exposure === "hidden", `shout: ${JSON.stringify(shout)}`);
@@ -164,7 +164,7 @@ test("a reviewer (denies mcp__*) with mcp in config starts nothing", async () =>
 
 test("a direct server in mcp.json is deferred in the child: not active, loaded by tool_search", async () => {
   const tmp = fs.realpathSync(os.tmpdir());
-  await withChild({ roles: { builder: { mcp: ["fx"] } }, server: { command: process.execPath, args: [fixture, path.join(tmp, `fx-direct-${process.pid}-s`), path.join(tmp, `fx-direct-${process.pid}-e`)], exposure: "direct" } }, async ({ api }) => {
+  await withChild({ roles: { builder: { mcp: ["fx"] } }, launchMcp: ["fx"], server: { command: process.execPath, args: [fixture, path.join(tmp, `fx-direct-${process.pid}-s`), path.join(tmp, `fx-direct-${process.pid}-e`)], exposure: "direct" } }, async ({ api }) => {
     assert.equal(await waitFor(() => mcpTools(api).includes("mcp__fx__echo")), true);
     assert.equal(api.getAllTools().find(({ name }) => name === "mcp__fx__echo")?.exposure, "deferred");
     assert.equal(api.getActiveTools().includes("mcp__fx__echo"), false);

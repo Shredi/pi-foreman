@@ -53,12 +53,12 @@ async function childRig(t: T, o: Opts = {}) {
 }
 
 test("a call inside the role's scope passes; a registered foreign tool and an unregistered mcp__ name are blocked with a trace", async (t) => {
-  const { rig } = await childRig(t);
+  const { rig } = await childRig(t, { mcp: ["fx"] });
   assert.equal(await rig.call("mcp__fx__echo", {}), undefined);
   assert.equal(await rig.call("mcp__fx__shout", {}), undefined);
   const foreign = await rig.call("mcp__other__probe", {});
   assert.equal(foreign?.block, true);
-  assert.equal(foreign?.reason, "pi-foreman: `mcp__other__probe` is outside the MCP scope of role builder (roles.builder.mcp).");
+  assert.equal(foreign?.reason, "pi-foreman: `mcp__other__probe` is outside the MCP scope of role builder (roles.builder.mcp, launch mcp).");
   const ghost = await rig.call("mcp__ghost__x", {});
   assert.equal(ghost?.block, true);
   assert.match(ghost?.reason ?? "", /outside the MCP scope of role builder/);
@@ -81,7 +81,7 @@ test("a launch mcp list narrows the guard: fx/echo allows echo only, and the rea
 });
 
 test("a tool_call arriving after a codemode call (how a nested call surfaces) is judged like a direct call", async (t) => {
-  const { rig } = await childRig(t);
+  const { rig } = await childRig(t, { mcp: ["fx"] });
   assert.equal(await rig.call("codemode", { code: "return 1" }), undefined);
   // the nested call arrives as its own tool_call with the nested tool's name
   const inner = await rig.call("mcp__other__probe", {});
@@ -91,7 +91,7 @@ test("a tool_call arriving after a codemode call (how a nested call surfaces) is
 });
 
 test("hyphen and underscore server names are one server", async (t) => {
-  const { rig } = await childRig(t, { roles: { builder: { mcp: ["my-srv"] } }, tools: [["mcp__my_srv__ping", "my-srv/ping"]] });
+  const { rig } = await childRig(t, { roles: { builder: { mcp: ["my-srv"] } }, mcp: ["my-srv"], tools: [["mcp__my_srv__ping", "my-srv/ping"]] });
   assert.equal(await rig.call("mcp__my_srv__ping", {}), undefined);
 });
 
@@ -123,7 +123,7 @@ test("the MCP extension is created in every child with a loadConfig", async (t) 
 });
 
 test("a missing loader refuses MCP in that child: trace mcp_child_unsupported, tool_search inactive, a prompt line", async (t) => {
-  const { rig, active } = await childRig(t, { resolveRoot: () => null, roles: { builder: { mcp: ["fx"], searchable: [] } } });
+  const { rig, active } = await childRig(t, { resolveRoot: () => null, roles: { builder: { mcp: ["fx"], searchable: [] } }, mcp: ["fx"] });
   const rows = rig.events("mcp_child_unsupported");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].role, "builder");

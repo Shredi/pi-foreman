@@ -69,7 +69,7 @@ import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
 import type { McpChildOpts } from "./mcpchild.ts";
-import { PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
+import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
 import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -1362,7 +1362,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const s = await startSession(ctx);
     recordIdentity(s, ctx, event.reason, restored);
     await initSkills(s);
-    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"));
+    await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
@@ -3043,6 +3043,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (unknown.length > 0) {
             s.trace?.emit({ event: "mcp_launch_unknown_server", role: mcpPlan.entries[0].role, reason: unknown.join(",") });
             mcpNotes.push(unknownServerLine(mcpPlan.entries[0].role, unknown));
+          }
+          // No `mcp` means no MCP for the child: a task that names a ceiling server gets a hint, never a refusal.
+          const named = launchMcp === undefined ? namedCeilingServers(get(s.config.config, "roles"), mcpPlan.entries[0].role, callerTask) : [];
+          if (named.length > 0) {
+            s.trace?.emit({ event: "mcp_launch_hint", role: mcpPlan.entries[0].role, reason: named.join(",") });
+            mcpNotes.push(mcpHintLine(mcpPlan.entries[0].role, named));
           }
         }
         const outPath = outputPathBlock(input);

@@ -37,7 +37,7 @@ test("McpChild.loadConfig follows ctx.isProjectTrusted(): false hides the projec
       loadConfig = o.loadConfig;
     };
     const api = { on: () => {}, registerTool: () => {}, getActiveTools: () => ["tool_search"], setActiveTools: () => {}, getAllTools: () => [] };
-    const mcp = new McpChild(api as never, { binding: { role: "builder" }, env: w.env, createMcp });
+    const mcp = new McpChild(api as never, { binding: { role: "builder", mcp: ["globalfx", "projfx"] }, env: w.env, createMcp });
     mcp.install();
     await mcp.start({ builder: { mcp: ["globalfx", "projfx"] } }, () => {});
     const names = (trusted: () => boolean) => loadConfig!({ cwd: w.project, isProjectTrusted: trusted }).servers.map((s) => s.name).sort();

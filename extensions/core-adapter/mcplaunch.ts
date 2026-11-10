@@ -1,5 +1,5 @@
 // Launch side of MCP on demand (round 68): the `mcp` field of `subagent`, top-level and per entry of `tasks`, `chain`
-// and `chain[i].parallel` (also the object of a dynamic fan-out). The field narrows `roles.<role>.mcp` for one child; it
+// and `chain[i].parallel` (also the object of a dynamic fan-out). The field names what one child gets, inside `roles.<role>.mcp` (absent or `[]` = nothing); it
 // is validated against the entry's role, stripped before pi-subagents sees the call and carried in the launch binding.
 // pi-subagents forwards `extensionBindings` to a child only on its single path, so a group launch that needs a binding
 // is refused until a pinned pi-subagents forwards per-entry bindings (PER_ENTRY_BINDINGS).
@@ -74,7 +74,7 @@ function checkList(value: unknown, role: string, configRoles: unknown): { list?:
 /**
  * Validate and strip the `mcp` fields of a `subagent` launch (the input is changed: the fields are removed). Management
  * calls (an `action`) are left alone. With `perEntryBindings` false, a group (`tasks`/`chain`) that needs a binding, that is
- * any entry whose role has a non-empty ceiling or that carries `mcp`, is refused.
+ * any entry that carries `mcp`, is refused; an entry without `mcp` gets no MCP and needs none.
  */
 export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntryBindings?: boolean; pinned?: string } = {}): McpPlan {
   if (!isObj(input) || input.action !== undefined) return { entries: [], group: false };
@@ -105,7 +105,7 @@ export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntr
     }
   }
   if (group && !opts.perEntryBindings) {
-    const needs = entries.some((e) => e.mcp !== undefined || roleMcpEntries(configRoles, e.role).length > 0);
+    const needs = entries.some((e) => e.mcp !== undefined);
     if (needs) return refuse("mcp_group_gate", groupGateText(opts.pinned ?? pinnedSubagentsVersion()));
   }
   delete input.mcp;
@@ -124,6 +124,18 @@ export function unknownServers(configRoles: unknown, role: string, launchMcp: st
 
 export const unknownServerLine = (role: string, servers: string[]): string =>
   `pi-foreman: MCP server ${servers.join(", ")} (role ${role}) is not in Pi's mcp.json (global file, or the project file when trusted); the child cannot load it.`;
+
+/** Servers of the role's ceiling (minus its denies) that `task` names as a whole word, in the `-` or the `_` form, any case. */
+export function namedCeilingServers(configRoles: unknown, role: string, task: string): string[] {
+  const ceiling = allowedMcp(configRoles, role, roleMcpEntries(configRoles, role));
+  return [...ceiling.servers, ...Object.keys(ceiling.tools)].filter((server) => {
+    const name = server.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[-_]/g, "[-_]");
+    return new RegExp(`(?<![A-Za-z0-9_-])${name}(?![A-Za-z0-9_-])`, "i").test(task);
+  });
+}
+
+export const mcpHintLine = (role: string, servers: string[]): string =>
+  `pi-foreman: the task names MCP server ${servers.join(", ")} (roles.${role}.mcp) but the launch has no mcp field, so the child runs without MCP; pass mcp: [${servers.map((s) => JSON.stringify(s)).join(", ")}] to give it that server.`;
 
 // ---------------------------------------------------------------- workflow scripts (A22)
 

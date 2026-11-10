@@ -1,6 +1,6 @@
 // MCP scope of a child (round 68): which servers and tools a child of a role may load on demand.
 // `roles.<role>.mcp` is the ceiling (entries `server` or `server/tool`), `denyTools` wins over it, and a launch's
-// `mcp` list narrows it. Pure functions; the child wiring is mcpchild.ts, the launch validation is mcplaunch.ts.
+// `mcp` list names what the child gets inside it (absent or `[]` = nothing). Pure functions; the child wiring is mcpchild.ts, the launch validation is mcplaunch.ts.
 import { denyPatterns, globMatch } from "./roledeny.ts";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -68,15 +68,14 @@ function build(entries: Iterable<string>, patterns: readonly string[]): McpAllow
 
 /**
  * The servers and tools a child of `role` may load: the role's list, minus entries its `denyTools` would deny,
- * narrowed by the launch list when given (`undefined`/`null` = no narrowing; `[]` = nothing). A launch entry
+ * narrowed by the launch list (`undefined`/`null` or `[]` = nothing: a launch names what its child needs). A launch entry
  * counts only inside the ceiling: `server` if the role lists that server, `server/tool` if the role lists the
  * server or the same entry. A bare `server` entry wins over `server/tool` entries of that server.
  */
 export function allowedMcp(configRoles: unknown, role: string | null | undefined, launchMcp?: readonly string[] | null): McpAllowed {
   const ceiling = roleMcpEntries(configRoles, role);
-  if (ceiling.length === 0) return { servers: [], tools: {} };
+  if (ceiling.length === 0 || !Array.isArray(launchMcp)) return { servers: [], tools: {} };
   const patterns = denyPatterns(configRoles, role);
-  if (!Array.isArray(launchMcp)) return build(ceiling, patterns);
   const base = build(ceiling, patterns);
   const kept: string[] = [];
   for (const entry of launchMcp) {
@@ -140,6 +139,13 @@ const childExposure = (e: Exposure): Exposure => (e === "direct" ? "deferred" : 
 /** Provider ids whose child gets its allowed deferred MCP tools declared up front (mcp.directProviders); unset = claude-bridge, [] = none. */
 export function directProviders(configured: unknown): string[] {
   return Array.isArray(configured) ? configured.filter((x): x is string => typeof x === "string") : ["claude-bridge"];
+}
+
+export const DIRECT_MAX_TOOLS = 40;
+
+/** How many MCP tools the up-front declaration may hold (mcp.directMaxTools); unset or not a positive integer = 40. */
+export function directMaxTools(configured: unknown): number {
+  return typeof configured === "number" && Number.isInteger(configured) && configured > 0 ? configured : DIRECT_MAX_TOOLS;
 }
 
 const patternRe = (pattern: string): RegExp => new RegExp("^" + pattern.split("*").map((p) => p.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");

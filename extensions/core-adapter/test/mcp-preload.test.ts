@@ -53,30 +53,30 @@ test("directProviders: unset means claude-bridge, an array is taken as is, [] tu
 });
 
 test("a listed provider gets the allowed deferred tools declared; tools of servers outside the ceiling are not", async () => {
-  const c = await child(ROLES, TOOLS, "p1", ["p1"]);
+  const c = await child(ROLES, TOOLS, "p1", ["p1"], ["fx"]);
   assert.deepEqual(c.active, ["read", "tool_search", "mcp__fx__echo", "mcp__fx__shout"]);
   assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p1", servers: "fx", count: 2 }]);
 });
 
 test("the default list names claude-bridge", async () => {
-  assert.equal((await child(ROLES, TOOLS, "claude-bridge", undefined)).calls.length, 1);
-  assert.equal((await child(ROLES, TOOLS, "p1", undefined)).calls.length, 0);
+  assert.equal((await child(ROLES, TOOLS, "claude-bridge", undefined, ["fx"])).calls.length, 1);
+  assert.equal((await child(ROLES, TOOLS, "p1", undefined, ["fx"])).calls.length, 0);
 });
 
 test("an unlisted provider keeps the tools deferred and traces nothing", async () => {
-  const c = await child(ROLES, TOOLS, "p2", ["p1"]);
+  const c = await child(ROLES, TOOLS, "p2", ["p1"], ["fx"]);
   assert.deepEqual(c.calls, []);
   assert.deepEqual(c.trace, []);
 });
 
 test("an empty list disables it, even for claude-bridge", async () => {
-  const c = await child(ROLES, TOOLS, "claude-bridge", []);
+  const c = await child(ROLES, TOOLS, "claude-bridge", [], ["fx"]);
   assert.deepEqual(c.calls, []);
   assert.deepEqual(c.trace, []);
 });
 
 test("a server/tool ceiling declares only that tool", async () => {
-  const c = await child({ builder: { mcp: ["fx/echo"] } }, TOOLS, "p1", ["p1"]);
+  const c = await child({ builder: { mcp: ["fx/echo"] } }, TOOLS, "p1", ["p1"], ["fx/echo"]);
   assert.deepEqual(c.active, ["read", "tool_search", "mcp__fx__echo"]);
   assert.equal(c.trace[0]?.count, 1);
 });
@@ -88,7 +88,7 @@ test("a launch mcp list narrows what is declared", async () => {
 
 test("only deferred tools are declared: codemode and already direct tools stay as they are", async () => {
   const tools = [{ name: "mcp__fx__echo", label: "fx/echo", exposure: "codemode" }, { name: "mcp__fx__shout", label: "fx/shout", exposure: "direct" }];
-  const c = await child(ROLES, tools, "p1", ["p1"]);
+  const c = await child(ROLES, tools, "p1", ["p1"], ["fx"]);
   assert.deepEqual(c.calls, []);
   assert.deepEqual(c.trace, []);
 });
@@ -100,7 +100,7 @@ test("a child without a ceiling declares nothing", async () => {
 });
 
 test("a provider known only at a later before_agent_start still preloads, once", async () => {
-  const c = await child(ROLES, TOOLS, "p1", ["p1"], undefined, [undefined, "p2"]);
+  const c = await child(ROLES, TOOLS, "p1", ["p1"], ["fx"], [undefined, "p2"]);
   assert.deepEqual(c.active, ["read", "tool_search", "mcp__fx__echo", "mcp__fx__shout"]);
   assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p1", servers: "fx", count: 2 }]);
 });

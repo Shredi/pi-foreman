@@ -82,12 +82,15 @@ function parseOne(size: unknown, risk: unknown): { declared: Declared; error?: s
 /** The sentence the model sees (tool description, error hint): where `size` and `risk` go. */
 export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}` and `risk: [...]` are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
 
-/** The foreman's `subagent` tool description with the placement sentence added; null when sizing is off, the tool is not declared or the sentence is already there. */
+/** The sentence the model sees (tool description): a child gets MCP tools only when its launch names them. */
+export const MCP_LAUNCH_NOTE = "A child gets no MCP tools unless the launch names them: `mcp: [\"server\", \"server/tool\"]`. `mcp` is a top-level key of this call, beside `agent` and `task`, never inside `options` or `args`, and stays inside the role's ceiling (`roles.<role>.mcp`); no `mcp` or `[]` means none.";
+
+/** The foreman's `subagent` tool description with the placement sentence and the MCP sentence added; null when sizing is off, the tool is not declared or the sentence is already there. */
 export function subagentDescription(declared: readonly { name: string; description?: string }[], enabled: boolean): string | null {
   if (!enabled) return null;
   const sub = declared.find((t) => t.name === "subagent");
   if (!sub || typeof sub.description !== "string" || sub.description.includes(TOP_LEVEL_NOTE)) return null;
-  return `${sub.description}\n\nBuilder launches (pi-foreman): ${TOP_LEVEL_NOTE}`;
+  return `${sub.description}\n\nBuilder launches (pi-foreman): ${TOP_LEVEL_NOTE} ${MCP_LAUNCH_NOTE}`;
 }
 
 /** The text appended to a pi-subagents refusal caused by a misplaced `size`/`risk`; null for any other error text. */
