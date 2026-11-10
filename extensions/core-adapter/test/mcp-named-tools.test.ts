@@ -123,7 +123,7 @@ test("e: [alpha, beta/probe] direct: probe is up front; alpha in bulk when named
   assert.deepEqual(over.mcpActive(), ["mcp__beta__probe"]);
   assert.deepEqual(over.trace, [{ event: "mcp_child_direct", provider: "p1", servers: "beta", count: 1 }, { event: "mcp_child_direct_capped", provider: "p1", count: 4, cap: 3 }]);
   assert.match(over.mcp.note() ?? "", /other tools of the MCP server alpha are not declared: find them with tool_search/);
-  assert.match(over.mcp.note() ?? "", /The 3 MCP tools of the servers named whole are over the cap of 3 \(mcp\.directMaxTools\), so they are not declared and found with tool_search; name that under Friction/);
+  assert.match(over.mcp.note() ?? "", /With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 \(mcp\.directMaxTools\), so they are not declared and found with tool_search; name that under Friction/);
   assert.equal(over.mcp.callBlock("mcp__alpha__shout"), undefined);
 });
 
@@ -258,7 +258,7 @@ test("h2: [alpha, beta/probe] with alpha over the cap: the line carries the cap 
   const c = await child(t, { launch: ["alpha", "beta/probe"], tools, max: 3 });
   assert.equal(
     c.mcp.note(),
-    "pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. The other tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). The 4 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.",
+    "pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. The other tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). With the 1 named tool, the 4 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.",
   );
 });
 
@@ -270,6 +270,35 @@ test("h2: a server that registered nothing in time is reported as not answering;
   const lacking = await child(t, { launch: ["alpha/echo", "alpha/missing"] });
   assert.match(lacking.mcp.note() ?? "", /Named but not found on the server: alpha\/missing/);
   assert.doesNotMatch(lacking.mcp.note() ?? "", /did not answer/);
+});
+
+// ---------------------------------------------------------------- h3: codemode exposure (the default of a server in mcp.json)
+
+const codemode = (tools: Reg[]): Reg[] => tools.map((x) => ({ ...x, exposure: "codemode" }));
+
+test("h3: a named tool of a codemode server is active on a direct and on another provider, and the line names it", async (t) => {
+  for (const provider of ["p1", "p2"]) {
+    const c = await child(t, { launch: ["alpha/echo"], provider, tools: codemode(TOOLS) });
+    assert.deepEqual(c.mcpActive(), ["mcp__alpha__echo"], provider);
+    assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: mcp__alpha__echo. No other MCP tool is reachable in this launch.", provider);
+  }
+});
+
+test("h3: a whole codemode server plus a named tool of it: the named one is active, the rest is not, the line says so", async (t) => {
+  const c = await child(t, { launch: ["alpha", "alpha/echo"], tools: codemode(TOOLS) });
+  assert.deepEqual(c.mcpActive(), ["mcp__alpha__echo"]);
+  assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: mcp__alpha__echo. The other tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).");
+  const bare = await child(t, { launch: ["alpha"], tools: codemode(TOOLS) });
+  assert.deepEqual(bare.mcpActive(), [], "codemode tools are not declared in bulk");
+});
+
+test("h3: the over-the-cap sentence counts named plus bulk: bulk alone at the cap, named plus bulk over it", async (t) => {
+  const tools: Reg[] = [{ name: "mcp__beta__probe", label: "beta/probe" }, ...many(3)];
+  const c = await child(t, { launch: ["alpha", "beta/probe"], tools, max: 3 });
+  assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
+  const note = c.mcp.note() ?? "";
+  assert.match(note, / With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 \(mcp\.directMaxTools\), so they are not declared and found with tool_search;/);
+  assert.doesNotMatch(note, /The 3 MCP tools/);
 });
 
 // ---------------------------------------------------------------- i: the launch hook
