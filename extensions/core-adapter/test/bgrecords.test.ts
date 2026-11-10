@@ -99,6 +99,10 @@ test("bg_run result parser: name and id from the first line", () => {
   assert.equal(parseStarted("No task"), null);
 });
 
+test("bg_run result parser: the add-on's real first line carries 'background task'", () => {
+  assert.deepEqual(parseStarted("Started background task sleep 90 (a1b2c3d4)\nStatus: running\nPID: 123\nOutput: /x"), { name: "sleep 90", id: "a1b2c3d4" });
+});
+
 test("installBgRecords: status request after session_start re-posts running tasks, terminal frame flips, shutdown clears", async () => {
   const handlers: Record<string, ((...a: any[]) => Promise<void>)[]> = {};
   const subs: Record<string, ((d: unknown) => void)[]> = {};

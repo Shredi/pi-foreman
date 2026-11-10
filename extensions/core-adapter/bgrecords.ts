@@ -14,7 +14,7 @@ const MAX_TITLE_BYTES = 192;
 const MAX_MSG_BYTES = 2048;
 const ID_CHARS = 12;
 
-// The add-on's EventBus channels (docs/api/eventbus-v1.md of pi-background-tasks); strings only, the package is never imported.
+// The add-on's EventBus channels and schemas (core/extension-api.ts of pi-background-tasks); strings only, the package is never imported.
 export const BG_REQUEST_CHANNEL = "pi-background-tasks:request:v1";
 export const BG_RESPONSE_CHANNEL = "pi-background-tasks:response:v1";
 export const BG_TERMINAL_CHANNEL = "pi-background-tasks:terminal:v1";
@@ -50,9 +50,9 @@ export function oscReport(fields: { state: BgState | "clear"; id: string; title?
   return `\x1b]7501;${pairs.join(":")}\x1b\\`;
 }
 
-/** `Started <name> (<id>)` first line of a bg_run result; null for anything else. */
+/** `Started background task <name> (<id>)` (older form: `Started <name> (<id>)`) first line of a bg_run result; null for anything else. */
 export function parseStarted(text: string): { name: string; id: string } | null {
-  const m = /^Started (.+) \(([^()\s]+)\)\s*(?:\n|$)/.exec(text);
+  const m = /^Started (?:background task )?(.+) \(([^()\s]+)\)\s*(?:\n|$)/.exec(text);
   return m ? { name: m[1], id: m[2] } : null;
 }
 
