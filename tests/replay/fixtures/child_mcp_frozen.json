@@ -1,7 +1,7 @@
 {
  "foreman": {
   "b1": [
-   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] load the echo tool and call it"}}]},
+   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bld]] load the echo tool and call it", "mcp": ["fx"]}}]},
    {"text": "Launched."},
    {"text": "Builder reported."}
   ]

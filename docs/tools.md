@@ -67,7 +67,7 @@ explorer, builder and reviewer, and overlay roles likewise) get the four names i
 list.
 
 Every child role also gets `tool_search`, through which MCP tools load on demand within the role's `roles.<id>.mcp`
-ceiling (see [roles](roles.md#rolesidmcp)). It is inactive in a child whose role allows no MCP server. On a `mcp.directProviders` provider the allowed deferred tools are declared before the child's first prompt instead, so they are callable there.
+ceiling (see [roles](roles.md#rolesidmcp)). In a child whose role allows no MCP server or whose launch named no `mcp`, no MCP tool is found or callable, and it stays active only when the role has searchable tools or hidden skills, otherwise it is inactive. On a `mcp.directProviders` provider the allowed deferred tools are declared before the child's first prompt instead, so they are callable there.
 
 ### Trace and retro
 

@@ -1,7 +1,7 @@
 // MCP in a child (round 68): core-adapter loads Pi's own MCP extension in every child with a filtered server list and
 // registers the harness `tool_search` (toolsearch.ts), so a child loads an MCP tool on demand and only within its role's scope (mcpscope.ts).
 // The binding is captured at factory time and the allowed set is computed from it in `start` (the child's
-// session_start), never from env later. A child without a binding allows nothing (fail closed).
+// session_start), never from env later. A child without a binding, or whose launch named no `mcp`, allows nothing (fail closed).
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -10,7 +10,7 @@ import * as sdk from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { piAgentDir } from "./env.ts";
 import type { Env } from "./env.ts";
-import { allowedMcp, directProviders, filterMcpConfig, mcpCallAllowed, mcpEmpty, serverKey } from "./mcpscope.ts";
+import { allowedMcp, directMaxTools, directProviders, filterMcpConfig, mcpCallAllowed, mcpEmpty, serverKey } from "./mcpscope.ts";
 import type { McpAllowed, McpLoadedLike } from "./mcpscope.ts";
 
 export const TOOL_SEARCH = "tool_search";
@@ -98,7 +98,7 @@ export function searchableOf(configRoles: unknown, role: string | undefined): st
 }
 
 export interface McpChildOpts {
-  /** The launch binding read at factory time (role, optional launch `mcp`); null = none, nothing is allowed. */
+  /** The launch binding read at factory time (role, optional launch `mcp`); null or no `mcp` = nothing is allowed. */
   binding: { role: string; mcp?: string[] } | null;
   env?: Env;
   /** Injectable for tests: the Pi package root and the file import of the loader. */
@@ -116,11 +116,18 @@ const PRELOAD_WAIT_MS = 10_000;
 
 export const unsupportedNote = (reason: string): string => `pi-foreman: MCP is not available in this child (${reason}). Do not look for MCP tools; name the missing MCP tool under Friction in your report.`;
 
+export const cappedNote = (count: number, cap: number): string =>
+  `pi-foreman: the ${count} MCP tools allowed to this child are over the cap of ${cap} (mcp.directMaxTools), so none was declared up front (they stay deferred; a tool loaded with tool_search is callable from the next turn on a provider that fixes its tool list per turn). Do not rely on MCP tools; under Friction in your report write that ${count} MCP tools were over the cap of ${cap}, and that the launch should narrow them with mcp: ["server/tool"] or the owner raise mcp.directMaxTools.`;
+
 export class McpChild {
   /** Set by `start` from the captured binding. */
   allowed: McpAllowed = { servers: [], tools: {} };
   /** `mcp.directProviders` as configured, set by `start`; `preload` matches the turn's provider against it. */
   private configuredDirect: unknown;
+  /** `mcp.directMaxTools` as configured, set by `start`. */
+  private configuredMax: unknown;
+  /** Set by `preload` when the tools it would declare were over the cap. */
+  private capped: { count: number; cap: number } | null = null;
   private preloaded = false;
   private trace: (record: Record<string, unknown>) => void = () => {};
   /** Why MCP is refused in this child (loader missing, extension not creatable), else null. */
@@ -191,6 +198,8 @@ export class McpChild {
    * prompt, once the allowed servers' tools are registered (bounded wait), load the allowed deferred ones the way
    * `tool_search` would: they are declared in the first request. Only tools inside the child's MCP scope are loaded.
    * `provider` is the model provider at that prompt (it may be unset at session start); without one nothing is loaded yet.
+   * More tools than `mcp.directMaxTools` are not declared at all (a partial set would fail in less visible ways): the
+   * child's prompt says so (`note`).
    */
   async preload(provider: string | undefined): Promise<void> {
     if (provider === undefined || !directProviders(this.configuredDirect).includes(provider) || this.preloaded || mcpEmpty(this.allowed) || this.unsupported) return;
@@ -207,6 +216,12 @@ export class McpChild {
     const active = this.pi.getActiveTools();
     const load = wanted().filter((name) => exposure.get(name) === "deferred" && !active.includes(name));
     if (load.length === 0) return;
+    const cap = directMaxTools(this.configuredMax);
+    if (load.length > cap) {
+      this.capped = { count: load.length, cap };
+      this.trace({ event: "mcp_child_direct_capped", provider, count: load.length, cap });
+      return;
+    }
     this.pi.setActiveTools([...active, ...load]);
     const servers = [...new Set(load.map((name) => this.labels.get(name)?.split("/", 1)[0] ?? ""))].sort();
     this.trace({ event: "mcp_child_direct", provider, servers: servers.join(","), count: load.length });
@@ -217,12 +232,13 @@ export class McpChild {
    * loader import, and take `tool_search` out of the active set when no MCP is available so no declaration is sent.
    * When the child's model provider is listed in `mcp.directProviders` (`configuredDirect`), `preload` declares the
    * allowed deferred tools up front (a provider that fixes its tool list per turn cannot call a tool that
-   * `tool_search` loads mid-turn).
+   * `tool_search` loads mid-turn), up to `mcp.directMaxTools` (`configuredMax`).
    */
-  async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void, configuredDirect?: unknown): Promise<void> {
+  async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void, configuredDirect?: unknown, configuredMax?: unknown): Promise<void> {
     const binding = this.opts.binding;
     this.trace = trace;
     this.configuredDirect = configuredDirect;
+    this.configuredMax = configuredMax;
     this.allowed = allowedMcp(configRoles, binding?.role, binding?.mcp);
     const { load, reason } = await this.loading;
     this.loader = load;
@@ -245,9 +261,10 @@ export class McpChild {
     }
   }
 
-  /** The prompt line of a child whose MCP is refused, else null. */
+  /** The prompt line of a child whose MCP is refused or whose up-front declaration was over the cap, else null. */
   note(): string | null {
-    return this.unsupported ? unsupportedNote(this.unsupported) : null;
+    if (this.unsupported) return unsupportedNote(this.unsupported);
+    return this.capped ? cappedNote(this.capped.count, this.capped.cap) : null;
   }
 
   /** Block text for a call to `tool` outside the child's MCP scope, else undefined. Only `mcp__` names are judged. */

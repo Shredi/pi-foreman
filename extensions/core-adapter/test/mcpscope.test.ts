@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { allowedMcp, filterMcpConfig, mcpCallAllowed, mcpEmpty, toolExposureOf } from "../mcpscope.ts";
+import { allowedMcp, filterMcpConfig, mcpCallAllowed, mcpEmpty, roleMcpEntries, toolExposureOf } from "../mcpscope.ts";
 import type { McpEntryLike } from "../mcpscope.ts";
 
 const roles = {
@@ -11,10 +11,13 @@ const roles = {
   none: {},
 };
 
+/** The role's whole ceiling: a launch that names every entry of the role's list. */
+const whole = (r: unknown, role: string) => allowedMcp(r, role, roleMcpEntries(r, role));
+
 test("the allowed set is the role list; a bare server entry wins over its server/tool entries", () => {
-  assert.deepEqual(allowedMcp(roles, "builder"), { servers: ["fx"], tools: { docs: ["search"], "my-srv": ["ping"] } });
-  assert.deepEqual(allowedMcp(roles, "explorer"), { servers: ["fx"], tools: {} });
-  assert.deepEqual(allowedMcp({ builder: { mcp: ["fx/echo", "fx/shout", "fx/echo"] } }, "builder"), { servers: [], tools: { fx: ["echo", "shout"] } });
+  assert.deepEqual(whole(roles, "builder"), { servers: ["fx"], tools: { docs: ["search"], "my-srv": ["ping"] } });
+  assert.deepEqual(whole(roles, "explorer"), { servers: ["fx"], tools: {} });
+  assert.deepEqual(whole({ builder: { mcp: ["fx/echo", "fx/shout", "fx/echo"] } }, "builder"), { servers: [], tools: { fx: ["echo", "shout"] } });
 });
 
 test("a role without mcp, an unknown role and an unreadable role allow nothing", () => {
@@ -23,18 +26,19 @@ test("a role without mcp, an unknown role and an unreadable role allow nothing",
 });
 
 test("denyTools wins: a deny pattern on a server empties it, other servers stay", () => {
-  assert.ok(mcpEmpty(allowedMcp(roles, "reviewer")));
-  assert.deepEqual(allowedMcp(roles, "custom"), { servers: ["fx"], tools: {} });
-  assert.ok(mcpEmpty(allowedMcp({ r: { mcp: ["a/b"], denyTools: ["mcp__a__b"] } }, "r")));
+  assert.ok(mcpEmpty(whole(roles, "reviewer")));
+  assert.deepEqual(whole(roles, "custom"), { servers: ["fx"], tools: {} });
+  assert.ok(mcpEmpty(whole({ r: { mcp: ["a/b"], denyTools: ["mcp__a__b"] } }, "r")));
 });
 
-test("launch narrowing keeps entries inside the ceiling, [] allows nothing, undefined no narrowing", () => {
+test("launch narrowing keeps entries inside the ceiling, [] and an absent list allow nothing", () => {
   assert.deepEqual(allowedMcp(roles, "builder", ["fx"]), { servers: ["fx"], tools: {} });
   assert.deepEqual(allowedMcp(roles, "builder", ["fx/echo"]), { servers: [], tools: { fx: ["echo"] } });
   assert.deepEqual(allowedMcp(roles, "builder", ["docs/search", "my_srv/ping"]), { servers: [], tools: { docs: ["search"], my_srv: ["ping"] } });
   assert.ok(mcpEmpty(allowedMcp(roles, "builder", [])));
-  assert.deepEqual(allowedMcp(roles, "builder", undefined), allowedMcp(roles, "builder"));
-  assert.deepEqual(allowedMcp(roles, "builder", null), allowedMcp(roles, "builder"));
+  assert.ok(mcpEmpty(allowedMcp(roles, "builder")));
+  assert.ok(mcpEmpty(allowedMcp(roles, "builder", undefined)));
+  assert.ok(mcpEmpty(allowedMcp(roles, "builder", null)));
 });
 
 test("launch entries outside the ceiling are dropped", () => {

@@ -76,10 +76,10 @@ test("a forged per-entry binding is dropped by stripBinding", () => {
 
 const groups: Array<[string, () => Record<string, unknown>]> = [
   ["tasks entry with mcp", () => ({ tasks: [{ agent: "builder", task: "a", mcp: ["fx"] }] })],
-  ["tasks entry whose role has a ceiling", () => ({ tasks: [{ agent: "builder", task: "a" }] })],
-  ["chain entry", () => ({ chain: [{ agent: "builder", task: "a" }] })],
-  ["chain parallel entry", () => ({ chain: [{ parallel: [{ agent: "explorer", task: "e" }, { agent: "builder", task: "a" }] }] })],
-  ["dynamic fan-out step", () => ({ chain: [{ expand: "x", collect: "y", parallel: { agent: "builder", task: "a" } }] })],
+  ["tasks entry with mcp: []", () => ({ tasks: [{ agent: "builder", task: "a", mcp: [] }] })],
+  ["chain entry", () => ({ chain: [{ agent: "builder", task: "a", mcp: ["fx"] }] })],
+  ["chain parallel entry", () => ({ chain: [{ parallel: [{ agent: "explorer", task: "e" }, { agent: "builder", task: "a", mcp: ["fx"] }] }] })],
+  ["dynamic fan-out step", () => ({ chain: [{ expand: "x", collect: "y", parallel: { agent: "builder", task: "a", mcp: ["fx"] } }] })],
 ];
 for (const [name, make] of groups) {
   test(`group gate: ${name} is refused`, async (t) => {
@@ -94,9 +94,9 @@ for (const [name, make] of groups) {
   });
 }
 
-test("a mixed group (one role with a ceiling, one without) is refused while the gate is false", async (t) => {
+test("a mixed group (one entry with mcp, one without) is refused while the gate is false", async (t) => {
   const r = await rig(t);
-  const { res } = await r.launch({ tasks: [{ agent: "reviewer", task: "a" }, { agent: "builder", task: "b" }] });
+  const { res } = await r.launch({ tasks: [{ agent: "reviewer", task: "a" }, { agent: "builder", task: "b", mcp: ["fx"] }] });
   assert.equal(res?.block, true);
   assert.match(res?.reason ?? "", GATE);
 });

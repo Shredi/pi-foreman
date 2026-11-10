@@ -49,7 +49,7 @@ export interface LaunchBinding {
   handoffDir?: string;
   /** The foreman's effective retro was on: the child traces when its `trace.enabled` is null (retro.ts sessionTrace). */
   retro?: boolean;
-  /** Launch `mcp` list (r68): narrows roles.<role>.mcp for this child; `[]` = no MCP, absent = the full ceiling. */
+  /** Launch `mcp` list (r68): names the MCP servers and tools this child gets, inside roles.<role>.mcp; `[]` or absent = no MCP. */
   mcp?: string[];
   /** R46: the child's read deny for this launch (childreads.ts launchReadAllowance); absent = the config limits. */
   reads?: number;
