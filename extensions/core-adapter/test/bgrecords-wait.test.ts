@@ -25,7 +25,7 @@ function rig(alive: () => boolean) {
     now = end;
   };
   const out: string[] = [];
-  const records = createBgRecords({ write: (d) => out.push(d), env: { HERDR_PANE_ID: "p" }, platform: "linux", mode: () => "tui", isTTY: true });
+  const records = createBgRecords({ write: (d) => out.push(d), env: { HERDR_PANE_ID: "p" }, mode: () => "tui", isTTY: true });
   const hooks: string[] = [];
   const rt = new WaitRuntime({
     timers, now: () => now, limits: () => LIMITS, stat: () => null, alive, gh: () => Promise.reject(new Error("unused")), wake: () => undefined, trace: () => undefined,
@@ -51,10 +51,10 @@ test("bg wait: process exit gives hook exited and a done record", () => {
   assert.match(r.out.at(-1)!, /state=done:id=background-tasks\/fb-w1:/);
 });
 
-test("bg wait: cancel gives hook cancelled and a done record", () => {
+test("bg wait: cancelAll (close) gives hook cancelled and a done record", () => {
   const r = rig(() => true);
-  const s = r.rt.start(bgSpec()) as { id: string };
-  assert.equal(r.rt.cancel(s.id), true);
+  r.rt.start(bgSpec());
+  assert.deepEqual(r.rt.cancelAll(), ["w1"]);
   assert.deepEqual(r.hooks, ["cancelled"]);
   assert.match(r.out.at(-1)!, /state=done:id=background-tasks\/fb-w1:/);
 });

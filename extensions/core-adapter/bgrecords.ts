@@ -60,7 +60,6 @@ export function parseStarted(text: string): { name: string; id: string } | null 
 export interface BgRecordsDeps {
   write: (data: string) => void;
   env: Env;
-  platform: string;
   /** The session's mode (read at each call: it is known from session_start on). */
   mode: () => string | undefined;
   isTTY: boolean;
@@ -160,7 +159,6 @@ export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: 
   const recorder = createBgRecords({
     write: opts.write ?? ((data) => void process.stdout.write(data)),
     env: opts.env ?? process.env,
-    platform,
     mode: () => mode,
     isTTY: opts.isTTY ?? process.stdout.isTTY === true,
     trace: opts.trace,

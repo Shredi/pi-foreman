@@ -279,8 +279,8 @@ export interface RuntimeDeps {
   briefs?: (dir: string) => { name: string; mtimeMs: number }[];
   /** A file wait on a ruling file woke (the harness writes `.seen`; ask contract). */
   onRulingWake?: (file: string) => void;
-  /** A foreman_bg wait ended: `exited` (the process is gone), `timeout` (the wait hit maxSeconds, the process is still alive) or `cancelled` (the wait was dropped). */
-  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout") => void;
+  /** A foreman_bg wait ended: `exited` (the process is gone), `timeout` (the wait hit maxSeconds, the process is still alive) or `cancelled` (the session closed and the process was sent SIGTERM) or `dropped` (the agent cancelled the wait; the process is left alone). */
+  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
 }
 
 interface Entry {
@@ -454,10 +454,14 @@ export class WaitRuntime {
   }
 
   cancel(id: string): boolean {
+    return this.cancelWith(id, "dropped");
+  }
+
+  private cancelWith(id: string, how: "cancelled" | "dropped"): boolean {
     const e = this.drop(id);
     if (!e) return false;
     this.d.trace({ event: "wait", decision: "cancelled", toolFamily: e.kind });
-    if (e.bg) this.d.onBgEnd?.(e.id, e.note, "cancelled");
+    if (e.bg) this.d.onBgEnd?.(e.id, e.note, how);
     this.governor.check();
     return true;
   }
@@ -476,7 +480,7 @@ export class WaitRuntime {
 
   /** Cancels every active wait (a close of the session); the cancelled ids. */
   cancelAll(): string[] {
-    return [...this.waits.keys()].filter((id) => this.cancel(id));
+    return [...this.waits.keys()].filter((id) => this.cancelWith(id, "cancelled"));
   }
 
   /** Pids of the foreman_bg runs of this session that are still waited on. */
@@ -628,7 +632,7 @@ export interface WaitSession {
   /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
   onCancel?: (id: string) => void;
   /** A foreman_bg wait ended (bgrecords.ts posts or clears the task's hc record). */
-  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout") => void;
+  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
   /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
   onRulingWake?: (file: string) => void;
   /** Appends a pending steer.md (steer.ts) to a wake message text. */

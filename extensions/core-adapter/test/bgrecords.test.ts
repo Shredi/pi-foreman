@@ -6,7 +6,7 @@ const b64 = (s: string): string => Buffer.from(s, "utf-8").toString("base64");
 const setup = (over: { env?: Record<string, string>; mode?: string; platform?: string; isTTY?: boolean } = {}) => {
   const out: string[] = [];
   const traces: Record<string, unknown>[] = [];
-  const r = createBgRecords({ write: (d) => out.push(d), env: over.env ?? { HERDR_PANE_ID: "w1:p1" }, platform: over.platform ?? "linux", mode: () => over.mode ?? "tui", isTTY: over.isTTY ?? true, trace: (t) => traces.push(t) });
+  const r = createBgRecords({ write: (d) => out.push(d), env: over.env ?? { HERDR_PANE_ID: "w1:p1" }, mode: () => over.mode ?? "tui", isTTY: over.isTTY ?? true, trace: (t) => traces.push(t) });
   return { r, out, traces };
 };
 const frame = (id: string, status: string, name = "build") => ({ schema_version: "pi-background-tasks.extension-terminal.v1", task: { id, name, command: "make", status } });

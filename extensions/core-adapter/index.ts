@@ -4533,7 +4533,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", onStart: (spec, id) => {
         markHandoffWait(s, spec, id);
         if (spec.kind === "pid" && spec.bg) bgRecords.post(`fb-${id}`, "working", spec.note, "Running");
-      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), steer: (text) => steerFor(s).append(text) };
+      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), steer: (text) => steerFor(s).append(text) };
     },
   });
 
