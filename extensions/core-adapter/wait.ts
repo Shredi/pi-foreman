@@ -279,8 +279,8 @@ export interface RuntimeDeps {
   briefs?: (dir: string) => { name: string; mtimeMs: number }[];
   /** A file wait on a ruling file woke (the harness writes `.seen`; ask contract). */
   onRulingWake?: (file: string) => void;
-  /** A foreman_bg wait ended: `exited` (the process is gone) or `cancelled` (the wait was dropped; the run may live on). */
-  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled") => void;
+  /** A foreman_bg wait ended: `exited` (the process is gone), `timeout` (the wait hit maxSeconds, the process is still alive) or `cancelled` (the wait was dropped). */
+  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout") => void;
 }
 
 interface Entry {
@@ -449,7 +449,7 @@ export class WaitRuntime {
     const e = this.drop(id);
     if (!e) return;
     this.d.trace({ event: "wait", decision: "resolved", toolFamily: e.kind });
-    if (e.bg) this.d.onBgEnd?.(e.id, e.note, "exited");
+    if (e.bg) this.d.onBgEnd?.(e.id, e.note, outcome === "timeout" && e.pid !== undefined && this.d.alive(e.pid) ? "timeout" : "exited");
     this.governor.resolved({ id: e.id, kind: e.kind, note: e.note, outcome: e.log ? `${outcome}; log ${e.log}` : outcome });
   }
 
@@ -628,7 +628,7 @@ export interface WaitSession {
   /** Called after a wait was cancelled (the finish gate may leave waiting_for_parent). */
   onCancel?: (id: string) => void;
   /** A foreman_bg wait ended (bgrecords.ts posts or clears the task's hc record). */
-  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled") => void;
+  onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout") => void;
   /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
   onRulingWake?: (file: string) => void;
   /** Appends a pending steer.md (steer.ts) to a wake message text. */

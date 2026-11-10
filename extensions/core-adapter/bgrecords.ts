@@ -13,6 +13,7 @@ const MAX_RECORDS = 64;
 const MAX_TITLE_BYTES = 192;
 const MAX_MSG_BYTES = 2048;
 const ID_CHARS = 12;
+const STATUS_RETRY_MS = 2000;
 
 // The add-on's EventBus channels and schemas (core/extension-api.ts of pi-background-tasks); strings only, the package is never imported.
 export const BG_REQUEST_CHANNEL = "pi-background-tasks:request:v1";
@@ -150,15 +151,16 @@ export function createBgRecords(d: BgRecordsDeps): BgRecords {
 const requestId = (): string => `pi-foreman-bgrecords-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
- * Wire the records into `pi`: the add-on's terminal frames and bg_run results, one `status` request after session_start (tasks that
+ * Wire the records into `pi`: the add-on's terminal frames and bg_run results, a `status` request at session_start, retried on the first agent_start and after a short timer until it is answered (tasks that
  * survived a reload), every record cleared on session_shutdown. `recorder` serves foreman_bg (wait.ts), which has its own hooks.
  */
-export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: { env?: Env; platform?: string; write?: (data: string) => void; isTTY?: boolean; trace?: (rec: Record<string, unknown>) => void } = {}): { recorder: BgRecords } {
+export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: { env?: Env; platform?: string; write?: (data: string) => void; isTTY?: boolean; trace?: (rec: Record<string, unknown>) => void; setTimeout?: (fn: () => void, ms: number) => unknown; clearTimeout?: (h: unknown) => void } = {}): { recorder: BgRecords } {
   let mode: string | undefined;
+  const platform = opts.platform ?? process.platform;
   const recorder = createBgRecords({
     write: opts.write ?? ((data) => void process.stdout.write(data)),
     env: opts.env ?? process.env,
-    platform: opts.platform ?? process.platform,
+    platform,
     mode: () => mode,
     isTTY: opts.isTTY ?? process.stdout.isTTY === true,
     trace: opts.trace,
@@ -166,7 +168,18 @@ export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: 
   const bus = pi.events;
   let offs: (() => void)[] = [];
   let onCont: (() => void) | null = null;
+  let retry: (() => void) | null = null;
+  let timer: unknown;
+  const setT = opts.setTimeout ?? ((fn: () => void, ms: number): unknown => {
+    const h = setTimeout(fn, ms);
+    h.unref?.();
+    return h;
+  });
+  const clearT = opts.clearTimeout ?? ((h: unknown): void => clearTimeout(h as ReturnType<typeof setTimeout>));
   const unsubscribe = (): void => {
+    retry = null;
+    if (timer !== undefined) clearT(timer);
+    timer = undefined;
     for (const off of offs.splice(0)) off();
     if (onCont) process.off("SIGCONT", onCont);
     onCont = null;
@@ -175,21 +188,44 @@ export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: 
     unsubscribe();
     mode = ctx.mode;
     if (!recorder.active) return;
-    if (opts.platform !== "win32" && process.platform !== "win32") {
+    if (platform !== "win32") {
       onCont = () => recorder.resend();
       process.on("SIGCONT", onCont);
     }
     if (!bus) return;
-    const reqId = requestId();
+    const reqIds = new Set<string>();
+    let answered = false;
     offs.push(bus.on(BG_TERMINAL_CHANNEL, (frame) => recorder.onTerminal(frame)));
     offs.push(
       bus.on(BG_RESPONSE_CHANNEL, (frame) => {
-        if (!isObj(frame) || frame.schema_version !== BG_RESPONSE_SCHEMA || frame.request_id !== reqId || frame.ok !== true || !isObj(frame.result) || !Array.isArray(frame.result.tasks)) return;
+        // an ok:false answer (the add-on's own session_start has not run yet) is not final: a later retry asks again
+        if (answered || !isObj(frame) || frame.schema_version !== BG_RESPONSE_SCHEMA || typeof frame.request_id !== "string" || !reqIds.has(frame.request_id) || frame.ok !== true || !isObj(frame.result) || !Array.isArray(frame.result.tasks)) return;
+        answered = true;
         for (const t of frame.result.tasks) if (isObj(t) && typeof t.id === "string" && t.status === "running") recorder.onRunning(t.id, taskTitle(t));
       }),
     );
     // no add-on: nobody listens, nothing answers
-    bus.emit(BG_REQUEST_CHANNEL, { schema_version: BG_REQUEST_SCHEMA, request_id: reqId, operation: "status", payload: {} });
+    const ask = (): void => {
+      if (answered) return;
+      const reqId = requestId();
+      reqIds.add(reqId);
+      bus.emit(BG_REQUEST_CHANNEL, { schema_version: BG_REQUEST_SCHEMA, request_id: reqId, operation: "status", payload: {} });
+    };
+    ask();
+    // package load order can put this session_start before the add-on's: retry once on the first agent_start, a last time after a short timer
+    let agentRetried = false;
+    retry = () => {
+      if (agentRetried) return;
+      agentRetried = true;
+      ask();
+    };
+    timer = setT(() => {
+      timer = undefined;
+      ask();
+    }, STATUS_RETRY_MS);
+  });
+  pi.on("agent_start", async () => {
+    retry?.();
   });
   pi.on("tool_result", async (event) => {
     if (event.toolName !== "bg_run" || event.isError || !recorder.active) return;
