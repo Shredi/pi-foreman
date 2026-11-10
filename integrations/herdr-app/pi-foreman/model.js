@@ -471,8 +471,8 @@ export function prUrl(node, pr) {
 const listOf = (x) => (Array.isArray(x) ? x : []);
 const radarRuns = (n) => listOf(n?.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").map((c) => c.role || c.name);
 
-/** The running async agents from the text of `hc get <terminal> --json`: `[{title, state}]` of the `pi-subagents` child
- *  records in state working or blocked; [] for anything else. */
+/** The running async agents and background tasks from the text of `hc get <terminal> --json`: `[{title, state}]` of the `pi-subagents`
+ *  and `pi-foreman` (background task) records in state working or blocked; [] for anything else. */
 export function parseRecords(text) {
   let doc;
   try { doc = JSON.parse(text); } catch { return []; }
@@ -480,7 +480,7 @@ export function parseRecords(text) {
   // Real `hc get --json`: an object keyed by record id; an array is accepted too.
   const rows = Array.isArray(doc.records) ? doc.records : isObj(doc.records) ? Object.entries(doc.records).map(([id, r]) => (isObj(r) ? { id, ...r } : r)) : [];
   return rows
-    .filter((r) => isObj(r) && r.app === "pi-subagents" && (r.state === "working" || r.state === "blocked"))
+    .filter((r) => isObj(r) && (r.app === "pi-subagents" || r.app === "pi-foreman") && (r.state === "working" || r.state === "blocked"))
     .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg) }));
 }
 
