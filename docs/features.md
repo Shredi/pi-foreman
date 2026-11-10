@@ -107,6 +107,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [ask-user-question](#ask-user-question) | ui |  | on | The `ask_user_question` tool comes from the bundled `@juicesharp/rpiv-ask-user-question` (1 to 4 questions with a header chip and 2 to 4 labelled options, notes as `user notes:` / `global note:`); without a human at the pane the package does not register it and the agent asks by file (ask.md, unchanged). The harness keeps hooks on the tool name: `tool_call` counts the dialog for `foreman_dialogs`, `tool_result` writes the answer text to `ruling-<n>.md` for an open ask.md in a handoff dir where the session is the child (not on Esc or error), and the idle model reads the answer. | on by default | [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session) |
 | [auto-review-overlay](#auto-review-overlay) | safety |  | on | The gate decides every tool call: floors first, then self-modification rules (a dialog by rule, never classifier-cleared), your deny, ask and allow rules, and the dangerous class. Under mode auto the classifier judges a dangerous call against your whitelist sentences; an escalation opens the owner dialog (a session opened by another session asks in its own pane; a child's ask goes to its parent's pane; headless sessions are denied with what to report). | on by default | [permissions](permissions.md#the-steps) |
 | [rule-workshop](#rule-workshop) | safety |  | on | `foreman perms suggest` groups the decisions that cost a dialog or a classifier call in the gate log into candidate generic rules and sentences, with a safety note each and a replay against the logged history (a lower bound, since the log keeps redacted shapes). `foreman perms adopt` re-validates chosen candidates and writes them to your user file at your terminal; `foreman perms review` flags adopted rules that never fire. The owner dialog also offers to remember the exact command. | on by default | [permissions](permissions.md#commands) |
+| [owner-script](#owner-script) | safety |  | on | For a change the guards close to every agent (user config, global installs, protected files) the foreman proposes a script with `foreman_script`: a dialog shows its description, risk, undo, path and hash (not the script body) with revise, reject and approve. On approve the harness runs the dry run, then on request the real run, from a private copy of the approved bytes. An approved script runs with the owner's rights and no guard reads it. A fix of up to `safety.scripts.silentFixLines` changed lines reruns with a notice; a larger one needs a new dialog. Without an answer the proposal stays pending; subagent children never propose. | on by default | [safety](safety.md#owner-scripts) |
 | [knowledge](#knowledge) | install |  | on | `foreman knowledge check` fetches the pages the bundled skills and design notes digest, compares them with the hashes in `config/knowledge.json`, caches the text per user and reports changed, unreachable and newly discovered pages; `accept` records a reread. `foreman update-check` and `/sync` print a one-line nudge when the last check is older than `knowledge.nudgeDays`. | on by default | [sessions](sessions.md#knowledge-sources) |
 | [herdr](#herdr) | ui | toggle | on | In a Herdr pane, shows any open dialog or permission ask as blocked and tags opened child and parent panes. | on by default | [sessions](sessions.md#herdr) |
 | [radar](#radar) | ops |  | on | `foreman radar` shows a live tree of the running pi-foreman sessions and their children from presence files. | on by default | [sessions](sessions.md#radar) |
@@ -813,7 +814,7 @@ No config key.
 
 | Key | Default | Layer |
 |---|---|---|
-| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
+| `tools.deferred` | `["fusion_*", "bg_delegate", "bg_run_pi_attested", "bg_result", "bg_kill", "foreman_session_open", "foreman_dialogs", "foreman_script", "foreman_worktree_remove", "foreman_move", "foreman_copy", "pr_comments", "plan_mode_question", "plan_mode_complete"]` | tighten-only (entries are added, never removed) |
 
 ### skill-visibility
 
@@ -848,6 +849,14 @@ No config key.
 **Permission rule workshop.** `foreman perms suggest` groups the decisions that cost a dialog or a classifier call in the gate log into candidate generic rules and sentences, with a safety note each and a replay against the logged history (a lower bound, since the log keeps redacted shapes). `foreman perms adopt` re-validates chosen candidates and writes them to your user file at your terminal; `foreman perms review` flags adopted rules that never fire. The owner dialog also offers to remember the exact command.
 
 No config key.
+
+### owner-script
+
+**Owner script approval.** For a change the guards close to every agent (user config, global installs, protected files) the foreman proposes a script with `foreman_script`: a dialog shows its description, risk, undo, path and hash (not the script body) with revise, reject and approve. On approve the harness runs the dry run, then on request the real run, from a private copy of the approved bytes. An approved script runs with the owner's rights and no guard reads it. A fix of up to `safety.scripts.silentFixLines` changed lines reruns with a notice; a larger one needs a new dialog. Without an answer the proposal stays pending; subagent children never propose.
+
+| Key | Default | Layer |
+|---|---|---|
+| `safety.scripts.silentFixLines` | `5` | tighten-only (lower only) |
 
 ### knowledge
 

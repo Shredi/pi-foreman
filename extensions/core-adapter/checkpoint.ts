@@ -110,6 +110,42 @@ function refused(why: string, scratchDir: string): { error: string } {
   return { error: `pi-foreman: ${CHECKPOINT_TOOL} refused: ${why}. Write the plan as ${scratchDir}/plan-<topic>.md (topic: letters, digits, . _ -, at most 64; a regular file, no symlink or hard link, at most 256 KiB) and call ${CHECKPOINT_TOOL} with that path.` };
 }
 
+export type FileRefusal = "missing" | "not_regular" | "hard_link" | "too_large" | "changed" | "unreadable";
+
+/** Read `real` when it is a regular file with one link and at most `maxBytes` (checked before and after the open, no symlink followed). */
+export function readRegularFile(real: string, maxBytes: number): { bytes: Buffer } | { refusal: FileRefusal } {
+  let fd: number;
+  try {
+    const st = fs.lstatSync(real);
+    if (!st.isFile()) return { refusal: "not_regular" };
+    if (st.nlink !== 1) return { refusal: "hard_link" };
+    if (st.size > maxBytes) return { refusal: "too_large" };
+    fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+  } catch {
+    return { refusal: "missing" };
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.nlink !== 1 || st.size > maxBytes) return { refusal: "changed" };
+    const bytes = fs.readFileSync(fd);
+    if (bytes.length > maxBytes) return { refusal: "too_large" };
+    return { bytes };
+  } catch {
+    return { refusal: "unreadable" };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const PLAN_FILE_REFUSAL: Record<FileRefusal, string> = {
+  missing: "the file does not exist or cannot be read",
+  not_regular: "not a regular file",
+  hard_link: "the file has more than one hard link",
+  too_large: "the file is larger than 256 KiB",
+  changed: "the file changed while it was read",
+  unreadable: "the file cannot be read",
+};
+
 /** Validate a plan path and read the file; the record's hash comes from these bytes. */
 export function readPlan(raw: unknown, o: PlanOpts): { plan: PlanFile } | { error: string } {
   const f = fold(o.platform);
@@ -130,28 +166,10 @@ export function readPlan(raw: unknown, o: PlanOpts): { plan: PlanFile } | { erro
   if (f(path.dirname(real)) !== f(scratch)) return refused(`the plan must be directly in ${o.scratchDir}`, o.scratchDir);
   const m = PLAN_NAME.exec(path.basename(real));
   if (!m) return refused("the file name must be plan-<topic>.md", o.scratchDir);
-  let fd: number;
-  try {
-    const st = fs.lstatSync(real);
-    if (!st.isFile()) return refused("not a regular file", o.scratchDir);
-    if (st.nlink !== 1) return refused("the file has more than one hard link", o.scratchDir);
-    if (st.size > PLAN_MAX_BYTES) return refused("the file is larger than 256 KiB", o.scratchDir);
-    fd = fs.openSync(real, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-  } catch {
-    return refused("the file does not exist or cannot be read", o.scratchDir);
-  }
-  try {
-    const st = fs.fstatSync(fd);
-    if (!st.isFile() || st.nlink !== 1 || st.size > PLAN_MAX_BYTES) return refused("the file changed while it was read", o.scratchDir);
-    const bytes = fs.readFileSync(fd);
-    if (bytes.length > PLAN_MAX_BYTES) return refused("the file is larger than 256 KiB", o.scratchDir);
-    const rel = path.relative(realRoot, real).split(path.sep).join("/");
-    return { plan: { topic: m[1], path: real, rel, bytes, hash: planVersionHash(bytes) } };
-  } catch {
-    return refused("the file cannot be read", o.scratchDir);
-  } finally {
-    fs.closeSync(fd);
-  }
+  const file = readRegularFile(real, PLAN_MAX_BYTES);
+  if ("refusal" in file) return refused(PLAN_FILE_REFUSAL[file.refusal], o.scratchDir);
+  const rel = path.relative(realRoot, real).split(path.sep).join("/");
+  return { plan: { topic: m[1], path: real, rel, bytes: file.bytes, hash: planVersionHash(file.bytes) } };
 }
 
 /** Hash of the recorded plan file now, or null when it is gone or no longer passes the path rules. */

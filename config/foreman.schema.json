@@ -603,6 +603,14 @@
             "baseBranch": { "type": ["string", "null"], "description": "Base branch for the merged check of foreman_worktree_remove; null = origin HEAD, else main, else master. A project cannot set it." }
           }
         },
+        "scripts": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Owner scripts approved in a dialog (foreman_script).",
+          "properties": {
+            "silentFixLines": { "type": "integer", "minimum": 0, "description": "Changed lines (added plus removed, measured against the approved text) up to which an edited script reruns with a notice instead of a new dialog; 0 turns silent fixes off. A project can only lower it." }
+          }
+        },
         "subagents": {
           "type": "object",
           "additionalProperties": false,

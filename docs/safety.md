@@ -208,6 +208,33 @@ A remote child (see [sessions](sessions.md#remote-child-sessions)) runs on a mac
 
 `sessions.json` is read, changed and written back without a lock (`foreman session brief`, the open and close verbs all do this, the write itself is atomic). Two of them running at once can lose one update. The loss is accepted for now.
 
+## Owner scripts
+
+An approved owner script runs with the owner's rights, and no guard reads it: no floor, no permission rule, no classifier and no sandbox applies inside the run. The owner's answer in the dialog is the only control. The owner chose this (2026-11-10) for changes the guards close to every agent, such as user config, global installs and protected files.
+
+**Mechanics.** The foreman writes a script into the scratch dir and calls `foreman_script` with `action: "propose"`, the path, a description (at most 600 characters), the risk and the undo (at most 300 each). The script must be a regular file below the scratch dir (no symlink, one hard link, at most 64 KiB, UTF-8). The dialog shows the three texts, each made one line with control and escape characters removed and never cut (a text over its limit refuses the proposal), then the path, the line count and the short sha256 that the harness adds. It does not show the script body, and no reviewer or classifier reads it. The owner answers revise (with a note), reject or approve. Every foreman session may propose, also one opened by another session; a subagent child never (the tool is not registered there and refuses with `script_child`). No ruling file, no parent verdict and no timeout approves: without a UI, in print or json mode, or when the dialog is dismissed, the proposal stays pending and nothing runs. The dialog counts as the `script` family of `foreman_dialogs`.
+
+The approval is tied to the script's bytes and lives in the session's memory only; nothing is written to the state directory, so a reload or restart drops it. If the file changes while the dialog is open, the proposal stays pending. One proposal per session: a new `propose` drops the earlier one and its approval, and `dry`, `run` and `status` take no path.
+
+**The run.** Only the harness starts the script. For every run it writes the approved bytes to a new private file (mode 0700, in a new temp dir), runs that file with POSIX `sh` (`/bin/sh`; on Windows Git Bash, never `cmd.exe`, else `no_posix_shell`) from the workspace root, and removes the file afterwards. The path in the scratch dir is never executed, so the script must not rely on `$0` or sibling files, and its shebang is ignored. The dry run gets `--dry-run` as its only argument and `DRY_RUN=1`; the real run gets neither. The foreman cannot add arguments or environment. The environment is the harness's own without the intercom identity; credentials stay. The run blocks the tool call; the limit is 600 s (`timeoutSeconds` up to 3600). On the limit, on an abort and after a normal exit the process group is killed. Output goes to `<scratch dir>/script-<name>-<hash8>-<dry|run>-<n>.log`; the tool result carries the exit code, the log path and the last lines.
+
+**The dry run is the script's own promise.** The harness only checks that the text contains `--dry-run` or `DRY_RUN` (a comment satisfies it); whether the script really changes nothing on that run is up to the script. On approve the dry run runs at once. A real run needs a dry run of the same bytes with exit 0. The foreman is told to read the dry-run output and, when it shows an unexpected state or a different change than described, to stop and propose again with a corrected description.
+
+**Silent-fix bound.** When the script changed after approval, the harness measures the new text against the bytes the owner approved (never against the last fix, so fixes cannot add up): at most `safety.scripts.silentFixLines` changed lines (added plus removed in a minimal line diff, default 5; 0 turns it off; a project or session layer can only lower it) and at most 400 bytes in the added lines. Within the bound the new bytes run after a new dry run, and the owner gets a notice (the script name, the old and new short hash, the changed lines) and the trace a `script_fix` record. Outside it the call refuses with `script_changed` and the foreman proposes again.
+
+**Expiry and attempts.** An approval covers dry runs, and real runs until one exits 0, at most 3 real attempts; then it is used up (`script_consumed`). It expires 60 minutes after the dialog (`script_expired`).
+
+**Limits.**
+
+- Standard input is closed and there is no terminal, so a prompt (a password prompt, `sudo`) fails.
+- The secret redaction covers only the tool result; the log file in the scratch dir is not redacted.
+- A process that detached itself from the script's process group outlives the run. On Windows nothing is killed after a normal exit (the tree kill needs a live root), only on the limit or an abort.
+- A description that does not match the script is not detected. The owner approves a summary the foreman wrote; the hash ties the approval to the bytes, not to the description.
+- Anyone who can write the scratch dir of the checkout can edit the script within the silent-fix bound; that edit then runs after a notice only, without a new dialog.
+- The shell floors are unchanged: the same change through `bash` is still stopped, and the opaque-script gap described under [permissions](permissions.md#floors) stays open.
+
+Trace records: `dialog` with surface `script`, `script` (decision, by, hash), `script_fix` (from, to, added, removed), `script_run` (kind, hash, exit, seconds).
+
 ## Further safety and runtime keys
 
 Key-by-key layer rules for `safety.*`: `design/architecture.md`
