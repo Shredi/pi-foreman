@@ -68,7 +68,7 @@ remote nodes and nodes already matched are skipped.
 The only other thing the mod runs is the platform opener (`open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler`
 on Windows, never through `cmd` or a shell), on a chip click, and only for an `https://` URL made of URL characters: no
 whitespace, no `& | ^ < > " '`, no control characters. The URL is taken from radar: a `url` on the PR, else `<repository
-URL>/pull/<number>` from an `https://` `repoUrl`/`repo` that radar provides. The mod never derives a URL from a git remote.
+URL>/pull/<number>` from an `https://` `repoUrl`/`repo` that radar provides. The mod never derives a URL from a git remote. An opener that exits non-zero or cannot run raises an error notice "Could not open the link" with the exit code and the first error line.
 A chip opens the PR page when the installed pi-foreman reports PR URLs (the `url` of a PR dot in `foreman radar --json`); with an older pi-foreman that gives neither, chips stay plain.
 
 ## Plan panel feed

@@ -28,6 +28,24 @@ export function openerArgv(platform, url) {
   return null;
 }
 
+/** One short line for a failed URL opener: `exit <code>: <first stderr line>` for a result with a non-zero code, the message
+ *  of a thrown error, `""` for a clean exit. Control characters and ANSI escapes are dropped; capped at 160 characters. */
+export function openFailure(resultOrError) {
+  try {
+    const r = resultOrError;
+    let text;
+    if (r instanceof Error) text = r.message;
+    else if (r !== null && typeof r === "object" && "code" in r) {
+      if (r.code === 0) return "";
+      const first = (typeof r.stderr === "string" ? r.stderr : "").split(/\r?\n/).map(plainLine).find(Boolean) ?? "";
+      text = `exit ${typeof r.code === "number" || typeof r.code === "string" ? r.code : "?"}${first ? `: ${first}` : ""}`;
+    } else text = typeof r === "string" ? r : r?.message ?? "";
+    const line = plainLine(text);
+    return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+  } catch { return ""; }
+}
+const plainLine = (s) => String(s ?? "").replace(/\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]/g, "").replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").replace(/\s+/g, " ").trim();
+
 /** The foreman binary for a machine from the `foreman` prop: a string (local only) or an object keyed by machine name
  *  (`local` for this computer). A missing entry is plain `foreman`. */
 export function radarBinary(prop, machine, fallback = "foreman") {
