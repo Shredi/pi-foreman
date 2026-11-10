@@ -105,6 +105,8 @@ function normNode(raw, depth, budget) {
   const waits = Array.isArray(raw.waits) ? raw.waits.filter(isObj).map((w) => ({
     kind: str(w.kind), note: str(w.note), ageS: num(w.age_s),
     prs: Array.isArray(w.prs) ? w.prs.slice(0, 50).map(int).filter((x) => x !== null) : [],
+    // the watched PRs whose head moved past the session's last reviewer PASS (livestate.ts LiveWait.unreviewed)
+    ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
   })) : [];
   const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ label: str(t.label), ageS: num(t.ageSeconds) })) : [];
   const asks = Array.isArray(raw.asks) ? raw.asks.filter((a) => isObj(a) && int(a.n) !== null).map((a) => ({ n: a.n, topic: str(a.topic) })) : [];
@@ -152,6 +154,21 @@ function normOpenPrs(raw) {
   return out;
 }
 
+const hostOf = (u) => { try { return new URL(u).hostname.toLowerCase(); } catch { return ""; } };
+
+/** Flags `unreviewed` on the PRs of a session node that its watch reported past the last reviewer PASS (`waits[].unreviewed`),
+ *  matched by number, repository and host (an unknown repository or host on either side matches). Followed-only PRs have no entry. */
+function markUnreviewed(n) {
+  const marks = listOf(n.waits).flatMap((w) => listOf(w?.unreviewed));
+  if (!marks.length) return;
+  n.prs = listOf(n.prs).map((pr) => {
+    const repo = nameOf(pr.repo || n.repoUrl).toLowerCase();
+    const host = hostOf(pr.url) || hostOf(pr.repo) || hostOf(n.repoUrl);
+    const hit = marks.some((u) => u.n === pr.number && (!repo || !u.repo || repo === u.repo.toLowerCase()) && (!host || !u.host || host === u.host.toLowerCase()));
+    return hit ? { ...pr, unreviewed: true } : pr;
+  });
+}
+
 /** Puts each open feed PR on the sessions with the same repository and head branch (`node.repo`, `node.branch` from the live
  *  file), and on the session whose `waits[].prs` lists its number when the repository (or head repository) is the session's,
  *  whatever branch the session is on now; a PR already on the node (same number) is not added twice. Mutates the nodes
@@ -171,6 +188,7 @@ export function matchPrs(nodes, feed, depth = 0) {
         if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
       }
     }
+    markUnreviewed(n);
     matchPrs(n.children, feed, depth + 1);
   }
 }
@@ -941,6 +959,9 @@ export function prDotState(pr) {
   return { ring: run > 0, fill: fail ? "red" : ok ? "green" : run ? "amber" : "dim", conflict: pr?.mergeable === "CONFLICTING" };
 }
 
+/** The token of a PR whose head moved past the session's last reviewer PASS. */
+export const UNREVIEWED = "unreviewed head";
+
 const CARD_CAP = 5;
 const EXCERPT_MAX = 200;
 
@@ -977,7 +998,7 @@ export function prCard(pr) {
   const text = str(pr?.bodyText).replace(/\s+/g, " ").trim().replace(/^#{1,6}\s+/, "");
   return {
     title: str(pr?.title) || `PR #${pr?.number ?? "?"}`,
-    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}`,
+    state: `#${pr?.number ?? "?"} · ${prStateText(pr)}${pr?.unreviewed === true ? ` · ${UNREVIEWED}` : ""}`,
     excerpt: text.length > EXCERPT_MAX ? `${text.slice(0, EXCERPT_MAX - 1).trimEnd()}…` : text,
     conflict: pr?.mergeable === "CONFLICTING" ? `conflicts with ${str(pr.baseRef) || "its base branch"}` : "",
     counts: { failed: groups[0].count, running: groups[1].count, passed: groups[2].count },

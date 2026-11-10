@@ -618,8 +618,9 @@ def _task_line(node, aux):
     for w in waits:
         if _is_pr(w):
             prs = [p for p in w.get("prs") or [] if isinstance(p, int) and not isinstance(p, bool)]
+            flagged = {u.get("n") for u in w.get("unreviewed") or [] if isinstance(u, dict)}  # head past the last reviewer PASS
             if prs:
-                items.extend("pr #%d" % p for p in prs)
+                items.extend("pr #%d%s" % (p, " unreviewed head" if p in flagged else "") for p in prs)
             else:
                 items.append(w.get("note") or "pr")
     items += [_wait_item(w) for w in waits if _is_ci(w) and not _is_pr(w)]

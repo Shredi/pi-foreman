@@ -7,7 +7,7 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
-import { PrWatches, TRACKER_DOWN, countRuns, oneLine } from "./prwatch.ts";
+import { PrWatches, TRACKER_DOWN, countRuns, oneLine, reviewFact } from "./prwatch.ts";
 import type { WatchSnapshot } from "./prwatch.ts";
 import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
@@ -192,7 +192,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_status",
     op: "pr_status",
     label: "PR status",
-    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt. Read-only. ${PR_CAPS}`,
+    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, and review (the head reviewed, or not reviewed with the last PASS head, or no review record). Read-only. ${PR_CAPS}`,
     parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR)."), ...where }, additionalProperties: false },
     foremanOnly: false,
   },
@@ -216,7 +216,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_watch",
     op: "pr_watch",
     label: "Watch PR",
-    description: "Watch a pull request in the background until it is merged or closed (pr_create arms this for the PR it opens; use this for one opened elsewhere). Each tick that finds something new sends a pi-foreman-pr message (a failed check, the CI result once all checks settled, a new comment or review, a mergeable change, no CI, merged, closed); the watch stays armed, do not re-arm. Returns at once; one watch per PR; pr_unwatch ends it.",
+    description: "Watch a pull request in the background until it is merged or closed (pr_create arms this for the PR it opens; use this for one opened elsewhere). Each tick that finds something new sends a pi-foreman-pr message (a failed check, the CI result once all checks settled, a new comment or review, a mergeable change, no CI, a head the reviewer never passed, merged, closed); the watch stays armed, do not re-arm. Returns at once; one watch per PR; pr_unwatch ends it.",
     parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR).") }, additionalProperties: false },
     foremanOnly: true,
   },
@@ -405,7 +405,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (push) return failure(`pr_create: the git guard would refuse pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
         const outcome = await run(t.op as PrOp, params);
-        const res = report(outcome);
+        const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
         const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
@@ -487,6 +487,18 @@ async function hostRule(s: PrPackSession, ctx: ExtensionContext, tool: string, p
 }
 
 type PrRun = (op: PrOp, args: Record<string, unknown>) => Promise<SafeOpOutcome>;
+
+/** A `pr_status` answer with its `review` line (prwatch.ts reviewFact): the same rule and data as the watch. An answer without a head stays as it is. */
+async function withReview(s: PrPackSession, o: SafeOpOutcome): Promise<SafeOpOutcome> {
+  if (o.kind !== "ran" || typeof o.result.headSha !== "string" || !o.result.headSha || !validNumber(o.result.number)) return o;
+  try {
+    const key = parsePrUrl(o.result.url);
+    const last = s.watches.reviewOf(key && key.n === o.result.number ? key : { host: "", repo: "", n: o.result.number });
+    return { ...o, result: { ...o.result, review: reviewFact(o.result.headSha, new Set(await s.reviewed()), last ?? "") } };
+  } catch {
+    return o;
+  }
+}
 
 /** The watch key of PR `n`: the repository of its URL, else the current one (pr_repo), else number-only (the per-PR ops pick the host from the directory). */
 async function watchKey(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, cwd: string = ctx.cwd): Promise<PrKey> {

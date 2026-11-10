@@ -33,6 +33,8 @@ export interface LiveWait {
   bg?: boolean;
   /** The synthetic `pr_watch` entry: the PR numbers being watched. */
   prs?: number[];
+  /** The `pr_watch` entry: the watched PRs whose head moved past the session's last reviewer PASS (herdr-app shows `unreviewed head`). */
+  unreviewed?: { n: number; repo: string; host: string }[];
 }
 
 /** An open ask of this session's own handoff (`# Ask <n>: <topic>` in ask.md). */
@@ -291,7 +293,7 @@ export class LiveState {
 
   private waitList(): LiveWait[] {
     try {
-      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}) }));
+      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}) }));
     } catch {
       return []; // waits are best effort
     }

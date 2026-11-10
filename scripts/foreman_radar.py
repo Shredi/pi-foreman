@@ -679,6 +679,11 @@ def build(data, now):
                 prs = [p for p in (w.get("prs") or []) if isinstance(p, int) and not isinstance(p, bool)]
                 if prs:
                     wn["prs"] = prs
+                unrev = [{"n": u["n"], "repo": str(u.get("repo") or ""), "host": str(u.get("host") or "")}
+                         for u in (w.get("unreviewed") or [])
+                         if isinstance(u, dict) and isinstance(u.get("n"), int) and not isinstance(u.get("n"), bool)]
+                if unrev:  # PRs whose head moved past the session's last reviewer PASS
+                    wn["unreviewed"] = unrev
                 n["waits"].append(wn)
         for t in d.get("tasks") or []:
             if isinstance(t, dict):
