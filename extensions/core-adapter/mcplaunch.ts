@@ -6,7 +6,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
-import { allowedMcp, inCeiling, roleMcpEntries, serverKey, splitEntry } from "./mcpscope.ts";
+import { allowedMcp, allowedMcpNamed, directMaxTools, inCeiling, roleMcpEntries, serverKey, splitEntry } from "./mcpscope.ts";
 import { groupEntryObjects, singleLaunchRole } from "./usage.ts";
 
 type Json = Record<string, unknown>;
@@ -39,7 +39,7 @@ export const groupGateText = (version: string): string =>
 
 export interface McpRefusal {
   /** The `launch_refused` reason. */
-  reason: "mcp_launch" | "mcp_group_gate";
+  reason: "mcp_launch" | "mcp_group_gate" | "mcp_named_cap";
   text: string;
 }
 
@@ -61,14 +61,20 @@ export interface McpPlan {
 
 const refuse = (reason: McpRefusal["reason"], text: string): McpPlan => ({ refusal: { reason, text }, entries: [], group: false });
 
-function checkList(value: unknown, role: string, configRoles: unknown): { list?: string[]; text?: string } {
+export const namedCapText = (count: number, cap: number): string =>
+  `pi-foreman: launch mcp names ${count} tools as server/tool, over the cap of ${cap} (mcp.directMaxTools); a child gets named tools up front only up to the cap. Name fewer tools: the rest of a server named whole (mcp: ["server", "server/tool"]) is found with tool_search.`;
+
+function checkList(value: unknown, role: string, configRoles: unknown, cap: number): { list?: string[]; text?: string; reason?: McpRefusal["reason"] } {
   if (!Array.isArray(value) || !value.every((x) => typeof x === "string" && splitEntry(x) !== null)) {
     return { text: "pi-foreman: launch mcp must be an array of non-empty strings, each `server` or `server/tool`" };
   }
   for (const entry of value as string[]) {
     if (!inCeiling(configRoles, role, entry.trim())) return { text: `pi-foreman: launch mcp entry ${entry.trim()} is outside roles.${role}.mcp` };
   }
-  return { list: (value as string[]).map((x) => x.trim()) };
+  const list = (value as string[]).map((x) => x.trim());
+  const tools = new Set(list.flatMap((x) => { const e = splitEntry(x); return e?.tool ? [`${serverKey(e.server)}/${e.tool}`] : []; }));
+  if (tools.size > cap) return { text: namedCapText(tools.size, cap), reason: "mcp_named_cap" };
+  return { list };
 }
 
 /**
@@ -76,7 +82,8 @@ function checkList(value: unknown, role: string, configRoles: unknown): { list?:
  * calls (an `action`) are left alone. With `perEntryBindings` false, a group (`tasks`/`chain`) that needs a binding, that is
  * any entry that carries `mcp`, is refused; an entry without `mcp` gets no MCP and needs none.
  */
-export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntryBindings?: boolean; pinned?: string } = {}): McpPlan {
+export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntryBindings?: boolean; pinned?: string; maxTools?: unknown } = {}): McpPlan {
+  const cap = directMaxTools(opts.maxTools);
   if (!isObj(input) || input.action !== undefined) return { entries: [], group: false };
   if (isObj(input.options) && "mcp" in input.options) {
     return refuse("mcp_launch", "pi-foreman: options.mcp is not a launch option; pass mcp as a field of subagent({agent, task, mcp}) or of a tasks/chain entry");
@@ -87,8 +94,8 @@ export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntr
   let top: string[] | undefined;
   if (input.mcp !== undefined) {
     if (!single) return refuse("mcp_launch", "pi-foreman: launch mcp goes on subagent({agent, task, mcp}) or on a tasks/chain entry; this call has no single agent");
-    const checked = checkList(input.mcp, single, configRoles);
-    if (checked.text) return refuse("mcp_launch", checked.text);
+    const checked = checkList(input.mcp, single, configRoles, cap);
+    if (checked.text) return refuse(checked.reason ?? "mcp_launch", checked.text);
     top = checked.list;
   }
   if (single) entries.push({ entry: input, role: single, ...(top ? { mcp: top } : {}) });
@@ -99,8 +106,8 @@ export function planMcpLaunch(input: Json, configRoles: unknown, opts: { perEntr
         continue;
       }
       if (typeof entry.agent !== "string" || !entry.agent) return refuse("mcp_launch", "pi-foreman: a tasks/chain entry with mcp needs an agent; the list is checked against that role's ceiling");
-      const checked = checkList(entry.mcp, entry.agent, configRoles);
-      if (checked.text) return refuse("mcp_launch", checked.text);
+      const checked = checkList(entry.mcp, entry.agent, configRoles, cap);
+      if (checked.text) return refuse(checked.reason ?? "mcp_launch", checked.text);
       entries.push({ entry, role: entry.agent, mcp: checked.list });
     }
   }
@@ -136,6 +143,16 @@ export function namedCeilingServers(configRoles: unknown, role: string, task: st
 
 export const mcpHintLine = (role: string, servers: string[]): string =>
   `pi-foreman: the task names MCP server ${servers.join(", ")} (roles.${role}.mcp) but the launch has no mcp field, so the child runs without MCP; pass mcp: [${servers.map((s) => JSON.stringify(s)).join(", ")}] to give it that server.`;
+
+/** Servers a launch names whole and names no tool of (the child's tools of them are declared up front only if they fit under the cap). */
+export function wholeOnlyServers(configRoles: unknown, role: string, launchMcp: string[] | undefined): string[] {
+  const allowed = allowedMcpNamed(configRoles, role, launchMcp);
+  const named = new Set(Object.keys(allowed.named ?? {}).map(serverKey));
+  return allowed.servers.filter((s) => !named.has(serverKey(s)));
+}
+
+export const wholeServerLine = (role: string, servers: string[], cap: number): string =>
+  `pi-foreman: the launch names MCP server ${servers.join(", ")} (role ${role}) without a tool of it. Over the cap of ${cap} (mcp.directMaxTools) nothing of it is declared up front and the child finds the tools with tool_search; to have tools in its list from the first request, name them: mcp: [${servers.map((s) => JSON.stringify(s)).join(", ")}, ${JSON.stringify(`${servers[0]}/<tool>`)}].`;
 
 // ---------------------------------------------------------------- workflow scripts (A22)
 

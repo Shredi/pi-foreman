@@ -616,7 +616,7 @@ class PackageFilesTest(unittest.TestCase):
             self.assertIn(old_text, expected)
         # round 68: the launch `mcp` field is named in the launch rule (no `mcp` = no MCP for the child)
         old_launch = "`output` and `outputMode` are refused (`output_path`). Workflow scripts"
-        new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` gives a child those MCP tools from its role's ceiling (single launches only; no `mcp` or `[]` = none, so name the servers a task needs). Workflow scripts"
+        new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` gives a child MCP tools from its role's ceiling (single launches only; no `mcp` or `[]` = none). Name each tool the task will probably need as `server/tool`, so it is in the child's tool list from the first request, and add the bare `server` so the child finds the rest with `tool_search`. Workflow scripts"
         self.assertIn(old_launch, expected)
         # token-diet item 9: the ask_user_question rule (schema, notes, ask by file when the tool is absent)
         old_ask = "- Plan mode is not part of the ceremony; the checkpoint is.\n"

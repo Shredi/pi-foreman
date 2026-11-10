@@ -64,7 +64,7 @@ class SizingPromptTest(unittest.TestCase):
             k = self.knobs(sizing="off", launchbriefs=brief, show="off")  # show "off": no foreman_show explain rule
             # round 68: the launch `mcp` field is named in the launch rule (no `mcp` = no MCP for the child)
             old_launch = "`output` and `outputMode` are refused (`output_path`). Workflow scripts"
-            new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` gives a child those MCP tools from its role's ceiling (single launches only; no `mcp` or `[]` = none, so name the servers a task needs). Workflow scripts"
+            new_launch = "`output` and `outputMode` are refused (`output_path`). `mcp: [\"server\", \"server/tool\"]` gives a child MCP tools from its role's ceiling (single launches only; no `mcp` or `[]` = none). Name each tool the task will probably need as `server/tool`, so it is in the child's tool list from the first request, and add the bare `server` so the child finds the rest with `tool_search`. Workflow scripts"
             # token-diet item 9: the ask_user_question rule
             old_ask = "- Plan mode is not part of the ceremony; the checkpoint is.\n"
             new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).\n"

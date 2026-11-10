@@ -127,7 +127,7 @@ test("at the cap the tools are declared", async (t) => {
   const c = await child(t, { launch: ["alpha"], tools: many(40) });
   assert.equal(c.active.filter((n) => n.startsWith("mcp__")).length, 40);
   assert.deepEqual(c.trace, [{ event: "mcp_child_direct", provider: "p1", servers: "alpha", count: 40 }]);
-  assert.equal(c.mcp.note(), null);
+  assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: all 40 tools of server alpha. No other MCP tool is reachable in this launch.");
 });
 
 test("over the cap none is declared: trace mcp_child_direct_capped with provider, count and cap, and a prompt line", async (t) => {
@@ -158,7 +158,7 @@ test("a configured cap is used; only the tools that would be declared count", as
 test("an unlisted provider is not capped: nothing is declared there anyway", async (t) => {
   const c = await child(t, { launch: ["alpha"], tools: many(41), provider: "p2" });
   assert.deepEqual(c.trace, []);
-  assert.equal(c.mcp.note(), null);
+  assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).");
 });
 
 // ---------------------------------------------------------------- the launch hint
