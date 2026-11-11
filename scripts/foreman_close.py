@@ -638,13 +638,101 @@ def pid_alive(pid):
     return True
 
 
-def archive_workflow(ws, dest):
-    """Copy the worktree's own `.workflow/` (ledger, scratch, results) to `dest`; the number of files copied."""
+SNAPSHOT_CAP = 16 * 1024 * 1024  # bytes of one close, over every snapshot of it (notes are kilobytes; this keeps a handoff dir cheap)
+SNAPSHOT_SKIP = {"closed": "closed/ (other rounds)", "archive": "archive/ (earlier snapshots)"}  # top-level folders, never copied
+SNAPSHOT_NAMES = 5  # file names a left-out line lists
+
+
+def _snapshot_files(src, skip_abs, left):
+    """[(rel, size, mtime)] of the regular files below `src` (sorted, rel uses `/`); links, skipped folders and unreadable or special entries go into `left`."""
+    out, stack = [], [""]
+    while stack:
+        rel = stack.pop()
+        try:
+            entries = list(os.scandir(os.path.join(src, *rel.split("/")) if rel else src))
+        except OSError:
+            left["other"] += 1
+            continue
+        for e in entries:
+            r = rel + "/" + e.name if rel else e.name
+            if not rel and e.name.lower() in SNAPSHOT_SKIP:
+                left["skip"].append(SNAPSHOT_SKIP[e.name.lower()])
+            elif safe_ops.is_link(e.path):
+                left["links"] += 1
+            elif safe_ops.norm(os.path.realpath(e.path)) == skip_abs:
+                continue
+            elif e.is_dir(follow_symlinks=False):
+                stack.append(r)
+            elif e.is_file(follow_symlinks=False):
+                try:
+                    st = e.stat(follow_symlinks=False)
+                except OSError:
+                    left["other"] += 1
+                    continue
+                out.append((r, st.st_size, st.st_mtime))
+            else:
+                left["other"] += 1
+    return sorted(out)
+
+
+def is_main_worktree(path):
+    """True when `path` is the first worktree of its repository (`git worktree list`), compared by real path."""
+    try:
+        items = safe_ops.worktrees(path)
+    except safe_ops.Precondition:
+        return False
+    return bool(items) and safe_ops.norm(os.path.realpath(items[0].get("worktree", ""))) == safe_ops.norm(os.path.realpath(path))
+
+
+def archive_workflow(ws, dest, since=None, ledger=None, budget=None):
+    """Copy what the session itself produced of the worktree's `.workflow/` to `dest`; {files, bytes, leftOut}.
+
+    Regular files only: no link is followed or copied, top-level `closed/` and `archive/` (any case) and `dest` itself are skipped; unreadable or special entries (FIFO, socket, device) are counted in `leftOut`.
+    With `since` (epoch seconds) older files are skipped, except `ledger` (the bound ledger); callers pass it only for the
+    main worktree's `.workflow/` (shared by all rounds), a linked worktree's belongs to its round. `budget` is a one-item list
+    with the bytes still allowed (shared across the snapshots of one close; default SNAPSHOT_CAP); a file that would cross
+    it is skipped, smaller later ones still go in. `leftOut` lists what was skipped and why.
+    """
+    res = {"files": 0, "bytes": 0, "leftOut": []}
     src = os.path.join(ws, ".workflow")
-    if not os.path.isdir(src) or safe_ops.is_link(src):
-        return 0
-    shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True)
-    return sum(len(files) for _, _, files in os.walk(dest))
+    if budget is None:
+        budget = [SNAPSHOT_CAP]
+    if safe_ops.is_link(src):
+        res["leftOut"].append("1 links")
+        return res
+    if not os.path.isdir(src):
+        return res
+    left = {"skip": [], "links": 0, "other": 0}
+    files = _snapshot_files(src, safe_ops.norm(os.path.realpath(dest)), left)
+    keep = None
+    if ledger and not safe_ops.is_link(ledger) and safe_ops.is_inside(os.path.realpath(src), os.path.realpath(ledger)):
+        keep = os.path.relpath(os.path.realpath(ledger), os.path.realpath(src)).replace(os.sep, "/")
+    files.sort(key=lambda f: (f[0] != keep, f[0]))
+    old, over = 0, []
+    for rel, size, mtime in files:
+        if since is not None and rel != keep and mtime < since:
+            old += 1
+        elif size > budget[0]:
+            over.append(rel)
+        else:
+            target = os.path.join(dest, *rel.split("/"))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            shutil.copyfile(os.path.join(src, *rel.split("/")), target, follow_symlinks=False)
+            budget[0] -= size
+            res["files"] += 1
+            res["bytes"] += size
+    lo = res["leftOut"]
+    lo.extend(left["skip"])
+    if left["links"]:
+        lo.append("%d links" % left["links"])
+    if left["other"]:
+        lo.append("%d unreadable or special entries" % left["other"])
+    if old:
+        lo.append("%d files older than the session" % old)
+    if over:
+        names = ", ".join(over[:SNAPSHOT_NAMES]) + (", ..." if len(over) > SNAPSHOT_NAMES else "")
+        lo.append("%d files over the %d MiB cap: %s" % (len(over), SNAPSHOT_CAP // (1024 * 1024), names))
+    return res
 
 
 def remote_branch(ws, branch):
@@ -653,6 +741,22 @@ def remote_branch(ws, branch):
     remote = rem.strip() if code == 0 and rem.strip() else "origin"
     code, out, _ = safe_ops.git(["ls-remote", "--heads", remote, "refs/heads/" + branch], ws)
     return "%s/%s" % (remote, branch) if code == 0 and out.strip() else None
+
+
+def is_default_branch(ws, branch, configured):
+    """True when `branch` is the repository's default (base) branch; False when the base does not resolve."""
+    try:
+        base_ref, _ = safe_ops.resolve_base(ws, configured)
+    except safe_ops.Precondition:
+        return False
+    for pre in ("refs/heads/", "refs/remotes/"):
+        if base_ref.startswith(pre):
+            base_ref = base_ref[len(pre):]
+            break
+    names = {base_ref}
+    if "/" in base_ref:  # `origin/main` (a remote ref): the short name too
+        names.add(base_ref.split("/", 1)[1])
+    return branch in names
 
 
 def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workflow=False):
@@ -665,6 +769,8 @@ def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workf
     cfg = dict(ops_cfg)
     top_level = (".workflow",) if exempt_workflow else ()  # only the worktree's own top-level .workflow/, never a nested one
     try:
+        if is_default_branch(ws, branch, cfg["baseBranch"]):
+            return "default_branch", None
         if verified:
             tip = safe_ops.git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], ws)[1].strip()
             head = safe_ops.git(["rev-parse", "--verify", "--quiet", "HEAD"], ws)[1].strip()
@@ -721,7 +827,9 @@ def parse(argv):
         p.add_argument("--ws", required=True)
         p.add_argument("--branch", required=True)
         p.add_argument("--verified-merged", metavar="SHA", help="the PR is MERGED and its head commit is SHA (the branch tip)")
-        p.add_argument("--archive", metavar="DIR", help="copy the worktree's .workflow/ to DIR first and exempt it")
+        p.add_argument("--archive", metavar="DIR", help="copy the worktree's .workflow/ to DIR first and exempt it (when nothing was left out)")
+        p.add_argument("--since", type=float, metavar="EPOCH", help="leave out files older than this (seconds) from the main worktree's .workflow; the bound ledger stays")
+        p.add_argument("--session-cwd", metavar="PATH", help="the session's cwd: when it is not --ws, its .workflow/ goes to <DIR>/../workflow-cwd/")
         p.add_argument("--exempt-workflow", action="store_true")
         p.add_argument("--wait-pid", type=int, help="run the removal after this pid exits (the detached step)")
         p.add_argument("--out", help="write the removal result (cleanup.json) here")
@@ -785,15 +893,24 @@ def main_selfclean(a):
     ops_cfg = safe_ops.ops_config(res["config"])
     if a.wait_pid is not None:
         return 0 if selfclean_run(a, state, ops_cfg)["status"] == "removed" else 3
-    out = {"ok": False, "archived": 0}
+    out = {"ok": False, "archived": 0, "archivedBytes": 0, "leftOut": []}
+    exempt = a.exempt_workflow
     if a.archive:
+        budget, ledger = [SNAPSHOT_CAP], (bound_ledger(state, a.session) if a.session else None)
         try:
-            out["archived"] = archive_workflow(ws, a.archive)
+            snap = archive_workflow(ws, a.archive, a.since if is_main_worktree(ws) else None, ledger, budget)
+            out.update(archived=snap["files"], archivedBytes=snap["bytes"], leftOut=snap["leftOut"])
+            exempt = exempt or not snap["leftOut"]
+            if a.session_cwd and os.path.isdir(a.session_cwd) and safe_ops.norm(os.path.realpath(a.session_cwd)) != safe_ops.norm(ws):
+                cwd_real = os.path.realpath(a.session_cwd)
+                other = archive_workflow(cwd_real, os.path.join(os.path.dirname(os.path.abspath(a.archive)), "workflow-cwd"), a.since if is_main_worktree(cwd_real) else None, ledger, budget)
+                out.update(archivedCwd=other["files"], archivedBytes=out["archivedBytes"] + other["bytes"])
+                out["leftOut"] = out["leftOut"] + ["session cwd: " + s for s in other["leftOut"]]
         except OSError as exc:
             out["reason"] = "archive_failed (%s)" % str(exc)[:80]
             print(json.dumps(out))
             return 3
-    reason, _ = selfclean_check(ws, a.branch, state, a.session, ops_cfg, a.verified_merged, a.exempt_workflow or bool(a.archive))
+    reason, _ = selfclean_check(ws, a.branch, state, a.session, ops_cfg, a.verified_merged, exempt)
     out["ok"] = reason is None
     if reason:
         out["reason"] = reason
