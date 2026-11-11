@@ -35,6 +35,11 @@ already shows is not repeated. See `docs/herdr.md#open-prs`.
    add `"props": { "foreman": "<absolute path to foreman>" }` (optional when `foreman` is on the PATH of your environment).
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
 
+The copy is the first install only. To update it, run `foreman setup --mods` in a terminal (`--dry-run` lists the changes first): it copies
+the files that differ from the package into each installed mod, never the test files or the app's `cache/`, then prints the next step
+(save reloads a mod, or restart the app; then `herdr-app check` the folder). `/foreman doctor` warns when the installed copy differs, and
+`foreman setup` offers the refresh. A session cannot write user config, so run it in a terminal (or have the foreman propose it as an owner script).
+
 ## Props
 
 `hc`: the binary that runs `get <terminal> --json`, same forms as `foreman`; a missing entry means plain `hc`.

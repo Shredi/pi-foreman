@@ -55,6 +55,7 @@ import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { withNudge } from "./knowledge.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
 import { profileDoctorLines } from "./profiledoctor.ts";
+import { doctorAppHome, modsDoctorLines } from "./profiles.mjs";
 import { BUNDLED_PACKAGE_ROOTS, collectOrientation } from "./orient.ts";
 import type { PiRoots } from "./orient.ts";
 import { applyRootsBlock } from "./childbrief.ts";
@@ -5569,6 +5570,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     out.push(...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }));
     out.push(...gateMigrationLines({ agentDir: s.agentDir, config: s.config.config }));
+    out.push(...modsDoctorLines({ packageRoot: PKG_ROOT, appHome: doctorAppHome(process.env, os.homedir()) }));
     if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);
     else fail("permission overlay baseline unreadable (shell and file tools are blocked)", "reinstall pi-foreman: config/permissions.baseline.json is part of the package.");
     for (const sh of shadowedRoles(s.cwd, childRoleIds(get(s.config.config, "roles")))) out.push(`WARN project agent shadows a role (${sh}) — fix: ${SHADOW_FIX}`);

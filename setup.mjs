@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // pi-foreman installer (design section 11). Plain Node >= 22.19 ESM; the dependency is @inquirer/prompts (picker), loaded lazily; --preview needs @earendil-works/pi-tui, a Pi-provided peer that a checkout installs as a devDependency.
 //   node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]
-//                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--github-hosts <host>[,<host>]] [--pick]
+//                  [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--github-hosts <host>[,<host>]] [--pick] [--mods [--dry-run]]
 // pi-foreman itself is installed with `pi install git:github.com/Shredi/pi-foreman` (it bundles pi-subagents
 // and pi-intercom as dependencies); this script writes the config around it.
 import * as fs from "node:fs";
@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import {
-  assignment, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, resolveSetupPython, toggleable,
+  MODS, appHome, assignment, diffMods, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, refreshMods, resolveSetupPython, toggleable,
 } from "./extensions/core-adapter/profiles.mjs";
 import { migrateGateConfig } from "./scripts/foreman_migrate_gate.mjs";
 
@@ -40,7 +40,7 @@ const FOREMAN_SOURCE = "git:github.com/Shredi/pi-foreman";
 const USAGE = [
   "Usage: node setup.mjs [--dry-run] [--project] [--overlay npm:<pkg>@<ver>] [--no-intercom] [--develop] [--remove] [--agent-dir <dir>]",
   "                       [--profile <name>] [--enable <id>[,<id>]] [--disable <id>[,<id>]] [--addon <id>] [--github-hosts <host>[,<host>]] [--pick]",
-  "                       [--intercom-hc [--machine-name <name>]] [--preview [screen]]",
+  "                       [--intercom-hc [--machine-name <name>]] [--preview [screen]] [--mods [--dry-run]]",
   `  Install pi-foreman first: ${FOREMAN_INSTALL}  (this script is also reachable as \`foreman setup\`).`,
   "  --no-intercom  filter pi-intercom out of the pi-foreman package entry and do not write its config",
   "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
@@ -56,6 +56,7 @@ const USAGE = [
   "  --github-hosts the GitHub hosts the PR tracker covers (tools.prGithubHosts, 1-20 host names, comma list); the picker asks for them, a fresh install without the flag writes github.com",
   "  --pick         open the terminal picker again (needs a terminal; PI_FOREMAN_PICKER=off disables it, =force is a test aid)",
   "  --preview      draw a setup screen (home, plan, updates, config, models, workfolders, apply) from sample data; changes nothing and cannot be combined with other flags",
+  "  --mods         refresh the installed herdr-app mods (pi-foreman, pi-foreman-plan) from this package: the changed files only, nothing else runs; a mod that is not installed is left alone",
   "  --dry-run      show what would change, write nothing",
 ].join("\n");
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
@@ -135,7 +136,7 @@ function hostsToWrite(merged, answer, fresh) {
 const withGithubHosts = (cfg, hosts) => (hosts ? { ...cfg, tools: { ...(isObj(cfg.tools) ? cfg.tools : {}), prGithubHosts: hosts } } : cfg);
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], noAddons: false, skipAddon: [], noEnv: false, githubHosts: null, pick: false, preview: null };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], noAddons: false, skipAddon: [], noEnv: false, githubHosts: null, pick: false, preview: null, mods: false };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -170,14 +171,19 @@ function parseArgs(argv) {
       o.githubHosts = r.hosts;
     }
     else if (flag === "--pick") o.pick = true;
+    else if (flag === "--mods") o.mods = true;
     else if (flag === "--preview") o.preview = inline ?? (argv[i + 1] !== undefined && !argv[i + 1].startsWith("-") ? argv[++i] : "");
     else if (flag === "--help" || flag === "-h") throw new Fatal(USAGE, 0);
     else throw new Fatal(`Unknown argument: ${argv[i]}\n${USAGE}`, 2);
   }
   if (o.preview !== null) {
-    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.noAddons && "--no-addons", o.skipAddon.length && "--skip-addon", o.noEnv && "--no-env", o.githubHosts && "--github-hosts", o.pick && "--pick"].filter(Boolean);
+    const others = [o.dryRun && "--dry-run", o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.agentDir !== null && "--agent-dir", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.noAddons && "--no-addons", o.skipAddon.length && "--skip-addon", o.noEnv && "--no-env", o.githubHosts && "--github-hosts", o.pick && "--pick", o.mods && "--mods"].filter(Boolean);
     if (others.length) throw new Fatal(`--preview cannot be combined with ${others.join(", ")}.`, 2);
     return o;
+  }
+  if (o.mods) {
+    const others = [o.project && "--project", o.remove && "--remove", o.overlay !== null && "--overlay", o.noIntercom && "--no-intercom", o.intercomHc && "--intercom-hc", o.machineName !== null && "--machine-name", o.develop && "--develop", o.profile && "--profile", o.enable.length && "--enable", o.disable.length && "--disable", o.addon.length && "--addon", o.noAddons && "--no-addons", o.skipAddon.length && "--skip-addon", o.noEnv && "--no-env", o.githubHosts && "--github-hosts", o.pick && "--pick"].filter(Boolean);
+    if (others.length) throw new Fatal(`--mods only refreshes the app mods and cannot be combined with ${others.join(", ")}.`, 2);
   }
   if (o.overlay !== null && !OVERLAY_RE.test(o.overlay)) {
     throw new Fatal(`--overlay needs an exact version, e.g. npm:@scope/pkg@1.2.3 (got "${o.overlay}"). Ranges and tags are refused.`, 2);
@@ -836,6 +842,87 @@ async function askNewAddons(list) {
   return picked;
 }
 
+/** One yes/no for the mod refresh: arrow-key confirm on a terminal, else readline; EOF or Ctrl-C declines. */
+async function askModsRefresh() {
+  let confirm = null;
+  if (pickerKind({ tty: !!(process.stdin.isTTY && process.stdout.isTTY) }) === "inquirer") {
+    try {
+      ({ confirm } = await import("@inquirer/prompts"));
+    } catch {
+      say(INQUIRER_MISSING_NOTE);
+    }
+  }
+  const question = "Refresh the installed herdr-app mods from this package?";
+  if (confirm) {
+    try {
+      return await confirm({ message: question, default: true });
+    } catch {
+      say("");
+      return false;
+    }
+  }
+  if (process.stdin.readableEnded || process.stdin.destroyed) return false; // a readline on a stream that already ended never closes
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    // EOF (closed stdin) declines instead of leaving the question pending
+    const eof = new Promise((resolve) => rl.once("close", () => resolve(null)));
+    const answer = await Promise.race([rl.question(`${question} [Y/n]: `), eof]);
+    return answer !== null && !/^n/i.test(answer);
+  } finally {
+    rl.close();
+  }
+}
+
+/** The next step after a mod refresh: save reloads a mod; the owner checks each refreshed folder with herdr-app check. */
+function printModsNextStep(home, mods) {
+  say("  next: save reloads a mod, so the app picks the change up on its own; if it does not, restart the app.");
+  for (const mod of mods) say(`  then run: herdr-app check ${path.join(home, "mods", mod)}`);
+}
+
+/** `foreman setup --mods`: refresh the installed herdr-app mods from this package and stop; no pi probing, no config writes. */
+function refreshModsCli(dryRun) {
+  const home = appHome();
+  const modsDir = path.join(home, "mods");
+  const installed = MODS.filter((m) => fs.existsSync(path.join(modsDir, m)));
+  if (!installed.length) {
+    say(`herdr-app mods: no mod is installed under ${modsDir}; nothing to do.`);
+    return;
+  }
+  const changed = refreshMods({ packageRoot: ROOT, appHome: home, dryRun });
+  if (!changed.length) {
+    say(`herdr-app mods: nothing to do, the installed mods match the package (${installed.join(", ")}).`);
+    return;
+  }
+  if (dryRun) {
+    say("herdr-app mods: dry run, nothing written. Would copy from the package:");
+    for (const { mod, files } of changed) say(`  ${mod}: ${files.join(", ")}`);
+    say("  run without --dry-run to copy them.");
+    return;
+  }
+  say("herdr-app mods: refreshed from the package:");
+  for (const { mod, files } of changed) say(`  ${mod}: ${files.join(", ")}`);
+  printModsNextStep(home, changed.map((c) => c.mod));
+}
+
+/** The installed herdr-app mods that differ from the package: listed, then one yes/no to refresh them (never silent). `--dry-run` and no terminal only report. Returns true when it refreshed. */
+async function offerModsRefresh({ st, dry }) {
+  const home = appHome();
+  const changed = diffMods({ packageRoot: ROOT, appHome: home });
+  if (!changed.length) return false;
+  for (const { mod, files } of changed) say(`  herdr-app mod ${mod} differs from the package: ${files.join(", ")}`);
+  if (dry || !st.allowed) {
+    say(`  refresh with: foreman setup --mods${dry ? " (dry run lists only)" : ""}`);
+    return false;
+  }
+  if (!(await askModsRefresh())) {
+    say("  not refreshed; refresh with: foreman setup --mods");
+    return false;
+  }
+  refreshMods({ packageRoot: ROOT, appHome: home });
+  printModsNextStep(home, changed.map((c) => c.mod));
+  return true;
+}
+
 /** What the environment allows for the picker: PI_FOREMAN_PICKER=force (test and automation aid) overrides the TTY and CI tests, =off disables it. */
 function pickerState() {
   const mode = process.env.PI_FOREMAN_PICKER;
@@ -860,6 +947,7 @@ async function main(argv) {
     process.exitCode = await runPreview(opts.preview || undefined, { stdout: process.stdout, isTTY: !!(process.stdin.isTTY && process.stdout.isTTY), columns: process.stdout.columns, rows: process.stdout.rows });
     return;
   }
+  if (opts.mods) return refreshModsCli(opts.dryRun);
   const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "packages.lock.json"), "utf8"));
   const agentDir = resolveAgentDir(opts.agentDir);
   const projectDir = process.cwd();
@@ -1630,6 +1718,7 @@ async function main(argv) {
       if (present.some((i) => i.id === a.id) || addonNew.some((n) => n.id === a.id)) continue;
       say(`optional add-on ${a.id}: ${a.purpose} Spec npm:${a.package}@${a.version}. ${a.clashes.join(" ")} Install with: foreman setup --addon ${a.id}`);
     }
+    if (await offerModsRefresh({ st, dry })) anyChange = true;
     if (opts.develop && developSettings()) anyChange = true;
     if (!anyChange) say("pi-foreman: up to date, nothing to change.");
     else if (dry) say("pi-foreman: dry run complete, nothing written.");
