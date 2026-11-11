@@ -105,7 +105,7 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 
 - The close prompt asks for the result file `<handoff dir>/result.md`: the PR number, the merge commit and anything left open.
 - After the result file the session tells its parent `PR #n merged, closing` and the usual `Result from <label>: <path>`.
-- **Target worktree.** The adapter runs one `pr_status` first. When the session's cwd has the PR head ref checked out, that
+- **Target worktree.** The session cwd may be a subfolder: it is first resolved to its worktree root (the `git worktree list --porcelain` entry containing it, longest match, by real path) and that root is the worktree in every check and message. A cwd in no listed worktree refuses the cleanup with a line naming the cwd, removes nothing and prints no remove command; the cwd's `.workflow/` is still snapshotted. The adapter runs one `pr_status` first. When the session's cwd has the PR head ref checked out, that
   worktree is the target. Otherwise (a round that worked in a second worktree while the session sits in the main checkout)
   the target is the worktree of `git worktree list --porcelain` (run in the session cwd) that has `refs/heads/<head ref>`
   checked out; its path is compared by real path, separators and, on Windows, case. The main (first) worktree and a head ref

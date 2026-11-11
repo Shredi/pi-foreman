@@ -71,16 +71,32 @@ export function parseWorktrees(text: string | null): Worktree[] {
 
 /** The same directory: real path, separators and (Windows) case folded. */
 export function samePath(a: string, b: string): boolean {
-  const key = (p: string): string => {
-    let r = path.resolve(p);
-    try {
-      r = fs.realpathSync.native(r);
-    } catch {
-      // not on disk: compare the resolved text
+  return pathKey(a) === pathKey(b);
+}
+
+function pathKey(p: string): string {
+  let r = path.resolve(p);
+  try {
+    r = fs.realpathSync.native(r);
+  } catch {
+    // not on disk: compare the resolved text
+  }
+  return process.platform === "win32" ? r.replace(/\\/g, "/").toLowerCase() : r;
+}
+
+/** The worktree of the list that contains `dir` (the longest match, so a linked worktree below the main checkout wins); null when none does. */
+export function worktreeRoot(dir: string, wts: Worktree[]): string | null {
+  const d = pathKey(dir);
+  let best: string | null = null;
+  let bestLen = -1;
+  for (const w of wts) {
+    const k = pathKey(w.path).replace(/[\\/]+$/, "");
+    if ((d === k || d.startsWith(k + "/") || d.startsWith(k + "\\")) && k.length > bestLen) {
+      best = w.path;
+      bestLen = k.length;
     }
-    return process.platform === "win32" ? r.replace(/\\/g, "/").toLowerCase() : r;
-  };
-  return key(a) === key(b);
+  }
+  return best;
 }
 
 const ACTIONS: Record<string, string> = {
@@ -115,23 +131,31 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   const baseRef = typeof pr?.baseRef === "string" && pr.baseRef ? pr.baseRef : null;
   const cwdBranch = await d.git(["symbolic-ref", "--short", "-q", "HEAD"]);
   const wts = parseWorktrees(await d.git(["worktree", "list", "--porcelain"]));
-  let target = d.cwd;
+  const root = worktreeRoot(d.cwd, wts);
+  if (!root) {
+    const snap = await snapshotOnly(d, d.cwd, cwdBranch ?? headRef ?? "HEAD");
+    return { lines: [...snap, `cleanup: not started (the session cwd ${d.cwd} is in no worktree of this repository); nothing is removed: the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
+  }
+  let target = root;
   let branch = cwdBranch;
   if (headRef && cwdBranch !== headRef) {
     const w = wts.find((x) => x.branch === headRef);
     branch = headRef;
     if (!w) {
       const lines = [`merged fact: not verified (PR #${n} head branch ${headRef} is not checked out in a worktree of this repository)`];
-      const snap = await snapshotOnly(d, cwdBranch ?? headRef);
-      lines.push(...snap, `cleanup: not started; nothing is removed: the owner deletes the local branch with \`git branch -D ${headRef}\` once PR #${n} is merged and removes any leftover worktree with \`git worktree remove <path>\``);
+      const snap = await snapshotOnly(d, root, cwdBranch ?? headRef);
+      const keepBranch = headRef === baseRef || headRef === wts[0].branch;
+      lines.push(...snap, keepBranch
+        ? `cleanup: not started; nothing is removed: branch ${headRef} is the base branch, the owner removes the round's own worktree and branch by hand once PR #${n} is merged`
+        : `cleanup: not started; nothing is removed: the owner deletes the local branch with \`git branch -D ${headRef}\` once PR #${n} is merged and removes any leftover worktree with \`git worktree remove <path>\``);
       return { lines };
     }
     target = w.path;
   }
-  const isMain = wts.length > 0 && samePath(target, wts[0].path);
+  const isMain = samePath(target, wts[0].path);
   if (!branch) {
     if (isMain) {
-      const snap = await snapshotOnly(d, "HEAD");
+      const snap = await snapshotOnly(d, root, "HEAD");
       return { lines: [...snap, `cleanup: not started (worktree ${target} is the main checkout and has no branch checked out); nothing is removed: worktree ${target} stays; the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
     }
     return { lines: [`cleanup: not started (the worktree ${target} has no branch checked out); nothing is removed: worktree ${target} stays; the owner checks out the round's branch in it, or removes the worktree with \`git worktree remove ${target}\``] };
@@ -139,10 +163,10 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   const lines: string[] = [];
   if (isMain || branch === baseRef) {
     const why = isMain ? `worktree ${target} is the main checkout` : `branch ${branch} is the base branch of PR #${n}`;
-    const snap = await snapshotOnly(d, branch);
+    const snap = await snapshotOnly(d, root, branch);
     return { lines: [...snap, `cleanup: not started (${why}); nothing is removed: worktree ${target} and branch ${branch} stay; the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
   }
-  const tip = await d.git(["rev-parse", "--verify", "HEAD"], samePath(target, d.cwd) ? undefined : target);
+  const tip = await d.git(["rev-parse", "--verify", "HEAD"], samePath(target, root) ? undefined : target);
   if (!tip) return { lines: [`cleanup: not started (the worktree ${target} has no commit checked out); nothing is removed: worktree ${target} and branch ${branch} stay; the owner commits the round's work in it, or removes the worktree with \`git worktree remove ${target}\``] };
   const fact = await verifyMerged(async () => status, n, branch, tip);
   if ("why" in fact) lines.push(`merged fact: not verified (${fact.why}); only a branch merged into the base is removed`);
@@ -150,7 +174,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   const common = ["selfclean", "--ws", target, "--branch", branch, "--state", d.stateDir, "--session", d.sessionId, ...("sha" in fact ? ["--verified-merged", fact.sha] : []), ...(d.trusted ? ["--trusted-project"] : [])];
   let out: CheckOut = {};
   try {
-    out = JSON.parse(await d.closeScript([...common, "--archive", archive, "--session-cwd", d.cwd, ...since(d)])) as CheckOut;
+    out = JSON.parse(await d.closeScript([...common, "--archive", archive, "--session-cwd", root, ...since(d)])) as CheckOut;
   } catch {
     out = { reason: "the check did not answer" };
   }
@@ -169,10 +193,10 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
 const since = (d: SelfFinishDeps): string[] => (d.sinceMs === undefined ? [] : ["--since", String(d.sinceMs / 1000)]);
 
 /** The snapshot of the session's own cwd when no worktree is a target or the cleanup is refused up front (the answer's ok is ignored: nothing is removed). */
-async function snapshotOnly(d: SelfFinishDeps, branch: string): Promise<string[]> {
+async function snapshotOnly(d: SelfFinishDeps, ws: string, branch: string): Promise<string[]> {
   const archive = path.join(d.handoff, ARCHIVE_DIR);
   try {
-    const out = JSON.parse(await d.closeScript(["selfclean", "--ws", d.cwd, "--branch", branch, "--state", d.stateDir, "--session", d.sessionId, ...(d.trusted ? ["--trusted-project"] : []), "--archive", archive, ...since(d)])) as CheckOut;
+    const out = JSON.parse(await d.closeScript(["selfclean", "--ws", ws, "--branch", branch, "--state", d.stateDir, "--session", d.sessionId, ...(d.trusted ? ["--trusted-project"] : []), "--archive", archive, ...since(d)])) as CheckOut;
     return archiveLines(out, archive);
   } catch {
     return [];

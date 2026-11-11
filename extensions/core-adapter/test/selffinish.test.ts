@@ -145,7 +145,7 @@ function fakeDeps(over: Partial<SelfFinishDeps> & { script?: (args: string[]) =>
   return {
     cwd: "/w/wt", handoff: "/h/demo", sessionId: "s1", stateDir: "/st", pid: 4242, trusted: false,
     status: async () => ran({ state: "merged", headRefName: "feat", headSha: "t1" }),
-    git: async (a) => (a[0] === "symbolic-ref" ? "feat" : "t1"),
+    git: async (a) => (a[0] === "symbolic-ref" ? "feat" : a[0] === "worktree" ? "worktree /w/main\nbranch refs/heads/main\n\nworktree /w/wt\nbranch refs/heads/feat\n" : "t1"),
     closeScript: async (a) => (over.script ? over.script(a) : JSON.stringify({ ok: true, archived: 3, remoteBranch: null })),
     spawnCleanup: (a) => void spawned.push(a),
     ...over,
