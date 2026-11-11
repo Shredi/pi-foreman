@@ -785,6 +785,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hosts = resolveGithubHosts(s.config.config);
           if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);
         },
+        reviewedHeads: () => passHeads(s.reviews),
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
         fresh: async (key, cwd) => {
@@ -940,7 +941,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; const unreviewed = sessions.get(id)?.prWatches.unreviewed().map((k) => ({ n: k.n, repo: k.repo, host: k.host })) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs, ...(unreviewed.length > 0 ? { unreviewed } : {}) }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       if (s.live) {
         const live = s.live;
         s.show = Show.start({ agentDir, sessionId: id, cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir, handoffDir: (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null, trace: (r) => s.trace?.emit(r), onChange: () => live.flush() });

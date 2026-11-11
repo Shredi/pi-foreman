@@ -2,7 +2,7 @@
 // reads what the PR tracker (herdr-app's `foreman prs poll`, prstore.ts) stored. It ends only when the stored snap says merged or
 // closed, or pr_unwatch ends it; every tick that finds something new sends ONE pi-foreman-pr message (the watch stays armed).
 // Events: a failed check run (per run id: a rerun or a new head is a new run), the CI result once all checks settled, new comments
-// or reviews, a mergeable change, a head without checks, merged or closed. Without a running tracker the watch stays armed and says
+// or reviews, a mergeable change, a head without checks, a head the session's reviewer never passed (after one it did), merged or closed. Without a running tracker the watch stays armed and says
 // so (status line and one notice per outage). Timers are unref'd; clear() (session shutdown) stops everything. The PR number is
 // never traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
@@ -138,8 +138,38 @@ export interface WatchState {
   noCiHead: string;
   /** Child sessions: the head the ready-to-merge line was reported for. */
   readyHead: string;
+  /** The last head of this PR with a reviewer PASS in this session, "" (or absent) when none: the PR is not one the session reviewed. */
+  reviewedHead?: string;
+  /** The head the not-reviewed event was sent for, "" (or absent) when none. */
+  unreviewedHead?: string;
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
+}
+
+const shortSha = (sha: string): string => sha.slice(0, 7);
+
+/**
+ * The review rule of one evaluation of `head` against the heads with a reviewer PASS (`passed`; plan verdicts never count). Updates `st`;
+ * returns the event text when the head moved past the last PASS and was not reported yet. Without a PASS ever seen for this PR
+ * (`reviewedHead` unset) there is nothing to drift from: no event, no state.
+ */
+export function reviewStep(st: WatchState, head: string, passed: ReadonlySet<string>): string | null {
+  if (!head) return null;
+  if (passed.has(head) || head === st.reviewedHead) {
+    if (st.reviewedHead !== head) st.reviewedHead = head;
+    if (st.unreviewedHead) st.unreviewedHead = "";
+    return null;
+  }
+  if (!st.reviewedHead || st.unreviewedHead === head) return null;
+  st.unreviewedHead = head;
+  return `head ${shortSha(head)} not reviewed (last PASS on ${shortSha(st.reviewedHead)})`;
+}
+
+/** The `pr_status` line: the current head against the session's PASS heads and the watch's last PASS head ("" when there is none). */
+export function reviewFact(head: string, passed: ReadonlySet<string>, lastPass: string): string {
+  if (!head) return "";
+  if (passed.has(head) || head === lastPass) return `head ${shortSha(head)} reviewed`;
+  return lastPass ? `head ${shortSha(head)} not reviewed (last PASS on ${shortSha(lastPass)})` : "no review record";
 }
 
 /** The runs that count toward checks finished, ready to merge and no checks: every run but a non-gating source's. */
@@ -201,7 +231,7 @@ const rawName = (r: Run): string => (r.source && r.name.startsWith(`${r.source}/
  * Events are built first, then filtered by the wake rules (`repo`: `owner/name` for their `repos` globs). The state is updated for every event
  * whether it wakes or not, so a silent event is never replayed; only a woken event reaches the delta.
  */
-export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = ""): { state: WatchState; delta: Delta | null } {
+export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>): { state: WatchState; delta: Delta | null } {
   const st: WatchState = { ...prev, failedIds: [...prev.failedIds], commentIds: [...prev.commentIds] };
   const events: string[] = [];
   const counts = countRuns(snap.runs);
@@ -282,6 +312,10 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     d.ready = true;
     events.push("ready to merge");
   }
+
+  // not a wake kind: a head past the last PASS is always news (a silent event is never replayed, so the state is set either way)
+  const drift = passed ? reviewStep(st, snap.head, passed) : null;
+  if (drift) events.push(drift);
 
   st.head = snap.head;
   st.updatedAt = snap.updatedAt;
@@ -468,7 +502,8 @@ function parseState(v: unknown): WatchState | null {
   if (typeof s.head !== "string" || !strings(s.failedIds) || typeof s.ci !== "string" || !strings(s.commentIds) || typeof s.updatedAt !== "string") return null;
   if (s.mergeable !== "" && s.mergeable !== "mergeable" && s.mergeable !== "conflicting") return null;
   if (!finite(s.noCi) || typeof s.noCiHead !== "string" || typeof s.readyHead !== "string" || typeof s.last !== "string") return null;
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, last: s.last };
+  const review = { ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...review, last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */
@@ -521,6 +556,8 @@ export interface PrWatchesDeps {
   wakeRules?(): readonly WakeRule[];
   /** Put the key back on the tracker's list when it is not there (a restored watch, a failed add, a hand-removed line). Never a GitHub call. */
   retrack?(key: PrKey): void | Promise<void>;
+  /** The heads with a reviewer PASS in this session (code reviews of any checkout; reviews.ts passHeads); absent: the watch does not judge reviews. */
+  reviewedHeads?(): readonly string[];
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set or a watch's state changed: write the session entry. */
@@ -608,7 +645,11 @@ export class PrWatches {
 
   /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
   start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null): void {
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: baselineOf(snap) });
+    const state = baselineOf(snap);
+    const passed = this.passedSet();
+    // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
+    if (passed) reviewStep(state, snap.head, passed);
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state });
     w.seenAt = okAt;
     this.arm(w);
     this.persist();
@@ -619,12 +660,34 @@ export class PrWatches {
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming" } });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) } });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
+  }
+
+  /** The session's PASS heads, null when the watch does not judge reviews (no dep, or it threw). */
+  private passedSet(): Set<string> | null {
+    if (!this.deps.reviewedHeads) return null;
+    try {
+      return new Set(this.deps.reviewedHeads());
+    } catch {
+      return null;
+    }
+  }
+
+  /** The watches whose head moved past the last PASS and has none yet (the tracker token); a PASS recorded since clears it at once. */
+  unreviewed(): PrKey[] {
+    const passed = this.passedSet();
+    return [...this.watches.values()].filter((w) => !!w.state.unreviewedHead && !passed?.has(w.state.unreviewedHead)).map((w) => w.key);
+  }
+
+  /** The last PASS head the watch of PR `key` holds ("" when none), null without a watch. */
+  reviewOf(key: PrKey): string | null {
+    const w = this.find(key);
+    return w ? w.state.reviewedHead ?? "" : null;
   }
 
   private register(r: WatchRecord): Watch {
@@ -785,6 +848,14 @@ export class PrWatches {
 
   private settle(w: Watch, r: StoreRead): void {
     if (w.ended) return;
+    // a PASS recorded since the alert clears it on the next tick, whatever the store says (no event: the state is only cleared)
+    const passed = this.passedSet();
+    const un = w.state.unreviewedHead;
+    if (passed && un && passed.has(un)) {
+      w.state = { ...w.state, reviewedHead: un, unreviewedHead: "" };
+      this.persist();
+      this.deps.changed?.();
+    }
     // `down` is a fact about the tracker, the same for every watch: the notice goes out on the up -> down transition only
     if (r.kind === "down") {
       this.setStatus(w, TRACKER_DOWN);
@@ -837,8 +908,8 @@ export class PrWatches {
     }
     // a pending start: comments count as reported, CI does not (failed runs and a settled result are sent once), and mergeable has
     // no baseline: a first CONFLICTING is news, a first MERGEABLE is the baseline
-    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const } : w.state;
-    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo);
+    const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const, ...(w.state.reviewedHead ? { reviewedHead: w.state.reviewedHead } : {}) } : w.state;
+    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined);
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;
     if (changed) this.persist();

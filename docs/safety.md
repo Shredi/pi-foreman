@@ -20,6 +20,8 @@ Protected targets (a host, a path or a command glob you list in `permissions.jso
 
 Sibling checkouts (a PR from another worktree or clone than the session's): a review record keeps the checkout it ran in (realpath of the git toplevel). The `pr_create {cwd}` tool opens a PR from such a checkout only when a counting reviewer PASS is recorded for exactly that checkout and equals its current HEAD (`[pr_refused:cwd_unreviewed]`, `cwd_stale`); the upstream rule applies there too, a headless PASS stays unbound, and a PASS recorded in one sibling checkout opens no other sibling (the session checkout still opens by SHA). `gh pr create --repo X --head B` from the session checkout is accepted only when exactly one checkout with a recorded PASS has a remote matching X and its local branch B at the PASS head (`repo_unmatched`, `repo_ambiguous`). `cd <dir> && gh pr create` stays refused (`pr_compound`). Each refusal names `pr_create {cwd}`; children and a disabled gate behave as before.
 
+The gate checks only at PR creation; a head pushed later is not refused by it. The session's PR watch reports it instead (`head <sha> not reviewed (last PASS on <sha>)`, see [tools](tools.md#watch)).
+
 Safety line for children: no recursive deletes, no discards outside the child's own diff. A child may undo its own
 change to a test file: `git restore [--worktree|-W] [--staged|-S] [--] <paths>` or `git checkout -- <paths>` is
 allowed only when every path is a plain file path (no glob, `.`, `..`, directory, `:(` magic or leading `-`) that

@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -404,6 +404,7 @@ export default class ForemanAgents extends View {
       .text_size(10.5).font_medium().text_color(st.fill === "red" ? t.blocked : t.muted)
       .child(div().child(`⎇ #${pr.number}${more.length ? ` +${more.length}` : ""}`))
       .when(st.conflict, (el) => el.child(conflictMark(t)))
+      .when(pr.unreviewed === true, (el) => el.child(div().text_color(tones(t).amber).child(UNREVIEWED)))
       .child(prDot(t, st));
     const c = { ...prCard(pr), more: more.length ? `also ${more.map((p) => `#${p.number}`).join(", ")}` : "" };
     const id = `pr-${key}-${pr.number}`;
