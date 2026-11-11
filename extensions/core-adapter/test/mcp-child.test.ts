@@ -12,6 +12,10 @@ import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { createDefaultChildSessionFactory } from "../../../node_modules/pi-subagents/src/runs/shared/child-session.js";
 import { createToolSearchToolDefinition } from "../../../node_modules/@earendil-works/pi-coding-agent/dist/extensions/tool-search/tool.js";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup, cached per module with no seam; PI_OFFLINE makes
+// that lookup return null without starting npm.
+process.env.PI_OFFLINE = "1";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const adapter = path.resolve(here, "..", "index.ts");
 const fixture = path.join(here, "fixtures", "mcp-fixture-server.mjs");

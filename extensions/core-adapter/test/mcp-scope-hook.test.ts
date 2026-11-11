@@ -7,6 +7,10 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup, cached per module with no seam; PI_OFFLINE makes
+// that lookup return null without starting npm.
+process.env.PI_OFFLINE = "1";
+
 /** An installed Pi package root that has the MCP loader on disk. */
 const PI_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "node_modules", "@earendil-works", "pi-coding-agent");
 

@@ -3,6 +3,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import "./_spawn-count.mjs";
 
 const { keys, prefixes } = JSON.parse(fs.readFileSync(new URL("./session-env.json", import.meta.url), "utf8"));
 for (const k of keys) delete process.env[k];
@@ -17,7 +18,23 @@ if (process.platform !== "win32") {
   const log = path.join(dir, "calls.log");
   fs.writeFileSync(path.join(dir, "gh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexit 1\n`, { mode: 0o755 });
   fs.writeFileSync(log, "");
+  // Same for `npm`: nothing under test may start it (the global npm root is seeded below); a stray call is logged in
+  // FOREMAN_FAKE_NPM_LOG and fails, and the spawn guard of foreman_test_run.mjs counts it.
+  const npmLog = path.join(dir, "npm-calls.log");
+  fs.writeFileSync(path.join(dir, "npm"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${npmLog}'\nexit 1\n`, { mode: 0o755 });
+  // `npx` through a shell is a stray npm start too: same log, same failure.
+  fs.writeFileSync(path.join(dir, "npx"), `#!/bin/sh\nprintf '%s\\n' "npx $*" >> '${npmLog}'\nexit 1\n`, { mode: 0o755 });
+  fs.writeFileSync(npmLog, "");
   process.env.PATH = `${dir}${path.delimiter}${process.env.PATH ?? ""}`;
   process.env.FOREMAN_FAKE_GH_LOG = log;
+  process.env.FOREMAN_FAKE_NPM_LOG = npmLog;
   process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
+}
+
+// The global npm root every session of a test process sees (owned.ts `npmRootOnce`, pi-model-data.mjs): an empty temp directory, so
+// no test starts `npm root -g`. Tests of the lookup itself clear the slot and put their own stub `npm` on PATH.
+{
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-npm-root-")));
+  globalThis[Symbol.for("pi-foreman.npm-root")] = { seed: root };
+  process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 }

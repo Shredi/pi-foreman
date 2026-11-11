@@ -13,7 +13,7 @@ import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
 import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
 import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
-import { childHandoffDirs, openedHandoffDirs, ownedRoots, ownHandoffDirs, resolveNpmRoot, underOwned } from "./owned.ts";
+import { childHandoffDirs, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
@@ -919,8 +919,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pressureQ: null,
     };
     sessions.set(id, s);
-    // `npm root -g` once per session, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
-    void resolveNpmRoot({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
+    // `npm root -g` once per process, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
+    void npmRootOnce({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
       .then((npmRoot) => {
         s.owned = computeOwned(npmRoot);
         s.npmRootPending = false;
