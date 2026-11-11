@@ -241,6 +241,27 @@ test("a PR head branch main in no worktree, session in a detached linked worktre
   }
 });
 
+test("a PR head branch in no worktree, session in a linked worktree on main: never removed, the owner has nothing to do, no sweep pointer", async () => {
+  for (const detachMain of [false, true]) {
+    for (const baseRef of ["develop", undefined, "main"]) {
+      const w = world();
+      try {
+        if (detachMain) git(w.repo, "checkout", "-q", "--detach");
+        else git(w.repo, "checkout", "-q", "-b", "other");
+        git(w.wt, "checkout", "-q", "main");
+        const r = await selfFinish(w.deps({ cwd: w.wt, status: async () => ran({ state: "merged", headRefName: "ghost", ...(baseRef ? { baseRef } : {}), headSha: w.tip }), git: gitIn(w.wt) }), 7);
+        assert.equal(r.spawn, undefined);
+        const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+        assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} and branch main are never removed; branch ghost is checked out in no worktree and nothing is done with it; there is nothing for the owner to do with them`)), line);
+        assert.ok(line.includes("the owner") && !line.includes("worktree sweep"), line);
+        assert.equal(git(w.wt, "branch", "--show-current"), "main");
+      } finally {
+        w.cleanup();
+      }
+    }
+  }
+});
+
 test("the main checkout on a round branch: the line says the main checkout is never removed and the branch stays while checked out there", async () => {
   const w = world();
   try {
@@ -300,10 +321,24 @@ test("an unborn second worktree: the not-started line names its path and branch 
     assert.equal(r.spawn, undefined);
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
     assert.ok(fwd(line).includes(fwd(`the worktree ${orphan} has no commit checked out`)) && fwd(line).includes(fwd(`worktree ${orphan} and branch newb stay`)), line);
-    assert.ok(line.includes("foreman worktree sweep") && !line.includes("git worktree remove"), line);
+    assert.ok(line.includes("the owner") && !line.includes("worktree sweep") && !line.includes("git worktree remove"), line);
     assert.ok(fs.existsSync(orphan));
   } finally {
     w.cleanup();
+  }
+});
+
+test("no parsable check answer or an unknown reason: the line names worktree and branch, the owner, and no sweep pointer", async () => {
+  const answers: Array<() => Promise<string>> = [async () => "", async () => { throw new Error("boom"); }, async () => JSON.stringify({ ok: false, reason: "mystery_reason" })];
+  for (const closeScript of answers) {
+    const w = world();
+    try {
+      const r = await selfFinish(w.deps({ closeScript, status: async () => ran({ state: "merged", headRefName: "feat", headSha: w.tip }) }), 7);
+      const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+      assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} and branch feat stay`)) && line.includes("the owner") && !line.includes("worktree sweep"), line);
+    } finally {
+      w.cleanup();
+    }
   }
 });
 
