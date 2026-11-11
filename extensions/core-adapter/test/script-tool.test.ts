@@ -681,3 +681,38 @@ test("foreman_script: an undo aborted before the script starts does not use an a
   assert.equal(r.logs().filter((n) => n.includes("-undo-")).length, 0);
   assert.equal((await r.call({ action: "undo" })).details?.exit, 0);
 });
+
+// ---- status undo fields: only when they mean something
+
+test("foreman_script: status after a real run of a script without undo support has no availableUntil and no attemptsLeft", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r, false);
+  await r.propose();
+  await r.call({ action: "run" });
+  const st = await statusOf(r);
+  assert.equal(st.undo.supported, false);
+  assert.equal("availableUntil" in st.undo, false, JSON.stringify(st.undo));
+  assert.equal("attemptsLeft" in st.undo, false, JSON.stringify(st.undo));
+});
+
+test("foreman_script: status after a real run with undo support has availableUntil and attemptsLeft", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  const st = await statusOf(r);
+  assert.equal(typeof st.undo.availableUntil, "string", JSON.stringify(st.undo));
+  assert.equal(st.undo.attemptsLeft, 3);
+});
+
+test("foreman_script: status after a successful undo has no availableUntil and attemptsLeft 0", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  assert.equal((await r.call({ action: "undo" })).details?.exit, 0);
+  const st = await statusOf(r);
+  assert.equal(st.undo.used, true);
+  assert.equal("availableUntil" in st.undo, false, JSON.stringify(st.undo));
+  assert.equal(st.undo.attemptsLeft, 0);
+});
