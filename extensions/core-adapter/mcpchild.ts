@@ -264,7 +264,13 @@ export class McpChild {
     if (!doNamed && !direct) {
       // nothing is declared on this provider: the same text on every turn here; a later turn on a direct provider declares tools and replaces it
       if (this.line === null) {
-        this.line = upfrontLine([], this.allowed.servers, []);
+        // a server whose registered tools are all hidden is not offered for search (tools not registered yet: unknown, so offered)
+        const exposure = new Map(this.pi.getAllTools().map((tool) => [tool.name, (tool as { exposure?: string }).exposure]));
+        const hidden = this.allowed.servers.filter((server) => {
+          const mine = [...this.labels].filter(([, label]) => serverKey(label.split("/", 1)[0] ?? "") === serverKey(server));
+          return mine.length > 0 && !mine.some(([name]) => ["deferred", "codemode"].includes(exposure.get(name) ?? ""));
+        });
+        this.line = upfrontLine([], this.allowed.servers.filter((server) => !hidden.includes(server)), [], [], [], null, hidden);
       }
       return;
     }
