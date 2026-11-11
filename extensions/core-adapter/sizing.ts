@@ -83,7 +83,7 @@ function parseOne(size: unknown, risk: unknown): { declared: Declared; error?: s
 export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}` and `risk: [...]` are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
 
 /** The sentence the model sees (tool description): a child gets MCP tools only when its launch names them. */
-export const MCP_LAUNCH_NOTE = "A child gets no MCP tools unless the launch names them: `mcp: [\"server\", \"server/tool\"]`. `mcp` is a top-level key of this call, beside `agent` and `task`, never inside `options` or `args`, and stays inside the role's ceiling (`roles.<role>.mcp`); no `mcp` or `[]` means none.";
+export const MCP_LAUNCH_NOTE = "A child gets no MCP tools unless the launch names them: `mcp: [\"server\", \"server/tool\"]`. `mcp` is a top-level key of this call, beside `agent` and `task`, never inside `options` or `args`, and stays inside the role's ceiling (`roles.<role>.mcp`); no `mcp` or `[]` means none. Name the tools the task probably needs as `server/tool` (up front from the first request); the bare `server` lets the child search the rest.";
 
 /** The foreman's `subagent` tool description with the placement sentence and the MCP sentence added; null when sizing is off, the tool is not declared or the sentence is already there. */
 export function subagentDescription(declared: readonly { name: string; description?: string }[], enabled: boolean): string | null {

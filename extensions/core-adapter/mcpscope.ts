@@ -11,6 +11,8 @@ export interface McpAllowed {
   servers: string[];
   /** Servers allowed only for the listed tools (names as written); never also in `servers`. */
   tools: Record<string, string[]>;
+  /** Tools named as `server/tool` whose server is also in `servers` (the child gets them up front, the rest of the server by search); absent when there are none. */
+  named?: Record<string, string[]>;
 }
 
 export const NO_MCP: McpAllowed = Object.freeze({ servers: [], tools: {} }) as McpAllowed;
@@ -62,17 +64,37 @@ function build(entries: Iterable<string>, patterns: readonly string[]): McpAllow
     }
   }
   const tools: Record<string, string[]> = {};
-  for (const [key, slot] of single) if (!whole.has(key)) tools[slot.server] = [...slot.tools];
-  return { servers: [...whole.values()], tools };
+  const named: Record<string, string[]> = {};
+  for (const [key, slot] of single) {
+    const wholeName = whole.get(key);
+    if (wholeName !== undefined) named[wholeName] = [...slot.tools];
+    else tools[slot.server] = [...slot.tools];
+  }
+  return { servers: [...whole.values()], tools, ...(Object.keys(named).length > 0 ? { named } : {}) };
+}
+
+/** Every single tool the child gets up front: the tools of `tools` and of `named`. */
+export function namedEntries(allowed: McpAllowed): { server: string; tool: string }[] {
+  return [allowed.tools, allowed.named ?? {}].flatMap((group) => Object.entries(group).flatMap(([server, list]) => list.map((tool) => ({ server, tool }))));
 }
 
 /**
  * The servers and tools a child of `role` may load: the role's list, minus entries its `denyTools` would deny,
  * narrowed by the launch list (`undefined`/`null` or `[]` = nothing: a launch names what its child needs). A launch entry
  * counts only inside the ceiling: `server` if the role lists that server, `server/tool` if the role lists the
- * server or the same entry. A bare `server` entry wins over `server/tool` entries of that server.
+ * server or the same entry. A bare `server` entry wins over `server/tool` entries of that server; `allowedMcpNamed`
+ * keeps those tools apart.
  */
 export function allowedMcp(configRoles: unknown, role: string | null | undefined, launchMcp?: readonly string[] | null): McpAllowed {
+  const { named: _named, ...allowed } = allowedMcpNamed(configRoles, role, launchMcp);
+  return allowed;
+}
+
+/**
+ * `allowedMcp` with the `server/tool` entries of a server that is also named whole kept in `named` (the server stays
+ * whole for the call gate and the config filter; the child declares those tools up front and finds the rest by search).
+ */
+export function allowedMcpNamed(configRoles: unknown, role: string | null | undefined, launchMcp?: readonly string[] | null): McpAllowed {
   const ceiling = roleMcpEntries(configRoles, role);
   if (ceiling.length === 0 || !Array.isArray(launchMcp)) return { servers: [], tools: {} };
   const patterns = denyPatterns(configRoles, role);
@@ -133,7 +155,7 @@ export interface McpLoadedLike {
   [key: string]: unknown;
 }
 
-/** In a child nothing is declared up front: `direct` becomes `deferred`, the rest stays. */
+/** In the child's config `direct` becomes `deferred`, the rest stays; what is declared up front is decided by `McpChild.preload`. */
 const childExposure = (e: Exposure): Exposure => (e === "direct" ? "deferred" : e);
 
 /** Provider ids whose child gets its allowed deferred MCP tools declared up front (mcp.directProviders); unset = claude-bridge, [] = none. */

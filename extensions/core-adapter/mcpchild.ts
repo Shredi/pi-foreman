@@ -10,7 +10,7 @@ import * as sdk from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { piAgentDir } from "./env.ts";
 import type { Env } from "./env.ts";
-import { allowedMcp, directMaxTools, directProviders, filterMcpConfig, mcpCallAllowed, mcpEmpty, serverKey } from "./mcpscope.ts";
+import { allowedMcpNamed, directMaxTools, directProviders, filterMcpConfig, mcpCallAllowed, mcpEmpty, namedEntries, serverKey, splitEntry } from "./mcpscope.ts";
 import type { McpAllowed, McpLoadedLike } from "./mcpscope.ts";
 
 export const TOOL_SEARCH = "tool_search";
@@ -108,6 +108,8 @@ export interface McpChildOpts {
   createMcp?: unknown;
   /** Injectable for tests: how long `preload` waits for the allowed servers' tools (default 10 s, Pi's own startup wait). */
   preloadWaitMs?: number;
+  /** Injectable for tests: the pause between two readiness polls of `preload` (default a 50 ms timer). */
+  preloadPause?: () => Promise<void>;
   /** How many skills are hidden from this child's prompt and findable through `tool_search` (default none). */
   hiddenSkills?: () => number;
 }
@@ -117,7 +119,44 @@ const PRELOAD_WAIT_MS = 10_000;
 export const unsupportedNote = (reason: string): string => `pi-foreman: MCP is not available in this child (${reason}). Do not look for MCP tools; name the missing MCP tool under Friction in your report.`;
 
 export const cappedNote = (count: number, cap: number): string =>
-  `pi-foreman: the ${count} MCP tools allowed to this child are over the cap of ${cap} (mcp.directMaxTools), so none was declared up front (they stay deferred; a tool loaded with tool_search is callable from the next turn on a provider that fixes its tool list per turn). Do not rely on MCP tools; under Friction in your report write that ${count} MCP tools were over the cap of ${cap}, and that the launch should narrow them with mcp: ["server/tool"] or the owner raise mcp.directMaxTools.`;
+  `pi-foreman: the ${count} MCP tools allowed to this child are over the cap of ${cap} (mcp.directMaxTools), so nothing is declared up front: they stay deferred and you find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn). Do not rely on MCP tools being in your tool list; under Friction in your report write that ${count} MCP tools were over the cap of ${cap}, and that the launch should name the tools the task needs next to the server (mcp: ["server", "server/tool"]; mcp: ["server/tool"] alone narrows to them) or the owner raise mcp.directMaxTools.`;
+
+export const namedCapNote = (count: number, cap: number): string =>
+  `pi-foreman: the ${count} MCP tools named for this child are over the cap of ${cap} (mcp.directMaxTools), so none was declared up front. Do not rely on MCP tools; under Friction in your report write that ${count} named MCP tools were over the cap of ${cap}.`;
+
+/**
+ * The prompt line of a launch that named MCP: which MCP tools are up front (`upfront` tool names, then `whole` servers
+ * declared in bulk with their declared tool count; `all` is false when tools of the server in scope stay undeclared), where the tools of the servers named whole and not declared (`search`) are
+ * found, which named tool the server lacks. `silent` are named servers of which no tool registered by the end of the readiness wait
+ * (it did not answer or the MCP config hides it; `tools` are its named tools, none for a server named whole only);
+ * `overCap` are the bulk tools (`bulk`) of the servers named whole that, with the `named` tools declared, did not fit under `cap`;
+ * `hidden` are named tools (`server/tool`) registered with an exposure that is neither `deferred` nor `codemode`.
+ */
+export function upfrontLine(
+  upfront: readonly string[],
+  search: readonly string[],
+  missing: readonly string[],
+  whole: readonly { server: string; count: number; all?: boolean }[] = [],
+  silent: readonly { server: string; tools: readonly string[] }[] = [],
+  overCap: { named: number; bulk: number; cap: number } | null = null,
+  hidden: readonly string[] = [],
+): string {
+  const items = [...upfront, ...whole.map((w) => (w.all === false ? `${w.count} tool${w.count === 1 ? "" : "s"} of server ${w.server}` : w.count === 1 ? `the only tool of server ${w.server}` : `all ${w.count} tools of server ${w.server}`))];
+  const have = items.length > 0 ? items.join(", ") : "none";
+  const rest =
+    search.length > 0
+      ? `${items.length > 0 ? "The other tools" : "The tools"} of the MCP server${search.length > 1 ? "s" : ""} ${search.join(", ")} are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).`
+      : silent.length > 0
+        ? "No other MCP tool is declared in this launch."
+        : "No other MCP tool is reachable in this launch.";
+  const lacking = missing.length > 0 ? ` Named but not found on the server: ${missing.join(", ")}; name it under Friction in your report.` : "";
+  const unavailable = hidden.length > 0 ? ` Named but not available in this child (hidden in the MCP config): ${hidden.join(", ")}; name it under Friction in your report.` : "";
+  const quiet = silent
+    .map((s) => ` MCP server ${s.server} registered no tool: it did not answer in time or it is hidden in the MCP config${s.tools.length > 0 ? `, so its named tools (${s.tools.join(", ")}) are not declared` : ""}; name it under Friction in your report.`)
+    .join("");
+  const over = overCap ? ` ${overCap.named > 0 ? `With the ${overCap.named} named tool${overCap.named === 1 ? "" : "s"}, the` : "The"} ${overCap.bulk} MCP tools of the servers named whole are over the cap of ${overCap.cap} (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.` : "";
+  return `pi-foreman: MCP tools declared in your tool list: ${have}. ${rest}${lacking}${unavailable}${quiet}${over}`;
+}
 
 export class McpChild {
   /** Set by `start` from the captured binding. */
@@ -128,7 +167,14 @@ export class McpChild {
   private configuredMax: unknown;
   /** Set by `preload` when the tools it would declare were over the cap. */
   private capped: { count: number; cap: number } | null = null;
-  private preloaded = false;
+  /** Set by `preload` when the named tools alone were over the cap. */
+  private namedOver: { count: number; cap: number } | null = null;
+  /** The prompt line of a launch that named MCP, set by `preload`: the same text on every turn on one provider; it can change only at a turn where the model provider changes to a direct one: tools get declared, or the over-the-cap note replaces the line (null until `preload` ran with a provider, and when only the over-the-cap note applies). */
+  private line: string | null = null;
+  /** The named part of `preload`, done at the first prompt with a provider: what the line says about the named tools (null until then, and for a launch without named tools). */
+  private stage: { upfront: string[]; count: number; missing: string[]; hidden: string[]; silent: { server: string; tools: string[] }[] } | null = null;
+  /** Set once a turn on a direct provider decided the bulk part (or nothing is left to decide). */
+  private bulkDone = false;
   private trace: (record: Record<string, unknown>) => void = () => {};
   /** Why MCP is refused in this child (loader missing, extension not creatable), else null. */
   unsupported: string | null = null;
@@ -193,53 +239,139 @@ export class McpChild {
   }
 
   /**
-   * A provider that fixes its tool list per turn (mcp.directProviders) never sees a tool that `tool_search` loads
-   * mid-turn, and Pi will not declare a `direct` MCP tool under a child's `--tools` allowlist. So before the first
-   * prompt, once the allowed servers' tools are registered (bounded wait), load the allowed deferred ones the way
-   * `tool_search` would: they are declared in the first request. Only tools inside the child's MCP scope are loaded.
-   * `provider` is the model provider at that prompt (it may be unset at session start); without one nothing is loaded yet.
-   * More tools than `mcp.directMaxTools` are not declared at all (a partial set would fail in less visible ways): the
-   * child's prompt says so (`note`).
+   * Before the first prompt, once the allowed servers' tools are registered (bounded wait), declare tools up front the
+   * way `tool_search` would load them, so the first request lists them (Pi will not declare a `direct` MCP tool under a
+   * child's `--tools` allowlist, and a provider that fixes its tool list per turn never sees a tool loaded mid-turn).
+   * Named tools (`server/tool` entries, also of a server named whole) whose exposure is `deferred` or `codemode` (both are
+   * what `tool_search` activates) are declared on every provider; more of them than
+   * `mcp.directMaxTools` are not declared at all (the launch refuses that first). The remaining tools of the servers named
+   * whole without named tools (bulk, `deferred` ones only) are declared only on a provider listed in `mcp.directProviders` and only if named
+   * plus bulk fit under the cap, else none of the bulk (a partial set would fail in less visible ways). A server named
+   * whole together with named tools never declares its remainder; it stays findable through `tool_search`. Only tools
+   * inside the child's MCP scope are loaded. `provider` is the model provider at that prompt (it may be unset at session
+   * start); without one nothing is loaded yet. The named part is done once, at the first prompt with a provider; the bulk part stays pending until a turn on a direct provider decides it.
+   * A named tool already active (resumed) is listed as declared, not activated again; one whose exposure is neither `deferred` nor `codemode`, is listed as not available. The prompt line (`note`) is the same text on every turn on one provider; it can change only at a turn where the
+   * model provider changes to a direct one: tools get declared, or the over-the-cap note replaces the line (the request prefix changes there anyway).
+   * With only bare servers over the cap, `note` gives the over-the-cap note instead of a line.
    */
   async preload(provider: string | undefined): Promise<void> {
-    if (provider === undefined || !directProviders(this.configuredDirect).includes(provider) || this.preloaded || mcpEmpty(this.allowed) || this.unsupported) return;
-    this.preloaded = true;
+    if (provider === undefined || this.bulkDone || mcpEmpty(this.allowed) || this.unsupported) return;
+    const entries = namedEntries(this.allowed);
+    const direct = directProviders(this.configuredDirect).includes(provider);
+    // the named part is done once, at the first prompt with a provider; the bulk part waits for a turn on a direct provider
+    const doNamed = this.stage === null && entries.length > 0;
+    const namedServers = new Set(entries.map((n) => serverKey(n.server)));
+    if (!doNamed && !direct) {
+      // nothing is declared on this provider: the same text on every turn here; a later turn on a direct provider declares tools and replaces it
+      if (this.line === null) {
+        this.line = upfrontLine([], this.allowed.servers, []);
+      }
+      return;
+    }
+    if (!doNamed && this.allowed.servers.length === 0) {
+      // the named part is done and no server is named whole: nothing is left to decide, so no wait
+      this.bulkDone = true;
+      return;
+    }
     const wanted = (): string[] => [...this.labels].filter(([, label]) => mcpCallAllowed(this.allowed, label)).map(([name]) => name);
-    const seen = (): Set<string> => new Set(wanted().map((name) => serverKey(this.labels.get(name)?.split("/", 1)[0] ?? "")));
+    const serverOf = (name: string): string => serverKey(this.labels.get(name)?.split("/", 1)[0] ?? "");
+    const seen = (): Set<string> => new Set(wanted().map(serverOf));
     const ready = (): boolean => {
       const have = seen();
       return [...this.allowed.servers, ...Object.keys(this.allowed.tools)].every((server) => have.has(serverKey(server)));
     };
     const deadline = Date.now() + (this.opts.preloadWaitMs ?? PRELOAD_WAIT_MS);
-    while (!ready() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+    const pause = this.opts.preloadPause ?? (() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
+    while (!ready() && Date.now() < deadline) await pause();
     const exposure = new Map(this.pi.getAllTools().map((tool) => [tool.name, (tool as { exposure?: string }).exposure]));
     const active = this.pi.getActiveTools();
-    const load = wanted().filter((name) => exposure.get(name) === "deferred" && !active.includes(name));
-    if (load.length === 0) return;
+    const isNamed = (name: string): boolean => {
+      const e = splitEntry(this.labels.get(name));
+      return !!e && entries.some((n) => serverKey(n.server) === serverKey(e.server) && n.tool === e.tool);
+    };
+    const inactive = wanted().filter((name) => !active.includes(name));
+    const named = doNamed ? inactive.filter((name) => isNamed(name) && ["deferred", "codemode"].includes(exposure.get(name) ?? "")) : [];
+    const activeNamed = doNamed ? wanted().filter((name) => active.includes(name) && isNamed(name)) : [];
+    const bulk = direct ? inactive.filter((name) => exposure.get(name) === "deferred" && !namedServers.has(serverOf(name))) : [];
     const cap = directMaxTools(this.configuredMax);
-    if (load.length > cap) {
-      this.capped = { count: load.length, cap };
-      this.trace({ event: "mcp_child_direct_capped", provider, count: load.length, cap });
-      return;
+    const registered = [...this.labels.values()].map((label) => splitEntry(label));
+    const missingEntries = entries.filter((n) => !registered.some((e) => e && serverKey(e.server) === serverKey(n.server) && e.tool === n.tool));
+    const answered = (server: string): boolean => registered.some((e) => e && serverKey(e.server) === serverKey(server));
+    const label = (n: { server: string; tool: string }): string => `${n.server}/${n.tool}`;
+    // servers named, whole or by tool, of which no tool registered by the end of the wait
+    const silent = [...this.allowed.servers, ...entries.map((n) => n.server)]
+      .filter((server, i, all) => !answered(server) && all.findIndex((s) => serverKey(s) === serverKey(server)) === i)
+      .map((server) => ({ server, tools: missingEntries.filter((n) => serverKey(n.server) === serverKey(server)).map(label) }));
+    if (doNamed) {
+      this.stage = {
+        upfront: [],
+        count: activeNamed.length + named.length,
+        missing: missingEntries.filter((n) => answered(n.server)).map(label),
+        // registered but neither deferred nor codemode
+        hidden: inactive.filter((name) => isNamed(name) && !named.includes(name)).map((name) => this.labels.get(name) ?? name),
+        silent,
+      };
     }
-    this.pi.setActiveTools([...active, ...load]);
-    const servers = [...new Set(load.map((name) => this.labels.get(name)?.split("/", 1)[0] ?? ""))].sort();
-    this.trace({ event: "mcp_child_direct", provider, servers: servers.join(","), count: load.length });
+    const count = this.stage?.count ?? 0;
+    const declared: string[] = [];
+    let bulkDeclared = false;
+    if (count > cap) {
+      this.namedOver = { count, cap };
+      this.bulkDone = true;
+      this.trace({ event: "mcp_child_named_capped", provider, count, cap });
+    } else {
+      bulkDeclared = bulk.length > 0 && count + bulk.length <= cap;
+      // in the order Pi registered them
+      declared.push(...inactive.filter((name) => named.includes(name) || (bulkDeclared && bulk.includes(name))));
+      if (this.stage && doNamed) this.stage.upfront = wanted().filter((name) => activeNamed.includes(name) || named.includes(name));
+      if (direct) this.bulkDone = true;
+      if (declared.length > 0) {
+        this.pi.setActiveTools([...active, ...declared]);
+        const servers = [...new Set(declared.map((name) => this.labels.get(name)?.split("/", 1)[0] ?? ""))].sort();
+        this.trace({ event: "mcp_child_direct", provider, servers: servers.join(","), count: declared.length });
+      }
+      if (bulk.length > 0 && !bulkDeclared) {
+        this.capped = { count: count + bulk.length, cap };
+        this.trace({ event: "mcp_child_direct_capped", provider, count: count + bulk.length, cap });
+      }
+    }
+    if (!this.namedOver && entries.length === 0 && this.capped) {
+      // the over-the-cap note stands for the line
+      this.line = null;
+    } else if (!this.namedOver) {
+      const bulkServers = new Set(bulkDeclared ? bulk.map(serverOf) : []);
+      // the named-tool part of a silent server is kept from the first turn; whole servers without a tool are judged at this turn
+      const first = this.stage?.silent ?? [];
+      const quiet = [...first.filter((s) => s.tools.length > 0 || silent.some((n) => serverKey(n.server) === serverKey(s.server))), ...silent.filter((s) => !first.some((f) => serverKey(f.server) === serverKey(s.server)))];
+      const whole = [...bulkServers].map((key) => {
+        const mine = wanted().filter((name) => serverOf(name) === key);
+        const declaredHere = mine.filter((name) => bulk.includes(name) || active.includes(name));
+        const rest = mine.filter((name) => !declaredHere.includes(name));
+        return { server: this.allowed.servers.find((s) => serverKey(s) === key) ?? key, count: declaredHere.length, all: rest.length === 0, searchable: rest.some((name) => ["deferred", "codemode"].includes(exposure.get(name) ?? "")) };
+      });
+      const search = this.allowed.servers.filter((server) => {
+        const key = serverKey(server);
+        const w = whole.find((x) => serverKey(x.server) === key);
+        return (!w || w.searchable) && !quiet.some((s) => serverKey(s.server) === key);
+      });
+      this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, quiet, this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? []);
+    }
   }
 
   /**
    * The child's session_start: compute the allowed set from the captured binding and the role config, wait for the
    * loader import, and take `tool_search` out of the active set when no MCP is available so no declaration is sent.
-   * When the child's model provider is listed in `mcp.directProviders` (`configuredDirect`), `preload` declares the
-   * allowed deferred tools up front (a provider that fixes its tool list per turn cannot call a tool that
-   * `tool_search` loads mid-turn), up to `mcp.directMaxTools` (`configuredMax`).
+   * `preload` declares the launch's named tools up front on every provider, and on a provider listed in
+   * `mcp.directProviders` (`configuredDirect`) also the tools of a server named whole without named tools (a provider
+   * that fixes its tool list per turn cannot call a tool that `tool_search` loads mid-turn), up to `mcp.directMaxTools`
+   * (`configuredMax`).
    */
   async start(configRoles: unknown, trace: (record: Record<string, unknown>) => void, configuredDirect?: unknown, configuredMax?: unknown): Promise<void> {
     const binding = this.opts.binding;
     this.trace = trace;
     this.configuredDirect = configuredDirect;
     this.configuredMax = configuredMax;
-    this.allowed = allowedMcp(configRoles, binding?.role, binding?.mcp);
+    this.allowed = allowedMcpNamed(configRoles, binding?.role, binding?.mcp);
     const { load, reason } = await this.loading;
     this.loader = load;
     if (!mcpEmpty(this.allowed)) {
@@ -261,9 +393,11 @@ export class McpChild {
     }
   }
 
-  /** The prompt line of a child whose MCP is refused or whose up-front declaration was over the cap, else null. */
+  /** The prompt line of a child whose MCP is refused, whose named tools were over the cap, whose launch named MCP (after `preload`), or whose up-front declaration was over the cap, else null. */
   note(): string | null {
     if (this.unsupported) return unsupportedNote(this.unsupported);
+    if (this.namedOver) return namedCapNote(this.namedOver.count, this.namedOver.cap);
+    if (this.line) return this.line;
     return this.capped ? cappedNote(this.capped.count, this.capped.cap) : null;
   }
 

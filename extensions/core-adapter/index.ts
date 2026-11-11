@@ -69,7 +69,8 @@ import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
 import type { McpChildOpts } from "./mcpchild.ts";
-import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, workflowBindingBlock } from "./mcplaunch.ts";
+import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, wholeOnlyServers, wholeServerLine, workflowBindingBlock } from "./mcplaunch.ts";
+import { allowedMcpNamed, directMaxTools, directProviders, namedEntries } from "./mcpscope.ts";
 import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -3041,13 +3042,25 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: forged };
         }
         // r68: the launch `mcp` field is validated against the role's ceiling and leaves the call here (rawLaunch above keeps it for a relaunch).
-        const mcpPlan = planMcpLaunch(input, get(s.config.config, "roles"), { perEntryBindings: PER_ENTRY_BINDINGS });
+        const mcpPlan = planMcpLaunch(input, get(s.config.config, "roles"), { perEntryBindings: PER_ENTRY_BINDINGS, maxTools: get(s.config.config, "mcp.directMaxTools") });
         if (mcpPlan.refusal) {
           s.trace?.emit({ event: "launch_refused", reason: mcpPlan.refusal.reason, tier: s.ceremony.tier, ...launchDeny(input) });
           return { block: true, reason: mcpPlan.refusal.text };
         }
         launchMcp = mcpPlan.mcp;
         if (!mcpPlan.group && mcpPlan.entries[0]) {
+          const mcpRole = mcpPlan.entries[0].role;
+          if (launchMcp && launchMcp.length > 0) {
+            // The parent cannot know how many tools a server has (Pi's config lists server names only, the child's tools register in the child), so `searchable` is not traced.
+            const allowed = allowedMcpNamed(get(s.config.config, "roles"), mcpRole, launchMcp);
+            s.trace?.emit({ event: "mcp_launch", role: mcpRole, upfront: namedEntries(allowed).length, servers: allowed.servers.join(",") });
+            const whole = wholeOnlyServers(get(s.config.config, "roles"), mcpRole, launchMcp);
+            if (whole.length > 0 && directProviders(get(s.config.config, "mcp.directProviders")).length > 0) {
+              const cap = directMaxTools(get(s.config.config, "mcp.directMaxTools"));
+              s.trace?.emit({ event: "mcp_launch_whole", role: mcpRole, servers: whole.join(","), cap });
+              mcpNotes.push(wholeServerLine(mcpRole, whole, cap));
+            }
+          }
           const known = await configuredServers(s.cwd, safeTrusted(ctx), process.env, deps.mcpChild?.resolveRoot);
           const unknown = known ? unknownServers(get(s.config.config, "roles"), mcpPlan.entries[0].role, launchMcp, known) : [];
           if (unknown.length > 0) {
