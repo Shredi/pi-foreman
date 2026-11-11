@@ -99,6 +99,22 @@ class Prune(unittest.TestCase):
         self.snap()
         self.assertTrue(p.exists())
 
+    def test_untyped_fields_neither_raise_nor_delete(self):
+        for where, key, value in [("live", "intercomId", ["fm-kid-33d451"]), ("live", "handoff", {"a": 1}), ("live", "handoff", ["/h/20261009-115900-kid"]),
+                                  ("reg", "child", ["fm-kid-33d451"]), ("reg", "handoff", ["/h/20261009-115900-kid"])]:
+            with self.subTest(where=where, key=key, value=value):
+                lv, ent = live(), entry("closed")
+                if key == "handoff":  # leave the untyped handoff as the only possible match
+                    lv["intercomId"], ent["child"] = None, None
+                    lv["handoff"] = "/h/20261009-115900-kid" if where == "reg" else lv.get("handoff")
+                (lv if where == "live" else ent)[key] = value
+                p = self.state / "live" / "s-kid.json"
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(json.dumps(lv), "utf-8")
+                (self.state / "sessions.json").write_text(json.dumps({"sessions": [ent]}), "utf-8")
+                self.snap()
+                self.assertTrue(p.exists())
+
     def test_done_file_is_pruned_as_before(self):
         p = self.put(live(state="done", hb_ago=3600), "open")
         self.snap()

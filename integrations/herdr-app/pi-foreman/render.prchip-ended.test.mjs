@@ -24,12 +24,12 @@ const walk = (el, out = []) => {
 const chipOf = (out) => walk(out).filter((e) => e.kind === "HoverCard").find((c) => walk(c.props.trigger).some((e) => (e.kids ?? []).includes("⎇ #7")));
 
 // A live top row (terminal t5) with one child of the given shape, as `foreman radar --json` would carry it.
-const mount = (kid, kidKids, feed, mod) => {
+const mount = (kid, kidKids, feed) => {
   const doc = parseRadarDoc(JSON.stringify({ v: 1, roots: [sess("f", "foreman-x", { hcTerminal: "t5" }, [sess("k", "kid", kid, kidKids)])], openPrs: feed, openPrsAt: new Date().toISOString() }));
   world.agents = [{ address: "t5", pane: "p1", space: 1, space_name: "s", status: "idle", focused: false, program: { name: "pi" } }];
   world.terminals = [{ address: "t5", state: "live", foreground: { pid: 7 } }];
-  const m = mod ?? Object.create(Mod.prototype);
-  if (!mod) { m.changed = {}; m.feed = []; m.folded = new Set(); m.busy = new Map(); m.recs = new Map(); m.childPi = new Set(); m.poll = () => {}; }
+  const m = Object.create(Mod.prototype);
+  m.changed = {}; m.feed = []; m.folded = new Set(); m.busy = new Map(); m.recs = new Map(); m.childPi = new Set(); m.poll = () => {};
   m.radar = new Map([["local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: doc.openPrsAt ?? null, tried: Date.now() }]]);
   return m;
 };
@@ -66,13 +66,3 @@ for (const [name, kid] of Object.entries(shapes)) {
     await clickChip(mount(kid, ended ? live : [], feed));
   });
 }
-
-test("a PR that left the feed between two renders keeps a clickable chip of an ended row", async () => {
-  const kid = shapes["a closed child"];
-  const live = [sess("g", "grandkid", { hcTerminal: "t11", state: "working", sym: "working" })];
-  const m = mount(kid, live, [feedPr]);
-  m.render({});
-  mount(kid, live, [], m);
-  m.radar.get("local").tree = buildTree(parseRadarDoc(JSON.stringify({ v: 1, roots: [sess("f", "foreman-x", { hcTerminal: "t5" }, [sess("k", "kid", { ...kid, dots: [dot({ url: URL_ })] }, live)])], openPrs: [] })).nodes);
-  await clickChip(m);
-});

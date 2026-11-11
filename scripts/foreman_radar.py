@@ -442,16 +442,24 @@ def provably_closed(d):
     return not (isinstance(pane, str) and pane in panes)
 
 
-def prune_done(path, d, now, ttl_min, closed=None, dead=False):
+def prune_done(path, d, now, ttl_min, closed=None):
     """Delete one presence file whose state is done and whose last activity is older than the TTL; with `closed`
-    (a predicate on the file's data) only when that also holds. With `dead` the file is one of a closed session whose
-    heartbeat went late (state not done), and `closed` is then required."""
-    if dead:
-        hb = parse_ts(d.get("heartbeatAt"))
-        if closed is None or d.get("state") == "done" or (hb is not None and now - hb <= LOST_AFTER):
-            return False
-    elif d.get("state") != "done":
+    (a predicate on the file's data) only when that also holds."""
+    if d.get("state") != "done":
         return False
+    return _prune_aged(path, d, now, ttl_min, closed)
+
+
+def prune_dead(path, d, now, ttl_min, closed=None):
+    """Delete the presence file of a closed session whose heartbeat went late (state not done) under the rule of
+    prune_done; `closed` (a predicate on the file's data) is required."""
+    hb = parse_ts(d.get("heartbeatAt"))
+    if closed is None or d.get("state") == "done" or (hb is not None and now - hb <= LOST_AFTER):
+        return False
+    return _prune_aged(path, d, now, ttl_min, closed)
+
+
+def _prune_aged(path, d, now, ttl_min, closed):
     times = [t for t in (parse_ts(d.get("heartbeatAt")), parse_ts(d.get("lastEventAt"))) if t is not None]
     last = max(times) if times else mtime(path)
     if last is None or now - last <= ttl_min * 60:
@@ -481,8 +489,8 @@ def mark_gone(reg, live, now):
 
 def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
     """Read every source into plain data. No clock, no printing; with now and done_ttl (minutes) it also deletes
-    the presence files of sessions that finished longer ago than the TTL, and the dead file of a closed session. With `only` (a session id) usage and
-    trace files are read only for that session's subtree."""
+    the presence files of sessions that finished longer ago than the TTL, and the dead file of a closed session (prune_dead).
+    With `only` (a session id) usage and trace files are read only for that session's subtree."""
     base = Path(adir) / "pi-foreman"
     cache = cache if cache is not None else UsageCache()
     live, usage, trace = [], {}, {}
@@ -492,8 +500,14 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
         names = []
     reg = read_json(base / "state" / "sessions.json")
     reg = [s for s in (reg.get("sessions") if isinstance(reg, dict) else None) or [] if isinstance(s, dict)]
-    closed_ids = {s.get("child") for s in reg if s.get("status") == "closed"} | {leaf(s.get("handoff")) for s in reg if s.get("status") == "closed" and s.get("handoff")}
-    closed_ids = {c for c in closed_ids if isinstance(c, str) and c}
+    closed_ids = set()
+    for s in reg:
+        if s.get("status") != "closed":
+            continue
+        if isinstance(s.get("child"), str) and s["child"]:
+            closed_ids.add(s["child"])
+        if isinstance(s.get("handoff"), str) and s["handoff"]:
+            closed_ids.add(leaf(s["handoff"]))
     for name in names:
         if not name.endswith(".json"):
             continue
@@ -504,7 +518,9 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
             path = base / "state" / "live" / name
             if prune_done(path, d, now, done_ttl, closed):
                 continue
-            if (d.get("intercomId") in closed_ids or (d.get("handoff") and leaf(d["handoff"]) in closed_ids)) and prune_done(path, d, now, done_ttl, closed, dead=True):
+            iid, ho = d.get("intercomId"), d.get("handoff")
+            matched = (isinstance(iid, str) and iid in closed_ids) or (isinstance(ho, str) and ho and leaf(ho) in closed_ids)
+            if matched and prune_dead(path, d, now, done_ttl, closed):
                 continue
         sid = d.get("sessionId") if isinstance(d.get("sessionId"), str) and d.get("sessionId") else name[:-5]
         d["sessionId"] = sid
