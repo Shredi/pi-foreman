@@ -285,7 +285,7 @@ export class SelfWarm {
 
   // ---- state fed by the adapter ---------------------------------------------------------------------------
 
-  /** `context_with_system`: the messages of the request about to be sent (system message first). A real request starts: an in-flight warm is aborted. */
+  /** `context_with_system`: the messages of the request about to be sent (system message first; a forced prompt already projected, see forcedProjection). A real request starts: an in-flight warm is aborted. */
   capture(messages: unknown[]): void {
     this.pending = messages;
     this.inFlight = true;
