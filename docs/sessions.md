@@ -563,7 +563,7 @@ state change and on a 30 second heartbeat, and a final `state: "done"` at shutdo
 | `tokensIn`, `tokensOut`, `cost` | the session's own model usage as its footer shows it (`↑` in incl. cache reads and writes, `↓` out, list cost); runs are not included |
 | `runs` | subagent runs: `launchId`, `role`, `rung` (`model`, `strong` or `null`), `state` (`working`, `ask`, `done`), `tokensIn`, `tokensOut`, `cost` (used when the usage file has no line for that `launchId`), `model` (the launch's explicit model as given, else `null`) |
 
-Rows of finished or lost sessions disappear from radar after `--since` hours; those files are not deleted.
+Rows of finished or lost sessions disappear from radar after `--since` hours; those files are not deleted, except a closed session's lost or stale file (see below).
 
 **Plan publication.** A session that saves a plan (the foreman's `.workflow/scratch/plan-<topic>.md`, or `<handoff dir>/plan.md` in a child) gets a
 show dir `<scratchDir>/show/<sessionId>/` with `plan.json` (path, title, version `v`, time, hashes) and two snapshots, `plan.ruled.md` and
@@ -575,10 +575,13 @@ on the remote machine, so a parent shows no plan for it.
 A `done` session expires sooner: once its last activity (newest of `heartbeatAt`, `lastEventAt`, the trace mtime) is older
 than `radar.doneTtlMinutes` (default 30; `--done-ttl MINUTES` overrides it) its row is hidden, unless a shown descendant
 keeps it, and on each refresh radar deletes the presence file of a `done` session whose `heartbeatAt` and `lastEventAt`
-are both older than the TTL (file mtime when neither parses). Only presence files with `state: "done"` are ever
+are both older than the TTL (file mtime when neither parses). Only presence files with `state: "done"`, and the lost or stale file of a closed session (below), are ever
 deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `lost` and `stale` rows never expire by age
 (only by `--since`). A session that is not `done` and has had no heartbeat for 15 minutes shows the state `stale`
-(the waiting glyph); between 90 seconds and 15 minutes it shows `lost`.
+(the waiting glyph); between 90 seconds and 15 minutes it shows `lost`. A session whose registry entry is `closed` (matched by
+its child id or handoff dir) and whose file is neither done nor fresh shows as closed; a fresh heartbeat wins over the registry.
+Radar deletes such a file once its last activity is older than the done TTL and the session is provably closed (pid dead
+and pane gone), the same condition as for a done file.
 
 ## pi-intercom
 

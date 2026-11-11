@@ -442,10 +442,15 @@ def provably_closed(d):
     return not (isinstance(pane, str) and pane in panes)
 
 
-def prune_done(path, d, now, ttl_min, closed=None):
+def prune_done(path, d, now, ttl_min, closed=None, dead=False):
     """Delete one presence file whose state is done and whose last activity is older than the TTL; with `closed`
-    (a predicate on the file's data) only when that also holds."""
-    if d.get("state") != "done":
+    (a predicate on the file's data) only when that also holds. With `dead` the file is one of a closed session whose
+    heartbeat went late (state not done), and `closed` is then required."""
+    if dead:
+        hb = parse_ts(d.get("heartbeatAt"))
+        if closed is None or d.get("state") == "done" or (hb is not None and now - hb <= LOST_AFTER):
+            return False
+    elif d.get("state") != "done":
         return False
     times = [t for t in (parse_ts(d.get("heartbeatAt")), parse_ts(d.get("lastEventAt"))) if t is not None]
     last = max(times) if times else mtime(path)
@@ -476,7 +481,7 @@ def mark_gone(reg, live, now):
 
 def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
     """Read every source into plain data. No clock, no printing; with now and done_ttl (minutes) it also deletes
-    the presence files of sessions that finished longer ago than the TTL. With `only` (a session id) usage and
+    the presence files of sessions that finished longer ago than the TTL, and the dead file of a closed session. With `only` (a session id) usage and
     trace files are read only for that session's subtree."""
     base = Path(adir) / "pi-foreman"
     cache = cache if cache is not None else UsageCache()
@@ -485,19 +490,25 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
         names = sorted(os.listdir(base / "state" / "live"))
     except OSError:
         names = []
+    reg = read_json(base / "state" / "sessions.json")
+    reg = [s for s in (reg.get("sessions") if isinstance(reg, dict) else None) or [] if isinstance(s, dict)]
+    closed_ids = {s.get("child") for s in reg if s.get("status") == "closed"} | {leaf(s.get("handoff")) for s in reg if s.get("status") == "closed" and s.get("handoff")}
+    closed_ids = {c for c in closed_ids if isinstance(c, str) and c}
     for name in names:
         if not name.endswith(".json"):
             continue
         d = read_json(base / "state" / "live" / name)
         if not isinstance(d, dict):
             continue
-        if now is not None and done_ttl is not None and prune_done(base / "state" / "live" / name, d, now, done_ttl, closed):
-            continue
+        if now is not None and done_ttl is not None:
+            path = base / "state" / "live" / name
+            if prune_done(path, d, now, done_ttl, closed):
+                continue
+            if (d.get("intercomId") in closed_ids or (d.get("handoff") and leaf(d["handoff"]) in closed_ids)) and prune_done(path, d, now, done_ttl, closed, dead=True):
+                continue
         sid = d.get("sessionId") if isinstance(d.get("sessionId"), str) and d.get("sessionId") else name[:-5]
         d["sessionId"] = sid
         live.append(d)
-    reg = read_json(base / "state" / "sessions.json")
-    reg = [s for s in (reg.get("sessions") if isinstance(reg, dict) else None) or [] if isinstance(s, dict)]
     if closed is not None and now is not None:  # a real run, not a pure read: registry entries may be over
         reg = mark_gone(reg, live, now)
     handoffs = {}
@@ -630,6 +641,11 @@ def remote_glyph(e, opened, now):
             return "idle", RESULT_IDLE  # the remote terminal stays up after the result; the parent closes it
         return REMOTE_LIVE[word]
     return reg_glyph(status, opened, now)
+
+
+def closes_dead(e, n):
+    """A closed registry entry ends a node whose live file went lost or stale; a fresh heartbeat keeps the live state."""
+    return e.get("status") == "closed" and n.get("glyph") == "lost" and n.get("state") in ("lost", "stale") and bool(n.get("sid"))
 
 
 def build(data, now):
@@ -767,7 +783,7 @@ def build(data, now):
             live = by_handoff[leaf(e.get("handoff"))]
             if not live["parent"] and isinstance(e.get("parent"), str) and e["parent"]:
                 live["parent"] = e["parent"]
-            if e.get("gone"):
+            if e.get("gone") or closes_dead(e, live):
                 live["glyph"], live["state"] = "idle", "closed"
             elif e.get("status") == "open":
                 live["regOpen"] = True
@@ -801,7 +817,7 @@ def build(data, now):
             if ho and ho.get("piSessionId") and not n["sid"]:
                 n["sid"] = ho["piSessionId"]
             nodes[key] = n
-        elif e.get("gone"):
+        elif e.get("gone") or closes_dead(e, n):
             n["glyph"], n["state"] = "idle", "closed"
         elif e.get("status") == "open":
             n["regOpen"] = True
