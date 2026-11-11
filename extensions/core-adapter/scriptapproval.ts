@@ -219,7 +219,7 @@ export function scriptNoticeLines(p: ScriptProposal): string[] {
   return [`Description: ${p.description}`, `Risk: ${p.risk}`, `Undo: ${p.undo}`, `Path: ${cleanText(p.rel)}`, `Lines: ${p.lines}`, `sha256: ${shortHash(p.hash)}`];
 }
 
-/** The harness's own line for the owner, sent as a notice of its own right after the summary: can the tool undo this script? */
+/** The harness's own line for the owner, the seventh and last line of the dialog notice, after the six summary lines: can the tool undo this script? */
 export function scriptUndoLine(p: ScriptProposal): string {
   return `Undo through the tool: ${p.undoSupported ? `yes (the script has the line ${SCRIPT_UNDO_MARKER}; the tool can run it with the argument undo after a real run)` : "no (the script has no undo marker line)"}`;
 }

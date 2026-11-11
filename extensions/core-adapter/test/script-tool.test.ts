@@ -161,7 +161,7 @@ test("foreman_script: approve runs the dry run at once and returns its output; t
   assert.ok(r.seen.titles[0].includes("set-key.sh") && r.seen.titles[0].includes(short), r.seen.titles[0]);
   const notice = r.seen.notices.find((n) => n.startsWith("Description: "));
   assert.ok(notice, "the summary notice was sent");
-  assert.deepEqual(notice.split("\n"), [`Description: ${TEXTS.description}`, `Risk: ${TEXTS.risk}`, `Undo: ${TEXTS.undo}`, `Path: ${SCRIPT}`, "Lines: 3", `sha256: ${short}`]);
+  assert.deepEqual(notice.split("\n"), [`Description: ${TEXTS.description}`, `Risk: ${TEXTS.risk}`, `Undo: ${TEXTS.undo}`, `Path: ${SCRIPT}`, "Lines: 3", `sha256: ${short}`, "Undo through the tool: no (the script has no undo marker line)"]);
   assert.ok(!r.seen.notices.some((n) => n.includes("would set the key")), "the script body is not shown");
 });
 
@@ -437,7 +437,7 @@ function undoScript(r: Rig, marker = true): string {
 
 const statusOf = async (r: Rig) => JSON.parse(textOf(await r.call({ action: "status" }))) as Record<string, any>;
 
-test("foreman_script: the dialog payload lists approve, revise, reject, and summary and undo notices come before it, unshortened", skipWin, async (t) => {
+test("foreman_script: the dialog payload lists approve, revise, reject, and the notice with the undo line last comes before it, unshortened", skipWin, async (t) => {
   let before: string[] = [];
   let r: Rig | undefined;
   r = await rig(t, { answer: () => ((before = [...r!.seen.notices]), "reject") });
@@ -445,15 +445,31 @@ test("foreman_script: the dialog payload lists approve, revise, reject, and summ
   await r.propose();
   assert.deepEqual(r.seen.choices, [["approve", "revise", "reject"]]);
   assert.ok(before.some((n) => n.startsWith(`Description: ${TEXTS.description}\nRisk: ${TEXTS.risk}\nUndo: ${TEXTS.undo}\n`)), "summary notice before the select");
-  assert.ok(before.some((n) => n.startsWith("Undo through the tool: yes")), "the undo ability is told before the select");
+  assert.ok(before.some((n) => n.split("\n").at(-1)!.startsWith("Undo through the tool: yes")), "the undo ability is the last line of that notice");
   assert.ok(r.seen.titles[0].startsWith("Run the owner script set-key.sh (sha256 "));
 });
 
-test("foreman_script: the undo notice says no for a script without the marker", skipWin, async (t) => {
+test("foreman_script: the undo line says no for a script without the marker", skipWin, async (t) => {
   const r = await rig(t, { answer: () => "reject" });
   undoScript(r, false);
   await r.propose();
-  assert.ok(r.seen.notices.some((n) => n.startsWith("Undo through the tool: no")));
+  assert.ok(r.seen.notices.some((n) => n.split("\n").at(-1)!.startsWith("Undo through the tool: no")));
+});
+
+test("foreman_script: exactly one notice goes out before the select, with description, risk, undo and the undo line", skipWin, async (t) => {
+  let atSelect: string[] = [];
+  let r: Rig | undefined;
+  r = await rig(t, { answer: () => ((atSelect = [...r!.seen.notices]), "reject") });
+  undoScript(r);
+  const start = r.seen.notices.length;
+  await r.propose();
+  assert.equal(atSelect.length - start, 1);
+  const lines = atSelect[start].split("\n");
+  assert.equal(lines.length, 7);
+  assert.equal(lines[0], `Description: ${TEXTS.description}`);
+  assert.equal(lines[1], `Risk: ${TEXTS.risk}`);
+  assert.equal(lines[2], `Undo: ${TEXTS.undo}`);
+  assert.ok(lines[6].startsWith("Undo through the tool: yes"));
 });
 
 test("foreman_script: undo is refused before any run and after only a dry run", skipWin, async (t) => {

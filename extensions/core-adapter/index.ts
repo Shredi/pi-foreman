@@ -99,7 +99,7 @@ import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagent
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
-import { beginRun, beginUndo, decideScript, newScriptState, proposeScript, recordRealRun, recordRun, recordUndo, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptUndoLine, scriptStatus, shortHash } from "./scriptapproval.ts";
+import { beginRun, beginUndo, cleanText, decideScript, newScriptState, proposeScript, recordRealRun, recordRun, recordUndo, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptUndoLine, scriptStatus, shortHash } from "./scriptapproval.ts";
 import type { ScriptRefusalCode, ScriptState } from "./scriptapproval.ts";
 import { runScript as runOwnerScript } from "./scriptrun.ts";
 import type { ScriptRunAction } from "./scriptapproval.ts";
@@ -5050,7 +5050,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const undoNow = async () => {
           const plan = beginUndo(s.script, o, Date.now());
           if ("error" in plan) return refusal(plan);
-          ctx.ui.notify(`Undo of ${s.script.proposal?.rel ?? "the script"} through foreman_script: running the script that ran (sha256 ${shortHash(plan.hash)}) with the argument undo, attempt ${plan.attempt} of ${SCRIPT_MAX_ATTEMPTS}.`, "warning");
+          ctx.ui.notify(`Undo of ${cleanText(s.script.proposal?.rel ?? "the script")} through foreman_script: running the script that ran (sha256 ${shortHash(plan.hash)}) with the argument undo, attempt ${plan.attempt} of ${SCRIPT_MAX_ATTEMPTS}.`, "warning");
           const r = await runOwnerScript({ bytes: plan.bytes, kind: "undo", cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd) });
           if ("code" in r || !r.started) {
             // nothing spawned (refused or aborted before the start): not one of the attempts
@@ -5097,8 +5097,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "dialog", surface: "script" });
         let answer: string | undefined;
         try {
-          ctx.ui.notify(scriptNoticeLines(p).join("\n"), "info");
-          ctx.ui.notify(scriptUndoLine(p), "info");
+          // One notice: the terminal replaces an info status line by the next one sent back to back.
+          ctx.ui.notify([...scriptNoticeLines(p), scriptUndoLine(p)].join("\n"), "info");
           answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
         } catch {
           answer = undefined;
