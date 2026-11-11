@@ -36,14 +36,12 @@ interface ChildOpts {
   noProvider?: boolean;
   /** The server list of Pi's loader (default alpha and beta, both deferred). */
   servers?: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[];
-  /** Pi's MCP extension reads its config before the first prompt (as at session_start). */
-  loadFirst?: boolean;
   /** Tools already active before the first prompt (a resumed session). */
   already?: string[];
   /** The api has `getMcpServers` (none registered) and, as in Pi, every config read is followed by it, once more after the first turn. */
   piOrder?: boolean;
-  /** Servers registered by an extension (`getMcpServers` of the api; needs `piOrder`). */
-  ext?: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[];
+  /** Servers whose tools register only when the test calls `register(server)` (after the first turn). */
+  late?: string[];
   /** Counts the readiness polls of `preload` (each pause really waits 50 ms). */
   polls?: { count: number };
 }
@@ -55,7 +53,8 @@ async function child(t: T, o: ChildOpts = {}) {
   fs.mkdirSync(path.dirname(loaderFile), { recursive: true });
   fs.writeFileSync(loaderFile, "");
   const tools = o.tools ?? TOOLS;
-  const state = { servers: o.servers, ext: o.ext ?? [] };
+  const state: { servers: ChildOpts["servers"]; ext: NonNullable<ChildOpts["servers"]> } = { servers: o.servers, ext: [] };
+  const isLate = (x: Reg): boolean => (o.late ?? []).includes(x.label.split("/", 1)[0]!);
   const active = ["read", "tool_search", ...(o.already ?? [])];
   const hooks: ((e: unknown, ctx: unknown) => Promise<void>)[] = [];
   const api = {
@@ -68,19 +67,19 @@ async function child(t: T, o: ChildOpts = {}) {
     getAllTools: () => tools.map((x) => ({ name: x.name, exposure: x.exposure ?? "deferred" })),
     ...(o.piOrder ? { getMcpServers: () => state.ext } : {}),
   };
-  let proxied: { getMcpServers?: () => unknown } | undefined;
+  let proxied: { getMcpServers?: () => unknown; registerTool(def: unknown): void } | undefined;
   let loadConfig: ((ctx: unknown) => { servers: { name: string; config: { exposure?: string; toolExposure?: Record<string, string> } }[] }) | undefined;
   const createMcp = (options: { loadConfig: typeof loadConfig }) => (pi: { registerTool(def: unknown): void }) => {
     proxied = pi as never;
     loadConfig = options.loadConfig;
-    for (const x of tools) pi.registerTool({ name: x.name, label: x.label });
+    for (const x of tools) if (!isLate(x)) pi.registerTool({ name: x.name, label: x.label });
   };
   const importFile = async () => ({ loadMcpConfig: () => ({ servers: state.servers ?? [{ name: "alpha", config: { exposure: "deferred" } }, { name: "beta", config: { exposure: "deferred" } }], errors: [] }) });
   const mcp = new McpChild(api as never, { binding: { role: o.role ?? "builder", ...(o.launch ? { mcp: o.launch } : {}) }, createMcp, resolveRoot: () => root, importFile, preloadWaitMs: 100, preloadPause: () => { if (o.polls) o.polls.count++; return new Promise<void>((resolve) => setTimeout(resolve, 50)); } });
   const trace: Record<string, unknown>[] = [];
   mcp.install();
   await mcp.start(ROLES, (r) => trace.push(r), o.direct ?? ["p1"], o.max);
-  if (o.loadFirst || o.piOrder) loadConfig!({ cwd: root, isProjectTrusted: () => false });
+  if (o.piOrder) loadConfig!({ cwd: root, isProjectTrusted: () => false });
   if (o.piOrder) proxied!.getMcpServers!();
   const turn = async () => {
     for (const hook of hooks) await hook({}, { model: o.noProvider ? undefined : { provider: o.provider ?? "p1" } });
@@ -93,7 +92,10 @@ async function child(t: T, o: ChildOpts = {}) {
     loadConfig!({ cwd: root, isProjectTrusted: () => false });
     proxied!.getMcpServers?.();
   };
-  return { mcp, active, trace, config, turn, mcpActive, state, read };
+  const register = (server: string) => {
+    for (const x of tools) if (x.label.startsWith(`${server}/`)) proxied!.registerTool({ name: x.name, label: x.label });
+  };
+  return { mcp, active, trace, config, turn, mcpActive, state, read, register };
 }
 
 // ---------------------------------------------------------------- a-e: what is declared, searchable, callable
@@ -459,12 +461,12 @@ test("k: named tools only: a first turn on a direct provider after another provi
 
 // ---------------------------------------------------------------- a server that registered no tool: one sentence for a hidden and a silent server
 
-const NONE_REACHABLE = "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch.";
+const NONE_DECLARED = "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is declared in this launch.";
 const NO_TOOL = "it did not answer in time or it is hidden in the MCP config";
 const alphaHidden = [{ name: "alpha", config: { exposure: "hidden" } }];
 
 test("m: [alpha/echo] with nothing registered gets the no-tool sentence, with a hidden config and with a silent server (same text)", async (t) => {
-  const text = `${NONE_REACHABLE} MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`;
+  const text = `${NONE_DECLARED} MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`;
   const hidden = await child(t, { launch: ["alpha/echo"], tools: [], servers: alphaHidden, piOrder: true });
   const silent = await child(t, { launch: ["alpha/echo"], tools: [], piOrder: true });
   assert.equal(hidden.mcp.note(), text);
@@ -475,7 +477,7 @@ test("m: [alpha] named whole with nothing registered, on a direct provider: the 
   for (const servers of [alphaHidden, undefined]) {
     const c = await child(t, { launch: ["alpha"], tools: [], servers, piOrder: true });
     const note = c.mcp.note() ?? "";
-    assert.equal(note, `${NONE_REACHABLE} MCP server alpha registered no tool: ${NO_TOOL}; name it under Friction in your report.`);
+    assert.equal(note, `${NONE_DECLARED} MCP server alpha registered no tool: ${NO_TOOL}; name it under Friction in your report.`);
     assert.doesNotMatch(note, /tool_search|later/);
   }
 });
@@ -484,7 +486,7 @@ test("m: several silent servers, named and whole, each get the sentence; a serve
   const c = await child(t, { launch: ["alpha/echo", "beta"], tools: [], servers: [], piOrder: true });
   assert.equal(
     c.mcp.note(),
-    `${NONE_REACHABLE} MCP server beta registered no tool: ${NO_TOOL}; name it under Friction in your report. MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`,
+    `${NONE_DECLARED} MCP server beta registered no tool: ${NO_TOOL}; name it under Friction in your report. MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`,
   );
 });
 
@@ -502,5 +504,77 @@ test("m: a later getMcpServers or loadConfig call changes nothing in the line", 
     c.state.ext = [];
     c.read();
     assert.equal(c.mcp.note(), note, launch.join(","));
+  }
+});
+
+// ---------------------------------------------------------------- n: a server registering late, mixed exposure, a one-tool server, no contradictory line
+
+test("n: [alpha, beta/probe], alpha registers after a turn on p2, then a turn on p1 under the cap: alpha's tools are declared, no no-tool sentence for it", async (t) => {
+  const c = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2", late: ["alpha"] });
+  assert.match(c.mcp.note() ?? "", /MCP server alpha registered no tool/);
+  c.register("alpha");
+  await c.mcp.preload("p1");
+  assert.deepEqual(c.mcpActive().sort(), ["mcp__alpha__echo", "mcp__alpha__shout", "mcp__alpha__whisper", "mcp__beta__probe"]);
+  assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: mcp__beta__probe, all 3 tools of server alpha. No other MCP tool is reachable in this launch.");
+});
+
+test("n: the same with alpha over the cap: the cap sentence, alpha in the search sentence, no unreachability claim and no no-tool sentence", async (t) => {
+  const c = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2", late: ["alpha"], max: 3 });
+  c.register("alpha");
+  await c.mcp.preload("p1");
+  assert.deepEqual(c.mcpActive(), ["mcp__beta__probe"]);
+  assert.equal(
+    c.mcp.note(),
+    `pi-foreman: MCP tools declared in your tool list: mcp__beta__probe. ${SEARCH} With the 1 named tool, the 3 MCP tools of the servers named whole are over the cap of 3 (mcp.directMaxTools), so they are not declared and found with tool_search; name that under Friction in your report.`,
+  );
+});
+
+test("n: a server that registered nothing by the end of the wait: the line does not claim that no other tool is reachable", async (t) => {
+  const c = await child(t, { launch: ["alpha", "beta"], late: ["alpha"] });
+  assert.equal(
+    c.mcp.note(),
+    `pi-foreman: MCP tools declared in your tool list: all 2 tools of server beta. No other MCP tool is declared in this launch. MCP server alpha registered no tool: ${NO_TOOL}; name it under Friction in your report.`,
+  );
+});
+
+test("n: a whole server with mixed exposure: the line gives the declared count, not all, and sends the rest to the search", async (t) => {
+  const tools: Reg[] = [{ name: "mcp__alpha__echo", label: "alpha/echo" }, { name: "mcp__alpha__shout", label: "alpha/shout" }, { name: "mcp__alpha__whisper", label: "alpha/whisper", exposure: "codemode" }];
+  const c = await child(t, { launch: ["alpha"], tools });
+  assert.deepEqual(c.mcpActive(), ["mcp__alpha__echo", "mcp__alpha__shout"]);
+  assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: 2 tools of server alpha. ${SEARCH}`);
+});
+
+test("n: a whole server with one tool: the count reads singular", async (t) => {
+  const c = await child(t, { launch: ["alpha"], tools: [{ name: "mcp__alpha__echo", label: "alpha/echo" }] });
+  assert.equal(c.mcp.note(), "pi-foreman: MCP tools declared in your tool list: the only tool of server alpha. No other MCP tool is reachable in this launch.");
+});
+
+test("n: no sequence yields a line with two contradictory statements about one server", async (t) => {
+  const launches = [["alpha", "beta"], ["alpha/echo", "beta/probe"], ["alpha", "alpha/echo"], ["alpha", "beta/probe"]];
+  const states = ["registered", "silent", "late"] as const;
+  const sequences = [["p1"], ["p2"], ["p2", "p1"], ["p2", "p2"]];
+  const mixed: Reg[] = [...TOOLS.slice(0, 2), { name: "mcp__alpha__whisper", label: "alpha/whisper", exposure: "codemode" }, ...TOOLS.slice(3)];
+  for (const launch of launches) for (const state of states) for (const seq of sequences) for (const max of [undefined, 3]) for (const tools of [TOOLS, mixed]) {
+    const where = JSON.stringify({ launch, state, seq, max, mixed: tools === mixed });
+    const c = await child(t, { launch, provider: seq[0], max, tools: state === "silent" ? tools.filter((x) => !x.label.startsWith("alpha/")) : tools, ...(state === "late" ? { late: ["alpha"] } : {}) });
+    const lines = [c.mcp.note()];
+    if (state === "late") c.register("alpha");
+    for (const p of seq.slice(1)) {
+      await c.mcp.preload(p);
+      lines.push(c.mcp.note());
+    }
+    await c.turn();
+    lines.push(c.mcp.note());
+    for (const line of lines) {
+      assert.ok(line, where);
+      const search = (/of the MCP servers? (.+?) are not declared/.exec(line)?.[1] ?? "").split(", ");
+      const noTool = /MCP server (\S+) registered no tool/g;
+      const silent = [...line.matchAll(noTool)].map((m) => m[1]!);
+      for (const server of ["alpha", "beta"]) {
+        const facts = [new RegExp(`(all \\d+ tools|the only tool) of server ${server}\\b`).test(line), search.includes(server), silent.includes(server)];
+        assert.ok(facts.filter(Boolean).length <= 1, `${where}: ${server} ${facts}: ${line}`);
+      }
+      if (/No other MCP tool is reachable/.test(line)) assert.ok(!/ are not declared/.test(line) && silent.length === 0, `${where}: ${line}`);
+    }
   }
 });

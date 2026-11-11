@@ -126,7 +126,7 @@ export const namedCapNote = (count: number, cap: number): string =>
 
 /**
  * The prompt line of a launch that named MCP: which MCP tools are up front (`upfront` tool names, then `whole` servers
- * declared in bulk with their tool count), where the tools of the servers named whole and not declared (`search`) are
+ * declared in bulk with their declared tool count; `all` is false when tools of the server in scope stay undeclared), where the tools of the servers named whole and not declared (`search`) are
  * found, which named tool the server lacks. `silent` are named servers of which no tool registered by the end of the readiness wait
  * (it did not answer or the MCP config hides it; `tools` are its named tools, none for a server named whole only);
  * `overCap` are the bulk tools (`bulk`) of the servers named whole that, with the `named` tools declared, did not fit under `cap`;
@@ -136,17 +136,19 @@ export function upfrontLine(
   upfront: readonly string[],
   search: readonly string[],
   missing: readonly string[],
-  whole: readonly { server: string; count: number }[] = [],
+  whole: readonly { server: string; count: number; all?: boolean }[] = [],
   silent: readonly { server: string; tools: readonly string[] }[] = [],
   overCap: { named: number; bulk: number; cap: number } | null = null,
   hidden: readonly string[] = [],
 ): string {
-  const items = [...upfront, ...whole.map((w) => `all ${w.count} tools of server ${w.server}`)];
+  const items = [...upfront, ...whole.map((w) => (w.all === false ? `${w.count} tool${w.count === 1 ? "" : "s"} of server ${w.server}` : w.count === 1 ? `the only tool of server ${w.server}` : `all ${w.count} tools of server ${w.server}`))];
   const have = items.length > 0 ? items.join(", ") : "none";
   const rest =
     search.length > 0
       ? `${items.length > 0 ? "The other tools" : "The tools"} of the MCP server${search.length > 1 ? "s" : ""} ${search.join(", ")} are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).`
-      : "No other MCP tool is reachable in this launch.";
+      : silent.length > 0
+        ? "No other MCP tool is declared in this launch."
+        : "No other MCP tool is reachable in this launch.";
   const lacking = missing.length > 0 ? ` Named but not found on the server: ${missing.join(", ")}; name it under Friction in your report.` : "";
   const unavailable = hidden.length > 0 ? ` Named but not available in this child (hidden in the MCP config): ${hidden.join(", ")}; name it under Friction in your report.` : "";
   const quiet = silent
@@ -228,7 +230,6 @@ export class McpChild {
       this.setupError = `Pi's MCP extension failed to start: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
-
 
   /** Pi's loader result reduced to the allowed set; `servers: []` when nothing is allowed or the loader is missing. */
   private loadConfig(ctx: ExtensionContext): McpLoadedLike {
@@ -339,9 +340,20 @@ export class McpChild {
       this.line = null;
     } else if (!this.namedOver) {
       const bulkServers = new Set(bulkDeclared ? bulk.map(serverOf) : []);
-      const quiet = this.stage?.silent ?? silent;
-      const search = this.allowed.servers.filter((server) => !bulkServers.has(serverKey(server)) && !quiet.some((s) => serverKey(s.server) === serverKey(server)));
-      const whole = [...bulkServers].map((key) => ({ server: this.allowed.servers.find((s) => serverKey(s) === key) ?? key, count: bulk.filter((name) => serverOf(name) === key).length }));
+      // the named-tool part of a silent server is kept from the first turn; whole servers without a tool are judged at this turn
+      const first = this.stage?.silent ?? [];
+      const quiet = [...first.filter((s) => s.tools.length > 0 || silent.some((n) => serverKey(n.server) === serverKey(s.server))), ...silent.filter((s) => !first.some((f) => serverKey(f.server) === serverKey(s.server)))];
+      const whole = [...bulkServers].map((key) => {
+        const mine = wanted().filter((name) => serverOf(name) === key);
+        const declaredHere = mine.filter((name) => bulk.includes(name) || active.includes(name));
+        const rest = mine.filter((name) => !declaredHere.includes(name));
+        return { server: this.allowed.servers.find((s) => serverKey(s) === key) ?? key, count: declaredHere.length, all: rest.length === 0, searchable: rest.some((name) => ["deferred", "codemode"].includes(exposure.get(name) ?? "")) };
+      });
+      const search = this.allowed.servers.filter((server) => {
+        const key = serverKey(server);
+        const w = whole.find((x) => serverKey(x.server) === key);
+        return (!w || w.searchable) && !quiet.some((s) => serverKey(s.server) === key);
+      });
       this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, quiet, this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? []);
     }
   }
