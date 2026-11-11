@@ -224,6 +224,26 @@ test("a detached second worktree: the not-started line names its path and says w
   }
 });
 
+test("a main checkout on a detached HEAD is named as the main checkout, never offered for removal, with or without a PR head ref", async () => {
+  for (const status of [async (): Promise<SafeOpOutcome> => ({ kind: "error", message: "pr_status failed" }), async () => ran({ state: "open", headRefName: null, baseRef: "main", headSha: null })]) {
+    const w = world();
+    try {
+      git(w.repo, "checkout", "-q", "--detach");
+      const r = await selfFinish(w.deps({ status, git: async (a, dir) => { try { return git(dir ?? w.repo, ...a); } catch { return null; } } }), 7);
+      const text = r.lines.join("\n");
+      assert.equal(r.spawn, undefined);
+      assert.equal(w.spawned.length, 0);
+      assert.ok(!text.includes("git worktree remove"), text);
+      assert.ok(!text.includes("null"), text);
+      const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+      assert.ok(line.includes(`worktree ${w.repo} is the main checkout`) && line.includes("nothing is removed"), line);
+      assert.ok(fs.existsSync(w.repo) && fs.existsSync(w.wt));
+    } finally {
+      w.cleanup();
+    }
+  }
+});
+
 test("an unborn second worktree: the not-started line names its path and branch and what the owner does", async () => {
   const w = world();
   try {
