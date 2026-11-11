@@ -156,7 +156,12 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
     if (!w) {
       const lines = [`merged fact: not verified (PR #${n} head branch ${headRef} is not checked out in a worktree of this repository)`];
       const snap = await snapshotOnly(d, root, cwdBranch ?? headRef);
-      lines.push(...snap, `cleanup: not started; nothing is removed: no worktree has branch ${headRef} checked out and the branch is kept`);
+      const kept = samePath(root, wts[0].path)
+        ? `worktree ${root} is the main checkout and is never removed; branch ${headRef} is checked out in no worktree and is kept; there is nothing for the owner to do with them`
+        : headRef === baseRef
+          ? `worktree ${root} stays and branch ${headRef} is the PR base branch and is kept; there is nothing for the owner to do with the branch`
+          : `worktree ${root} stays and branch ${headRef} is kept; the owner checks out branch ${headRef} in it, ${SWEEP}`;
+      lines.push(...snap, `cleanup: not started; nothing is removed: ${kept}`);
       return { lines };
     }
     target = w.path;
@@ -172,8 +177,11 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   const lines: string[] = [];
   if (isMain || branch === baseRef) {
     const why = isMain ? `worktree ${target} is the main checkout` : `branch ${branch} is the base branch of PR #${n}`;
+    const kept = isMain
+      ? `worktree ${target} is the main checkout and is never removed; branch ${branch} stays while it is checked out there; there is nothing for the owner to do with them`
+      : `worktree ${target} stays and branch ${branch} is the PR base branch and is kept; there is nothing for the owner to do with the branch`;
     const snap = await snapshotOnly(d, root, branch);
-    return { lines: [...snap, `cleanup: not started (${why}); nothing is removed: worktree ${target} and branch ${branch} are never removed; there is nothing for the owner to do with them`] };
+    return { lines: [...snap, `cleanup: not started (${why}); nothing is removed: ${kept}`] };
   }
   const tip = await d.git(["rev-parse", "--verify", "HEAD"], samePath(target, root) ? undefined : target);
   if (!tip) return { lines: [`cleanup: not started (the worktree ${target} has no commit checked out); nothing is removed: worktree ${target} and branch ${branch} stay; the owner commits the round's work in it, ${SWEEP}`] };

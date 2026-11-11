@@ -194,16 +194,59 @@ test("the PR base branch is never a target even in a second worktree", async () 
   }
 });
 
-test("a PR head branch in no worktree: the message names the branch and what to do; nothing is removed", async () => {
+test("a PR head branch in no worktree, session in the main checkout: the message names the main checkout and the branch, nothing for the owner to do", async () => {
   const w = world();
   try {
     const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "ghost", baseRef: "main", headSha: w.tip }) }), 7);
     assert.equal(r.spawn, undefined);
     const text = r.lines.join("\n");
     assert.match(text, /merged fact: not verified \(PR #7 head branch ghost is not checked out in a worktree of this repository\)/);
-    assert.match(text, /cleanup: not started; nothing is removed: no worktree has branch ghost checked out and the branch is kept/);
+    assert.match(text, /cleanup: not started; nothing is removed: worktree .* is the main checkout and is never removed; branch ghost is checked out in no worktree and is kept; there is nothing for the owner to do with them/);
     assert.ok(!text.includes("git branch -D") && !text.includes("git worktree remove"), text);
     assert.ok(fs.existsSync(w.wt));
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("a PR head branch in no worktree, session in a detached linked worktree: the line names that worktree, the branch and the owner's action", async () => {
+  const w = world();
+  try {
+    git(w.wt, "checkout", "-q", "--detach");
+    const r = await selfFinish(w.deps({ cwd: w.wt, status: async () => ran({ state: "merged", headRefName: "ghost", baseRef: "main", headSha: w.tip }), git: gitIn(w.wt) }), 7);
+    assert.equal(r.spawn, undefined);
+    const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+    assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} stays and branch ghost is kept; the owner checks out branch ghost in it, `)) && line.includes("foreman worktree sweep"), line);
+    assert.ok(!line.includes("git worktree remove") && !line.includes("git branch -D"), line);
+    assert.ok(fs.existsSync(w.wt));
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("a PR head branch in no worktree equal to the base ref, session in a linked worktree: no check-out advice", async () => {
+  const w = world();
+  try {
+    git(w.wt, "checkout", "-q", "--detach");
+    git(w.repo, "checkout", "-q", "--detach");
+    const r = await selfFinish(w.deps({ cwd: w.wt, status: async () => ran({ state: "merged", headRefName: "main", baseRef: "main", headSha: w.tip }), git: gitIn(w.wt) }), 7);
+    assert.equal(r.spawn, undefined);
+    const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+    assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} stays and branch main is the PR base branch and is kept`)) && line.includes("nothing for the owner to do") && !line.includes("checks out"), line);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("the main checkout on a round branch: the line says the main checkout is never removed and the branch stays while checked out there", async () => {
+  const w = world();
+  try {
+    git(w.repo, "checkout", "-q", "-b", "round");
+    const head = git(w.repo, "rev-parse", "HEAD");
+    const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "round", baseRef: "main", headSha: head }), git: gitIn(w.repo) }), 7);
+    assert.equal(r.spawn, undefined);
+    const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+    assert.ok(fwd(line).includes(fwd(`worktree ${w.repo} is the main checkout and is never removed; branch round stays while it is checked out there`)) && line.includes("nothing for the owner to do"), line);
   } finally {
     w.cleanup();
   }
@@ -348,7 +391,7 @@ test("head ref main with no base ref and a detached main checkout: no branch del
     const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "main", headSha: w.tip }), git: gitIn(w.repo) }), 7);
     const text = r.lines.join("\n");
     assert.equal(r.spawn, undefined);
-    assert.match(text, /no worktree has branch main checked out and the branch is kept/);
+    assert.match(text, /branch main is checked out in no worktree and is kept/);
     assert.ok(!text.includes("git branch -D"), text);
   } finally {
     w.cleanup();
@@ -413,10 +456,11 @@ test("isInside counts only separators valid on the platform: on POSIX a backslas
   assert.equal(isInside("/r/repo\\x", "/r/repo"), process.platform === "win32");
 });
 
-test("no returned line advises git worktree remove or git branch -D, and each names the worktree or branch it speaks about", async () => {
+test("no returned line advises git worktree remove or git branch -D; each not-started line names the worktree or branch it speaks about and says what the owner does", async () => {
   const mustName = (r: { lines: string[] }, ...names: string[]): void => {
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
     assert.ok(line, r.lines.join("\n"));
+    assert.ok(line.includes("the owner"), line);
     for (const l of r.lines) assert.ok(!l.includes("git worktree remove") && !l.includes("git branch -D"), l);
     for (const n of names) assert.ok(fwd(line).includes(fwd(n)), `${n} in ${line}`);
   };
