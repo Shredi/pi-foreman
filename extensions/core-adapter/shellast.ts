@@ -51,6 +51,20 @@ export interface ShellSegment {
   argv: string[];
   redirects: ShellRedirect[];
   heredoc: boolean;
+  /** The text of a heredoc or here-string of this command, on any descriptor; `literal` is false for a here-string word that is computed (its raw text). */
+  stdinBodies?: Array<{ text: string; literal: boolean }>;
+  /** The text of a `parse_error` or `depth` segment that could not be walked, or the body of a function, `coproc`, `select` or arithmetic `for`, or a whole `(( ))` command (which the walker does not enter). */
+  source?: string;
+  /** The text (with its `$(`, backtick or `<(` delimiters) of each command or process substitution inside a `[[ ]]` test, `(( ))` command or `select` word list, which the walker does not enter. */
+  substitutions?: string[];
+  /** Per `argv` word: true when the word is not literal (an expansion or a glob), so its text in `argv` is the raw word, not a value. */
+  computed?: boolean[];
+  /** The command follows the `time` keyword of its pipeline. */
+  afterTime?: boolean;
+  /** A later stage of a pipeline: stdin comes from the stage before. */
+  piped?: boolean;
+  /** The names assigned in this command's environment prefix and by an `env` wrapper (`GIT_CONFIG_NOSYSTEM=1 git ...`). */
+  envNames?: string[];
   cwd: string | null;
   /** The wrappers this segment was unwrapped from, outermost first (`env`, `bash`, `$(`, backtick ...). */
   wrappers: string[];
@@ -106,8 +120,14 @@ interface Scope {
   depth: number;
   /** stdin comes from a pipe, a heredoc, a here-string or `<`. */
   stdin: boolean;
+  pipe?: boolean;
+  /** The command follows the `time` keyword (`time -o x ...`: the parser leaves `-o` as the program, the guard reads `time` as a wrapper with options). */
+  time?: boolean;
+  /** The text the node positions of the script being walked refer to. */
+  src?: string;
   redirects: ShellRedirect[];
   heredoc: boolean;
+  bodies: Array<{ text: string; literal: boolean }>;
   reason: OpaqueReason | null;
 }
 
@@ -116,7 +136,9 @@ interface Cmd {
   sc: Scope;
   redirs: ShellRedirect[];
   heredoc: boolean;
+  bodies: Array<{ text: string; literal: boolean }>;
   feeds: boolean;
+  envNames?: string[];
   reason: OpaqueReason | null;
 }
 
@@ -215,35 +237,42 @@ function assignW(a: Assignment, vars?: Map<string, string | undefined>): W {
 const harmless = (a: Assign): boolean => !a.append && a.value !== null && (HARMLESS.has(a.name) || a.name.startsWith("LC_"));
 
 /** The command substitutions and process substitutions inside `node`, not descending into their scripts. */
-function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undefined; label: string }>; proc: boolean }): void {
+function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undefined; label: string; text?: string }>; proc: boolean }): void {
   forEachChild(node, (c: SyntaxNode) => {
     const x = c as any;
     if (x.type === "CommandExpansion" || x.type === "ArithmeticCommandExpansion" || x.type === "ProcessSubstitution") {
       if (x.type === "ProcessSubstitution") acc.proc = true;
-      acc.subs.push({ script: x.script, label: String(x.text).startsWith("`") ? "`" : "$(" });
+      acc.subs.push({ script: x.script, label: String(x.text).startsWith("`") ? "`" : "$(", text: String(x.text) });
       return;
     }
     scriptsIn(c, acc);
   });
 }
 
-function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | null, c?: Cmd, cwd: string | null = sc.cwd): void {
+function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | null, c?: Cmd, cwd: string | null = sc.cwd, source?: string, computed?: boolean[], substitutions?: string[]): void {
   sc.run.out.push({
+    ...(substitutions?.length ? { substitutions } : {}),
+    ...(source === undefined ? {} : { source }),
+    ...(computed ? { computed } : {}),
+    ...(sc.time ? { afterTime: true } : {}),
+    ...(sc.pipe ? { piped: true } : {}),
+    ...(c?.envNames?.length ? { envNames: [...c.envNames] } : {}),
     program,
     argv,
     redirects: [...(c ? c.redirs : sc.redirects)],
     heredoc: c ? c.heredoc : sc.heredoc,
+    stdinBodies: [...(c ? c.bodies : sc.bodies)],
     cwd,
     wrappers: [...sc.wrappers],
     opaque: reason ?? c?.reason ?? sc.reason,
   });
 }
 
-function walkSubs(subs: Array<{ script: Script | undefined; label: string }>, sc: Scope): void {
+function walkSubs(subs: Array<{ script: Script | undefined; label: string; text?: string }>, sc: Scope): void {
   for (const s of subs) {
-    if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth");
-    else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error");
-    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, redirects: [], heredoc: false, reason: null });
+    if (sc.depth + 1 > MAX_DEPTH) seg(sc, s.label, [], "depth", undefined, sc.cwd, s.text);
+    else if (!s.script || s.script.errors?.length) seg(sc, s.label, [], "parse_error", undefined, sc.cwd, s.text);
+    else walkList(s.script.commands, { ...sc, depth: sc.depth + 1, wrappers: [...sc.wrappers, s.label], stdin: false, pipe: false, time: false, redirects: [], heredoc: false, bodies: [], reason: null });
   }
 }
 
@@ -254,6 +283,12 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
     const stdin = fd === null || fd === "0";
     if (r.type === "HereDoc" || r.type === "HereString") {
       c.heredoc = true;
+      // the body of a heredoc or here-string on any descriptor is recorded (the guard reads them all as script)
+      if (r.type === "HereDoc") c.bodies.push({ text: r.body.text, literal: true });
+      else if (r.target) {
+        const t = wordOf(r.target, vars);
+        c.bodies.push(t.value !== null ? { text: t.value, literal: true } : { text: t.text, literal: false });
+      }
       if (stdin) c.feeds = true;
       continue;
     }
@@ -271,7 +306,8 @@ function redirectsOf(list: readonly Redirection[], c: Cmd, vars?: Map<string, st
 function walkList(stmts: readonly Statement[], sc: Scope): string | null {
   let cwd = sc.cwd;
   for (const st of stmts) {
-    const end = walkNode(st.command, { ...sc, cwd });
+    // `time` applies to the pipeline it precedes, not to the commands inside a group, subshell or loop body
+    const end = walkNode(st.command, { ...sc, cwd, time: false });
     if (!st.background) cwd = end;
   }
   return cwd;
@@ -292,9 +328,29 @@ function walkLists(lists: Array<CompoundList | undefined>, sc: Scope): string | 
 }
 
 function walkWords(words: readonly Word[] | undefined, sc: Scope): void {
-  const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
+  const acc = { subs: [] as Array<{ script: Script | undefined; label: string; text?: string }>, proc: false };
   for (const w of words ?? []) scriptsIn(w, acc);
   walkSubs(acc.subs, sc);
+}
+
+/** The source text of the body of a node the walker does not enter (function, coproc, select, arithmetic for), when it has one. */
+function bodyText(n: any, sc: Scope): string | undefined {
+  const b = n.body;
+  if (sc.src === undefined || !b || typeof b !== "object" || typeof b.pos !== "number" || typeof b.end !== "number") return undefined;
+  let end: number = b.end;
+  if (n.type === "Coproc") {
+    // a coproc body ends before the text of its heredocs: take it through the terminator line
+    const visit = (x: SyntaxNode): void => {
+      const y = x as any;
+      if (y.type === "HereDocBody" && typeof y.end === "number") {
+        const nl = sc.src!.indexOf("\n", y.end);
+        end = Math.max(end, nl < 0 ? sc.src!.length : nl);
+      }
+      forEachChild(x, visit);
+    };
+    visit(b as SyntaxNode);
+  }
+  return sc.src.slice(b.pos, end);
 }
 
 function walkNode(n: any, sc: Scope): string | null {
@@ -302,7 +358,7 @@ function walkNode(n: any, sc: Scope): string | null {
     case "Command":
       return doCommand(n as Command, sc);
     case "Pipeline":
-      (n.commands as CommandNode[]).forEach((cmd, i) => walkNode(cmd, { ...sc, stdin: sc.stdin || i > 0 }));
+      (n.commands as CommandNode[]).forEach((cmd, i) => walkNode(cmd, { ...sc, stdin: sc.stdin || i > 0, pipe: sc.pipe || i > 0, time: i === 0 && (n.prefixes ?? []).some((p: any) => p.type === "Time") }));
       return sc.cwd;
     case "AndOr": {
       let cwd = sc.cwd;
@@ -313,12 +369,12 @@ function walkNode(n: any, sc: Scope): string | null {
       return cwd;
     }
     case "Redirected": {
-      const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, feeds: sc.stdin, reason: sc.reason };
+      const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, bodies: [...sc.bodies], feeds: sc.stdin, reason: sc.reason };
       redirectsOf(n.redirects, c);
-      const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
+      const acc = { subs: [] as Array<{ script: Script | undefined; label: string; text?: string }>, proc: false };
       for (const r of n.redirects as Redirection[]) scriptsIn(r, acc);
       walkSubs(acc.subs, sc);
-      return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
+      return walkNode(n.command, { ...sc, redirects: c.redirs, heredoc: c.heredoc, bodies: c.bodies, stdin: c.feeds, reason: acc.proc ? pick(c.reason, "process_substitution") : c.reason });
     }
     case "Subshell":
       walkList(n.body.commands, sc);
@@ -343,11 +399,17 @@ function walkNode(n: any, sc: Scope): string | null {
       return walkLists(n.items.map((i: any) => i.body), sc);
     }
     case "Function":
-      seg(sc, n.name.text, [], "function_def");
+      seg(sc, n.name.text, [], "function_def", undefined, sc.cwd, bodyText(n, sc));
       return sc.cwd;
     default: {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
-      seg(sc, names[n.type] ?? n.type, [], "unsupported");
+      const acc = { subs: [] as Array<{ script: Script | undefined; label: string; text?: string }>, proc: false };
+      if (n.type === "Select") for (const w of (n.wordlist ?? []) as Word[]) scriptsIn(w, acc);
+      else if (n.type === "TestCommand" || n.type === "ArithmeticCommand") scriptsIn(n, acc);
+      // the header only: the body is read as text; an empty word stands in for it in the traversal
+      else if (n.type === "ArithmeticFor") scriptsIn({ type: n.type, initialize: n.initialize, test: n.test, update: n.update, body: { type: "Word", parts: [] } } as unknown as SyntaxNode, acc);
+      const text = (n.type === "ArithmeticCommand" || n.type === "TestCommand") && sc.src !== undefined ? sc.src.slice(n.pos, n.end) : bodyText(n, sc);
+      seg(sc, names[n.type] ?? n.type, [], "unsupported", undefined, sc.cwd, text, undefined, acc.subs.map((s) => s.text ?? ""));
       return sc.cwd;
     }
   }
@@ -355,8 +417,8 @@ function walkNode(n: any, sc: Scope): string | null {
 
 function doCommand(cmd: Command, sc: Scope): string | null {
   const vars = sc.run.vars.get(cmd);
-  const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, feeds: sc.stdin || sc.heredoc, reason: sc.reason };
-  const acc = { subs: [] as Array<{ script: Script | undefined; label: string }>, proc: false };
+  const c: Cmd = { sc, redirs: [...sc.redirects], heredoc: sc.heredoc, bodies: [...sc.bodies], feeds: sc.stdin || sc.heredoc, reason: sc.reason };
+  const acc = { subs: [] as Array<{ script: Script | undefined; label: string; text?: string }>, proc: false };
   scriptsIn(cmd, acc);
   if (acc.proc) c.reason = pick(c.reason, "process_substitution");
   walkSubs(acc.subs, sc);
@@ -380,6 +442,7 @@ function doCommand(cmd: Command, sc: Scope): string | null {
     return sc.cwd;
   }
   for (const a of prefix) if (!(a.assign && harmless(a.assign))) c.reason = pick(c.reason, "assignment");
+  c.envNames = prefix.flatMap((a) => (a.assign ? [a.assign.name] : []));
   return run(words, c, sc.cwd);
 }
 
@@ -467,7 +530,7 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
     }
   }
   const bad = rest.find((a) => a.value === null);
-  seg(sc, prog, rest.map((a) => a.value ?? a.text), reason ?? bad?.reason ?? null, c, at);
+  seg(sc, prog, rest.map((a) => a.value ?? a.text), reason ?? bad?.reason ?? null, c, at, undefined, rest.map((a) => a.value === null));
   return cwd;
 }
 
@@ -475,7 +538,7 @@ function plain(prog: string, name: string, rest: W[], c: Cmd, cwd: string | null
 function runString(label: string, src: string, c: Cmd, cwd: string | null): string | null {
   const sc: Scope = { ...c.sc, cwd, wrappers: [...c.sc.wrappers, label] };
   if (sc.depth + 1 > MAX_DEPTH) {
-    seg(sc, label, [], "depth", c);
+    seg(sc, label, [], "depth", c, cwd, src);
     return cwd;
   }
   let script: Script | undefined;
@@ -485,10 +548,11 @@ function runString(label: string, src: string, c: Cmd, cwd: string | null): stri
     script = undefined;
   }
   if (!script || (script as any).errors?.length) {
-    seg(sc, label, [src], "parse_error", c);
+    seg(sc, label, [src], "parse_error", c, cwd, src);
     return cwd;
   }
-  walkScript(script, src, { ...sc, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, stdin: c.feeds, reason: c.reason });
+  // the guard reads a nested script with the heredocs of no command (`watch sh <<EOF` hands the body to nobody it reads), so `bodies` starts empty
+  walkScript(script, src, { ...sc, time: false, depth: sc.depth + 1, redirects: c.redirs, heredoc: c.heredoc, bodies: [], stdin: c.feeds, reason: c.reason });
   return cwd;
 }
 
@@ -498,7 +562,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   const p = words[0];
   const rest = words.slice(1);
   if (p.value === null) {
-    seg(sc, p.text, rest.map((a) => a.value ?? a.text), p.reason ?? "unresolved_var", c, cwd);
+    seg(sc, p.text, rest.map((a) => a.value ?? a.text), p.reason ?? "unresolved_var", c, cwd, undefined, rest.map((a) => a.value === null));
     return cwd;
   }
   const prog = p.value;
@@ -508,7 +572,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     return run(inner, { ...c, sc: { ...sc, wrappers: [...sc.wrappers, w] } }, at);
   };
   const bad = (reason: OpaqueReason): string | null => {
-    seg(sc, prog, rest.map((a) => a.value ?? a.text), reason, c, cwd);
+    seg(sc, prog, rest.map((a) => a.value ?? a.text), reason, c, cwd, undefined, rest.map((a) => a.value === null));
     return cwd;
   };
   const opts = (spec: OptSpec) => parseOpts(rest, spec);
@@ -572,6 +636,7 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const dir = val(o.opts, "-C", "--chdir");
       if (dir !== null) at = cdTarget(["cd", dir], cwd ?? undefined, win32(sc.run)) ?? null;
       while (args.length && (args[0].assign ?? asAssign(args[0]))) {
+        c.envNames = [...(c.envNames ?? []), (args[0].assign ?? asAssign(args[0]))!.name];
         if (!harmless((args[0].assign ?? asAssign(args[0]))!)) c.reason = pick(c.reason, "assignment");
         args = args.slice(1);
       }
@@ -779,7 +844,77 @@ function prepare(script: Script, src: string, sc: Scope): void {
 
 function walkScript(script: Script, src: string, sc: Scope): void {
   prepare(script, src, sc);
-  walkList(script.commands, sc);
+  walkList(script.commands, { ...sc, src });
+}
+
+export interface LineWord {
+  /** The word with quotes removed and its command, arithmetic and `$name` expansions cut out (what the guard's lexer keeps of it). */
+  text: string;
+  /** The word is the program of a command. */
+  program: boolean;
+  /** The word holds an expansion (its value is computed). */
+  expands: boolean;
+}
+
+/**
+ * Every word of the line as the parser reads it, wherever it stands (command words, `case` patterns, `[[ ]]` operands, function bodies, here-string
+ * words, heredoc bodies, assignments, nested substitutions); not redirect targets and not comments. Null when the line does not parse.
+ */
+export function lineWords(command: string): LineWord[] | null {
+  let script: Script | undefined;
+  try {
+    script = parse(command);
+  } catch {
+    return null;
+  }
+  if (!script || (script as any).errors?.length) return null;
+  const out: LineWord[] = [];
+  const programs = new Set<unknown>();
+  const expansions = (n: SyntaxNode, acc: string[]): void =>
+    forEachChild(n, (c: SyntaxNode) => {
+      const x = c as any;
+      if (x.type === "CommandExpansion" || x.type === "ArithmeticExpansion" || x.type === "SimpleExpansion" || x.type === "ProcessSubstitution") acc.push(String(x.text));
+      else expansions(c, acc);
+    });
+  const visit = (n: SyntaxNode): void => {
+    const x = n as any;
+    if (x.type === "Command" && x.name) programs.add(x.name);
+    if (x.type === "Assignment") out.push({ text: `${x.name}=`, program: false, expands: false });
+    if (x.type === "HereDocBody") out.push({ text: String(x.text), program: false, expands: false });
+    if (x.type === "Word") {
+      const cut: string[] = [];
+      expansions(n, cut);
+      let text = String(x.value ?? x.text);
+      for (const e of cut) text = text.replace(e, "");
+      out.push({ text, program: programs.has(n), expands: cut.length > 0 });
+    }
+    // a redirect target is a file name, not a word of the command; what it expands is still walked
+    if (x.target && x.operator && x.type !== "HereString" && x.type !== "HereDoc") {
+      forEachChild(x.target as SyntaxNode, visit);
+      return;
+    }
+    forEachChild(n, visit);
+  };
+  visit(script as unknown as SyntaxNode);
+  return out;
+}
+
+/** The text of every arithmetic expansion `$(( ... ))` the parser finds in `command` (also inside quotes and substitutions; none in single quotes, comments or escaped text). */
+export function arithmeticTexts(command: string): string[] {
+  const out: string[] = [];
+  let script: Script | undefined;
+  try {
+    script = parse(command);
+  } catch {
+    return out;
+  }
+  const visit = (n: SyntaxNode): void => {
+    const x = n as any;
+    if (x.type === "ArithmeticExpansion" && typeof x.text === "string") out.push(x.text);
+    forEachChild(n, visit);
+  };
+  visit(script as unknown as SyntaxNode);
+  return out;
 }
 
 /**
@@ -787,7 +922,7 @@ function walkScript(script: Script, src: string, sc: Scope): void {
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform };
-  const sc: Scope = { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
+  const sc: Scope = { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, bodies: [], reason: null };
   let script: Script | undefined;
   try {
     script = parse(command);
@@ -795,7 +930,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
     script = undefined;
   }
   if (!script || (script as any).errors?.length) {
-    seg(sc, "", [], "parse_error");
+    seg(sc, "", [], "parse_error", undefined, sc.cwd, command);
     return run.out;
   }
   walkScript(script, command, sc);
