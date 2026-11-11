@@ -113,14 +113,14 @@ const ACTIONS: Record<string, string> = {
 /** Reasons for which the worktree and the branch are never removed: nothing for the owner to do. */
 const NEVER = new Set(["default_branch", "main_worktree"]);
 
-const SWEEP = "then runs `foreman worktree sweep`, which removes a worktree and its branch only when its own checks pass (docs/close.md, cleanup preconditions)";
+const PRECONDITIONS = "reads the cleanup preconditions in docs/close.md before removing anything";
 
 /** The line for a cleanup that does not start: names the real worktree and branch, says what the owner does. */
 function stays(target: string, branch: string, reason: string): string {
   const head = `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: `;
   if (NEVER.has(reason)) return `${head}this worktree and branch are never removed; there is nothing for the owner to do with them`;
-  if (!Object.hasOwn(ACTIONS, reason)) return `${head}the owner reads the cleanup preconditions in docs/close.md before removing anything`;
-  return `${head}${ACTIONS[reason]}, ${SWEEP}`;
+  if (!Object.hasOwn(ACTIONS, reason)) return `${head}the owner ${PRECONDITIONS}`;
+  return `${head}${ACTIONS[reason]}, then ${PRECONDITIONS}`;
 }
 
 interface CheckOut { ok?: unknown; reason?: unknown; archived?: unknown; archivedCwd?: unknown; leftOut?: unknown; remoteBranch?: unknown }
@@ -146,7 +146,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   const root = worktreeRoot(d.cwd, wts);
   if (!root) {
     const snap = (await snapshotOnly(d, d.cwd, cwdBranch ?? headRef ?? "HEAD")).lines;
-    return { lines: [...snap, `cleanup: not started (the session cwd ${d.cwd} is in no worktree of this repository); nothing is removed; the owner runs \`foreman worktree sweep\` from a worktree of the repository, which removes a worktree and its branch only when its own checks pass`] };
+    return { lines: [...snap, `cleanup: not started (the session cwd ${d.cwd} is in no worktree of this repository); nothing is removed; the owner ${PRECONDITIONS}`] };
   }
   let target = root;
   let branch = cwdBranch;
@@ -162,7 +162,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
         ? `worktree ${root} is the main checkout and is never removed; branch ${headRef} is checked out in no worktree and nothing is done with it; there is nothing for the owner to do with them`
         : never
         ? `worktree ${root} and branch ${cwdBranch} are never removed; branch ${headRef} is checked out in no worktree and nothing is done with it; there is nothing for the owner to do with them`
-        : `worktree ${root} stays; branch ${headRef} is checked out in no worktree and nothing is done with it; the owner decides about worktree ${root}: \`foreman worktree sweep\` removes a worktree and its branch only when its own checks pass (docs/close.md, cleanup preconditions)`;
+        : `worktree ${root} stays; branch ${headRef} is checked out in no worktree and nothing is done with it; the owner ${PRECONDITIONS}`;
       lines.push(...snap.lines, `cleanup: not started; nothing is removed: ${kept}`);
       return { lines };
     }
@@ -174,7 +174,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
       const snap = (await snapshotOnly(d, root, "HEAD")).lines;
       return { lines: [...snap, `cleanup: not started (worktree ${target} is the main checkout and has no branch checked out); nothing is removed: worktree ${target} is never removed; there is nothing for the owner to do with it`] };
     }
-    return { lines: [`cleanup: not started (the worktree ${target} has no branch checked out); nothing is removed: worktree ${target} stays; the owner checks out the round's branch in it, ${SWEEP}`] };
+    return { lines: [`cleanup: not started (the worktree ${target} has no branch checked out); nothing is removed: worktree ${target} stays; the owner checks out the round's branch in it, then ${PRECONDITIONS}`] };
   }
   const lines: string[] = [];
   if (isMain || branch === baseRef) {

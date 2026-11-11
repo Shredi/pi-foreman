@@ -216,7 +216,7 @@ test("a PR head branch in no worktree, session in a detached linked worktree: th
     const r = await selfFinish(w.deps({ cwd: w.wt, status: async () => ran({ state: "merged", headRefName: "ghost", baseRef: "main", headSha: w.tip }), git: gitIn(w.wt) }), 7);
     assert.equal(r.spawn, undefined);
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} stays; branch ghost is checked out in no worktree and nothing is done with it; the owner decides about worktree ${w.wt}: `)) && line.includes("foreman worktree sweep") && !line.includes("checks out branch"), line);
+    assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} stays; branch ghost is checked out in no worktree and nothing is done with it; the owner reads the cleanup preconditions in docs/close.md before removing anything`)) && !line.includes("worktree sweep") && !line.includes("checks out branch"), line);
     assert.ok(!line.includes("git worktree remove") && !line.includes("git branch -D"), line);
     assert.ok(fs.existsSync(w.wt));
   } finally {
@@ -235,6 +235,24 @@ test("a PR head branch main in no worktree, session in a detached linked worktre
       const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
       assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} stays; branch main is checked out in no worktree and nothing is done with it`)) && line.includes("the owner"), line);
       assert.ok(!line.includes("checks out branch") && !line.includes("git branch -D") && !line.includes("git worktree remove"), line);
+    } finally {
+      w.cleanup();
+    }
+  }
+});
+
+test("a PR head branch in no worktree, session in a linked worktree with main checked out, check unclassified: names the worktree, the owner, no sweep", async () => {
+  const answers: Array<() => Promise<string>> = [async () => "", async () => { throw new Error("boom"); }];
+  for (const closeScript of answers) {
+    const w = world();
+    try {
+      git(w.repo, "checkout", "-q", "-b", "other");
+      git(w.wt, "checkout", "-q", "main");
+      const r = await selfFinish(w.deps({ cwd: w.wt, closeScript, status: async () => ran({ state: "merged", headRefName: "ghost", baseRef: "develop", headSha: w.tip }), git: gitIn(w.wt) }), 7);
+      assert.equal(r.spawn, undefined);
+      for (const l of r.lines) assert.ok(!l.includes("worktree sweep") && !l.includes("git worktree remove") && !l.includes("git branch -D"), l);
+      const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+      assert.ok(fwd(line).includes(fwd(`worktree ${w.wt} stays; branch ghost is checked out in no worktree`)) && line.includes("the owner"), line);
     } finally {
       w.cleanup();
     }
@@ -285,7 +303,7 @@ test("a detached second worktree: the not-started line names its path and says w
     assert.equal(r.spawn, undefined);
     assert.equal(w.calls(), 0, "no check runs without a branch");
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(fwd(line).includes(fwd(`the worktree ${w.wt} has no branch checked out`)) && line.includes("foreman worktree sweep") && !line.includes("git worktree remove"), line);
+    assert.ok(fwd(line).includes(fwd(`the worktree ${w.wt} has no branch checked out`)) && line.includes("the owner checks out the round's branch in it, then reads the cleanup preconditions in docs/close.md before removing anything") && !line.includes("worktree sweep") && !line.includes("git worktree remove"), line);
     assert.ok(fs.existsSync(w.wt));
   } finally {
     w.cleanup();
@@ -443,7 +461,7 @@ test("a refused linked worktree with no base ref known: the branch is kept, no b
     const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "feat", headSha: w.tip }) }), 7);
     const text = r.lines.join("\n");
     assert.equal(r.spawn, undefined);
-    assert.ok(text.includes("worktree_dirty") && fwd(text).includes(fwd(w.wt)) && text.includes("foreman worktree sweep"), text);
+    assert.ok(text.includes("worktree_dirty") && fwd(text).includes(fwd(w.wt)) && !text.includes("worktree sweep") && text.includes("docs/close.md"), text);
     assert.match(text, /branch feat stay/);
     assert.ok(!text.includes("git branch -D"), text);
   } finally {
@@ -451,14 +469,14 @@ test("a refused linked worktree with no base ref known: the branch is kept, no b
   }
 });
 
-test("a refused linked worktree with a differing base ref names the sweep, no branch delete command", async () => {
+test("a refused linked worktree with a differing base ref points to the cleanup preconditions, no sweep, no branch delete command", async () => {
   const w = world();
   try {
     fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
     const r = await selfFinish(w.deps(), 7);
     const text = r.lines.join("\n");
     assert.equal(r.spawn, undefined);
-    assert.ok(text.includes("worktree_dirty") && text.includes("`foreman worktree sweep`") && !text.includes("git branch -D"), text);
+    assert.ok(text.includes("worktree_dirty") && text.includes("then reads the cleanup preconditions in docs/close.md before removing anything") && !text.includes("worktree sweep") && !text.includes("git branch -D"), text);
   } finally {
     w.cleanup();
   }
@@ -499,7 +517,7 @@ test("no returned line advises git worktree remove or git branch -D; each not-st
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
     assert.ok(line, r.lines.join("\n"));
     assert.ok(line.includes("the owner"), line);
-    for (const l of r.lines) assert.ok(!l.includes("git worktree remove") && !l.includes("git branch -D") && !l.includes("checks out branch"), l);
+    for (const l of r.lines) assert.ok(!l.includes("worktree sweep") && !l.includes("git worktree remove") && !l.includes("git branch -D") && !l.includes("checks out branch"), l);
     for (const n of names) assert.ok(fwd(line).includes(fwd(n)), `${n} in ${line}`);
   };
   const noStatus = async (): Promise<SafeOpOutcome> => ({ kind: "error", message: "pr_status failed" });
@@ -507,7 +525,7 @@ test("no returned line advises git worktree remove or git branch -D; each not-st
   try {
     fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
     const r = await selfFinish(w.deps(), 7);
-    mustName(r, w.wt, "branch feat", "foreman worktree sweep");
+    mustName(r, w.wt, "branch feat", "docs/close.md");
   } finally {
     w.cleanup();
   }

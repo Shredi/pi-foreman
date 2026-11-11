@@ -143,21 +143,22 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
   message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
   and the branch stay. Each such line names the real worktree root (and the branch, where one is checked out) and what the owner does:
-  the action for the reason (commit or discard changes, copy or delete the ignored files, wait for the merge), then run
-  `foreman worktree sweep`, which removes a worktree and its branch only when its own checks pass. The sweep is named only for
-  a reason the check answered and classified. For any other reason (an unknown one, or a check that gave no answer) the line names
-  the worktree and branch, the reason, and says the owner reads the cleanup preconditions here before removing anything, with no
-  pointer to the sweep. A worktree with no commit checked out says the owner commits the round's work in it and a later close
-  checks it again, also with no sweep pointer. No message prints a `git worktree remove` or `git branch -D` command.
+  the action for the reason (commit or discard changes, copy or delete the ignored files, wait for the merge), then the owner
+  reads the cleanup preconditions here before removing anything. For any other reason (an unknown one, or a check that gave no
+  answer) the line names the worktree and branch, the reason, and says the owner reads the cleanup preconditions here before
+  removing anything. A worktree with no commit checked out says the owner commits the round's work in it and a later close
+  checks it again. No refusal line names a removal command or tool (neither `foreman worktree sweep`, `git worktree remove`
+  nor `git branch -D`).
   For the main checkout and the default or PR base branch (`main_worktree`, `default_branch`, or the up-front refusal) the line
   says the main checkout is never removed and the branch stays while it is checked out there (a base branch in a linked worktree:
   the worktree stays and the branch is kept) and there is nothing for the owner to do. When the head branch is checked out in no
   worktree, nothing is removed and the line names the session's worktree root and says the branch is checked out in no worktree
   and nothing is done with it: for the main checkout, that it is never removed and there is nothing for the owner to do; for a
   linked worktree that has the default branch checked out (the check refuses it as `default_branch`), that the worktree and
-  that branch are never removed and there is nothing for the owner to do, without a pointer to the sweep; for any other
-  linked worktree, that the owner decides about the worktree (`foreman worktree sweep` removes a worktree and its branch only
-  when its own checks pass). No line tells the owner to check out a branch named by the PR status.
+  that branch are never removed and there is nothing for the owner to do; for any other linked worktree, that the worktree stays
+  and the owner reads the cleanup preconditions here before removing anything; the same holds for a session cwd in no worktree
+  of the repository and for a linked worktree with no branch checked out (which also says the owner checks out the round's
+  branch in it first). No line tells the owner to check out a branch named by the PR status.
 - **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
   `spawn` with `detached` and `unref`, no console window on Windows). It waits for the session's pi process to exit, checks
   again, runs `git worktree remove` (never `--force`) and the branch delete, and writes `<handoff dir>/cleanup.json`:
