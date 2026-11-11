@@ -7,6 +7,8 @@
  * escape, so two lone halves never join into one astral character there. The differences left: the Unicode version of the lower-casing tables may differ from the
  * Python in use, and a high half directly followed by a low half in the input string itself is one character in JavaScript and two in Python (the two cannot be
  * told apart; a git branch name never holds a lone surrogate).
+ * The match does not backtrack over `*`: the entry is cut at each `*` outside a class and each piece is matched on its own at a fixed width (see `fnmatch`), so the
+ * time grows with the product of name length and entry length, not exponentially with the number of `*` as one `.*`-joined expression does.
  * A pattern only adds matches: `main`, `master` and the remote's default stay in the list the callers pass.
  *
  * Differences to the sweep's `protected_pattern` (`scripts/foreman_worktree.py`), which means the same fnmatch for the patterns and shares the case table
@@ -56,14 +58,33 @@ function fnmatchClass(pat: readonly string[], from: number, to: number): string 
   return stuff[0] === "!" ? `[^${stuff.slice(1)}]` : `[${stuff}]`;
 }
 
-/** The JS source of a Python-fnmatch pattern (the `re.translate` of `fnmatch.translate`, without its `(?s:)` wrapper: the caller adds the `s` flag). */
-function fnmatchSource(text: string): string {
+/** A run of the entry between two `*`: the JS source of its `fnmatch.translate` and the number of characters (code points) it matches, always exactly that many. */
+interface Piece {
+  src: string;
+  len: number;
+}
+
+/**
+ * A Python-fnmatch pattern cut at every `*` outside a bracket class (runs of `*` are one cut, empty pieces dropped): the pieces as the `re.translate` of
+ * `fnmatch.translate` writes them, without its `(?s:)` wrapper (the caller adds the `s` flag), and whether the entry starts or ends with `*`.
+ */
+function fnmatchPieces(text: string): { pieces: Piece[]; hasStar: boolean; startStar: boolean; endStar: boolean } {
   const pat = Array.from(text);
+  const pieces: Piece[] = [];
   let out = "";
+  let len = 0;
+  let hasStar = false;
   for (let i = 0; i < pat.length; i++) {
     const c = pat[i];
-    if (c === "*") out += ".*";
-    else if (c === "?") out += ".";
+    if (c === "*") {
+      hasStar = true;
+      if (len) pieces.push({ src: out, len });
+      out = "";
+      len = 0;
+      continue;
+    }
+    len++;
+    if (c === "?") out += ".";
     else if (c === "[") {
       let j = i + 1;
       if (pat[j] === "!") j++;
@@ -76,11 +97,45 @@ function fnmatchSource(text: string): string {
       }
     } else out += c.replace(/[.+^${}()|\\\]/]/gu, "\\$&").replace(/\p{Cs}/gu, (h) => `\\u{${h.charCodeAt(0).toString(16)}}`);
   }
-  return out;
+  if (len) pieces.push({ src: out, len });
+  return { pieces, hasStar, startStar: pat[0] === "*", endStar: pat[pat.length - 1] === "*" };
 }
 
+/**
+ * Whole-string match without backtracking over `*`: every piece has a fixed length, so the first piece is tried at the start (unless the entry begins with `*`),
+ * the last at the end (unless it ends with `*`), and each piece between at its earliest position after the one before; the earliest fit never costs a later
+ * piece a place. The name is read as code points (`Array.from`, the units the `u` flag sees), and a window of them is joined back for the piece's own
+ * expression, so no position falls inside a surrogate pair. Every piece is compiled before the first test, so an entry that cannot be compiled throws as the
+ * one-expression form did, whatever the name is, and each caller ends that in a deny.
+ */
 function fnmatch(name: string, pattern: string): boolean {
-  return new RegExp(`^${fnmatchSource(pattern)}$`, "su").test(name);
+  const { pieces, hasStar, startStar, endStar } = fnmatchPieces(pattern);
+  const res = pieces.map((p) => new RegExp(`^${p.src}$`, "su"));
+  const cps = Array.from(name);
+  const at = (k: number, from: number) => res[k].test(cps.slice(from, from + pieces[k].len).join(""));
+  if (!hasStar) return pieces.length === 0 ? cps.length === 0 : cps.length === pieces[0].len && at(0, 0);
+  let lo = 0;
+  let hi = cps.length;
+  let first = 0;
+  let last = pieces.length - 1;
+  if (!startStar) {
+    if (pieces[0].len > hi || !at(0, 0)) return false;
+    lo = pieces[0].len;
+    first = 1;
+  }
+  if (!endStar) {
+    const from = hi - pieces[last].len;
+    if (from < lo || !at(last, from)) return false;
+    hi = from;
+    last--;
+  }
+  for (let k = first; k <= last; k++) {
+    let pos = lo;
+    while (pos + pieces[k].len <= hi && !at(k, pos)) pos++;
+    if (pos + pieces[k].len > hi) return false;
+    lo = pos + pieces[k].len;
+  }
+  return true;
 }
 
 /** The entry of `patterns` that `branch` matches (the entry as configured), or undefined. */
