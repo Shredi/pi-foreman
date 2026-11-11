@@ -23,12 +23,18 @@ export const SCRIPT_MAX_ATTEMPTS = 3;
 export const SCRIPT_FIX_LINES_DEFAULT = 5;
 export const SCRIPT_FIX_ADDED_BYTES = 400;
 export const SCRIPT_FIX_NOTICE_LINES = 12;
-/** Dialog choices, approve last. */
-export const SCRIPT_CHOICES = ["revise", "reject", "approve"] as const;
+/** The marker line (the whole line) that declares the script undoes its change when run with the argument `undo`. */
+export const SCRIPT_UNDO_MARKER = "# foreman-undo: supported";
+const SCRIPT_UNDO_MARKER_RE = /^# foreman-undo: supported\r?$/m;
+/** Dialog choices. Approve first is the owner's decision of 2026-11-11 (the owner answers these dialogs on a phone); a stray Enter in the terminal therefore approves. */
+export const SCRIPT_CHOICES = ["approve", "revise", "reject"] as const;
+
+/** The script kinds a `dry` or `run` action starts; `undo` has its own plan. */
+export type ScriptRunAction = Exclude<ScriptRunKind, "undo">;
 
 export type ScriptStatus = "pending" | "approved" | "dry_ok" | "consumed" | "rejected" | "revise" | "expired";
 /** `script_child` is the adapter's (a subagent child never proposes); `script_text` is a summary text that is empty or over its limit. */
-export type ScriptRefusalCode = "script_child" | "script_path" | "script_no_dry_run" | "script_pending" | "script_changed" | "script_dry_required" | "script_consumed" | "script_expired" | "no_posix_shell" | "script_text";
+export type ScriptRefusalCode = "undo_no_proposal" | "undo_no_marker" | "undo_not_run" | "undo_done" | "undo_attempts" | "undo_expired" | "script_child" | "script_path" | "script_no_dry_run" | "script_pending" | "script_changed" | "script_dry_required" | "script_consumed" | "script_expired" | "no_posix_shell" | "script_text";
 
 export interface ScriptFix {
   /** Short hash of the approved bytes and of the bytes that run now. */
@@ -64,6 +70,8 @@ export interface ScriptFile {
   bytes: Buffer;
   hash: string;
   lines: number;
+  /** The bytes carry the undo marker line. */
+  undo: boolean;
 }
 
 export interface ScriptTexts {
@@ -90,8 +98,22 @@ export interface ScriptProposal extends ScriptTexts {
   runHash: string | null;
   /** Real runs started. */
   attempts: number;
-  /** Logs of every run started, in order. */
+  /** Logs of every run started, in order, and how many of each kind (the log counter is per kind). */
   logs: string[];
+  logCounts: Record<ScriptRunKind, number>;
+  /**
+   * The undo marker, detected once at propose in the proposed text; never read again from disk. Undo is allowed only when this
+   * is true AND the bytes that really ran (`ranBytes`) carry the marker too: a silent fix that removes the marker ends undo,
+   * one that adds it does not give it. Undo runs `ranBytes` with the argument `undo`.
+   */
+  undoSupported: boolean;
+  /** The bytes, hash and time (epoch ms) of the latest real run that started the script; null before one. */
+  ranBytes: Buffer | null;
+  ranHash: string | null;
+  ranAt: number | null;
+  /** Undo runs started, and whether one ended with exit 0 (it counts once). */
+  undoAttempts: number;
+  undoDone: boolean;
   /** The owner's note of a revise decision. */
   note: string | null;
 }
@@ -177,7 +199,7 @@ export function readScript(raw: unknown, o: ScriptOpts): { script: ScriptFile } 
     return refuse("script_no_dry_run", `the script has neither \`--dry-run\` nor \`DRY_RUN\`. The harness runs it first with the argument --dry-run and DRY_RUN=1; the script must honour one of them and change nothing on that run.`);
   }
   const rel = path.relative(realRoot, real).split(path.sep).join("/");
-  return { script: { path: real, rel, name: path.basename(real), bytes: file.bytes, hash: sha256(file.bytes), lines: splitLines(text).length } };
+  return { script: { path: real, rel, name: path.basename(real), bytes: file.bytes, hash: sha256(file.bytes), lines: splitLines(text).length, undo: SCRIPT_UNDO_MARKER_RE.test(text) } };
 }
 
 /** A new proposal (status pending). It replaces the earlier proposal and its approval, also when this one is refused. */
@@ -188,13 +210,18 @@ export function proposeScript(state: ScriptState, input: { path?: unknown; descr
   const read = readScript(input.path, o);
   if ("error" in read) return read;
   const s = read.script;
-  state.proposal = { ...texts.texts, path: s.path, rel: s.rel, name: s.name, status: "pending", bytes: s.bytes, hash: s.hash, lines: s.lines, approvedBytes: null, approvedHash: null, approvedAt: null, runBytes: null, runHash: null, attempts: 0, logs: [], note: null };
+  state.proposal = { ...texts.texts, path: s.path, rel: s.rel, name: s.name, status: "pending", bytes: s.bytes, hash: s.hash, lines: s.lines, approvedBytes: null, approvedHash: null, approvedAt: null, runBytes: null, runHash: null, attempts: 0, logs: [], logCounts: { dry: 0, run: 0, undo: 0 }, undoSupported: s.undo, ranBytes: null, ranHash: null, ranAt: null, undoAttempts: 0, undoDone: false, note: null };
   return { proposal: state.proposal };
 }
 
 /** The notice of the dialog: the foreman's three texts, each on its own labelled line, then the harness's own lines. */
 export function scriptNoticeLines(p: ScriptProposal): string[] {
   return [`Description: ${p.description}`, `Risk: ${p.risk}`, `Undo: ${p.undo}`, `Path: ${cleanText(p.rel)}`, `Lines: ${p.lines}`, `sha256: ${shortHash(p.hash)}`];
+}
+
+/** The harness's own line for the owner, sent as a notice of its own right after the summary: can the tool undo this script? */
+export function scriptUndoLine(p: ScriptProposal): string {
+  return `Undo through the tool: ${p.undoSupported ? `yes (the script has the line ${SCRIPT_UNDO_MARKER}; the tool can run it with the argument undo after a real run)` : "no (the script has no undo marker line)"}`;
 }
 
 /** The select title: it names the script and its short hash itself, so a notice that replaced the summary cannot hide them. */
@@ -307,7 +334,7 @@ function expire(p: ScriptProposal, now: number): void {
 }
 
 export interface ScriptRunPlan {
-  kind: ScriptRunKind;
+  kind: ScriptRunAction;
   /** The bytes to hand to the runner, and their hash (pass it back to recordRun). */
   bytes: Buffer;
   hash: string;
@@ -320,7 +347,7 @@ export interface ScriptRunPlan {
  * What a `dry` or `run` action may run now, or why not. Reads the path again (every propose check), applies the fix rule,
  * and for a real run requires a passed dry run of the same bytes. A real run counts as an attempt from here on.
  */
-export function beginRun(state: ScriptState, kind: ScriptRunKind, o: ScriptOpts, now: number, fixLimit: number = SCRIPT_FIX_LINES_DEFAULT): ScriptRunPlan | ScriptRefusal {
+export function beginRun(state: ScriptState, kind: ScriptRunAction, o: ScriptOpts, now: number, fixLimit: number = SCRIPT_FIX_LINES_DEFAULT): ScriptRunPlan | ScriptRefusal {
   const p = state.proposal;
   if (!p) return refuse("script_pending", "there is no proposal; call propose first.");
   expire(p, now);
@@ -346,7 +373,7 @@ export function beginRun(state: ScriptState, kind: ScriptRunKind, o: ScriptOpts,
   if (kind === "run" && p.status !== "dry_ok") return { ...refuse("script_dry_required", `a real run of ${p.rel} needs a dry run of the same text with exit 0 first; call dry.`), ...(fix ? { fix } : {}) };
   const scratch = scratchRoot(realDeep(path.resolve(workspaceOf(o.cwd).root)), o.scratchDir, o.platform);
   if (!scratch) return refuse("script_path", `the scratch dir ${o.scratchDir} is disabled.`);
-  const logPath = freshScriptLogPath(scratch, p.name, p.runHash, kind, p.logs.length + 1);
+  const logPath = freshScriptLogPath(scratch, p.name, p.runHash, kind, ++p.logCounts[kind]);
   p.logs.push(logPath);
   if (kind === "run") p.attempts++;
   return { kind, bytes: p.runBytes, hash: p.runHash, logPath, ...(fix ? { fix } : {}) };
@@ -356,27 +383,100 @@ export function beginRun(state: ScriptState, kind: ScriptRunKind, o: ScriptOpts,
  * Record how a run ended. Dry run of the current bytes: exit 0 gives `dry_ok`, anything else `approved`. Real run: exit 0
  * consumes the approval, and so does the third attempt. Returns the status.
  */
-export function recordRun(state: ScriptState, kind: ScriptRunKind, hash: string, exit: number | null): ScriptStatus | null {
+export function recordRun(state: ScriptState, kind: ScriptRunAction, hash: string, exit: number | null): ScriptStatus | null {
   const p = state.proposal;
   if (!p) return null;
   if (p.status !== "approved" && p.status !== "dry_ok") return p.status;
   if (hash !== p.runHash) return p.status;
   if (kind === "dry") p.status = exit === 0 ? "dry_ok" : "approved";
-  else if (exit === 0 || p.attempts >= SCRIPT_MAX_ATTEMPTS) p.status = "consumed";
+  else {
+    if (exit === 0 || p.attempts >= SCRIPT_MAX_ATTEMPTS) p.status = "consumed";
+  }
   return p.status;
+}
+
+/** Undo is possible: the marker was in the proposed text and, once a real run happened, is in the bytes that ran. */
+function undoAble(p: ScriptProposal): boolean {
+  return p.undoSupported && (!p.ranBytes || SCRIPT_UNDO_MARKER_RE.test(p.ranBytes.toString("utf8")));
+}
+
+/**
+ * Record that a real run really started the script (whatever its exit): undo reverses these exact bytes, for an hour from `now`.
+ * Call it before recordRun; a run that never spawned the script is not recorded.
+ */
+export function recordRealRun(state: ScriptState, hash: string, now: number): void {
+  const p = state.proposal;
+  if (!p || !p.runBytes || hash !== p.runHash) return;
+  p.ranBytes = p.runBytes;
+  p.ranHash = p.runHash;
+  p.ranAt = now;
+}
+
+export interface UndoPlan {
+  /** The bytes that really ran, their hash, the log and the attempt number (of 3). */
+  bytes: Buffer;
+  hash: string;
+  logPath: string;
+  attempt: number;
+}
+
+/**
+ * What an `undo` action may run now, or why not. Never reads the file: it hands out the bytes of the latest real run of the
+ * session's current proposal. No dialog; the owner approved the proposed text and was told whether the tool can undo.
+ */
+export function beginUndo(state: ScriptState, o: ScriptOpts, now: number): UndoPlan | ScriptRefusal {
+  const p = state.proposal;
+  if (!p) return refuse("undo_no_proposal", "there is no proposal in this session, so nothing can be undone through the tool. A new propose is the way.");
+  if (!p.undoSupported) return refuse("undo_no_marker", `${p.rel} has no undo marker line (${SCRIPT_UNDO_MARKER}) in the proposed text, so the tool cannot undo it. Undo it by hand or propose a script that undoes it.`);
+  if (!undoAble(p)) return refuse("undo_no_marker", `the text of ${p.rel} that ran does not declare the undo marker line (${SCRIPT_UNDO_MARKER}) any more (a fix after approval removed it), so the tool cannot undo it. Undo it by hand or propose a script that undoes it.`);
+  if (!p.ranBytes || !p.ranHash || p.ranAt === null) return refuse("undo_not_run", `${p.rel} has no real run yet in this proposal; there is nothing to undo. (An earlier proposal that was replaced cannot be undone through the tool; a new propose is the way.)`);
+  if (p.undoDone) return refuse("undo_done", `the undo of ${p.rel} already ran with exit 0; it counts once.`);
+  if (p.undoAttempts >= SCRIPT_MAX_ATTEMPTS) return refuse("undo_attempts", `${SCRIPT_MAX_ATTEMPTS} undo attempts of ${p.rel} are used; a new propose is the way.`);
+  if (now - p.ranAt >= SCRIPT_EXPIRY_MS) return refuse("undo_expired", `the real run of ${p.rel} is older than 60 minutes, so the tool no longer undoes it; a new propose is the way.`);
+  const scratch = scratchRoot(realDeep(path.resolve(workspaceOf(o.cwd).root)), o.scratchDir, o.platform);
+  if (!scratch) return refuse("script_path", `the scratch dir ${o.scratchDir} is disabled.`);
+  const logPath = freshScriptLogPath(scratch, p.name, p.ranHash, "undo", ++p.logCounts.undo);
+  p.logs.push(logPath);
+  p.undoAttempts++;
+  return { bytes: p.ranBytes, hash: p.ranHash, logPath, attempt: p.undoAttempts };
+}
+
+/** Record how an undo run ended: exit 0 counts once. */
+export function recordUndo(state: ScriptState, hash: string, exit: number | null): void {
+  const p = state.proposal;
+  if (p && p.ranHash === hash && exit === 0) p.undoDone = true;
+}
+
+export interface ScriptUndoReport {
+  /** The proposed text carries the undo marker, and so does the text that ran. */
+  supported: boolean;
+  /** Undo can run now. */
+  available: boolean;
+  /** ISO time the undo window ends (one hour after the real run), null before a real run. */
+  availableUntil: string | null;
+  used: boolean;
+  attempts: number;
+  attemptsLeft: number;
 }
 
 export interface ScriptStatusReport {
   status: ScriptStatus;
+  /** The approval is used up (status consumed): nothing more runs without a new propose. */
+  approvalUsed: boolean;
   path: string;
-  /** Hash of the proposed bytes, of the approved ones, and of the ones that run (differs after a silent fix). */
+  /** Hash of the proposed text (not of what ran), then of the approved bytes and of the ones that run next (differs after a silent fix); `ranHash` is the hash of the bytes that really ran. */
   hash: string;
   approvedHash: string | null;
   runHash: string | null;
+  /** The hash that really ran and the ISO time of that real run; null before one. */
+  ranHash: string | null;
+  ranAt: string | null;
   attempts: number;
+  /** Real attempts left; 0 once the approval is used up. */
   attemptsLeft: number;
-  /** Epoch ms, null before approval. */
+  /** Epoch ms the approval ends, null before approval and after it is used up. */
   expiresAt: number | null;
+  undo: ScriptUndoReport;
   logs: string[];
   note: string | null;
 }
@@ -386,5 +486,15 @@ export function scriptStatus(state: ScriptState, now: number): ScriptStatusRepor
   const p = state.proposal;
   if (!p) return null;
   expire(p, now);
-  return { status: p.status, path: p.rel, hash: p.hash, approvedHash: p.approvedHash, runHash: p.runHash, attempts: p.attempts, attemptsLeft: Math.max(0, SCRIPT_MAX_ATTEMPTS - p.attempts), expiresAt: p.approvedAt === null ? null : p.approvedAt + SCRIPT_EXPIRY_MS, logs: [...p.logs], note: p.note };
+  const used = p.status === "consumed";
+  const until = p.ranAt === null ? null : p.ranAt + SCRIPT_EXPIRY_MS;
+  const undo: ScriptUndoReport = {
+    supported: undoAble(p),
+    available: undoAble(p) && until !== null && !p.undoDone && p.undoAttempts < SCRIPT_MAX_ATTEMPTS && now < until,
+    availableUntil: until === null ? null : new Date(until).toISOString(),
+    used: p.undoDone,
+    attempts: p.undoAttempts,
+    attemptsLeft: p.undoDone ? 0 : Math.max(0, SCRIPT_MAX_ATTEMPTS - p.undoAttempts),
+  };
+  return { status: p.status, approvalUsed: used, path: p.rel, hash: p.hash, approvedHash: p.approvedHash, runHash: p.runHash, ranHash: p.ranHash, ranAt: p.ranAt === null ? null : new Date(p.ranAt).toISOString(), attempts: p.attempts, attemptsLeft: used ? 0 : Math.max(0, SCRIPT_MAX_ATTEMPTS - p.attempts), expiresAt: used || p.approvedAt === null ? null : p.approvedAt + SCRIPT_EXPIRY_MS, undo, logs: [...p.logs], note: p.note };
 }

@@ -15,6 +15,7 @@ import {
   newScriptState,
   proposeScript,
   readScript,
+  recordRealRun,
   recordRun,
   scriptNoticeLines,
   scriptSelectTitle,
@@ -392,5 +393,18 @@ test("script state: each run gets its own log below the scratch root", (t) => {
   recordRun(a.state, "dry", dry.hash, 0);
   const run = beginRun(a.state, "run", a.opts, T0);
   assert.ok(isPlan(run));
-  assert.match(path.basename(run.logPath), /-run-2\.log$/);
+  assert.match(path.basename(run.logPath), /-run-1\.log$/);
+});
+
+test("script state: recordRealRun keeps the bytes, hash and time of the run; recordRun alone keeps none", (t) => {
+  const a = approved(t);
+  dryOk(a);
+  const run = beginRun(a.state, "run", a.opts, T0);
+  assert.ok(isPlan(run));
+  recordRealRun(a.state, "other", T0 + 5);
+  assert.equal(a.state.proposal?.ranAt, null, "a foreign hash records nothing");
+  recordRun(a.state, "run", run.hash, 1);
+  assert.equal(a.state.proposal?.ranAt, null, "recordRun alone records no run for undo");
+  recordRealRun(a.state, run.hash, T0 + 5);
+  assert.deepEqual([a.state.proposal?.ranHash, a.state.proposal?.ranAt, a.state.proposal?.ranBytes?.toString()], [run.hash, T0 + 5, SCRIPT]);
 });
