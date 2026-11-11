@@ -150,8 +150,9 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   says the main checkout is never removed and the branch stays while it is checked out there (a base branch in a linked worktree:
   the worktree stays and the branch is kept) and there is nothing for the owner to do. When the head branch is checked out in no
   worktree, nothing is removed and the line names the session's worktree root that stays and the branch it keeps: for the main
-  checkout, that there is nothing for the owner to do; for a linked worktree, that the owner checks out the branch in it and runs
-  `foreman worktree sweep` (a head equal to the PR base branch gets no check-out advice: the branch is kept).
+  checkout, that there is nothing for the owner to do; for a linked worktree, that the branch is checked out in no worktree and
+  nothing is done with it, and that the owner decides about the worktree (`foreman worktree sweep` removes a worktree and its
+  branch only when its own checks pass). No line tells the owner to check out a branch named by the PR status.
 - **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
   `spawn` with `detached` and `unref`, no console window on Windows). It waits for the session's pi process to exit, checks
   again, runs `git worktree remove` (never `--force`) and the branch delete, and writes `<handoff dir>/cleanup.json`:

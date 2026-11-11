@@ -157,10 +157,8 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
       const lines = [`merged fact: not verified (PR #${n} head branch ${headRef} is not checked out in a worktree of this repository)`];
       const snap = await snapshotOnly(d, root, cwdBranch ?? headRef);
       const kept = samePath(root, wts[0].path)
-        ? `worktree ${root} is the main checkout and is never removed; branch ${headRef} is checked out in no worktree and is kept; there is nothing for the owner to do with them`
-        : headRef === baseRef
-          ? `worktree ${root} stays and branch ${headRef} is the PR base branch and is kept; there is nothing for the owner to do with the branch`
-          : `worktree ${root} stays and branch ${headRef} is kept; the owner checks out branch ${headRef} in it, ${SWEEP}`;
+        ? `worktree ${root} is the main checkout and is never removed; branch ${headRef} is checked out in no worktree and nothing is done with it; there is nothing for the owner to do with them`
+        : `worktree ${root} stays; branch ${headRef} is checked out in no worktree and nothing is done with it; the owner decides about worktree ${root}: \`foreman worktree sweep\` removes a worktree and its branch only when its own checks pass (docs/close.md, cleanup preconditions)`;
       lines.push(...snap, `cleanup: not started; nothing is removed: ${kept}`);
       return { lines };
     }
