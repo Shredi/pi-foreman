@@ -93,6 +93,13 @@ export function subagentDescription(declared: readonly { name: string; descripti
   return `${sub.description}\n\nBuilder launches (pi-foreman): ${TOP_LEVEL_NOTE} ${MCP_LAUNCH_NOTE}`;
 }
 
+/** The foreman's `subagent` tool description with the MCP sentence alone (sizing off); null when the tool is not declared or the sentence is already there. */
+export function mcpDescription(declared: readonly { name: string; description?: string }[]): string | null {
+  const sub = declared.find((t) => t.name === "subagent");
+  if (!sub || typeof sub.description !== "string" || sub.description.includes(MCP_LAUNCH_NOTE)) return null;
+  return `${sub.description}\n\n${MCP_LAUNCH_NOTE}`;
+}
+
 /** The text appended to a pi-subagents refusal caused by a misplaced `size`/`risk`; null for any other error text. */
 export function misplacedHint(errorText: string): string | null {
   if (!/unknown options key '(?:size|risk)'|args requires workflow/.test(errorText)) return null;

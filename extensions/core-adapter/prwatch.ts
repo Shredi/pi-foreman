@@ -87,6 +87,8 @@ export interface WatchSnapshot {
   runs: Run[];
   /** The tracker's per-source state of this PR (readStoreEntry); absent: none. */
   sources?: Record<string, SourceStatus>;
+  /** The PR is a draft (the tracker's meta, readStoreEntry); absent: not a draft. */
+  draft?: boolean;
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
   comments?: CommentEntry[];
 }
@@ -138,6 +140,8 @@ export interface WatchState {
   noCiHead: string;
   /** Child sessions: the head the ready-to-merge line was reported for. */
   readyHead: string;
+  /** Child sessions: the head the green-but-draft line was reported for, "" (or absent) when none. */
+  draftHead?: string;
   /** The last head of this PR with a reviewer PASS in this session, "" (or absent) when none: the PR is not one the session reviewed. */
   reviewedHead?: string;
   /** The head the not-reviewed event was sent for, "" (or absent) when none. */
@@ -212,6 +216,7 @@ export interface Delta {
   moreComments: number;
   /** Child session lines (PI_FOREMAN_HANDOFF_DIR set). */
   ready?: boolean;
+  draftReady?: boolean;
   conflict?: boolean;
   closedUnmerged?: boolean;
   /** The PR ended the watch. */
@@ -257,7 +262,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     ciFired = true;
     ciWakes = wakeOf("checks_settled", "github");
     if (ciWakes) {
-      events.push(`checks finished: ${s.result}`);
+      events.push(snap.draft ? `checks finished: ${s.result}, draft` : `checks finished: ${s.result}`);
       d.failed = snap.runs.filter((r) => r.bucket === "failed").map(asked);
       d.missing = snap.runs.filter((r) => r.bucket === "missing").map((r) => r.name);
     }
@@ -307,10 +312,15 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     }
   } else st.noCi = 0;
 
-  if (child && s.result === "pass" && snap.mergeable === "mergeable" && st.readyHead !== snap.head) {
+  if (child && s.result === "pass" && snap.mergeable === "mergeable" && !snap.draft && st.readyHead !== snap.head) {
     st.readyHead = snap.head;
     d.ready = true;
     events.push("ready to merge");
+  }
+  if (child && s.result === "pass" && snap.mergeable === "mergeable" && snap.draft && st.draftHead !== snap.head) {
+    st.draftHead = snap.head;
+    d.draftReady = true;
+    events.push("green, still a draft");
   }
 
   // not a wake kind: a head past the last PASS is always news (a silent event is never replayed, so the state is set either way)
@@ -343,6 +353,7 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   }
   if (more > 0) content += `\n(+${more} more: call pr_comments)`;
   if (d.ready) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
+  if (d.draftReady) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, still a draft`;
   if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch, then push via the parent`;
   if (d.closedUnmerged) content += `\nreport to the parent: PR #${number} closed unmerged`;
   return { customType: PR_MESSAGE_TYPE, content, display: true, details: { number, outcome: d.final ?? "event", delta: d } };
@@ -503,7 +514,7 @@ function parseState(v: unknown): WatchState | null {
   if (s.mergeable !== "" && s.mergeable !== "mergeable" && s.mergeable !== "conflicting") return null;
   if (!finite(s.noCi) || typeof s.noCiHead !== "string" || typeof s.readyHead !== "string" || typeof s.last !== "string") return null;
   const review = { ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...review, last: s.last };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...review, last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */

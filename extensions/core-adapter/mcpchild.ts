@@ -181,6 +181,8 @@ export class McpChild {
   /** Tool name to `server/tool` label, recorded when Pi's MCP extension registers a tool. */
   readonly labels = new Map<string, string>();
   private loader: LoadMcpConfig | null = null;
+  /** Keys of the servers named whole whose config says `hidden`, noted at each config read (before the child filters them out). */
+  private readonly configHidden = new Set<string>();
   private readonly loading: Promise<{ load: LoadMcpConfig | null; reason: string }>;
   private setupError: string | null = null;
   private readonly pi: ExtensionAPI;
@@ -235,6 +237,8 @@ export class McpChild {
   private loadConfig(ctx: ExtensionContext): McpLoadedLike {
     if (mcpEmpty(this.allowed) || !this.loader || this.unsupported) return { servers: [], errors: [] };
     const loaded = this.loader({ agentDir: piAgentDir(this.opts.env ?? process.env, os.homedir()), cwd: ctx.cwd, projectTrusted: ctx.isProjectTrusted() });
+    this.configHidden.clear();
+    for (const entry of loaded.servers) if (entry.config.exposure === "hidden" && this.allowed.servers.some((s) => serverKey(s) === serverKey(entry.name))) this.configHidden.add(serverKey(entry.name));
     return filterMcpConfig(loaded, this.allowed);
   }
 
@@ -264,7 +268,13 @@ export class McpChild {
     if (!doNamed && !direct) {
       // nothing is declared on this provider: the same text on every turn here; a later turn on a direct provider declares tools and replaces it
       if (this.line === null) {
-        this.line = upfrontLine([], this.allowed.servers, []);
+        // a server whose registered tools are all hidden is not offered for search (tools not registered yet: unknown, so offered)
+        const exposure = new Map(this.pi.getAllTools().map((tool) => [tool.name, (tool as { exposure?: string }).exposure]));
+        const hidden = this.allowed.servers.filter((server) => {
+          const mine = [...this.labels].filter(([, label]) => serverKey(label.split("/", 1)[0] ?? "") === serverKey(server));
+          return this.configHidden.has(serverKey(server)) || (mine.length > 0 && !mine.some(([name]) => ["deferred", "codemode"].includes(exposure.get(name) ?? "")));
+        });
+        this.line = upfrontLine([], this.allowed.servers.filter((server) => !hidden.includes(server)), [], [], [], null, hidden);
       }
       return;
     }
@@ -352,9 +362,10 @@ export class McpChild {
       const search = this.allowed.servers.filter((server) => {
         const key = serverKey(server);
         const w = whole.find((x) => serverKey(x.server) === key);
-        return (!w || w.searchable) && !quiet.some((s) => serverKey(s.server) === key);
+        return (!w || w.searchable) && !quiet.some((s) => serverKey(s.server) === key) && !this.configHidden.has(key);
       });
-      this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, quiet, this.capped ? { named: count, bulk: bulk.length, cap } : null, this.stage?.hidden ?? []);
+      const hiddenWhole = this.allowed.servers.filter((server) => this.configHidden.has(serverKey(server)) && !quiet.some((s) => serverKey(s.server) === serverKey(server)));
+      this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, quiet, this.capped ? { named: count, bulk: bulk.length, cap } : null, [...(this.stage?.hidden ?? []), ...hiddenWhole]);
     }
   }
 

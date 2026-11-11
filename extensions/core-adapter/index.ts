@@ -70,7 +70,7 @@ import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
 import type { McpChildOpts } from "./mcpchild.ts";
 import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, wholeOnlyServers, wholeServerLine, workflowBindingBlock } from "./mcplaunch.ts";
-import { allowedMcpNamed, directMaxTools, directProviders, namedEntries } from "./mcpscope.ts";
+import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcpEntries } from "./mcpscope.ts";
 import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
@@ -212,7 +212,7 @@ import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyS
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
-import { liftSizing, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
+import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
@@ -4642,7 +4642,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       label: "Record the tier",
       // Bug fix (sizing): the `subagent` schema is upstream, so the foreman's tool description gets the sentence that places size/risk.
       prepareLoadout: (loadout: { declared: readonly { name: string; description?: string }[] }) => {
-        const description = subagentDescription(loadout.declared, [...sessions.values()].every((x) => sizingConfig(x.config.config).enabled));
+        const sizingOn = [...sessions.values()].every((x) => sizingConfig(x.config.config).enabled);
+        // sizing off: the MCP sentence alone, only where a role has an MCP ceiling (no ceiling, no launch field to explain)
+        const hasMcpRole = (roles: unknown): boolean => typeof roles === "object" && roles !== null && Object.keys(roles).some((r) => roleMcpEntries(roles, r).length > 0);
+        const mcpOn = [...sessions.values()].some((x) => hasMcpRole(get(x.config.config, "roles")));
+        const description = sizingOn ? subagentDescription(loadout.declared, true) : mcpOn ? mcpDescription(loadout.declared) : null;
         return description ? { descriptions: { subagent: description } } : undefined;
       },
       description: "Record the ceremony tier of the current task (trivial, standard or heavy) with a one-line reason, before acting. Required before you change workspace files yourself: only a trivial tier allows that; at standard or heavy a builder makes the changes. Never lowers a tier that is already recorded or escalated.",

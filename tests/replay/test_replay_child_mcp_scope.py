@@ -1,8 +1,8 @@
 """r68: MCP tools on demand in a real Pi child, narrowed by the launch (replay fixture child_mcp_scope).
 
-roles.builder.mcp lists the fixture server `fx`; the launch narrows it to `fx/echo` (`mcp` on subagent). The builder
-loads `mcp__fx__echo` through `tool_search` and calls it (the server runs and answers); `mcp__fx__shout`, outside the launch
-scope, is never registered in the child, so the call fails as an unknown tool before any hook. The per-call `mcp_scope`
+roles.builder.mcp lists fx; the launch names fx/echo (`mcp` on subagent). echo is declared up front in the child's tool list,
+so tool_search finds nothing to load and the call runs. mcp__fx__shout, outside the launch, is never registered, so its call
+fails as an unknown tool. The per-call `mcp_scope`
 guard is a second line behind that and is covered by the adapter tests (mcp-scope-hook.test.ts); no `mcp_scope` block
 and no `mcp_child_unsupported` is traced here.
 A second case (fixture child_mcp_scope_codemode) runs the same narrowing through a codemode script in an explorer child:
@@ -24,7 +24,7 @@ FIXTURE_SERVER = REPO / "extensions" / "core-adapter" / "test" / "fixtures" / "m
 
 @unittest.skipIf(REASON is not None, "replay prerequisites missing: %s" % (REASON,))
 class TestChildMcpScope(ReplayCase):
-    def test_launch_narrowed_mcp_loads_on_demand(self):
+    def test_launch_narrowed_mcp_tool_declared_up_front(self):
         rig = self.rig("child-mcp-scope", load_fixture("child_mcp_scope"), config={"roles": {"builder": {"mcp": ["fx"]}}})
         # `echo` is not a read name, so an MCP call of it is the dangerous class `danger-mcp-act` (asked of the parent); this case is about
         # the scope, so a user allow rule lets the call through

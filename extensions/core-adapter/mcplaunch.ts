@@ -132,12 +132,13 @@ export function unknownServers(configRoles: unknown, role: string, launchMcp: st
 export const unknownServerLine = (role: string, servers: string[]): string =>
   `pi-foreman: MCP server ${servers.join(", ")} (role ${role}) is not in Pi's mcp.json (global file, or the project file when trusted); the child cannot load it.`;
 
-/** Servers of the role's ceiling (minus its denies) that `task` names as a whole word, in the `-` or the `_` form, any case. */
+/** Servers of the role's ceiling (minus its denies) that `task` names as a whole word (or inside `mcp__server__tool`), in the `-` or the `_` form, any case. */
 export function namedCeilingServers(configRoles: unknown, role: string, task: string): string[] {
   const ceiling = allowedMcp(configRoles, role, roleMcpEntries(configRoles, role));
   return [...ceiling.servers, ...Object.keys(ceiling.tools)].filter((server) => {
     const name = server.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/[-_]/g, "[-_]");
-    return new RegExp(`(?<![A-Za-z0-9_-])${name}(?![A-Za-z0-9_-])`, "i").test(task);
+    // also right after `mcp__` (a tool name `mcp__server__tool`); `server_x` and `server-x` stay other words
+    return new RegExp(`(?:(?<![A-Za-z0-9_-])|(?<=mcp__))${name}(?![A-Za-z0-9-])(?!_[A-Za-z0-9])`, "i").test(task);
   });
 }
 

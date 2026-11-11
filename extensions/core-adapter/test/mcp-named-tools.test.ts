@@ -577,3 +577,35 @@ test("n: no sequence yields a line with two contradictory statements about one s
     }
   }
 });
+
+test("h: a server named whole whose registered tools are hidden is not offered for search on a provider outside directProviders; a deferred one still is", async (t) => {
+  const tools: Reg[] = [{ name: "mcp__alpha__echo", label: "alpha/echo", exposure: "hidden" }, { name: "mcp__beta__probe", label: "beta/probe" }];
+  const c = await child(t, { launch: ["alpha", "beta"], tools, provider: "p2" });
+  const note = c.mcp.note() ?? "";
+  assert.match(note, /The tools of the MCP server beta are not declared: find them with tool_search/);
+  assert.doesNotMatch(note, /MCP servers? alpha[^.]*find them with tool_search/);
+  assert.match(note, /Named but not available in this child \(hidden in the MCP config\): alpha;/);
+  await c.turn();
+  assert.equal(c.mcp.note(), note);
+  const only = await child(t, { launch: ["alpha"], tools, provider: "p2" });
+  assert.doesNotMatch(only.mcp.note() ?? "", /tool_search/);
+});
+
+test("h: a server named whole whose config says hidden is not offered for search, with no tool registered or in a mixed launch; a non-hidden one still is", async (t) => {
+  const HIDDEN = "Named but not available in this child (hidden in the MCP config): alpha;";
+  const beta: Reg[] = [{ name: "mcp__beta__probe", label: "beta/probe" }];
+  const none = await child(t, { launch: ["alpha", "beta"], tools: beta, provider: "p2", servers: alphaHidden, piOrder: true });
+  const noneNote = none.mcp.note() ?? "";
+  assert.match(noneNote, /The tools of the MCP server beta are not declared: find them with tool_search/);
+  assert.doesNotMatch(noneNote, /MCP servers? alpha[^.]*find them with tool_search/);
+  assert.ok(noneNote.includes(HIDDEN), noneNote);
+  const only = await child(t, { launch: ["alpha"], tools: [], provider: "p2", servers: alphaHidden, piOrder: true });
+  assert.doesNotMatch(only.mcp.note() ?? "", /tool_search/);
+  const mixed = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2", servers: alphaHidden, piOrder: true });
+  const mixedNote = mixed.mcp.note() ?? "";
+  assert.deepEqual(mixed.mcpActive(), ["mcp__beta__probe"]);
+  assert.doesNotMatch(mixedNote, /MCP servers? alpha[^.]*find them with tool_search/);
+  assert.ok(mixedNote.includes(HIDDEN), mixedNote);
+  const open = await child(t, { launch: ["alpha", "beta/probe"], provider: "p2", piOrder: true });
+  assert.match(open.mcp.note() ?? "", /The other tools of the MCP server alpha are not declared: find them with tool_search/);
+});
