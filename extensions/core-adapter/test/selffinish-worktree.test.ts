@@ -217,7 +217,7 @@ test("a detached second worktree: the not-started line names its path and says w
     assert.equal(r.spawn, undefined);
     assert.equal(w.calls(), 0, "no check runs without a branch");
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(line.includes(`the worktree ${w.wt} has no branch checked out`) && line.includes(`git worktree remove ${w.wt}`), line);
+    assert.ok(fwd(line).includes(fwd(`the worktree ${w.wt} has no branch checked out`)) && fwd(line).includes(fwd(`git worktree remove ${w.wt}`)), line);
     assert.ok(fs.existsSync(w.wt));
   } finally {
     w.cleanup();
@@ -236,7 +236,7 @@ test("a main checkout on a detached HEAD is named as the main checkout, never of
       assert.ok(!text.includes("git worktree remove"), text);
       assert.ok(!text.includes("null"), text);
       const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-      assert.ok(line.includes(`worktree ${w.repo} is the main checkout`) && line.includes("nothing is removed"), line);
+      assert.ok(fwd(line).includes(fwd(`worktree ${w.repo} is the main checkout`)) && line.includes("nothing is removed"), line);
       assert.ok(fs.existsSync(w.repo) && fs.existsSync(w.wt));
     } finally {
       w.cleanup();
@@ -252,8 +252,8 @@ test("an unborn second worktree: the not-started line names its path and branch 
     const r = await selfFinish(w.deps({ cwd: orphan, status: async () => ran({ state: "open", headRefName: null, baseRef: "main", headSha: null }), git: async (a, dir) => { try { return git(dir ?? orphan, ...a); } catch { return null; } } }), 7);
     assert.equal(r.spawn, undefined);
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(line.includes(`the worktree ${orphan} has no commit checked out`) && line.includes(`worktree ${orphan} and branch newb stay`), line);
-    assert.ok(line.includes("git worktree remove " + orphan), line);
+    assert.ok(fwd(line).includes(fwd(`the worktree ${orphan} has no commit checked out`)) && fwd(line).includes(fwd(`worktree ${orphan} and branch newb stay`)), line);
+    assert.ok(fwd(line).includes(fwd("git worktree remove " + orphan)), line);
     assert.ok(fs.existsSync(orphan));
   } finally {
     w.cleanup();
@@ -277,7 +277,7 @@ test("cwd in a subfolder of the main checkout on a detached HEAD, pr_status fail
     assert.equal(w.spawned.length, 0);
     assert.ok(!text.includes("git worktree remove") && !text.includes("git branch -D"), text);
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(line.includes(`worktree ${w.repo} is the main checkout`) && !fwd(line).includes(fwd(sub)), line);
+    assert.ok(fwd(line).includes(fwd(`worktree ${w.repo} is the main checkout`)) && !fwd(line).includes(fwd(sub)), line);
     assert.ok(fs.existsSync(w.repo) && fs.existsSync(w.wt));
   } finally {
     w.cleanup();
@@ -297,7 +297,7 @@ test("cwd in a subfolder of the main checkout on the round branch: refused as th
     assert.equal(w.calls(), 1, "only the snapshot runs");
     assert.ok(!text.includes("git worktree remove") && !text.includes("git branch -D"), text);
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(line.includes(`worktree ${w.repo} is the main checkout`) && !fwd(line).includes(fwd(sub)), line);
+    assert.ok(fwd(line).includes(fwd(`worktree ${w.repo} is the main checkout`)) && !fwd(line).includes(fwd(sub)), line);
     noRemoveOf(text, w.repo, sub);
     assert.ok(fs.existsSync(w.repo));
   } finally {
@@ -335,6 +335,48 @@ test("head ref equal to the base ref in no worktree: no branch delete advice", a
     assert.equal(r.spawn, undefined);
     assert.match(text, /not checked out in a worktree/);
     assert.ok(!text.includes("git branch -D") && !text.includes("git worktree remove"), text);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("head ref main with no base ref and a detached main checkout: no branch delete advice", async () => {
+  const w = world();
+  try {
+    git(w.repo, "checkout", "-q", "--detach");
+    const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "main", headSha: w.tip }), git: gitIn(w.repo) }), 7);
+    const text = r.lines.join("\n");
+    assert.equal(r.spawn, undefined);
+    assert.match(text, /branch main is kept/);
+    assert.ok(!text.includes("git branch -D"), text);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("a refused linked worktree with no base ref known: the branch is kept, no branch delete advice", async () => {
+  const w = world();
+  try {
+    fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
+    const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "feat", headSha: w.tip }) }), 7);
+    const text = r.lines.join("\n");
+    assert.equal(r.spawn, undefined);
+    assert.ok(text.includes("worktree_dirty") && fwd(text).includes(`git worktree remove ${fwd(w.wt)}`), text);
+    assert.match(text, /branch feat is kept/);
+    assert.ok(!text.includes("git branch -D"), text);
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("a refused linked worktree with a differing base ref still prints the branch delete advice", async () => {
+  const w = world();
+  try {
+    fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
+    const r = await selfFinish(w.deps(), 7);
+    const text = r.lines.join("\n");
+    assert.equal(r.spawn, undefined);
+    assert.ok(text.includes("worktree_dirty") && text.includes("`git branch -D feat`"), text);
   } finally {
     w.cleanup();
   }

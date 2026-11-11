@@ -144,7 +144,8 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
   and the branch stay. Each such line names the real worktree path (and the branch, where one is checked out) and what the owner does: clear the reason
   (commit or discard changes, copy or delete the ignored files), then remove them with `git worktree remove <path>` and
-  `git branch -D <branch>` or with `foreman worktree sweep`.
+  `git branch -D <branch>` or with `foreman worktree sweep`. The `git branch -D` advice is printed only when the PR base
+  branch is known and differs from the branch; otherwise the message says the branch is kept and prints no delete command.
 - **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
   `spawn` with `detached` and `unref`, no console window on Windows). It waits for the session's pi process to exit, checks
   again, runs `git worktree remove` (never `--force`) and the branch delete, and writes `<handoff dir>/cleanup.json`:

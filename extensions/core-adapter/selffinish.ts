@@ -106,9 +106,15 @@ const ACTIONS: Record<string, string> = {
 };
 
 /** The line for a cleanup that does not start: names the real worktree and branch, says what the owner does. */
-function stays(target: string, branch: string, reason: string): string {
+function stays(target: string, branch: string, reason: string, baseRef: string | null): string {
   const first = ACTIONS[reason] || "the owner clears that reason";
+  if (!mayDeleteBranch(branch, baseRef)) return `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: ${first}, then removes the worktree with \`git worktree remove ${target}\`; branch ${branch} is kept (the PR base branch is not known to differ from it)`;
   return `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: ${first}, then removes them with \`git worktree remove ${target}\` and \`git branch -D ${branch}\` (or \`foreman worktree sweep\`)`;
+}
+
+/** A `git branch -D` is advised only when the PR base ref is known and is another branch. */
+function mayDeleteBranch(branch: string, baseRef: string | null): boolean {
+  return baseRef !== null && baseRef !== branch;
 }
 
 interface CheckOut { ok?: unknown; reason?: unknown; archived?: unknown; archivedCwd?: unknown; leftOut?: unknown; remoteBranch?: unknown }
@@ -144,9 +150,8 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
     if (!w) {
       const lines = [`merged fact: not verified (PR #${n} head branch ${headRef} is not checked out in a worktree of this repository)`];
       const snap = await snapshotOnly(d, root, cwdBranch ?? headRef);
-      const keepBranch = headRef === baseRef || headRef === wts[0].branch;
-      lines.push(...snap, keepBranch
-        ? `cleanup: not started; nothing is removed: branch ${headRef} is the base branch, the owner removes the round's own worktree and branch by hand once PR #${n} is merged`
+      lines.push(...snap, !mayDeleteBranch(headRef, baseRef)
+        ? `cleanup: not started; nothing is removed: branch ${headRef} is kept (the PR base branch is not known to differ from it), the owner removes the round's own worktree by hand once PR #${n} is merged`
         : `cleanup: not started; nothing is removed: the owner deletes the local branch with \`git branch -D ${headRef}\` once PR #${n} is merged and removes any leftover worktree with \`git worktree remove <path>\``);
       return { lines };
     }
@@ -181,7 +186,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   lines.push(...archiveLines(out, archive));
   if (out.ok !== true) {
     const reason = typeof out.reason === "string" ? out.reason : "refused";
-    lines.push(stays(target, branch, reason));
+    lines.push(stays(target, branch, reason, baseRef));
     return { lines };
   }
   if (typeof out.remoteBranch === "string") lines.push(`kept: remote branch ${branch} (enable delete head branch on merge)`);
