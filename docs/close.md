@@ -105,21 +105,60 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 
 - The close prompt asks for the result file `<handoff dir>/result.md`: the PR number, the merge commit and anything left open.
 - After the result file the session tells its parent `PR #n merged, closing` and the usual `Result from <label>: <path>`.
+- **Target worktree.** The session cwd may be a subfolder: it is first resolved to its worktree root (the `git worktree list --porcelain` entry containing it, longest match, by real path) and that root is the worktree in every check and message. A cwd in no listed worktree refuses the cleanup with a line naming the cwd, removes nothing and prints no remove command; the cwd's `.workflow/` is still snapshotted. The adapter runs one `pr_status` first. When the session's cwd has the PR head ref checked out, that
+  worktree is the target. Otherwise (a round that worked in a second worktree while the session sits in the main checkout)
+  the target is the worktree of `git worktree list --porcelain` (run in the session cwd) that has `refs/heads/<head ref>`
+  checked out; its path is compared by real path, separators and, on Windows, case. The main (first) worktree and a head ref
+  equal to the PR base branch are never a target: the adapter refuses with a line naming the worktree and branch, and
+  `selfclean` refuses with `main_worktree` or `default_branch` (the repository's base branch). A head branch checked out in
+  no worktree gives `merged fact: not verified (PR #n head branch <b> is not checked out in a worktree of this repository)`
+  and `cleanup: not started; nothing is removed`; the cwd snapshot is still taken. The session records nothing for this.
 - **Verified-merged fact.** A squash or rebase merge leaves the branch tip outside the base branch, so `not_merged` would
-  refuse. The adapter runs one `pr_status` and passes the fact only when the PR is `merged`, its head ref is this worktree's
-  branch and its `headSha` equals the local branch tip. The fact is a `--verified-merged <sha>` flag of
+  refuse. The fact is passed only when the PR is `merged`, its head ref is the target's branch and its `headSha` equals the
+  target's branch tip. The fact is a `--verified-merged <sha>` flag of
   `foreman_close.py selfclean`. With it `not_merged` does not apply and the local branch is deleted with `git update-ref -d`
   against `<sha>`, for exactly that branch, and only while the branch tip and `HEAD` still are `<sha>` when the removal runs (a
   moved tip keeps the branch). Without it the rules
   of [Cleanup preconditions](#cleanup-preconditions) stay (`git branch -d`, merged into the base or its pushed upstream).
-- **`.workflow/` archive.** Before the checks the worktree's own `.workflow/` (ledger, scratch, results) is copied into
-  `<handoff dir>/workflow/`; only then it no longer counts for `ignored_files`. The line `workflow archive: <dir>` goes into the
-  report. Every other precondition stays: clean tree, no stash entry referencing the branch, not locked, no other live
+- **`.workflow/` archive.** Before the checks the target worktree's `.workflow/` is snapshotted into
+  `<handoff dir>/workflow/`; a session cwd that is another worktree gets `<handoff dir>/workflow-cwd/` by the same rule.
+  The snapshot keeps only what the session itself produced. The age rule (only files written since the pi process started;
+  the session's bound ledger is always kept) applies to the `.workflow/` of the repository's main worktree, the folder shared
+  by all rounds, whether it is reached as the target or as the session cwd (decided from `git worktree list`, by real path).
+  A linked worktree's own `.workflow/` belongs to its round: all its regular files are kept whatever their age (a file the
+  opener wrote before the session started does not block the cleanup). In both, never the top-level folders `closed/` and `archive/` (matched in any case; so a snapshot never contains a
+  snapshot), never a symlink or junction (links are not followed or copied), never the destination itself. The total is
+  capped at 16 MiB over both snapshots of one close (ledgers, plans and notes are kilobytes; the cap keeps a handoff dir cheap
+  to copy); a file that would cross the cap is skipped, smaller later ones still go in. There is no config key for it.
+  The line `workflow archive: <dir> (<n> files)` goes into the report; a session cwd that is another worktree and has files
+  in its snapshot adds `workflow archive (session cwd): <dir> (<n> files)` (the `workflow-cwd/` dir) for the second snapshot. When something was left out,
+  `workflow archive left out: <what (why)>; ...` follows (`closed/ (other rounds)`, `archive/ (earlier snapshots)`, `N links`,
+  `N unreadable or special entries` (unreadable folders, files that fail `stat`, FIFOs, sockets, devices),
+  `N files older than the session` (main worktree only), `N files over the 16 MiB cap: a, b, ...`). Only when nothing of the target's `.workflow/` was
+  left out does it no longer count for `ignored_files`; otherwise the refusal `ignored_files` keeps the worktree.
+  When the adapter refuses up front (the target is the main checkout, or the head ref is the PR base branch), the session
+  cwd's `.workflow/` is still snapshotted by the same rule, with the same lines; nothing is removed. Every other precondition stays: clean tree, no stash entry referencing the branch, not locked, no other live
   session with its cwd inside.
 - **Checks before the exit.** The preconditions are checked in the session. A refusal (`worktree_dirty`, `stash_references_branch`,
   `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
   message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
-  and the branch stay.
+  and the branch stay. Each such line names the real worktree root (and the branch, where one is checked out) and what the owner does:
+  the action for the reason (commit or discard changes, copy or delete the ignored files, wait for the merge), then the owner
+  reads the cleanup preconditions here before removing anything. For any other reason (an unknown one, or a check that gave no
+  answer) the line names the worktree and branch, the reason, and says the owner reads the cleanup preconditions here before
+  removing anything. A worktree with no commit checked out says the owner commits the round's work in it and a later close
+  checks it again. No refusal line names a removal command or tool (neither `foreman worktree sweep`, `git worktree remove`
+  nor `git branch -D`).
+  For the main checkout and the default or PR base branch (`main_worktree`, `default_branch`, or the up-front refusal) the line
+  says the main checkout is never removed and the branch stays while it is checked out there (a base branch in a linked worktree:
+  the worktree stays and the branch is kept) and there is nothing for the owner to do. When the head branch is checked out in no
+  worktree, nothing is removed and the line names the session's worktree root and says the branch is checked out in no worktree
+  and nothing is done with it: for the main checkout, that it is never removed and there is nothing for the owner to do; for a
+  linked worktree that has the default branch checked out (the check refuses it as `default_branch`), that the worktree and
+  that branch are never removed and there is nothing for the owner to do; for any other linked worktree, that the worktree stays
+  and the owner reads the cleanup preconditions here before removing anything; the same holds for a session cwd in no worktree
+  of the repository and for a linked worktree with no branch checked out (which also says the owner checks out the round's
+  branch in it first). No line tells the owner to check out a branch named by the PR status.
 - **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
   `spawn` with `detached` and `unref`, no console window on Windows). It waits for the session's pi process to exit, checks
   again, runs `git worktree remove` (never `--force`) and the branch delete, and writes `<handoff dir>/cleanup.json`:
@@ -172,7 +211,7 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
 - `foreman close --drop PATH`: stop listing it; nothing is removed.
 - Untaken child handovers are re-listed on every run and keep the parent's report open.
 - `foreman close selfclean --ws <worktree> --branch <b> [--verified-merged <sha>] [--archive <dir>]`: the checks of a
-  [self-finish](#self-finish-on-merge) as one JSON object (`ok`, `reason`, `archived`, `remoteBranch`; exit 0 ok, 3 refused).
+  [self-finish](#self-finish-on-merge) as one JSON object (`ok`, `reason`, `archived`, `archivedBytes`, `leftOut`, `archivedCwd`, `remoteBranch`; exit 0 ok, 3 refused; `--since <epoch s>` is the pi process start for the age rule of the main worktree's `.workflow/`; `--session-cwd <dir>` is a session cwd that is another worktree, snapshotted too).
   With `--wait-pid <pid> --exempt-workflow --out <file>` it is the detached removal. An adapter-internal command, not a model tool.
 - `foreman worktree sweep [--cwd D] [--dry-run]`: removes every linked worktree of the repository that passes
   the same preconditions, listed in a manifest or not (`removed:`, `would remove:`, `skipped: <path> — <reason>`).
