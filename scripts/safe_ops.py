@@ -27,7 +27,10 @@ Documented limits:
 - Path checks resolve symlinks once; a symlink swapped in after the check but before the action
   is not detected (same race as above). Files are opened with O_NOFOLLOW where available.
 - `git worktree remove` would also delete ignored files; that is why ignored files block the
-  removal unless they sit under a `worktreeDisposable` path component.
+  removal unless they sit under a `worktreeDisposable` path component. A pattern with an inner `/`
+  (`.pi/tasks/`) matches only at the worktree's top level. A wholly ignored folder that git reports as one
+  record is walked (symlinks are leaf files, never followed; 20 000 entries at most, else the folder
+  counts) and judged file by file. The refusal names the first offending files.
 """
 from __future__ import annotations
 
@@ -43,7 +46,10 @@ import sys
 import tempfile
 
 DEFAULT_COPY_MAX_BYTES = 100 * 1024 * 1024
-DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]
+DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db"]
+IGNORED_WALK_CAP = 20000  # entries walked inside one collapsed ignored folder
+IGNORED_FILES_KEPT = 50  # offending paths a Precondition carries (the total count is exact)
+IGNORED_SHOWN = 3  # paths named in a one-line refusal
 GIT_TIMEOUT = 60
 CASE_INSENSITIVE = sys.platform in ("win32", "darwin")
 _REPARSE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
@@ -60,10 +66,12 @@ def redact(text):
 
 
 class Precondition(Exception):
-    def __init__(self, name, detail=""):
+    def __init__(self, name, detail="", files=None, total=0):
         Exception.__init__(self, name)
         self.name = name
         self.detail = detail
+        self.files = files or []  # ignored_files: cleaned offending paths (at most IGNORED_FILES_KEPT)
+        self.total = total  # ignored_files: how many paths offend in all
 
 
 class ActionError(Exception):
@@ -530,21 +538,87 @@ def list_gitlinks(cwd):
 
 
 def disposable(path, patterns):
-    """True when a component of the git-relative `path` matches a disposable pattern."""
+    """True when a component of the git-relative `path` matches a disposable pattern.
+
+    A pattern with an inner `/` is anchored at the top level: it matches the leading components of `path` only.
+    """
     is_dir = path.endswith("/")
     parts = [x for x in path.split("/") if x]
+    fold = (lambda t: t.lower()) if CASE_INSENSITIVE else (lambda t: t)
     for pat in patterns:
         dir_only = pat.endswith("/")
         name = pat.strip("/")
         if not name:
             continue
+        if "/" in name:
+            segs = [x for x in name.split("/") if x]
+            if len(parts) < len(segs) or (dir_only and len(parts) == len(segs) and not is_dir):
+                continue
+            if all(fnmatch.fnmatchcase(fold(c), fold(g)) for c, g in zip(parts, segs)):
+                return True
+            continue
         # Directory patterns match any component that is a directory (all but the last, or the
         # last when git reported a collapsed directory).
         candidates = parts if (not dir_only or is_dir) else parts[:-1]
         for c in candidates:
-            if fnmatch.fnmatchcase(c.lower() if CASE_INSENSITIVE else c, name.lower() if CASE_INSENSITIVE else name):
+            if fnmatch.fnmatchcase(fold(c), fold(name)):
                 return True
     return False
+
+
+UNSAFE_CHARS_RX = re.compile("[\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069\\ud800-\\udfff]")
+
+
+def clean_path(p):
+    """`p` with control, line-separator and bidi characters replaced by `?`, cut to 120 characters."""
+    t = UNSAFE_CHARS_RX.sub("?", p)
+    return t[:117] + "..." if len(t) > 120 else t
+
+
+def ignored_text(exc):
+    """The refusal text of a Precondition: `ignored_files (a, b, c, +N more)` for ignored files, else its name."""
+    if exc.name != "ignored_files" or not exc.files:
+        return exc.name
+    shown = exc.files[:IGNORED_SHOWN]
+    rest = max(exc.total, len(exc.files)) - len(shown)
+    return "ignored_files (%s)" % ", ".join(shown + (["+%d more" % rest] if rest > 0 else []))
+
+
+def ignored_info(exc):
+    """JSON fields of an ignored_files refusal: `files` (the first IGNORED_SHOWN) and `filesMore`."""
+    shown = exc.files[:IGNORED_SHOWN]
+    return {"files": shown, "filesMore": max(max(exc.total, len(exc.files)) - len(shown), 0)}
+
+
+def offending_ignored(root, rec, patterns, top_level):
+    """The ignored paths below the git status record `rec` (`/`-separated, a trailing `/` = collapsed folder) that
+    are not disposable. A folder is walked without following symlinks (a symlink is a leaf file); over
+    IGNORED_WALK_CAP entries or on OSError the folder itself is reported."""
+    def judged(p):
+        return disposable(p, patterns) or (("/" in p) and p.split("/", 1)[0] in top_level)
+    if judged(rec):
+        return []
+    if not rec.endswith("/"):
+        return [rec]
+    found, seen, stack = [], 0, [rec]
+    try:
+        while stack:
+            cur = stack.pop()
+            with os.scandir(os.path.join(root, *cur.split("/"))) as it:
+                for ent in it:
+                    seen += 1
+                    if seen > IGNORED_WALK_CAP:
+                        return [rec]
+                    p = cur + ent.name
+                    link = ent.is_symlink() or getattr(ent, "is_junction", lambda: False)()
+                    if not link and ent.is_dir(follow_symlinks=False):
+                        if not judged(p + "/"):
+                            stack.append(p + "/")
+                    elif not judged(p):
+                        found.append(p)
+    except OSError:
+        return [rec]
+    return found
 
 
 def resolve_base(cwd, configured):
@@ -599,9 +673,13 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     code, out, _ = git(["status", "--porcelain", "-z", "--ignored=traditional", "--untracked-files=normal"], target)
     if code != 0:
         raise Precondition("worktree_dirty", "git status --ignored failed")
+    bad = []
     for rec in out.split("\0"):
-        if rec.startswith("!! ") and not disposable(rec[3:], cfg["worktreeDisposable"]) and not (("/" in rec[3:]) and rec[3:].split("/", 1)[0] in top_level):
-            raise Precondition("ignored_files", "ignored file outside safety.ops.worktreeDisposable: %s" % rec[3:])
+        if rec.startswith("!! "):
+            bad += offending_ignored(target, rec[3:], cfg["worktreeDisposable"], top_level)
+    if bad:
+        files = [clean_path(p) for p in bad[:IGNORED_FILES_KEPT]]
+        raise Precondition("ignored_files", "ignored file outside safety.ops.worktreeDisposable: %s" % files[0], files, len(bad))
 
     code, head, _ = git(["rev-parse", "--verify", "HEAD"], target)
     if code != 0:

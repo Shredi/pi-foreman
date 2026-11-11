@@ -443,7 +443,7 @@ def check_entry(e, state, sid, ops_cfg):
     try:
         return None, safe_ops.check_worktree(path, path, ops_cfg)
     except safe_ops.Precondition as exc:
-        return exc.name, None
+        return safe_ops.ignored_text(exc), None
     except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
         return "check_failed (%s)" % str(exc)[:80], None
 
@@ -759,12 +759,13 @@ def is_default_branch(ws, branch, configured):
     return branch in names
 
 
-def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workflow=False):
+def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workflow=False, info=None):
     """(reason, chk): None and the worktree check when the worktree and local branch may go, else the refusal reason.
 
     `verified` is the verified-merged fact (the PR is MERGED, its head ref is `branch` and its head commit is this sha,
     checked by the caller): with it `not_merged` does not apply, but only while the branch tip and HEAD still are that
     commit. `exempt_workflow` drops the worktree's own `.workflow/` from the ignored-files check (it was archived).
+    `info`: a dict that receives `files` and `filesMore` when the refusal is ignored_files.
     """
     cfg = dict(ops_cfg)
     top_level = (".workflow",) if exempt_workflow else ()  # only the worktree's own top-level .workflow/, never a nested one
@@ -778,6 +779,8 @@ def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workf
                 return "verified_merged_stale", None
         chk = safe_ops.check_worktree(ws, ws, cfg, verified_merged=bool(verified), top_level=top_level)
     except safe_ops.Precondition as exc:
+        if info is not None and exc.name == "ignored_files":
+            info.update(safe_ops.ignored_info(exc))
         return exc.name, None
     except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
         return "check_failed (%s)" % str(exc)[:80], None
@@ -798,7 +801,9 @@ def selfclean_run(a, state, ops_cfg):
     if pid_alive(a.wait_pid):
         out["reason"] = "the session did not exit within %d s" % WAIT_PID_MAX
     else:
-        reason, chk = selfclean_check(a.ws, a.branch, state, a.session, ops_cfg, a.verified_merged, a.exempt_workflow)
+        info = {}
+        reason, chk = selfclean_check(a.ws, a.branch, state, a.session, ops_cfg, a.verified_merged, a.exempt_workflow, info)
+        out.update(info)
         if reason is None:
             try:
                 res = safe_ops.remove_worktree(chk, force_branch=bool(a.verified_merged), verified_sha=a.verified_merged or None)
@@ -910,7 +915,9 @@ def main_selfclean(a):
             out["reason"] = "archive_failed (%s)" % str(exc)[:80]
             print(json.dumps(out))
             return 3
-    reason, _ = selfclean_check(ws, a.branch, state, a.session, ops_cfg, a.verified_merged, exempt)
+    info = {}
+    reason, _ = selfclean_check(ws, a.branch, state, a.session, ops_cfg, a.verified_merged, exempt, info)
+    out.update(info)
     out["ok"] = reason is None
     if reason:
         out["reason"] = reason

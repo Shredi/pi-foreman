@@ -99,7 +99,7 @@
     },
     "ops": {
       "copyMaxBytes": 104857600,
-      "worktreeDisposable": ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"],
+      "worktreeDisposable": ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db"],
       "baseBranch": null
     },
     "scripts": { "silentFixLines": 5 },

@@ -141,7 +141,7 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   session with its cwd inside.
 - **Checks before the exit.** The preconditions are checked in the session. A refusal (`worktree_dirty`, `stash_references_branch`,
   `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
-  message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
+  message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`; for `ignored_files` the reason names the first files: `ignored_files: a, b, c, +N more`, and the owner copies or deletes them); nothing is spawned, and the worktree
   and the branch stay. Each such line names the real worktree root (and the branch, where one is checked out) and what the owner does:
   the action for the reason (commit or discard changes, copy or delete the ignored files, wait for the merge), then the owner
   reads the cleanup preconditions here before removing anything. For any other reason (an unknown one, or a check that gave no
@@ -193,7 +193,7 @@ otherwise the remote's default branch applies.
 
 Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entry:
 
-- Worktree: clean including ignored files (outside `safety.ops.worktreeDisposable`), branch merged into the base
+- Worktree: clean including ignored files (outside `safety.ops.worktreeDisposable`; the defaults include pi's task logs in the top-level `.pi/tasks/`, `.DS_Store` and `Thumbs.db`; a wholly ignored folder is walked file by file, symlinks are never followed, and a walk over 20 000 entries or an unreadable folder counts as an ignored file). The refusal names the first files: `ignored_files (a, b, c, +N more)` in the handover reason and in the sweep's `skipped:` line. Branch merged into the base
   branch or contained in its pushed upstream, not locked, no stash entry referencing the branch, no live session
   of another id with its cwd inside. Removal is `git worktree remove` without `--force`, then `git branch -d`
   (`-D` only with the verified-merged fact of a [self-finish](#self-finish-on-merge)). Cleanup of a manifest entry never uses `-D`.

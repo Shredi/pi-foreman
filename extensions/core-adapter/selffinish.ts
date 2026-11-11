@@ -106,7 +106,7 @@ export function worktreeRoot(dir: string, wts: Worktree[]): string | null {
 
 const ACTIONS: Record<string, string> = {
   worktree_dirty: "the owner commits or discards the changes in it",
-  ignored_files: "the owner copies or deletes the ignored files in it (see the left out line)",
+  ignored_files: "the owner copies or deletes the ignored files named here",
   not_merged: "the owner waits until the PR is merged",
 };
 
@@ -116,14 +116,29 @@ const NEVER = new Set(["default_branch", "main_worktree"]);
 const PRECONDITIONS = "reads the cleanup preconditions in docs/close.md before removing anything";
 
 /** The line for a cleanup that does not start: names the real worktree and branch, says what the owner does. */
-function stays(target: string, branch: string, reason: string): string {
-  const head = `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: `;
+function stays(target: string, branch: string, reason: string, named = ""): string {
+  const head = `cleanup: not started (${reason}${named}); worktree ${target} and branch ${branch} stay: `;
   if (NEVER.has(reason)) return `${head}this worktree and branch are never removed; there is nothing for the owner to do with them`;
   if (!Object.hasOwn(ACTIONS, reason)) return `${head}the owner ${PRECONDITIONS}`;
   return `${head}${ACTIONS[reason]}, then ${PRECONDITIONS}`;
 }
 
-interface CheckOut { ok?: unknown; reason?: unknown; archived?: unknown; archivedCwd?: unknown; leftOut?: unknown; remoteBranch?: unknown }
+/** Control, line-separator and bidi characters out of a name taken from the check's JSON, cut to 120 characters. */
+function cleanName(s: string): string {
+  const t = s.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, "?");
+  return t.length > 120 ? `${t.slice(0, 117)}...` : t;
+}
+
+/** `: a, b, c, +N more` for the ignored files a check answer names, else nothing. */
+function namedFiles(out: CheckOut): string {
+  if (out.reason !== "ignored_files" || !Array.isArray(out.files)) return "";
+  const names = out.files.filter((x): x is string => typeof x === "string").slice(0, 3).map(cleanName);
+  if (!names.length) return "";
+  const more = typeof out.filesMore === "number" && Number.isFinite(out.filesMore) && out.filesMore > 0 ? Math.floor(out.filesMore) : 0;
+  return `: ${[...names, ...(more ? [`+${more} more`] : [])].join(", ")}`;
+}
+
+interface CheckOut { ok?: unknown; reason?: unknown; files?: unknown; filesMore?: unknown; archived?: unknown; archivedCwd?: unknown; leftOut?: unknown; remoteBranch?: unknown }
 
 /** The archive lines of a check answer: the byte-identical `workflow archive:` line, then `workflow archive left out:` when something was. */
 function archiveLines(out: CheckOut, archive: string): string[] {
@@ -200,7 +215,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   lines.push(...archiveLines(out, archive));
   if (out.ok !== true) {
     const reason = typeof out.reason === "string" ? out.reason : "refused";
-    lines.push(stays(target, branch, reason));
+    lines.push(stays(target, branch, reason, namedFiles(out)));
     return { lines };
   }
   if (typeof out.remoteBranch === "string") lines.push(`kept: remote branch ${branch} (enable delete head branch on merge)`);

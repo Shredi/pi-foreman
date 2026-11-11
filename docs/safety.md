@@ -256,7 +256,7 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `safety.git.commit.requiredTrailers`, `safety.git.commit.forbiddenTrailers` | Regular expressions each required trailer line must match / no trailer line may match; a project can add entries only. |
 | `safety.git.commit.checkCommand` | argv run before each foreman commit with the staged diff on stdin and the message in `PI_FOREMAN_COMMIT_MESSAGE`; a non-zero exit blocks the commit. |
 | `safety.ops.copyMaxBytes` | Size cap for `foreman_copy`; a project can only lower it. The foreman's `foreman_copy` may also read from its own session handoff dir (into the workspace; the destination stays confined to it); children may not. |
-| `safety.ops.worktreeDisposable` | Path components whose ignored files `foreman_worktree_remove` may delete (`name/` = a directory); not settable by a project. |
+| `safety.ops.worktreeDisposable` | Path components whose ignored files `foreman_worktree_remove` may delete (`name/` = a directory; a pattern with an inner `/`, like the default `.pi/tasks/`, is anchored at the worktree's top level). The defaults also cover `.DS_Store` and `Thumbs.db`; a wholly ignored folder is walked file by file (symlinks are never followed) and the refusal `ignored_files (a, b, c, +N more)` names the first files. Not settable by a project. |
 | `safety.ops.baseBranch` | Base branch for the merged check of `foreman_worktree_remove`; `null` = origin HEAD, else main, else master. |
 | `safety.preconditionOps` | Settings container for the precondition-checked operations; a project cannot set it. |
 | `safety.preBash.hooks`, `safety.preBash.strict` | Hooks run before each bash call and the strict switch; see [Pre-bash hooks](#pre-bash-hooks). A project or session cannot set them. |
