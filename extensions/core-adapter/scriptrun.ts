@@ -13,15 +13,16 @@ import { msysEnv } from "./env.ts";
 import { killGroup } from "./extstatus.ts";
 import { redactCommand } from "./trace.ts";
 
-export type ScriptRunKind = "dry" | "run";
+export type ScriptRunKind = "dry" | "run" | "undo";
 
 export const SCRIPT_TIMEOUT_DEFAULT_S = 600;
 export const SCRIPT_TIMEOUT_MAX_S = 3600;
 export const SCRIPT_TAIL_LINES = 40;
 export const SCRIPT_TAIL_BYTES = 4 * 1024;
 export const SCRIPT_DRY_ARG = "--dry-run";
+export const SCRIPT_UNDO_ARG = "undo";
 
-/** `<scratch root>/script-<name>-<hash8>-<dry|run>-<n>.log`; the name keeps letters, digits, `.`, `_`, `-`. */
+/** `<scratch root>/script-<name>-<hash8>-<dry|run|undo>-<n>.log`; the name keeps letters, digits, `.`, `_`, `-`; `n` counts per kind. */
 export function scriptLogPath(scratchRoot: string, name: string, hash: string, kind: ScriptRunKind, n: number): string {
   const safe = name.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 64) || "script";
   return path.join(scratchRoot, `script-${safe}-${hash.slice(0, 8)}-${kind}-${n}.log`);
@@ -51,9 +52,9 @@ export function scriptShell(platform: string = process.platform, opts: { getShel
   }
 }
 
-/** The fixed argv after the shell: the run file, plus `--dry-run` on a dry run only. */
+/** The fixed argv after the shell: the run file, plus `--dry-run` on a dry run and the single argument `undo` on an undo run. */
 export function scriptArgv(file: string, kind: ScriptRunKind): string[] {
-  return kind === "dry" ? [file, SCRIPT_DRY_ARG] : [file];
+  return kind === "dry" ? [file, SCRIPT_DRY_ARG] : kind === "undo" ? [file, SCRIPT_UNDO_ARG] : [file];
 }
 
 /** The environment of a run: `env` without the intercom identity, with the MSYS switches on win32; DRY_RUN=1 on a dry run, no DRY_RUN on a real run. */
@@ -118,6 +119,8 @@ export interface ScriptRunResult {
   tail: string;
   /** Set when the shell could not be started. */
   error?: string;
+  /** The script process was really spawned (an abort or timeout after that still counts; an abort before it, a refusal or a spawn error does not). */
+  started: boolean;
 }
 
 export interface ScriptRunRefusal {
@@ -131,7 +134,7 @@ export async function runScript(input: ScriptRunInput): Promise<ScriptRunResult 
   const shell = scriptShell(platform, input);
   if (!shell) return { code: "no_posix_shell", error: "pi-foreman: foreman_script refused (no_posix_shell): no POSIX shell found (on Windows the script runs in Git Bash; cmd.exe is never used). Install Git for Windows or set Pi's shellPath." };
   const started = Date.now();
-  const done = (r: Partial<ScriptRunResult>): ScriptRunResult => ({ kind: input.kind, exitCode: null, signal: null, seconds: Math.round((Date.now() - started) / 100) / 10, timedOut: false, aborted: false, logPath: input.logPath, tail: scriptLogTail(input.logPath), ...r });
+  const done = (r: Partial<ScriptRunResult>): ScriptRunResult => ({ kind: input.kind, exitCode: null, signal: null, seconds: Math.round((Date.now() - started) / 100) / 10, timedOut: false, aborted: false, started: false, logPath: input.logPath, tail: scriptLogTail(input.logPath), ...r });
   // aborted before the start: nothing spawns, no run file, no log
   if (input.signal?.aborted) return done({ aborted: true, tail: "" });
   let dir: string | null = null;
@@ -169,8 +172,8 @@ export async function runScript(input: ScriptRunInput): Promise<ScriptRunResult 
         if (platform !== "win32") kill();
         resolve({ ...r, timedOut, aborted });
       };
-      child.on("error", (err) => finish({ error: `could not start ${shell}: ${err.message}` }));
-      child.on("exit", (code, sig) => finish({ exitCode: code, signal: sig }));
+      child.on("error", (err) => finish({ error: `could not start ${shell}: ${err.message}`, started: child.pid !== undefined }));
+      child.on("exit", (code, sig) => finish({ exitCode: code, signal: sig, started: true }));
       if (input.signal?.aborted) onAbort();
       else input.signal?.addEventListener("abort", onAbort, { once: true });
     });

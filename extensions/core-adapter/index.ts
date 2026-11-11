@@ -99,10 +99,10 @@ import { postToolPayload, preToolPayload, resolveToolPath, stopPayload, subagent
 import type { PayloadContext } from "./payload.ts";
 import { NO_PYTHON_FIX, PythonCache, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
-import { beginRun, decideScript, newScriptState, proposeScript, recordRun, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptStatus, shortHash } from "./scriptapproval.ts";
+import { beginRun, beginUndo, cleanText, decideScript, newScriptState, proposeScript, recordRealRun, recordRun, recordUndo, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptUndoLine, scriptStatus, shortHash } from "./scriptapproval.ts";
 import type { ScriptRefusalCode, ScriptState } from "./scriptapproval.ts";
 import { runScript as runOwnerScript } from "./scriptrun.ts";
-import type { ScriptRunKind } from "./scriptrun.ts";
+import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
@@ -4982,18 +4982,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   // Owner script (scriptapproval.ts, scriptrun.ts): the owner approves a script's bytes in a dialog, the harness runs them. Never in a
-  // subagent child, never approved without the owner's own answer (no ruling file, no timeout). The script text is not inspected.
+  // subagent child, never approved without the owner's own answer (no ruling file, no timeout). The harness only looks for the dry-run and undo marker literals in the script text; it does not judge it.
   if (process.env.PI_SUBAGENT_CHILD !== "1") {
     pi.registerTool({
       name: SCRIPT_TOOL,
       label: "Owner script",
       // Never in parallel with other tool calls of the same message: no write lands while the owner decides or the script runs.
       executionMode: "sequential",
-      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal; these three take no path. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
+      description: "Ask the owner to approve a script for a change the guards close to every agent (user config, global installs, protected files), then run it. Write the script into the scratch dir: POSIX sh, LF line endings, no reliance on $0 or sibling files (the harness runs a private copy from the workspace root, stdin closed), and it must honour --dry-run or DRY_RUN=1 by changing nothing on that run. propose (path, description, risk, undo) opens the owner's dialog (approve, revise with a note, reject); on approve the dry run runs at once and its output is returned. Read the dry-run output before run: when it shows an unexpected state or a different change than described, stop and propose again with a corrected description. dry reruns the dry run, run is the real run (it needs a passed dry run of the same text), status shows the proposal and the undo state, undo runs the script that really ran with the single argument undo (only when the script has the marker line `# foreman-undo: supported` as a whole line, after a real run, within an hour of it, at most three attempts, exit 0 counts once; no second dialog, the owner gets a notice); these four take no path. A small fix of the script after approval reruns with a notice to the owner, a larger one needs a new propose. Without an answer the proposal stays pending.",
       parameters: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["propose", "dry", "run", "status"] },
+          action: { type: "string", enum: ["propose", "dry", "run", "status", "undo"] },
           path: { type: "string", minLength: 1, description: "propose only: path of the script in the scratch dir." },
           description: { type: "string", description: "propose only: one paragraph on what the script changes, at most 600 characters; the owner sees it whole." },
           risk: { type: "string", description: "propose only: what can go wrong, at most 300 characters." },
@@ -5007,12 +5007,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const s = await ensureSession(ctx);
         const out = (decision: string, text: string, extra: Record<string, unknown> = {}, isError = false) => ({ content: [{ type: "text" as const, text }], details: { decision, ...extra }, ...(isError ? { isError: true } : {}) });
         const refusal = (r: { code: ScriptRefusalCode; error: string }) => out("refused", r.error, { code: r.code }, true);
-        if (s.isChild) return refusal({ code: "script_child", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_child): a subagent child never proposes or runs an owner script; report the needed change to the foreman.` });
+        if (s.isChild) return refusal({ code: "script_child", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_child): a subagent child never proposes, runs or undoes an owner script; report the needed change to the foreman.` });
         const o = planOpts(s, ctx);
         const action = params.action;
 
         /** A dry or real run of the proposal's own script: fix rule, runner, state, trace. */
-        const runNow = async (kind: ScriptRunKind) => {
+        const runNow = async (kind: ScriptRunAction) => {
           const limit = get(s.config.config, "safety.scripts.silentFixLines");
           const plan = beginRun(s.script, kind, o, Date.now(), typeof limit === "number" ? limit : SCRIPT_FIX_LINES_DEFAULT);
           if (plan.fix) {
@@ -5027,6 +5027,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return refusal(r);
           }
           const exit = r.error ? null : r.exitCode;
+          if (kind === "run" && r.started && (s.script.proposal?.status === "approved" || s.script.proposal?.status === "dry_ok")) recordRealRun(s.script, plan.hash, Date.now());
           const status = recordRun(s.script, kind, plan.hash, exit);
           s.trace?.emit({ event: "script_run", kind, hash: shortHash(plan.hash), exit, seconds: r.seconds });
           const p = s.script.proposal;
@@ -5045,13 +5046,40 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return out(kind, `${head}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { status, exit, logPath: r.logPath, hash: plan.hash }, exit !== 0);
         };
 
-        if (action === "dry" || action === "run" || action === "status") {
+        /** An undo run of the stored bytes that really ran: no dialog, a warning notice and a trace event per attempt. */
+        const undoNow = async () => {
+          const plan = beginUndo(s.script, o, Date.now());
+          if ("error" in plan) return refusal(plan);
+          ctx.ui.notify(`Undo of ${cleanText(s.script.proposal?.rel ?? "the script")} through foreman_script: running the script that ran (sha256 ${shortHash(plan.hash)}) with the argument undo, attempt ${plan.attempt} of ${SCRIPT_MAX_ATTEMPTS}.`, "warning");
+          const r = await runOwnerScript({ bytes: plan.bytes, kind: "undo", cwd: workspaceOf(ctx.cwd).root, logPath: plan.logPath, timeoutSeconds: typeof params.timeoutSeconds === "number" ? params.timeoutSeconds : undefined, signal, platform, config: s.config.config, shellPath: shellPathSetting(s.agentDir, ctx.cwd) });
+          if ("code" in r || !r.started) {
+            // nothing spawned (refused or aborted before the start): not one of the attempts
+            const up = s.script.proposal;
+            if (up) {
+              up.undoAttempts = Math.max(0, up.undoAttempts - 1);
+              up.logCounts.undo = Math.max(0, up.logCounts.undo - 1);
+              up.logs.pop();
+            }
+            if ("code" in r) return refusal(r);
+            return out("undo", `Undo of ${up?.rel ?? "the script"} did not start (${r.error ?? (r.aborted ? "aborted" : "not started")}); the attempt is given back.`, { hash: plan.hash }, true);
+          }
+          const exit = r.error ? null : r.exitCode;
+          recordUndo(s.script, plan.hash, exit);
+          s.trace?.emit({ event: "script_run", kind: "undo", hash: shortHash(plan.hash), attempts: plan.attempt, exit, seconds: r.seconds });
+          const p = s.script.proposal;
+          const how = r.error ?? (r.timedOut ? "stopped at the time limit" : r.aborted ? "aborted" : exit === null ? `ended by ${r.signal ?? "a signal"}` : `exit ${exit}`);
+          const next = exit === 0 ? "The undo is done; it counts once." : plan.attempt >= SCRIPT_MAX_ATTEMPTS ? "The undo failed and no attempt is left; a new propose is the way." : `The undo failed; ${SCRIPT_MAX_ATTEMPTS - plan.attempt} attempt(s) left.`;
+          return out("undo", `Undo of ${p?.rel ?? "the script"} (sha256 ${shortHash(plan.hash)}), attempt ${plan.attempt} of ${SCRIPT_MAX_ATTEMPTS}: ${how} after ${r.seconds} s. Log: ${r.logPath}\n${r.tail ? `Last lines:\n${r.tail}\n` : "(no output)\n"}${next}`, { exit, logPath: r.logPath, hash: plan.hash }, exit !== 0);
+        };
+
+        if (action === "dry" || action === "run" || action === "status" || action === "undo") {
           if (params.path !== undefined) return refusal({ code: "script_path", error: `pi-foreman: ${SCRIPT_TOOL} refused (script_path): ${action} takes no path; it uses the script of the proposal. A different script needs a new propose.` });
+          if (action === "undo") return undoNow();
           if (action !== "status") return runNow(action);
           const st = scriptStatus(s.script, Date.now());
           return out("status", st ? JSON.stringify(st, null, 2) : "No script is proposed in this session.", { status: st?.status ?? null });
         }
-        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run or status.`, {}, true);
+        if (action !== "propose") return out("refused", `${SCRIPT_TOOL}: action must be propose, dry, run, status or undo.`, {}, true);
 
         const done = (decision: string, by: string | null, hash: string | null, text: string, isError = false) => {
           s.trace?.emit({ event: "script", decision, by, hash });
@@ -5069,7 +5097,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.trace?.emit({ event: "dialog", surface: "script" });
         let answer: string | undefined;
         try {
-          ctx.ui.notify(scriptNoticeLines(p).join("\n"), "info");
+          // One notice: the terminal replaces an info status line by the next one sent back to back.
+          ctx.ui.notify([...scriptNoticeLines(p), scriptUndoLine(p)].join("\n"), "info");
           answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
         } catch {
           answer = undefined;

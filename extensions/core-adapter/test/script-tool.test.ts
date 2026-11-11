@@ -115,7 +115,7 @@ async function rig(t: import("node:test").TestContext, o: RigOpts = {}) {
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
   const raw = tools.get("foreman_script");
-  const call = (params: Record<string, unknown>): Promise<Result> => raw!.execute("c1", params, undefined, undefined, ctx);
+  const call = (params: Record<string, unknown>, signal?: AbortSignal): Promise<Result> => raw!.execute("c1", params, signal, undefined, ctx);
   const trace = (event: string): Record<string, unknown>[] => {
     const dir = path.join(agentDir, "pi-foreman", "state");
     const f = fs.existsSync(dir) ? fs.readdirSync(dir).find((n) => n.startsWith("trace-") && n.endsWith(".jsonl")) : undefined;
@@ -156,12 +156,12 @@ test("foreman_script: approve runs the dry run at once and returns its output; t
   assert.match(textOf(out), /stop and propose again with a corrected description/);
   assert.deepEqual(r.runs(), ["mode:--dry-run"]);
   const short = shortHash(sha256(Buffer.from(r.text)));
-  assert.deepEqual(r.seen.choices, [["revise", "reject", "approve"]], "approve last");
+  assert.deepEqual(r.seen.choices, [["approve", "revise", "reject"]], "approve first (owner decision 2026-11-11)");
   assert.equal(r.seen.titles.length, 1);
   assert.ok(r.seen.titles[0].includes("set-key.sh") && r.seen.titles[0].includes(short), r.seen.titles[0]);
   const notice = r.seen.notices.find((n) => n.startsWith("Description: "));
   assert.ok(notice, "the summary notice was sent");
-  assert.deepEqual(notice.split("\n"), [`Description: ${TEXTS.description}`, `Risk: ${TEXTS.risk}`, `Undo: ${TEXTS.undo}`, `Path: ${SCRIPT}`, "Lines: 3", `sha256: ${short}`]);
+  assert.deepEqual(notice.split("\n"), [`Description: ${TEXTS.description}`, `Risk: ${TEXTS.risk}`, `Undo: ${TEXTS.undo}`, `Path: ${SCRIPT}`, "Lines: 3", `sha256: ${short}`, "Undo through the tool: no (the script has no undo marker line)"]);
   assert.ok(!r.seen.notices.some((n) => n.includes("would set the key")), "the script body is not shown");
 });
 
@@ -420,4 +420,264 @@ test("foreman_script: a real run refused with no_posix_shell is not one of the t
   assert.equal(run.details?.status, "consumed", textOf(run));
   assert.equal((await status()).attempts, 1);
   assert.deepEqual(r.runs(), ["mode:--dry-run", "mode:real"]);
+});
+
+// ---- undo, status after a run, log names
+
+const UNDO_MARKER = "# foreman-undo: supported";
+type Rig = Awaited<ReturnType<typeof rig>>;
+
+/** A script that logs `<$1 or real>:<DRY_RUN or none>` per run; with the marker unless `marker` is false; its undo exits 1 while `<root>/fail` exists. */
+function undoScript(r: Rig, marker = true): string {
+  const mark = path.join(r.root, "ran.txt");
+  const text = `# honours --dry-run\n${marker ? `${UNDO_MARKER}\n` : ""}echo "\${1:-real}:\${DRY_RUN:-none}" >> '${mark}'\n[ "$1" = undo ] && [ -f '${path.join(r.root, "fail")}' ] && exit 1\nexit 0\n`;
+  fs.writeFileSync(r.file, text);
+  return text;
+}
+
+const statusOf = async (r: Rig) => JSON.parse(textOf(await r.call({ action: "status" }))) as Record<string, any>;
+
+test("foreman_script: the dialog payload lists approve, revise, reject, and the notice with the undo line last comes before it, unshortened", skipWin, async (t) => {
+  let before: string[] = [];
+  let r: Rig | undefined;
+  r = await rig(t, { answer: () => ((before = [...r!.seen.notices]), "reject") });
+  undoScript(r);
+  await r.propose();
+  assert.deepEqual(r.seen.choices, [["approve", "revise", "reject"]]);
+  assert.ok(before.some((n) => n.startsWith(`Description: ${TEXTS.description}\nRisk: ${TEXTS.risk}\nUndo: ${TEXTS.undo}\n`)), "summary notice before the select");
+  assert.ok(before.some((n) => n.split("\n").at(-1)!.startsWith("Undo through the tool: yes")), "the undo ability is the last line of that notice");
+  assert.ok(r.seen.titles[0].startsWith("Run the owner script set-key.sh (sha256 "));
+});
+
+test("foreman_script: the undo line says no for a script without the marker", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "reject" });
+  undoScript(r, false);
+  await r.propose();
+  assert.ok(r.seen.notices.some((n) => n.split("\n").at(-1)!.startsWith("Undo through the tool: no")));
+});
+
+test("foreman_script: exactly one notice goes out before the select, with description, risk, undo and the undo line", skipWin, async (t) => {
+  let atSelect: string[] = [];
+  let r: Rig | undefined;
+  r = await rig(t, { answer: () => ((atSelect = [...r!.seen.notices]), "reject") });
+  undoScript(r);
+  const start = r.seen.notices.length;
+  await r.propose();
+  assert.equal(atSelect.length - start, 1);
+  const lines = atSelect[start].split("\n");
+  assert.equal(lines.length, 7);
+  assert.equal(lines[0], `Description: ${TEXTS.description}`);
+  assert.equal(lines[1], `Risk: ${TEXTS.risk}`);
+  assert.equal(lines[2], `Undo: ${TEXTS.undo}`);
+  assert.ok(lines[6].startsWith("Undo through the tool: yes"));
+});
+
+test("foreman_script: undo is refused before any run and after only a dry run", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  const none = await r.call({ action: "undo" });
+  assert.equal(none.details?.code, "undo_no_proposal", textOf(none));
+  await r.propose();
+  const dryOnly = await r.call({ action: "undo" });
+  assert.equal(dryOnly.details?.code, "undo_not_run", textOf(dryOnly));
+  assert.deepEqual(r.runs(), ["--dry-run:1"]);
+  const withPath = await r.call({ action: "undo", path: SCRIPT });
+  assert.equal(withPath.details?.code, "script_path");
+});
+
+test("foreman_script: undo after a real run runs the stored bytes with the argument undo, whatever the file on disk is now", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  fs.writeFileSync(r.file, "echo changed-after-the-run >> '" + path.join(r.root, "ran.txt") + "'\n");
+  const first = await r.call({ action: "undo" });
+  assert.equal(first.details?.exit, 0, textOf(first));
+  assert.deepEqual(r.runs(), ["--dry-run:1", "real:none", "undo:none"], "$1 is undo, no DRY_RUN, the stored bytes ran");
+  fs.rmSync(r.file);
+  const again = await r.call({ action: "undo" });
+  assert.equal(again.details?.code, "undo_done", textOf(again));
+  assert.equal(r.runs().length, 3, "used once after exit 0");
+  const notices = r.seen.notices.filter((n) => n.startsWith("Undo of "));
+  assert.equal(notices.length, 1);
+  assert.match(notices[0], /attempt 1 of 3/);
+  const rec = r.trace("script_run").filter((x) => x.kind === "undo");
+  assert.deepEqual(rec.map((x) => [x.exit, x.attempts]), [[0, 1]]);
+});
+
+test("foreman_script: undo is refused for a script without the marker, even after a real run", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r, false);
+  await r.propose();
+  await r.call({ action: "run" });
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "undo_no_marker", textOf(u));
+  assert.deepEqual(r.runs(), ["--dry-run:1", "real:none"]);
+});
+
+test("foreman_script: a failed undo is retried, three attempts in all, then refused", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  fs.writeFileSync(path.join(r.root, "fail"), "");
+  for (let i = 1; i <= 3; i++) {
+    const u = await r.call({ action: "undo" });
+    assert.equal(u.isError, true);
+    assert.equal(u.details?.exit, 1, textOf(u));
+    assert.match(textOf(u), new RegExp(`attempt ${i} of 3`));
+  }
+  const fourth = await r.call({ action: "undo" });
+  assert.equal(fourth.details?.code, "undo_attempts", textOf(fourth));
+  assert.equal(r.runs().filter((x) => x.startsWith("undo")).length, 3);
+  const st = await statusOf(r);
+  assert.deepEqual([st.undo.attempts, st.undo.attemptsLeft, st.undo.available], [3, 0, false]);
+});
+
+test("foreman_script: a failed undo can be followed by one that succeeds", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  fs.writeFileSync(path.join(r.root, "fail"), "");
+  assert.equal((await r.call({ action: "undo" })).details?.exit, 1);
+  fs.rmSync(path.join(r.root, "fail"));
+  assert.equal((await r.call({ action: "undo" })).details?.exit, 0);
+  assert.equal((await r.call({ action: "undo" })).details?.code, "undo_done");
+});
+
+test("foreman_script: undo expires one hour after the real run and the text says a new propose is the way", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  const real = Date.now();
+  t.mock.method(Date, "now", () => real + 60 * 60 * 1000 - 1000);
+  const st = await statusOf(r);
+  assert.equal(st.undo.available, true);
+  t.mock.method(Date, "now", () => real + 60 * 60 * 1000 + 1000);
+  assert.equal((await statusOf(r)).undo.available, false);
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "undo_expired", textOf(u));
+  assert.match(textOf(u), /new propose/);
+  assert.deepEqual(r.runs(), ["--dry-run:1", "real:none"]);
+});
+
+test("foreman_script: a new propose replaces the proposal and the old run cannot be undone", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  await r.propose();
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "undo_not_run", textOf(u));
+  assert.match(textOf(u), /new propose/);
+  assert.deepEqual(r.runs(), ["--dry-run:1", "real:none", "--dry-run:1"]);
+});
+
+test("foreman_script: a real run aborted before the script starts does not make undo available", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  const ac = new AbortController();
+  ac.abort();
+  await r.call({ action: "run" }, ac.signal);
+  assert.deepEqual(r.runs(), ["--dry-run:1"], "the script never ran");
+  const st = await statusOf(r);
+  assert.equal(st.ranAt, null);
+  assert.equal(st.undo.available, false);
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "undo_not_run", textOf(u));
+});
+
+test("foreman_script: undo is refused for a subagent child", skipWin, async (t) => {
+  const r = await rig(t, { child: "runtime" });
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "script_child", textOf(u));
+  assert.deepEqual(r.runs(), []);
+});
+
+test("foreman_script: the status after a real run says the approval is used up, with the hash that ran, when, and the undo state", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  const text = undoScript(r);
+  await r.propose();
+  const before = await statusOf(r);
+  assert.deepEqual([before.approvalUsed, before.attemptsLeft, before.ranHash, before.ranAt, before.undo.available], [false, 3, null, null, false]);
+  const t0 = Date.now();
+  await r.call({ action: "run" });
+  const st = await statusOf(r);
+  const hash = sha256(Buffer.from(text));
+  assert.equal(st.status, "consumed");
+  assert.equal(st.approvalUsed, true);
+  assert.equal(st.attemptsLeft, 0);
+  assert.equal(st.expiresAt, null);
+  assert.equal(st.ranHash, hash);
+  assert.ok(Math.abs(Date.parse(st.ranAt) - t0) < 60_000 && st.ranAt.endsWith("Z"), st.ranAt);
+  assert.equal(st.hash, hash, "hash stays the proposed text's hash");
+  assert.deepEqual([st.undo.supported, st.undo.available, st.undo.used, st.undo.attempts, st.undo.attemptsLeft], [true, true, false, 0, 3]);
+  assert.equal(Date.parse(st.undo.availableUntil), Date.parse(st.ranAt) + 60 * 60 * 1000);
+  await r.call({ action: "undo" });
+  const after = await statusOf(r);
+  assert.deepEqual([after.undo.available, after.undo.used, after.undo.attempts, after.undo.attemptsLeft], [false, true, 1, 0]);
+});
+
+test("foreman_script: log names keep .sh, count per kind (dry-1, dry-2, run-1, undo-1), name the undo kind and never reuse an existing log", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  const text = undoScript(r);
+  const h8 = sha256(Buffer.from(text)).slice(0, 8);
+  const scratch = path.dirname(r.file);
+  const pre = `script-set-key.sh-${h8}`;
+  fs.writeFileSync(path.join(scratch, `${pre}-dry-2.log`), "older log\n");
+  await r.propose(); // dry-1
+  await r.call({ action: "dry" }); // dry-2 exists: dry-3
+  await r.call({ action: "run" });
+  await r.call({ action: "undo" });
+  assert.deepEqual(r.logs().sort(), [`${pre}-dry-1.log`, `${pre}-dry-2.log`, `${pre}-dry-3.log`, `${pre}-run-1.log`, `${pre}-undo-1.log`]);
+  assert.equal(fs.readFileSync(path.join(scratch, `${pre}-dry-2.log`), "utf8"), "older log\n");
+});
+
+test("foreman_script: a small fix after approval that removes the marker ends undo; the script does not run again and status says so", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  const text = undoScript(r);
+  await r.propose();
+  fs.writeFileSync(r.file, text.replace(`${UNDO_MARKER}\n`, ""));
+  assert.equal((await r.call({ action: "dry" })).details?.status, "dry_ok");
+  assert.equal((await r.call({ action: "run" })).details?.exit, 0);
+  assert.equal(r.runs().length, 3);
+  const st = await statusOf(r);
+  assert.deepEqual([st.undo.supported, st.undo.available], [false, false]);
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "undo_no_marker", textOf(u));
+  assert.match(textOf(u), /text of .* that ran does not declare/);
+  assert.equal(r.runs().length, 3, "the run count stays: undo did not start the script");
+});
+
+test("foreman_script: a small fix that adds the marker to a script proposed without it does not enable undo", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  const text = undoScript(r, false);
+  await r.propose();
+  fs.writeFileSync(r.file, text.replace("# honours --dry-run\n", `# honours --dry-run\n${UNDO_MARKER}\n`));
+  assert.equal((await r.call({ action: "dry" })).details?.status, "dry_ok");
+  await r.call({ action: "run" });
+  const st = await statusOf(r);
+  assert.deepEqual([st.undo.supported, st.undo.available], [false, false]);
+  const u = await r.call({ action: "undo" });
+  assert.equal(u.details?.code, "undo_no_marker", textOf(u));
+  assert.equal(r.runs().length, 3);
+});
+
+test("foreman_script: an undo aborted before the script starts does not use an attempt", skipWin, async (t) => {
+  const r = await rig(t, { answer: () => "approve" });
+  undoScript(r);
+  await r.propose();
+  await r.call({ action: "run" });
+  const ac = new AbortController();
+  ac.abort();
+  const u = await r.call({ action: "undo" }, ac.signal);
+  assert.equal(u.isError, true, textOf(u));
+  assert.equal(r.runs().length, 2, "the script did not run for the undo");
+  const st = await statusOf(r);
+  assert.deepEqual([st.undo.attempts, st.undo.attemptsLeft, st.undo.available], [0, 3, true]);
+  assert.equal(r.logs().filter((n) => n.includes("-undo-")).length, 0);
+  assert.equal((await r.call({ action: "undo" })).details?.exit, 0);
 });

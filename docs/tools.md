@@ -393,12 +393,13 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 
 | action | does |
 | --- | --- |
-| `propose` | checks the path and the texts, opens the owner's dialog (revise, reject, approve); on approve runs the dry run and returns its output |
+| `propose` | checks the path and the texts, opens the owner's dialog (approve, revise, reject, in that order); on approve runs the dry run and returns its output |
 | `dry` | reruns the dry run; after a small fix of the script it applies the silent-fix rule first |
 | `run` | the real run; needs a passed dry run of the same text |
-| `status` | the proposal, its hashes, state, attempts and log paths |
+| `status` | the proposal, its state, the hashes, attempts and log paths; after a real run the approval is used up (`approvalUsed`, `attemptsLeft` 0) with `ranHash` and `ranAt`, and `undo` shows `available`, `availableUntil`, `used` and attempts left |
+| `undo` | runs the bytes that really ran with the single argument `undo`; only for a script with the whole line `# foreman-undo: supported` whose proposed text has it (and the text that ran still has it), after a real run, within 60 minutes of it, three attempts, exit 0 counts once; no second dialog, the owner gets a warning notice |
 
-`dry`, `run` and `status` take no path. Without an answer the proposal stays pending. Refusal codes: `script_child`, `script_path`, `script_text`, `script_no_dry_run`, `script_pending`, `script_changed`, `script_dry_required`, `script_consumed`, `script_expired`, `no_posix_shell`. An approved script runs with the owner's rights and no guard reads it; see [safety](safety.md#owner-scripts) for the mechanics and the limits.
+`dry`, `run`, `status` and `undo` take no path. Without an answer the proposal stays pending. Refusal codes: `script_child`, `script_path`, `script_text`, `script_no_dry_run`, `script_pending`, `script_changed`, `script_dry_required`, `script_consumed`, `script_expired`, `no_posix_shell`; undo adds `undo_no_proposal`, `undo_no_marker`, `undo_not_run`, `undo_done`, `undo_attempts`, `undo_expired`. An approved script runs with the owner's rights and no guard reads it; see [safety](safety.md#owner-scripts) for the mechanics and the limits.
 
 ### foreman_show
 
