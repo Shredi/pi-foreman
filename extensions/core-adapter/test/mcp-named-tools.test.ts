@@ -285,14 +285,14 @@ test("h2: [alpha, beta/probe] with alpha over the cap: the line carries the cap 
   );
 });
 
-test("h2: a server that registered nothing in time is reported as not answering; a tool missing on a server that did register keeps the old wording", async (t) => {
+test("h2: a server that registered nothing in time gets the no-tool sentence; a tool missing on a server that did register keeps the old wording", async (t) => {
   const silent = await child(t, { launch: ["alpha/echo", "beta/probe"], tools: [{ name: "mcp__beta__probe", label: "beta/probe" }] });
   const note = silent.mcp.note() ?? "";
-  assert.match(note, /MCP server alpha did not answer in time, so its named tools \(alpha\/echo\) are not declared; they may be found with tool_search later; name it under Friction in your report\./);
+  assert.match(note, /MCP server alpha registered no tool: it did not answer in time or it is hidden in the MCP config, so its named tools \(alpha\/echo\) are not declared; name it under Friction in your report\./);
   assert.doesNotMatch(note, /Named but not found/);
   const lacking = await child(t, { launch: ["alpha/echo", "alpha/missing"] });
   assert.match(lacking.mcp.note() ?? "", /Named but not found on the server: alpha\/missing/);
-  assert.doesNotMatch(lacking.mcp.note() ?? "", /did not answer/);
+  assert.doesNotMatch(lacking.mcp.note() ?? "", /registered no tool/);
 });
 
 // ---------------------------------------------------------------- h3: codemode exposure (the default of a server in mcp.json)
@@ -437,43 +437,11 @@ test("k: a named tool hidden in a server named whole is named in the line as not
   );
 });
 
-test("k: [alpha/echo] with echo hidden: the server is dropped by the filter and the line says hidden, not that it did not answer", async (t) => {
-  const servers = [{ name: "alpha", config: { exposure: "deferred", toolExposure: { echo: "hidden" } } }];
-  const c = await child(t, { launch: ["alpha/echo"], tools: [], servers, loadFirst: true });
-  assert.deepEqual(c.config, []);
-  const note = c.mcp.note() ?? "";
-  assert.equal(note, "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch. Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.");
-  assert.doesNotMatch(note, /did not answer/);
-});
-
 test("k: a named tool already active before preload is listed as declared, neither activated nor traced again", async (t) => {
   const c = await child(t, { launch: ["alpha", "alpha/echo"], already: ["mcp__alpha__echo"] });
   assert.deepEqual(c.mcpActive(), ["mcp__alpha__echo"]);
   assert.deepEqual(c.trace, []);
   assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: mcp__alpha__echo. ${SEARCH}`);
-});
-
-// ---------------------------------------------------------------- Pi's call order: loadConfig, then getMcpServers (twice)
-
-test("k: Pi's later getMcpServers reads do not erase a hidden tool: [alpha/echo] with echo hidden still says hidden", async (t) => {
-  const servers = [{ name: "alpha", config: { exposure: "deferred", toolExposure: { echo: "hidden" } } }];
-  const c = await child(t, { launch: ["alpha/echo"], tools: [], servers, piOrder: true });
-  const note = c.mcp.note() ?? "";
-  assert.equal(note, "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch. Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.");
-  assert.doesNotMatch(note, /did not answer/);
-});
-
-test("k: [alpha, alpha/echo] with the server hidden: no tool_search sentence for alpha, hidden wording", async (t) => {
-  const servers = [{ name: "alpha", config: { exposure: "hidden" } }];
-  const c = await child(t, { launch: ["alpha", "alpha/echo"], tools: [], servers, piOrder: true });
-  const note = c.mcp.note() ?? "";
-  assert.equal(note, "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch. Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.");
-  assert.doesNotMatch(note, /tool_search|did not answer/);
-});
-
-test("k: a server that registers nothing in time still gets 'did not answer in time' with Pi's call order", async (t) => {
-  const c = await child(t, { launch: ["alpha/echo"], tools: [], piOrder: true });
-  assert.match(c.mcp.note() ?? "", /MCP server alpha did not answer in time, so its named tools \(alpha\/echo\) are not declared/);
 });
 
 test("k: named tools only: a first turn on a direct provider after another provider does not wait again and traces nothing more", async (t) => {
@@ -489,95 +457,50 @@ test("k: named tools only: a first turn on a direct provider after another provi
   assert.equal(c.mcp.note(), note);
 });
 
-// ---------------------------------------------------------------- servers the config drops as hidden: one dropped set for both config paths
+// ---------------------------------------------------------------- a server that registered no tool: one sentence for a hidden and a silent server
 
-const GONE = " MCP server named but not available in this child (hidden in the MCP config): alpha; name it under Friction in your report.";
 const NONE_REACHABLE = "pi-foreman: MCP tools declared in your tool list: none. No other MCP tool is reachable in this launch.";
+const NO_TOOL = "it did not answer in time or it is hidden in the MCP config";
 const alphaHidden = [{ name: "alpha", config: { exposure: "hidden" } }];
 
-test("k: [alpha] with alpha hidden: the line says not available, on a provider outside directProviders and on a direct one", async (t) => {
-  for (const provider of ["p2", "p1"]) {
-    const c = await child(t, { launch: ["alpha"], tools: [], servers: alphaHidden, piOrder: true, provider });
+test("m: [alpha/echo] with nothing registered gets the no-tool sentence, with a hidden config and with a silent server (same text)", async (t) => {
+  const text = `${NONE_REACHABLE} MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`;
+  const hidden = await child(t, { launch: ["alpha/echo"], tools: [], servers: alphaHidden, piOrder: true });
+  const silent = await child(t, { launch: ["alpha/echo"], tools: [], piOrder: true });
+  assert.equal(hidden.mcp.note(), text);
+  assert.equal(silent.mcp.note(), text);
+});
+
+test("m: [alpha] named whole with nothing registered, on a direct provider: the no-tool sentence, no tool_search promise", async (t) => {
+  for (const servers of [alphaHidden, undefined]) {
+    const c = await child(t, { launch: ["alpha"], tools: [], servers, piOrder: true });
     const note = c.mcp.note() ?? "";
-    assert.equal(note, `${NONE_REACHABLE}${GONE}`, provider);
-    assert.doesNotMatch(note, /tool_search|did not answer/);
+    assert.equal(note, `${NONE_REACHABLE} MCP server alpha registered no tool: ${NO_TOOL}; name it under Friction in your report.`);
+    assert.doesNotMatch(note, /tool_search|later/);
   }
 });
 
-test("k: [alpha, beta] with alpha hidden on p2: the search sentence names beta only, alpha is not available", async (t) => {
-  const tools = TOOLS.filter((x) => x.label.startsWith("beta/"));
-  const c = await child(t, { launch: ["alpha", "beta"], tools, servers: [...alphaHidden, { name: "beta", config: { exposure: "deferred" } }], piOrder: true, provider: "p2" });
-  assert.equal(c.mcp.note(), `pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server beta are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).${GONE}`);
+test("m: several silent servers, named and whole, each get the sentence; a server that registered keeps its own wording", async (t) => {
+  const c = await child(t, { launch: ["alpha/echo", "beta"], tools: [], servers: [], piOrder: true });
+  assert.equal(
+    c.mcp.note(),
+    `${NONE_REACHABLE} MCP server beta registered no tool: ${NO_TOOL}; name it under Friction in your report. MCP server alpha registered no tool: ${NO_TOOL}, so its named tools (alpha/echo) are not declared; name it under Friction in your report.`,
+  );
 });
 
-test("k: a hidden server registered by an extension and named alpha/echo is not available, not 'did not answer'", async (t) => {
-  const c = await child(t, { launch: ["alpha/echo"], tools: [], servers: [], ext: alphaHidden, piOrder: true });
-  const note = c.mcp.note() ?? "";
-  assert.equal(note, `${NONE_REACHABLE} Named but not available in this child (hidden in the MCP config): alpha/echo; name it under Friction in your report.`);
-  assert.doesNotMatch(note, /did not answer|tool_search/);
-});
-
-test("k: a later empty getMcpServers or loadConfig result does not erase what the other path found", async (t) => {
-  const viaExt = await child(t, { launch: ["alpha"], tools: [], servers: [], ext: alphaHidden, piOrder: true, provider: "p2" });
-  assert.equal(viaExt.mcp.note(), `${NONE_REACHABLE}${GONE}`);
-  viaExt.state.ext = [];
-  viaExt.read();
-  await viaExt.turn();
-  assert.equal(viaExt.mcp.note(), `${NONE_REACHABLE}${GONE}`, "loadConfig and getMcpServers listing nothing keep the finding of the extension list");
-  const viaConfig = await child(t, { launch: ["alpha"], tools: [], servers: alphaHidden, piOrder: true, provider: "p2" });
-  assert.equal(viaConfig.mcp.note(), `${NONE_REACHABLE}${GONE}`);
-  viaConfig.state.servers = [];
-  viaConfig.read();
-  await viaConfig.turn();
-  assert.equal(viaConfig.mcp.note(), `${NONE_REACHABLE}${GONE}`, "an empty getMcpServers after loadConfig keeps the finding of the loader list");
-});
-
-// ---------------------------------------------------------------- a server one path keeps is reachable; the line is built once; the cap note names hidden servers
-
-const alphaDeferred = [{ name: "alpha", config: { exposure: "deferred" } }];
-const SHAPES: [string, typeof alphaDeferred, typeof alphaDeferred][] = [
-  ["config deferred, extension hidden", alphaDeferred, alphaHidden],
-  ["config hidden, extension deferred", alphaHidden, alphaDeferred],
-];
-
-test("l: a server one path keeps and the other hides is reachable: no not-available sentence on p2 and on p1", async (t) => {
-  for (const [shape, servers, ext] of SHAPES) {
-    const p2 = await child(t, { launch: ["alpha"], tools: many(2), servers, ext, piOrder: true, provider: "p2" });
-    assert.equal(p2.mcp.note(), "pi-foreman: MCP tools declared in your tool list: none. The tools of the MCP server alpha are not declared: find them with tool_search (a tool it loads is callable from the next turn on a provider that fixes its tool list per turn).", shape);
-    const p1 = await child(t, { launch: ["alpha"], tools: many(2), servers, ext, piOrder: true, provider: "p1" });
-    assert.equal(p1.mcp.note(), "pi-foreman: MCP tools declared in your tool list: all 2 tools of server alpha. No other MCP tool is reachable in this launch.", shape);
-    assert.equal(p1.mcpActive().length, 2, shape);
+test("m: a later getMcpServers or loadConfig call changes nothing in the line", async (t) => {
+  for (const launch of [["alpha/echo"], ["alpha"]]) {
+    const c = await child(t, { launch, tools: [], servers: alphaHidden, piOrder: true });
+    const note = c.mcp.note();
+    assert.match(note ?? "", /registered no tool/);
+    c.state.servers = [{ name: "alpha", config: { exposure: "deferred" } }];
+    c.state.ext = [{ name: "alpha", config: { exposure: "deferred" } }];
+    c.read();
+    await c.turn();
+    assert.equal(c.mcp.note(), note, launch.join(","));
+    c.state.servers = [];
+    c.state.ext = [];
+    c.read();
+    assert.equal(c.mcp.note(), note, launch.join(","));
   }
-});
-
-test("l: a reachable slow server in either shape is waited for on p1; a server both paths drop is not", async (t) => {
-  for (const [shape, servers, ext] of SHAPES) {
-    const polls = { count: 0 };
-    await child(t, { launch: ["alpha"], tools: [], servers, ext, piOrder: true, provider: "p1", polls });
-    assert.ok(polls.count > 0, `${shape}: preload waited for the slow server`);
-  }
-  const polls = { count: 0 };
-  const c = await child(t, { launch: ["alpha"], tools: [], servers: alphaHidden, ext: alphaHidden, piOrder: true, provider: "p1", polls });
-  assert.equal(polls.count, 0, "no wait for a dropped server");
-  assert.equal(c.mcp.note(), `${NONE_REACHABLE}${GONE}`);
-});
-
-test("l: a server dropped by both paths is named as not available on p2", async (t) => {
-  const c = await child(t, { launch: ["alpha"], tools: [], servers: alphaHidden, ext: alphaHidden, piOrder: true, provider: "p2" });
-  assert.equal(c.mcp.note(), `${NONE_REACHABLE}${GONE}`);
-});
-
-test("l: on p2 without named tools the line is built once: a server hidden between two turns does not change the text", async (t) => {
-  const c = await child(t, { launch: ["alpha", "beta"], provider: "p2", piOrder: true });
-  const note = c.mcp.note();
-  assert.match(note ?? "", /servers alpha, beta are not declared/);
-  c.state.servers = [...alphaDeferred, { name: "beta", config: { exposure: "hidden" } }];
-  c.read();
-  await c.turn();
-  assert.equal(c.mcp.note(), note);
-});
-
-test("l: bare servers over the cap on a direct provider with one hidden: the cap note, then the hidden sentence, count without the hidden server", async (t) => {
-  const c = await child(t, { launch: ["alpha", "beta"], tools: many(4), max: 3, servers: [...alphaDeferred, { name: "beta", config: { exposure: "hidden" } }], piOrder: true });
-  assert.equal(c.mcp.note(), `${cappedNote(4, 3)} MCP server named but not available in this child (hidden in the MCP config): beta; name it under Friction in your report.`);
 });
