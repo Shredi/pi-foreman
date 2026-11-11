@@ -47,7 +47,7 @@ import sys
 import tempfile
 
 DEFAULT_COPY_MAX_BYTES = 100 * 1024 * 1024
-DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/", ".coverage", ".coverage.*", "htmlcov/", "*.egg-info/", "*.tsbuildinfo", ".eslintcache", ".nyc_output/", ".next/", ".nuxt/", ".svelte-kit/", ".turbo/", ".parcel-cache/"]
+DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db", "gpui-kit.d.ts", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/", ".coverage", ".coverage.*", "htmlcov/", "*.egg-info/", "*.tsbuildinfo", ".eslintcache", ".nyc_output/", ".next/", ".nuxt/", ".svelte-kit/", ".turbo/", ".parcel-cache/"]
 IGNORED_WALK_CAP = 20000  # entries walked inside one collapsed ignored folder
 IGNORED_FILES_KEPT = 50  # offending paths a Precondition carries (the total count is exact)
 IGNORED_SHOWN = 3  # paths named in a one-line refusal
