@@ -79,6 +79,19 @@ class DisposableGlobTest(unittest.TestCase):
         self.assertFalse(safe_ops.disposable(".pytest_cache", safe_ops.DEFAULT_DISPOSABLE))
 
 
+class InnerSlashEntryTest(unittest.TestCase):
+    def test_inner_slash_entry_without_trailing_slash_is_file_only(self):
+        self.assertFalse(safe_ops.disposable("a/b/x", ["a/b"]))
+        self.assertFalse(safe_ops.disposable("a/b/", ["a/b"]))
+        self.assertTrue(safe_ops.disposable("a/b", ["a/b"]))
+        self.assertFalse(safe_ops.disposable("x/a/b", ["a/b"]))
+
+    def test_inner_slash_folder_entry_covers_everything_inside(self):
+        self.assertTrue(safe_ops.disposable("a/b/x", ["a/b/"]))
+        self.assertTrue(safe_ops.disposable(".pi/tasks/abc/x.output", safe_ops.DEFAULT_DISPOSABLE))
+        self.assertFalse(safe_ops.disposable(".pi/tasks", safe_ops.DEFAULT_DISPOSABLE))
+
+
 class CacheWorktreeBase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="cache_litter_test_")))

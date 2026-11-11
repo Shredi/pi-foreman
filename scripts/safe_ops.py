@@ -543,7 +543,8 @@ def disposable(path, patterns):
 
     A pattern `name/` matches a directory component at any depth; a pattern without a trailing `/` matches only a file
     (the last component of a path that is not a folder record). A pattern with an inner `/` is anchored at the top
-    level: it matches the leading components of `path` only.
+    level: `name/` matches the leading components of `path` only (so it covers everything below), without the `/` it
+    matches only a file with exactly that many components.
     """
     is_dir = path.endswith("/")
     parts = [x for x in path.split("/") if x]
@@ -556,6 +557,8 @@ def disposable(path, patterns):
         if "/" in name:
             segs = [x for x in name.split("/") if x]
             if len(parts) < len(segs) or (dir_only and len(parts) == len(segs) and not is_dir):
+                continue
+            if not dir_only and (len(parts) != len(segs) or is_dir):
                 continue
             if all(fnmatch.fnmatchcase(fold(c), fold(g)) for c, g in zip(parts, segs)):
                 return True
