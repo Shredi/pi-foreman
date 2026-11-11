@@ -142,10 +142,13 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 - **Checks before the exit.** The preconditions are checked in the session. A refusal (`worktree_dirty`, `stash_references_branch`,
   `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
   message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
-  and the branch stay. Each such line names the real worktree path (and the branch, where one is checked out) and what the owner does: clear the reason
-  (commit or discard changes, copy or delete the ignored files), then remove them with `git worktree remove <path>` and
-  `git branch -D <branch>` or with `foreman worktree sweep`. The `git branch -D` advice is printed only when the PR base
-  branch is known and differs from the branch; otherwise the message says the branch is kept and prints no delete command.
+  and the branch stay. Each such line names the real worktree root (and the branch, where one is checked out) and what the owner does:
+  the action for the reason (commit or discard changes, copy or delete the ignored files, wait for the merge), then run
+  `foreman worktree sweep`, which removes a worktree and its branch only when its own checks pass. An unknown reason is named and
+  points here (cleanup preconditions) and to the sweep. No message prints a `git worktree remove` or `git branch -D` command.
+  For the main checkout and the default or PR base branch (`main_worktree`, `default_branch`, or the up-front refusal) the line
+  says the worktree and branch are never removed and there is nothing for the owner to do. When the head branch is checked out
+  in no worktree, nothing is removed and the line names the branch it keeps.
 - **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
   `spawn` with `detached` and `unref`, no console window on Windows). It waits for the session's pi process to exit, checks
   again, runs `git worktree remove` (never `--force`) and the branch delete, and writes `<handoff dir>/cleanup.json`:

@@ -84,6 +84,11 @@ function pathKey(p: string): string {
   return process.platform === "win32" ? r.replace(/\\/g, "/").toLowerCase() : r;
 }
 
+/** `d` is `k` or below it; only a separator valid on the platform counts (on POSIX a `\` is a name character). */
+export function isInside(d: string, k: string): boolean {
+  return d === k || d.startsWith(k + "/") || (process.platform === "win32" && d.startsWith(k + "\\"));
+}
+
 /** The worktree of the list that contains `dir` (the longest match, so a linked worktree below the main checkout wins); null when none does. */
 export function worktreeRoot(dir: string, wts: Worktree[]): string | null {
   const d = pathKey(dir);
@@ -91,7 +96,7 @@ export function worktreeRoot(dir: string, wts: Worktree[]): string | null {
   let bestLen = -1;
   for (const w of wts) {
     const k = pathKey(w.path).replace(/[\\/]+$/, "");
-    if ((d === k || d.startsWith(k + "/") || d.startsWith(k + "\\")) && k.length > bestLen) {
+    if (isInside(d, k) && k.length > bestLen) {
       best = w.path;
       bestLen = k.length;
     }
@@ -105,16 +110,17 @@ const ACTIONS: Record<string, string> = {
   not_merged: "the owner waits until the PR is merged",
 };
 
-/** The line for a cleanup that does not start: names the real worktree and branch, says what the owner does. */
-function stays(target: string, branch: string, reason: string, baseRef: string | null): string {
-  const first = ACTIONS[reason] || "the owner clears that reason";
-  if (!mayDeleteBranch(branch, baseRef)) return `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: ${first}, then removes the worktree with \`git worktree remove ${target}\`; branch ${branch} is kept (the PR base branch is not known to differ from it)`;
-  return `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: ${first}, then removes them with \`git worktree remove ${target}\` and \`git branch -D ${branch}\` (or \`foreman worktree sweep\`)`;
-}
+/** Reasons for which the worktree and the branch are never removed: nothing for the owner to do. */
+const NEVER = new Set(["default_branch", "main_worktree"]);
 
-/** A `git branch -D` is advised only when the PR base ref is known and is another branch. */
-function mayDeleteBranch(branch: string, baseRef: string | null): boolean {
-  return baseRef !== null && baseRef !== branch;
+const SWEEP = "then runs `foreman worktree sweep`, which removes a worktree and its branch only when its own checks pass (docs/close.md, cleanup preconditions)";
+
+/** The line for a cleanup that does not start: names the real worktree and branch, says what the owner does. */
+function stays(target: string, branch: string, reason: string): string {
+  const head = `cleanup: not started (${reason}); worktree ${target} and branch ${branch} stay: `;
+  if (NEVER.has(reason)) return `${head}this worktree and branch are never removed; there is nothing for the owner to do with them`;
+  const first = ACTIONS[reason] ?? `the owner resolves "${reason}" (see the cleanup preconditions in docs/close.md)`;
+  return `${head}${first}, ${SWEEP}`;
 }
 
 interface CheckOut { ok?: unknown; reason?: unknown; archived?: unknown; archivedCwd?: unknown; leftOut?: unknown; remoteBranch?: unknown }
@@ -140,7 +146,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   const root = worktreeRoot(d.cwd, wts);
   if (!root) {
     const snap = await snapshotOnly(d, d.cwd, cwdBranch ?? headRef ?? "HEAD");
-    return { lines: [...snap, `cleanup: not started (the session cwd ${d.cwd} is in no worktree of this repository); nothing is removed: the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
+    return { lines: [...snap, `cleanup: not started (the session cwd ${d.cwd} is in no worktree of this repository); nothing is removed; the owner runs \`foreman worktree sweep\` from a worktree of the repository, which removes a worktree and its branch only when its own checks pass`] };
   }
   let target = root;
   let branch = cwdBranch;
@@ -150,9 +156,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
     if (!w) {
       const lines = [`merged fact: not verified (PR #${n} head branch ${headRef} is not checked out in a worktree of this repository)`];
       const snap = await snapshotOnly(d, root, cwdBranch ?? headRef);
-      lines.push(...snap, !mayDeleteBranch(headRef, baseRef)
-        ? `cleanup: not started; nothing is removed: branch ${headRef} is kept (the PR base branch is not known to differ from it), the owner removes the round's own worktree by hand once PR #${n} is merged`
-        : `cleanup: not started; nothing is removed: the owner deletes the local branch with \`git branch -D ${headRef}\` once PR #${n} is merged and removes any leftover worktree with \`git worktree remove <path>\``);
+      lines.push(...snap, `cleanup: not started; nothing is removed: no worktree has branch ${headRef} checked out and the branch is kept`);
       return { lines };
     }
     target = w.path;
@@ -161,18 +165,18 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   if (!branch) {
     if (isMain) {
       const snap = await snapshotOnly(d, root, "HEAD");
-      return { lines: [...snap, `cleanup: not started (worktree ${target} is the main checkout and has no branch checked out); nothing is removed: worktree ${target} stays; the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
+      return { lines: [...snap, `cleanup: not started (worktree ${target} is the main checkout and has no branch checked out); nothing is removed: worktree ${target} is never removed; there is nothing for the owner to do with it`] };
     }
-    return { lines: [`cleanup: not started (the worktree ${target} has no branch checked out); nothing is removed: worktree ${target} stays; the owner checks out the round's branch in it, or removes the worktree with \`git worktree remove ${target}\``] };
+    return { lines: [`cleanup: not started (the worktree ${target} has no branch checked out); nothing is removed: worktree ${target} stays; the owner checks out the round's branch in it, ${SWEEP}`] };
   }
   const lines: string[] = [];
   if (isMain || branch === baseRef) {
     const why = isMain ? `worktree ${target} is the main checkout` : `branch ${branch} is the base branch of PR #${n}`;
     const snap = await snapshotOnly(d, root, branch);
-    return { lines: [...snap, `cleanup: not started (${why}); nothing is removed: worktree ${target} and branch ${branch} stay; the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
+    return { lines: [...snap, `cleanup: not started (${why}); nothing is removed: worktree ${target} and branch ${branch} are never removed; there is nothing for the owner to do with them`] };
   }
   const tip = await d.git(["rev-parse", "--verify", "HEAD"], samePath(target, root) ? undefined : target);
-  if (!tip) return { lines: [`cleanup: not started (the worktree ${target} has no commit checked out); nothing is removed: worktree ${target} and branch ${branch} stay; the owner commits the round's work in it, or removes the worktree with \`git worktree remove ${target}\``] };
+  if (!tip) return { lines: [`cleanup: not started (the worktree ${target} has no commit checked out); nothing is removed: worktree ${target} and branch ${branch} stay; the owner commits the round's work in it, ${SWEEP}`] };
   const fact = await verifyMerged(async () => status, n, branch, tip);
   if ("why" in fact) lines.push(`merged fact: not verified (${fact.why}); only a branch merged into the base is removed`);
   const archive = path.join(d.handoff, ARCHIVE_DIR);
@@ -186,7 +190,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   lines.push(...archiveLines(out, archive));
   if (out.ok !== true) {
     const reason = typeof out.reason === "string" ? out.reason : "refused";
-    lines.push(stays(target, branch, reason, baseRef));
+    lines.push(stays(target, branch, reason));
     return { lines };
   }
   if (typeof out.remoteBranch === "string") lines.push(`kept: remote branch ${branch} (enable delete head branch on merge)`);

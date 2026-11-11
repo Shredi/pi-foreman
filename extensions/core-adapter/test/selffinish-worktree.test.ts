@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SafeOpOutcome } from "../safeops.ts";
-import { parseWorktrees, samePath, selfFinish } from "../selffinish.ts";
+import { isInside, parseWorktrees, samePath, selfFinish } from "../selffinish.ts";
 import type { SelfFinishDeps } from "../selffinish.ts";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
@@ -201,7 +201,8 @@ test("a PR head branch in no worktree: the message names the branch and what to 
     assert.equal(r.spawn, undefined);
     const text = r.lines.join("\n");
     assert.match(text, /merged fact: not verified \(PR #7 head branch ghost is not checked out in a worktree of this repository\)/);
-    assert.match(text, /cleanup: not started; nothing is removed.*git branch -D ghost/);
+    assert.match(text, /cleanup: not started; nothing is removed: no worktree has branch ghost checked out and the branch is kept/);
+    assert.ok(!text.includes("git branch -D") && !text.includes("git worktree remove"), text);
     assert.ok(fs.existsSync(w.wt));
   } finally {
     w.cleanup();
@@ -217,7 +218,7 @@ test("a detached second worktree: the not-started line names its path and says w
     assert.equal(r.spawn, undefined);
     assert.equal(w.calls(), 0, "no check runs without a branch");
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
-    assert.ok(fwd(line).includes(fwd(`the worktree ${w.wt} has no branch checked out`)) && fwd(line).includes(fwd(`git worktree remove ${w.wt}`)), line);
+    assert.ok(fwd(line).includes(fwd(`the worktree ${w.wt} has no branch checked out`)) && line.includes("foreman worktree sweep") && !line.includes("git worktree remove"), line);
     assert.ok(fs.existsSync(w.wt));
   } finally {
     w.cleanup();
@@ -253,7 +254,7 @@ test("an unborn second worktree: the not-started line names its path and branch 
     assert.equal(r.spawn, undefined);
     const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
     assert.ok(fwd(line).includes(fwd(`the worktree ${orphan} has no commit checked out`)) && fwd(line).includes(fwd(`worktree ${orphan} and branch newb stay`)), line);
-    assert.ok(fwd(line).includes(fwd("git worktree remove " + orphan)), line);
+    assert.ok(line.includes("foreman worktree sweep") && !line.includes("git worktree remove"), line);
     assert.ok(fs.existsSync(orphan));
   } finally {
     w.cleanup();
@@ -316,7 +317,7 @@ test("cwd in a subfolder of a linked round worktree: the worktree root is verifi
     assert.ok(fwd(line).includes(fwd(w.wt)) && !fwd(line).includes(fwd(sub)) && line.includes("branch feat"), line);
     r.spawn();
     assert.ok(w.spawned[0].includes(w.wt) || w.spawned[0].some((a) => samePath(a, w.wt)));
-    assert.ok(!w.spawned[0].some((a) => a === sub));
+    assert.ok(!w.spawned[0].some((a) => samePath(a, sub) || fwd(a) === fwd(sub)));
     noRemoveOf(r.lines.join("\n"), w.repo);
     const res = await py(w.spawned[0]);
     assert.equal(res.code, 0);
@@ -347,7 +348,7 @@ test("head ref main with no base ref and a detached main checkout: no branch del
     const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "main", headSha: w.tip }), git: gitIn(w.repo) }), 7);
     const text = r.lines.join("\n");
     assert.equal(r.spawn, undefined);
-    assert.match(text, /branch main is kept/);
+    assert.match(text, /no worktree has branch main checked out and the branch is kept/);
     assert.ok(!text.includes("git branch -D"), text);
   } finally {
     w.cleanup();
@@ -361,22 +362,22 @@ test("a refused linked worktree with no base ref known: the branch is kept, no b
     const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "feat", headSha: w.tip }) }), 7);
     const text = r.lines.join("\n");
     assert.equal(r.spawn, undefined);
-    assert.ok(text.includes("worktree_dirty") && fwd(text).includes(`git worktree remove ${fwd(w.wt)}`), text);
-    assert.match(text, /branch feat is kept/);
+    assert.ok(text.includes("worktree_dirty") && fwd(text).includes(fwd(w.wt)) && text.includes("foreman worktree sweep"), text);
+    assert.match(text, /branch feat stay/);
     assert.ok(!text.includes("git branch -D"), text);
   } finally {
     w.cleanup();
   }
 });
 
-test("a refused linked worktree with a differing base ref still prints the branch delete advice", async () => {
+test("a refused linked worktree with a differing base ref names the sweep, no branch delete command", async () => {
   const w = world();
   try {
     fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
     const r = await selfFinish(w.deps(), 7);
     const text = r.lines.join("\n");
     assert.equal(r.spawn, undefined);
-    assert.ok(text.includes("worktree_dirty") && text.includes("`git branch -D feat`"), text);
+    assert.ok(text.includes("worktree_dirty") && text.includes("`foreman worktree sweep`") && !text.includes("git branch -D"), text);
   } finally {
     w.cleanup();
   }
@@ -404,4 +405,75 @@ test("parseWorktrees reads the porcelain list (main first) and samePath ignores 
   const here = fs.realpathSync.native(os.tmpdir());
   assert.ok(samePath(here, here + path.sep));
   if (process.platform === "win32") assert.ok(samePath(here.replace(/\\/g, "/").toUpperCase(), here.toLowerCase()));
+});
+
+test("isInside counts only separators valid on the platform: on POSIX a backslash is a name character", () => {
+  assert.ok(isInside("/r/repo", "/r/repo") && isInside("/r/repo/sub", "/r/repo"));
+  assert.ok(!isInside("/r/repo2", "/r/repo") && !isInside("/r/repo-x", "/r/repo"));
+  assert.equal(isInside("/r/repo\\x", "/r/repo"), process.platform === "win32");
+});
+
+test("no returned line advises git worktree remove or git branch -D, and each names the worktree or branch it speaks about", async () => {
+  const mustName = (r: { lines: string[] }, ...names: string[]): void => {
+    const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+    assert.ok(line, r.lines.join("\n"));
+    for (const l of r.lines) assert.ok(!l.includes("git worktree remove") && !l.includes("git branch -D"), l);
+    for (const n of names) assert.ok(fwd(line).includes(fwd(n)), `${n} in ${line}`);
+  };
+  const noStatus = async (): Promise<SafeOpOutcome> => ({ kind: "error", message: "pr_status failed" });
+  let w = world();
+  try {
+    fs.writeFileSync(path.join(w.wt, "dirty.txt"), "d\n");
+    const r = await selfFinish(w.deps(), 7);
+    mustName(r, w.wt, "branch feat", "foreman worktree sweep");
+  } finally {
+    w.cleanup();
+  }
+  w = world();
+  try {
+    git(w.repo, "checkout", "-q", "-b", "other");
+    const wm = path.join(w.root, "repo.worktrees", "onmain");
+    git(w.repo, "worktree", "add", "-q", wm, "main");
+    const r = await selfFinish(w.deps({ cwd: wm, status: async () => ran({ state: "merged", headRefName: "main", headSha: w.tip }), git: gitIn(wm) }), 7);
+    assert.equal(r.spawn, undefined);
+    mustName(r, wm, "branch main", "default_branch", "never removed");
+  } finally {
+    w.cleanup();
+  }
+  w = world();
+  try {
+    git(w.repo, "checkout", "-q", "--detach");
+    const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "main", baseRef: "develop", headSha: w.tip }), git: gitIn(w.repo) }), 7);
+    mustName(r, "branch main");
+  } finally {
+    w.cleanup();
+  }
+  w = world();
+  try {
+    const r = await selfFinish(w.deps({ status: async () => ran({ state: "merged", headRefName: "main", baseRef: "main", headSha: w.tip }), git: gitIn(w.repo) }), 7);
+    mustName(r, w.repo, "never removed");
+  } finally {
+    w.cleanup();
+  }
+  w = world();
+  try {
+    const stray = path.join(w.root, "stray");
+    fs.mkdirSync(stray);
+    const r = await selfFinish(w.deps({ cwd: stray, git: async (a) => (a[0] === "worktree" ? git(w.repo, ...a) : null) }), 7);
+    mustName(r, stray);
+  } finally {
+    w.cleanup();
+  }
+  w = world();
+  try {
+    git(w.wt, "checkout", "-q", "--detach");
+    const r = await selfFinish(w.deps({ cwd: w.wt, status: noStatus, git: gitIn(w.wt) }), 7);
+    mustName(r, w.wt);
+    const orphan = path.join(w.root, "repo.worktrees", "orphan");
+    git(w.repo, "worktree", "add", "-q", "--orphan", "-b", "newb", orphan);
+    const r2 = await selfFinish(w.deps({ cwd: orphan, status: noStatus, git: gitIn(orphan) }), 7);
+    mustName(r2, orphan, "branch newb");
+  } finally {
+    w.cleanup();
+  }
 });
