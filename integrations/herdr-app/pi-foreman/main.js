@@ -422,7 +422,11 @@ export default class ForemanAgents extends View {
     const trigger = chip.id(id).tooltip(c.state).on_mouse_move(onMove)
       .when(Boolean(href), (el) => el.cursor_pointer()
         .hover((x) => x.border_color(t.working).text_color(t.foreground))
-        .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(id, cx); this.openUrl(href, cx); }));
+        .on_click((_e, cx) => { cx.stop_propagation?.(); this.press(id, cx); this.openUrl(href, cx); }))
+      .when(!href, (el) => el.on_click((_e, cx) => {
+        cx.stop_propagation?.();
+        guard(() => notify({ title: "No link for this pull request", body: `#${pr.number} has no page address yet.`, level: "info" }));
+      }));
     // The id carries a hash of the card's content: a card is not reused when its content changed.
     return HoverCard.new(`card-${key}-${pr.number}-${hashOf(JSON.stringify(c))}`).open_delay(300).close_delay(200)
       .anchor(this.cardAnchor?.get(id) ?? "top_center")

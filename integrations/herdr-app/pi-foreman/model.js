@@ -429,8 +429,9 @@ export function totalCost(node) {
 }
 
 /** A session that is over without the "done" mark: closed by its owner, finished (its remote terminal ended), or lost (its process vanished).
- *  A lost one with a live hc terminal (`liveHc`, set by the render) or an open registry entry (`regOpen`) is only late, not over. */
-export const isEnded = (n) => n.state === "closed" || n.state === "finished" || (n.state === "lost" && !n.liveHc && !n.regOpen);
+ *  A lost or stale one (heartbeat long silent) with a live hc terminal (`liveHc`, set by the render) or an open registry entry
+ *  (`regOpen`) is only late, not over. */
+export const isEnded = (n) => n.state === "closed" || n.state === "finished" || ((n.state === "lost" || n.state === "stale") && !n.liveHc && !n.regOpen);
 
 export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;
