@@ -452,11 +452,12 @@ export interface ScriptUndoReport {
   supported: boolean;
   /** Undo can run now. */
   available: boolean;
-  /** ISO time the undo window ends (one hour after the real run), null before a real run. */
-  availableUntil: string | null;
+  /** ISO time the undo window ends (one hour after the real run), null before a real run. Only with undo supported and not yet used. */
+  availableUntil?: string | null;
   used: boolean;
   attempts: number;
-  attemptsLeft: number;
+  /** Undo attempts left. Only with undo supported; 0 once the undo is used. */
+  attemptsLeft?: number;
 }
 
 export interface ScriptStatusReport {
@@ -488,13 +489,14 @@ export function scriptStatus(state: ScriptState, now: number): ScriptStatusRepor
   expire(p, now);
   const used = p.status === "consumed";
   const until = p.ranAt === null ? null : p.ranAt + SCRIPT_EXPIRY_MS;
+  const supported = undoAble(p);
   const undo: ScriptUndoReport = {
-    supported: undoAble(p),
-    available: undoAble(p) && until !== null && !p.undoDone && p.undoAttempts < SCRIPT_MAX_ATTEMPTS && now < until,
-    availableUntil: until === null ? null : new Date(until).toISOString(),
+    supported,
+    available: supported && until !== null && !p.undoDone && p.undoAttempts < SCRIPT_MAX_ATTEMPTS && now < until,
+    ...(supported && !p.undoDone ? { availableUntil: until === null ? null : new Date(until).toISOString() } : {}),
     used: p.undoDone,
     attempts: p.undoAttempts,
-    attemptsLeft: p.undoDone ? 0 : Math.max(0, SCRIPT_MAX_ATTEMPTS - p.undoAttempts),
+    ...(supported ? { attemptsLeft: p.undoDone ? 0 : Math.max(0, SCRIPT_MAX_ATTEMPTS - p.undoAttempts) } : {}),
   };
   return { status: p.status, approvalUsed: used, path: p.rel, hash: p.hash, approvedHash: p.approvedHash, runHash: p.runHash, ranHash: p.ranHash, ranAt: p.ranAt === null ? null : new Date(p.ranAt).toISOString(), attempts: p.attempts, attemptsLeft: used ? 0 : Math.max(0, SCRIPT_MAX_ATTEMPTS - p.attempts), expiresAt: used || p.approvedAt === null ? null : p.approvedAt + SCRIPT_EXPIRY_MS, undo, logs: [...p.logs], note: p.note };
 }

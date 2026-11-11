@@ -65,7 +65,7 @@ class DisposableGlobTest(unittest.TestCase):
 
     def test_defaults_end_with_the_agreed_caches_in_order(self):
         self.assertEqual(safe_ops.DEFAULT_DISPOSABLE[-len(CACHES):], CACHES)
-        self.assertEqual(len(safe_ops.DEFAULT_DISPOSABLE), 9 + len(CACHES))
+        self.assertEqual(len(safe_ops.DEFAULT_DISPOSABLE), 10 + len(CACHES))
 
     def test_glob_stays_inside_one_component(self):
         pats = safe_ops.DEFAULT_DISPOSABLE

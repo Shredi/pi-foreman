@@ -404,7 +404,7 @@ When the active provider is `claude-bridge`, pi-foreman points `CLAUDE_CONFIG_DI
 `<agent dir>/pi-foreman/claude-config/`, so the host's Claude Code settings, hooks, plugins and
 `CLAUDE.md` do not load into every bridge turn (config key `bridge.isolateClaudeConfig`: `"auto"` by
 default, `true`, or `false`; a project file cannot set it). The folder starts without a login, and the
-installer does not log in. Do one of these once:
+installer does not log in; setup prints the log-in hint only when no login is found (credentials file, macOS keychain entry or `CLAUDE_CODE_OAUTH_TOKEN`). Do one of these once:
 
 ```sh
 CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude    # then /login

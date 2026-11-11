@@ -62,6 +62,17 @@ const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
 const NO_PROFILE_HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
+// Keep in step with isolationDir/keychainService/macKeychainProbe/isolationDoctor in extensions/core-adapter/bridgeiso.ts.
+// Presence checks only: no credential content is read or printed.
+const macKeychainProbe = (service) => spawnSync("security", ["find-generic-password", "-s", service], { stdio: "ignore", timeout: 5000 }).status === 0;
+
+export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain = macKeychainProbe } = {}) {
+  const dir = path.join(agentDir, "pi-foreman", "claude-config");
+  if (fs.existsSync(path.join(dir, ".credentials.json"))) return true;
+  if (platform === "darwin" && keychain(`Claude Code-credentials-${crypto.createHash("sha256").update(dir.normalize("NFC")).digest("hex").substring(0, 8)}`)) return true;
+  return !!env.CLAUDE_CODE_OAUTH_TOKEN;
+}
+
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
@@ -1602,7 +1613,7 @@ async function main(argv) {
     }
     if (errors.length) say(`  some roles are unresolved; only the resolvable part was written. Edit ${foremanFile}.`);
 
-    if (finalPackages.some(isBridgeEntry)) say(BRIDGE_HINT.replace("<agent dir>", agentDir));
+    if (finalPackages.some(isBridgeEntry) && !bridgeLoginPresent(agentDir)) say(BRIDGE_HINT.replace("<agent dir>", agentDir));
     const present = addonsInstalled();
     // add-on environment variables (PI_BG_FEATURES=process): Pi reads them at start, so they must outlive this shell
     const envVars = {};
