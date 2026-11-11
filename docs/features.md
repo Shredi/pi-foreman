@@ -643,7 +643,7 @@ Switch: `safety.subagents.allowWorkflow` is true.
 | `ceremony.childBashTimeoutMaxSeconds` | `1800` | any layer |
 | `safety.requiredChildExtensions` | `[]` | tighten-only (entries are added, never removed) |
 | `safety.ops.copyMaxBytes` | `104857600` | tighten-only (lower only) |
-| `safety.ops.worktreeDisposable` | `["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/"]` | not in project/session (no tighten rule for this safety key) |
+| `safety.ops.worktreeDisposable` | `["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db"]` | not in project/session (no tighten rule for this safety key) |
 | `safety.ops.baseBranch` | `null` | not in project/session (no tighten rule for this safety key) |
 | `safety.preBash.hooks` | `[]` | not in project/session (no tighten rule for this safety key) |
 | `safety.preBash.strict` | `false` | not in project/session (no tighten rule for this safety key) |

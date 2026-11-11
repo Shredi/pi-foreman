@@ -273,7 +273,7 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
             try:
                 chk = safe_ops.check_worktree(real, real, ops_cfg)
             except safe_ops.Precondition as exc:
-                reason = exc.name
+                reason = safe_ops.ignored_text(exc)
             except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
                 reason = "check_failed (%s)" % str(exc)[:80]
         if reason is None and chk:
