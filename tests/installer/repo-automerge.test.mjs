@@ -120,3 +120,35 @@ test("no repo or a bad argument prints the usage and exits 2", () => {
   assert.equal(main([], { gh: () => assert.fail("no call"), log: () => {} }), 2);
   assert.equal(main(["o/r", "--nope"], { gh: () => assert.fail("no call"), log: () => {} }), 2);
 });
+
+const open = { required_status_checks: { strict: true, contexts: ["x"] }, allow_force_pushes: { enabled: true }, allow_deletions: { enabled: true }, enforce_admins: { enabled: false } };
+const closed = { required_status_checks: { strict: true, contexts: ["x"] }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false }, enforce_admins: { enabled: true } };
+
+test("a dry run warns when force pushes and deletion are allowed and admins are exempt", () => {
+  const r = run({ [`GET ${PROT}`]: ok(open) }, ["o/r", "--checks", "ci-ok"]);
+  assert.match(r.out, /force pushes to main: allowed WARN/);
+  assert.match(r.out, /deletion of main: allowed WARN/);
+  assert.match(r.out, /protection includes admins: no \(admins can bypass it\) WARN/);
+});
+
+test("a dry run reports the three settings OK when the branch is closed", () => {
+  const r = run({ [`GET ${PROT}`]: ok(closed) }, ["o/r", "--checks", "ci-ok"]);
+  assert.match(r.out, /force pushes to main: not allowed OK/);
+  assert.match(r.out, /deletion of main: not allowed OK/);
+  assert.match(r.out, /protection includes admins: yes OK/);
+  assert.doesNotMatch(r.out, /WARN/);
+});
+
+test("a missing setting counts as closed for force pushes and deletion and as exempt for admins", () => {
+  const r = run({ [`GET ${PROT}`]: ok({ required_status_checks: { strict: true, contexts: [] } }) }, ["o/r", "--checks", "ci-ok"]);
+  assert.match(r.out, /force pushes to main: not allowed OK/);
+  assert.match(r.out, /deletion of main: not allowed OK/);
+  assert.match(r.out, /protection includes admins: no .* WARN/);
+});
+
+test("--apply prints no protection report and sends the same writes", () => {
+  const r = run({ [`GET ${PROT}`]: ok(open), [`PATCH ${PROT}/required_status_checks`]: ok({}), [`DELETE ${PROT}/required_pull_request_reviews`]: ok({}) }, ["o/r", "--checks", "ci-ok", "--apply"]);
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /force pushes|deletion of|includes admins/);
+  assert.deepEqual(r.writes().map((c) => `${c.method} ${c.endpoint}`), ["PATCH repos/o/r", `PATCH ${PROT}/required_status_checks`, `DELETE ${PROT}/required_pull_request_reviews`]);
+});

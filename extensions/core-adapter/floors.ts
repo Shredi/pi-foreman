@@ -10,6 +10,7 @@ import { lexUnder, normPath, sameOrUnder, tildeWord, type Resolver } from "./pat
 import { globMatch } from "./glob.ts";
 import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
 import { nonPathArgs } from "./permoverlay.ts";
+import { protectedMatch } from "./protectedmatch.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -207,17 +208,17 @@ function pushFloor(call: GitCall, env: FloorEnv): FloorHit | null {
   const refspecs = positional.slice(1).filter((r) => r !== "tag");
   const odd = refspecs.find((r) => r.startsWith("+") || r.includes(":"));
   if (odd !== undefined) return hit("git-push-force", `The refspec '${odd}' can overwrite or delete any remote ref. ${alt}`);
-  const prot = protectedSet(env);
+  const prot = [...protectedSet(env)];
   const cwd = call.cwd ?? env.cwd;
   const head = env.remoteHead?.(cwd);
-  if (head) prot.add(head);
+  if (head) prot.push(head);
   const targets = refspecs.map((r) => (r === "HEAD" ? env.currentBranch?.(cwd) ?? "HEAD" : stripHeads(r)));
   if (!refspecs.length && !all) {
     const cur = env.currentBranch?.(cwd);
     if (cur) targets.push(cur);
   }
   if (all) return hit("git-push-protected", `\`git push --all\` includes the default and protected branches. ${alt}`);
-  const bad = targets.find((t) => prot.has(t));
+  const bad = targets.find((t) => protectedMatch(prot, t, { ignoreCase: true }) !== undefined);
   if (bad !== undefined) return hit("git-push-protected", `'${bad}' is a default or protected branch. ${alt}`);
   return null;
 }
@@ -751,7 +752,9 @@ function opaqueTextFloorsAt(text: string, env: FloorEnv, anywhere: boolean): Flo
     if (key !== undefined) return flag("git-config", `The unparsed line names the git config key '${key}', which changes where code is fetched or pushed, which program git runs or which credentials it uses.`);
     if (calls.some((c) => c.verb === "remote" && /^\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b/.test(c.tail))) return flag("git-config", "The unparsed line changes a git remote.");
     if (push && /(?:\s--(?:force|force-with-lease|force-if-includes|mirror|delete|prune|all)\b|\s-[a-z]*[fd][a-z]*\b|\s\+\S|\s:\S)/.test(push.tail)) return flag("git-push-force", "The unparsed line looks like a force, delete, mirror or colon-refspec push.");
-    const prot = push ? [...protectedSet(env)].find((b) => new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(push.tailText)) : undefined;
+    // every entry: the literal whole-word search; an entry with a wildcard is also matched against each token of the push tail
+    const tokens = push ? (push.tailText.match(/[A-Za-z0-9._/*-]+/g) ?? []).map((t) => t.replace(/^refs\/heads\//, "")) : [];
+    const prot = push ? [...protectedSet(env)].find((b) => new RegExp(`\\b${b.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(push.tailText) || (/[*?[]/.test(b) && tokens.some((t) => protectedMatch([b], t, { ignoreCase: true }) !== undefined))) : undefined;
     if (prot !== undefined) return flag("git-push-protected", `The unparsed line pushes '${prot}', a default or protected branch.`);
   }
   if (/\b(?:npm|pnpm|yarn|bun|cargo|twine|gem|poetry)\s+(?:\S+\s+)*(?:publish|upload|push)\b/.test(lower)) return hit("publish", "The unparsed line publishes a package. Ask the user to publish.");

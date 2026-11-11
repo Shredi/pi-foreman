@@ -89,7 +89,7 @@ test("prpack: pr_create order, gate refusal traced, push refusal, upstream stale
   const off = setup({ gateOn: false, push: "protected branch" });
   const r2 = await off.call("pr_create", { title: "t", body: "b" });
   assert.equal(r2.details.decision, "push_refused");
-  assert.match(r2.content[0].text, /^pr_create: the git guard would refuse pushing this branch \(protected branch\); nothing was done\.$/);
+  assert.match(r2.content[0].text, /^pr_create: a push floor refuses pushing this branch \(protected branch\); nothing was done\.$/);
   const ok = setup({ gateOn: false });
   const r3 = await ok.call("pr_create", { title: "t", body: "b" });
   assert.equal(r3.details.decision, "ran");

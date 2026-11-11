@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { mainNeedsGitGuard } from "../gitguard.ts";
+import { mainNeedsGitGuard } from "../gitdrift.ts";
 import { appendReview, headOf, headsAt, isPrToolName, launchCwds, MAX_REVIEWS, passHeads, prGateRefusal, prToolRefusal, checksLine, reviewedHead, reviewsOfRunEnd } from "../reviews.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import { rmTestTmp } from "./_tmpbase.ts";

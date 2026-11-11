@@ -188,8 +188,8 @@ touches `.ask` and shows the session as blocked in Herdr (`herdr:blocked`, label
   allowed. This refusal is defence in depth, since a ruling cannot satisfy the gate anyway; a ruling file this session
   still changed is ignored until the parent writes it again (a newer mtime). Self-written marks live in memory.
 - **Child input dirs.** A child writes the files it passes to a command (its `git commit -F` message file) only into
-  `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir, and the git guard
-  refuses a child message file there and anywhere else in the worktree (docs/permissions.md, overlay narrowing). A
+  `$FOREMAN_SCRATCH` or `<worktree>/.workflow/scratch/`; `.pi/scratch/` is the main session's dir and not a place for a
+  child's message file. A
   child's `git tag -F` message file under a write-protect rule (`.pi/scratch/` included) is denied by the overlay.
 - **`bg_wait` during a builder's supervisor ask.** pi-foreman does not refuse it (`bg_wait` is exempt from the supervisor window).
   The pi-subagents package (node_modules, not editable here) ends the wait with "Wait yielded for a pending supervisor
@@ -267,7 +267,7 @@ inside it. A checkout counts as part of the surrounding tree when its `.git` fil
 `modules/` admin area and that admin dir points back at the checkout (a linked submodule worktree), or a submodule's
 `core.worktree` names it (a plain submodule checkout); the rule applies recursively. For a session started in the main
 monorepo or in such a worktree, and for its round worktrees, that whole tree is one workspace: owned paths, path rules, the
-git guard (commit, `restore`), round detection and the children's write roots all treat the nested checkouts as inside it,
+round detection and the children's write roots all treat the nested checkouts as inside it,
 but never anything above the session's workspace or round, and never another round's tree. A forged `.git` file that points at
 another round's admin dir fails the back-link check. A session started inside a submodule checkout does not lift: its workspace
 is that submodule.
@@ -662,7 +662,7 @@ The foreman-only `foreman_bg({command, note})` runs one shell command detached (
 `<agent dir>/pi-foreman/state/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when that file already exists, e.g. after a reload) and registers a `pid` wait with your `note`. It returns the wait
 id and the log path at once; you end the turn and one message wakes you when the process has exited (the exit code is not
 known: read the log). The command passes the same guards as a bash call, with no bypass: the overlay deny and ask rules, the
-shell-write guard, the destructive guard and the git guard. A command that is empty or not a string is refused.
+shell-write guard and the destructive guard. A command that is empty or not a string is refused.
 On Windows the command runs in Git Bash (the bash tool's shell), so write POSIX syntax; only when no bash is found it runs under `cmd.exe`, see the
 [known limit](safety.md#known-limit-background-runs-on-windows).
 

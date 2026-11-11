@@ -141,7 +141,7 @@ export function registerGitPack(pi: Pick<ExtensionAPI, "registerTool">, deps: Gi
 
 ## 7. Features and docs
 
-- **`config/features.json`.** Add the following entry after `git-guard`, then run `FOREMAN_DOCS_UPDATE=1 python scripts/foreman_docs.py features`:
+- **`config/features.json`.** Add the following entry after the entry for the gate's push floors (`git-guard` when this was written, since removed), then run `FOREMAN_DOCS_UPDATE=1 python scripts/foreman_docs.py features`:
 
   ```json
   {"id": "git-tools", "title": "Git tool pack", "purpose": "Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace.", "doc": "docs/tools.md#git-tool-pack", "keys": ["tools.git"], "commands": [], "switch": {"key": "tools.git", "on": "true"}, "state": "off", "enable": "{\"tools\": {\"git\": true}}"}

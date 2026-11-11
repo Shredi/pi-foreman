@@ -611,6 +611,8 @@ class PackageFilesTest(unittest.TestCase):
              "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
             # the SECURITY: revision-cap rule lost its removed `planner` tag, so it renders in every variant (eee843d never had it)
             ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
+            # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
+            ("on the current head; the adapter refuses it otherwise. Start", "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
         ]
         for old_text, _ in role_pairs:
             self.assertIn(old_text, expected)

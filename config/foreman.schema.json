@@ -288,7 +288,7 @@
         },
         "foremanEdits": { "type": "string", "enum": ["readonly", "scratchpad", "bounded"], "description": "What the foreman may change itself: readonly = only .workflow/; scratchpad = .workflow/ and ceremony.scratchDir; bounded = workspace files at tier trivial within ceremony.trivialBound. A refused edit raises a trivial tier to standard. A project or session can only tighten it (readonly < scratchpad < bounded)." },
         "scratchDir": { "type": "string", "description": "Workspace-relative folder the foreman may write in scratchpad mode (notes, drafts, commit messages). Not absolute, no '..', not the workspace root, must resolve inside the workspace. A project or session can only narrow it to a subfolder." },
-        "reviewBeforePr": { "type": "boolean", "description": "A pull/merge request needs a reviewer PASS on the current HEAD. A project or session can only set true." },
+        "reviewBeforePr": { "type": "boolean", "description": "A pull request opened with the PR tool (pr_create) needs a reviewer PASS on the current HEAD; the tool refuses without it. A PR opened from the shell is not refused; the watch reports a head the reviewer never passed. A project or session can only set true." },
         "foremanReads": {
           "type": "object",
           "additionalProperties": false,
@@ -579,16 +579,16 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches (fnmatch patterns) that never receive a force push, mirror push or delete from the foreman. A project can add entries, not remove them." },
+            "protectedBranches": { "type": "array", "items": { "type": "string" }, "description": "Branches (case-insensitive fnmatch patterns) that never receive a force push, mirror push or delete from the foreman. A project can add entries, not remove them." },
             "commit": {
               "type": "object",
               "additionalProperties": false,
-              "description": "Foreman commit lint (scripts/git_guard.py --mode main).",
+              "description": "No longer used; commit messages are checked by the project's commit hooks. The keys stay so old configs validate.",
               "properties": {
-                "messagePattern": { "type": ["string", "null"], "description": "Python regular expression the commit subject must match (re.search). null switches the check off. A project cannot set it." },
-                "requiredTrailers": { "type": "array", "items": { "type": "string" }, "description": "Regular expressions; each must match one trailer line (Key: value) of the message. A project can add entries, not remove them." },
-                "forbiddenTrailers": { "type": "array", "items": { "type": "string" }, "description": "Regular expressions no trailer line may match. A project can add entries, not remove them." },
-                "checkCommand": { "type": ["array", "null"], "items": { "type": "string" }, "description": "argv of a command run before each foreman commit, with the staged diff on stdin and the message in PI_FOREMAN_COMMIT_MESSAGE; a non-zero exit blocks the commit. It executes a program, so only the organisation and user layers may set it; a project value is ignored." }
+                "messagePattern": { "type": ["string", "null"], "description": "No longer used; commit messages are checked by the project's commit hooks." },
+                "requiredTrailers": { "type": "array", "items": { "type": "string" }, "description": "No longer used; commit messages are checked by the project's commit hooks." },
+                "forbiddenTrailers": { "type": "array", "items": { "type": "string" }, "description": "No longer used; commit messages are checked by the project's commit hooks." },
+                "checkCommand": { "type": ["array", "null"], "items": { "type": "string" }, "description": "No longer used; commit messages are checked by the project's commit hooks." }
               }
             }
           }

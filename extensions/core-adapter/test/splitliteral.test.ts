@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mainNeedsGitGuard } from "../gitguard.ts";
+import { mainNeedsGitGuard } from "../gitdrift.ts";
 import { readFileSync } from "node:fs";
 import { probeFileHit, reassemblesToken } from "../splitliteral.ts";
 
-// R6 lane 1c: the same fixture tests/test_git_guard_split_literal.py reads (git_guard.py, child mode)
+// R6 lane 1c: reads the fixture tests/fixtures/split-literal-cases.json
 const CASES = JSON.parse(readFileSync(new URL("../../../tests/fixtures/split-literal-cases.json", import.meta.url), "utf8")) as { deny: string[]; allow: string[]; probeDeny: string[]; probeAllow: string[] };
 
 test("fixture deny lines reassemble a guarded token", () => {
@@ -21,7 +21,7 @@ test("probe-file scan: char codes, base64 and fragments are hits, ordinary strin
   for (const cmd of CASES.deny) assert.equal(probeFileHit(cmd), true, cmd);
 });
 
-// ledger item 7f: a main-role line that spells a guarded token from pieces reaches the guard (git_guard.py denies it)
+// ledger item 7f: a main-role line that spells a guarded token from pieces satisfies the predicate mainNeedsGitGuard (gitdrift.ts), which triggers the config-change check
 test("split-literal lines run the git guard in the main role", () => {
   for (const cmd of [
     "cat '.g''it'/config",

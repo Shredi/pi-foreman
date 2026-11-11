@@ -204,7 +204,7 @@ def default_branches(cwd, ops_cfg):
 
 
 def protected_pattern(cfg, branch):
-    """The safety.git.protectedBranches pattern `branch` matches (case-insensitive fnmatch, as git_guard's protected_hit), else None."""
+    """The safety.git.protectedBranches pattern `branch` matches (case-insensitive fnmatch; the table tests/fixtures/protected-branch-cases.json pins it against the gate's matcher), else None."""
     pats = ((cfg.get("safety") or {}).get("git") or {}).get("protectedBranches")
     b = branch.lower()
     for p in (pats if isinstance(pats, list) else ["main", "master"]):

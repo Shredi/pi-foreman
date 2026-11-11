@@ -1,7 +1,7 @@
 // Reviewer verdicts with the commit they covered (ledger 10-12): when a reviewer run ends with a
 // verdict, HEAD of that run's cwd is recorded next to it, only when it equals HEAD at the run's
 // launch (else null: a commit made during the review was not reviewed). Only PASS heads open the PR gate
-// (scripts/git_guard.py `pr_gate`, gitguard.ts). Trust level: role name + verdict token of the
+// (`prGateRefusal`). Trust level: role name + verdict token of the
 // run-end event, as for the delegation rounds. The record also names the checkout (realpath of the git toplevel): a PASS
 // opens the session checkout by SHA, and another (sibling) checkout only through `pr_create {cwd}` for exactly that checkout
 // at its current HEAD; a PASS recorded in another checkout opens nothing else (fail closed).
@@ -222,14 +222,14 @@ export function appendReview(list: ReviewRecord[], rec: ReviewRecord): void {
   if (list.length > MAX_REVIEWS) list.splice(0, list.length - MAX_REVIEWS);
 }
 
-/** Heads whose latest verdict is PASS, for the git guard's `pr_gate.reviewed_heads`. */
+/** Heads whose latest verdict is PASS. */
 export function passHeads(list: readonly ReviewRecord[]): string[] {
   const last = new Map<string, Verdict>();
   for (const r of list) if (r.head) last.set(r.head, r.verdict);
   return [...last].filter(([, v]) => v === "pass").map(([h]) => h);
 }
 
-/** Checkouts whose latest verdict at a head is PASS (code reviews with a recorded checkout and head), for the git guard's `pr_gate.reviewed_checkouts`. */
+/** Checkouts whose latest verdict at a head is PASS (code reviews with a recorded checkout and head). */
 export function passCheckouts(list: readonly ReviewRecord[]): { cwd: string; head: string }[] {
   const last = new Map<string, { cwd: string; head: string; verdict: Verdict }>();
   for (const r of list) if (r.head && r.cwd && r.kind !== "plan") last.set(`${r.cwd}\0${r.head}`, { cwd: r.cwd, head: r.head, verdict: r.verdict });
@@ -267,9 +267,9 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
   return out.slice(-MAX_REVIEWS);
 }
 
-/** Every `[pr_refused:<reason>]` the git guard (scripts/git_guard.py) and the PR tool gate emit. */
+/** Every `[pr_refused:<reason>]` a PR gate can name; `pr_alias`, `pr_compound`, `pr_config`, `checks_failed`, `repo_unmatched` and `repo_ambiguous` were only emitted by the removed shell gate and are kept for old traces. */
 export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed", "cwd_unreviewed", "cwd_stale", "repo_unmatched", "repo_ambiguous"] as const;
-/** The reasons of the branch test; `cwd_unreviewed`, `cwd_stale` (pr_create {cwd}) and `repo_unmatched`, `repo_ambiguous` (gh --repo/--head, git_guard.py) come from the sibling-checkout rules. */
+/** The reasons of the branch test; `cwd_unreviewed`, `cwd_stale` (pr_create {cwd}) come from the sibling-checkout rules. */
 export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 
 /** Arguments of a package PR tool that name the branch the pull request opens from (B-M7). */
@@ -294,7 +294,7 @@ async function headRefusal(cwd: string, ref: string, reviewed: readonly string[]
 }
 
 /**
- * The same SHA test the git guard applies, for a PR tool call: each branch argument (`owner:branch`
+ * The SHA test for a PR tool call: each branch argument (`owner:branch`
  * reads as `branch`), else workspace HEAD, against the reviewed heads. A branch argument that does
  * not resolve in the workspace refuses (head_unknown).
  */

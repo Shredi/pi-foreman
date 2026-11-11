@@ -19,21 +19,12 @@
    {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bwrite]] write the file"}}]},
    {"text": "Launched."},
    {"text": "Builder reported."}
-  ],
-  "childheredoc": [
-   {"tools": [{"name": "subagent", "arguments": {"agent": "builder", "task": "[[replay:bheredoc]] write the file"}}]},
-   {"text": "Launched."},
-   {"text": "Builder reported."}
   ]
  },
  "builder": {
   "bwrite": [
    {"tools": [{"name": "bash", "arguments": {"command": "printf 'built\\n' > built.txt"}}]},
    {"text": "child: write finished"}
-  ],
-  "bheredoc": [
-   {"tools": [{"name": "bash", "arguments": {"command": "cat > heredoc.txt <<'EOF'\nbuilt\nEOF"}}]},
-   {"text": "child: heredoc finished"}
   ]
  }
 }

@@ -16,7 +16,7 @@ export interface RunGuardInput {
   coreDir: string;
   guard: GuardName;
   payload: unknown;
-  /** Extra argv after the script path (git_guard: --mode main/child). */
+  /** Extra argv after the script path. */
   args?: string[];
   env: Record<string, string>;
   cwd: string;

@@ -14,8 +14,8 @@
 // - a snapshot of the repo's local git config files and hooks, taken before every child launch
 //   that passes, compared before every foreman git run: the foreman's shell git commands, every
 //   foreman safe op (foreman_move, foreman_copy, foreman_worktree_remove all run git through
-//   scripts/safe_ops.py) and the main-mode git guard (it runs `git config`/`git diff --cached`
-//   after the gate). A change is an ask (never values, only which keys / hook files), denied
+//   scripts/safe_ops.py) and every foreman shell line that names git or a forge tool
+//   (`mainNeedsGitGuard`). A change is an ask (never values, only which keys / hook files), denied
 //   without a UI. Only file reads here; no git process is started.
 //   Covered: common dir config/config.worktree, in-repo includes, every linked worktree's
 //   config.worktree/gitdir/.git file (and whether commondir and .git file lead back to this repo;
@@ -42,6 +42,17 @@ export const FOREMAN_GIT_CONFIG: Array<[string, string]> = [
   ["core.fsmonitor", "false"],
   ["protocol.ext.allow", "never"],
 ];
+
+/** A line that may spell `.git` / `GIT~1` from pieces (`'.g''it'`, `".g"+"it"`). */
+const SPLIT_TOKEN = /\.[\s'"\\$+]*g|g[\s'"\\$+]*i[\s'"\\$+]*t[\s'"\\$+]*~|~[\s'"\\+]*\d/i;
+
+/**
+ * The config-change check's trigger: the line names git or a PR cli (gh, glab, hub, tea), or may spell a guarded token from pieces.
+ * A command that names none of them is not checked.
+ */
+export function mainNeedsGitGuard(command: unknown): boolean {
+  return typeof command === "string" && (/git/i.test(command) || /\b(gh|glab|hub|tea)\b/i.test(command) || SPLIT_TOKEN.test(command));
+}
 
 /** Patch the foreman's process env (Pi's shell tools inherit it). Idempotent. */
 export function patchForemanGitEnv(env: Env): void {

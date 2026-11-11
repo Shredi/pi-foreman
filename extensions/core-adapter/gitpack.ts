@@ -302,7 +302,7 @@ export interface PrPackDeps {
   env(): Record<string, string>;
   timeoutMs?: number;
   preflight?(ctx: ExtensionContext, op: string, callId: string, cwd?: string): Promise<{ block: true; reason: string } | undefined>;
-  /** The git guard's verdict on a bare `git push` of the current branch: a reason to refuse, else null. */
+  /** The gate's push floors on a bare `git push` of the current branch: a reason to refuse, else null. */
   pushRefusal(ctx: ExtensionContext, cwd?: string): Promise<string | null>;
 }
 
@@ -402,7 +402,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
             return failure(refusal.message, { decision: "pr_refused", reason: refusal.reason });
           }
           const push = await deps.pushRefusal(ctx, dir);
-          if (push) return failure(`pr_create: the git guard would refuse pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
+          if (push) return failure(`pr_create: a push floor refuses pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
         const outcome = await run(t.op as PrOp, params);
         const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);

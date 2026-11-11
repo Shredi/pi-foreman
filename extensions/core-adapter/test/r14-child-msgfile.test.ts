@@ -1,5 +1,5 @@
 // R14 P1 item 2: the message-file operand of `git commit` / `git tag` (`-F f`, `--file f`, `--file=f`) is a read: the overlay's write
-// protection (`{cwd}/.pi/*`) leaves it to git_guard's child allowlist (tests/test_git_guard_child_commit_f.py). Other commands' `-F`/`--file`
+// protection (`{cwd}/.pi/*`) does not cover it; nothing checks a child's message file after the overlay. Other commands' `-F`/`--file`
 // words, a write of the same path elsewhere on the line, and attached or combined short forms stay protected. Each case runs through the
 // overlay (checkToolCall) as a child in its worktree.
 import { test, after } from "node:test";
@@ -27,7 +27,7 @@ const rules: OverlayRules = buildOverlayRules(baseline, {}, {}, ag, ws, undefine
 const child: MatchCtx = { cwd: ws, home, platform: process.platform, role: "child", roundRoots: [ws] };
 const sh = (command: string): string => checkToolCall(rules, "bash", { command }, child)?.kind ?? "pass";
 
-test("child_git_commit_F_pi_scratch_left_to_git_guard", () => {
+test("child_git_commit_F_pi_scratch_left_to_the_gate", () => {
   for (const cmd of [
     `git commit -F .pi/scratch/m.txt`,
     `git commit --file .pi/scratch/m.txt`,
@@ -39,7 +39,7 @@ test("child_git_commit_F_pi_scratch_left_to_git_guard", () => {
 });
 
 // R14 ruling 2a: the message-file exemption lifts only the write protection; the child read-block (handoffs, other children's scratch)
-// still sees the -F operand, so `git tag -a v -F <handoff>` (git_guard lints only commits) and `git commit -F <blocked>` stay denied.
+// still sees the -F operand, so `git tag -a v -F <handoff>` and `git commit -F <blocked>` stay denied.
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 const scratchRoot = path.join(w, "tmp", "pi-foreman-scratch");
 const ownScratch = path.join(scratchRoot, "s1", "Lown");
@@ -71,8 +71,8 @@ test("child_git_commit_F_other_child_scratch_denied", () => {
   assert.match(d.reason!, /pi-foreman-scratch/);
 });
 
-test("child_git_commit_F_pi_scratch_reaches_git_guard_not_write_protection", () => {
-  // the overlay passes it on; git_guard refuses it (tests/test_git_guard_child_commit_f.py test_child_f_pi_scratch_refused_with_git_guard_reason)
+test("child_git_commit_F_pi_scratch_passes_the_overlay_not_write_protection", () => {
+  // the overlay passes it on; nothing checks the message file after the overlay
   assert.deepEqual(shB(`git commit -F .pi/scratch/m.txt`), { kind: "pass", reason: undefined });
 });
 

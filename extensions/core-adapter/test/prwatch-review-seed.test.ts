@@ -45,12 +45,13 @@ test("pending watch seeded by the created head: a first snap on the same head is
   assert.equal(h.w.reviewOf(K), A);
 });
 
-test("pending watch without the seed (plain pr_watch): a first snap on an unreviewed head is silent", async () => {
+test("pending watch without the seed (plain pr_watch): a first snap on an unreviewed head says so", async () => {
   const h = harness([A]);
   h.w.startPending(K);
   await h.tick(B, 1);
-  assert.deepEqual(drifts(h.sent), []);
-  assert.deepEqual(h.w.unreviewed(), []);
+  assert.equal(drifts(h.sent).length, 1);
+  assert.ok(drifts(h.sent)[0].includes(`head ${B.slice(0, 7)} not reviewed (no review record)`));
+  assert.deepEqual(h.w.unreviewed(), [K]);
 });
 
 test("reviewStep: a head equal to reviewedHead counts as reviewed with an empty PASS set", () => {
