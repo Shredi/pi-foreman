@@ -192,7 +192,7 @@ export const PR_TOOLS: { name: string; op: PrOp | "pr_watch" | "pr_unwatch"; lab
     name: "pr_status",
     op: "pr_status",
     label: "PR status",
-    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, and review (the head reviewed, or not reviewed with the last PASS head, or no review record). Read-only. ${PR_CAPS}`,
+    description: `State of a pull request (default the current branch's): state, draft, mergeable, reviewDecision, headSha, baseRef, updatedAt, and review (the head reviewed, or not reviewed with the last PASS head, or no review record, or not available in a child session). Read-only. ${PR_CAPS}`,
     parameters: { type: "object", properties: { number: num("PR number (default: the current branch's PR)."), ...where }, additionalProperties: false },
     foremanOnly: false,
   },
@@ -489,9 +489,13 @@ async function hostRule(s: PrPackSession, ctx: ExtensionContext, tool: string, p
 
 type PrRun = (op: PrOp, args: Record<string, unknown>) => Promise<SafeOpOutcome>;
 
+/** The `review` line of a child session: its PASS records live with the session that launched it (index.ts restores them only at the top level). */
+const CHILD_REVIEW = "not available in a child session (the review record lives with the session that launched it)";
+
 /** A `pr_status` answer with its `review` line (prwatch.ts reviewFact): the same rule and data as the watch. An answer without a head stays as it is. */
 async function withReview(s: PrPackSession, o: SafeOpOutcome): Promise<SafeOpOutcome> {
   if (o.kind !== "ran" || typeof o.result.headSha !== "string" || !o.result.headSha || !validNumber(o.result.number)) return o;
+  if (s.isChild) return { ...o, result: { ...o.result, review: CHILD_REVIEW } };
   try {
     const key = parsePrUrl(o.result.url);
     // an address that does not parse names no repository: never look a watch up by number alone

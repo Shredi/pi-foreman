@@ -232,6 +232,7 @@ export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn
   const snap = parseSnap(e.snap);
   const sources = parseSources(e.sources);
   if (snap && sources) snap.sources = sources;
+  if (snap && isObj(e.meta) && typeof e.meta.draft === "boolean") snap.draft = e.meta.draft;
   const okAt = finite(e.okAt) ? e.okAt : finite(e.endedAt) ? e.endedAt : null;
   if (snap && okAt !== null && snap.state !== "open") return { kind: "entry", snap, okAt };
   if (finite(e.errorAt) && (okAt === null || e.errorAt > okAt)) return { kind: "error", error: one(e.error) || "the tracker's last poll failed", ...(e.gone === true ? { gone: true } : {}) };

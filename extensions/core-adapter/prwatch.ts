@@ -87,6 +87,8 @@ export interface WatchSnapshot {
   runs: Run[];
   /** The tracker's per-source state of this PR (readStoreEntry); absent: none. */
   sources?: Record<string, SourceStatus>;
+  /** The PR is a draft (the tracker's meta, readStoreEntry); absent: not a draft. */
+  draft?: boolean;
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
   comments?: CommentEntry[];
 }
@@ -257,7 +259,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     ciFired = true;
     ciWakes = wakeOf("checks_settled", "github");
     if (ciWakes) {
-      events.push(`checks finished: ${s.result}`);
+      events.push(child && snap.draft && s.result === "pass" && snap.mergeable === "mergeable" ? "checks finished: pass, draft" : `checks finished: ${s.result}`);
       d.failed = snap.runs.filter((r) => r.bucket === "failed").map(asked);
       d.missing = snap.runs.filter((r) => r.bucket === "missing").map((r) => r.name);
     }
@@ -307,7 +309,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     }
   } else st.noCi = 0;
 
-  if (child && s.result === "pass" && snap.mergeable === "mergeable" && st.readyHead !== snap.head) {
+  if (child && s.result === "pass" && snap.mergeable === "mergeable" && !snap.draft && st.readyHead !== snap.head) {
     st.readyHead = snap.head;
     d.ready = true;
     events.push("ready to merge");
