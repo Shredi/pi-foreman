@@ -34,6 +34,7 @@ export function isolationOn(setting: unknown, provider: string | undefined): boo
   return provider === BRIDGE_PROVIDER;
 }
 
+/** setup.mjs bridgeLoginPresent mirrors this dir, keychainService and the login check in isolationDoctor; keep them in step. */
 export function isolationDir(agentDir: string): string {
   return path.join(agentDir, "pi-foreman", "claude-config");
 }
