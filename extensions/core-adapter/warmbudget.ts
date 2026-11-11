@@ -28,6 +28,9 @@ export function warmRates(o: { table?: PriceTable | null; registry?: Rate | null
   return r ? { input: num(r.input), output: num(r.output), cacheRead: num(r.cacheRead), cacheWrite: num(r.cacheWrite) } : null;
 }
 
+/** A completed warm read the cache: cacheRead above 0 and not less than what it wrote (the miss rule of selfwarm.ts). */
+export const warmHit = (t: Pick<WarmTokens, "cacheRead" | "cacheWrite">): boolean => num(t.cacheRead) > 0 && num(t.cacheWrite) < num(t.cacheRead);
+
 export interface BudgetCheck {
   ok: boolean;
   spent: number;
@@ -38,7 +41,7 @@ export interface BudgetCheck {
 export class WarmBudget {
   private prompt = 0;
   private warms: WarmTokens[] = [];
-  /** The last completed warm of the session and the prompt size it ran at; survives a reset (a new stretch has no warm yet). */
+  /** The last completed warm that hit the cache and the prompt size it ran at; survives a reset (a new stretch has no warm yet). A miss never sets it. */
   private lastWarm: { tokens: WarmTokens; prompt: number } | null = null;
 
   /** A real request ended (prompt = its input + cacheRead + cacheWrite), a compaction ran or the model changed: a new idle. */
@@ -54,10 +57,10 @@ export class WarmBudget {
   note(t: WarmTokens): void {
     const w = { input: num(t.input), output: num(t.output), cacheRead: num(t.cacheRead), cacheWrite: num(t.cacheWrite) };
     this.warms.push(w);
-    this.lastWarm = { tokens: w, prompt: this.prompt };
+    if (warmHit(w)) this.lastWarm = { tokens: w, prompt: this.prompt };
   }
 
-  /** The cost of the last measured warm of the session, its prompt tokens scaled to the current prompt size when that changed; null = none yet. */
+  /** The cost of the last measured hit of the session, its prompt tokens scaled to the current prompt size when that changed; null = none yet. */
   private measured(rates: Rates): number | null {
     const l = this.lastWarm;
     if (!l) return null;
@@ -66,7 +69,7 @@ export class WarmBudget {
     return costAt({ input: t.input * k, output: t.output, cacheRead: t.cacheRead * k, cacheWrite: t.cacheWrite * k }, rates).total;
   }
 
-  /** Null when there is no prompt size or no rate (budget unavailable). `cold` = P x max(cacheWrite, input); `next` = the measured cost of the last completed warm of the session (this stretch or an earlier one), else P x cacheRead + 1 output token. */
+  /** Null when there is no prompt size or no rate (budget unavailable). `cold` = P x max(cacheWrite, input); `next` = the measured cost of the last warm of the session that hit the cache (this stretch or an earlier one), else P x cacheRead + 1 output token. */
   check(rates: Rates | null, share: number): BudgetCheck | null {
     if (!rates || this.prompt <= 0) return null;
     const spent = this.warms.reduce((a, w) => a + costAt(w, rates).total, 0);

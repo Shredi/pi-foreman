@@ -13,7 +13,7 @@ import { warmRates } from "./warmbudget.ts";
 import { replayWarm, replayable } from "./warmreplay.ts";
 
 export interface WarmWireOpts {
-  pi: Pick<ExtensionAPI, "getAllTools" | "getActiveTools" | "getThinkingLevel" | "getSettings">;
+  pi: Pick<ExtensionAPI, "getThinkingLevel" | "getSettings">;
   pkgRoot: string;
   isChild: boolean;
   /** Derived claude-bridge TTL in seconds (bridgettl.ts); absent or null = none. */
@@ -36,6 +36,8 @@ export interface WarmWireOpts {
   contextWindow?(): number | null;
   /** A claude-bridge config approval is pending (the replay is skipped). */
   driftPending?(): boolean;
+  /** Names of the tools whose declarations are hidden from the request (the replay projects them out of the messages). */
+  hidden?(): readonly string[];
   /** The footer's keep-alive glyph. */
   setGlyph?(on: boolean): void;
 }
@@ -102,11 +104,10 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
       const ctx = o.ctx();
       if (!ctx?.model) return null;
       const { convertToLlm } = await import("@earendil-works/pi-coding-agent");
-      const active = new Set(o.pi.getActiveTools());
       return replayWarm(ctx.model, messages, signal, {
         onError,
         convertToLlm: (m) => convertToLlm(m as never) as unknown[],
-        tools: () => o.pi.getAllTools().filter((t) => active.has(t.name)).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+        hidden: o.hidden,
         thinkingLevel: () => o.pi.getThinkingLevel(),
         sessionId: () => ctx.sessionManager.getSessionId(),
         cacheRetention: () => (process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"),

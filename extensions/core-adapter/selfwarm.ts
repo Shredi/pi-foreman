@@ -10,7 +10,7 @@ import type { CachePolicy } from "./cachepolicy.ts";
 import type { Presence } from "./presence.ts";
 import type { Timers } from "./prwatch.ts";
 import type { UsageLine } from "./usage.ts";
-import { WarmBudget, type BudgetCheck, type Rates } from "./warmbudget.ts";
+import { WarmBudget, warmHit, type BudgetCheck, type Rates } from "./warmbudget.ts";
 import { warmCompact } from "./warmcompact.ts";
 
 /** A warm is sent this share of the TTL after the last touch, but never later than `WARM_MARGIN_S` before the TTL ends. */
@@ -111,7 +111,8 @@ const realTimers: Timers = {
 
 /** State shared by every SelfWarm instance of one session in this process (the adapter can be loaded twice in a bridge child). */
 interface SessionWarm {
-  missed: boolean;
+  /** How warming ended in the current idle stretch (cleared by the next real request): a miss, or an error of the replay. */
+  endedBy: "miss" | "error" | null;
   owner: object | null;
   budget: WarmBudget;
   childOffTraced: boolean;
@@ -122,7 +123,7 @@ const registry = (): Map<string, SessionWarm> => {
   const g = globalThis as unknown as Record<symbol, Map<string, SessionWarm> | undefined>;
   return (g[REGISTRY] ??= new Map());
 };
-const freshSession = (): SessionWarm => ({ missed: false, owner: null, budget: new WarmBudget(), childOffTraced: false, notReplayableTraced: false });
+const freshSession = (): SessionWarm => ({ endedBy: null, owner: null, budget: new WarmBudget(), childOffTraced: false, notReplayableTraced: false });
 
 type St = "off" | "watching" | "ended";
 type Refusal = { reason: "budget" | "budget_unavailable"; budget?: { spent: number; cold: number; share: number } };
@@ -144,6 +145,8 @@ export interface WarmSnapshot {
   warmsLeft: number;
   /** Warms a fresh idle stretch would allow in the active tier (spent = 0); derived, 0 without a budget. */
   warmsFresh: number;
+  /** How warming ended in the current idle stretch; null = not ended by a miss or an error. */
+  endedBy: "miss" | "error" | null;
   /** End of the TTL of the last allowed warm (ms); null without a touch or a tick. */
   spanEndAt: number | null;
   /** Ms between two warms; null for a TTL of 10 s or less. */
@@ -196,14 +199,14 @@ export class SelfWarm {
     return this.shared().budget;
   }
 
-  /** Self-warm was switched off for the session by a miss (every instance of the session honours it). */
+  /** A miss ended warming in the current idle stretch (every instance of the session honours it; the next real request clears it). */
   missed(): boolean {
-    return this.shared().missed;
+    return this.shared().endedBy === "miss";
   }
 
-  /** pi-foreman sends the warms of this cache: keepalive on, token billing, TTL above 10 s, a replayable model, no miss. */
+  /** pi-foreman sends the warms of this cache: keepalive on, token billing, TTL above 10 s, a replayable model, no miss in this idle stretch. */
   owns(): boolean {
-    return !this.shared().missed && !!this.deps.policy()?.keepaliveOwned && this.deps.replayable();
+    return this.shared().endedBy !== "miss" && !!this.deps.policy()?.keepaliveOwned && this.deps.replayable();
   }
 
   lastCacheTouch(): number | null {
@@ -260,10 +263,9 @@ export class SelfWarm {
     const share = view ? tierShare(p, view.tier) : 0;
     const chk = view ? this.budget.check(this.deps.rates(this.budget.promptTokens()), share) : null;
     const budget = chk ? { ...chk, share } : null;
-    const off = this.missed();
     const watching = this.st === "watching";
-    const warmsLeft = watching && budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
-    const warmsFresh = budget && !off && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold) / budget.next + 1e-9)) : 0;
+    const warmsLeft = watching && budget && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold - budget.spent) / budget.next + 1e-9)) : 0;
+    const warmsFresh = budget && budget.next > 0 ? Math.max(0, Math.floor((share * budget.cold) / budget.next + 1e-9)) : 0;
     const tick = warmDelayMs(p?.ttlSeconds ?? null);
     const ttlMs = (p?.ttlSeconds ?? 0) * 1000;
     return {
@@ -275,6 +277,7 @@ export class SelfWarm {
       tier: view,
       warmsLeft,
       warmsFresh,
+      endedBy: this.shared().endedBy,
       spanEndAt: this.touch === null || tick === null ? null : this.touch + warmsLeft * tick + ttlMs,
       tickMs: tick,
     };
@@ -293,6 +296,7 @@ export class SelfWarm {
   /** A real request ended: the cache was touched, a new idle stretch starts (the capture of this request becomes the replay source). */
   noteRequest(promptTokens: number): void {
     const d = this.deps;
+    this.shared().endedBy = null; // a real request opens a new idle stretch: a miss or an error of the last one does not carry over
     this.inFlight = false;
     if (this.pending) {
       this.captured = this.pending;
@@ -316,9 +320,7 @@ export class SelfWarm {
       d.trace({ event: "keepalive", outcome: "skipped", reason: p.bridgeChildOff ? "bridge_child_off" : "child_off" });
     }
     if (!this.owns() || !this.claim()) {
-      if (sh.missed) {
-        // a miss ended warming for the session: nothing more to trace
-      } else if (p.keepaliveOwned && !sh.notReplayableTraced && sh.owner === null) {
+      if (p.keepaliveOwned && !sh.notReplayableTraced && sh.owner === null) {
         sh.notReplayableTraced = true;
         d.trace({ event: "keepalive", outcome: "skipped", reason: "not_replayable" });
       } else if (p.active && p.billing === "token" && p.ttlSeconds !== null && warmDelayMs(p.ttlSeconds) === null && !this.tooShortTraced) {
@@ -461,6 +463,7 @@ export class SelfWarm {
       if (sh.owner === this) sh.owner = null; // the owner stopped owning: free the claim for an instance that can warm
     }
     if (this.st !== "watching") return;
+    if (reason === "error") this.shared().endedBy = "error";
     this.deps.trace({ event: "keepalive", outcome: "window_end", reason, ...(message ? { message } : {}) });
     this.st = reason === "error" || reason === "shutdown" || reason === "model_change" || reason === "not_owned" ? "off" : "ended";
     this.glyph(false);
@@ -574,10 +577,9 @@ export class SelfWarm {
       this.budget.note({ input: Number(u.input) || 0, output: Number(u.output) || 0, cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0 });
       this.warmsSent += 1;
       d.trace({ event: "keepalive", outcome: "fired", source: "foreman", reason: view.reason, tier: view.tier, presence: view.presence, cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0, cost: line?.cost.total ?? (Number(u.cost?.total) || 0) });
-      // a completed warm that did not read the cache (cacheRead 0, or more written than read) ends warming for the whole session
-      const cr = Number(u.cacheRead) || 0;
-      if (cr === 0 || (Number(u.cacheWrite) || 0) >= cr) {
-        this.shared().missed = true;
+      // a completed warm that did not read the cache (cacheRead 0, or more written than read) ends warming for this idle stretch (the next real request opens a new one)
+      if (!warmHit({ cacheRead: Number(u.cacheRead) || 0, cacheWrite: Number(u.cacheWrite) || 0 })) {
+        this.shared().endedBy = "miss";
         return this.end("self_warm_miss");
       }
       const next = this.nextWarmRefused();

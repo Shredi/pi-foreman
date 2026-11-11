@@ -117,6 +117,8 @@ export interface CacheSource {
   warmsLeft: number;
   /** Warms a fresh idle stretch would allow in the active tier (selfwarm.ts snapshot); absent = 0. */
   warmsFresh?: number;
+  /** How warming ended in the current idle stretch (selfwarm.ts snapshot); absent or null = neither a miss nor an error. */
+  endedBy?: "miss" | "error" | null;
   tier: CacheTier | null;
   /** A turn runs: the bar shows the warms a fresh idle stretch would allow. */
   running: boolean;
@@ -151,7 +153,11 @@ export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
     left: bar.leftMs === null ? null : formatLeft(bar.leftMs),
     cold: !busy && (bar.leftMs === null || bar.leftMs <= 0),
     // always set while the bar shows: the count a warm would allow (running: a fresh stretch's), 0 when none; the tier that holds now
-    warms: busy ? { count: allowed ? (src.warmsFresh ?? 0) : 0, tier: src.tier } : bar.warmsLeft > 0 && bar.leftMs !== null && bar.leftMs > 0 ? { count: bar.warmsLeft, tier: bar.tier } : { count: 0, tier: src.tier },
+    warms: {
+      ...(busy ? { count: allowed ? (src.warmsFresh ?? 0) : 0, tier: src.tier } : bar.warmsLeft > 0 && bar.leftMs !== null && bar.leftMs > 0 ? { count: bar.warmsLeft, tier: bar.tier } : { count: 0, tier: src.tier }),
+      // the idle stretch a miss or an error ended shows it instead of the count (a running turn opens a new stretch at its end)
+      ...(!busy && allowed && src.endedBy ? { ended: src.endedBy === "miss" ? ("miss" as const) : ("err" as const) } : {}),
+    },
     step: !src.downshifted ? src.idleRung : null,
     glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift, ...tierGlyphs(src.symbols) },
   };

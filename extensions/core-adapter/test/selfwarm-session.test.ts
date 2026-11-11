@@ -76,7 +76,7 @@ function rig(replies: WarmReply[], instances = 2, key: string | null = `session-
   return { sws, advance, request, ev, fired, traces, mode };
 }
 
-test("two instances of one session: one fires, the other never does; the miss is traced once and honoured by both", async () => {
+test("two instances of one session: one fires, the other never does; the miss is traced once and ends the stretch for both, the next real request re-arms them", async () => {
   const h = rig([MISS]);
   h.request();
   await h.advance(270_000);
@@ -85,10 +85,10 @@ test("two instances of one session: one fires, the other never does; the miss is
   assert.equal(h.fired.n, 1);
   assert.deepEqual(h.ev("keepalive", "window_end").map((r) => r.reason), ["self_warm_miss"]);
   assert.deepEqual(h.sws.map((s) => [s.missed(), s.owns()]), [[true, false], [true, false]]);
-  h.request();
+  h.request(); // a new idle stretch: the owner warms again (its miss does not carry over)
   await h.advance(10 * 60_000);
-  assert.equal(h.fired.n, 1);
-  assert.equal(h.ev("keepalive", "fired").length, 1);
+  assert.equal(h.fired.n, 2);
+  assert.equal(h.ev("keepalive", "fired").length, 2);
 });
 
 test("the passive instance takes over when the owner shuts down", async () => {
@@ -114,15 +114,16 @@ test("a second warm with cacheRead 0 is a miss too", async () => {
   assert.equal(h.fired.n, 2);
 });
 
-test("after a miss warmsLeft and warmsFresh are 0 on every instance", async () => {
+test("after a miss warmsLeft is 0 on every instance and warmsFresh is the count a fresh stretch would allow", async () => {
   const h = rig([MISS]);
   h.request();
-  assert.ok(h.sws[1].snapshot().warmsFresh > 0);
+  const fresh = h.sws[1].snapshot().warmsFresh;
+  assert.ok(fresh > 0);
   await h.advance(270_000);
   for (const sw of h.sws) {
     const s = sw.snapshot();
     assert.equal(s.warmsLeft, 0);
-    assert.equal(s.warmsFresh, 0);
+    assert.equal(s.warmsFresh, fresh);
   }
 });
 
@@ -139,12 +140,12 @@ test("next uses the measured cost of the last warm when the stretch has none yet
   b.note(MISS.usage as never);
   const missCost = (3 * 5 + 69740 * 6.25 + 25) / 1e6;
   assert.ok(Math.abs(b.check(RATES, 1)!.spent - (hitCost + missCost)) < 1e-9);
-  // a new stretch: no warm yet, `next` is the measured last warm, scaled to the new prompt size
+  // a new stretch: no warm yet, `next` is the measured last warm that hit (the miss does not count), scaled to the new prompt size
   b.reset(144_875);
   assert.equal(b.check(RATES, 1)!.spent, 0);
-  assert.ok(Math.abs(b.check(RATES, 1)!.next - missCost) < 1e-9);
+  assert.ok(Math.abs(b.check(RATES, 1)!.next - hitCost) < 1e-9);
   b.reset(289_750);
-  const scaled = (3 * 5 * 2 + 69740 * 2 * 6.25 + 25) / 1e6;
+  const scaled = (3 * 5 * 2 + 132423 * 2 * 0.5 + 12452 * 2 * 6.25 + 1 * 25) / 1e6;
   assert.ok(Math.abs(b.check(RATES, 1)!.next - scaled) < 1e-9);
 });
 

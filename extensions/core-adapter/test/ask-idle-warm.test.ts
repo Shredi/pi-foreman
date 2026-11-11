@@ -116,7 +116,7 @@ test("a thrown replay error is traced the same way; a window_end without a messa
 test("replayWarm hands the provider's error text to onError", async () => {
   const seen: string[] = [];
   const out = await replayWarm({}, [], new AbortController().signal, {
-    convertToLlm: () => [], tools: () => [], thinkingLevel: () => "off", sessionId: () => "s", cacheRetention: () => undefined,
+    convertToLlm: () => [], thinkingLevel: () => "off", sessionId: () => "s", cacheRetention: () => undefined,
     onError: (m) => void seen.push(m),
     streamSimple: () => ({ result: async () => ({ usage: {}, stopReason: "error", errorMessage: "429 slow down" }) }),
   });

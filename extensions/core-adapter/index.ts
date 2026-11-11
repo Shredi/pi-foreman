@@ -586,6 +586,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       spanEndAt: snap.spanEndAt,
       warmsLeft: snap.warmsLeft,
       warmsFresh: snap.warmsFresh,
+      endedBy: snap.endedBy,
       tier: snap.tier ? snap.tier.tier : null,
       running: s.running,
       waiting: s.questionCalls.size > 0 || s.live?.isBlocked() === true,
@@ -747,7 +748,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
-    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
+    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
     const s: Session = {
       id,
       cwd,

@@ -9,7 +9,7 @@ export interface CacheDoctorInput {
   promptCache: { short?: number; long?: number } | undefined;
   /** Pi's cache retention env value (`PI_CACHE_RETENTION`). */
   retention: string | undefined;
-  /** A self-warm miss ended the self-warm for this session (`keepalive window_end self_warm_miss`). */
+  /** A self-warm miss ended the self-warm for the current idle stretch (until the next real request) (`keepalive window_end self_warm_miss`). */
   selfWarmMissed: boolean;
   /** providers.<p>.roles.foreman.idle is set. */
   hasIdleRung: boolean;
@@ -27,7 +27,7 @@ export function cacheDoctorLines(i: CacheDoctorInput): string[] {
     const piTtl = i.promptCache[tier];
     if (piTtl !== p.ttlSeconds) out.push(`WARN Pi promptCache.${tier} for ${prov} is ${piTtl ?? "unset"} s but cache.ttlSeconds is ${p.ttlSeconds}: Pi warms and expires on its own tier, the budget and cold checks on the policy's — make them equal in models.json or providers.${prov}.cache (docs/cache.md)`);
   }
-  if (i.selfWarmMissed) out.push(`WARN a self-warm for ${prov} did not read the cache (keepalive window_end self_warm_miss): self-warm is off for this session — check the TTL (docs/cache.md)`);
+  if (i.selfWarmMissed) out.push(`WARN a self-warm for ${prov} did not read the cache (keepalive window_end self_warm_miss): self-warm is off until the next real request (it ended the idle stretch it happened in) — check the TTL (docs/cache.md)`);
   const r = i.idleRung;
   if (r && (r.policy.skip === "no_entry" || r.policy.ttlSeconds === null)) out.push(`WARN idle rung ${r.spec}: provider ${r.provider} has no cache entry (ttl unknown): no cache bar and no warms while downshifted — set providers.${r.provider}.cache.ttlSeconds and billing (docs/ladder.md)`);
   if (!i.hasIdleRung) out.push(`INFO no providers.${prov}.roles.foreman.idle: the idle model downshift is off (docs/ladder.md)`);
