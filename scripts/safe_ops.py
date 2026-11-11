@@ -27,7 +27,8 @@ Documented limits:
 - Path checks resolve symlinks once; a symlink swapped in after the check but before the action
   is not detected (same race as above). Files are opened with O_NOFOLLOW where available.
 - `git worktree remove` would also delete ignored files; that is why ignored files block the
-  removal unless they sit under a `worktreeDisposable` path component. A pattern with an inner `/`
+  removal unless they sit under a `worktreeDisposable` path component. An entry without a trailing `/` matches
+  a file only (write folder entries as `name/`). A pattern with an inner `/`
   (`.pi/tasks/`) matches only at the worktree's top level. A wholly ignored folder that git reports as one
   record is walked (symlinks are leaf files, never followed; 20 000 entries at most, else the folder
   counts) and judged file by file. The refusal names the first offending files.
@@ -46,7 +47,7 @@ import sys
 import tempfile
 
 DEFAULT_COPY_MAX_BYTES = 100 * 1024 * 1024
-DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db"]
+DEFAULT_DISPOSABLE = ["node_modules/", "target/", "dist/", "build/", "__pycache__/", ".venv/", ".pi/tasks/", ".DS_Store", "Thumbs.db", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".nox/", ".coverage", ".coverage.*", "htmlcov/", "*.egg-info/", "*.tsbuildinfo", ".eslintcache", ".nyc_output/", ".next/", ".nuxt/", ".svelte-kit/", ".turbo/", ".parcel-cache/"]
 IGNORED_WALK_CAP = 20000  # entries walked inside one collapsed ignored folder
 IGNORED_FILES_KEPT = 50  # offending paths a Precondition carries (the total count is exact)
 IGNORED_SHOWN = 3  # paths named in a one-line refusal
@@ -540,7 +541,9 @@ def list_gitlinks(cwd):
 def disposable(path, patterns):
     """True when a component of the git-relative `path` matches a disposable pattern.
 
-    A pattern with an inner `/` is anchored at the top level: it matches the leading components of `path` only.
+    A pattern `name/` matches a directory component at any depth; a pattern without a trailing `/` matches only a file
+    (the last component of a path that is not a folder record). A pattern with an inner `/` is anchored at the top
+    level: it matches the leading components of `path` only.
     """
     is_dir = path.endswith("/")
     parts = [x for x in path.split("/") if x]
@@ -557,9 +560,12 @@ def disposable(path, patterns):
             if all(fnmatch.fnmatchcase(fold(c), fold(g)) for c, g in zip(parts, segs)):
                 return True
             continue
-        # Directory patterns match any component that is a directory (all but the last, or the
-        # last when git reported a collapsed directory).
-        candidates = parts if (not dir_only or is_dir) else parts[:-1]
+        # `name/` matches any component that is a directory (all but the last, or the last when git reported a
+        # collapsed directory); `name` matches only the last component of a file path.
+        if dir_only:
+            candidates = parts if is_dir else parts[:-1]
+        else:
+            candidates = [] if is_dir else parts[-1:]
         for c in candidates:
             if fnmatch.fnmatchcase(fold(c), fold(name)):
                 return True
