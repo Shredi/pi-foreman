@@ -30,7 +30,6 @@ interface ChildOpts {
   launch?: string[];
   tools?: Reg[];
   provider?: string;
-  direct?: unknown;
   max?: unknown;
   /** The first turn runs with no model provider (it may be unset at session start). */
   noProvider?: boolean;
@@ -78,7 +77,7 @@ async function child(t: T, o: ChildOpts = {}) {
   const mcp = new McpChild(api as never, { binding: { role: o.role ?? "builder", ...(o.launch ? { mcp: o.launch } : {}) }, createMcp, resolveRoot: () => root, importFile, preloadWaitMs: 100, preloadPause: () => { if (o.polls) o.polls.count++; return new Promise<void>((resolve) => setTimeout(resolve, 50)); } });
   const trace: Record<string, unknown>[] = [];
   mcp.install();
-  await mcp.start(ROLES, (r) => trace.push(r), o.direct ?? ["p1"], o.max);
+  await mcp.start(ROLES, (r) => trace.push(r), ["p1"], o.max);
   if (o.piOrder) loadConfig!({ cwd: root, isProjectTrusted: () => false });
   if (o.piOrder) proxied!.getMcpServers!();
   const turn = async () => {

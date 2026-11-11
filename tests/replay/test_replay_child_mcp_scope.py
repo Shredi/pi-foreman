@@ -42,7 +42,8 @@ class TestChildMcpScope(ReplayCase):
                 m = json.loads(line).get("message", {})
                 if m.get("role") == "toolResult":
                     results[m.get("toolName")] = (m.get("isError"), "".join(c.get("text", "") for c in m.get("content", [])))
-        self.assertIn("Loaded 1 tool", results["tool_search"][1], results)
+        # `echo` is declared up front (a named tool), so the search finds nothing left to load
+        self.assertEqual(results["tool_search"], (False, "No matching tools found."), results)
         self.assertEqual(results["mcp__fx__echo"], (False, "hello"), results)
         self.assertEqual(results["mcp__fx__shout"], (True, "Tool mcp__fx__shout not found"), results)
         self.assertTrue((rig.root / "fx-started").exists())
