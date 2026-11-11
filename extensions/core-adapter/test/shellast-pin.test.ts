@@ -190,7 +190,9 @@ function gate(r: PinRow, child: boolean): Decision {
   const f = info[r.fixture];
   const cwd = r.cwd === undefined ? f.cwd : r.cwd.replaceAll("{R}", f.root);
   const out = gateEvaluate(r.tool, { command: r.command.replaceAll("{R}", f.root) }, cwd, {
-    env: (c) => baseFloorEnv(c, { child }),
+    // every input the floors read is explicit: the write roots are the cwd and the top fixture dir (it stands in for the OS temp dir, which
+    // differs by machine), the scratch dirs are the fixture's (not `$FOREMAN_SCRATCH`), home and platform are fixed
+    env: (c) => baseFloorEnv(c, { child, home: path.join(root, "pin-home"), platform: "linux", writeRoots: [c, root], scratch: [f.scratch] }),
     ...(child ? { roots: () => rootsFor(cwd, f) } : {}),
   }).result as { block?: boolean; ask?: boolean; rule?: string } | undefined;
   return [out?.block ? "deny" : out?.ask ? "ask" : "allow", out?.block || out?.ask ? (out.rule ?? "") : ""];
