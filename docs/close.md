@@ -219,6 +219,8 @@ Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entr
   (information only). A branch with no commits beyond its base counts as merged, so a fresh empty worktree is swept.
   The worktree that contains `--cwd` (default: the current dir) is skipped with `in_use_by_caller`.
   Warning: sweep removes a freshly created worktree that has no commits beyond its base yet; use `--dry-run` first.
+  A worktree on the default branch (`default_branch`) or on a `safety.git.protectedBranches` match (`protected_branch`)
+  is skipped, also with `--dry-run`, and that branch is never deleted.
 
 ## The worktree root
 

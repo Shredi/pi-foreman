@@ -13,12 +13,15 @@ worktree that contains --cwd itself (`in_use_by_caller`). Removal is
 `removed:` (`would remove:` with --dry-run) or `skipped: <path> — <reason>`. A worktree outside
 close.worktreeDir (`<repo>` = the main worktree's name, relative to the main worktree) and outside
 `<repo>/.claude/worktrees` and pi-subagents' default root `../worktrees/<repo>` also gets an `off-convention:` line
-(information only).
+(information only). A worktree whose branch is the repository's default branch (`default_branch (<name>)`: the configured
+safety.ops.baseBranch, the target of origin/HEAD, and both main and master when origin/HEAD does not resolve) or matches
+safety.git.protectedBranches (`protected_branch (<pattern>)`) is skipped, also with --dry-run, and its branch is never deleted.
 Exit 0 done, 2 usage, config error or not a git repository.
 """
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import os
 import re
 import subprocess
@@ -167,6 +170,49 @@ def held_by_gitlink(checkout, real):
     return any(rel == g or rel.startswith(g.rstrip("/") + "/") for g in links)
 
 
+def default_branches(cwd, ops_cfg):
+    """(names, resolved): short names of the default branch (configured base, origin/HEAD target; main and master when origin/HEAD does not resolve) and whether origin/HEAD resolved."""
+    names = set()
+    try:  # the base check_worktree uses
+        base = safe_ops.resolve_base(cwd, ops_cfg.get("baseBranch"))[0]
+    except safe_ops.Precondition:
+        base = None
+    if base:
+        for pre in ("refs/heads/", "refs/remotes/"):
+            if base.startswith(pre):
+                base = base[len(pre):]
+                break
+        names.add(base)  # a branch really named `heads/x` or `remotes/x` keeps its full name
+        for pre in ("remotes/", "heads/"):
+            if base.startswith(pre):
+                base = base[len(pre):]
+                break
+        names.add(base)
+        if "/" in base:  # `origin/x`: the short name too (over-matching only skips)
+            names.add(base.split("/", 1)[1])
+    code, out, _ = safe_ops.git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd)
+    head = out.strip()
+    resolved = (code == 0 and head.startswith("refs/remotes/") and "/" in head[len("refs/remotes/"):]
+                and safe_ops.git(["rev-parse", "--verify", "--quiet", head + "^{commit}"], cwd)[0] == 0)
+    if resolved:
+        names.add(head[len("refs/remotes/"):].split("/", 1)[1])
+    else:
+        names.update(("main", "master"))
+    if safe_ops.CASE_INSENSITIVE:
+        names = {n.lower() for n in names}
+    return names, resolved
+
+
+def protected_pattern(cfg, branch):
+    """The safety.git.protectedBranches pattern `branch` matches (case-insensitive fnmatch, as git_guard's protected_hit), else None."""
+    pats = ((cfg.get("safety") or {}).get("git") or {}).get("protectedBranches")
+    b = branch.lower()
+    for p in (pats if isinstance(pats, list) else ["main", "master"]):
+        if isinstance(p, str) and p and fnmatch.fnmatchcase(b, p.lower()):
+            return p
+    return None
+
+
 def sweep(cwd, cfg, state, sid, dry_run=False):
     """Lines of the sweep report; raises safe_ops.Precondition when cwd is not a git repo."""
     safe_ops.workspace_root(cwd)
@@ -175,7 +221,17 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
     conv = convention_dirs(main_dir, cfg)
     ops_cfg = safe_ops.ops_config(cfg)
     caller = os.path.realpath(cwd)
+    defaults, remote_ok = default_branches(main_dir, ops_cfg)
     lines = []
+
+    def branch_reason(branch):
+        if not branch:
+            return None
+        if (branch.lower() if safe_ops.CASE_INSENSITIVE else branch) in defaults:
+            return "default_branch (%s)%s" % (branch, "" if remote_ok else "; remote default unresolved, main and master count")
+        pat = protected_pattern(cfg, branch)
+        return "protected_branch (%s)" % pat if pat else None
+
     def nested_in(tree):
         # checkouts living inside another worktree of this listing (or holding gitlinks): pi-foreman never removes those here
         try:
@@ -201,9 +257,13 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
             continue
         if not any(safe_ops.is_inside(d, real) for d in conv):
             lines.append("off-convention: %s" % path)
+        listed_branch = w.get("branch") if isinstance(w.get("branch"), str) else ""
         reason, chk = None, None
-        user = fcl.in_use_by(state, sid, real)
-        if user:
+        reason = branch_reason(listed_branch[len("refs/heads/"):] if listed_branch.startswith("refs/heads/") else None)
+        user = None if reason else fcl.in_use_by(state, sid, real)
+        if reason:
+            pass
+        elif user:
             reason = "in_use (session %s)" % user
         elif safe_ops.is_inside(real, caller, True):
             reason = "in_use_by_caller"
@@ -216,6 +276,9 @@ def sweep(cwd, cfg, state, sid, dry_run=False):
                 reason = exc.name
             except (safe_ops.ActionError, subprocess.SubprocessError, OSError) as exc:
                 reason = "check_failed (%s)" % str(exc)[:80]
+        if reason is None and chk:
+            reason = branch_reason(chk["branch"])
+            chk = None if reason else chk
         if reason is None:
             nested = nested_in(real)
             if nested:
