@@ -508,10 +508,14 @@ export function prUrl(node, pr) {
 }
 
 const listOf = (x) => (Array.isArray(x) ? x : []);
+const isTaskRecord = (r) => r.app === "pi-foreman" && typeof r.id === "string" && r.id.startsWith("background-tasks/");
+// The records that are agents: shell-task records are not (their gear line is the view), they only keep the session busy.
+const agentRecs = (recs) => listOf(recs).filter((r) => !r.task);
 const radarRuns = (n) => listOf(n?.children).filter((c) => c.kind === "run" && !c.ended && c.state === "working").map((c) => c.role || c.name);
 
-/** The running async agents and background tasks from the text of `hc get <terminal> --json`: `[{title, state}]` of the `pi-subagents`
- *  and `pi-foreman` (background task) records in state working or blocked; [] for anything else. */
+/** The running async agents and background tasks from the text of `hc get <terminal> --json`: `[{title, state, msg}]` of the `pi-subagents`
+ *  and `pi-foreman` records in state working or blocked; [] for anything else. A shell task (pi-foreman `background-tasks/<id>`) carries
+ *  `task: true`: the gear line shows it, no agent row does. A pi-foreman `background-agents/<id>` record (an agent-marked task) is an agent. */
 export function parseRecords(text) {
   let doc;
   try { doc = JSON.parse(text); } catch { return []; }
@@ -520,7 +524,7 @@ export function parseRecords(text) {
   const rows = Array.isArray(doc.records) ? doc.records : isObj(doc.records) ? Object.entries(doc.records).map(([id, r]) => (isObj(r) ? { id, ...r } : r)) : [];
   return rows
     .filter((r) => isObj(r) && (r.app === "pi-subagents" || r.app === "pi-foreman") && (r.state === "working" || r.state === "blocked"))
-    .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg) }));
+    .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg), ...(isTaskRecord(r) ? { task: true } : {}) }));
 }
 
 /** The `<machine>/<terminal>` a hand-made `hc attach` terminal follows, from the text of `hc get <terminal> --json` (its `argv`
@@ -635,9 +639,9 @@ function waitText(node) {
   return `wait: ${w.join(" · ")}${node.waits.length > 2 ? ` +${node.waits.length - 2}` : ""}`;
 }
 
-/** "N agents: titles" from radar's working runs plus the records radar does not show; "" for none. `node` may be null. */
+/** "N agents: titles" from radar's working runs plus the agent records radar does not show (shell tasks are not agents); "" for none. `node` may be null. */
 export function agentsText(node, recs = []) {
-  const roles = [...radarRuns(node), ...extraRecords(node, recs).map((r) => r.title || "agent")];
+  const roles = [...radarRuns(node), ...extraRecords(node, agentRecs(recs)).map((r) => r.title || "agent")];
   return roles.length ? `${roles.length} agent${roles.length === 1 ? "" : "s"}: ${roles.join(", ")}` : "";
 }
 
@@ -646,7 +650,7 @@ const MAX_AGENT_LINES = 4;
 /** One line per running async agent under a session or agent row: `[{glyph: "working"|"blocked"|"", text}]`, at most 4,
  *  then a `+N more` item (glyph ""). Only records without a live worker row (matched by title/role, with counts) get a
  *  line, `title · msg`; radar runs are drawn as worker rows already (the agent rows of `sessionTree`: sessions in
- *  `skip` and hidden ones are left out). Finished records are not parsed in. `node` may be null. */
+ *  `skip` and hidden ones are left out). Shell-task records (`task`) get no line. Finished records are not parsed in. `node` may be null. */
 export function agentLines(node, recs = [], skip = new Set()) {
   const left = new Map();
   const count = (n, depth) => {
@@ -655,7 +659,7 @@ export function agentLines(node, recs = [], skip = new Set()) {
     for (const s of listOf(n.sessions)) if (!skip.has(s) && nodeStatus(s) !== "hidden") count(s, depth + 1);
   };
   count(node, 0);
-  const all = listOf(recs).filter((r) => {
+  const all = agentRecs(recs).filter((r) => {
     const k = left.get(r.title) ?? 0;
     if (k > 0) left.set(r.title, k - 1);
     return k === 0;

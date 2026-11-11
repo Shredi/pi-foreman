@@ -8,6 +8,7 @@ type Env = Record<string, string | undefined>;
 export type BgState = "working" | "done" | "error";
 
 const ROOT = "background-tasks";
+const AGENT_ROOT = "background-agents";
 const APP = "pi-foreman";
 const MAX_RECORDS = 64;
 const MAX_TITLE_BYTES = 192;
@@ -36,15 +37,16 @@ function encode(text: string, maxBytes: number): string {
   return bytes.toString("base64");
 }
 
-/** The record key: `background-tasks/<id, 12 characters of A-Za-z0-9_+->`. */
-export function recordKey(id: string): string {
-  const seg = id.replace(/[^A-Za-z0-9_+-]/g, "-").slice(0, ID_CHARS);
-  return `${ROOT}/${seg || "task"}`;
+const idSegment = (id: string): string => id.replace(/[^A-Za-z0-9_+-]/g, "-").slice(0, ID_CHARS) || "task";
+
+/** The record key: `background-tasks/<id, 12 characters of A-Za-z0-9_+->`, `background-agents/<id>` for a task marked as agent (`bg_run` `isAgent: true`). */
+export function recordKey(id: string, agent = false): string {
+  return `${agent ? AGENT_ROOT : ROOT}/${idSegment(id)}`;
 }
 
-/** The escape for one record; `clear` drops it. */
-export function oscReport(fields: { state: BgState | "clear"; id: string; title?: string; msg?: string }): string {
-  const pairs = [`state=${fields.state}`, `id=${recordKey(fields.id)}`];
+/** The escape for one record; `clear` drops it. `agent` picks the key root (see recordKey). */
+export function oscReport(fields: { state: BgState | "clear"; id: string; agent?: boolean; title?: string; msg?: string }): string {
+  const pairs = [`state=${fields.state}`, `id=${recordKey(fields.id, fields.agent)}`];
   if (fields.state !== "clear") pairs.push(`app=${APP}`);
   if (fields.title !== undefined) pairs.push(`title=${encode(fields.title, MAX_TITLE_BYTES)}`);
   if (fields.msg !== undefined) pairs.push(`msg=${encode(fields.msg, MAX_MSG_BYTES)}`);
@@ -68,14 +70,14 @@ export interface BgRecordsDeps {
 
 export interface BgRecords {
   readonly active: boolean;
-  post(id: string, state: BgState, title: string, msg: string): void;
+  post(id: string, state: BgState, title: string, msg: string, agent?: boolean): void;
   clear(id: string): void;
   clearAll(): void;
   resend(): void;
   /** A `pi-background-tasks:terminal:v1` frame: flips the task's record to done, error or done "Killed"; malformed frames are ignored. */
   onTerminal(frame: unknown): void;
-  /** A task seen running (start or status): working, unless its terminal frame already came. */
-  onRunning(id: string, title: string): void;
+  /** A task seen running (start or status): working, unless its terminal frame already came. `agent` is the task's `isAgent`. */
+  onRunning(id: string, title: string, agent?: boolean): void;
 }
 
 const taskTitle = (t: Record<string, unknown>): string => (typeof t.name === "string" && t.name ? t.name : typeof t.command === "string" ? t.command.slice(0, 40) : "task");
@@ -84,15 +86,23 @@ export function createBgRecords(d: BgRecordsDeps): BgRecords {
   const sent = new Map<string, string>();
   const finished = new Set<string>();
   const states = new Map<string, BgState>();
+  // The kind each id's record was first posted under (id segment -> agent): its terminal frame, clear and eviction keep that key.
+  const agents = new Map<string, boolean>();
+  const kindOf = (id: string, agent?: boolean): boolean => {
+    const seg = idSegment(id);
+    if (!agents.has(seg)) agents.set(seg, agent === true);
+    return agents.get(seg) === true;
+  };
   const isActive = (): boolean => !!(d.env.HERDR_PANE_ID?.trim() || d.env.HC_TERMINAL_ID?.trim()) && d.mode() === "tui" && d.isTTY && d.env.TERM !== "dumb" && d.env.PI_PROGRAM_STATUS !== "0";
   const self: BgRecords = {
     get active() {
       return isActive();
     },
-    post(id, state, title, msg) {
+    post(id, state, title, msg, agent) {
       if (!isActive()) return;
-      const key = recordKey(id);
-      const report = oscReport({ state, id, title, msg });
+      const isAgent = kindOf(id, agent);
+      const key = recordKey(id, isAgent);
+      const report = oscReport({ state, id, agent: isAgent, title, msg });
       if (sent.get(key) === report) return;
       if (!sent.has(key) && sent.size >= MAX_RECORDS) {
         // the cap: drop the oldest finished record, else the oldest
@@ -100,6 +110,7 @@ export function createBgRecords(d: BgRecordsDeps): BgRecords {
         if (victim !== undefined) {
           sent.delete(victim);
           states.delete(victim);
+          agents.delete(victim.slice(victim.indexOf("/") + 1));
           d.write(`\x1b]7501;state=clear:id=${victim}\x1b\\`);
         }
       }
@@ -109,17 +120,20 @@ export function createBgRecords(d: BgRecordsDeps): BgRecords {
       d.trace?.({ event: "bgrecord", decision: state });
     },
     clear(id) {
-      const key = recordKey(id);
+      const isAgent = agents.get(idSegment(id)) === true;
+      const key = recordKey(id, isAgent);
       if (!sent.delete(key)) return;
       states.delete(key);
+      agents.delete(idSegment(id));
       if (!isActive()) return;
-      d.write(oscReport({ state: "clear", id }));
+      d.write(oscReport({ state: "clear", id, agent: isAgent }));
       d.trace?.({ event: "bgrecord", decision: "clear" });
     },
     clearAll() {
       const keys = [...sent.keys()];
       sent.clear();
       states.clear();
+      agents.clear();
       finished.clear();
       if (!isActive()) return;
       for (const key of keys) d.write(`\x1b]7501;state=clear:id=${key}\x1b\\`);
@@ -136,12 +150,12 @@ export function createBgRecords(d: BgRecordsDeps): BgRecords {
       const status = t.status;
       if (status !== "completed" && status !== "failed" && status !== "killed") return;
       finished.add(t.id);
-      if (status === "failed") self.post(t.id, "error", taskTitle(t), "Failed");
-      else self.post(t.id, "done", taskTitle(t), status === "killed" ? "Killed" : "Finished");
+      if (status === "failed") self.post(t.id, "error", taskTitle(t), "Failed", t.isAgent === true);
+      else self.post(t.id, "done", taskTitle(t), status === "killed" ? "Killed" : "Finished", t.isAgent === true);
     },
-    onRunning(id, title) {
+    onRunning(id, title, agent) {
       if (finished.has(id)) return;
-      self.post(id, "working", title, "Running");
+      self.post(id, "working", title, "Running", agent);
     },
   };
   return self;
@@ -199,7 +213,7 @@ export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: 
         // an ok:false answer (the add-on's own session_start has not run yet) is not final: a later retry asks again
         if (answered || !isObj(frame) || frame.schema_version !== BG_RESPONSE_SCHEMA || typeof frame.request_id !== "string" || !reqIds.has(frame.request_id) || frame.ok !== true || !isObj(frame.result) || !Array.isArray(frame.result.tasks)) return;
         answered = true;
-        for (const t of frame.result.tasks) if (isObj(t) && typeof t.id === "string" && t.status === "running") recorder.onRunning(t.id, taskTitle(t));
+        for (const t of frame.result.tasks) if (isObj(t) && typeof t.id === "string" && t.status === "running") recorder.onRunning(t.id, taskTitle(t), t.isAgent === true);
       }),
     );
     // no add-on: nobody listens, nothing answers
@@ -229,7 +243,8 @@ export function installBgRecords(pi: Pick<ExtensionAPI, "on" | "events">, opts: 
     if (event.toolName !== "bg_run" || event.isError || !recorder.active) return;
     const text = (event.content ?? []).map((c) => (c && c.type === "text" ? (c as { text?: string }).text ?? "" : "")).join("\n");
     const started = parseStarted(text);
-    if (started) recorder.onRunning(started.id, started.name);
+    // the bg_run input's isAgent: an agent-marked task posts background-agents/<id> (optional chain: a result without input is a shell task)
+    if (started) recorder.onRunning(started.id, started.name, event.input?.isAgent === true);
   });
   pi.on("session_shutdown", async () => {
     unsubscribe();
