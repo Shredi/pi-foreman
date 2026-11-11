@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gateEvaluate, baseFloorEnv } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
-import { parseShell } from "../shellast.ts";
+import { parseShell, lineWords, arithmeticTexts } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 const PIN_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "shellast-pin.json");
@@ -229,4 +229,66 @@ test("the gate's decisions equal the ones pinned at the base, child session", { 
     if (got.join("|") !== r.child.join("|")) bad.push(`${describe(i, r)}: ${JSON.stringify(got)}, pinned ${JSON.stringify(r.child)}`);
   });
   assert.equal(bad.length, 0, `${bad.length} child rows differ:\n${bad.slice(0, 20).join("\n")}`);
+});
+
+const LONG_SIZES = [100, 1000, 3000, 6000, 10000];
+const rep = (s: string, n: number, sep: string): string => Array.from({ length: n }, () => s).join(sep);
+const LONG_LINES: Record<string, (n: number) => string> = {
+  "arith sum": (n) => `(( ${rep("1", n, "+")} ))`,
+  "arith deep parentheses": (n) => `(( ${"(".repeat(n)}1${")".repeat(n)} ))`,
+  "arith many substitutions": (n) => `(( x = ${rep("$(id)", n, "+")}+1 ))`,
+  "arith after and": (n) => `echo hi && (( ${rep("1", n, "+")} ))`,
+  "arith for header": (n) => `for ((i=0;i<${rep("1", n, "+")};i++)); do :; done`,
+  "arith for header substitutions": (n) => `for ((i=0;i<${rep("$(id)", n, "+")};i++)); do :; done`,
+  "arith expansion": (n) => `echo $(( ${rep("1", n, "+")} ))`,
+  "test and chain": (n) => `[[ ${rep("a == a", n, " && ")} ]]`,
+  "test deep parentheses": (n) => `[[ ${"( ".repeat(n)}a == a${" )".repeat(n)} ]]`,
+  "test many substitutions": (n) => `[[ ${rep("$(id) == a", n, " && ")} ]]`,
+  "select many words": (n) => `select x in ${rep("a", n, " ")}; do :; done`,
+  "select many substitutions": (n) => `select x in ${rep("$(id)", n, " ")}; do :; done`,
+  pipeline: (n) => rep("echo", n, " | "),
+  "nested groups": (n) => `${"{ ".repeat(n)}:;${" }".repeat(n)}`,
+  "nested subshells": (n) => `${"( ".repeat(n)}:${" )".repeat(n)}`,
+};
+
+/** Per construct and size (`LONG_SIZES`): the first 16 hex digits of the digest the base commit's parser output has, or "throws" where the base throws. Measured at the base. */
+const LONG_BASE: Record<string, string[]> = {
+  "arith sum": ["bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a"],
+  "arith deep parentheses": ["bbfe1c835d898e7a", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
+  "arith many substitutions": ["bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a", "bbfe1c835d898e7a"],
+  "arith after and": ["f16bbcd3169ce99a", "f16bbcd3169ce99a", "f16bbcd3169ce99a", "f16bbcd3169ce99a", "f16bbcd3169ce99a"],
+  "arith for header": ["77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf"],
+  "arith for header substitutions": ["77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf", "77bf9f4486502dcf"],
+  "arith expansion": ["52ad3aaa98549eb9", "805d07a863f4836c", "throws", "throws", "throws"],
+  "test and chain": ["5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c"],
+  "test deep parentheses": ["5f98d0f8f202c64c", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
+  "test many substitutions": ["5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c", "5f98d0f8f202c64c"],
+  "select many words": ["303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846"],
+  "select many substitutions": ["303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846", "303a3e518c777846"],
+  pipeline: ["0049aeccdff915c7", "ff5cd82e68b6b386", "dd982124efab464c", "233ba80c1194446a", "3a83537748428b16"],
+  "nested groups": ["3d428ca24c18b1f0", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
+  "nested subshells": ["3d428ca24c18b1f0", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
+};
+
+test("long lines: the parser throws where the base throws and returns what the base returns; lineWords and arithmeticTexts do not throw", () => {
+  const bad: string[] = [];
+  for (const [name, make] of Object.entries(LONG_LINES)) {
+    LONG_SIZES.forEach((n, i) => {
+      const line = make(n);
+      let got: string;
+      try {
+        got = digestOf(line).slice(0, 16);
+      } catch {
+        got = "throws";
+      }
+      if (got !== LONG_BASE[name][i]) bad.push(`${name} ${n}: ${got}, base ${LONG_BASE[name][i]}`);
+      try {
+        lineWords(line);
+        arithmeticTexts(line);
+      } catch (e) {
+        bad.push(`${name} ${n}: lineWords or arithmeticTexts throws ${(e as Error).message}`);
+      }
+    });
+  }
+  assert.equal(bad.length, 0, bad.join("\n"));
 });

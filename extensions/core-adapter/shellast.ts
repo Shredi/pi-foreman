@@ -249,6 +249,41 @@ function scriptsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undef
   });
 }
 
+/**
+ * Pre-order, document order walk below `roots` without recursion (a deep tree cannot overflow the stack). `visit` returns false to skip the
+ * children of a node, or an array of nodes to walk instead of them.
+ */
+function walkIter(roots: readonly SyntaxNode[], visit: (n: SyntaxNode) => boolean | readonly SyntaxNode[] | void): void {
+  const stack: SyntaxNode[] = [...roots].reverse();
+  while (stack.length) {
+    const n = stack.pop()!;
+    const r = visit(n);
+    if (r === false) continue;
+    const kids: SyntaxNode[] = [];
+    if (Array.isArray(r)) kids.push(...(r as readonly SyntaxNode[]));
+    else forEachChild(n, (c: SyntaxNode) => void kids.push(c));
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  }
+}
+
+const childrenOf = (n: SyntaxNode): SyntaxNode[] => {
+  const kids: SyntaxNode[] = [];
+  forEachChild(n, (c: SyntaxNode) => void kids.push(c));
+  return kids;
+};
+
+/** `scriptsIn` for the nodes the walker does not enter: the same substitutions in the same order, without recursion. */
+function subsIn(node: SyntaxNode, acc: { subs: Array<{ script: Script | undefined; label: string; text?: string }>; proc: boolean }): void {
+  walkIter(childrenOf(node), (c) => {
+    const x = c as any;
+    if (x.type === "CommandExpansion" || x.type === "ArithmeticCommandExpansion" || x.type === "ProcessSubstitution") {
+      if (x.type === "ProcessSubstitution") acc.proc = true;
+      acc.subs.push({ script: x.script, label: String(x.text).startsWith("`") ? "`" : "$(", text: String(x.text) });
+      return false;
+    }
+  });
+}
+
 function seg(sc: Scope, program: string, argv: string[], reason: OpaqueReason | null, c?: Cmd, cwd: string | null = sc.cwd, source?: string, computed?: boolean[], substitutions?: string[]): void {
   sc.run.out.push({
     ...(substitutions?.length ? { substitutions } : {}),
@@ -340,15 +375,13 @@ function bodyText(n: any, sc: Scope): string | undefined {
   let end: number = b.end;
   if (n.type === "Coproc") {
     // a coproc body ends before the text of its heredocs: take it through the terminator line
-    const visit = (x: SyntaxNode): void => {
+    walkIter([b as SyntaxNode], (x) => {
       const y = x as any;
       if (y.type === "HereDocBody" && typeof y.end === "number") {
         const nl = sc.src!.indexOf("\n", y.end);
         end = Math.max(end, nl < 0 ? sc.src!.length : nl);
       }
-      forEachChild(x, visit);
-    };
-    visit(b as SyntaxNode);
+    });
   }
   return sc.src.slice(b.pos, end);
 }
@@ -404,11 +437,18 @@ function walkNode(n: any, sc: Scope): string | null {
     default: {
       const names: Record<string, string> = { Select: "select", Coproc: "coproc", ArithmeticFor: "for", TestCommand: "[[", ArithmeticCommand: "((" };
       const acc = { subs: [] as Array<{ script: Script | undefined; label: string; text?: string }>, proc: false };
-      if (n.type === "Select") for (const w of (n.wordlist ?? []) as Word[]) scriptsIn(w, acc);
-      else if (n.type === "TestCommand" || n.type === "ArithmeticCommand") scriptsIn(n, acc);
-      // the header only: the body is read as text; an empty word stands in for it in the traversal
-      else if (n.type === "ArithmeticFor") scriptsIn({ type: n.type, initialize: n.initialize, test: n.test, update: n.update, body: { type: "Word", parts: [] } } as unknown as SyntaxNode, acc);
-      const text = (n.type === "ArithmeticCommand" || n.type === "TestCommand") && sc.src !== undefined ? sc.src.slice(n.pos, n.end) : bodyText(n, sc);
+      let text: string | undefined;
+      // the optional fields only: a failure while collecting them leaves them unset and never changes the segment's other fields
+      try {
+        if (n.type === "Select") for (const w of (n.wordlist ?? []) as Word[]) subsIn(w, acc);
+        else if (n.type === "TestCommand" || n.type === "ArithmeticCommand") subsIn(n, acc);
+        // the header only: the body is read as text; an empty word stands in for it in the traversal
+        else if (n.type === "ArithmeticFor") subsIn({ type: n.type, initialize: n.initialize, test: n.test, update: n.update, body: { type: "Word", parts: [] } } as unknown as SyntaxNode, acc);
+        text = (n.type === "ArithmeticCommand" || n.type === "TestCommand") && sc.src !== undefined ? sc.src.slice(n.pos, n.end) : bodyText(n, sc);
+      } catch {
+        acc.subs = [];
+        text = undefined;
+      }
       seg(sc, names[n.type] ?? n.type, [], "unsupported", undefined, sc.cwd, text, undefined, acc.subs.map((s) => s.text ?? ""));
       return sc.cwd;
     }
@@ -871,12 +911,14 @@ export function lineWords(command: string): LineWord[] | null {
   const out: LineWord[] = [];
   const programs = new Set<unknown>();
   const expansions = (n: SyntaxNode, acc: string[]): void =>
-    forEachChild(n, (c: SyntaxNode) => {
+    walkIter(childrenOf(n), (c) => {
       const x = c as any;
-      if (x.type === "CommandExpansion" || x.type === "ArithmeticExpansion" || x.type === "SimpleExpansion" || x.type === "ProcessSubstitution") acc.push(String(x.text));
-      else expansions(c, acc);
+      if (x.type === "CommandExpansion" || x.type === "ArithmeticExpansion" || x.type === "SimpleExpansion" || x.type === "ProcessSubstitution") {
+        acc.push(String(x.text));
+        return false;
+      }
     });
-  const visit = (n: SyntaxNode): void => {
+  const visit = (n: SyntaxNode): boolean | readonly SyntaxNode[] | void => {
     const x = n as any;
     if (x.type === "Command" && x.name) programs.add(x.name);
     if (x.type === "Assignment") out.push({ text: `${x.name}=`, program: false, expands: false });
@@ -890,12 +932,14 @@ export function lineWords(command: string): LineWord[] | null {
     }
     // a redirect target is a file name, not a word of the command; what it expands is still walked
     if (x.target && x.operator && x.type !== "HereString" && x.type !== "HereDoc") {
-      forEachChild(x.target as SyntaxNode, visit);
-      return;
+      return childrenOf(x.target as SyntaxNode);
     }
-    forEachChild(n, visit);
   };
-  visit(script as unknown as SyntaxNode);
+  try {
+    walkIter([script as unknown as SyntaxNode], visit);
+  } catch {
+    // a failure leaves the words found so far
+  }
   return out;
 }
 
@@ -908,12 +952,14 @@ export function arithmeticTexts(command: string): string[] {
   } catch {
     return out;
   }
-  const visit = (n: SyntaxNode): void => {
-    const x = n as any;
-    if (x.type === "ArithmeticExpansion" && typeof x.text === "string") out.push(x.text);
-    forEachChild(n, visit);
-  };
-  visit(script as unknown as SyntaxNode);
+  try {
+    walkIter([script as unknown as SyntaxNode], (n) => {
+      const x = n as any;
+      if (x.type === "ArithmeticExpansion" && typeof x.text === "string") out.push(x.text);
+    });
+  } catch {
+    // a failure leaves the texts found so far
+  }
   return out;
 }
 
