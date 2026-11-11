@@ -8,7 +8,7 @@
 
 Setting up with an agent: point it at [features.md](features.md).
 
-Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>

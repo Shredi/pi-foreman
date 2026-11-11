@@ -14,7 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - {os: ubuntu-latest, node: "22"}
+          - {os: macos-latest, node: "22"}
+          - {os: windows-latest, node: "22"}
+          - {os: ubuntu-latest, node: "26"}
+    name: test (${{ matrix.os }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }})
     runs-on: ${{ matrix.os }}
     steps:
       - name: "Windows: Defender real-time scanning off (CI speed)"
@@ -27,7 +32,7 @@ jobs:
           python-version: "3.13"
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
       - name: install bundled packages (pi-subagents, intercom)
         run: npm install --no-package-lock --no-audit --no-fund
       - name: python unit tests
@@ -77,14 +82,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, shard: 1, shards: 2}
-          - {os: ubuntu-latest, shard: 2, shards: 2}
-          - {os: macos-latest, shard: 1, shards: 1}
-          - {os: windows-latest, shard: 1, shards: 4}
-          - {os: windows-latest, shard: 2, shards: 4}
-          - {os: windows-latest, shard: 3, shards: 4}
-          - {os: windows-latest, shard: 4, shards: 4}
-    name: replay (${{ matrix.os }}, ${{ matrix.shard }}/${{ matrix.shards }})
+          - {os: ubuntu-latest, shard: 1, shards: 2, node: "22"}
+          - {os: ubuntu-latest, shard: 2, shards: 2, node: "22"}
+          - {os: macos-latest, shard: 1, shards: 1, node: "22"}
+          - {os: windows-latest, shard: 1, shards: 4, node: "22"}
+          - {os: windows-latest, shard: 2, shards: 4, node: "22"}
+          - {os: windows-latest, shard: 3, shards: 4, node: "22"}
+          - {os: windows-latest, shard: 4, shards: 4, node: "22"}
+          - {os: ubuntu-latest, shard: 1, shards: 2, node: "26"}
+          - {os: ubuntu-latest, shard: 2, shards: 2, node: "26"}
+    name: replay (${{ matrix.os }}, ${{ matrix.shard }}/${{ matrix.shards }}${{ matrix.node != '22' && format(', node {0}', matrix.node) || '' }})
     runs-on: ${{ matrix.os }}
     steps:
       - name: "Windows: Defender real-time scanning off (CI speed)"
@@ -97,7 +104,7 @@ jobs:
           python-version: "3.13"
       - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
       - name: install bundled packages (pi-subagents, intercom)
         run: npm install --no-package-lock --no-audit --no-fund
       - name: install Pi (pinned)
