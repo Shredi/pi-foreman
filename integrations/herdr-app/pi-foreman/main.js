@@ -37,7 +37,7 @@ const CARD = 5; // inset of a session card: 4px margin and its 1px border
 const LINE = 14; // width of one connector cell
 
 // Pi is the only harness: its logo and a leading "π - " in a terminal title say nothing, so sessions carry neither. Only agent
-// rows (subagent runs) carry an icon.
+// rows (subagent runs and agent-marked background tasks) carry an icon; a shell task is the gear line only.
 const stripPi = (s) => (typeof s === "string" ? s.replace(/^\s*π\s*(?:-\s*)?/, "") : s);
 
 // One status mark from a glyphSpec: a spinner, the "Needs you" pill, or a dot (hollow ring or filled).

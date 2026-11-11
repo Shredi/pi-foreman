@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseRecords } from "./model.js";
 
-test("parseRecords: pi-foreman background-task records count like pi-subagents ones", () => {
+test("parseRecords: pi-subagents records as before; pi-foreman shell-task records are kept, marked task", () => {
   const doc = JSON.stringify({
     records: {
       "subagents/abc": { app: "pi-subagents", state: "working", title: "explorer", msg: "Running" },
@@ -13,6 +13,6 @@ test("parseRecords: pi-foreman background-task records count like pi-subagents o
   });
   assert.deepEqual(parseRecords(doc), [
     { title: "explorer", state: "working", msg: "Running" },
-    { title: "npm test", state: "working", msg: "Running" },
+    { title: "npm test", state: "working", msg: "Running", task: true },
   ]);
 });
