@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pickTrialResult } from "./foreman_ci_bench.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const py = process.platform === "win32" ? "python" : "python3";
@@ -48,15 +49,6 @@ function installer() {
   return { status: r.ok ? "pass" : "fail", line: `${pass ? pass[1] : "?"} passed, ${fail ? fail[1] : "?"} failed`, out: r.out };
 }
 
-function findFiles(dir, name, found = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) findFiles(p, name, found);
-    else if (e.name === name) found.push(p);
-  }
-  return found;
-}
-
 function bench() {
   const lookup = spawnSync(process.platform === "win32" ? "where" : "which", ["harbor"], { stdio: "ignore" });
   if (lookup.status !== 0) return { status: "skip", line: "harbor is not on PATH (the bench probe needs Harbor)" };
@@ -64,9 +56,9 @@ function bench() {
   try {
     const r = exec(py, ["scripts/foreman_bench.py", "run", "--preset", "bench/presets/smoke.json", "--rows", "foreman-fake", "--task", "detach-probe", "--jobs-dir", jobs], { HARBOR_TELEMETRY: "off" });
     if (!r.ok) return { status: "fail", line: `bench run exit ${r.status}`, out: r.out };
-    const results = findFiles(jobs, "result.json").filter((f) => f.includes("foreman-fake__detach-probe__r1__")).sort();
-    if (results.length === 0) return { status: "fail", line: "no result.json for detach-probe", out: r.out };
-    const reward = JSON.parse(fs.readFileSync(results[results.length - 1], "utf8")).verifier_result?.rewards?.reward;
+    const result = pickTrialResult(jobs);
+    if (result === null) return { status: "fail", line: "no result.json for detach-probe", out: r.out };
+    const reward = JSON.parse(fs.readFileSync(result, "utf8")).verifier_result?.rewards?.reward;
     if (reward !== 1) return { status: "fail", line: `detach-probe reward ${reward}, need 1`, out: r.out };
     return { status: "pass", line: "detach-probe reward 1", out: r.out };
   } finally {
