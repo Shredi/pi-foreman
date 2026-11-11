@@ -15,14 +15,34 @@ const SHA = "abcdef0123456789";
 const run = (name: string, bucket: Bucket): Run => ({ id: name, name, bucket, url: `https://h.invalid/${name}` });
 const snap = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => ({ state: "open", mergeable: "mergeable", head: SHA, base: "main", updatedAt: "t0", runs: [], ...o });
 
-test("draft: a child whose draft PR has passing checks says draft, and sends no ready line", () => {
+const DRAFT_LINE = /\nreport to the parent: PR #7 green on abcdef0, mergeable, still a draft$/;
+
+test("draft: a child whose draft PR has passing checks says draft in the message and the report line, never ready", () => {
   const base = baselineOf(snap({ runs: [run("a", "pending")], mergeable: "unknown", draft: true }));
   const { delta } = prDelta(base, snap({ runs: [run("a", "passed")], draft: true }), true);
-  assert.deepEqual(delta?.events, ["checks finished: pass, draft"]);
+  assert.deepEqual(delta?.events, ["checks finished: pass, draft", "green, still a draft"]);
   const msg = prMessage(7, delta!).content;
   assert.match(msg, /checks finished: pass, draft/);
+  assert.match(msg, DRAFT_LINE);
   assert.ok(!msg.includes("ready to merge"));
-  assert.ok(!msg.includes("report to the parent"));
+});
+
+test("draft: mergeable known one tick after the checks settled, the draft report line still comes once", () => {
+  const base = baselineOf(snap({ runs: [run("a", "pending")], mergeable: "unknown", draft: true }));
+  const first = prDelta(base, snap({ runs: [run("a", "passed")], mergeable: "unknown", draft: true }), true);
+  assert.deepEqual(first.delta?.events, ["checks finished: pass, draft"]);
+  assert.ok(!prMessage(7, first.delta!).content.includes("report to the parent"));
+  const second = prDelta(first.state, snap({ runs: [run("a", "passed")], draft: true }), true);
+  assert.deepEqual(second.delta?.events, ["green, still a draft"]);
+  assert.match(prMessage(7, second.delta!).content, DRAFT_LINE);
+  assert.equal(prDelta(second.state, snap({ runs: [run("a", "passed")], draft: true }), true).delta, null);
+});
+
+test("draft: a top-level session gets the draft checks line and no report line", () => {
+  const base = baselineOf(snap({ runs: [run("a", "pending")], mergeable: "unknown", draft: true }));
+  const { delta } = prDelta(base, snap({ runs: [run("a", "passed")], draft: true }), false);
+  assert.deepEqual(delta?.events, ["checks finished: pass, draft"]);
+  assert.ok(!prMessage(7, delta!).content.includes("report to the parent"));
 });
 
 test("draft: the same PR not in draft gives the ready lines as before", () => {
@@ -35,7 +55,7 @@ test("draft: the same PR not in draft gives the ready lines as before", () => {
 test("draft: marked ready for review on the same head, the ready lines come once", () => {
   const base = baselineOf(snap({ runs: [run("a", "pending")], mergeable: "unknown", draft: true }));
   const draft = prDelta(base, snap({ runs: [run("a", "passed")], draft: true }), true);
-  assert.deepEqual(draft.delta?.events, ["checks finished: pass, draft"]);
+  assert.deepEqual(draft.delta?.events, ["checks finished: pass, draft", "green, still a draft"]);
   const ready = prDelta(draft.state, snap({ runs: [run("a", "passed")] }), true);
   assert.deepEqual(ready.delta?.events, ["ready to merge"]);
   assert.match(prMessage(7, ready.delta!).content, /\nreport to the parent: PR #7 green on abcdef0, mergeable, ready to merge$/);

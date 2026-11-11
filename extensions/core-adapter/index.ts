@@ -4644,7 +4644,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       prepareLoadout: (loadout: { declared: readonly { name: string; description?: string }[] }) => {
         const sizingOn = [...sessions.values()].every((x) => sizingConfig(x.config.config).enabled);
         // sizing off: the MCP sentence alone, only where a role has an MCP ceiling (no ceiling, no launch field to explain)
-        const mcpOn = [...sessions.values()].some((x) => ((roles) => typeof roles === "object" && roles !== null && Object.keys(roles).some((r) => roleMcpEntries(roles, r).length > 0))(get(x.config.config, "roles")));
+        const hasMcpRole = (roles: unknown): boolean => typeof roles === "object" && roles !== null && Object.keys(roles).some((r) => roleMcpEntries(roles, r).length > 0);
+        const mcpOn = [...sessions.values()].some((x) => hasMcpRole(get(x.config.config, "roles")));
         const description = sizingOn ? subagentDescription(loadout.declared, true) : mcpOn ? mcpDescription(loadout.declared) : null;
         return description ? { descriptions: { subagent: description } } : undefined;
       },

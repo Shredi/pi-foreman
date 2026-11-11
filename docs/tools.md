@@ -208,7 +208,7 @@ The tracker (`foreman prs poll`) polls the tracked PRs with one `pr_batch` per 5
 id and link) and fetches comments only when `updatedAt` moved, for the PR's own repository (not the working directory's). The news latency is the tracker's cycle (about 1 to 1.5 minutes per 50 tracked PRs) plus up to one `tools.prWatchSeconds` tick.
 
 In a child session (`PI_FOREMAN_HANDOFF_DIR` set) the message also carries the instruction lines: `report to the parent: PR #n
-green on <sha>, mergeable, ready to merge` once per head when CI passed and the PR is mergeable and not a draft (a draft that passed CI with a mergeable PR says `checks finished: pass, draft` instead, and no report line); on a mergeable conflict `merge
+green on <sha>, mergeable, ready to merge` once per head when CI passed and the PR is mergeable and not a draft (a draft says `checks finished: <result>, draft`; one that passed CI with a mergeable PR gets, once per head, `report to the parent: PR #n green on <sha>, mergeable, still a draft` instead, and never the ready line; marked ready on the same head, the ready line comes once); on a mergeable conflict `merge
 <base> into the branch, then push via the parent`; on a PR closed unmerged `report to the parent: PR #n closed unmerged`.
 
 A session cannot close while it holds a watch on an open PR: the close is refused with `PR #n open and watched (merge it, or
