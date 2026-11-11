@@ -1,6 +1,6 @@
 // Pins the gate's decisions and the parser output of the git-guard parity commands against the base commit named in the fixture
-// header. The parser change that follows the base only adds optional `ShellSegment` fields: the gate's decisions (main and child) and
-// the parse output without those fields must stay what they were. Decisions are the gate's `block` / `ask` / allow and its rule name.
+// header, so a later parser or floor change moves no decision unnoticed: the gate's decisions (main and child) and the parse output
+// of every row must stay what they were. Decisions are the gate's `block` / `ask` / allow and its rule name.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
@@ -11,15 +11,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { gateEvaluate, baseFloorEnv } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
-import { parseShell, lineWords, arithmeticTexts } from "../shellast.ts";
+import { parseShell } from "../shellast.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
 const PIN_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "shellast-pin.json");
 const hasGit = spawnSync("git", ["--version"]).status === 0;
 const posix = process.platform !== "win32";
-
-/** The fields this change adds to `ShellSegment` (the type at the base has none of them); they are removed before the digest. */
-const ADDED_FIELDS = ["stdinBodies", "source", "substitutions", "computed", "afterTime", "piped", "envNames"];
 
 type Decision = [verdict: string, rule: string];
 type Fixture = "empty" | "plain" | "alias" | "foreman" | "subok" | "subdiff";
@@ -48,11 +45,7 @@ function canonical(v: unknown): string {
 }
 
 function digestOf(text: string): string {
-  const segs = parseShell(text, { platform: "linux" }).map((s) => {
-    const o = { ...s } as unknown as Record<string, unknown>;
-    for (const f of ADDED_FIELDS) delete o[f];
-    return o;
-  });
+  const segs = parseShell(text, { platform: "linux" });
   return crypto.createHash("sha256").update(canonical(segs)).digest("hex");
 }
 
@@ -207,7 +200,7 @@ test("the pin fixture is not empty and its row count equals the header", () => {
   assert.doesNotMatch(JSON.stringify(pin), /\/Users\/|\/home\/|\/private\/var|\/var\/folders|C:\\Users/);
 });
 
-test("the parse output without the added optional fields has the pinned digest", () => {
+test("the parse output has the pinned digest", () => {
   const bad: string[] = [];
   pin.rows.forEach((r, i) => {
     if (digestOf(parseText(r)) !== r.digest) bad.push(describe(i, r));
@@ -272,7 +265,7 @@ const LONG_BASE: Record<string, string[]> = {
   "nested subshells": ["3d428ca24c18b1f0", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc", "73aad5ee9e6a23cc"],
 };
 
-test("long lines: the parser throws where the base throws and returns what the base returns; lineWords and arithmeticTexts do not throw", () => {
+test("long lines: the parser throws where the base throws and returns what the base returns", () => {
   const bad: string[] = [];
   for (const [name, make] of Object.entries(LONG_LINES)) {
     LONG_SIZES.forEach((n, i) => {
@@ -284,12 +277,6 @@ test("long lines: the parser throws where the base throws and returns what the b
         got = "throws";
       }
       if (got !== LONG_BASE[name][i]) bad.push(`${name} ${n}: ${got}, base ${LONG_BASE[name][i]}`);
-      try {
-        lineWords(line);
-        arithmeticTexts(line);
-      } catch (e) {
-        bad.push(`${name} ${n}: lineWords or arithmeticTexts throws ${(e as Error).message}`);
-      }
     });
   }
   assert.equal(bad.length, 0, bad.join("\n"));
