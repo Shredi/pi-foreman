@@ -19,6 +19,8 @@ The gate's classifier is a separate path: one cheap model call clears a dangerou
 One mechanism serves every review: the same launch path, climb rung, model rule, extractor and records. The occasion
 is read from a marker in the reviewer's task text.
 
+The table below lists one row per occasion.
+
 | Occasion | Marker | Reviews | Counts for items and gates |
 |---|---|---|---|
 | `item` | none | Built ledger items | yes |
