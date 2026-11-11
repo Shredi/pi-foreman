@@ -128,7 +128,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
     }
     target = w.path;
   }
-  if (!branch) return { lines: ["cleanup: not started (the worktree has no branch checked out)"] };
+  if (!branch) return { lines: [`cleanup: not started (the worktree ${target} has no branch checked out); nothing is removed: worktree ${target} stays; the owner checks out the round's branch in it, or removes the worktree with \`git worktree remove ${target}\``] };
   const lines: string[] = [];
   const isMain = wts.length > 0 && samePath(target, wts[0].path);
   if (isMain || branch === baseRef) {
@@ -137,7 +137,7 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
     return { lines: [...snap, `cleanup: not started (${why}); nothing is removed: worktree ${target} and branch ${branch} stay; the owner removes the round's own worktree and branch by hand once PR #${n} is merged`] };
   }
   const tip = await d.git(["rev-parse", "--verify", "HEAD"], samePath(target, d.cwd) ? undefined : target);
-  if (!tip) return { lines: ["cleanup: not started (the worktree has no commit checked out)"] };
+  if (!tip) return { lines: [`cleanup: not started (the worktree ${target} has no commit checked out); nothing is removed: worktree ${target} and branch ${branch} stay; the owner commits the round's work in it, or removes the worktree with \`git worktree remove ${target}\``] };
   const fact = await verifyMerged(async () => status, n, branch, tip);
   if ("why" in fact) lines.push(`merged fact: not verified (${fact.why}); only a branch merged into the base is removed`);
   const archive = path.join(d.handoff, ARCHIVE_DIR);

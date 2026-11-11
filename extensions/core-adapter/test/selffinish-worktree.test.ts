@@ -208,6 +208,38 @@ test("a PR head branch in no worktree: the message names the branch and what to 
   }
 });
 
+test("a detached second worktree: the not-started line names its path and says what the owner does", async () => {
+  const w = world();
+  try {
+    git(w.wt, "checkout", "-q", "--detach");
+    // git exits non-zero for symbolic-ref on a detached HEAD; the adapter's git wrapper turns that into null
+    const r = await selfFinish(w.deps({ cwd: w.wt, status: async () => ran({ state: "open", headRefName: null, baseRef: "main", headSha: null }), git: async (a, dir) => { try { return git(dir ?? w.wt, ...a); } catch { return null; } } }), 7);
+    assert.equal(r.spawn, undefined);
+    assert.equal(w.calls(), 0, "no check runs without a branch");
+    const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+    assert.ok(line.includes(`the worktree ${w.wt} has no branch checked out`) && line.includes(`git worktree remove ${w.wt}`), line);
+    assert.ok(fs.existsSync(w.wt));
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("an unborn second worktree: the not-started line names its path and branch and what the owner does", async () => {
+  const w = world();
+  try {
+    const orphan = path.join(w.root, "repo.worktrees", "orphan");
+    git(w.repo, "worktree", "add", "-q", "--orphan", "-b", "newb", orphan);
+    const r = await selfFinish(w.deps({ cwd: orphan, status: async () => ran({ state: "open", headRefName: null, baseRef: "main", headSha: null }), git: async (a, dir) => { try { return git(dir ?? orphan, ...a); } catch { return null; } } }), 7);
+    assert.equal(r.spawn, undefined);
+    const line = r.lines.find((l) => l.startsWith("cleanup: not started"))!;
+    assert.ok(line.includes(`the worktree ${orphan} has no commit checked out`) && line.includes(`worktree ${orphan} and branch newb stay`), line);
+    assert.ok(line.includes("git worktree remove " + orphan), line);
+    assert.ok(fs.existsSync(orphan));
+  } finally {
+    w.cleanup();
+  }
+});
+
 test("parseWorktrees reads the porcelain list (main first) and samePath ignores separators and (Windows) case", () => {
   const list = "worktree /r/repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /r/repo.worktrees/feat\nHEAD def\nbranch refs/heads/feat\n\nworktree /r/det\nHEAD 123\ndetached\n";
   assert.deepEqual(parseWorktrees(list), [{ path: "/r/repo", branch: "main" }, { path: "/r/repo.worktrees/feat", branch: "feat" }, { path: "/r/det", branch: null }]);

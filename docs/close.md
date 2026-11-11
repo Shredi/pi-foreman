@@ -130,7 +130,8 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   snapshot), never a symlink or junction (links are not followed or copied), never the destination itself. The total is
   capped at 16 MiB over both snapshots of one close (ledgers, plans and notes are kilobytes; the cap keeps a handoff dir cheap
   to copy); a file that would cross the cap is skipped, smaller later ones still go in. There is no config key for it.
-  The line `workflow archive: <dir> (<n> files)` goes into the report; when something was left out,
+  The line `workflow archive: <dir> (<n> files)` goes into the report; a session cwd that is another worktree and has files
+  in its snapshot adds `workflow archive (session cwd): <dir> (<n> files)` (the `workflow-cwd/` dir) for the second snapshot. When something was left out,
   `workflow archive left out: <what (why)>; ...` follows (`closed/ (other rounds)`, `archive/ (earlier snapshots)`, `N links`,
   `N unreadable or special entries` (unreadable folders, files that fail `stat`, FIFOs, sockets, devices),
   `N files older than the session` (main worktree only), `N files over the 16 MiB cap: a, b, ...`). Only when nothing of the target's `.workflow/` was
@@ -141,7 +142,7 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 - **Checks before the exit.** The preconditions are checked in the session. A refusal (`worktree_dirty`, `stash_references_branch`,
   `ignored_files`, `not_merged`, `in_use (session X)`, ...) is written into `result.md` under `## Merge cleanup` and into the
   message to the parent (`PR #n merged, closing (cleanup: not started (<reason>); ...)`); nothing is spawned, and the worktree
-  and the branch stay. Each such line names the real worktree path and branch and what the owner does: clear the reason
+  and the branch stay. Each such line names the real worktree path (and the branch, where one is checked out) and what the owner does: clear the reason
   (commit or discard changes, copy or delete the ignored files), then remove them with `git worktree remove <path>` and
   `git branch -D <branch>` or with `foreman worktree sweep`.
 - **Detached cleanup.** The last step of the close spawns a detached process (`foreman_close.py selfclean --wait-pid`; node
