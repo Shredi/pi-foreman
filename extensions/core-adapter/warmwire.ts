@@ -10,7 +10,7 @@ import { Presence } from "./presence.ts";
 import { SelfWarm, type WarmSignals } from "./selfwarm.ts";
 import { appendUsage, pricedLine, type LineContext } from "./usage.ts";
 import { warmRates } from "./warmbudget.ts";
-import { replayWarm, replayable } from "./warmreplay.ts";
+import { replayWarm, replayable, type ReplayApi } from "./warmreplay.ts";
 
 export interface WarmWireOpts {
   pi: Pick<ExtensionAPI, "getThinkingLevel" | "getSettings">;
@@ -51,6 +51,19 @@ export function bridgeChildrenOn(config: unknown): boolean {
 /** `providers.<provider>.cache.keepalive.children: false` (resolved over the config layers): children on that provider do not warm. */
 export function childrenOff(config: unknown, provider: string): boolean {
   return get(config, `providers.${provider}.cache.keepalive.children`) === false;
+}
+
+/** The Pi side of the replay for a context: Pi's converter, the thinking level, the session id, the retention and the registry's `streamSimple`. Shared by the idle warm and `/foreman doctor warm`. */
+export async function liveReplayApi(o: Pick<WarmWireOpts, "pi" | "hidden">, ctx: ExtensionContext): Promise<ReplayApi> {
+  const { convertToLlm } = await import("@earendil-works/pi-coding-agent");
+  return {
+    convertToLlm: (m) => convertToLlm(m as never) as unknown[],
+    hidden: o.hidden,
+    thinkingLevel: () => o.pi.getThinkingLevel(),
+    sessionId: () => ctx.sessionManager.getSessionId(),
+    cacheRetention: () => (process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"),
+    streamSimple: (model, context, options) => (ctx.modelRegistry as never as { streamSimple(m: unknown, c: unknown, op: unknown): { result(): Promise<unknown> } }).streamSimple(model, context, options),
+  };
 }
 
 export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: SelfWarm } {
@@ -103,16 +116,7 @@ export function createWarm(o: WarmWireOpts): { presence: Presence; selfWarm: Sel
     replay: async (messages, signal, onError) => {
       const ctx = o.ctx();
       if (!ctx?.model) return null;
-      const { convertToLlm } = await import("@earendil-works/pi-coding-agent");
-      return replayWarm(ctx.model, messages, signal, {
-        onError,
-        convertToLlm: (m) => convertToLlm(m as never) as unknown[],
-        hidden: o.hidden,
-        thinkingLevel: () => o.pi.getThinkingLevel(),
-        sessionId: () => ctx.sessionManager.getSessionId(),
-        cacheRetention: () => (process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"),
-        streamSimple: (model, context, options) => (ctx.modelRegistry as never as { streamSimple(m: unknown, c: unknown, op: unknown): { result(): Promise<unknown> } }).streamSimple(model, context, options),
-      });
+      return replayWarm(ctx.model, messages, signal, { ...(await liveReplayApi(o, ctx)), onError });
     },
     record: (reply) => {
       const ctx = o.ctx();

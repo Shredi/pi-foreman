@@ -957,6 +957,7 @@ Switch: `providers.*.cache.keepalive.enabled` is true.
 | [knowledge](#knowledge) | `foreman knowledge` |
 | [radar](#radar) | `foreman radar` |
 | [resources](#resources) | `/foreman status` |
+| [idle-cache](#idle-cache) | `/foreman doctor warm` |
 
 ## Overlay quick start
 

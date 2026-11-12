@@ -188,6 +188,14 @@ declarations change, that request is one cold prefix, not only a longer system p
 declared for the session and across resume (the `deferred-loaded` session entry), so the cost is paid once per tool.
 The keep-alive replay captures the request as sent (read-only) and replays it with the hidden declarations projected out. See [tools](tools.md#deferred-tools-and-searchable-skills).
 
+## Prove the warm live (`/foreman doctor warm`)
+
+`/foreman doctor warm` checks on your provider that the idle warm really reads the cache. It never runs unasked: plain `/foreman doctor` only mentions it, and the command states what it will send and what it costs, then asks for confirmation (without a UI, on a decline or a dismissed dialog nothing is sent). It runs once per call, with no retry.
+
+What it sends, on the current model: one small fresh request, a prefix of about 5000 tokens (an assumption: above the 1024 to 4096 token minimum most providers cache) that starts with a unique marker so it cannot hit an existing cache entry, and, once that completes, one warm of the same messages through the same replay code the idle warm uses (`maxTokens` 1, the session id, the thinking level, the cache retention), with the session's own model object (api, base URL, headers and all). The cost is one cache write plus one cache read of that prefix, estimated from the price table in the confirmation ("cost unknown for this model" without a price). The probe adds no message to the conversation and leaves the session's captured warm request, warm budget, footer and sent messages alone.
+
+Reading the result: **HIT** means the warm's `cacheRead` covers what the fresh request wrote, so the idle warm works on this provider. **MISS** names the reason as the trace does (`self_warm_miss`: the warm did not read the cache) with both requests' `cacheRead`, `cacheWrite` and cost; check the TTL and `promptCache` (see Config). A fresh request that wrote nothing means the prefix is below the model's minimum cacheable size or the provider does not cache. A failed request prints the provider's error. No request is sent, with the reason, when the keep-alive is off for the model (the skip reason `no_entry`, `ttl_unknown`, `ttl_long`, `disabled` or `ttl_too_short`, and the config key to set), when no model is selected, when the idle warm could not replay the model at this thinking level (`not_replayable`), when a claude-bridge config approval is pending (`claude_cfg_pending`), or while a turn is in flight or messages are queued (run it when the session is idle). Any other argument after `/foreman doctor` runs the plain doctor. The probe is traced as `doctor_warm`, apart from the idle warms' `keepalive` events and counters.
+
 ## Cost and privacy
 
 The list-price table is `config/prices.json` (also read by the bench): the status line, presence `runs[].cost` and `/foreman cost` price a usage record with it when the provider logged `cost.total: 0`, as the claude-bridge does.
@@ -234,5 +242,6 @@ Other events:
 | event | fields | meaning |
 |---|---|---|
 | `budget` | `spent, cold, share, tier` | A warm was refused by the cost rule (dollars, then the share of the tier). |
+| `doctor_warm` | `outcome` (`hit`, `miss`, `error`, `refused`, `declined`), `reason`, `model`, `cacheRead`, `cacheWrite` (of the warm), `cost` (both requests), `message` (an error's text) | One `/foreman doctor warm` probe; not an idle warm and not counted as one. |
 | `presence` | `outcome` (`present`, `away`, `unknown`), `idleSeconds` | A presence sample. |
 | `foreman_model` | `from, to, reason, cause` or `outcome` | The idle-model downshift and its restore ([ladder](ladder.md#idle-rung-foreman-downshift)). |
