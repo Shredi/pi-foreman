@@ -20,10 +20,14 @@ const FILLER_LINES = 700;
 const TIMEOUT_MS = 120_000;
 
 export interface DoctorWarmDeps {
-  /** The current model (`ctx.model`), passed to the provider call as it is. */
+  /** The current model (`ctx.model` itself): opaque for the provider call, which needs its api, baseUrl, compat, headers and cost; only `provider` and `id` are read here (text, policy). */
   model(): { provider: string; id: string } | null;
   policy(): CachePolicy | null;
-  /** A turn is in flight (`!ctx.isIdle()`). */
+  /** The idle warm's rule (`replayable` in warmreplay.ts) for this model and thinking level. */
+  replayable(): boolean;
+  /** A claude-bridge config approval is pending: the replay would start Claude Code on unapproved config. */
+  driftPending(): boolean;
+  /** A turn is in flight or messages are queued. */
   busy(): boolean;
   hasUI: boolean;
   confirm(title: string, message: string): Promise<boolean>;
@@ -92,6 +96,8 @@ export async function doctorWarm(d: DoctorWarmDeps): Promise<DoctorWarmResult> {
     const fix = (SKIP_FIX[skip] ?? SKIP_FIX.no_entry)(model.provider);
     return refuse(skip, `the idle keep-alive is off for ${model.provider}/${model.id}; fix: ${fix}`);
   }
+  if (!d.replayable()) return refuse("not_replayable", `the idle warm cannot replay ${model.provider}/${model.id} at this thinking level (a budget-thinking anthropic-messages model), so there is no warm to prove`);
+  if (d.driftPending()) return refuse("claude_cfg_pending", "a claude-bridge config approval is pending and the replay would start Claude Code on unapproved config");
   if (d.busy()) return refuse("busy", "a turn is in flight and the probe must not interleave with it; run it when the session is idle");
   if (active) return refuse("busy", "a doctor warm probe is already running");
 

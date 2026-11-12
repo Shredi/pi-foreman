@@ -160,7 +160,7 @@ import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
 import { createWarm, liveReplayApi } from "./warmwire.ts";
 import { doctorWarm } from "./doctorwarm.ts";
 import { warmRates } from "./warmbudget.ts";
-import { forcedProjection } from "./warmreplay.ts";
+import { forcedProjection, replayable } from "./warmreplay.ts";
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
@@ -5426,11 +5426,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
         return;
       }
-      if (rest.length > 0 && !(rest.length === 1 && rest[0] === "warm")) {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman doctor warm", "warning");
-        return;
-      }
-      if (rest[0] === "warm") {
+      if (rest.length === 1 && rest[0] === "warm") {
         const s = await ensureSession(ctx);
         if (s.isChild) {
           ctx.ui.notify("Usage: /foreman doctor warm (foreman session only)", "warning");
@@ -5438,9 +5434,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const m = ctx.model;
         const r = await doctorWarm({
-          model: () => (m ? { provider: m.provider, id: m.id } : null),
+          model: () => m ?? null,
           policy: () => (m ? resolveWarmPolicy(s.config.config, m.provider, m.id, bridgeTtlS) : null),
-          busy: () => !ctx.isIdle(),
+          replayable: () => replayable(m as never, pi.getThinkingLevel()),
+          driftPending: () => !!m && m.provider === BRIDGE_PROVIDER && s.claudeCfg.pending(ctx.cwd).length > 0,
+          busy: () => !ctx.isIdle() || warmQueued(s),
           hasUI: ctx.hasUI,
           confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)),
           rates: (promptTokens) => (m ? warmRates({ table: loadPrices(PKG_ROOT), registry: lookupRate(ctx.modelRegistry as never, m.provider, m.id), model: m.id, promptTokens, ttlSeconds: resolveWarmPolicy(s.config.config, m.provider, m.id, bridgeTtlS).ttlSeconds }) : null),

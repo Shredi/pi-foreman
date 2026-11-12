@@ -9,6 +9,9 @@ type Usage = { input?: number; output?: number; cacheRead?: number; cacheWrite?:
 const RATES = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
 const cfg = { providers: { p: { cache: { ttlSeconds: 300, keepalive: { enabled: true } } } } };
 
+// The full Pi model (api, baseUrl, compat, headers, cost): the provider call must get this very object.
+const MODEL = { provider: "p", id: "m", api: "openai-completions", baseUrl: "https://x.test", compat: {}, headers: {}, maxTokens: 4096, cost: RATES };
+
 function rig(usages: Usage[], over: Partial<DoctorWarmDeps> = {}) {
   const events: string[] = [];
   const sent: { model: unknown; context: { messages: unknown[] }; options: Record<string, unknown> }[] = [];
@@ -27,8 +30,10 @@ function rig(usages: Usage[], over: Partial<DoctorWarmDeps> = {}) {
     },
   };
   const deps: DoctorWarmDeps = {
-    model: () => ({ provider: "p", id: "m" }),
+    model: () => MODEL,
     policy: () => resolveWarmPolicy(cfg, "p", "m"),
+    replayable: () => true,
+    driftPending: () => false,
     busy: () => false,
     hasUI: true,
     confirm: async (_t, msg) => (events.push("confirm"), confirms.push(msg), true),
@@ -134,6 +139,8 @@ test("refusals: no model, keep-alive off per skip reason with the fix, a turn in
     [{ policy: () => resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 3600 } } } }, "p", "m") }, /refused \(ttl_long\)/],
     [{ policy: () => resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 5, keepalive: { enabled: true } } } } }, "p", "m") }, /refused \(ttl_too_short\)/],
     [{ busy: () => true }, /refused \(busy\).*turn is in flight/],
+    [{ replayable: () => false }, /refused \(not_replayable\)/],
+    [{ driftPending: () => true }, /refused \(claude_cfg_pending\)/],
   ];
   for (const [over, re] of cases) {
     const r = rig([FRESH, HIT], over);
@@ -144,6 +151,20 @@ test("refusals: no model, keep-alive off per skip reason with the fix, a turn in
     assert.deepEqual(r.confirms, []);
     assert.equal(r.traces[0].outcome, "refused");
   }
+});
+
+test("a refusal by the replayable rule traces the idle warm's reason", async () => {
+  const r = rig([FRESH, HIT], { replayable: () => false });
+  await doctorWarm(r.deps);
+  assert.deepEqual(r.traces.map((t) => [t.outcome, t.reason]), [["refused", "not_replayable"]]);
+});
+
+test("both requests receive the very same model object (api, baseUrl, compat, headers, cost intact)", async () => {
+  const r = rig([FRESH, HIT]);
+  await doctorWarm(r.deps);
+  assert.equal(r.sent.length, 2);
+  assert.equal(r.sent[0].model, MODEL);
+  assert.equal(r.sent[1].model, MODEL);
 });
 
 test("a turn that starts after the fresh request stops the warm", async () => {
@@ -199,6 +220,14 @@ test("plain /foreman doctor sends no request and mentions the option; doctor war
   assert.equal((a.h.ctx.sessionManager.getEntries() as unknown[]).length, entries);
   assert.deepEqual(a.h.events("doctor_warm").map((r) => r.outcome), ["hit"]);
   assert.deepEqual(a.h.events("keepalive"), []);
+});
+
+test("/foreman doctor <other argument> runs the plain doctor as before and sends nothing", async (t) => {
+  const a = await adapter(t, async () => true);
+  await a.run("doctor whatever");
+  assert.equal(a.requests.length, 0);
+  assert.match(a.notes.join("\n"), /pi-foreman doctor/);
+  assert.doesNotMatch(a.notes.join("\n"), /Usage:/);
 });
 
 test("/foreman doctor warm on a declined dialog sends nothing", async (t) => {
