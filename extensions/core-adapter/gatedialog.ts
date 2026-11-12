@@ -129,12 +129,12 @@ export function ownerTitle(a: OwnerAsk, command: string): string {
 /** The notice after a successful remember: the project (name, then the file), what was stored, and for a stored sentence outside base mode `auto` that it is only used there. */
 function rememberedNotice(file: string, sentences: string[], rules: string[], baseMode?: string): string {
   const project = path.basename(path.dirname(path.dirname(file)));
-  return [
+  return printable([
     `remembered for project ${project} in ${file}`,
     ...sentences.map((s) => `sentence: ${s}`),
     ...rules.map((r) => `rule: ${r}`),
     ...(sentences.length && baseMode !== undefined && baseMode !== "auto" ? [`The sentence is only used under mode auto; sessions here otherwise run mode ${baseMode}.`] : []),
-  ].join("\n");
+  ].join("\n"));
 }
 
 /** Ask the owner. Never throws for a dismissed dialog; an away owner denies without or during the dialog. */
@@ -161,7 +161,7 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
   if ((choice !== "allow and remember" && !(choice === EXACT_OPTION && exact)) || !a.remember || !d.remember) return dismissed;
 
   const once = (note: string): OwnerAnswer => {
-    ui.notify(note, "warning");
+    ui.notify(printable(note), "warning");
     return { allow: true, how: "once", notes: [note], refused: true };
   };
   const { store, afterWrite } = d.remember;
@@ -186,7 +186,7 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
     return { allow: true, how: "remember", notes: [note] };
   }
 
-  const pick = await ui.select(`Remember this as a whitelist sentence?\n\n${a.remember.sentence}`, [...REMEMBER_OPTIONS], { signal });
+  const pick = await ui.select(`Remember this as a whitelist sentence?\n\n${printable(a.remember.sentence)}`, [...REMEMBER_OPTIONS], { signal });
   if (pick === undefined) return dismissed;
   let sentence = a.remember.sentence;
   if (pick === "edit the sentence") {
@@ -197,7 +197,7 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
 
   let rules: string[] = [];
   if (a.remember.rules && a.remember.rules.length) {
-    const yes = await ui.select(`Also add the pattern rule${a.remember.rules.length > 1 ? "s" : ""} ${a.remember.rules.join(" and ")}?`, ["yes", "no"], { signal });
+    const yes = await ui.select(`Also add the pattern rule${a.remember.rules.length > 1 ? "s" : ""} ${printable(a.remember.rules.join(" and "))}?`, ["yes", "no"], { signal });
     if (yes === undefined) return dismissed;
     if (yes === "yes") rules = a.remember.rules;
   }
@@ -209,7 +209,7 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
   for (const extra of rules.slice(1)) {
     const x = store.writeRemember({ rule: extra });
     if (x.ok === false) {
-      ui.notify(`pi-foreman: ${x.reason} The rule ${extra} was not stored.`, "warning");
+      ui.notify(printable(`pi-foreman: ${x.reason} The rule ${extra} was not stored.`), "warning");
       notes.push(x.reason);
     } else storedRules.push(extra);
   }
