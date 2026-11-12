@@ -727,7 +727,8 @@ class Scope(object):
         self.handoff_nt = False
         self.ignore_handoff = False   # second pass of decide(): handoff refusals are set aside
         self.ignore_unresolved = False   # another second pass: targets with an unresolved expansion do not count
-        self.strict = False   # the local assignment step is on and only an always-writable place is not a project path
+        self.local = False   # the local assignment step is on
+        self.strict = False   # (implies local) only an always-writable place is not a project path; decides allow or refuse, never the flags
         if isinstance(handoff_dir, str) and handoff_dir.strip():
             hd = _native_dir(handoff_dir)
             if hd and os.path.normpath(hd) != os.path.sep:
@@ -963,7 +964,7 @@ class Analyzer(object):
     def text(self, text, cwd, depth):
         if depth > MAX_DEPTH:
             raise Found("unreadable", "<nested too deep>")
-        items = (LocalLexer if self.scope.strict else Lexer)(text, cwd, self.scope.scratch).run()
+        items = (LocalLexer if self.scope.local else Lexer)(text, cwd, self.scope.scratch).run()
         stack = []
         prev = None
         for it in items:
@@ -2187,9 +2188,10 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
 
     strict = False   # pass S, see below: set only for a refused line that has a local assignment
 
-    def run(ignore_handoff, ignore_unresolved=False):
+    def run(ignore_handoff, ignore_unresolved=False, flags=False):
         scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs, handoff_dir)
-        scope.strict = strict
+        scope.local = strict
+        scope.strict = strict and not flags   # the flag passes ask whether a project file is written: local step on, scope not strict
         scope.ignore_handoff = ignore_handoff
         scope.ignore_unresolved = ignore_unresolved
         a = Analyzer(scope)
@@ -2211,13 +2213,13 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
         if handoff_dir:
             # refused only because of the handoff allow-list when nothing else is refused with it set aside
             try:
-                run(True)
+                run(True, flags=True)
                 out.handoff = True
             except (Found, Unreadable):
                 out.handoff = False
         # refused only because of unresolvable targets when nothing else is refused with those set aside
         try:
-            run(False, True)
+            run(False, True, True)
             out.unresolved = True
         except (Found, Unreadable):
             out.unresolved = False

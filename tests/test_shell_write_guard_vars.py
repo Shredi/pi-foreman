@@ -92,13 +92,13 @@ class ShellWriteVarsTest(unittest.TestCase):
                     "H='%s x'; echo y > \"$H/f\"" % self.outside, 'D="../.ssh"; echo x > "$D/id_rsa"',
                     'D=..; cp x "$D/y"', 'D=..; touch "$D/z"', 'D=..; tar xf a.tar -C "$D"'):
             with self.subTest(cmd=cmd):
-                self.refused(cmd, False)
+                self.refused(cmd, True)   # refused as a resolved target, no project file is written: no tier raise
 
     def test_a_word_mixing_a_local_value_is_judged_on_the_final_path(self):
         self.refused('D=.workflow; echo x > "$D/../x"', False)
         self.refused('D=.workflow; echo x > "pre$D"', False)
         self.refused('D=..; echo x > ".workflow/$D/x"', False)
-        self.refused('D=..; echo x > ".workflow/$D/../../x"', False)
+        self.refused('D=..; echo x > ".workflow/$D/../../x"', True)
         self.allowed('D=closed; echo x > ".workflow/$D/x"')
         self.allowed('D=closed; echo x > ".workflow/${D}/x"')
 
@@ -281,7 +281,10 @@ class ShellWriteVarsDirTest(unittest.TestCase):
 
     def each(self, template):
         for v in self.values():
-            self.refused("D=%s; %s" % (v, template), False)
+            hit = self.decide("D=%s; %s" % (v, template))
+            self.assertIsNotNone(hit, template)
+            if v in self.values()[4:]:   # a value inside the workspace: a project file is written, the tier is raised
+                self.assertFalse(hit.unresolved, "D=%s; %s" % (v, template))
 
     def test_cd_forms_refuse_the_later_write(self):
         for cd in ('cd "$D"', "cd $D", 'cd -- "$D"', 'cd -P "$D"', 'pushd "$D"', 'cd "$D" &&'):

@@ -130,6 +130,57 @@ class ShellWriteVarsMatrixTest(unittest.TestCase):
         self.assertGreater(total, 1000)
         self.assertGreater(allowed, 50)   # the writable places do resolve
 
+    def loose_flags(self, cmd):
+        """(handoff, unresolved) of the line analysed with the local step on and the scope not strict."""
+        def refused(ignore_handoff, ignore_unresolved):
+            scope = swg.Scope(self.ws, [".workflow"], self.scratch, [], self.hand)
+            scope.local = True
+            scope.ignore_handoff = ignore_handoff
+            scope.ignore_unresolved = ignore_unresolved
+            try:
+                swg.Analyzer(scope).text(cmd, self.ws, 0)
+            except (swg.Found, swg.Unreadable):
+                return True
+            return False
+        return not refused(True, False), not refused(False, True)
+
+    def test_the_flags_of_a_refused_line_are_those_of_the_non_strict_analysis(self):
+        checked = 0
+        for line, _, _ in self.lines():
+            hit = self.decide(line)
+            if hit is None:
+                continue
+            checked += 1
+            with self.subTest(line=line):
+                self.assertEqual((hit.handoff, hit.unresolved), self.loose_flags(line), line)
+        self.assertGreater(checked, 1000)
+
+    def test_a_harmless_assignment_does_not_change_the_flags(self):
+        for tail in ("echo x >> /tmp/x", "cp a ../sibling/x", "git -C /tmp checkout x"):
+            for pre in ("", "D=.workflow; "):
+                with self.subTest(pre=pre, tail=tail):
+                    hit = self.decide('%secho y >> "$V"; %s' % (pre, tail))
+                    self.assertTrue(hit.unresolved)
+        hand = os.path.join(self.outside, "handoffs", "h1")   # outside the workspace, so that setting it aside leaves no project file
+        os.makedirs(hand)
+        lit = swg.decide('echo x >> "%s/brief.md"; echo y >> /tmp/x' % hand, self.ws, self.ws, "bash", [".workflow"], self.scratch, [], hand)
+        var = swg.decide('H="%s"; echo x >> "$H/brief.md"; echo y >> /tmp/x' % hand, self.ws, self.ws, "bash", [".workflow"], self.scratch, [], hand)
+        self.assertTrue(lit.handoff)
+        self.assertEqual((var.handoff, var.unresolved), (lit.handoff, lit.unresolved))
+
+    def test_a_project_file_on_the_line_still_raises_the_tier(self):
+        for line in ('D=src; echo x >> "$D/f"', 'D=.workflow; echo x >> "$D/a"; echo y >> README.md'):
+            hit = self.decide(line)
+            self.assertFalse(hit.unresolved, line)
+            self.assertFalse(hit.handoff, line)
+
+    def test_an_outside_value_is_refused_by_its_resolved_target_without_the_unresolved_claim(self):
+        for line, target in (('D=..; echo x >> "$D/f"', "../f"), ("D=../../.ssh; cp -t$D a", "../../.ssh")):
+            hit = self.decide(line)
+            self.assertEqual(tuple(hit)[1], target)
+            self.assertNotIn("unresolved", tuple(hit)[1])
+            self.assertTrue(hit.unresolved)   # the flag key keeps its name: no project file is written, no tier raise
+
     def test_the_lines_the_review_listed_stay_refused(self):
         lines = ["D=../../.ssh; cp -t$D authorized_keys", "D=../../.aws; cp --target-directory=$D credentials",
                  "D=..; cp -t$D a", "D=..; cp -rt$D a", "D=..; cp -at$D a", "D=..; cp a b -t$D", "D=..; cp --target-directory=$D/x a",
