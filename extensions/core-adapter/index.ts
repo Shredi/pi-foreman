@@ -144,7 +144,7 @@ import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
-import { LiveState, intercomIdOf, labelOfHandoff } from "./livestate.ts";
+import { LiveState, intercomIdOf, labelOfHandoff, prWatchWait } from "./livestate.ts";
 import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
@@ -949,7 +949,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const prs = sessions.get(id)?.prWatches.list().map((p) => p.n) ?? []; const unreviewed = sessions.get(id)?.prWatches.unreviewed().map((k) => ({ n: k.n, repo: k.repo, host: k.host })) ?? []; return prs.length > 0 ? [...w, { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs, ...(unreviewed.length > 0 ? { unreviewed } : {}) }] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const pw = prWatchWait(sessions.get(id)?.prWatches.list() ?? [], sessions.get(id)?.prWatches.unreviewed() ?? []); return pw ? [...w, pw] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       if (s.live) {
         const live = s.live;
         s.show = Show.start({ agentDir, sessionId: id, cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir, handoffDir: (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null, trace: (r) => s.trace?.emit(r), onChange: () => live.flush() });

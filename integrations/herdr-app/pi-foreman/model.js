@@ -107,6 +107,8 @@ function normNode(raw, depth, budget) {
     prs: Array.isArray(w.prs) ? w.prs.slice(0, 50).map(int).filter((x) => x !== null) : [],
     // the watched PRs whose head moved past the session's last reviewer PASS (livestate.ts LiveWait.unreviewed)
     ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
+    // the watched PRs with their repository (livestate.ts LiveWait.prRefs); absent in an older live file
+    ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null && str(u.repo)).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
   })) : [];
   const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ label: str(t.label), ageS: num(t.ageSeconds) })) : [];
   const asks = Array.isArray(raw.asks) ? raw.asks.filter((a) => isObj(a) && int(a.n) !== null).map((a) => ({ n: a.n, topic: str(a.topic) })) : [];
@@ -173,20 +175,23 @@ function markUnreviewed(n) {
 
 /** Puts each open feed PR on the sessions with the same repository and head branch (`node.repo`, `node.branch` from the live
  *  file), and on the session whose `waits[].prs` lists its number when the repository (or head repository) is the session's,
- *  whatever branch the session is on now; a PR already on the node (same number) is not added twice. Mutates the nodes
- *  `parseRadarDoc` just built. */
+ *  whatever branch the session is on now; a PR a `waits[].prRefs` entry names (number and repository, host when both know
+ *  one) attaches whatever the session's repository is; a PR already on the node (same number) is not added twice. Mutates
+ *  the nodes `parseRadarDoc` just built. */
 export function matchPrs(nodes, feed, depth = 0) {
   if (depth > MAX_DEPTH) return;
   for (const n of listOf(nodes)) {
     if (!isObj(n)) continue;
-    if (n.kind === "session" && n.repo) {
+    const refs = listOf(n.waits).flatMap((w) => listOf(w?.prRefs));
+    if (n.kind === "session" && (n.repo || refs.length > 0)) {
       const repo = n.repo.toLowerCase();
       const watched = new Set(listOf(n.waits).flatMap((w) => listOf(w?.prs)));
       for (const p of listOf(feed)) {
         if (!isObj(p) || p.state === "merged" || p.state === "closed") continue;
-        const byBranch = Boolean(n.branch) && p.branch === n.branch && nameOf(p.headRepo || p.repo).toLowerCase() === repo;
-        const byWatch = watched.has(p.number) && [p.repo, p.headRepo].some((r) => nameOf(r).toLowerCase() === repo);
-        if (!byBranch && !byWatch) continue;
+        const byBranch = Boolean(repo) && Boolean(n.branch) && p.branch === n.branch && nameOf(p.headRepo || p.repo).toLowerCase() === repo;
+        const byWatch = Boolean(repo) && watched.has(p.number) && [p.repo, p.headRepo].some((r) => nameOf(r).toLowerCase() === repo);
+        const byRef = refs.some((u) => u.n === p.number && nameOf(p.repo).toLowerCase() === u.repo.toLowerCase() && (!u.host || !(hostOf(p.url) || hostOf(p.repo)) || keyHost(u.host) === (hostOf(p.url) || hostOf(p.repo))));
+        if (!byBranch && !byWatch && !byRef) continue;
         if (!n.prs.some((x) => x.number === p.number && (!x.repo || !p.repo || nameOf(x.repo) === nameOf(p.repo)))) n.prs.push({ ...p });
       }
     }
@@ -823,24 +828,35 @@ export function detailLine(node) {
 /** Tree of one session: its own agents and its child sessions are siblings, each child session carrying its own agents and
  *  children. Item `{id, type: "session"|"agent"|"more", label, status, urgent, children, ...}`; `urgent` is the most urgent
  *  status of the item and everything below it. Siblings are sorted by `urgent`. Sessions in `skip` and ended ones are left out.
- *  null for a non-node. */
-export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set(), skipKeys = new Set(), extra = [], top = true, id: rootId = "" } = {}) {
+ *  `recs` are the hc records of the root; `recsOf(node)` gives those of a child session (a remote session's, fetched from its own
+ *  terminal; none by default). `remoteOf(node)` gives the remote radar node joined to a child session's remote terminal (or null):
+ *  that node's agents, runs, child sessions and PRs show beneath the child session, and its status counts too. null for a non-node. */
+export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, remoteOf = null, skip = new Set(), skipKeys = new Set(), extra = [], top = true, id: rootId = "" } = {}) {
   if (!isObj(node)) return null;
+  // A child session's status: its own, with the status of the remote node joined to it (a hidden one stays hidden).
+  const childStatus = (s) => {
+    const st = nodeStatus(s, null, recsOf ? listOf(recsOf(s)) : []);
+    const rn = remoteOf ? remoteOf(s) : null;
+    if (st === "hidden" || !isObj(rn)) return st;
+    const rst = nodeStatus(rn, null, recsOf ? listOf(recsOf(s)) : []);
+    return urgentStatus([st, rst === "hidden" ? "idle" : rst]);
+  };
   const build = (n, status, id, depth, root) => {
     const kids = [];
     const closed = !root && isEnded(n);
-    listOf(n.workers).forEach((w, i) => {
+    const rn = !root && !closed && remoteOf ? remoteOf(n) : null;
+    const src = isObj(rn) ? joinedView(n, rn) : n;
+    listOf(src.workers).forEach((w, i) => {
       if (w.ended || closed) return;
       const st = nodeStatus(w);
       kids.push({ id: `${id}/a${i}`, type: "agent", label: [w.role || w.name, shortModel(w.model)].filter(Boolean).join(" "), status: st, urgent: st, children: [] });
     });
-    if (root) {
-      kids.push(...recItems(n, recs, skip, id));
-      kids.push(...listOf(extra));
-    }
+    if (root) kids.push(...recItems(n, recs, skip, id));
+    else if (!closed && recsOf) kids.push(...recItems(src, listOf(recsOf(n)), skip, id));
+    if (root) kids.push(...listOf(extra));
     if (depth < MAX_DEPTH) {
-      listOf(n.sessions).forEach((s, i) => {
-        const st = nodeStatus(s);
+      listOf(src.sessions).forEach((s, i) => {
+        const st = childStatus(s);
         if (skip.has(s) || skipKeys.has(s.key) || st === "hidden") return;
         const child = build(s, st, `${id}/s${i}`, depth + 1, false);
         if (child) kids.push(child);
@@ -850,7 +866,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set()
     const children = sortItems(kids);
     const isTop = root && top;
     const total = isTop ? totalCost(n) : num(n.cost);
-    const prs = sortPrs(n.prs);
+    const prs = sortPrs(src.prs);
     return {
       id, type: "session", node: n, label: n.name, dim: closed, elsewhere: !isTop && (n.machine || !n.hcTerminal) ? n.machine || "elsewhere" : "", tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
       sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
@@ -859,6 +875,18 @@ export function sessionTree(node, { hcStatus = null, recs = [], skip = new Set()
     };
   };
   return build(node, nodeStatus(node, hcStatus, recs), rootId || node.key || node.name || "root", 0, true);
+}
+
+// A registry node with the remote node joined to its remote terminal, as one node for its rows: the agents, runs and child
+// sessions of both, and the PRs of both (one per number).
+function joinedView(n, rn) {
+  const prs = listOf(n.prs);
+  return {
+    ...n,
+    workers: [...listOf(n.workers), ...listOf(rn.workers)],
+    sessions: [...listOf(n.sessions), ...listOf(rn.sessions)],
+    prs: [...prs, ...listOf(rn.prs).filter((p) => !prs.some((x) => x.number === p.number))],
+  };
 }
 
 // Siblings by `urgent`; "+N more" items stay last.
@@ -882,9 +910,18 @@ function recItems(n, recs, skip, id) {
  *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
  *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
  *  `program` for the click and the logo. */
-export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set() } = {}) {
+export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set(), remoteNodes = [], recsOf = null, remoteOf = null } = {}) {
   if (!Array.isArray(all)) return [];
   const seen = new Set([address]);
+  // A named terminal (`hc run --name`) that follows the attach of a remote session a registry node draws: the target from its
+  // record (argv), else the polled one, else its `fm-<machine>-<slug>-<hex4>` name when exactly one node has that name; "" otherwise.
+  const mirrorOf = (term, polled) => {
+    const known = new Set(listOf(remoteNodes).map((x) => x.target));
+    const target = parseAttachTarget(term) || (typeof polled === "string" ? polled : "");
+    if (target) return known.has(target) ? target : "";
+    const byName = new Set(listOf(remoteNodes).filter((x) => x.name === term.name).map((x) => x.target));
+    return byName.size === 1 ? [...byName][0] : "";
+  };
   // A nameless terminal that follows `hc attach <machine>/<t>`: the attach of that remote session (named in `all`), else hidden.
   const attachLabel = (target) => {
     const m = /^fm-(.+)-[0-9a-f]{4,6}$/.exec(all.find((k) => isObj(k) && k.address === target)?.name ?? "");
@@ -902,12 +939,13 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       // The attach target comes from the terminal record itself (also for a listed agent, whose label is the remote title), else from `hc get`.
       const own = !(typeof term.name === "string" && term.name) && !isObj(r.node) ? parseAttachTarget(term) : "";
       const attach = own || (nameless && !isObj(r.node) && typeof r.attach === "string" ? r.attach : "");
+      if (typeof term.name === "string" && term.name && !isObj(r.node) && mirrorOf(term, r.attach)) return below; // the mirror of a drawn remote session: its row is the registry node's, its children stay
       if (attach && (!attachLabel(attach) || drawnTargets.has(attach))) return below; // an attach of nothing we know, or of a session already drawn: no row, its children stay
       const label = (attach && `${attachLabel(attach)}`) || (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
       const status = r.status ?? "idle";
       let item;
       if (isObj(r.node)) {
-        item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], skip, skipKeys, extra: below, top: false, id });
+        item = sessionTree(r.node, { hcStatus: r.own ?? null, recs: r.recs ?? [], recsOf, remoteOf, skip, skipKeys, extra: below, top: false, id });
         const ended = isEnded(r.node);
         if (ended && item.children.length === 0) return []; // an ended child with nothing live below leaves the tree
         if (ended) item.dim = true; // one that keeps live descendants stays, dimmed
@@ -924,6 +962,40 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
     });
   };
   return walk(address, 0);
+}
+
+/** The live remote sessions a local registry tree draws as rows (`machine` set, an hc terminal, neither done nor ended), as
+ *  `{target: "<machine>/<t>", name}`: `name` is the `hc run --name` of the attach terminal a click opens for it. */
+export function remoteNodesOf(tree) {
+  return allSessions(tree)
+    .filter((n) => n.machine && n.hcTerminal && n.state !== "done" && !isEnded(n))
+    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name) }));
+}
+
+/** The `<machine>/<t>` a registry node with a remote terminal follows ("" for a node without one). */
+export function remoteTarget(n) {
+  if (!n?.machine || typeof n.hcTerminal !== "string" || !n.hcTerminal) return "";
+  return n.hcTerminal.includes("/") ? n.hcTerminal : `${n.machine}/${n.hcTerminal}`;
+}
+
+/** The `<machine>/<t>` targets of the remote registry nodes drawn in the given tree items (and below them). */
+export function drawnRemoteTargets(items) {
+  const out = new Set();
+  const walk = (it, d) => {
+    if (!isObj(it) || d > MAX_DEPTH) return;
+    const target = isObj(it.node) ? remoteTarget(it.node) : "";
+    if (target) out.add(target);
+    for (const c of listOf(it.children)) walk(c, d + 1);
+  };
+  for (const it of listOf(items)) walk(it, 0);
+  return out;
+}
+
+/** Addresses of the listed agents that are the remote machine's own terminal of a session a local registry node draws
+ *  (`machine/<t>` equals the node's target): that node is their row, they get none of their own. */
+export function remoteTwins(list, remoteNodes) {
+  const targets = new Set(listOf(remoteNodes).map((x) => x?.target));
+  return new Set(listOf(list).map((a) => a?.address).filter((x) => typeof x === "string" && targets.has(x)));
 }
 
 /** Addresses of the listed agents that are hc children (by `parent`, through any chain of terminals) of another listed agent:

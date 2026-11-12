@@ -33,6 +33,8 @@ export interface LiveWait {
   bg?: boolean;
   /** The synthetic `pr_watch` entry: the PR numbers being watched. */
   prs?: number[];
+  /** The `pr_watch` entry: the watched PRs with their repository and host, so a session carries the chip of a PR in another repository. Absent in an older live file (`prs` alone keeps the same-repository rule). */
+  prRefs?: { n: number; repo: string; host: string }[];
   /** The `pr_watch` entry: the watched PRs whose head moved past the session's last reviewer PASS (herdr-app shows `unreviewed head`). */
   unreviewed?: { n: number; repo: string; host: string }[];
 }
@@ -135,6 +137,14 @@ export function presenceState(i: { done: boolean; owner: boolean; asks?: boolean
 }
 
 export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
+
+/** The synthetic `pr_watch` wait of a session's PR watches (numbers, `prRefs` with repository and host, `unreviewed` when any); null without a watch. */
+export function prWatchWait(watches: { n: number; key: { repo: string; host: string } }[], unreviewed: { n: number; repo: string; host: string }[]): LiveWait | null {
+  if (watches.length === 0) return null;
+  const prs = watches.map((p) => p.n);
+  const prRefs = watches.map((p) => ({ n: p.n, repo: p.key.repo, host: p.key.host }));
+  return { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs, prRefs, ...(unreviewed.length > 0 ? { unreviewed: unreviewed.map((k) => ({ n: k.n, repo: k.repo, host: k.host })) } : {}) };
+}
 
 /** `<YYYYmmdd-HHMMSS>-<slug>[-<6hex>]` -> slug, else null. */
 export function labelOfHandoff(handoff: string | null | undefined): string | null {
@@ -293,7 +303,7 @@ export class LiveState {
 
   private waitList(): LiveWait[] {
     try {
-      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}) }));
+      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.filter((u) => Number.isInteger(u.n) && typeof u.repo === "string" && u.repo).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}) }));
     } catch {
       return []; // waits are best effort
     }
