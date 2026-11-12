@@ -121,10 +121,9 @@ class Unreadable(Exception):
 # --------------------------------------------------------------------------- lexer
 
 class Word(object):
-    __slots__ = ("text", "dynamic", "glob", "quoted", "refs", "local")
+    __slots__ = ("text", "dynamic", "glob", "quoted", "refs")
 
     def __init__(self):
-        self.local = False     # built from a value of the local assignment step: only an always-writable place is allowed
         self.refs = []         # the source of each unresolved expansion, in order of the `\x00` placeholders of text
         self.text = ""
         self.dynamic = False   # an expansion ($x, ${..}, $(..), `..`) anywhere in the word
@@ -355,6 +354,8 @@ def _grammar_statements(text, local):
 
 
 class Lexer(object):
+    local = False   # LocalLexer: the line's assignments may also be the local step's (LOCAL_ASSIGN)
+
     def __init__(self, text, cwd=None, scratch=None):
         self.t = text
         self.i = 0
@@ -368,9 +369,7 @@ class Lexer(object):
         self.vars = {}
         # variables resolve only on a line inside the closed grammar (see grammar_statements)
         self.header_end = len(grammar_header(text))
-        self.eligible = _grammar_statements(text[:self.header_end], True) is not None
-        # a line only the local widening admits: every value resolved on it is a local one
-        self.local_line = self.eligible and grammar_statements(text[:self.header_end]) is None
+        self.eligible = _grammar_statements(text[:self.header_end], self.local) is not None
 
     # -- words
     def _expansion(self, w, quoted=False):
@@ -395,7 +394,6 @@ class Lexer(object):
         known = self.known_var(t[i:self.i])
         if known is not None and (quoted or not re.search(r"\s", known)):   # an unquoted value with a blank splits
             w.text += known
-            w.local = w.local or self.local_line
             return
         w.text += "\x00"
         w.dynamic = True
@@ -526,7 +524,7 @@ class Lexer(object):
                 self.vars.pop(m.group(1), None)
             else:
                 self.vars[m.group(1)] = value
-        else:
+        elif self.local:
             self.vars.pop((re.match(r"(%s)=" % _G_NAME, c.words[0].text) or [None, None])[1], None)   # unknown again unless set below
             m = LOCAL_ASSIGN_WORD.fullmatch(c.words[0].text) or (_NT and LOCAL_ASSIGN_NT_WORD.fullmatch(c.words[0].text))
             if m and not c.words[0].unresolvable:
@@ -638,6 +636,10 @@ class Lexer(object):
         return self.items
 
 
+class LocalLexer(Lexer):
+    local = True
+
+
 def tokenize(text, cwd=None, scratch=None):
     return Lexer(text, cwd, scratch).run()
 
@@ -725,6 +727,7 @@ class Scope(object):
         self.handoff_nt = False
         self.ignore_handoff = False   # second pass of decide(): handoff refusals are set aside
         self.ignore_unresolved = False   # another second pass: targets with an unresolved expansion do not count
+        self.strict = False   # the local assignment step is on and only an always-writable place is not a project path
         if isinstance(handoff_dir, str) and handoff_dir.strip():
             hd = _native_dir(handoff_dir)
             if hd and os.path.normpath(hd) != os.path.sep:
@@ -740,30 +743,27 @@ class Scope(object):
         self.allowed = [os.path.normpath(os.path.join(self.ws_real, *parts))
                         for parts in map(_allowed_rel, dirs) if parts]
 
-    def project_path(self, abs_path, link=False, strict=False):
+    def project_path(self, abs_path, link=False):
         """`link`: the operand is judged on the link itself (realpath of its directory + its name), as plain `rm link` removes the link.
-        `strict`: only an always-writable place is not a project path (a path outside the workspace counts as one)."""
+        In strict mode a path outside the workspace is a project path too."""
         if abs_path is None:
             return True
         if _drive_path(abs_path) and os.name != "nt":
-            return strict
+            return self.strict
         if link:
             real = os.path.join(os.path.realpath(os.path.dirname(abs_path)), os.path.basename(abs_path))
         else:
             real = os.path.realpath(abs_path)
-        if self.handoff and not self.ignore_handoff and self.in_handoff(abs_path):
-            if self._handoff_refuses(abs_path, real):
-                return True
-            return False   # a child-written name: writable before the allow_abs / outside-workspace returns
-        if strict and self.handoff and self.in_handoff(abs_path):
-            return False   # the handoff-ignoring pass sets the handoff dir aside, as it does for a literal path
+        if self.handoff and (self.strict or not self.ignore_handoff) and self.in_handoff(abs_path):
+            # a child-written name: writable before the allow_abs / outside-workspace returns; strict keeps the dir writable in the handoff-ignoring pass
+            return not self.ignore_handoff and self._handoff_refuses(abs_path, real)
         if self.scratch and _inside(self.scratch, real) and _fold(os.path.normpath(real)) != _fold(self.scratch):
             return False
         for owned in self.allow_abs:
             if _inside(owned, real) and _fold(os.path.normpath(real)) != _fold(owned):
                 return False
         if not (_inside(self.ws, abs_path) or _inside(self.ws_real, real)):
-            return strict
+            return self.strict
         for allowed in self.allowed:
             if _inside(allowed, real) and _fold(os.path.normpath(real)) != _fold(allowed):
                 return False
@@ -811,7 +811,7 @@ class Scope(object):
             return False
         if text == "":
             return False
-        return self.project_path(absolute(text, cwd, lexical=False), link, isinstance(word, Word) and word.local)
+        return self.project_path(absolute(text, cwd, lexical=False), link)
 
     def set_aside(self, word):
         """The `ignore_unresolved` pass skips a word that is unresolvable only through variables or substitutions (no glob)."""
@@ -819,7 +819,7 @@ class Scope(object):
 
     def dir_in_ws(self, cwd):
         """A tool that writes below its working directory (git, patch): any place in the workspace."""
-        if cwd is None:
+        if cwd is None or self.strict:   # strict: what the tool writes is not known, so it is never a write in a safe place
             return True
         real = os.path.realpath(cwd)
         return _inside(self.ws, cwd) or _inside(self.ws_real, real)
@@ -963,7 +963,7 @@ class Analyzer(object):
     def text(self, text, cwd, depth):
         if depth > MAX_DEPTH:
             raise Found("unreadable", "<nested too deep>")
-        items = tokenize(text, cwd, self.scope.scratch)
+        items = (LocalLexer if self.scope.strict else Lexer)(text, cwd, self.scope.scratch).run()
         stack = []
         prev = None
         for it in items:
@@ -1033,20 +1033,8 @@ class Analyzer(object):
             return None
         if any(w.text.startswith("-") and "P" in w.text[1:] and not w.text.startswith("--") for w in words[1:]):
             raw = absolute(a.text, cwd, lexical=False)   # cd -P: symlinks first, then `..`
-            return self.local_dir(a, None if raw is None else os.path.realpath(raw), cwd)
-        return self.local_dir(a, absolute(a.text, cwd), cwd)
-
-    def local_dir(self, word, d, base):
-        """The directory `d` taken from `word`; a word built from a local-step value keeps it only inside the
-        workspace or an always-writable place (judged on the realpath too), else the directory is unknown."""
-        if d is None or not word.local:
-            return d
-        s = self.scope
-        raw = absolute(word.text, base, lexical=False)
-        for p in (d, raw):
-            if p is None or not (_inside(s.ws_real, os.path.realpath(p)) or not s.project_path(p, strict=True)):
-                return None
-        return d
+            return None if raw is None else os.path.realpath(raw)
+        return absolute(a.text, cwd)
 
     # -- one simple command (program word first)
     def run(self, words, cwd, depth, stdin):
@@ -1124,7 +1112,7 @@ class Analyzer(object):
             for w in args:
                 if w.text.startswith("of="):
                     t = Word()
-                    t.text, t.dynamic, t.glob, t.refs, t.local = w.text[3:], w.dynamic, w.glob, w.refs, w.local
+                    t.text, t.dynamic, t.glob, t.refs = w.text[3:], w.dynamic, w.glob, w.refs
                     _hit(s, "dd", t, cwd)
             return
         if prog == "git":
@@ -1140,7 +1128,7 @@ class Analyzer(object):
             d = _opt(opts, "-d", "--directory")
             where = cwd
             if d:
-                where = None if d[-1] is None or d[-1].unresolvable else self.local_dir(d[-1], absolute(d[-1].text, cwd), cwd)
+                where = None if d[-1] is None or d[-1].unresolvable else absolute(d[-1].text, cwd)
             if s.dir_in_ws(where):
                 raise Found("patch", "<working tree>")
             return
@@ -1172,8 +1160,6 @@ class Analyzer(object):
                 break
             name, eq = (t.split("=", 1) + [None])[:2] if t.startswith("--") else (t, None)
             val = lit(eq) if eq is not None else (args[i + 1] if name in with_arg and i + 1 < len(args) else None)
-            if eq is not None:
-                val.local = a.local
             if name in shell_opts:
                 if val is not None or name not in with_arg:   # npx -c 'cmd' | pnpm exec -c cmd...
                     body = val.text if val is not None else " ".join(w.text for w in args[i + 1:])
@@ -1186,7 +1172,7 @@ class Analyzer(object):
     def runner(self, prog, spec, cwd, depth, stdin):
         inner, where, body = spec
         if where is not None:
-            cwd = None if where.unresolvable else self.local_dir(where, absolute(where.text, cwd), cwd)
+            cwd = None if where.unresolvable else absolute(where.text, cwd)
         if body is not None:
             return self.text(body, cwd, depth + 1)
         if inner:
@@ -1202,7 +1188,7 @@ class Analyzer(object):
             raise Found(kind, _show(word))
         else:
             d = absolute(word.text, cwd, lexical=False)
-        if d is None or self.scope.project_path(os.path.join(d, "file"), strict=word is not None and word.local):
+        if d is None or self.scope.project_path(os.path.join(d, "file")):
             raise Found(kind, _show(word) if word is not None else "<working dir>")
 
     def fetch_like(self, prog, args, cwd):
@@ -1306,10 +1292,7 @@ class Analyzer(object):
                 if k in ("-S", "--split-string"):
                     raise Found("unreadable", "<env -S>")
                 if k in ("-C", "--chdir"):
-                    if w is None:   # `--chdir=D`, `-CD`: the value is a part of a word
-                        w = lit(v)
-                        w.local = any(x.local and x.text.endswith(v) for x in rest)
-                    cwd = None if w.unresolvable else self.local_dir(w, absolute(v, cwd), cwd)
+                    cwd = None if (w is not None and w.unresolvable) else absolute(v, cwd)
         if prog == "timeout" and inner:
             inner = inner[1:]   # the duration
         if prog == "xargs":
@@ -1481,7 +1464,7 @@ class Analyzer(object):
             dest, srcs = ops[-1], ops[:-1]
         else:
             return
-        if prog == "rsync" and not dest.unresolvable and re.match(r"^[^/\\]*:", dest.text) and not _drive_path(dest.text):
+        if prog == "rsync" and not s.strict and not dest.unresolvable and re.match(r"^[^/\\]*:", dest.text) and not _drive_path(dest.text):
             return   # remote destination host:path
         if s.handoff and not dest.unresolvable:
             dpath = absolute(dest.text, cwd, lexical=False)
@@ -1493,7 +1476,6 @@ class Analyzer(object):
                             continue
                         raise Found(prog, _show(w))
                     named = lit(dest.text.rstrip("/\\") + "/" + re.split(r"[\\/]", w.text.rstrip("/\\"))[-1])
-                    named.local = dest.local
                     _hit(s, prog, named, cwd)
                 if prog == "mv":
                     for w in srcs:
@@ -1511,19 +1493,16 @@ class Analyzer(object):
             t = args[i].text
             if t == "-C" and i + 1 < len(args):
                 d = args[i + 1]
-                where = None if d.unresolvable else self.local_dir(d, absolute(d.text, where), where)
+                where = None if d.unresolvable else absolute(d.text, where)
                 i += 2
                 continue
             if t in ("-c", "--git-dir", "--work-tree", "--namespace") and i + 1 < len(args):
                 if t == "--work-tree":
-                    d = args[i + 1]
-                    where = None if d.unresolvable else self.local_dir(d, absolute(d.text, where), where)
+                    where = None if args[i + 1].unresolvable else absolute(args[i + 1].text, where)
                 i += 2
                 continue
             if t.startswith("--work-tree="):
-                d = lit(t.split("=", 1)[1])
-                d.local = args[i].local
-                where = self.local_dir(d, absolute(d.text, where), where)
+                where = absolute(t.split("=", 1)[1], where)
             if t.startswith("-"):
                 i += 1
                 continue
@@ -2206,8 +2185,11 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
         if handoff_dir:
             command = expand_handoff(command, handoff_dir)
 
+    strict = False   # pass S, see below: set only for a refused line that has a local assignment
+
     def run(ignore_handoff, ignore_unresolved=False):
         scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs, handoff_dir)
+        scope.strict = strict
         scope.ignore_handoff = ignore_handoff
         scope.ignore_unresolved = ignore_unresolved
         a = Analyzer(scope)
@@ -2215,7 +2197,15 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
         return scope
 
     try:
-        run(False)
+        try:
+            run(False)   # pass M: as on main, the local step is off
+        except Found:
+            head = command[:len(grammar_header(command))]
+            if _grammar_statements(head, True) is None or grammar_statements(head) is not None:
+                raise
+            # pass S: the local step is on, and everything on the line must land in an always-writable place
+            strict = True
+            run(False)
     except Found as f:
         out = Decision((f.kind, f.target))
         if handoff_dir:

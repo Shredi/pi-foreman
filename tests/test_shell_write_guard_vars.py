@@ -116,10 +116,10 @@ class ShellWriteVarsTest(unittest.TestCase):
         with mock.patch.object(swg, "_NT", True):
             self.assertIsNone(swg.grammar_statements(line))   # the shared grammar is unchanged
             self.assertIsNotNone(swg._grammar_statements(line, True))
-            lx = swg.Lexer(line)
+            self.assertFalse(swg.Lexer(line).eligible)   # the main behaviour: not resolved
+            lx = swg.LocalLexer(line)
             lx.run()
             self.assertEqual(lx.vars.get("H"), "C:/agent dir/h")
-            self.assertTrue(lx.local_line)
             for bad in ('H="C:\\a b\\"; cp f "$H"', 'H="C:a b"; cp f "$H"', 'H="C:/a $X"; cp f "$H"'):
                 self.assertIsNone(swg._grammar_statements(bad, True), bad)
         with mock.patch.object(swg, "_NT", False):
