@@ -14,7 +14,7 @@ const MIN = 60_000;
 const RATES = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 10 };
 const HIT: WarmReply = { provider: "p", model: "m", usage: { input: 5, output: 1, cacheRead: 100_000, cacheWrite: 0 }, timestamp: 0 };
 const NONE: WarmSignals = { strongA: null, turn: false, question: false, dialog: false, command: false };
-const pol = (ttl: number): CachePolicy => ({ active: false, ttlSeconds: ttl, billing: "token", intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: true }) as CachePolicy;
+const pol = (ttl: number): CachePolicy => ({ active: false, ttlSeconds: ttl, intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: true }) as CachePolicy;
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
 };
@@ -125,7 +125,7 @@ test("replayWarm hands the provider's error text to onError", async () => {
   assert.equal(cleanError("a\u0000b"), "a b");
 });
 
-const POLICY: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 } as CachePolicy;
+const POLICY: CachePolicy = { active: true, ttlSeconds: 300, intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 } as CachePolicy;
 const T0 = 1_000_000_000;
 const src = (over: Partial<CacheSource> = {}): CacheSource => ({
   policy: POLICY, now: T0, lastTouch: T0, stretchStartAt: T0, nextWarmAt: T0 + 270_000, spanEndAt: T0 + 3 * 270_000 + 300_000,

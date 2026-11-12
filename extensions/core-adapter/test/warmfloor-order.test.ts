@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { warmCompact } from "../warmcompact.ts";
 import type { CachePolicy } from "../cachepolicy.ts";
 
-const POLICY: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, compactMinTokens: 100_000 };
+const POLICY: CachePolicy = { active: true, ttlSeconds: 300, intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, compactMinTokens: 100_000 };
 
 function run(aboveFloor: boolean, tokens: number) {
   const traces: Record<string, unknown>[] = [];

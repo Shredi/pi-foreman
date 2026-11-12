@@ -4,13 +4,11 @@
 /** @deprecated Pi's own idle limit; unread since pi-foreman sends every warm itself (kept for the pinned exports). */
 export const PI_IDLE_CAP_MINUTES = 30;
 
-export type CacheBilling = "token" | "request";
-
 /** Built-in cache values per provider; a config key wins per key. */
-export const BUILTIN_CACHE: Record<string, { ttlSeconds: number | null; billing: CacheBilling }> = {
-  "claude-bridge": { ttlSeconds: 300, billing: "token" },
-  // Token billing since 2026-06-01 (legacy annual Pro/Pro+ plans set billing: request); the TTL comes from BUILTIN_BY_MODEL.
-  "github-copilot": { ttlSeconds: null, billing: "token" },
+export const BUILTIN_CACHE: Record<string, { ttlSeconds: number | null }> = {
+  "claude-bridge": { ttlSeconds: 300 },
+  // The TTL comes from BUILTIN_BY_MODEL.
+  "github-copilot": { ttlSeconds: null },
 };
 
 /** Built-in per-model TTLs of a provider (seconds); the first matching row wins, after a config row and ttlSeconds. */
@@ -24,13 +22,12 @@ export const BUILTIN_BY_MODEL: Record<string, { match: string; ttlSeconds: numbe
   ],
 };
 
-export type CacheSkip = "no_entry" | "billing_request" | "ttl_unknown" | "ttl_long" | "disabled";
+export type CacheSkip = "no_entry" | "ttl_unknown" | "ttl_long" | "disabled";
 
 export interface CachePolicy {
   active: boolean;
   skip?: CacheSkip;
   ttlSeconds: number | null;
-  billing: CacheBilling | null;
   /** @deprecated Resolved, read by nobody (no fixed tick: the tick is min(0.9 x TTL, TTL - 10 s)). */
   intervalSeconds: number;
   /** @deprecated Resolved, read by nobody (the warm window has no fixed length). */
@@ -49,7 +46,7 @@ export interface CachePolicy {
   selfWarm?: boolean;
   /** @deprecated Resolved, read by nobody (the warm window has no fixed length). */
   selfWarmWindowMinutes?: number;
-  /** pi-foreman sends every idle warm of this cache itself (selfwarm.ts): keepalive on, token billing, TTL above 10 s. Pi's own warmer is told `stop`. */
+  /** pi-foreman sends every idle warm of this cache itself (selfwarm.ts): keepalive on, TTL above 10 s. Pi's own warmer is told `stop`. */
   keepaliveOwned?: boolean;
   /** Warms are off because this is a child session on claude-bridge and `keepalive.children` is not true (set by warmwire.ts). */
   bridgeChildOff?: boolean;
@@ -100,16 +97,12 @@ function resolve(config: unknown, provider: string | undefined | null, model?: s
         ? bridgeTtlS
         : (id ? rows.find((r) => matchModel(r.match, id))?.ttlSeconds : undefined) ?? built?.ttlSeconds;
   const ttlSeconds = isInt(ttlRaw) && ttlRaw >= 1 ? ttlRaw : null;
-  const billingRaw = hit.billing === "token" || hit.billing === "request" ? hit.billing : cfg.billing;
-  const billing: CacheBilling | null =
-    billingRaw === "token" || billingRaw === "request" ? billingRaw : (built?.billing ?? null);
   const intervalSeconds = isInt(ka.intervalSeconds)
     ? Math.min(3600, Math.max(30, ka.intervalSeconds))
     : Math.max(30, Math.round((ttlSeconds ?? 0) * 0.9));
   const windowMinutes = isInt(ka.windowMinutes) ? Math.min(60, Math.max(1, ka.windowMinutes)) : 45;
   const base = {
     ttlSeconds,
-    billing,
     intervalSeconds,
     windowMinutes,
     effectiveWindowMinutes: Math.min(windowMinutes, PI_IDLE_CAP_MINUTES),
@@ -117,12 +110,12 @@ function resolve(config: unknown, provider: string | undefined | null, model?: s
   };
   if (!built && Object.keys(cfg).length === 0) return { policy: { ...base, active: false, skip: "no_entry" }, enabled: false };
 
-  // A derived bridge TTL keeps keep-alive on by default, also at 3600 s (the warms are then self-warms).
+  // On by default only for a built-in provider (a derived bridge TTL also at 3600 s: the warms are then self-warms);
+  // any other provider needs keepalive.enabled: true.
   const enabled =
-    typeof ka.enabled === "boolean" ? ka.enabled : billing === "token" && ttlSeconds !== null && (ttlSeconds < 3600 || derived);
+    typeof ka.enabled === "boolean" ? ka.enabled : !!built && ttlSeconds !== null && (ttlSeconds < 3600 || derived);
   let skip: CacheSkip | undefined;
-  if (billing === "request") skip = "billing_request";
-  else if (ttlSeconds === null) skip = "ttl_unknown";
+  if (ttlSeconds === null) skip = "ttl_unknown";
   else if (ttlSeconds >= 3600) skip = "ttl_long";
   else if (!enabled) skip = "disabled";
   return { policy: skip ? { ...base, active: false, skip } : { ...base, active: true }, enabled };
@@ -144,8 +137,8 @@ export function resolveWarmPolicy(config: unknown, provider: string | undefined 
   const ka = isObj(cfg.keepalive) ? cfg.keepalive : {};
   const clamp = (v: unknown, lo: number, hi: number, d: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
   const ttl = base.ttlSeconds;
-  const selfWarm = enabled && base.billing === "token" && ttl !== null && ka.beyondPiCap !== false && ttl >= SELF_WARM_MIN_TTL_SECONDS;
-  const keepaliveOwned = enabled && base.billing === "token" && ttl !== null && ttl > 10;
+  const selfWarm = enabled && ttl !== null && ka.beyondPiCap !== false && ttl >= SELF_WARM_MIN_TTL_SECONDS;
+  const keepaliveOwned = enabled && ttl !== null && ttl > 10;
   const fallbackWindow = Math.min(1440, Math.max(45, 3 * Math.ceil((ttl ?? 0) / 60)));
   return {
     ...base,

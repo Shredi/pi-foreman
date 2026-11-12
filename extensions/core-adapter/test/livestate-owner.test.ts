@@ -33,7 +33,7 @@ test("the snapshot carries owner from the getter at write time; no getter or a t
   fs.rmSync(d, { recursive: true, force: true });
 });
 
-const POLICY: CachePolicy = { active: false, ttlSeconds: 300, billing: "token", intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: true };
+const POLICY: CachePolicy = { active: false, ttlSeconds: 300, intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: true };
 
 function swith(p: { enabled: boolean; away: boolean; since: number | null; outcome: string | null }, o: { isChild?: boolean; now?: number } = {}): SelfWarm {
   const presence = { enabled: () => p.enabled, away: () => p.away, awaySince: () => p.since, sample: () => (p.outcome ? { outcome: p.outcome } : null), refresh: async () => undefined, disarm: () => undefined, arm: () => undefined } as unknown as Presence;

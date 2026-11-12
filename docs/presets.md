@@ -71,7 +71,7 @@ multi-family provider (ranks with a literal row per model, and a cache row so th
 {
   "providers": {
     "my-provider": {
-      "cache": { "billing": "request", "byModel": [{ "match": "gpt-*", "ttlSeconds": 600 }] },
+      "cache": { "byModel": [{ "match": "gpt-*", "ttlSeconds": 600 }] },
       "ranks": [
         { "match": "claude-opus-5-5", "tier": 0 },
         { "match": "gpt-6-astra", "tier": 0 },
@@ -99,14 +99,14 @@ your user or overlay `foreman.json` (ids are placeholders):
       "roles": { "foreman": { "idle": { "model": "<provider-b>/<cheaper-model>", "thinking": "low" } } }
     },
     "<provider-b>": {
-      "cache": { "ttlSeconds": 1800, "billing": "token", "keepalive": { "selfWarmWindowMinutes": 240 } }
+      "cache": { "ttlSeconds": 1800, "keepalive": { "selfWarmWindowMinutes": 240 } }
     }
   }
 }
 ```
 
-After the switch the idle model's provider supplies TTL, billing and warms, so `<provider-b>` needs the `cache` entry
-(a token-billed cache is warmed by pi-foreman itself, [cache](cache.md#keep-alive)), plus a
+After the switch the idle model's provider supplies TTL and warms, so `<provider-b>` needs the `cache` entry
+(a cache is warmed by pi-foreman itself, [cache](cache.md#keep-alive)), plus a
 `promptCache` entry for the idle model in Pi's `models.json`. Child roles,
 `foreman_session_open` and the rank checks keep using `<provider-a>`'s map ([ladder](ladder.md#idle-rung-foreman-downshift)).
 `foreman doctor` lists the rung with the other mapped models and warns when `<provider-b>` has no cache entry.

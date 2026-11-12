@@ -18,7 +18,7 @@ const SPAN = 0.95 * TTL * 1000; // touch to cold
 const TICK = 0.9 * TTL * 1000;
 const RUNG = "claude-sonnet-5-5";
 
-const policy = (over: Partial<CachePolicy> = {}): CachePolicy => ({ active: true, ttlSeconds: TTL, billing: "token", intervalSeconds: 3240, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, selfWarm: true, ...over });
+const policy = (over: Partial<CachePolicy> = {}): CachePolicy => ({ active: true, ttlSeconds: TTL, intervalSeconds: 3240, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, selfWarm: true, ...over });
 
 const TOUCH = NOW - (SPAN - (38 * 60 + 12) * 1000);
 /** End of the TTL of the last of `n` warms, one tick apart from the touch. */
@@ -85,12 +85,11 @@ test("a past cold deadline shows the cold state", () => {
   assert.equal(line1(source({ now: NOW + 3_600_000 })), `${HEAD}□□□□□□□□□□ ❄ cold ♨ 0 ½ · ↓ ${RUNG}`);
 });
 
-test("hidden: no_entry, ttl_unknown, billing request, no model, footer.cacheBar false", () => {
+test("hidden: no_entry, ttl_unknown, no model, footer.cacheBar false", () => {
   const bare = `${HEAD}`.slice(0, -3);
   for (const [name, src] of [
-    ["no_entry", source({ policy: policy({ active: false, skip: "no_entry", ttlSeconds: null, billing: null }) })],
+    ["no_entry", source({ policy: policy({ active: false, skip: "no_entry", ttlSeconds: null }) })],
     ["ttl_unknown", source({ policy: policy({ active: false, skip: "ttl_unknown", ttlSeconds: null }) })],
-    ["billing_request", source({ policy: policy({ active: false, skip: "billing_request", billing: "request" }) })],
     ["no policy", source({ policy: null })],
     ["no source", null],
     ["cacheBar false", source({ enabled: false })],

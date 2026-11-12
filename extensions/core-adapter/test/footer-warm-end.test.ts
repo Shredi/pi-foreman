@@ -8,7 +8,7 @@ import type { CachePolicy } from "../cachepolicy.ts";
 
 const theme = { fg: (_c: string, t: string) => t };
 const T0 = 1_700_000_000_000;
-const POLICY: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 };
+const POLICY: CachePolicy = { active: true, ttlSeconds: 300, intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 };
 const src = (over: Partial<CacheSource> = {}): CacheSource => ({
   policy: POLICY, now: T0 + 1000, lastTouch: T0, stretchStartAt: T0, nextWarmAt: null, spanEndAt: T0 + 300_000, warmsLeft: 0, warmsFresh: 4, tier: "half",
   running: false, downshifted: false, idleRung: null, enabled: true, symbols: "unicode", ...over,

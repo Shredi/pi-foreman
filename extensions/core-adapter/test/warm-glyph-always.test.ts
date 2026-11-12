@@ -10,7 +10,7 @@ const theme = { fg: (_c: string, t: string) => t };
 const T0 = 1_700_000_000_000;
 const TTL = 300;
 const TICK = 270_000;
-const POLICY: CachePolicy = { active: true, ttlSeconds: TTL, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 };
+const POLICY: CachePolicy = { active: true, ttlSeconds: TTL, intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 };
 const src = (over: Partial<CacheSource> = {}): CacheSource => ({
   policy: POLICY,
   now: T0,
@@ -85,7 +85,6 @@ test("hidden cases stay hidden", () => {
   assert.equal(cacheViewOf(null), null);
   assert.equal(cacheViewOf(src({ enabled: false })), null);
   assert.equal(cacheViewOf(src({ policy: null })), null);
-  assert.equal(cacheViewOf(src({ policy: { ...POLICY, active: false, skip: "no_entry", ttlSeconds: null, billing: null } })), null);
+  assert.equal(cacheViewOf(src({ policy: { ...POLICY, active: false, skip: "no_entry", ttlSeconds: null } })), null);
   assert.equal(cacheViewOf(src({ policy: { ...POLICY, active: false, skip: "ttl_unknown", ttlSeconds: null } })), null);
-  assert.equal(cacheViewOf(src({ policy: { ...POLICY, billing: "request" } })), null);
 });

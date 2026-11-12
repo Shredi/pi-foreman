@@ -138,11 +138,11 @@ export function tierGlyphs(set: string): { half: string; quarter: string } {
   return set === "ascii" ? { half: "1/2", quarter: "1/4" } : { half: "½", quarter: "¼" };
 }
 
-/** The bar of a source, or null when it is hidden (no entry, unknown TTL, per-request billing, switched off). */
+/** The bar of a source, or null when it is hidden (no entry, unknown TTL, switched off). */
 export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const p = src?.policy;
-  if (!src || !src.enabled || !p || p.billing === "request" || p.ttlSeconds === null) return null;
-  if (p.skip === "no_entry" || p.skip === "ttl_unknown" || p.skip === "billing_request") return null;
+  if (!src || !src.enabled || !p || p.ttlSeconds === null) return null;
+  if (p.skip === "no_entry" || p.skip === "ttl_unknown") return null;
   const allowed = !p.skip || (p.skip === "ttl_long" && p.keepaliveOwned);
   const busy = src.running && !src.waiting;
   const warming = allowed && !busy;

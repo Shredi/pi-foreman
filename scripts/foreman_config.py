@@ -43,7 +43,7 @@ Keys outside safety that the project and session layers cannot loosen either
     providers.*.review               ignored (a review model approves asks)
     providers.*.roles.*.strong       ignored (picks a stronger, costlier model; L1/L3/L2 only)
     providers.*.strongOnRevision     only false is accepted (true relaunches on the strong model)
-    providers.*.cache.ttlSeconds / billing / warmCompact / byModel   ignored (the cache policy: L1/L3/L2 only)
+    providers.*.cache.ttlSeconds / warmCompact / byModel   ignored (the cache policy: L1/L3/L2 only)
     providers.*.cache.keepalive.intervalSeconds   ignored (L1/L3/L2 only)
     providers.*.cache.keepalive.enabled   only false is accepted (true keeps the session warm at a cost)
     providers.*.cache.keepalive.windowMinutes   lower only, minimum 1; without an earlier value at most 45
@@ -214,7 +214,6 @@ IGNORED_KEYS = [
     (("providers", "*", "roles", "review"), "it loosens: the gate's review model approves asks; user or overlay config only"),
     (("roles", "review"), "it loosens: the gate's review model approves asks; user or overlay config only"),
     (("providers", "*", "cache", "ttlSeconds"), "the cache policy comes from the user or overlay config"),
-    (("providers", "*", "cache", "billing"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "keepalive", "intervalSeconds"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "warmCompact"), "the cache policy comes from the user or overlay config"),
     (("providers", "*", "cache", "byModel"), "the cache policy comes from the user or overlay config"),
@@ -348,9 +347,9 @@ LAYER_CAP = {"windowMinutes": 45, "launchTimeoutCapMinutes": 120, "budgetShare":
 LAYER_FLOOR = {"compactMinTokens": 100000}
 # Built-in cache policy per provider (mirrors BUILTIN_CACHE in extensions/core-adapter/cachepolicy.ts).
 BUILTIN_CACHE = {
-    "claude-bridge": {"ttlSeconds": 300, "billing": "token"},
-    # Token billing since 2026-06-01 (legacy annual Pro/Pro+ plans set billing: request); the TTL comes from BUILTIN_BY_MODEL.
-    "github-copilot": {"ttlSeconds": None, "billing": "token"},
+    "claude-bridge": {"ttlSeconds": 300},
+    # The TTL comes from BUILTIN_BY_MODEL.
+    "github-copilot": {"ttlSeconds": None},
 }
 # Smallest TTL Pi could not warm twice before its 30-minute idle cap (mirrors SELF_WARM_MIN_TTL_SECONDS in cachepolicy.ts).
 SELF_WARM_MIN_TTL_SECONDS = int(30 * 60 / (2 * 0.9)) + 1
@@ -1697,7 +1696,7 @@ def cache_policy(config, provider, model=None, bridge_ttl=None):
 
     bridge_ttl: derived_bridge_ttl seconds; on claude-bridge it sits after a byModel row and an explicit ttlSeconds.
 
-    -> {"ttlSeconds", "billing", "enabled"} or None when neither the config nor BUILTIN_CACHE has an entry.
+    -> {"ttlSeconds", "enabled"} or None when neither the config nor BUILTIN_CACHE has an entry.
     """
     provs = config.get("providers") if isinstance(config, dict) else None
     raw = provs.get(provider) if isinstance(provs, dict) else None
@@ -1725,21 +1724,18 @@ def cache_policy(config, provider, model=None, bridge_ttl=None):
         ttl = next((t for pat, t in BUILTIN_BY_MODEL.get(provider, []) if mid and _model_matches(pat, mid)),
                    built.get("ttlSeconds"))
     ttl = ttl if isinstance(ttl, int) and not isinstance(ttl, bool) and ttl >= 1 else None
-    braw = hit.get("billing") if hit.get("billing") in ("token", "request") else cfg.get("billing")
-    billing = braw if braw in ("token", "request") else built.get("billing")
     ka = cfg.get("keepalive") if isinstance(cfg.get("keepalive"), dict) else {}
     enabled = ka.get("enabled")
     if not isinstance(enabled, bool):
-        enabled = billing == "token" and ttl is not None and (ttl < 3600 or derived)
-    if billing == "request":
-        enabled = False
-    return {"ttlSeconds": ttl, "billing": billing, "enabled": enabled}
+        # On by default only for a built-in provider; any other provider needs keepalive.enabled: true.
+        enabled = provider in BUILTIN_CACHE and ttl is not None and (ttl < 3600 or derived)
+    return {"ttlSeconds": ttl, "enabled": enabled}
 
 
 def warm_policy(config, provider, model=None, bridge_ttl=None):
     """cache_policy plus the warm-policy fields (mirrors resolveWarmPolicy in cachepolicy.ts).
 
-    -> cache_policy's keys and keepaliveOwned (keepalive.enabled with token billing and a TTL above 10 s: pi-foreman sends the warms),
+    -> cache_policy's keys and keepaliveOwned (keepalive.enabled and a TTL above 10 s: pi-foreman sends the warms),
     budgetShare, compactMinTokens, or None. awayTicks, whileWaiting, selfWarm and selfWarmWindowMinutes are deprecated: still resolved, read by nobody.
     """
     base = cache_policy(config, provider, model, bridge_ttl)
@@ -1754,12 +1750,12 @@ def warm_policy(config, provider, model=None, bridge_ttl=None):
         return min(hi, max(lo, v)) if isinstance(v, (int, float)) and not isinstance(v, bool) else default
 
     ttl = base["ttlSeconds"]
-    self_warm = bool(base["enabled"] and base["billing"] == "token" and ttl is not None
+    self_warm = bool(base["enabled"] and ttl is not None
                      and ka.get("beyondPiCap") is not False and ttl >= SELF_WARM_MIN_TTL_SECONDS)
     default_window = min(1440, max(45, 3 * -(-(ttl or 0) // 60)))
     out = dict(base)
     out.update({
-        "keepaliveOwned": bool(base["enabled"] and base["billing"] == "token" and ttl is not None and ttl > 10),
+        "keepaliveOwned": bool(base["enabled"] and ttl is not None and ttl > 10),
         "budgetShare": clamp(ka.get("budgetShare"), 0, 1, 0.5),
         "awayTicks": int(clamp(ka.get("awayTicks"), 0, 20, 0)),
         "whileWaiting": ka.get("whileWaiting") if isinstance(ka.get("whileWaiting"), bool) else True,

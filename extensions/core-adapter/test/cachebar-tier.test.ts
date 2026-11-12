@@ -57,7 +57,7 @@ test("warms left and the tier pass through; no warm pending clears both and fall
   assert.equal(cacheBar(snap({ warmsLeft: 0 })).tier, null);
 });
 
-const POLICY: CachePolicy = { active: true, ttlSeconds: TTL, billing: "token", intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 };
+const POLICY: CachePolicy = { active: true, ttlSeconds: TTL, intervalSeconds: 270, windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true, budgetShare: 0.5, awayTicks: 0 };
 const src = (over: Partial<CacheSource> = {}): CacheSource => ({
   policy: POLICY,
   now: T0,

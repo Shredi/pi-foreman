@@ -111,8 +111,8 @@ overlay config only (a project or session value is ignored) and unset by default
   the base model's provider (children and the finalizer keep the base provider's roles), and `foreman doctor` judges the base model's
   cache and the idle rung. A model the owner picks with `/model` becomes the base, so these re-key with it.
 - **Another provider.** The rung may name `<other-provider>/<model>`. After the switch the idle model's own provider
-  entry supplies TTL, billing, keep-alive and warm budget (`providers.<q>.cache`). It needs a `cache` entry with a TTL
-  and billing for that provider (without one there is no cache bar and no warms while downshifted; `foreman doctor`
+  entry supplies TTL, keep-alive and warm budget (`providers.<q>.cache`). It needs a `cache` entry with a TTL
+  for that provider (without one there is no cache bar and no warms while downshifted; `foreman doctor`
   warns), and a `promptCache` entry for the idle model in Pi's `models.json` (Pi's own warmer is always told `stop`; its `cacheWarming` setting is not read). The model and
   its provider login must exist; `foreman doctor` lists the rung with the other mapped models (label `.idle`). The
   thinking level is capped by `maxThinking` like any rung.
