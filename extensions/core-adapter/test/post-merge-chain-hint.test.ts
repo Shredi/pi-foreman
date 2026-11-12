@@ -1,5 +1,5 @@
 // The post-merge chain guard: near-miss shapes stay refused and carry a hint naming the accepted chain (chainHint); the base stays the remote default branch.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -26,6 +26,13 @@ function fixture() {
   return { base, work, g };
 }
 
+// one repository for the tests that only read it (few git starts: the suite has a child-process budget)
+let common: ReturnType<typeof fixture> | undefined;
+const shared = () => (common ??= fixture());
+after(() => {
+  if (common) rmTestTmp(common.base);
+});
+
 const NEAR_MISSES = [
   "git switch main && git reset --hard origin/main",
   "git switch main && git pull",
@@ -40,19 +47,15 @@ const NEAR_MISSES = [
 ];
 
 test("near-miss chains stay refused (branchMove null) and carry the hint", async () => {
-  const f = fixture();
-  try {
-    for (const c of NEAR_MISSES) {
-      assert.equal(await branchMove(c, f.work, true), null, c);
-      const hint = chainHint(c, true);
-      assert.ok(hint, c);
-      assert.match(hint, /git switch <default> && git pull --ff-only/);
-      assert.match(hint, /remote default branch/);
-    }
-    assert.equal(await branchMove("git switch main\ngit pull --ff-only", f.work, true), null);
-  } finally {
-    rmTestTmp(f.base);
+  const f = shared();
+  for (const c of NEAR_MISSES) {
+    assert.equal(await branchMove(c, f.work, true), null, c);
+    const hint = chainHint(c, true);
+    assert.ok(hint, c);
+    assert.match(hint, /git switch <default> && git pull --ff-only/);
+    assert.match(hint, /remote default branch/);
   }
+  assert.equal(await branchMove("git switch main\ngit pull --ff-only", f.work, true), null);
 });
 
 test("no hint for other lines, flags on the switch, or a child", () => {
@@ -81,13 +84,9 @@ test("the accepted chain, a force switch, a missing branch, a dirty tree, a `;` 
 });
 
 test("a base that is not the remote default stays refused, and says which branch is the default", async () => {
-  const f = fixture();
-  try {
-    f.g("branch", "other");
-    assert.deepEqual(await branchMove("git switch other && git pull --ff-only", f.work, true), { allow: false, precondition: "other is not the default branch main" });
-  } finally {
-    rmTestTmp(f.base);
-  }
+  const f = shared();
+  f.g("branch", "-f", "other");
+  assert.deepEqual(await branchMove("git switch other && git pull --ff-only", f.work, true), { allow: false, precondition: "other is not the default branch main" });
 });
 
 test("an unset origin/HEAD refuses the chain with a precondition that says how to set it", async () => {

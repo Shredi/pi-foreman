@@ -277,6 +277,21 @@ test("not returned: the head branch is the base branch, and the base is never de
   await refused(f, deps(f, answer(f, { headRefName: "main", baseRef: "main" })), /head branch is its base branch/);
 });
 
+test("not returned: the head branch is the remote default branch (a PR from main into release), nothing is deleted", async () => {
+  const f = fixture("squash");
+  try {
+    f.g("switch", "-q", "-c", "release", "main");
+    f.g("push", "-q", "-u", "origin", "release");
+    f.g("switch", "-q", "main");
+    f.g("remote", "set-head", "origin", "main");
+    const d = deps(f, answer(f, { headRefName: "main", baseRef: "release", headSha: f.g("rev-parse", "HEAD") }));
+    await refused(f, d, /default branch of origin, which is never deleted/);
+    assert.match(f.g("for-each-ref", "--format=%(refname:short)", "refs/heads"), /main/);
+  } finally {
+    rmTestTmp(f.root);
+  }
+});
+
 test("a step failing after the switch reports the state it left", async () => {
   const f = fixture("squash");
   try {

@@ -37,7 +37,7 @@ const plainName = (s: unknown): s is string => typeof s === "string" && s !== ""
 /**
  * Switch `cwd`'s checkout from the merged PR's head branch to the updated base branch and delete the head branch.
  * Preconditions, all before any change: no child running; the host says the PR is merged; the checkout is on the PR's head branch at the PR's last head;
- * no tracked change; the local base branch has an upstream, is not checked out elsewhere and fast-forwards to the fetched base; no untracked or ignored file is overwritten.
+ * the head branch is not a remote default branch; no tracked change; the local base branch has an upstream, is not checked out elsewhere and fast-forwards to the fetched base; no untracked or ignored file is overwritten.
  */
 export async function returnToBase(deps: ReturnDeps, a: { cwd: string; number: number }): Promise<ReturnResult> {
   const git = (args: string[], dir: string = a.cwd) => deps.git(args, dir);
@@ -65,6 +65,11 @@ export async function returnToBase(deps: ReturnDeps, a: { cwd: string; number: n
   const remote = await git(["config", "--get", `branch.${base}.remote`], dir);
   const merge = await git(["config", "--get", `branch.${base}.merge`], dir);
   if (!remote.ok || !plainName(remote.out) || remote.out === "." || !merge.ok || !merge.out.startsWith("refs/heads/") || !plainName(merge.out)) return keep(`the local ${base} has no upstream remote branch`, `set one (git branch --set-upstream-to <remote>/${base} ${base}), then return to it by hand`);
+  // the remote default branch is never deleted: the base's remote and origin are both asked (an unset HEAD ref names nothing)
+  for (const r of new Set([remote.out, "origin"])) {
+    const def = await git(["symbolic-ref", "--short", "-q", `refs/remotes/${r}/HEAD`], dir);
+    if (def.ok && def.out === `${r}/${head}`) return keep(`the PR's head branch ${head} is the default branch of ${r}, which is never deleted`, `nothing is changed; switch to ${base} by hand`);
+  }
   const remoteRef = `refs/remotes/${remote.out}/${merge.out.slice("refs/heads/".length)}`;
   if (!(await git(["fetch", "--no-tags", "--quiet", remote.out, `${merge.out}:${remoteRef}`], dir)).ok) return keep(`fetching ${base} from ${remote.out} failed`, "check the network or the remote, then update the base branch by hand");
   if (!(await git(["merge-base", "--is-ancestor", `refs/heads/${base}`, remoteRef], dir)).ok) return keep(`the local ${base} has commits that ${remote.out}'s ${base} lacks, so it cannot fast-forward`, `look at them (git log ${remoteRef}..${base}); the owner decides, nothing is changed`);
