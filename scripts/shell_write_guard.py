@@ -121,9 +121,10 @@ class Unreadable(Exception):
 # --------------------------------------------------------------------------- lexer
 
 class Word(object):
-    __slots__ = ("text", "dynamic", "glob", "quoted")
+    __slots__ = ("text", "dynamic", "glob", "quoted", "refs")
 
     def __init__(self):
+        self.refs = []         # the source of each unresolved expansion, in order of the `\x00` placeholders of text
         self.text = ""
         self.dynamic = False   # an expansion ($x, ${..}, $(..), `..`) anywhere in the word
         self.glob = False      # unquoted * ? [ or a brace list
@@ -243,6 +244,11 @@ GRAMMAR_RESERVED_PREFIXES = ("BASH_", "FOREMAN_", "GIT_", "NODE_", "NPM_", "LD_"
 GRAMMAR_HARNESS_REFS = ("FOREMAN_SCRATCH", "PI_FOREMAN_HANDOFF_DIR")
 GRAMMAR_FORBIDDEN = ("|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'")
 _G_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
+# What only this guard resolves on top (`grammar_statements(local=True)`; shellvars.ts does not, the permission gate's
+# allows stay as they were): a sole `NAME=<relative literal>` or a quoted literal (spaces allowed, no expansion, glob,
+# backslash or tilde inside). The value stays text and is judged against the cwd in force where the name is used.
+LOCAL_ASSIGN = re.compile(r"(%s)=(?:[A-Za-z0-9._][%s]*|\"([%s][ %s]*)\"|'([%s][ %s]*)')" % ((_G_NAME,) + (GRAMMAR_LITERAL_CHARS,) * 5))
+LOCAL_ASSIGN_WORD = re.compile(r"(%s)=([%s][ %s]*)" % (_G_NAME, GRAMMAR_LITERAL_CHARS, GRAMMAR_LITERAL_CHARS))
 # a value starts with `/` or a prefix: a bare word such as `IFS=Z` is no path
 GRAMMAR_ASSIGN = re.compile("(%s)=((?:%s|/)[%s]*)" % (_G_NAME, "|".join(re.escape(p) for p in GRAMMAR_PREFIXES),
                                                         GRAMMAR_LITERAL_CHARS))
@@ -288,9 +294,10 @@ def grammar_header(text):
     return text if nl < 0 else text[:nl]
 
 
-def grammar_statements(text):
+def grammar_statements(text, local=False):
     """The statements of `text` (a list of `(name, raw_value)` for an assignment, `None` for a command) when every
-    statement is inside the closed grammar, else None. A `$NAME` that no statement assigns stays unresolved."""
+    statement is inside the closed grammar, else None. A `$NAME` that no statement assigns stays unresolved.
+    `local`: this guard's own widening (LOCAL_ASSIGN), never used for the shared grammar."""
     parts = _G_SPLIT.split(text)
     stmts, seps = parts[0::2], parts[1::2]
     out = []
@@ -304,7 +311,7 @@ def grammar_statements(text):
                 return None
             continue
         words = re.split(r"[ \t]+", stmt)
-        m = GRAMMAR_ASSIGN.fullmatch(stmt) or (_NT and GRAMMAR_ASSIGN_NT.fullmatch(stmt)) or None
+        m = GRAMMAR_ASSIGN.fullmatch(stmt) or (_NT and GRAMMAR_ASSIGN_NT.fullmatch(stmt)) or (local and LOCAL_ASSIGN.fullmatch(stmt)) or None
         if m:
             # a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
             if not grammar_name_ok(m.group(1)) or not (before in (None, ";", "\n") or (before == "&&" and prev_assign)):
@@ -353,10 +360,10 @@ class Lexer(object):
         self.vars = {}
         # variables resolve only on a line inside the closed grammar (see grammar_statements)
         self.header_end = len(grammar_header(text))
-        self.eligible = grammar_statements(text[:self.header_end]) is not None
+        self.eligible = grammar_statements(text[:self.header_end], local=True) is not None
 
     # -- words
-    def _expansion(self, w):
+    def _expansion(self, w, quoted=False):
         t, i = self.t, self.i
         if t.startswith("$((", i):
             self.i = _balanced(t, i + 3, "(", ")")
@@ -376,11 +383,12 @@ class Lexer(object):
                 return
             self.i = m.end()
         known = self.known_var(t[i:self.i])
-        if known is not None:
+        if known is not None and (quoted or not re.search(r"\s", known)):   # an unquoted value with a blank splits
             w.text += known
             return
         w.text += "\x00"
         w.dynamic = True
+        w.refs.append("$(...)" if t.startswith("$(", i) and not t.startswith("$((", i) else t[i:self.i][:40])
 
     def _backtick(self, w):
         end = _backtick_end(self.t, self.i + 1)
@@ -388,6 +396,7 @@ class Lexer(object):
         self.i = end
         w.text += "\x00"
         w.dynamic = True
+        w.refs.append("`...`")
 
     def read_word(self, stop_at_ops=True):
         """Read one word at self.i (no leading blanks). Returns Word or None."""
@@ -407,6 +416,7 @@ class Lexer(object):
                     self.i = end
                     w.text += "\x00"
                     w.dynamic = True
+                    w.refs.append("<(...)")
                     started = True
                     continue
                 break
@@ -455,7 +465,7 @@ class Lexer(object):
                             w.text += t[self.i + 1]
                         self.i += 2
                     elif d == "$":
-                        self._expansion(w)
+                        self._expansion(w, True)
                     elif d == "`":
                         self._backtick(w)
                     else:
@@ -505,6 +515,11 @@ class Lexer(object):
                 self.vars.pop(m.group(1), None)
             else:
                 self.vars[m.group(1)] = value
+        else:
+            self.vars.pop((re.match(r"(%s)=" % _G_NAME, c.words[0].text) or [None, None])[1], None)   # unknown again unless set below
+            m = LOCAL_ASSIGN_WORD.fullmatch(c.words[0].text)
+            if m and not c.words[0].unresolvable:
+                self.vars[m.group(1)] = m.group(2)   # relative or quoted text, judged where it is used
 
     # -- structure
     def _finish_cmd(self, op):
@@ -698,6 +713,7 @@ class Scope(object):
         self.handoff_lex = None
         self.handoff_nt = False
         self.ignore_handoff = False   # second pass of decide(): handoff refusals are set aside
+        self.ignore_unresolved = False   # another second pass: targets with an unresolved expansion do not count
         if isinstance(handoff_dir, str) and handoff_dir.strip():
             hd = _native_dir(handoff_dir)
             if hd and os.path.normpath(hd) != os.path.sep:
@@ -771,7 +787,7 @@ class Scope(object):
         """True when writing to `word` (a Word or str) counts as a project write."""
         if isinstance(word, Word):
             if word.unresolvable:
-                return True
+                return not self.set_aside(word)
             text = word.text
         else:
             text = word
@@ -782,6 +798,10 @@ class Scope(object):
         if text == "":
             return False
         return self.project_path(absolute(text, cwd, lexical=False), link)
+
+    def set_aside(self, word):
+        """The `ignore_unresolved` pass skips a word that is unresolvable only through variables or substitutions (no glob)."""
+        return self.ignore_unresolved and bool(word.refs) and not word.glob
 
     def dir_in_ws(self, cwd):
         """A tool that writes below its working directory (git, patch): any place in the workspace."""
@@ -801,9 +821,13 @@ class Found(Exception):
 
 
 def _show(word):
-    if isinstance(word, Word):
-        return word.text if not word.unresolvable else "%s (unresolved)" % word.text
-    return str(word)
+    if not isinstance(word, Word):
+        return str(word)
+    text = word.text
+    if word.unresolvable and word.refs and text.count("\x00") == len(word.refs):
+        for ref in word.refs:   # name each unresolved token in place of its placeholder
+            text = text.replace("\x00", ref, 1)
+    return text if not word.unresolvable else "%s (unresolved)" % text
 
 
 def _hit(scope, kind, word, cwd, link=False):
@@ -1074,7 +1098,7 @@ class Analyzer(object):
             for w in args:
                 if w.text.startswith("of="):
                     t = Word()
-                    t.text, t.dynamic, t.glob = w.text[3:], w.dynamic, w.glob
+                    t.text, t.dynamic, t.glob, t.refs = w.text[3:], w.dynamic, w.glob, w.refs
                     _hit(s, "dd", t, cwd)
             return
         if prog == "git":
@@ -1145,6 +1169,8 @@ class Analyzer(object):
         if word is None:
             d = cwd
         elif word.unresolvable:
+            if self.scope.set_aside(word):
+                return
             raise Found(kind, _show(word))
         else:
             d = absolute(word.text, cwd, lexical=False)
@@ -1432,6 +1458,8 @@ class Analyzer(object):
                 # a copy into a directory of the handoff dir writes `dest/<source name>`: judge that name
                 for w in srcs:
                     if w.unresolvable:
+                        if s.set_aside(w):
+                            continue
                         raise Found(prog, _show(w))
                     named = lit(dest.text.rstrip("/\\") + "/" + re.split(r"[\\/]", w.text.rstrip("/\\"))[-1])
                     _hit(s, prog, named, cwd)
@@ -2119,8 +2147,10 @@ def _harness_dir(d):
 
 
 class Decision(tuple):
-    """(kind, target); `.handoff` is True when every refused target lies in the own handoff dir."""
+    """(kind, target); `.handoff` is True when every refused target lies in the own handoff dir, `.unresolved` when
+    every refused target is unresolvable (a variable or substitution the guard cannot resolve)."""
     handoff = False
+    unresolved = False
 
 
 def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratch_dir=None, allow_dirs=None,
@@ -2138,9 +2168,10 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
         if handoff_dir:
             command = expand_handoff(command, handoff_dir)
 
-    def run(ignore_handoff):
+    def run(ignore_handoff, ignore_unresolved=False):
         scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs, handoff_dir)
         scope.ignore_handoff = ignore_handoff
+        scope.ignore_unresolved = ignore_unresolved
         a = Analyzer(scope)
         (a.ps_text if shell == "powershell" else a.text)(command, os.path.normpath(os.path.abspath(cwd)), 0)
         return scope
@@ -2156,6 +2187,12 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
                 out.handoff = True
             except (Found, Unreadable):
                 out.handoff = False
+        # refused only because of unresolvable targets when nothing else is refused with those set aside
+        try:
+            run(False, True)
+            out.unresolved = True
+        except (Found, Unreadable):
+            out.unresolved = False
         return out
     except Unreadable:
         return Decision(("unreadable", "<command>"))
@@ -2192,8 +2229,12 @@ def main(argv=None):
     out = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                   "permissionDecisionReason": "pi-foreman: %s (%s: %s)" % (REFUSAL, kind, target[:200])},
            "kind": kind}
+    if target.endswith("(unresolved)"):
+        out["hookSpecificOutput"]["permissionDecisionReason"] += "; write the path literally or use the edit/write tool"
     if getattr(hit, "handoff", False):
         out["handoff"] = True
+    if getattr(hit, "unresolved", False):
+        out["unresolved"] = True
     sys.stdout.write(json.dumps(out) + "\n")
     return 0
 

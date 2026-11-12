@@ -1,0 +1,222 @@
+"""shell_write_guard.py: variables in write targets. A same-line literal assignment (relative or quoted values
+included) resolves and the resolved path is judged like the literal one; everything else stays refused, and a
+refusal caused only by unresolvable targets says so (`unresolved`). Strings are only parsed, nothing runs."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "scripts" / "shell_write_guard.py"
+sys.path.insert(0, str(ROOT / "scripts"))
+import shell_write_guard as swg  # noqa: E402
+
+POSIX_VARS_ONLY = unittest.skipIf(os.name == "nt", "the variable resolution is POSIX only")
+
+
+class ShellWriteVarsTest(unittest.TestCase):
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-wv-"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+        for d in (".workflow/closed", "src", "docs"):
+            os.makedirs(os.path.join(self.ws, d))
+        self.hand = os.path.join(self.ws, "agent dir", "handoffs", "h1")
+        os.makedirs(self.hand)
+        self.scratch = os.path.join(self.ws, "scratch")
+        os.makedirs(self.scratch)
+
+    def decide(self, cmd, cwd=None):
+        return swg.decide(cmd, cwd or self.ws, self.ws, "bash", [".workflow"], self.scratch, [], self.hand)
+
+    def allowed(self, cmd):
+        self.assertIsNone(self.decide(cmd), cmd)
+
+    def refused(self, cmd, unresolved, cwd=None):
+        hit = self.decide(cmd, cwd)
+        self.assertIsNotNone(hit, cmd)
+        self.assertEqual(hit.unresolved, unresolved, "%s -> %r" % (cmd, tuple(hit)))
+        return hit
+
+    # -- resolved
+    @POSIX_VARS_ONLY
+    def test_relative_literal_resolves(self):
+        self.allowed('D=.workflow/closed; cp x "$D/y"')
+        self.allowed('D=.workflow; echo x > "$D/n.md"')
+        self.allowed("D=.workflow; echo x > ${D}/n.md")
+
+    @POSIX_VARS_ONLY
+    def test_quoted_literal_resolves_spaces_included(self):
+        self.allowed('H="%s"; echo x > "$H/result.md"' % self.hand)
+        self.allowed("H='%s'; echo x > \"$H/result.md\"" % self.hand)
+        self.allowed('H="%s/work"; mkdir -p "$H/a b"' % self.hand)
+        self.allowed('S="%s"; echo x > "$S/n.md"' % self.scratch)
+        # unquoted, a value with a blank splits into words: not resolved
+        self.refused('H="%s"; echo x > $H/result.md' % self.hand, True)
+
+    @POSIX_VARS_ONLY
+    def test_resolved_value_is_judged_like_the_literal(self):
+        self.refused("D=src; echo x > \"$D/a.ts\"", False)
+        self.refused('D=.workflow; echo x > "$D/../README.md"', False)
+        self.refused('V=../README.md; echo x > ".workflow/$V"', False)
+        self.refused('H="%s"; echo x > "$H/brief.md"' % self.hand, False)   # parent-owned name
+        self.allowed('H="%s"; echo x > "$H/plan.md"' % self.hand)
+        self.refused('H=".ssh"; echo x > "$H/id_rsa"', False)
+        self.refused('D=".workflow"; echo x > "$D/../.env"', False)
+
+    @POSIX_VARS_ONLY
+    def test_relative_value_is_judged_in_the_cwd_where_it_is_used(self):
+        for cmd in ('D=.workflow; cd src; echo x > "$D/f"', 'cd src; D=.workflow; echo x > "$D/f"'):
+            hit = self.decide(cmd)
+            self.assertIsNotNone(hit, cmd)
+        self.allowed('cd .workflow; D=closed; echo x > "$D/f"')
+
+    @POSIX_VARS_ONLY
+    def test_symlink_inside_the_allowed_dir_is_followed(self):
+        try:
+            os.symlink(os.path.join(self.ws, "src"), os.path.join(self.ws, ".workflow", "link"))
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        self.refused('D=.workflow/link; echo x > "$D/f"', False)
+        self.refused('D=link; cd .workflow; echo x > "$D/f"', False)
+
+    # -- not resolved
+    @POSIX_VARS_ONLY
+    def test_values_with_expansion_or_glob_are_not_resolved(self):
+        for value in ('"$PWD/x"', '"`pwd`"', '"$(pwd)"', '".work*"', "'.workflow/$X'", '"~/x"', '"a\\\\b"', '"x?y"', '"{a,b}"'):
+            with self.subTest(value=value):
+                self.refused("D=%s; echo x > \"$D/f\"" % value, True)
+
+    @POSIX_VARS_ONLY
+    def test_reassignment_to_a_non_literal_forgets_the_name(self):
+        self.refused('D=.workflow; D=$(pwd); echo x > "$D/f"', True)
+        self.refused('D=.workflow; D=" x"; echo x > "$D/f"', True)
+        self.refused('D=.workflow; D=$X; echo x > "$D/f"', True)
+
+    @POSIX_VARS_ONLY
+    def test_existing_restrictions_still_hold(self):
+        for cmd in ('D=.workflow cp x "$D/y"', 'true && D=.workflow; cp x "$D/y"', '(D=.workflow); cp x "$D/y"',
+                    'D=.workflow; export D=src; cp x "$D/y"', 'D=.workflow; read D; cp x "$D/y"',
+                    'D=.workflow & cp x "$D/y"', 'D=.workflow*; cp x "$D/y"', 'IFS=.workflow; cp x "$IFS/y"',
+                    'D=.workflow; f() { cp x "$D/y"; }; f', 'D=.workflow; while true; do cp x "$D/y"; done',
+                    'for l in a b; do cp x ".workflow/closed/$l/"; done'):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(self.decide(cmd), cmd)
+
+    def test_unresolved_targets(self):
+        for cmd in ('echo x > ".workflow/$V"', 'echo x > ".workflow/$(echo a)"', 'echo x > ".workflow/`echo a`"',
+                    'echo x > "$V/.workflow/x"', 'echo x > "$V"', 'echo x > "${V}/f"',
+                    'for l in a b; do cp x ".workflow/closed/$l/"; done', 'echo x > ".workflow/$HOME"'):
+            with self.subTest(cmd=cmd):
+                self.refused(cmd, True)
+
+    def test_a_real_project_write_next_to_an_unresolved_one_is_no_unresolved_refusal(self):
+        self.refused('echo x > "$V"; echo y > README.md', False)
+        self.refused('echo y > README.md; echo x > "$V"', False)
+        self.refused('echo x > "$V"; echo y > src/*.ts', False)
+        self.refused('echo x > "$V"; echo "$(cat f)" > "$W"; rm -rf src', False)
+        self.refused('echo x > ".workflow/$V"; echo y > "%s/brief.md"' % self.hand, False)
+
+    def test_refusal_text_names_the_token_and_the_two_ways_out(self):
+        text = self.refused('echo x > ".workflow/$V"', True)[1]
+        self.assertIn(".workflow/$V (unresolved)", text)
+        self.assertIn("$(...)/f (unresolved)", self.refused('echo x > "$(echo a)/f"', True)[1])
+        self.assertIn("`...`/f (unresolved)", self.refused('echo x > "`echo a`/f"', True)[1])
+        self.assertIn("${V}/f (unresolved)", self.refused('echo x > "${V}/f"', True)[1])
+
+
+class ShellWriteVarsCwdTest(unittest.TestCase):
+    """A relative resolved value is judged in the directory the write really runs in, exactly like the literal path."""
+
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-wvc-"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+        self.hand = os.path.join(self.ws, "handoffs", "s1")
+        for d in (".workflow", "src/.workflow", "handoffs/s1"):
+            os.makedirs(os.path.join(self.ws, d))
+
+    def kind(self, cmd):
+        hit = swg.decide(cmd, self.ws, self.ws, "bash", [".workflow"], None, [self.hand])
+        return hit[0] if hit else None
+
+    @POSIX_VARS_ONLY
+    def test_relative_handoff_value_is_allowed_and_a_project_dir_is_not(self):
+        self.assertIsNone(self.kind('H=handoffs/s1; cp plan.md "$H/plan.md"'))
+        self.assertEqual(self.kind('H=src; cp plan.md "$H/plan.md"'), "cp")
+
+    @POSIX_VARS_ONLY
+    def test_a_changed_or_uncertain_cwd_refuses_like_the_literal(self):
+        # (variable form, literal form of the same write)
+        pairs = (
+            ('cd src; D=.workflow; echo x > "$D/f"', "cd src; echo x > .workflow/f"),
+            ('cd src && D=.workflow; echo x > "$D/f"', "cd src && echo x > .workflow/f"),
+            ('D=.workflow; cd src; echo x > "$D/f"', "cd src; echo x > .workflow/f"),
+            ('pushd src; D=.workflow; echo x > "$D/f"', "pushd src; echo x > .workflow/f"),
+            ('D=.workflow; pushd src; echo x > "$D/f"', "pushd src; echo x > .workflow/f"),
+            ('(cd src; D=.workflow; echo x > "$D/f")', "(cd src; echo x > .workflow/f)"),
+            ('D=.workflow; (cd src; echo x > "$D/f")', "(cd src; echo x > .workflow/f)"),
+            ('cd "$X"; D=.workflow; echo x > "$D/f"', 'cd "$X"; echo x > .workflow/f'),
+            ('D=.workflow; if true; then cd src; fi; echo x > "$D/f"', "if true; then cd src; fi; echo x > .workflow/f"),
+            ('D=.workflow; while true; do cd src; break; done; echo x > "$D/f"', "while true; do cd src; break; done; echo x > .workflow/f"),
+            ('D=.workflow; f() { cd src; }; f; echo x > "$D/f"', "f() { cd src; }; f; echo x > .workflow/f"),
+            ('D=.workflow; true && cd src || true; echo x > "$D/f"', "true && cd src || true; echo x > .workflow/f"),
+            ('D=.workflow; cd src || true; echo x > "$D/f"', "cd src || true; echo x > .workflow/f"),
+            ('D=.workflow; pushd src; popd; echo x > "$D/f"', "pushd src; popd; echo x > .workflow/f"),
+            ('D=.workflow; cd nodir; echo x > "$D/f"', "cd nodir; echo x > .workflow/f"),
+        )
+        for var, lit in pairs:
+            with self.subTest(command=var):
+                self.assertEqual(self.kind(var), "redirect", var)
+                self.assertEqual(self.kind(lit), "redirect", lit)
+
+    @POSIX_VARS_ONLY
+    def test_cd_back_to_the_workspace_allows_both_forms(self):
+        # the write lands in <ws>/.workflow, so allowing is correct
+        self.assertIsNone(self.kind('D=.workflow; cd src; cd ..; echo x > "$D/f"'))
+        self.assertIsNone(self.kind("cd src; cd ..; echo x > .workflow/f"))
+
+    @POSIX_VARS_ONLY
+    def test_the_variable_form_is_never_more_permissive_than_the_literal(self):
+        # a `cd` in a pipeline or a background job does not carry over: the literal is allowed there, the variable form is refused
+        self.assertIsNone(self.kind("cd src & echo x > .workflow/f"))
+        self.assertEqual(self.kind('D=.workflow; cd src & echo x > "$D/f"'), "redirect")
+        self.assertIsNone(self.kind("cd src | cat; echo x > .workflow/f"))
+        self.assertEqual(self.kind('D=.workflow; cd src | cat; echo x > "$D/f"'), "redirect")
+
+
+class ShellWriteVarsOutputTest(unittest.TestCase):
+    def setUp(self):
+        self.ws = os.path.realpath(tempfile.mkdtemp(prefix="pf-swg-wvo-"))
+        self.addCleanup(shutil.rmtree, self.ws, True)
+        os.makedirs(os.path.join(self.ws, ".workflow"))
+
+    def run_script(self, cmd):
+        payload = {"tool_input": {"command": cmd}, "cwd": self.ws, "workspace": self.ws, "allowed_dirs": [".workflow"]}
+        r = subprocess.run([sys.executable, "-E", "-s", str(SCRIPT)], input=json.dumps(payload), capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout) if r.stdout.strip() else None
+
+    def test_unresolved_flag_and_reason_suffix(self):
+        out = self.run_script('echo x > ".workflow/$V"')
+        self.assertIs(out["unresolved"], True)
+        reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn(swg.REFUSAL, reason)
+        self.assertIn("(redirect: .workflow/$V (unresolved))", reason)
+        self.assertIn("write the path literally or use the edit/write tool", reason)
+
+    def test_no_flag_and_no_suffix_for_a_project_file(self):
+        for cmd in ("echo x > README.md", 'echo x > "$V"; echo y > README.md'):
+            out = self.run_script(cmd)
+            self.assertNotIn("unresolved", out, cmd)
+        self.assertNotIn("write the path literally", self.run_script("echo x > README.md")["hookSpecificOutput"]["permissionDecisionReason"])
+
+    @POSIX_VARS_ONLY
+    def test_resolved_relative_value_is_allowed_end_to_end(self):
+        self.assertIsNone(self.run_script('D=.workflow; echo x > "$D/n.md"'))
+
+
+if __name__ == "__main__":
+    unittest.main()

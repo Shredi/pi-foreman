@@ -40,7 +40,7 @@ export function runShellWriteGuard(input: ShellWriteRunInput): Promise<GuardRun>
 
 export type ShellWriteVerdict =
   | { decision: "allow" }
-  | { decision: "refuse"; kind: string; reason: string; handoffOnly?: true }
+  | { decision: "refuse"; kind: string; reason: string; handoffOnly?: true; unresolvedOnly?: true }
   | { decision: "failure"; reason: string };
 
 /** The write form named by the script (`kind`), reduced to a short slug: it goes to the trace. */
@@ -56,11 +56,11 @@ function kindOf(stdout: string): string {
   return "unknown";
 }
 
-/** The script marked the refusal as caused only by the own handoff dir's allow-list (every other target was fine). */
-function handoffOnly(stdout: string): boolean {
+/** The script marked the refusal as caused only by the own handoff dir's allow-list (`handoff`) or only by targets it cannot resolve (`unresolved`); every other target was fine. */
+function onlyFlag(stdout: string, key: "handoff" | "unresolved"): boolean {
   for (const line of stdout.trim().split(/\r?\n/).reverse()) {
     try {
-      return (JSON.parse(line) as { handoff?: unknown }).handoff === true;
+      return (JSON.parse(line) as Record<string, unknown>)[key] === true;
     } catch {
       // not the JSON line
     }
@@ -74,7 +74,7 @@ export function shellWriteVerdict(run: GuardRun, python: string | null): ShellWr
   if (outcome.kind === "failure") return { decision: "failure", reason: `${outcome.message} The call is blocked.` };
   if (outcome.d.decision === "none" || outcome.d.decision === "allow") return { decision: "allow" };
   const reason = outcome.d.reason || `pi-foreman: ${SHELL_WRITE_REFUSAL}`;
-  return { decision: "refuse", kind: run.status === "ran" ? kindOf(run.stdout) : "unknown", reason, ...(run.status === "ran" && handoffOnly(run.stdout) ? { handoffOnly: true as const } : {}) };
+  return { decision: "refuse", kind: run.status === "ran" ? kindOf(run.stdout) : "unknown", reason, ...(run.status === "ran" && onlyFlag(run.stdout, "handoff") ? { handoffOnly: true as const } : {}), ...(run.status === "ran" && onlyFlag(run.stdout, "unresolved") ? { unresolvedOnly: true as const } : {}) };
 }
 
 export type BranchMove = { allow: true; reason?: "post_merge" } | { allow: false; precondition: string };

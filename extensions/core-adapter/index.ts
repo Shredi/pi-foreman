@@ -3997,8 +3997,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const precondition = move && "precondition" in move ? move.precondition : undefined;
       const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : v.reason;
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
-      // a refusal caused only by a parent-owned name in the own handoff dir is no sign the task needs a builder: no tier escalation
-      const more = v.handoffOnly ? "" : onEditRefused(s, mode, "shell");
+      // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is no sign the task needs a builder: no tier escalation
+      const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
       return { block: true, reason: mode === "bounded" ? reason : `${reason} pi-foreman: ${editModeAdvice(mode, scratchDir)}.${more}` };
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error in the shell write guard (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
