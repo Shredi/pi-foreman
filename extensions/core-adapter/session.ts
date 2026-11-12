@@ -24,14 +24,16 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CLOSE_START_FAILED_REASON, CLOSE_TEXT, CLOSED_TEXT, PR_WATCHED_REASON, outboxSend, outboxSendDetailed, validResultPathText } from "./close.ts";
 import type { OutboxOutcome } from "./close.ts";
+import { get } from "./config.ts";
 import type { Json } from "./config.ts";
+import { WAKE_MESSAGE_TYPE } from "./usage.ts";
 import { mainCheckoutOf, resolveWorktreeRoot } from "./worktreeroot.ts";
 import { workspaceTop } from "./gitdrift.ts";
 import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
-import { blockedConfirm } from "./herdr.ts";
+import { withBlocked } from "./herdr.ts";
 import type { EventBus } from "./herdr.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
@@ -42,6 +44,8 @@ export const CHILD_REFUSAL = "/foreman session is for a top-level foreman sessio
 /** Seconds an outbox send waits for pi-intercom's result (a confirmation dialog may be open). */
 export const SEND_WAIT_MS = 15_000;
 const OPEN_TIMEOUT_MS = 180_000;
+/** `sessions.confirmWaitSeconds` when no config layer sets it (config/foreman.defaults.json holds the same value). */
+const CONFIRM_WAIT_SECONDS = 20;
 /** A `--worktree` open also fetches and runs `npm ci` (up to 540 s in foreman_worktree_setup.py). */
 const OPEN_WORKTREE_TIMEOUT_MS = 660_000;
 /** The line `foreman session open --worktree` prints with the worktree's JSON (foreman_session.py WORKTREE_MARK). */
@@ -346,8 +350,19 @@ export interface SessionDeps {
   send: (to: string, text: string) => Promise<string>;
   /** Like `send`, with the outbox result's code and detail; when present it decides the retry via live.json. */
   sendDetailed?: (to: string, text: string) => Promise<OutboxOutcome>;
-  /** The owner's yes/no for a real open (see ownerConfirm); absent = no interactive session, so an open is refused. */
-  confirm?: (title: string, message: string) => Promise<boolean>;
+  /** The owner's yes/no for a real open (see ownerConfirm); absent = no interactive session, so an open is refused. `signal` withdraws the dialog. */
+  confirm?: (title: string, message: string, signal?: AbortSignal) => Promise<boolean>;
+  /**
+   * The tool's pending state (the foreman_script proposal pattern): opens whose dialog is unanswered, by label. Without it the
+   * confirm is awaited without limit (the `/foreman session open` command).
+   */
+  pendingOpens?: Map<string, PendingOpen>;
+  /** With `pendingOpens`: how long the open waits for the dialog before it answers "pending"; 0 or absent = without limit. */
+  confirmWaitMs?: number;
+  /** The tool call's abort signal: it withdraws a dialog still within its wait. */
+  signal?: AbortSignal;
+  /** Report the outcome of an open the caller no longer waits for (late answer, cancelled call) to the foreman. */
+  wake?: (label: string, text: string) => void;
   /** This session's own model, `<provider>/<id>`; with `config` it enables the session-foreman model. */
   model?: string;
   /** Merged config (providers.<p>.roles.session-foreman.model, ranks, ladder.childPolicy). */
@@ -366,7 +381,20 @@ export interface SessionDeps {
 
 export const PLAN_MODE_UNAVAILABLE = "session open refused [plan_mode_unavailable]: this session has no /plan command (install a plan-mode package), so the new session cannot open in plan mode. Open it without planMode, or pass the first command your setup provides.";
 
-export type SessionResult = { text: string; ok: boolean };
+export type SessionResult = { text: string; ok: boolean; /** The dialog is unanswered; the outcome arrives as a wake message. */ pending?: true };
+
+/** One open whose confirm dialog is unanswered (or whose spawn is running after the answer). */
+export interface PendingOpen {
+  /** Withdraws the dialog. */
+  abort: AbortController;
+  /** The call was cancelled: whatever the dialog answers later opens nothing. */
+  withdrawn: boolean;
+  /** The owner said Yes and the open is running. */
+  opening: boolean;
+  /** A caller was told "pending": the outcome is sent by wake (once). */
+  told: boolean;
+  woke: boolean;
+}
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
 
@@ -414,10 +442,11 @@ export const NO_UI_REFUSAL = "session open refused [no_ui]: opening a session ne
 /** The owner-confirm hook of one Pi context: a yes/no dialog without timeout; absent without an interactive UI; a thrown dialog counts as No. */
 export function ownerConfirm(ctx: ExtensionContext, events: EventBus | undefined): SessionDeps["confirm"] {
   if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return undefined;
-  const ask = blockedConfirm(events, (title, message) => ctx.ui.confirm(title, message));
-  return async (title, message) => {
+  const ask = (title: string, message: string, signal?: AbortSignal): Promise<boolean> =>
+    withBlocked(events, title, () => (signal ? ctx.ui.confirm(title, message, { signal }) : ctx.ui.confirm(title, message)));
+  return async (title, message, signal) => {
     try {
-      return (await ask(title, message)) === true;
+      return (await ask(title, message, signal)) === true;
     } catch {
       return false;
     }
@@ -475,16 +504,168 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
   if (c.dryRun) argv.push("--dry-run");
   if (c.worktree) argv.push("--worktree");
   if (c.base !== undefined) argv.push("--base", c.base);
-  if (!c.dryRun) {
-    if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
-    const yes = await d.confirm(`pi-foreman: open session ${c.label}?`, openSummary(d, c, model, cwdArg));
-    if (yes !== true) return { text: `session open refused [owner_declined]: the owner declined to open session ${c.label}`, ok: false };
+  if (c.dryRun) return (await spawnOpen(d, c, argv, model)).r;
+  const open = openEntryOf(d, c.label);
+  if (open) return { text: describeEntry(open, `session ${c.label} is already open`), ok: false };
+  if (!d.confirm) return { text: NO_UI_REFUSAL, ok: false };
+  const title = `pi-foreman: open session ${c.label}?`;
+  const message = openSummary(d, c, model, cwdArg);
+  if (!d.pendingOpens) {
+    if ((await d.confirm(title, message)) !== true) return DECLINED(c.label);
+    return (await spawnOpen(d, c, argv, model)).r;
   }
-  const r = await d.spawner(d.python, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
+  return confirmThenOpen(d, c, argv, model, title, message);
+}
+
+const DECLINED = (label: string): SessionResult => ({ text: `session open refused [owner_declined]: the owner declined to open session ${label}`, ok: false });
+
+type OpenKind = "opened" | "declined" | "failed" | "cancelled";
+interface OpenOutcome {
+  kind: OpenKind;
+  r: SessionResult;
+}
+
+/**
+ * The tool's open: the dialog races the wait window. Answered inside it, the open goes on inline. Not answered, the call returns
+ * "pending", the dialog stays and its answer (Yes: the open runs; No; a failed open) is sent as a wake message. A cancelled call
+ * (abort signal) withdraws the dialog and opens nothing; an answer that still arrives from a UI that could not withdraw is reported.
+ */
+async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined, title: string, message: string): Promise<SessionResult> {
+  const pend = d.pendingOpens!;
+  const label = c.label;
+  const have = pend.get(label);
+  if (have) {
+    have.told = true;
+    return pendingResult(label, have.opening ? "is being opened now" : "is waiting for the owner's answer; no second dialog was raised", have.opening);
+  }
+  if (d.signal?.aborted) return { text: `session open ${label} cancelled before the dialog was shown; nothing was opened`, ok: false };
+  const entry: PendingOpen = { abort: new AbortController(), withdrawn: false, opening: false, told: false, woke: false };
+  const wakeOnce = (o: OpenOutcome): void => {
+    if (entry.woke) return;
+    entry.woke = true;
+    d.wake?.(label, wakeText(d, label, o));
+  };
+  pend.set(label, entry);
+  const answer = d.confirm!(title, message, entry.abort.signal).catch(() => false);
+  // runs when the dialog is answered, in or after the wait window
+  const outcome = answer.then(async (yes): Promise<OpenOutcome> => {
+    try {
+      if (entry.withdrawn) {
+        // a caller told "pending" gets exactly one wake whatever the late answer was; an untold one only hears of a late Yes
+        if (yes === true || entry.told) {
+          wakeOnce({ kind: "cancelled", r: { ok: false, text: yes === true
+            ? `foreman_session_open ${label}: the call was cancelled and its dialog could not be withdrawn; the owner's Yes came too late and nothing was opened. Open it again if it is still wanted.`
+            : `foreman_session_open ${label}: the call was cancelled and its dialog was withdrawn or answered No; nothing was opened. Open it again if it is still wanted.` } });
+        }
+        return { kind: "cancelled", r: { text: `session open ${label} cancelled; nothing was opened`, ok: false } };
+      }
+      if (yes !== true) return { kind: "declined", r: DECLINED(label) };
+      entry.opening = true;
+      return await spawnOpen(d, c, argv, model);
+    } catch (err) {
+      return { kind: "failed", r: { text: (err as Error).message, ok: false } };
+    } finally {
+      if (pend.get(label) === entry) pend.delete(label);
+    }
+  });
+  // a second caller told "pending" while the first still waits or spawns gets the outcome here too
+  void outcome.then((o) => {
+    if (entry.told && o.kind !== "cancelled") wakeOnce(o);
+  }).catch(() => {});
+  let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
+  const first = await new Promise<"answered" | "timeout" | "aborted">((resolve) => {
+    void answer.then(() => resolve("answered"));
+    if (d.confirmWaitMs && d.confirmWaitMs > 0) timer = setTimeout(() => resolve("timeout"), d.confirmWaitMs);
+    if (d.signal) {
+      // decided here, at one synchronous point: a Yes processed after this spawns nothing; one already spawning is reported instead
+      onAbort = () => {
+        if (!entry.opening) entry.withdrawn = true;
+        resolve("aborted");
+      };
+      d.signal.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  clearTimeout(timer);
+  if (onAbort) d.signal?.removeEventListener("abort", onAbort);
+  if (first === "aborted" && !entry.opening) {
+    if (pend.get(label) === entry) pend.delete(label);
+    entry.abort.abort();
+    return { text: `session open ${label} cancelled: its dialog was withdrawn and nothing was opened`, ok: false };
+  }
+  if (first === "timeout") {
+    // the caller goes on; the owner's later answer is reported by wake
+    entry.told = true;
+    return pendingResult(label, "is waiting for the owner's answer");
+  }
+  const o = await outcome;
+  // the call was cancelled while the open ran (the spawn is never killed: a half-made session would have no message): say what happened
+  if (d.signal?.aborted && o.kind !== "cancelled") wakeOnce(o);
+  return o.r;
+}
+
+const pendingResult = (label: string, why: string, opening = false): SessionResult => ({
+  text: `session open ${label}: ${opening ? "the owner said Yes" : "pending owner confirmation"}. The open ${why}; ${opening ? "it is not finished" : "nothing is spawned until the owner says Yes"}. The outcome (opened with terminal, handoff dir and intercom id, declined, or failed) arrives as a foreman_wake message; do not call again for this label. A foreman_wait kind child on ${label} may be armed now.`,
+  ok: true,
+  pending: true,
+});
+
+/** The wake message of an open the caller no longer waits for. */
+function wakeText(d: SessionDeps, label: string, o: OpenOutcome): string {
+  if (o.kind === "declined") return `foreman_session_open ${label}: declined by the owner; nothing was opened`;
+  if (o.kind === "opened") {
+    const e = openEntryOf(d, label);
+    return e ? describeEntry(e, `foreman_session_open ${label}: opened`) : `foreman_session_open ${label}: opened\n${o.r.text}`;
+  }
+  if (o.kind === "cancelled") return o.r.text;
+  return `foreman_session_open ${label}: open failed: ${o.r.text}`;
+}
+
+/** The newest registry entry for `label` that is not closed or failed (a session that is, or may still be, running). */
+function openEntryOf(d: SessionDeps, label: string): SessionEntry | undefined {
+  return [...readRegistry(d.agentDir).sessions].reverse().find((s) => s.label === label && s.status !== "closed" && s.status !== "failed");
+}
+
+/** Where an entry's session runs, in words. */
+function terminalOf(e: SessionEntry): string {
+  const hc = e.hc && typeof e.hc === "object" ? (e.hc as { address?: unknown }).address : undefined;
+  if (typeof e.machine === "string") return `machine ${e.machine}${typeof hc === "string" ? ` (${hc})` : ""}`;
+  if (e.pane !== undefined) return `Herdr tab ${String(e.tab)} (workspace ${String(e.workspace)}, pane ${String(e.pane)})`;
+  if (typeof hc === "string") return `herdr-core terminal ${hc}`;
+  return "a terminal started by hand from the printed command";
+}
+
+/** `<lead> in <terminal>, handoff dir <dir>`, with the intercom id and whether live.json shows it live. */
+function describeEntry(e: SessionEntry, lead: string): string {
+  const live = e.handoff ? readLive(e.handoff) : null;
+  return [
+    `${lead} in ${terminalOf(e)}, handoff dir ${e.handoff ?? "(unknown)"}`,
+    `intercom id ${live?.intercomId ?? e.child}`,
+    `status ${e.status ?? "?"}`,
+    live ? "live (live.json is written)" : "not live yet (no live.json)",
+  ].join("; ") + ". Adopt it: foreman_wait kind child on its label, or foreman session brief; close it or pick another label to open a new one.";
+}
+
+/** The spawn of `foreman_session.py open` (never killed by an abort: it ends with the registry entry or a message) and its result. */
+async function spawnOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>, argv: string[], model: string | undefined): Promise<OpenOutcome> {
+  const r = await d.spawner(d.python!, ["-E", "-s", ...argv], { timeoutMs: c.worktree ? OPEN_WORKTREE_TIMEOUT_MS : OPEN_TIMEOUT_MS, cwd: d.cwd });
   const out = r.stdout.trim();
-  if (c.worktree && !c.dryRun && !r.error && !r.timedOut && r.code === 0) await noteWorktree(d, c.label, out);
-  const text = [model && !/^session model: /m.test(out) ? `session model: ${model}` : "", out, r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
-  return { text, ok: !r.error && !r.timedOut && r.code === 0 };
+  const ok = !r.error && !r.timedOut && r.code === 0;
+  if (c.worktree && !c.dryRun && ok) await noteWorktree(d, c.label, out);
+  let text = [model && !/^session model: /m.test(out) ? `session model: ${model}` : "", out, r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
+  if (!ok) text = namePathOwner(d, text);
+  return { kind: ok ? "opened" : "failed", r: { text, ok } };
+}
+
+/** A refusal "the worktree path exists: <p>": names the registered session that owns <p>, else says none is registered. */
+function namePathOwner(d: SessionDeps, text: string): string {
+  const m = /the worktree path exists: (.+)/.exec(text);
+  if (!m) return text;
+  const p = path.resolve(m[1].trim());
+  const owner = [...readRegistry(d.agentDir).sessions].reverse().find((s) => typeof s.cwd === "string" && path.resolve(s.cwd) === p);
+  if (!owner) return `${text}\nNo session is registered for that worktree path.`;
+  const closed = owner.status === "closed" || owner.status === "failed";
+  return `${text}\n${describeEntry(owner, closed ? `The worktree belongs to the earlier session ${owner.label} (${owner.status})` : `The worktree belongs to session ${owner.label}, which is already open`)}`;
 }
 
 /** After a successful `--worktree` open: record the worktree in the opener's manifest and trace `session_worktree`. */
@@ -761,14 +942,19 @@ export function registerSessionOpenTool(
   pi: ExtensionAPI,
   deps: { session: (ctx: ExtensionContext) => Promise<SessionHost>; spawner: Spawner; pkgRoot: string },
 ): void {
+  // opens waiting for the owner, by label; this extension instance's memory, gone with the session
+  const pendingOpens = new Map<string, PendingOpen>();
   pi.registerTool({
     name: SESSION_OPEN_TOOL,
     label: "Open a session",
     description:
       "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan is approved); a session with an approved plan: no planFirst. Refused in subagent children.",
     parameters: OPEN_PARAMS as never,
-    async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+    async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
+      const configured = get(s.config, "sessions.confirmWaitSeconds");
+      const n = configured === undefined ? CONFIRM_WAIT_SECONDS : Number(configured);
+      const waitSeconds = Number.isFinite(n) ? n : CONFIRM_WAIT_SECONDS;
       const r = await runSessionOpenTool(
         {
           isChild: s.isChild,
@@ -780,6 +966,22 @@ export function registerSessionOpenTool(
           python: s.python,
           spawner: deps.spawner,
           confirm: ownerConfirm(ctx, pi.events as EventBus | undefined),
+          pendingOpens,
+          confirmWaitMs: waitSeconds > 0 ? Math.round(waitSeconds * 1000) : 0,
+          signal,
+          wake: (label, text) => {
+            let idle = true;
+            try {
+              idle = ctx.isIdle();
+            } catch {
+              // a stale context: treat as idle
+            }
+            try {
+              pi.sendMessage({ customType: WAKE_MESSAGE_TYPE, content: text, display: true, details: { kinds: ["session_open"], ids: [label] } }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
+            } catch {
+              // a stale session: the outcome is in the registry
+            }
+          },
           send: async () => "unavailable",
           model: s.model,
           config: s.config,
@@ -790,7 +992,7 @@ export function registerSessionOpenTool(
         },
         params,
       );
-      return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.ok ? "opened" : "refused" }, ...(r.ok ? {} : { isError: true }) };
+      return { content: [{ type: "text" as const, text: r.text }], details: { decision: r.pending ? "pending" : r.ok ? "opened" : "refused" }, ...(r.ok ? {} : { isError: true }) };
     },
   } as never);
 }

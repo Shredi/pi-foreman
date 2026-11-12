@@ -77,7 +77,7 @@
   "footer": { "usage": true, "style": "foreman", "cacheBar": true },
   "ui": { "symbols": "unicode", "spinner": true },
   "herdr": { "blockedShim": true, "groupTag": true },
-  "sessions": { "backend": "auto", "hc": { "outliveParent": true }, "machines": {}, "remote": { "fetchTimeoutSeconds": 30 }, "worktree": { "branchPrefix": "round" } },
+  "sessions": { "backend": "auto", "confirmWaitSeconds": 20, "hc": { "outliveParent": true }, "machines": {}, "remote": { "fetchTimeoutSeconds": 30 }, "worktree": { "branchPrefix": "round" } },
   "compaction": { "maxTokens": 200000 },
   "wait": { "batchWindowSeconds": 300, "maxSeconds": 86400, "maxActive": 8, "ci": true },
   "resources": { "maxLoadPerCore": 1.5, "minFreeMemMB": 1024, "minFreeDiskGB": 5, "sampleSeconds": 30 },
