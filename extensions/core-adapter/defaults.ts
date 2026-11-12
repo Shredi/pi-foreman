@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { injection } from "./floors.ts";
+import { gitGlobalWidth, gitOptSpellings, injection } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -667,12 +667,10 @@ function installSeg(s: ShellSegment): boolean {
   return false;
 }
 
-const GIT_GLOBAL_VALUED = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
-
 /** The git subcommand and its words, past the global options. */
 function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
   let i = 0;
-  while (i < a.length && a[i].startsWith("-")) i += GIT_GLOBAL_VALUED.has(a[i]) ? 2 : 1;
+  while (i < a.length && a[i].startsWith("-")) i += gitGlobalWidth(a, i);
   return { sub: a[i], rest: a.slice(i + 1) };
 }
 
@@ -753,21 +751,8 @@ export function withMergedFacts(facts: GitFacts, merged: Map<string, boolean>): 
   return { ...facts, branchMerged: (cwd: string, branch: string) => merged.get(mergedFactKey(cwd, branch)) === true };
 }
 
-/**
- * The option `long` (a program-running option) among `words` up to `--`: any prefix of it of at least `--` and one letter, with or without `=value` (git
- * rejects an ambiguous one, so matching it costs nothing); with `short`, also a single-dash cluster where no value-taking letter of clone (`o`, `b`, `u`,
- * `c`, `j`) comes before that letter.
- */
-function gitProgOpt(words: string[], long: string, short?: string): boolean {
-  const end = words.indexOf("--");
-  return (end < 0 ? words : words.slice(0, end)).some((w) => {
-    if (w.startsWith("--")) {
-      const name = w.split("=", 1)[0];
-      return name.length >= 3 && long.startsWith(name);
-    }
-    return short !== undefined && /^-[^-]/.test(w) && [...w.slice(1)].find((ch) => "obucj".includes(ch)) === short;
-  });
-}
+/** The option `long` (a program-running option) among `words`, in any spelling of `gitOptSpellings`. */
+const gitProgOpt = (words: string[], long: string, short?: string): boolean => gitOptSpellings(words, long, { short }).length > 0;
 
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   if (progOf(s) !== "git") return false;
@@ -787,7 +772,8 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
     case "credential":
       return rest[0] === "fill";
     case "switch":
-      return child && (flag(/^-[a-zA-Z]*C/) || rest.includes("--force-create"));
+      // `--force` is another option (git reads `--forc` as ambiguous), so only the spellings longer than it count
+      return child && (flag(/^-[a-zA-Z]*C/) || gitOptSpellings(rest, "--force-create", { min: 8 }).length > 0 || rest.includes("--force-create"));
     case "update-ref":
     case "prune":
       return child;
@@ -802,7 +788,7 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
     case "restore":
       return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
     case "branch":
-      if (child && (flag(/^-[a-zA-Z]*[fmMC]/) || rest.includes("--force") || rest.includes("--move"))) return true;
+      if (child && (flag(/^-[a-zA-Z]*[fmMC]/) || gitProgOpt(rest, "--force") || gitProgOpt(rest, "--move") || rest.includes("--force") || rest.includes("--move"))) return true;
       return (flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete")) && !(s.cwd !== null && branchDeleteMerged(rest, s.cwd ?? env.cwd, env));
     case "push": {
       // s.cwd is already moved by every `-C` (shellast); null: a `-C` operand that cannot be resolved
@@ -814,8 +800,18 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return true;
     case "commit":
       return rest.includes("--amend") && env.facts?.hasUpstream?.(s.cwd ?? env.cwd) === true;
-    case "tag":
-      return child && (flag(/^-[a-zA-Z]*d/) || rest.includes("--delete"));
+    case "tag": {
+      // the word after `--sort` or `--format` is that option's value, not a flag, unless `--sort` is itself a value (`-m --sort -d v1`): the word before
+      // it is then a flag taking a value, and nothing is skipped
+      const words: string[] = [];
+      for (let i = 0; i < rest.length; i++) {
+        const prev = rest[i - 1];
+        const own = prev === undefined || !prev.startsWith("-") || TAG_LIST_FLAGS.has(prev) || /^-n\d*$/.test(prev);
+        if ((rest[i] === "--sort" || rest[i] === "--format") && own) i++;
+        else words.push(rest[i]);
+      }
+      return child && (words.some((w) => /^-[a-zA-Z]*d/.test(w)) || gitProgOpt(words, "--delete") || rest.includes("--delete"));
+    }
     case "stash":
       return rest[0] === "drop" || rest[0] === "clear";
     case "worktree":

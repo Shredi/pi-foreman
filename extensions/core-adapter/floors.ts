@@ -81,7 +81,12 @@ const floorSection = (name: string): boolean => {
   return floorKey(n) || floorKey(`${n}.x`) || KEYS.sectionNames.some((s) => n === s || n.startsWith(`${s}.`));
 };
 
-const GLOBAL_VALUE = new Set(["--git-dir", "--work-tree", "--namespace", "--super-prefix", "--attr-source", "--exec-path"]);
+const GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--attr-source", "--exec-path", "--config-env"]);
+
+/** How many words the global git option at `a[i]` takes: 2 when it is a value-taking option without a glued value, else 1. The one reader of git's global options. */
+export function gitGlobalWidth(a: string[], i: number): number {
+  return GLOBAL_VALUE.has(a[i]) ? 2 : 1;
+}
 
 interface GitCall {
   sub: string;
@@ -105,24 +110,12 @@ function gitCall(seg: ShellSegment, env: FloorEnv): GitCall | null {
     if (w === "--git-dir" || w.startsWith("--git-dir=")) {
       const v = w === "--git-dir" ? a[i + 1] : w.slice("--git-dir=".length);
       if (v !== undefined) gitDir = path.resolve(cwd, v);
-      i += w === "--git-dir" ? 2 : 1;
-    } else if (w === "-c") {
-      overrides.push(a[i + 1] ?? "");
-      i += 2;
-    } else if (/^-c.+/.test(w)) {
-      overrides.push(w.slice(2));
-      i++;
-    } else if (w === "-C") {
+    } else if (w === "-c" || w === "--config-env") overrides.push(a[i + 1] ?? "");
+    else if (/^-c.+/.test(w)) overrides.push(w.slice(2));
+    else if (w === "-C") {
       if (a[i + 1] !== undefined) cwd = path.resolve(cwd, a[i + 1]);
-      i += 2;
-    } else if (w === "--config-env") {
-      overrides.push(a[i + 1] ?? "");
-      i += 2;
-    } else if (w.startsWith("--config-env=")) {
-      overrides.push(w.slice("--config-env=".length));
-      i++;
-    } else if (GLOBAL_VALUE.has(w)) i += 2;
-    else i++;
+    } else if (w.startsWith("--config-env=")) overrides.push(w.slice("--config-env=".length));
+    i += gitGlobalWidth(a, i);
   }
   return { sub: (a[i] ?? "").toLowerCase(), rest: a.slice(i + 1), overrides, cwd, gitDir };
 }
@@ -331,36 +324,45 @@ function inOwnTemp(paths: string[], env: FloorEnv): boolean {
 }
 
 /**
- * The `-c` and `--config` values among the words after `git clone`, up to `--`. A long option matches as any prefix of at least `--` and one letter, with
- * or without `=value` (git rejects an ambiguous one, so matching it costs nothing); `-c` matches as a single-dash cluster where no value-taking letter
- * of clone (`o`, `b`, `u`, `c`, `j`) comes before it. The value is the glued rest, else the next word.
+ * The spellings of the option `long` among `words`, up to `--`: any prefix of it of at least `min` characters (default `--` and one letter), with or
+ * without `=value` (git rejects an ambiguous one, so matching it costs nothing); with `short`, also a single-dash cluster where no value-taking letter of
+ * clone (`o`, `b`, `u`, `c`, `j`) comes before that letter. One entry per spelling: the glued value (after `=` or the cluster letter), else, with
+ * `consume`, the next word (which is then not read as an option), else undefined.
  */
-function cloneConfigs(rest: string[]): string[] {
-  const out: string[] = [];
-  const end = rest.indexOf("--");
-  const words = end < 0 ? rest : rest.slice(0, end);
-  for (let i = 0; i < words.length; i++) {
-    const w = words[i];
+export function gitOptSpellings(words: string[], long: string, opts: { short?: string; consume?: boolean; min?: number } = {}): Array<string | undefined> {
+  const out: Array<string | undefined> = [];
+  const end = words.indexOf("--");
+  const list = end < 0 ? words : words.slice(0, end);
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i];
+    let glued: string | undefined;
     if (w.startsWith("--")) {
       const name = w.split("=", 1)[0];
-      if (name.length < 3 || !"--config".startsWith(name)) continue;
-      out.push(w.includes("=") ? w.slice(w.indexOf("=") + 1) : (words[++i] ?? ""));
-    } else if (/^-[^-]/.test(w)) {
-      const at = [...w].findIndex((ch, n) => n > 0 && "obucj".includes(ch));
-      if (at < 0 || w[at] !== "c") continue;
-      out.push(at + 1 < w.length ? w.slice(at + 1) : (words[++i] ?? ""));
-    }
+      if (name.length < (opts.min ?? 3) || !long.startsWith(name)) continue;
+      glued = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
+    } else if (opts.short !== undefined && /^-[^-]/.test(w)) {
+      const chars = [...w];
+      const at = chars.findIndex((ch, n) => n > 0 && "obucj".includes(ch));
+      if (at < 0 || chars[at] !== opts.short) continue;
+      glued = at + 1 < chars.length ? chars.slice(at + 1).join("") : undefined;
+    } else continue;
+    out.push(glued ?? (opts.consume ? (list[++i] ?? "") : undefined));
   }
   return out;
 }
+
+/** The `-c` and `--config` values among the words after `git clone`. */
+const cloneConfigs = (rest: string[]): string[] => gitOptSpellings(rest, "--config", { short: "c", consume: true }) as string[];
 
 /** All git floors of one segment: config writes in every form (`git clone -c` included), remote changes, the push floors. */
 function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   const call = gitCall(seg, env);
   if (!call) return null;
-  for (const o of call.sub === "clone" ? [...call.overrides, ...cloneConfigs(call.rest)] : call.overrides) {
+  const clone = call.sub === "clone" ? cloneConfigs(call.rest) : [];
+  for (const [o, cloneForm] of [...call.overrides.map((o): [string, boolean] => [o, false]), ...clone.map((o): [string, boolean] => [o, true])]) {
     const key = keyOfOverride(o);
-    if (!isWord(key) || floorKey(key)) return hit("git-config", `Setting '${key || "?"}' with -c or --config-env changes where code is fetched or pushed, which program git runs or which credentials it uses. Run git without it.`);
+    const form = cloneForm ? "git clone -c or --config" : "-c or --config-env";
+    if (!isWord(key) || floorKey(key)) return hit("git-config", `Setting '${key || "?"}' with ${form} changes where code is fetched or pushed, which program git runs or which credentials it uses. Run git without it.`);
     if (key.trim().toLowerCase() === "core.attributesfile") {
       const h = attributesFloor(call, o.slice(o.indexOf("=") + 1), env);
       if (h) return h;
