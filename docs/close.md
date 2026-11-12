@@ -105,8 +105,8 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 
 - **A close from any source.** The session remembers a watched PR it saw merged: the watch's `merged` event, or the fresh
   `pr_status` that ends the watch before a close (a PR closed without a merge is not remembered). The memory is saved with the
-  watch state, so a reload keeps it. A close from any source (the parent's `foreman:close`, a remote parent's order,
-  `/foreman close`) in a session with such a memory runs the same self-finish as the `pr-merged` close: `## Merge cleanup` in
+  watch state, so a reload keeps it. A close from any source (for example the parent's `foreman:close`, a remote parent's order,
+  a typed `/foreman close` or a close Herdr drives with it) in a session with such a memory runs the same self-finish as the `pr-merged` close: `## Merge cleanup` in
   the result file, the same checks and the detached cleanup as the last step. This holds when the merge close was refused
   (for example a child run still active) and when the parent closes first.
   Without a handoff dir nothing changes. A merge close that is refused sends the parent the refusal (`pi-foreman: close
