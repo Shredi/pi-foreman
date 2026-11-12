@@ -93,3 +93,35 @@ test("a throwing sendMessage in the late-answer wake is not an unhandled rejecti
     r.cleanup();
   }
 });
+
+for (const [name, honourSignal, late] of [
+  ["UI honours the signal", true, undefined],
+  ["UI ignores the signal, late No", false, false],
+  ["UI ignores the signal, late Yes", false, true],
+] as const) {
+  test(`second caller told pending, first call aborted (${name}): one wake, zero spawns`, async () => {
+    const r = rig({ confirmWaitSeconds: 5, honourSignal });
+    try {
+      const ac = new AbortController();
+      const first = r.call({}, ac.signal);
+      await sleep(20);
+      const second = await r.call({});
+      assert.equal(second.details.decision, "pending");
+      ac.abort();
+      await first;
+      if (late !== undefined) r.dialogs[0].answer(late);
+      await sleep(30);
+      assert.equal(r.woke.length, 1, "exactly one wake");
+      assert.match(r.woke[0].message.content, /cancelled/);
+      assert.match(r.woke[0].message.content, /nothing was opened/);
+      assert.equal(r.spawned.length, 0);
+      const again = r.call({});
+      await sleep(20);
+      assert.equal(r.dialogs.length, 2, "label is free again: a new dialog");
+      r.dialogs[1].answer(false);
+      await again;
+    } finally {
+      r.cleanup();
+    }
+  });
+}

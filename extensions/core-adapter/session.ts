@@ -551,7 +551,13 @@ async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub:
   const outcome = answer.then(async (yes): Promise<OpenOutcome> => {
     try {
       if (entry.withdrawn) {
-        if (yes === true) d.wake?.(label, `foreman_session_open ${label}: the call was cancelled and its dialog could not be withdrawn; the owner's Yes came too late and nothing was opened. Open it again if it is still wanted.`);
+        // a caller told "pending" gets exactly one wake whatever the late answer was; an untold one only hears of a late Yes
+        if ((yes === true || entry.told) && !entry.woke) {
+          entry.woke = true;
+          d.wake?.(label, yes === true
+            ? `foreman_session_open ${label}: the call was cancelled and its dialog could not be withdrawn; the owner's Yes came too late and nothing was opened. Open it again if it is still wanted.`
+            : `foreman_session_open ${label}: the call was cancelled and its dialog was withdrawn or answered No; nothing was opened. Open it again if it is still wanted.`);
+        }
         return { kind: "cancelled", r: { text: `session open ${label} cancelled; nothing was opened`, ok: false } };
       }
       if (yes !== true) return { kind: "declined", r: DECLINED(label) };
