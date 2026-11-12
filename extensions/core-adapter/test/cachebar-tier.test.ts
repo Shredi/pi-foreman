@@ -1,5 +1,5 @@
-// Footer cache bar of the warm redesign: share of the whole projected warm span, countdown to cold, warms left per tier,
-// tier glyph with ASCII fallback, and no limiter word.
+// Footer cache bar of the warm redesign: share of the current cache lifetime, a mark where the next warm fires, the total
+// warm time (plain countdown without a coming warm), `♨` and the tier glyph with ASCII fallback, and no limiter word.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cacheViewOf, tierGlyphs, type CacheSource } from "../footer.ts";
@@ -79,17 +79,17 @@ const line = (cache: ReturnType<typeof cacheViewOf>): string => {
   return plain(renderFooter(v, 200, theme)[0]);
 };
 
-test("rendering: cells, countdown, keepalive glyph with warms left, tier glyph", () => {
+test("rendering: cells with the mark, total warm time, keepalive glyph, tier glyph", () => {
   const l = line(cacheViewOf(src())!);
-  assert.match(l, /■■■■■■■■■■ 04:45 ♨ 3 ½$/);
-  assert.match(line(cacheViewOf(src({ tier: "quarter", warmsLeft: 1 }))!), /♨ last ¼$/);
+  assert.match(l, /■│■■■■■■■■■ 18:15 ♨ ½$/);
+  assert.match(line(cacheViewOf(src({ tier: "quarter", warmsLeft: 1 }))!), /■│■■■■■■■■■ 09:15 ♨ ¼$/);
 });
 
 test("ASCII fallback spells the tier glyphs 1/2 and 1/4", () => {
   assert.deepEqual(tierGlyphs("ascii"), { half: "1/2", quarter: "1/4" });
   assert.deepEqual(tierGlyphs("unicode"), { half: "½", quarter: "¼" });
-  assert.match(line(cacheViewOf(src({ symbols: "ascii" }))!), /\^ 3 1\/2$/);
-  assert.match(line(cacheViewOf(src({ symbols: "ascii", tier: "quarter" }))!), /\^ 3 1\/4$/);
+  assert.match(line(cacheViewOf(src({ symbols: "ascii" }))!), /■\|■■■■■■■■■ 18:15 \^ 1\/2$/);
+  assert.match(line(cacheViewOf(src({ symbols: "ascii", tier: "quarter" }))!), /■\|■■■■■■■■■ 18:15 \^ 1\/4$/);
 });
 
 test("no limiter word and no (away n) in any state", () => {
@@ -98,12 +98,12 @@ test("no limiter word and no (away n) in any state", () => {
   }
 });
 
-test("cold stays `□□□ ❄ cold`, the warm part follows with 0 and the tier glyph", () => {
+test("cold stays `□□□ ❄ cold`, the tier glyph follows", () => {
   const l = line(cacheViewOf(src({ lastTouch: null, nextWarmAt: null }))!);
-  assert.match(l, /□□□□□□□□□□ ❄ cold ♨ 0 ½$/);
+  assert.match(l, /□□□□□□□□□□ ❄ cold ½$/);
 });
 
-test("no warms left or a running turn without a fresh count: `♨ 0` and the tier glyph", () => {
-  assert.match(line(cacheViewOf(src({ warmsLeft: 0 }))!), /04:45 ♨ 0 ½$/);
-  assert.match(line(cacheViewOf(src({ running: true }))!), /04:45 ♨ 0 ½$/);
+test("no warms left or a running turn without fresh warms: plain countdown, no `♨`, the tier glyph", () => {
+  assert.match(line(cacheViewOf(src({ warmsLeft: 0 }))!), /■■■■■■■■■■ 04:45 ½$/);
+  assert.match(line(cacheViewOf(src({ running: true }))!), /■■■■■■■■■■ 04:45 ½$/);
 });

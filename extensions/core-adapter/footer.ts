@@ -6,8 +6,9 @@ import { symbolSet } from "./symbols.ts";
 import { isCostLine } from "./usage.ts";
 import { renderFooter } from "./footerview.ts";
 import type { CacheBarView, FooterTheme, FooterView } from "./footerview.ts";
-import { cacheBar, formatLeft, type CacheTier } from "./cachebar.ts";
+import { cacheBar, formatLeft, formatTotal, type CacheTier } from "./cachebar.ts";
 import type { CachePolicy } from "./cachepolicy.ts";
+import { warmDelayMs } from "./selfwarm.ts";
 import { realTimers, type Timers } from "./prwatch.ts";
 type Json = Record<string, unknown>;
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -138,6 +139,9 @@ export function tierGlyphs(set: string): { half: string; quarter: string } {
   return set === "ascii" ? { half: "1/2", quarter: "1/4" } : { half: "½", quarter: "¼" };
 }
 
+/** The vertical mark of the footer bar where the next warm fires; the ascii set draws it as `|`. Kept here with the tier glyphs, not in the shared symbol table. */
+export const markGlyph = (set: string): string => (set === "ascii" ? "|" : "│");
+
 /** The bar of a source, or null when it is hidden (no entry, unknown TTL, switched off). */
 export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const p = src?.policy;
@@ -148,18 +152,24 @@ export function cacheViewOf(src: CacheSource | null): CacheBarView | null {
   const warming = allowed && !busy;
   const bar = cacheBar({ now: src.now, lastTouch: src.lastTouch, ttlSeconds: p.ttlSeconds, stretchStartAt: src.stretchStartAt, spanEndAt: src.spanEndAt, warmsLeft: src.warmsLeft, tier: src.tier, nextWarmAt: warming ? src.nextWarmAt : null });
   const set = symbolSet(src.symbols);
+  const ended = !busy && allowed && src.endedBy ? (src.endedBy === "miss" ? ("miss" as const) : ("err" as const)) : null;
+  // a warm is coming: the budget allows one more, the cache is not cold yet, no turn runs and the stretch did not end
+  const coming = !busy && !ended && bar.warmsLeft > 0 && bar.leftMs !== null && bar.leftMs > 0;
+  // estimated total warm time: the time left now plus the warms the budget still allows, one warm interval each
+  const left = bar.leftMs === null ? null : coming ? formatTotal(bar.leftMs + bar.warmsLeft * (warmDelayMs(p.ttlSeconds) ?? 0)) : formatLeft(bar.leftMs);
   return {
-    share: bar.share,
-    left: bar.leftMs === null ? null : formatLeft(bar.leftMs),
+    share: bar.lifeShare,
+    left,
     cold: !busy && (bar.leftMs === null || bar.leftMs <= 0),
-    // always set while the bar shows: the count a warm would allow (running: a fresh stretch's), 0 when none; the tier that holds now
+    mark: coming ? bar.markShare : null,
+    // always set while the bar shows: the count a warm would allow (running: a fresh stretch's), 0 when none (the `♨` shows for a count above 0); the tier that holds now
     warms: {
-      ...(busy ? { count: allowed ? (src.warmsFresh ?? 0) : 0, tier: src.tier } : bar.warmsLeft > 0 && bar.leftMs !== null && bar.leftMs > 0 ? { count: bar.warmsLeft, tier: bar.tier } : { count: 0, tier: src.tier }),
-      // the idle stretch a miss or an error ended shows it instead of the count (a running turn opens a new stretch at its end)
-      ...(!busy && allowed && src.endedBy ? { ended: src.endedBy === "miss" ? ("miss" as const) : ("err" as const) } : {}),
+      ...(busy ? { count: allowed ? (src.warmsFresh ?? 0) : 0, tier: src.tier } : coming ? { count: bar.warmsLeft, tier: bar.tier } : { count: 0, tier: src.tier }),
+      // the idle stretch a miss or an error ended shows it instead of the `♨` (a running turn opens a new stretch at its end)
+      ...(ended ? { ended } : {}),
     },
     step: !src.downshifted ? src.idleRung : null,
-    glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift, ...tierGlyphs(src.symbols) },
+    glyphs: { keepalive: set.keepalive, cold: set.cold, downshift: set.downshift, mark: markGlyph(src.symbols), ...tierGlyphs(src.symbols) },
   };
 }
 

@@ -1,5 +1,5 @@
-// The footer's warm part for the idle stretch a miss or an error ended: ` ♨ miss` / ` ♨ err` instead of the count and the tier
-// glyph, within the 7 columns of ` ♨ 0 ½`, kept at narrow widths, gone with the next stretch (a running turn or a cleared ending).
+// The footer's warm part for the idle stretch a miss or an error ended: ` ♨ miss` / ` ♨ err` instead of the `♨` and the tier
+// glyph, within 7 columns, kept at narrow widths, gone with the next stretch (a running turn or a cleared ending).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cacheViewOf, type CacheSource } from "../footer.ts";
@@ -19,16 +19,16 @@ const line = (s: CacheSource, width = 200): string => {
   return renderFooter(v, width, theme)[0];
 };
 
-test("a miss shows ♨ miss, an error ♨ err, without the count and the tier glyph", () => {
+test("a miss shows ♨ miss, an error ♨ err, with no tier glyph after it", () => {
   assert.match(line(src({ endedBy: "miss" })), / ♨ miss$/);
   assert.match(line(src({ endedBy: "error" })), / ♨ err$/);
   assert.match(line(src({ endedBy: "miss", symbols: "ascii" })), /miss$/);
 });
 
-test("the ending text takes at most 7 columns (the warm part of a count and a tier glyph is 6)", () => {
+test("the ending text takes at most 7 columns", () => {
   const normal = line(src({ endedBy: null, warmsLeft: 0 }));
-  assert.match(normal, / ♨ 0 ½$/);
-  const base = visibleWidth(normal) - visibleWidth(" ♨ 0 ½");
+  assert.match(normal, / 04:44 ½$/);
+  const base = visibleWidth(normal) - visibleWidth(" ½");
   for (const e of ["miss", "error"] as const) assert.ok(visibleWidth(line(src({ endedBy: e }))) - base <= 7, e);
 });
 
@@ -36,11 +36,11 @@ test("narrow widths keep the ending text", () => {
   for (const width of [80, 60, 50, 45]) assert.match(line(src({ endedBy: "miss" }), width), /♨ miss/, `width ${width}`);
 });
 
-test("cold with an ending keeps it; a running turn and a cleared ending show the usual count", () => {
+test("cold with an ending keeps it; a running turn and a cleared ending show the usual warm part", () => {
   assert.match(line(src({ endedBy: "miss", now: T0 + 400_000 })), /cold ♨ miss$/);
-  assert.match(line(src({ endedBy: "miss", running: true })), / ♨ 4 ½$/);
-  assert.match(line(src({ endedBy: null, warmsLeft: 3, nextWarmAt: T0 + 270_000 })), / ♨ 3 ½$/);
-  assert.match(line(src({})), / ♨ 0 ½$/);
+  assert.match(line(src({ endedBy: "miss", running: true })), / ♨ ½$/);
+  assert.match(line(src({ endedBy: null, warmsLeft: 3, nextWarmAt: T0 + 270_000 })), / 18:14 ♨ ½$/);
+  assert.match(line(src({})), / 04:44 ½$/);
 });
 
 test("no bar, no ending: a policy that does not warm hides it", () => {
