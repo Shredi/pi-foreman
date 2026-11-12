@@ -59,8 +59,8 @@ test("a mirror of a target no registry node draws is kept (the target is only a 
 
 test("remoteTwins: a listed remote terminal that a live local registry node names is that node's row", () => {
   const list = [{ address: "t1" }, { address: "box1/t7" }, { address: "box1/t9" }, { address: "box2/t7" }];
-  assert.deepEqual([...remoteTwins(list, [tree()])], ["box1/t7"]);
-  assert.deepEqual([...remoteTwins(list, [tree(regNode({ state: "done" }))])], []);
-  assert.deepEqual([...remoteTwins(list, [tree(regNode({ state: "closed", ended_s: 3 }))])], []);
-  assert.deepEqual([...remoteTwins(list, null)], []);
+  assert.deepEqual([...remoteTwins(list, remoteNodesOf([tree()]))], ["box1/t7"]);
+  assert.deepEqual([...remoteTwins(list, remoteNodesOf([tree(regNode({ state: "done" }))]))], []);
+  assert.deepEqual([...remoteTwins(list, remoteNodesOf([tree(regNode({ state: "closed", ended_s: 3 }))]))], []);
+  assert.deepEqual([...remoteTwins(list, remoteNodesOf(null))], []);
 });

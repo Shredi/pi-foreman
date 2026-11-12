@@ -993,8 +993,8 @@ export function drawnRemoteTargets(items) {
 
 /** Addresses of the listed agents that are the remote machine's own terminal of a session a local registry node draws
  *  (`machine/<t>` equals the node's target): that node is their row, they get none of their own. */
-export function remoteTwins(list, tree) {
-  const targets = new Set(remoteNodesOf(tree).map((x) => x.target));
+export function remoteTwins(list, remoteNodes) {
+  const targets = new Set(listOf(remoteNodes).map((x) => x?.target));
   return new Set(listOf(list).map((a) => a?.address).filter((x) => typeof x === "string" && targets.has(x)));
 }
 

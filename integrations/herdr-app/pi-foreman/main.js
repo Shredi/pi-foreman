@@ -700,7 +700,7 @@ export default class ForemanAgents extends View {
     const localTree = this.radar.get("local")?.ok ? this.radar.get("local").tree : [];
     const remoteNodes = guard(() => remoteNodesOf(localTree), []);
     this.remoteTargets = new Set(remoteNodes.map((x) => x.target));
-    const recsOfNode = (n) => (n.machine && n.hcTerminal ? this.recs.get(n.hcTerminal.includes("/") ? n.hcTerminal : `${n.machine}/${n.hcTerminal}`)?.recs ?? [] : []);
+    const recsOfNode = (n) => (remoteTarget(n) ? this.recs.get(remoteTarget(n))?.recs ?? [] : []);
     // The remote node joined to a registry node's remote terminal: its agents, runs and child sessions show under that node's row.
     const remoteOf = (n) => joined.get(remoteTarget(n)) ?? null;
     // Item 25: a session drawn as a joined row anywhere is not drawn again as a radar child (matched by key).
@@ -718,8 +718,7 @@ export default class ForemanAgents extends View {
       }
     }
     for (const addr of guard(() => attachNests(list, all, radarTargets, (a) => this.recs.get(a)?.attach ?? ""), new Set())) nested.add(addr);
-    const twins = guard(() => remoteTwins(list, localTree), new Set());
-    for (const addr of twins) if (!joined.has(addr)) nested.add(addr);
+    const twins = guard(() => remoteTwins(list, remoteNodes), new Set());
     const listedBy = new Map(list.map((a) => [a.address, a]));
     // `<machine>/<t>` targets already drawn as a session (radar nodes, listed agents): an attach of one is not drawn again.
     const drawnTargets = new Set(list.map((a) => a.address));
@@ -730,13 +729,16 @@ export default class ForemanAgents extends View {
         drawnTargets.add(key !== "local" && !n.hcTerminal.includes("/") ? `${key}/${n.hcTerminal}` : n.hcTerminal);
       }
     }
-    const groups = [];
-    for (const a of list.filter((x) => !nested.has(x.address))) {
-      const id = `sp-${a.space}`;
-      const tail = groups[groups.length - 1];
-      if (tail && tail.id === id) tail.members.push(a);
-      else groups.push({ id, space: a.space, label: a.space_name || "", members: [a] });
-    }
+    const groupsOf = (members) => {
+      const out = [];
+      for (const a of members) {
+        const id = `sp-${a.space}`;
+        const tail = out[out.length - 1];
+        if (tail && tail.id === id) tail.members.push(a);
+        else out.push({ id, space: a.space, label: a.space_name || "", members: [a] });
+      }
+      return out;
+    };
     const machineOf = (g) => spaceList.find((s) => s.id === g.space)?.machine ?? null;
     const header = (g) => {
       const machine = machineOf(g);
@@ -767,13 +769,14 @@ export default class ForemanAgents extends View {
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);
       return f ? [block, div().h(4).flex_none()] : [block];
     };
-    const blocks = new Map(groups.flatMap((g) => g.members.map((a) => [a.address, withRows(a)])));
-    // A joined remote terminal that a drawn registry node follows is no row of its own: that node's row shows it (remoteOf).
+    // A remote terminal that a drawn registry node follows is no row of its own: that node's row shows it. The rows of
+    // everything else are drawn first, so what registry rows are drawn is known; a twin none of them carries keeps its row.
+    const candidates = list.filter((x) => !nested.has(x.address));
+    const blocks = new Map(candidates.filter((a) => !twins.has(a.address)).map((a) => [a.address, withRows(a)]));
     const drawnRemote = drawnRemoteTargets(drawnItems);
-    const rows = groups.flatMap((g) => {
-      const shown = g.members.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
-      return shown.length ? [...header(g), ...shown.flatMap((a) => blocks.get(a.address))] : [];
-    });
+    const kept = candidates.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
+    for (const a of kept) if (!blocks.has(a.address)) blocks.set(a.address, withRows(a));
+    const rows = groupsOf(kept).flatMap((g) => [...header(g), ...g.members.flatMap((a) => blocks.get(a.address))]);
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
     const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values(), ...childJoined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
