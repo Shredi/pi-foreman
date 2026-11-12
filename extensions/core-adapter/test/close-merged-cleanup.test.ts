@@ -79,6 +79,12 @@ function rewriteRoot(text: string, from: string, to: string, sep: string = path.
   return out;
 }
 
+/** Rewrites a copied git link file. The copy keeps the template's attributes: git for Windows marks a worktree's `.git` file hidden, and a truncating open (`w`) of such an existing file fails with EPERM, so the file is removed and written new. */
+const writeLinkFile = (f: string, text: string): void => {
+  fs.rmSync(f, { force: true });
+  fs.writeFileSync(f, text);
+};
+
 /** A copy of the template repository (the absolute paths in the copied git files rewritten, no git call), or a `lite` world: the directories only, for a test that uses the fake self-finish. */
 function world(lite = false) {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-merged-cleanup-")));
@@ -95,7 +101,7 @@ function world(lite = false) {
         const hit = process.platform === "win32" ? text.toLowerCase().includes(s.toLowerCase()) : text.includes(s);
         assert.ok(!hit, `${f} still points at the template (${s})`);
       }
-      fs.writeFileSync(f, text);
+      writeLinkFile(f, text);
     }
     tip = template.tip;
   }
@@ -603,4 +609,16 @@ test("the copied git link files are rewritten in both the native and the forward
   assert.equal(rewriteRoot("gitdir: c:/users/a/TPL-1/x", from, to, "\\", true), "gitdir: C:/Users/a/copy-2/x");
   const posix = rewriteRoot("gitdir: /tmp/tpl/x\n", "/tmp/tpl", "/tmp/copy", "/", false);
   assert.equal(posix, "gitdir: /tmp/copy/x\n");
+});
+
+test("writeLinkFile replaces an existing longer file: the read-back is the new text alone", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-linkfile-"));
+  try {
+    const f = path.join(dir, ".git");
+    fs.writeFileSync(f, "gitdir: /a/much/longer/old/path/that/the/new/text-does-not-reach\n");
+    writeLinkFile(f, "gitdir: /b\n");
+    assert.equal(fs.readFileSync(f, "utf8"), "gitdir: /b\n");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
