@@ -110,7 +110,7 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   the result file, the same checks and the detached cleanup as the last step. This holds when the merge close was refused
   (for example a child run still active) and when the parent closes first.
   Without a handoff dir nothing changes. A merge close that is refused sends the parent the refusal (`pi-foreman: close
-  refused: <reason>`), and the memory stays for the next close. When the cleanup of a parent's close does not start, the
+  refused: <reason>`), and the memory stays for the next close. The one exception is the refusal `a close is already in progress`: nothing is sent to the parent then, because the close that is already running (for example the parent's own, still checking the PR status) uses the remembered PR and runs the cleanup. When the cleanup of a parent's close does not start, the
   parent gets the reason as its own reply, `PR #n merged, closing (cleanup: not started (<reason>); ...)`, before the
   `foreman:closed <file>[ CLOSE: x]` line, which never carries the reason; a remote parent's reply cannot carry a line, so the
   reason is in the result file only. The result file of a parent's close sits in the worktree's `.workflow/` and the cleanup
