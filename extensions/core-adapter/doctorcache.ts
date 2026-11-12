@@ -1,5 +1,5 @@
 // foreman doctor: idle-cache checks beyond the Pi prerequisites (docs/cache.md).
-import type { CachePolicy } from "./cachepolicy.ts";
+import { BUILTIN_CACHE, type CachePolicy } from "./cachepolicy.ts";
 import { BRIDGE_TTL_ENV, forced5m, type BridgeTtlSetting, type BridgeTtlValue } from "./bridgettl.ts";
 
 export interface CacheDoctorInput {
@@ -29,7 +29,11 @@ export function cacheDoctorLines(i: CacheDoctorInput): string[] {
   }
   if (i.selfWarmMissed) out.push(`WARN a self-warm for ${prov} did not read the cache (keepalive window_end self_warm_miss): self-warm is off until the next real request (it ended the idle stretch it happened in) — check the TTL (docs/cache.md)`);
   const r = i.idleRung;
-  if (r && (r.policy.skip === "no_entry" || r.policy.ttlSeconds === null)) out.push(`WARN idle rung ${r.spec}: provider ${r.provider} has no cache entry (ttl unknown): no cache bar and no warms while downshifted — set providers.${r.provider}.cache.ttlSeconds and billing (docs/ladder.md)`);
+  if (r && (r.policy.skip === "no_entry" || r.policy.ttlSeconds === null)) {
+    const builtIn = Object.prototype.hasOwnProperty.call(BUILTIN_CACHE, r.provider);
+    const keepalive = builtIn ? "" : ` and providers.${r.provider}.cache.keepalive.enabled: true (a provider outside the built-in table keeps the keep-alive off without it)`;
+    out.push(`WARN idle rung ${r.spec}: provider ${r.provider} has no cache entry (ttl unknown): no cache bar and no warms while downshifted — set providers.${r.provider}.cache.ttlSeconds${keepalive} (docs/ladder.md)`);
+  }
   if (!i.hasIdleRung) out.push(`INFO no providers.${prov}.roles.foreman.idle: the idle model downshift is off (docs/ladder.md)`);
   return out;
 }
@@ -46,13 +50,21 @@ export const DEPRECATED_KEEPALIVE_KEYS: Record<string, string> = {
   intervalSeconds: "a warm is sent at min(0.9 x TTL, TTL - 10 s) after the last touch",
 };
 
-/** One WARN per deprecated keepalive key set in a provider's cache config (merged config); the keys are read by nobody. */
+const DEPRECATED_BILLING_WHY = "the keep-alive no longer depends on billing; a legacy per-request plan sets keepalive.enabled: false, a provider that is not built in sets keepalive.enabled: true to keep the keep-alive";
+
+/** One WARN per deprecated key set in a provider's cache config (merged config): keepalive keys, `billing` and byModel `billing`; the keys are read by nobody. */
 export function deprecatedKeepaliveLines(config: unknown): string[] {
   const provs = isObj(config) ? config.providers : undefined;
   if (!isObj(provs)) return [];
   const out: string[] = [];
   for (const [name, entry] of Object.entries(provs)) {
     const cache = isObj(entry) && isObj(entry.cache) ? entry.cache : undefined;
+    if (cache && "billing" in cache) out.push(`WARN providers.${name}.cache.billing is deprecated and ignored: ${DEPRECATED_BILLING_WHY} — delete it from your foreman.json (docs/cache.md)`);
+    if (cache && Array.isArray(cache.byModel)) {
+      cache.byModel.forEach((row, i) => {
+        if (isObj(row) && "billing" in row) out.push(`WARN providers.${name}.cache.byModel[${i}].billing is deprecated and ignored: ${DEPRECATED_BILLING_WHY} — delete it from your foreman.json (docs/cache.md)`);
+      });
+    }
     const ka = cache && isObj(cache.keepalive) ? cache.keepalive : undefined;
     if (!ka) continue;
     for (const [key, why] of Object.entries(DEPRECATED_KEEPALIVE_KEYS)) {

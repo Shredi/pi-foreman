@@ -14,7 +14,7 @@ interface Case {
   isChild: boolean;
   env: Record<string, string>;
   cfg: { bridge?: { promptCacheTtl?: unknown } };
-  expect: { ttlSeconds: number | null; billing: string | null; skip: string | null; selfWarm: boolean };
+  expect: { ttlSeconds: number | null; skip: string | null; selfWarm: boolean };
 }
 const CASES = (JSON.parse(readFileSync(new URL("../../../tests/fixtures/bridge_ttl_cases.json", import.meta.url), "utf8")) as { cases: Case[] }).cases;
 
@@ -25,7 +25,6 @@ test("shared cases", () => {
     const p = resolveWarmPolicy(c.cfg, c.provider, c.model, bridgeTtlS);
     assert.equal(p.skip ?? null, c.expect.skip, `${c.name}: skip`);
     assert.equal(p.ttlSeconds, c.expect.ttlSeconds, `${c.name}: ttlSeconds`);
-    assert.equal(p.billing, c.expect.billing, `${c.name}: billing`);
     assert.equal(!!p.selfWarm, c.expect.selfWarm, `${c.name}: selfWarm`);
   }
 });
@@ -43,7 +42,7 @@ test("the bridge TTL does not touch other providers", () => {
 });
 
 test("BUILTIN_CACHE keeps its literal; copilot rows live in BUILTIN_BY_MODEL", () => {
-  assert.deepEqual(BUILTIN_CACHE, { "claude-bridge": { ttlSeconds: 300, billing: "token" }, "github-copilot": { ttlSeconds: null, billing: "token" } });
+  assert.deepEqual(BUILTIN_CACHE, { "claude-bridge": { ttlSeconds: 300 }, "github-copilot": { ttlSeconds: null } });
   assert.deepEqual(BUILTIN_BY_MODEL["github-copilot"].map((r) => [r.match, r.ttlSeconds]), [["claude-*", 300], ["gpt-*", 1800], ["o1*", 1800], ["o3*", 1800], ["o4*", 1800]]);
 });
 

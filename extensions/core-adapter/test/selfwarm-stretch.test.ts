@@ -16,7 +16,7 @@ const COLD_MISS: WarmReply = { provider: "p", model: "m", usage: { input: 3, out
 /** A hit that cost more than the quarter share (0.425 against 0.3125 at a 100k prompt), though the half share covers it. */
 const BIG_HIT: WarmReply = { provider: "p", model: "m", usage: { input: 3, output: 1, cacheRead: 100000, cacheWrite: 60000 }, timestamp: 0 };
 const STRONG: WarmSignals = { ...NONE, strongA: "subagent" };
-const policy: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 1, keepaliveOwned: true };
+const policy: CachePolicy = { active: true, ttlSeconds: 300, intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 1, keepaliveOwned: true };
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
 };

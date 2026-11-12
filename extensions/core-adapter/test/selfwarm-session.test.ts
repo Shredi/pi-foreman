@@ -14,7 +14,7 @@ const RATES = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 };
 const NONE: WarmSignals = { strongA: null, turn: false, question: false, dialog: false, command: false };
 const MISS: WarmReply = { provider: "p", model: "m", usage: { input: 3, output: 1, cacheRead: 0, cacheWrite: 69740 }, timestamp: 0 };
 const HIT: WarmReply = { provider: "p", model: "m", usage: { input: 3, output: 1, cacheRead: 132423, cacheWrite: 12452 }, timestamp: 0 };
-const policy: CachePolicy = { active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 1, keepaliveOwned: true };
+const policy: CachePolicy = { active: true, ttlSeconds: 300, intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 1, keepaliveOwned: true };
 const flush = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
 };

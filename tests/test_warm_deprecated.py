@@ -22,7 +22,7 @@ class DeprecatedKeysTest(unittest.TestCase):
         self.assertTrue(fc.warm_policy(cfg(enabled=True), P, "m", None)["keepaliveOwned"])
         self.assertFalse(fc.warm_policy(cfg(), P, "m", None)["keepaliveOwned"])
         self.assertFalse(fc.warm_policy(cfg(enabled=False), P, "m", None)["keepaliveOwned"])
-        self.assertFalse(fc.warm_policy(cfg(billing="request", enabled=True), P, "m", None)["keepaliveOwned"])
+        self.assertTrue(fc.warm_policy(cfg(billing="request", enabled=True), P, "m", None)["keepaliveOwned"])
         self.assertFalse(fc.warm_policy(cfg(ttl=10, enabled=True), P, "m", None)["keepaliveOwned"])
         self.assertTrue(fc.warm_policy(cfg(ttl=11, enabled=True), P, "m", None)["keepaliveOwned"])
 
@@ -31,7 +31,7 @@ class DeprecatedKeysTest(unittest.TestCase):
         self.assertTrue(base["keepaliveOwned"])
         for key, value in DEPRECATED.items():
             got = fc.warm_policy(cfg(enabled=True, **{key: value}), P, "m", None)
-            for field in ("keepaliveOwned", "ttlSeconds", "billing", "enabled", "budgetShare", "compactMinTokens"):
+            for field in ("keepaliveOwned", "ttlSeconds", "enabled", "budgetShare", "compactMinTokens"):
                 self.assertEqual(got[field], base[field], (key, field))
 
     def test_presets_set_no_deprecated_key(self):

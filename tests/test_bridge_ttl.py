@@ -17,8 +17,6 @@ def skip_of(pol):
     """The skip reason cache_policy's result implies (resolveCachePolicy's `skip` in cachepolicy.ts)."""
     if pol is None:
         return "no_entry"
-    if pol["billing"] == "request":
-        return "billing_request"
     if pol["ttlSeconds"] is None:
         return "ttl_unknown"
     if pol["ttlSeconds"] >= 3600:
@@ -35,11 +33,10 @@ class SharedCasesTest(unittest.TestCase):
                 want = c["expect"]
                 self.assertEqual(skip_of(pol), want["skip"])
                 self.assertEqual(pol["ttlSeconds"] if pol else None, want["ttlSeconds"])
-                self.assertEqual(pol["billing"] if pol else None, want["billing"])
                 self.assertEqual(bool(pol and pol["selfWarm"]), want["selfWarm"])
 
     def test_signature_without_bridge_ttl_is_unchanged(self):
-        self.assertEqual(fc.cache_policy({}, "claude-bridge"), {"ttlSeconds": 300, "billing": "token", "enabled": True})
+        self.assertEqual(fc.cache_policy({}, "claude-bridge"), {"ttlSeconds": 300, "enabled": True})
 
 
 class ConfigLayerTest(unittest.TestCase):

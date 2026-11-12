@@ -23,10 +23,10 @@ class ByModelTest(unittest.TestCase):
         self.assertEqual(fc.cache_policy(c, P, "other")["ttlSeconds"], 300)
         self.assertEqual(fc.cache_policy(c, P)["ttlSeconds"], 300)
 
-    def test_request_billing_row_disables_keepalive(self):
+    def test_request_billing_row_is_ignored(self):
         c = cache(ttlSeconds=300, billing="token", keepalive={"enabled": True},
                   byModel=[{"match": "gpt-*", "billing": "request"}])
-        self.assertFalse(fc.cache_policy(c, P, "gpt-6")["enabled"])
+        self.assertTrue(fc.cache_policy(c, P, "gpt-6")["enabled"])
         self.assertTrue(fc.cache_policy(c, P, "claude-opus-5-5")["enabled"])
 
     def test_preset_row_and_project_layer_drops_by_model(self):

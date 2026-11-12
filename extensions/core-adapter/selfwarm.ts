@@ -204,7 +204,7 @@ export class SelfWarm {
     return this.shared().endedBy === "miss";
   }
 
-  /** pi-foreman sends the warms of this cache: keepalive on, token billing, TTL above 10 s, a replayable model, no miss in this idle stretch. */
+  /** pi-foreman sends the warms of this cache: keepalive on, TTL above 10 s, a replayable model, no miss in this idle stretch. */
   owns(): boolean {
     return this.shared().endedBy !== "miss" && !!this.deps.policy()?.keepaliveOwned && this.deps.replayable();
   }
@@ -323,7 +323,7 @@ export class SelfWarm {
       if (p.keepaliveOwned && !sh.notReplayableTraced && sh.owner === null) {
         sh.notReplayableTraced = true;
         d.trace({ event: "keepalive", outcome: "skipped", reason: "not_replayable" });
-      } else if (p.active && p.billing === "token" && p.ttlSeconds !== null && warmDelayMs(p.ttlSeconds) === null && !this.tooShortTraced) {
+      } else if (p.active && p.ttlSeconds !== null && warmDelayMs(p.ttlSeconds) === null && !this.tooShortTraced) {
         this.tooShortTraced = true;
         d.trace({ event: "keepalive", outcome: "skipped", reason: "ttl_too_short", ttl: p.ttlSeconds });
       }

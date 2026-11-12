@@ -1,5 +1,5 @@
 // github-copilot is token-billed by default (since 2026-06-01): the built-in per-model TTL rows switch the keep-alive on for
-// Claude and GPT ids; `billing: request` (provider or byModel row) turns it off; `keepalive.children: false` stops a child's warms.
+// Claude and GPT ids; `billing` (provider or byModel row) is accepted and ignored; `keepalive.children: false` stops a child's warms.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveCachePolicy, resolveWarmPolicy } from "../cachepolicy.ts";
@@ -13,7 +13,6 @@ test("copilot claude-opus-5.5: active, 300 s, token", () => {
   const p = resolveCachePolicy({}, "github-copilot", "claude-opus-5.5");
   assert.equal(p.active, true);
   assert.equal(p.ttlSeconds, 300);
-  assert.equal(p.billing, "token");
 });
 
 test("copilot GPT ids: active, 1800 s", () => {
@@ -21,7 +20,6 @@ test("copilot GPT ids: active, 1800 s", () => {
     const p = resolveCachePolicy({}, "github-copilot", id);
     assert.equal(p.active, true, id);
     assert.equal(p.ttlSeconds, 1800, id);
-    assert.equal(p.billing, "token", id);
   }
 });
 
@@ -35,15 +33,15 @@ test("copilot model without a TTL row: ttl_unknown", () => {
   assert.equal(p.skip, "ttl_unknown");
 });
 
-test("copilot billing: request at provider level gives billing_request", () => {
+test("copilot billing: request at provider level is ignored", () => {
   const p = resolveCachePolicy(cfg({ billing: "request" }), "github-copilot", "claude-opus-5.5");
-  assert.equal(p.active, false);
-  assert.equal(p.skip, "billing_request");
+  assert.equal(p.active, true);
+  assert.equal(p.skip, undefined);
 });
 
-test("copilot byModel row with billing: request gives billing_request for that model only", () => {
+test("copilot byModel row with billing: request is ignored", () => {
   const c = cfg({ byModel: [{ match: "gpt-*", billing: "request" }] });
-  assert.equal(resolveCachePolicy(c, "github-copilot", "gpt-6.1-sol").skip, "billing_request");
+  assert.equal(resolveCachePolicy(c, "github-copilot", "gpt-6.1-sol").active, true);
   assert.equal(resolveCachePolicy(c, "github-copilot", "claude-opus-5.5").active, true);
 });
 

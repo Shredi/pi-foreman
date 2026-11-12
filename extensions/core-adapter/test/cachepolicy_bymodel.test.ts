@@ -29,10 +29,10 @@ test("byModel: keep-alive follows the matched ttl", () => {
   assert.equal(resolveCachePolicy({}, "claude-bridge", "claude-opus-5-5").intervalSeconds, 270);
 });
 
-test("byModel: request billing never starts the keep-alive", () => {
+test("byModel: a billing request row is accepted and ignored", () => {
   const c = cfg({ ttlSeconds: 300, billing: "token", keepalive: { enabled: true }, byModel: [{ match: "gpt-*", ttlSeconds: 600, billing: "request" }] });
   const p = resolveCachePolicy(c, "claude-bridge", "gpt-6");
-  assert.equal(p.active, false);
-  assert.equal(p.skip, "billing_request");
+  assert.equal(p.active, true);
+  assert.equal(p.skip, undefined);
   assert.equal(resolveCachePolicy(c, "claude-bridge", "claude-opus-5-5").active, true);
 });

@@ -8,7 +8,7 @@ const withCache = (provider: string, cache: unknown) => ({ providers: { [provide
 test("bridge defaults", () => {
   const p = resolveCachePolicy({}, "claude-bridge");
   assert.deepEqual(p, {
-    active: true, ttlSeconds: 300, billing: "token", intervalSeconds: 270,
+    active: true, ttlSeconds: 300, intervalSeconds: 270,
     windowMinutes: 45, effectiveWindowMinutes: 30, warmCompact: true,
   });
   assert.equal(PI_IDLE_CAP_MINUTES, 30);
@@ -17,7 +17,6 @@ test("bridge defaults", () => {
 test("copilot is token-billed; without a model there is no TTL", () => {
   const p = resolveCachePolicy({}, "github-copilot");
   assert.equal(p.active, false);
-  assert.equal(p.billing, "token");
   assert.equal(p.skip, "ttl_unknown");
 });
 
@@ -55,7 +54,6 @@ test("config overrides the built-in ttl; enabled true on a long ttl still skips"
 test("the claude-bridge preset equals the built-in entry", () => {
   const preset = JSON.parse(readFileSync(new URL("../../../config/presets/claude-bridge.json", import.meta.url), "utf8"));
   const c = preset.providers["claude-bridge"].cache;
-  assert.equal(c.billing, BUILTIN_CACHE["claude-bridge"].billing);
   assert.equal("ttlSeconds" in c, false); // it would shadow the derived bridge TTL
   assert.equal(c.keepalive.enabled, true); // round 32: self-warm keeps the 1 h cache warm
   assert.equal(resolveCachePolicy(preset, "claude-bridge", "claude-sonnet-5-5", 3600).ttlSeconds, 3600);

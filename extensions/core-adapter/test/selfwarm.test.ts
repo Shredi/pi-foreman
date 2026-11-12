@@ -13,7 +13,7 @@ const RATES = { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 10 };
 const HIT: WarmReply = { provider: "p", model: "m", usage: { input: 5, output: 1, cacheRead: 100_000, cacheWrite: 0 }, timestamp: 0 };
 const NONE: WarmSignals = { strongA: null, turn: false, question: false, dialog: false, command: false };
 const policy = (ttl: number | null, over: Partial<CachePolicy> = {}): CachePolicy => ({
-  active: false, ttlSeconds: ttl, billing: "token", intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: ttl !== null && ttl > 10, ...over,
+  active: false, ttlSeconds: ttl, intervalSeconds: 0, windowMinutes: 0, effectiveWindowMinutes: 0, warmCompact: true, budgetShare: 0.5, keepaliveOwned: ttl !== null && ttl > 10, ...over,
 });
 
 interface Slot {
@@ -515,7 +515,7 @@ test("keepalive.enabled is the only switch: deprecated keys are accepted and cha
   assert.equal(resolveWarmPolicy(cfg({ enabled: true }), "claude-bridge").keepaliveOwned, true);
   assert.equal(resolveWarmPolicy(cfg({}), "claude-bridge").keepaliveOwned, false);
   assert.equal(resolveWarmPolicy(cfg({ enabled: false }), "claude-bridge").keepaliveOwned, false);
-  assert.equal(resolveWarmPolicy(cfg({ enabled: true }, { billing: "request" }), "claude-bridge").keepaliveOwned, false);
+  assert.equal(resolveWarmPolicy(cfg({ enabled: true }, { billing: "request" }), "claude-bridge").keepaliveOwned, true);
   assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 10, keepalive: { enabled: true } } } } }, "claude-bridge").keepaliveOwned, false);
   assert.equal(resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 11, keepalive: { enabled: true } } } } }, "claude-bridge").keepaliveOwned, true);
   const dep = { enabled: true, beyondPiCap: false, windowMinutes: 5, selfWarmWindowMinutes: 5, awayTicks: 3, whileWaiting: false, intervalSeconds: 60 };

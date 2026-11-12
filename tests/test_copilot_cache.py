@@ -15,12 +15,12 @@ def cache(**kw):
 
 class CopilotTokenBillingTest(unittest.TestCase):
     def test_default_is_token(self):
-        self.assertEqual(fc.BUILTIN_CACHE[P], {"ttlSeconds": None, "billing": "token"})
-        self.assertEqual(fc.cache_policy({}, P, "claude-opus-5.5"), {"ttlSeconds": 300, "billing": "token", "enabled": True})
+        self.assertEqual(fc.BUILTIN_CACHE[P], {"ttlSeconds": None})
+        self.assertEqual(fc.cache_policy({}, P, "claude-opus-5.5"), {"ttlSeconds": 300, "enabled": True})
 
     def test_gpt_ids_get_1800(self):
         for m in ("gpt-6.1-sol", "gpt-6.1-terra", "gpt-5.6-luna"):
-            self.assertEqual(fc.cache_policy({}, P, m), {"ttlSeconds": 1800, "billing": "token", "enabled": True}, m)
+            self.assertEqual(fc.cache_policy({}, P, m), {"ttlSeconds": 1800, "enabled": True}, m)
 
     def test_unknown_model_has_no_ttl(self):
         pol = fc.cache_policy({}, P, "gemini-3.8-flash")
@@ -28,10 +28,10 @@ class CopilotTokenBillingTest(unittest.TestCase):
         self.assertFalse(pol["enabled"])
 
     def test_request_override(self):
-        self.assertFalse(fc.cache_policy(cache(billing="request"), P, "claude-opus-5.5")["enabled"])
+        self.assertTrue(fc.cache_policy(cache(billing="request"), P, "claude-opus-5.5")["enabled"])
         c = cache(byModel=[{"match": "gpt-*", "billing": "request"}])
-        self.assertEqual(fc.cache_policy(c, P, "gpt-6.1-sol")["billing"], "request")
-        self.assertFalse(fc.cache_policy(c, P, "gpt-6.1-sol")["enabled"])
+        self.assertNotIn("billing", fc.cache_policy(c, P, "gpt-6.1-sol"))
+        self.assertTrue(fc.cache_policy(c, P, "gpt-6.1-sol")["enabled"])
         self.assertTrue(fc.cache_policy(c, P, "claude-opus-5.5")["enabled"])
 
 
