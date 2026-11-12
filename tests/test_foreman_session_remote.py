@@ -245,7 +245,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_defaults(self):
         sessions = self.load()["config"]["sessions"]
-        self.assertEqual(sessions, {"backend": "auto", "hc": {"outliveParent": True}, "machines": {},
+        self.assertEqual(sessions, {"backend": "auto", "confirmWaitSeconds": 20, "hc": {"outliveParent": True}, "machines": {},
                                     "remote": {"fetchTimeoutSeconds": 30}, "worktree": {"branchPrefix": "round"}})
 
     def test_machines_from_the_project_layer_are_ignored(self):
