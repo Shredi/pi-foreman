@@ -89,6 +89,10 @@ export interface WatchSnapshot {
   sources?: Record<string, SourceStatus>;
   /** The PR is a draft (the tracker's meta, readStoreEntry); absent: not a draft. */
   draft?: boolean;
+  /** The check names the base branch requires; null: unreadable (the host hid or rejected them); absent: not asked (counts as unreadable). */
+  required?: string[] | null;
+  /** The forge's merge state (`blocked`, `behind`, `dirty`, `draft`, `unknown`, `clean`, ...), lowercase; absent: not reported. */
+  mergeState?: string;
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
   comments?: CommentEntry[];
 }
@@ -146,9 +150,20 @@ export interface WatchState {
   reviewedHead?: string;
   /** The head the not-reviewed event was sent for, "" (or absent) when none. */
   unreviewedHead?: string;
+  /** A would-be pass waiting out the settle time: the head, the signature of the gating run set and when the watch first saw that set (epoch ms); absent when none. */
+  passSince?: { head: string; sig: string; at: number };
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
 }
+
+/** The settle time (`tools.prSettleSeconds`) and the clock it runs on; prDelta without one never holds a pass for time. */
+export interface SettleGate {
+  settleMs: number;
+  now: number;
+}
+
+/** Merge states of the forge that keep the ready-to-merge line back. */
+const NOT_READY = new Set(["blocked", "behind", "dirty", "draft", "unknown"]);
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
 
@@ -180,16 +195,22 @@ export function reviewFact(head: string, passed: ReadonlySet<string>, lastPass: 
 /** The runs that count toward checks finished, ready to merge and no checks: every run but a non-gating source's. */
 const gatingOf = (runs: Run[]): Run[] => runs.filter((r) => r.gates !== false);
 
-const settledOf = (all: Run[]): { settled: boolean; result: "pass" | "fail" | "" } => {
+/** Whether a run is the required check `name`. */
+const isCheck = (r: Run, name: string): boolean => r.name === name || rawName(r) === name;
+
+/** A pass is not settled while a required check has no run on the head (a failure is settled at once). */
+const settledOf = (all: Run[], required?: string[] | null): { settled: boolean; result: "pass" | "fail" | "" } => {
   const runs = gatingOf(all);
   const c = countRuns(runs);
   if (runs.length === 0 || c.pending > 0) return { settled: false, result: "" };
-  return { settled: true, result: c.failed + c.missing > 0 ? "fail" : "pass" };
+  if (c.failed + c.missing > 0) return { settled: true, result: "fail" };
+  if (required?.some((n) => !all.some((r) => isCheck(r, n)))) return { settled: false, result: "" };
+  return { settled: true, result: "pass" };
 };
 
 /** The state a new watch starts from: what is on the PR now counts as reported. */
 export function baselineOf(snap: WatchSnapshot): WatchState {
-  const s = settledOf(snap.runs);
+  const s = settledOf(snap.runs, snap.required);
   return {
     head: snap.head,
     failedIds: snap.runs.filter((r) => r.bucket === "failed").map(rid).slice(-MAX_IDS),
@@ -237,7 +258,7 @@ const rawName = (r: Run): string => (r.source && r.name.startsWith(`${r.source}/
  * Events are built first, then filtered by the wake rules (`repo`: `owner/name` for their `repos` globs). The state is updated for every event
  * whether it wakes or not, so a silent event is never replayed; only a woken event reaches the delta.
  */
-export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true): { state: WatchState; delta: Delta | null } {
+export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true, gate?: SettleGate): { state: WatchState; delta: Delta | null } {
   const st: WatchState = { ...prev, failedIds: [...prev.failedIds], commentIds: [...prev.commentIds] };
   const events: string[] = [];
   const counts = countRuns(snap.runs);
@@ -255,7 +276,13 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
 
   // a pending run the tracker made up for a source that did not answer does not reset the recorded result
   if (gating.some((r) => r.bucket === "pending" && !r.noAnswer)) st.ci = "";
-  const s = settledOf(snap.runs);
+  let s = settledOf(snap.runs, snap.required);
+  // no readable required set to wait for (none, or unreadable): a pass holds until the same gating run set has stood for the settle time
+  if (s.result === "pass" && gate && gate.settleMs > 0 && !snap.required?.length && st.ci !== `${snap.head}:pass`) {
+    const sig = gating.map((r) => r.name).sort().join("\n");
+    if (st.passSince?.head !== snap.head || st.passSince.sig !== sig) st.passSince = { head: snap.head, sig, at: gate.now };
+    if (gate.now - st.passSince.at < gate.settleMs) s = { settled: false, result: "" };
+  } else delete st.passSince;
   let ciFired = false;
   let ciWakes = false;
   if (s.settled && st.ci !== `${snap.head}:${s.result}`) {
@@ -313,7 +340,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     }
   } else st.noCi = 0;
 
-  if (child && s.result === "pass" && snap.mergeable === "mergeable" && !snap.draft && st.readyHead !== snap.head) {
+  if (child && s.result === "pass" && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
     st.readyHead = snap.head;
     d.ready = true;
     events.push("ready to merge");
@@ -382,7 +409,9 @@ const bucketOf = (v: unknown): Bucket => (v === "pending" || v === "failed" || v
 function fromBatch(p: Record<string, unknown>): Omit<WatchSnapshot, "comments"> {
   const runs = list<Record<string, unknown>>(p.runs).map((r): Run => ({ id: text(r.id), name: text(r.name), bucket: bucketOf(r.bucket), url: text(r.url) }));
   const state = p.state === "merged" || p.state === "closed" ? p.state : "open";
-  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs };
+  const required = Array.isArray(p.required) ? (p.required as unknown[]).filter((n): n is string => typeof n === "string") : p.required === null ? null : undefined;
+  const mergeState = text(p.mergeState);
+  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(mergeState ? { mergeState } : {}) };
 }
 
 /**
@@ -514,7 +543,9 @@ function parseState(v: unknown): WatchState | null {
   if (typeof s.head !== "string" || !strings(s.failedIds) || typeof s.ci !== "string" || !strings(s.commentIds) || typeof s.updatedAt !== "string") return null;
   if (s.mergeable !== "" && s.mergeable !== "mergeable" && s.mergeable !== "conflicting") return null;
   if (!finite(s.noCi) || typeof s.noCiHead !== "string" || typeof s.readyHead !== "string" || typeof s.last !== "string") return null;
-  const review = { ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
+  const ps = s.passSince as Record<string, unknown> | null | undefined;
+  const passSince = ps && typeof ps === "object" && typeof ps.head === "string" && typeof ps.sig === "string" && finite(ps.at) ? { passSince: { head: ps.head, sig: ps.sig, at: ps.at } } : {};
+  const review = { ...passSince, ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
   return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...review, last: s.last };
 }
 
@@ -581,6 +612,8 @@ export interface PrWatchesDeps {
   trace(rec: Record<string, unknown>): void;
   /** Seconds between polls in ms (index.ts: watchIntervalMs). */
   intervalMs(): number;
+  /** tools.prSettleSeconds in ms, read on every use; absent or 0: a pass is never held for time. */
+  settleMs?(): number;
   now(): number;
   timers?: Timers;
   /** A watch started, ended or changed (presence refresh). */
@@ -925,7 +958,7 @@ export class PrWatches {
     // a pending start: comments count as reported, CI does not (failed runs and a settled result are sent once), and mergeable has
     // no baseline: a first CONFLICTING is news, a first MERGEABLE is the baseline
     const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const, ...(w.state.reviewedHead ? { reviewedHead: w.state.reviewedHead } : {}) } : w.state;
-    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined, this.deps.reviewGate?.() ?? true);
+    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined, this.deps.reviewGate?.() ?? true, { settleMs: this.deps.settleMs?.() ?? 0, now: this.deps.now() });
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;
     if (changed) this.persist();
