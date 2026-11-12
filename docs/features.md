@@ -564,6 +564,7 @@ Switch: `tools.pr` is true.
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prGithubHosts` | unset | not in project/session (the GitHub hosts of the PR tracker come from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
+| `tools.prSettleSeconds` | `90` | any layer |
 
 ### pr-sources
 

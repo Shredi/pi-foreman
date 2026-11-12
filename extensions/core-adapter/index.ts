@@ -811,6 +811,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         idle: () => s.prCtx?.isIdle() ?? true,
         trace: (r) => s.trace?.emit(r),
         intervalMs: () => watchIntervalMs(get(s.config.config, "tools.prWatchSeconds")),
+        settleMs: () => {
+          const v = get(s.config.config, "tools.prSettleSeconds");
+          return (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 90) * 1000;
+        },
         now: () => Date.now(),
         changed: () => s.live?.touch(),
       }),

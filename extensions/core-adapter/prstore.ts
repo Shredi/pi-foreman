@@ -198,7 +198,8 @@ function parseSnap(v: unknown): StoredSnap | null {
   }
   const mergeable: Mergeable = v.mergeable === "mergeable" || v.mergeable === "conflicting" ? v.mergeable : "unknown";
   const str = (x: unknown): string => (typeof x === "string" ? x : "");
-  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs };
+  const required = Array.isArray(v.required) ? v.required.filter((n): n is string => typeof n === "string") : v.required === null ? null : undefined;
+  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}) };
 }
 
 /** The per-source state of a state entry (`sources.<name>`), invalid entries dropped; undefined when none is left. */

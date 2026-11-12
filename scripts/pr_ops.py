@@ -1109,7 +1109,7 @@ def _rollup_nodes(roll):
     return [nd for nd in nodes if isinstance(nd, dict)] if isinstance(nodes, list) else []
 
 
-def watch_runs(roll):
+def watch_runs(roll, required=None):
     """One entry {id, name, bucket, url} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
     or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run."""
     out = []
@@ -1123,9 +1123,27 @@ def watch_runs(roll):
                     "bucket": group, "url": s_or_none(url, 300)})
     order = ("failed", "missing", "pending", "passed")
     out.sort(key=lambda r: order.index(r["bucket"]))
-    while len(out) > 1 and len(json.dumps(out)) > 12000:   # the answer stays under the 16 KB cap; passed runs go first
-        out.pop()
+    keep = set(required or ())
+    while len(out) > 1 and len(json.dumps(out)) > 12000:   # the answer stays under the 16 KB cap; passed runs go first, required ones last
+        cut = [i for i, r in enumerate(out) if r["name"] not in keep]
+        out.pop(cut[-1] if cut else len(out) - 1)
     return out
+
+
+def readable_required(required, roll, runs):
+    """required, or None when a required check may be hidden from the watch: cut from the run list, or beyond the 100 nodes asked for."""
+    if required is None:
+        return None
+    ctx = roll.get("contexts") if isinstance(roll, dict) else None
+    total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
+    nodes = _rollup_nodes(roll)
+    seen = {title_or_none(_node_group(nd)[0]) or "?" for nd in nodes}
+    kept = {r["name"] for r in runs}
+    truncated = isinstance(total, int) and not isinstance(total, bool) and total > len(nodes)
+    for n in required:
+        if (n in seen and n not in kept) or (truncated and n not in seen):
+            return None
+    return required
 
 
 def map_rollup(roll):
@@ -1145,9 +1163,39 @@ def map_rollup(roll):
     return out
 
 
-def _pr_query(count, watch=False):
-    # watch: the extra fields pr_watch reads (head, base, head repository, updatedAt, run identity and link)
+def required_checks(pr, errs):
+    """The check names the base branch requires: classic branch protection plus rulesets. None when unreadable
+    (the fields were not asked for, the host hid them, or the request reported an error under baseRef)."""
+    base = pr.get("baseRef")
+    if not isinstance(base, dict) or any(isinstance(x.get("path"), list) and "baseRef" in x["path"] for x in errs):
+        return None
+    rules = base.get("rules")
+    nodes = rules.get("nodes") if isinstance(rules, dict) else None
+    if not isinstance(nodes, list) or "branchProtectionRule" not in base:
+        return None
+    rule = base.get("branchProtectionRule")
+    names = [c for c in (rule.get("requiredStatusCheckContexts") if isinstance(rule, dict) else None) or [] if isinstance(c, str)]
+    for nd in nodes:
+        params = nd.get("parameters") if isinstance(nd, dict) else None
+        checks = params.get("requiredStatusChecks") if isinstance(params, dict) else None
+        for c in checks if isinstance(checks, list) else []:
+            if isinstance(c, dict) and isinstance(c.get("context"), str):
+                names.append(c["context"])
+    out = []
+    for n in names:
+        n = title_or_none(n)
+        if n and n not in out:
+            out.append(n)
+    return out[:50]
+
+
+def _pr_query(count, watch=False, policy=True):
+    # watch: the extra fields pr_watch reads (head, base, head repository, updatedAt, run identity and link);
+    # policy: with them, the merge state and the base branch's required checks (a host without these fields is asked again without)
     pr_extra = "headRefOid baseRefName headRepository { nameWithOwner } updatedAt " if watch else ""
+    if watch and policy:
+        pr_extra += ("mergeStateStatus baseRef { branchProtectionRule { requiredStatusCheckContexts } rules(first: 30) { nodes { "
+                     "parameters { ... on RequiredStatusChecksParameters { requiredStatusChecks { context } } } } } } ")
     run_extra = "databaseId detailsUrl " if watch else ""
     ctx_extra = "createdAt targetUrl " if watch else ""
     decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
@@ -1180,9 +1228,23 @@ def _batch_args(args):
     return out
 
 
+MERGE_STATES = ("behind", "blocked", "clean", "dirty", "draft", "has_hooks", "unknown", "unstable")
+
+
 def _enum(v, allowed):
     v = str(v or "").lower()
     return v if v in allowed else None
+
+
+POLICY_FIELDS = ("mergeStateStatus", "baseRef", "branchProtectionRule", "requiredStatusCheckContexts", "RequiredStatusChecksParameters",
+                 "requiredStatusChecks", "rules", "parameters")
+
+
+def _rejects_policy_fields(e):
+    """An undefined-field style GraphQL error that names one of the merge state / required check fields."""
+    msg = str(e.get("message") or "")
+    undefined = e.get("type") in ("undefinedField", "UNDEFINED_FIELD") or re.search(r"doesn't exist on type|unknown field|undefined field|no such field", msg, re.I)
+    return bool(undefined) and re.search(r"\b(%s)\b" % "|".join(POLICY_FIELDS), msg) is not None
 
 
 def op_pr_batch(req):
@@ -1198,22 +1260,32 @@ def op_pr_batch(req):
     for i, (repo, n) in enumerate(entries):
         owner, name = two_part(repo)
         variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
-    path = _body_file(json.dumps({"query": _pr_query(len(entries), watch), "variables": variables}))
-    try:   # the body goes through a file: 50 queries overflow the Windows command line
-        argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
-            ["--input", _argpath(path)]
-        code, out, err = run_host(argv, root, [_argpath(path)])
-    finally:
-        _unlink(path)
-    try:
-        d = json.loads(out)
-    except ValueError:
-        d = None
+    def ask(policy):
+        path = _body_file(json.dumps({"query": _pr_query(len(entries), watch, policy), "variables": variables}))
+        try:   # the body goes through a file: 50 queries overflow the Windows command line
+            argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
+                ["--input", _argpath(path)]
+            code, out, err = run_host(argv, root, [_argpath(path)])
+        finally:
+            _unlink(path)
+        try:
+            d = json.loads(out)
+        except ValueError:
+            d = None
+        errs = [x for x in d.get("errors") if isinstance(x, dict)] if isinstance(d, dict) and isinstance(d.get("errors"), list) else []
+        return code, err, d, errs
+
+    code, err, d, errs = ask(True)
+    if watch and not (isinstance(d, dict) and isinstance(d.get("data"), dict)) and any(_rejects_policy_fields(x) for x in errs):
+        # a host that does not know the merge state and required check fields: without them, required unreadable;
+        # any other failure (auth, network, rate limit) is not retried, and a retry that fails too leaves the first error
+        again = ask(False)
+        if isinstance(again[2], dict) and isinstance(again[2].get("data"), dict):
+            code, err, d, errs = again
     if not isinstance(d, dict):
         if code != 0:
             host_error(host, "batch", code, err)
         raise ActionError("pr_host_failed", "gh: printed no JSON")
-    errs = [x for x in d.get("errors") if isinstance(x, dict)] if isinstance(d.get("errors"), list) else []
     if any(x.get("type") == "RATE_LIMITED" for x in errs):
         raise ActionError("pr_host_failed", "gh: GraphQL RATE_LIMITED")
     data = d.get("data")
@@ -1244,10 +1316,14 @@ def op_pr_batch(req):
                     "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
                     "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)}
         if watch:
+            required = required_checks(pr, [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]])
+            runs = watch_runs(roll, required)
             hr = pr.get("headRepository")
             item.update({"headSha": s_or_none(pr.get("headRefOid"), 64), "baseRef": s_or_none(pr.get("baseRefName"), 200),
                          "headRepo": s_or_none(hr.get("nameWithOwner"), 140) if isinstance(hr, dict) else None,
-                         "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": watch_runs(roll)})
+                         "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": runs,
+                         "required": readable_required(required, roll, runs),
+                         "mergeState": _enum(pr.get("mergeStateStatus"), MERGE_STATES)})
         prs.append(item)
     return {"action": "pr_batch", "prs": prs, "errors": errors}
 
