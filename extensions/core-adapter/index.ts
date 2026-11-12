@@ -157,7 +157,9 @@ import { bridgeTtlDoctorLines, cacheDoctorLines, deprecatedKeepaliveLines } from
 import { BridgeCacheTtl, bridgeTtlSetting, derivedBridgeTtlS, type BridgeTtlSetting } from "./bridgettl.ts";
 import type { Presence } from "./presence.ts";
 import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
-import { createWarm } from "./warmwire.ts";
+import { createWarm, liveReplayApi } from "./warmwire.ts";
+import { doctorWarm } from "./doctorwarm.ts";
+import { warmRates } from "./warmbudget.ts";
 import { forcedProjection } from "./warmreplay.ts";
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
@@ -5300,7 +5302,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms mode|reload|list",
+    description: "pi-foreman commands: /foreman doctor [warm] | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms mode|reload|list",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -5422,6 +5424,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (sub !== "doctor") {
         ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
+        return;
+      }
+      if (rest.length > 0 && !(rest.length === 1 && rest[0] === "warm")) {
+        ctx.ui.notify("Usage: /foreman doctor | /foreman doctor warm", "warning");
+        return;
+      }
+      if (rest[0] === "warm") {
+        const s = await ensureSession(ctx);
+        if (s.isChild) {
+          ctx.ui.notify("Usage: /foreman doctor warm (foreman session only)", "warning");
+          return;
+        }
+        const m = ctx.model;
+        const r = await doctorWarm({
+          model: () => (m ? { provider: m.provider, id: m.id } : null),
+          policy: () => (m ? resolveWarmPolicy(s.config.config, m.provider, m.id, bridgeTtlS) : null),
+          busy: () => !ctx.isIdle(),
+          hasUI: ctx.hasUI,
+          confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)),
+          rates: (promptTokens) => (m ? warmRates({ table: loadPrices(PKG_ROOT), registry: lookupRate(ctx.modelRegistry as never, m.provider, m.id), model: m.id, promptTokens, ttlSeconds: resolveWarmPolicy(s.config.config, m.provider, m.id, bridgeTtlS).ttlSeconds }) : null),
+          api: () => liveReplayApi({ pi, hidden: () => deferred.hidden }, ctx),
+          trace: (rec) => s.trace?.emit(rec),
+        });
+        ctx.ui.notify(r.text, r.level === "info" ? "info" : r.level === "warning" ? "warning" : "error");
         return;
       }
       const s = await ensureSession(ctx);
@@ -5618,6 +5644,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         idleRung: idleRef ? { spec: String(idleSpec), provider: idleRef.provider, policy: resolveWarmPolicy(s.config.config, idleRef.provider, idleRef.id, bridgeTtlS) } : null,
       }));
     }
+    if (!s.isChild) out.push("INFO /foreman doctor warm proves the idle warm live on this model (two small requests; it states the cost and asks first)");
     const addonOn = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd });
     out.push(`INFO background-tasks: ${addonOn ? "present" : "absent"}`);
     out.push(...bgFeaturesDoctor(addonOn, s.agentDir, process.env));
