@@ -1109,7 +1109,7 @@ def _rollup_nodes(roll):
     return [nd for nd in nodes if isinstance(nd, dict)] if isinstance(nodes, list) else []
 
 
-def watch_runs(roll):
+def watch_runs(roll, required=None):
     """One entry {id, name, bucket, url} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
     or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run."""
     out = []
@@ -1123,9 +1123,27 @@ def watch_runs(roll):
                     "bucket": group, "url": s_or_none(url, 300)})
     order = ("failed", "missing", "pending", "passed")
     out.sort(key=lambda r: order.index(r["bucket"]))
-    while len(out) > 1 and len(json.dumps(out)) > 12000:   # the answer stays under the 16 KB cap; passed runs go first
-        out.pop()
+    keep = set(required or ())
+    while len(out) > 1 and len(json.dumps(out)) > 12000:   # the answer stays under the 16 KB cap; passed runs go first, required ones last
+        cut = [i for i, r in enumerate(out) if r["name"] not in keep]
+        out.pop(cut[-1] if cut else len(out) - 1)
     return out
+
+
+def readable_required(required, roll, runs):
+    """required, or None when a required check may be hidden from the watch: cut from the run list, or beyond the 100 nodes asked for."""
+    if required is None:
+        return None
+    ctx = roll.get("contexts") if isinstance(roll, dict) else None
+    total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
+    nodes = _rollup_nodes(roll)
+    seen = {title_or_none(_node_group(nd)[0]) or "?" for nd in nodes}
+    kept = {r["name"] for r in runs}
+    truncated = isinstance(total, int) and not isinstance(total, bool) and total > len(nodes)
+    for n in required:
+        if (n in seen and n not in kept) or (truncated and n not in seen):
+            return None
+    return required
 
 
 def map_rollup(roll):
@@ -1298,11 +1316,13 @@ def op_pr_batch(req):
                     "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
                     "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)}
         if watch:
+            req = required_checks(pr, [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]])
+            runs = watch_runs(roll, req)
             hr = pr.get("headRepository")
             item.update({"headSha": s_or_none(pr.get("headRefOid"), 64), "baseRef": s_or_none(pr.get("baseRefName"), 200),
                          "headRepo": s_or_none(hr.get("nameWithOwner"), 140) if isinstance(hr, dict) else None,
-                         "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": watch_runs(roll),
-                         "required": required_checks(pr, [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]]),
+                         "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": runs,
+                         "required": readable_required(req, roll, runs),
                          "mergeState": _enum(pr.get("mergeStateStatus"), MERGE_STATES)})
         prs.append(item)
     return {"action": "pr_batch", "prs": prs, "errors": errors}

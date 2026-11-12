@@ -48,6 +48,37 @@ class PolicyBatchTest(prt.RepoLessCase):
         self.assertIsNone(got["required"])
         self.assertIsNone(self.watch(watch_pr(mergeStateStatus="WEIRD"))["mergeState"])
 
+    def _cut_pr(self, names, required, total=None, count=150):
+        runs = [dict(prt.run("matrix-job-%03d-%s" % (i, "x" * 90)), databaseId=i) for i in range(count)]
+        runs += [dict(prt.run(n), databaseId=1000 + i) for i, n in enumerate(names)]
+        base = {"branchProtectionRule": {"requiredStatusCheckContexts": required}, "rules": {"nodes": []}}
+        return prt.gql_pr(5, prt.rollup(*runs, total=total), headRefOid="abc1234567", baseRefName="main",
+                          updatedAt="2026-01-02T00:00:00Z", baseRef=base)
+
+    def test_required_run_survives_the_size_cut_when_it_is_last(self):
+        got = self.watch(self._cut_pr(["ci-ok"], ["ci-ok"]))
+        self.assertLess(len(got["runs"]), 150)
+        self.assertIn("ci-ok", [r["name"] for r in got["runs"]])
+        self.assertEqual(got["required"], ["ci-ok"])
+
+    def test_required_is_null_when_required_runs_are_cut(self):
+        names = ["req-%02d-%s" % (i, "y" * 180) for i in range(50)]
+        got = self.watch(self._cut_pr(names, names, count=0))
+        self.assertLess(len(got["runs"]), 50)
+        self.assertIsNone(got["required"])
+
+    def test_required_is_null_when_the_rollup_is_truncated_and_the_required_check_is_not_among_the_nodes(self):
+        got = self.watch(self._cut_pr(["other"], ["ci-ok"], total=130, count=3))
+        self.assertIsNone(got["required"])
+
+    def test_required_stays_a_list_when_the_rollup_is_truncated_but_every_required_name_is_present(self):
+        got = self.watch(self._cut_pr(["ci-ok"], ["ci-ok"], total=130, count=3))
+        self.assertEqual(got["required"], ["ci-ok"])
+
+    def test_required_stays_a_list_when_absent_from_a_complete_uncut_list(self):
+        got = self.watch(self._cut_pr(["other"], ["ci-ok"], count=3))
+        self.assertEqual(got["required"], ["ci-ok"])
+
     def test_a_host_that_rejects_the_new_fields_is_asked_again_without_them(self):
         bad = {"errors": [{"type": "undefinedField", "message": "Field 'mergeStateStatus' doesn't exist on type 'PullRequest'"}]}
         good = {"data": {"r0": watch_pr()}}

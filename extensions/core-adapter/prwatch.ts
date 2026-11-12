@@ -567,8 +567,8 @@ function parseState(v: unknown): WatchState | null {
   if (!finite(s.noCi) || typeof s.noCiHead !== "string" || typeof s.readyHead !== "string" || typeof s.last !== "string") return null;
   const ps = s.passSince as Record<string, unknown> | null | undefined;
   const passSince = ps && typeof ps === "object" && typeof ps.head === "string" && typeof ps.sig === "string" && finite(ps.at) ? { passSince: { head: ps.head, sig: ps.sig, at: ps.at } } : {};
-  const review = { ...passSince, ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...review, last: s.last };
+  const review = { ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */
