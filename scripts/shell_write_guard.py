@@ -1033,8 +1033,20 @@ class Analyzer(object):
             return None
         if any(w.text.startswith("-") and "P" in w.text[1:] and not w.text.startswith("--") for w in words[1:]):
             raw = absolute(a.text, cwd, lexical=False)   # cd -P: symlinks first, then `..`
-            return None if raw is None else os.path.realpath(raw)
-        return absolute(a.text, cwd)
+            return self.local_dir(a, None if raw is None else os.path.realpath(raw), cwd)
+        return self.local_dir(a, absolute(a.text, cwd), cwd)
+
+    def local_dir(self, word, d, base):
+        """The directory `d` taken from `word`; a word built from a local-step value keeps it only inside the
+        workspace or an always-writable place (judged on the realpath too), else the directory is unknown."""
+        if d is None or not word.local:
+            return d
+        s = self.scope
+        raw = absolute(word.text, base, lexical=False)
+        for p in (d, raw):
+            if p is None or not (_inside(s.ws_real, os.path.realpath(p)) or not s.project_path(p, strict=True)):
+                return None
+        return d
 
     # -- one simple command (program word first)
     def run(self, words, cwd, depth, stdin):
@@ -1128,7 +1140,7 @@ class Analyzer(object):
             d = _opt(opts, "-d", "--directory")
             where = cwd
             if d:
-                where = None if d[-1] is None or d[-1].unresolvable else absolute(d[-1].text, cwd)
+                where = None if d[-1] is None or d[-1].unresolvable else self.local_dir(d[-1], absolute(d[-1].text, cwd), cwd)
             if s.dir_in_ws(where):
                 raise Found("patch", "<working tree>")
             return
@@ -1160,6 +1172,8 @@ class Analyzer(object):
                 break
             name, eq = (t.split("=", 1) + [None])[:2] if t.startswith("--") else (t, None)
             val = lit(eq) if eq is not None else (args[i + 1] if name in with_arg and i + 1 < len(args) else None)
+            if eq is not None:
+                val.local = a.local
             if name in shell_opts:
                 if val is not None or name not in with_arg:   # npx -c 'cmd' | pnpm exec -c cmd...
                     body = val.text if val is not None else " ".join(w.text for w in args[i + 1:])
@@ -1172,7 +1186,7 @@ class Analyzer(object):
     def runner(self, prog, spec, cwd, depth, stdin):
         inner, where, body = spec
         if where is not None:
-            cwd = None if where.unresolvable else absolute(where.text, cwd)
+            cwd = None if where.unresolvable else self.local_dir(where, absolute(where.text, cwd), cwd)
         if body is not None:
             return self.text(body, cwd, depth + 1)
         if inner:
@@ -1292,7 +1306,10 @@ class Analyzer(object):
                 if k in ("-S", "--split-string"):
                     raise Found("unreadable", "<env -S>")
                 if k in ("-C", "--chdir"):
-                    cwd = None if (w is not None and w.unresolvable) else absolute(v, cwd)
+                    if w is None:   # `--chdir=D`, `-CD`: the value is a part of a word
+                        w = lit(v)
+                        w.local = any(x.local and x.text.endswith(v) for x in rest)
+                    cwd = None if w.unresolvable else self.local_dir(w, absolute(v, cwd), cwd)
         if prog == "timeout" and inner:
             inner = inner[1:]   # the duration
         if prog == "xargs":
@@ -1494,16 +1511,19 @@ class Analyzer(object):
             t = args[i].text
             if t == "-C" and i + 1 < len(args):
                 d = args[i + 1]
-                where = None if d.unresolvable else absolute(d.text, where)
+                where = None if d.unresolvable else self.local_dir(d, absolute(d.text, where), where)
                 i += 2
                 continue
             if t in ("-c", "--git-dir", "--work-tree", "--namespace") and i + 1 < len(args):
                 if t == "--work-tree":
-                    where = None if args[i + 1].unresolvable else absolute(args[i + 1].text, where)
+                    d = args[i + 1]
+                    where = None if d.unresolvable else self.local_dir(d, absolute(d.text, where), where)
                 i += 2
                 continue
             if t.startswith("--work-tree="):
-                where = absolute(t.split("=", 1)[1], where)
+                d = lit(t.split("=", 1)[1])
+                d.local = args[i].local
+                where = self.local_dir(d, absolute(d.text, where), where)
             if t.startswith("-"):
                 i += 1
                 continue

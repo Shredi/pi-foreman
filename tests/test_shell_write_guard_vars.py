@@ -270,5 +270,55 @@ class ShellWriteVarsOutputTest(unittest.TestCase):
         self.assertIsNone(self.run_script('D=.workflow; echo x > "$D/n.md"'))
 
 
+class ShellWriteVarsDirTest(unittest.TestCase):
+    """A local-step value used as a directory: outside the workspace and the always-writable places the cwd is unknown."""
+    setUp, decide, allowed, refused = (ShellWriteVarsTest.setUp, ShellWriteVarsTest.decide,
+                                       ShellWriteVarsTest.allowed, ShellWriteVarsTest.refused)
+
+    def values(self):
+        return (["..", "../../.ssh", '"%s"' % self.outside, '"%s/out dir"' % self.outside]
+                + ["src", "./src", ".workflow/../src"])
+
+    def each(self, template):
+        for v in self.values():
+            self.refused("D=%s; %s" % (v, template), False)
+
+    def test_cd_forms_refuse_the_later_write(self):
+        for cd in ('cd "$D"', "cd $D", 'cd -- "$D"', 'cd -P "$D"', 'pushd "$D"', 'cd "$D" &&'):
+            for tail in ("echo x >> f", "touch f", "cp a b", "mv a b"):
+                self.each("%s%s%s" % (cd, " " if cd.endswith("&&") else "; ", tail))
+
+    def test_git_dir_forms_refuse(self):
+        for verb in ("checkout -- x", "apply p.diff", "restore x", "reset --hard", "stash pop"):
+            for opt in ('-C "$D"', '--work-tree "$D"', '--work-tree="$D"', "--work-tree=$D"):
+                self.each("git %s %s" % (opt, verb))
+
+    def test_other_cwd_options_refuse(self):
+        for cmd in ('env -C "$D" touch f', 'env --chdir "$D" touch f', 'uv run --directory "$D" touch f',
+                    'yarn exec --cwd "$D" touch f', 'pnpm exec --dir "$D" touch f', 'patch -d "$D" -p1 < p',
+                    'tar -xf a.tar -C "$D"',
+                    '(cd "$D"; touch f)', 'cd "$D"; cd x; touch f', 'cd "$D/sub"; touch f'):
+            self.each(cmd)
+
+    def test_directory_options_the_guard_does_not_read_as_a_word_refuse(self):
+        for cmd in ('unzip -d "$D" a.zip', 'curl -O --output-dir "$D" u', 'wget -P "$D" u'):
+            for v in self.values():
+                self.assertIsNotNone(self.decide("D=%s; %s" % (v, cmd)), cmd)
+
+    def test_a_directory_inside_an_always_writable_place_stays_allowed(self):
+        self.allowed('D=.workflow/closed; cd "$D"; touch f')
+        self.allowed('D=.workflow/closed; cd "$D"; cp /tmp/a b')
+        self.refused('D=src; cd "$D"; touch f', False)
+        self.refused('D=src; cd "$D"; echo x >> f', False)
+
+    def test_a_symlinked_directory_out_of_the_workspace_refuses(self):
+        try:
+            os.symlink(self.outside, os.path.join(self.ws, ".workflow", "out"))
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        self.refused('D=.workflow/out; cd "$D"; touch f', False)
+        self.refused('D=.workflow/out; git -C "$D" checkout -- x', False)
+
+
 if __name__ == "__main__":
     unittest.main()
