@@ -64,8 +64,10 @@ auto-review -> claude-bridge/claude-haiku-5-5 (tier 3)
 
 ## Overlay on top of inexpensive
 
-Apply the preset, then let your overlay own what is specific to your provider, for example a request-billed,
-multi-family provider (ranks with a literal row per model, and a cache row so the keep-alive stays off):
+Apply the preset, then let your overlay own what is specific to your provider, for example a multi-family provider
+that is not built in (ranks with a literal row per model, and a cache row for its TTL). Its keep-alive stays off because
+the provider is not built in; `keepalive.enabled: true` turns it on. A legacy per-request plan on a built-in provider
+sets `keepalive.enabled: false`.
 
 ```json
 {

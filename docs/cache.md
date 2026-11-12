@@ -67,7 +67,7 @@ Earlier versions of the `claude-bridge` presets wrote `providers.claude-bridge.c
 
 #### github-copilot
 
-Since 2026-06-01 GitHub bills Copilot per token (see [models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)), so the keep-alive is on by default for Copilot Claude and GPT models, children included.
+Since 2026-06-01 GitHub bills Copilot per token (see [models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)). The keep-alive is on by default for Copilot Claude and GPT models because they have a built-in TTL row, children included; the billing does not decide it.
 
 - **Switch the keep-alive off.** `{"providers": {"github-copilot": {"cache": {"keepalive": {"enabled": false}}}}}`; for children only, `keepalive.children: false`.
 - **Prices.** The warm budget uses Pi's model registry (`@earendil-works/pi-ai`, github-copilot): `config/prices.json` has no Copilot rows. The registry's Copilot rates match GitHub's models-and-pricing page (cache write 1.25 x input, cache read discounted).
@@ -88,7 +88,7 @@ A `byModel` row sets the TTL of the live policy only. It does not apply to the r
 
 A child session (`PI_SUBAGENT_CHILD=1`) warms its own cache by the rules of its provider:
 
-- **Other token-billed providers** (for example `github-copilot`): on by default. `providers.<p>.cache.keepalive.children: false` stops it (`keepalive skipped child_off`, traced once per session).
+- **Other providers with the keep-alive on** (for example `github-copilot`): children warm by default. `providers.<p>.cache.keepalive.children: false` stops it (`keepalive skipped child_off`, traced once per session).
 - **`claude-bridge`**: off by default (`keepalive skipped bridge_child_off`, traced once per session). A bridge warm replays through `streamSimple` and often does not match the real request's cache key, so it pays a cold write and keeps nothing warm. Opt in with `providers.claude-bridge.cache.keepalive.children: true`.
 - **Layers.** `true` is accepted from user or overlay config only; a project or session may only set `false`.
 - **Miss contingency.** The miss contingency under [Keep-alive](#keep-alive) still applies: warming ends for the idle stretch after the first warm that does not hit, and the next real request starts warming again.
