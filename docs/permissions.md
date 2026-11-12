@@ -310,12 +310,13 @@ A dismissed dialog is a deny. A repeated identical deny is handled as before (`r
 
 **Allow and remember.**
 
-1. If the project file may not widen (it is tracked, not ignored, or a symlink), the dialog says why, names `.git/info/exclude`, and the call runs once without writing.
+1. If the project file may not widen (it is tracked, not ignored, or a symlink), the dialog says why, names `.git/info/exclude`, and the call runs once without writing; the same wording (the call ran once, nothing was stored) follows every refused write (an untrusted file, invalid JSON, a key that is not a list, a write error, an invalid rule).
 2. A select shows the proposed sentence, written from the call (`Run "kubectl" "apply" against the host ... in the namespace "staging"`; variable parts quoted and capped at 80 characters): `use this sentence`, `edit the sentence` (opens an editor prefilled; up to 300 characters) or `cancel` (denies).
 3. Only when a complete pattern rule can be derived (every segment readable, no exec flag), a second select asks `also add pattern rule Bash(kubectl apply *)?` yes or no.
 4. The write goes to the **project file** (`classifier.allow`, and `allow` for the rule), preserving the file's other keys and order. The permission files are reloaded, the classifier cache is cleared, the call runs.
+5. A notice names the project (the name of the main checkout, then the file path) and the stored sentence and rule. The file is always the one of the session that shows the dialog, wherever the command ran. When the session's mode without its session override is not `auto`, the notice adds that the sentence is only used under mode `auto` and which mode the sessions here otherwise run.
 
-**Allow and remember this exact command.** The rule is the normalised text of each segment (single spaces, quotes stripped), so `git commit -m "a b"` is stored as `Bash(git commit -m a b)`. The same project-file trust check as above applies; if it fails the call runs once. A per-segment rule matches that segment wherever it stands: also inside other lines (`git fetch origin && make deploy` is covered for its `git fetch origin` segment) and from other directories. It does not make a line allowed unless every segment of that line is covered.
+**Allow and remember this exact command.** The rule is the normalised text of each segment (single spaces, quotes stripped), so `git commit -m "a b"` is stored as `Bash(git commit -m a b)`. The same project-file trust check as above applies; if it fails the call runs once. Rules are written one by one: if a later one is refused, the notice lists the rules stored and the rules not stored. A per-segment rule matches that segment wherever it stands: also inside other lines (`git fetch origin && make deploy` is covered for its `git fetch origin` segment) and from other directories. It does not make a line allowed unless every segment of that line is covered.
 
 Self-modification, ask-rule and floor-ask dialogs, and mode-`ask` dialogs for calls outside the dangerous class, offer no remember option.
 
@@ -338,7 +339,7 @@ A dialog never waits for a fixed time while you are at the machine. Before it op
 | child | a subagent run (builder, reviewer, ...) | its parent, see below |
 | headless | no UI (print or json mode) | nobody: the call is denied at once |
 
-With nobody to ask, the agent reads: `pi-foreman: denied: nobody is at this session (no pane). The owner is absent; do not wait or retry, report this line and continue with what you can.` A floor is never asked.
+With nobody to ask, the agent reads: `pi-foreman: denied: nobody is at this session (no pane). The owner is absent; do not wait or retry, report this line and continue with what you can.` A child whose parent has a pane but whose asks are off reads a different text (see Child asks). A floor is never asked.
 
 ### Child asks
 
@@ -346,11 +347,11 @@ With nobody to ask, the agent reads: `pi-foreman: denied: nobody is at this sess
 
 1. When the parent adapter launches a child it creates an ask dir `<agentDir>/pi-foreman/state/child-asks/<parent session id>/<launch id>/` and passes it in the launch binding. The child gate writes `ask.md` there with `fs`, never through a tool: the cause (`danger-<name>`, `rule <text>`, `no rule matches`), the reason line, tool, cwd, role, run and the **whole** command. It then waits for `ruling-<n>.md`.
 2. A floor denies any child tool write under `state/child-asks/`, so a child can never write its own ruling. A ruling is accepted only as `ruling-<n>.md` for an `n` the child gate itself wrote, with an mtime not before its ask. A stale ruling is ignored.
-3. The parent adapter polls the ask dirs of its running children (500 ms) and opens **one dialog in the parent's own pane** naming the child role and run, the tool, the full command, the cause and the classifier's reason. Remember is offered for dangerous-class asks. A parent that has no UI writes `DENY`.
+3. The parent adapter polls the ask dirs of its running children (500 ms) and opens **one dialog in the parent's own pane** naming the child role and run, the tool, the full command, the cause and the classifier's reason. Remember is offered for dangerous-class asks; when the parent's own mode is `allow` a sentence would never be used, so only the exact-command rule is offered there. A parent that has no UI writes `DENY`.
 4. Dialogs from several children queue, one at a time. A child that has timed out drops its pending dialog; a late answer is logged, not applied.
 5. `ALLOW` lets the call run once. Anything else, or the deadline, denies. The parent model never answers a child ask.
 
-The child stops waiting after `gate.askTimeoutMs` (default 900000, 15 minutes), sooner when the parent's presence turns away. With `"deny"`, or when the binding has no ask dir (a headless parent), the child is denied with a text that tells it to report to the foreman.
+The child stops waiting after `gate.askTimeoutMs` (default 900000, 15 minutes), sooner when the parent's presence turns away. A child denied because child asks are off (its own `gate.childAsk` is `"deny"`, or its parent launched it with them off) reads `pi-foreman: denied: this call needs the owner's answer and child asks are off (gate.childAsk is "deny"). Report this line to the foreman, who can run it or ask the owner. The call was: <cause>.` A child whose parent has no pane (a headless parent) reads the no-pane text above, followed by `The call was: <cause>.` Both are denies; nothing else about the decision changes.
 
 A parent's remember applies to its running children, which re-read the permission files at each decision.
 
@@ -413,7 +414,7 @@ Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) an
 
 ## Decision log
 
-One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `latencyMs`, `model` and `cached` when a model decided.
+One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `latencyMs`, `model` and `cached` when a model decided. For a dialog the `reason` of an allow holds the answer (for example `allow-once`, `allow-remember`, `allow-remember-refused` when the remember write was refused and the call ran once, `parent-allow` on the child's line); a deny keeps its deny text.
 
 | Layer | Written when | `rule` holds |
 |---|---|---|
@@ -425,7 +426,7 @@ One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`:
 | `cache` | the classifier's cached allow was reused | `prose:A3` |
 | `mode` | the mode decided (no rule, dangerous under `allow` or `deny`) | `mode:no-rule`, `mode:allow:danger-...`, `mode-deny` |
 | `dialog` | an owner answered | the `danger-*` name or the cause |
-| `child-ask` | a parent answered or timed out for a child | the run id and the outcome |
+| `child-ask` | a parent answered or timed out for a child | the run id and the outcome (an answer carries the dialog answer, for example `allow-once`) |
 
 Lines of the older gate (`review`, `autoreview` usage role) stay readable. `shape` is the normalised, redacted command: program and option words kept, literal paths reduced to a class (`<worktree>/...`, `<scratch>/...`, `<tmp>/...`, `<home>/...`, `<parent>/.workflow/...`, `<abs>`), URLs to the host, every quoted string and secret-like value replaced by `<v>`. The log rotates to `log.1.jsonl` at `gate.logMaxBytes` (default 20 MB). Classifier calls are logged to the usage log with role `classifier`; the trace carries `guard`, `dialog` and `review` events.
 

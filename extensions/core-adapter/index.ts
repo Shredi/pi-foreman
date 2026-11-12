@@ -39,7 +39,7 @@ import { askOwner, DEFAULT_ASK_TIMEOUT_MS, STOP_TEXT } from "./gatedialog.ts";
 import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
-import { NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
+import { childAskOffText, NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
@@ -2094,9 +2094,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!ctx.hasUI) return { allow: false, reason: NO_PANE_TEXT };
     const rt = gateRuntimeOf(s);
     const dangerName = /^danger-[a-z-]+$/.test(a.cause) ? a.cause : null;
-    const remember = dangerName ? rememberOf(dangerName, a.tool, a.payload, undefined, undefined, s.cwd) : undefined;
+    const proposed = dangerName ? rememberOf(dangerName, a.tool, a.payload, undefined, undefined, s.cwd) : undefined;
+    // under the parent's own mode allow a sentence would never be used: only the exact-command rule is offered
+    const remember = proposed && rt.store.resolve().mode === "allow" ? { ...proposed, noSentence: true } : proposed;
     const ans = await withBlocked(herdrEvents, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run }, ...(remember ? { remember } : {}) }, ownerDeps(s, ctx, rt)));
-    return ans.allow === true ? { allow: true } : { allow: false, reason: ans.reason };
+    return ans.allow === true ? { allow: true, how: ans.how === "remember" ? "allow-remember" : ans.refused ? "allow-remember-refused" : "allow-once" } : { allow: false, reason: ans.reason, how: ans.how };
   }
   let childAskChain: Promise<void> = Promise.resolve();
   pi.events?.on(SUPERVISOR_SURFACED_EVENT, (data: unknown) => launchWaits.onSupervisorRequest(data));
@@ -2660,7 +2662,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     noRemember?: boolean;
     segments?: import("./shellast.ts").ShellSegment[];
     roots?: GateRoots;
-    allowed: (rule: string, layer: GateLayer, label: string) => undefined;
+    allowed: (rule: string, layer: GateLayer, label: string, folder?: boolean, reason?: string) => undefined;
     denied: (rule: string, layer: GateLayer, reason: string) => { block: true; reason: string };
   }
   /** The sentence and pattern rules the remember step proposes (rules.ts describeCall, proposeRule). */
@@ -2694,11 +2696,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const causeClass = a.dangerName ? "danger" : cause.startsWith("self-modification") ? "selfmod" : cause.startsWith("rule ") ? "rule" : cause === "no rule matches" ? "mode" : "floor";
       gs.trace?.emit({ event: "dialog", guard: "gate", cause: causeClass, kind, decision: answer, rule, toolFamily: tool, ...df, ...dialogFields(df.command) });
       askFlag.overlay({ command: df.command, rule, approved: allow, session: gs.id });
-      return allow ? (a.allowed(rule, "dialog", `dialog:${answer}`), undefined) : a.denied(rule, "dialog", reason ?? "pi-foreman: denied.");
+      return allow ? (a.allowed(rule, "dialog", `dialog:${answer}`, false, answer), undefined) : a.denied(rule, "dialog", reason ?? "pi-foreman: denied.");
     };
     if (kind === "child") {
       const askDir = launchBinding?.askDir;
-      if (!askDir || get(gs.config.config, "gate.childAsk") !== "parent") return done("no-parent", false, `${NO_PANE_TEXT} The call was: ${cause}.`);
+      const cfgOff = get(gs.config.config, "gate.childAsk") !== "parent";
+      if (!askDir || cfgOff) {
+        // child asks off (own config, or the parent launched it with them off) vs nobody at the parent's pane
+        const off = launchBinding?.noAsk !== "no-pane" && (cfgOff || launchBinding?.noAsk === "deny");
+        return done("no-parent", false, off ? childAskOffText(cause) : `${NO_PANE_TEXT} The call was: ${cause}.`);
+      }
       const t = get(gs.config.config, "gate.askTimeoutMs");
       const timeoutMs = typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : DEFAULT_ASK_TIMEOUT_MS;
       const turn = childAskChain; // one ask.md at a time: parallel tool calls of the child queue here
@@ -2723,7 +2730,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (kind !== "owner") return done("no-ui", false, NO_PANE_TEXT); // no UI: an immediate deny
     const remember = a.noRemember ? undefined : rememberOf(a.dangerName ?? "unmatched", tool, payload, input, a.segments, ctx.cwd);
     const ans: OwnerAnswer = await withBlocked(herdrEvents, `pi-foreman: ${tool} asks`, () => askOwner({ tool, payload, cwd: ctx.cwd, cause, ...(a.classifierReason ? { classifierReason: a.classifierReason } : {}), ...(remember ? { remember } : {}) }, ownerDeps(gs, ctx, rt)));
-    if (ans.allow === true) return done(ans.how === "remember" ? "allow-remember" : "allow-once", true);
+    if (ans.allow === true) return done(ans.how === "remember" ? "allow-remember" : ans.refused ? "allow-remember-refused" : "allow-once", true);
     if (ans.how === "stop") gateStopped.add(gs.id);
     return done(ans.how, false, ans.reason);
   }
@@ -4020,6 +4027,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     launchScratch(s, input, b);
     const ownHandoff = ownChildHandoff(s);
     if (!s.isChild && ownHandoff) b.handoffDir = ownHandoff;
+    if (!s.isChild) {
+      if (get(s.config.config, "gate.childAsk") !== "parent") b.noAsk = "deny";
+      else if (!ctx.hasUI) b.noAsk = "no-pane";
+    }
     if (!s.isChild && get(s.config.config, "gate.childAsk") === "parent" && ctx.hasUI) {
       // a parent with its own pane gives the child an ask dir; a headless parent gives none, so its children deny
       const askDir = childAskDir(s.agentDir, s.id, b.launchId);

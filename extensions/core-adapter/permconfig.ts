@@ -88,6 +88,8 @@ export interface ProseEntry {
 export interface Resolved {
   mode: PermMode;
   modeSource: "session" | "profile" | "user" | "invalid-user-file" | "default";
+  /** The mode without the session override. */
+  baseMode: PermMode;
   profile: string | null;
   rules: RuleSets;
   entries: RuleEntry[];
@@ -541,13 +543,19 @@ export class PermStore {
       mode = profileBody.mode;
       modeSource = "profile";
     }
+    const baseMode = mode;
     if (this.sessionMode) {
       mode = this.sessionMode;
       modeSource = "session";
     }
-    const resolved: Resolved = { mode, modeSource, profile, rules: sets, entries, prose, protected: prot, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
+    const resolved: Resolved = { mode, modeSource, baseMode, profile, rules: sets, entries, prose, protected: prot, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
     this.cached = { sig, resolved };
     return resolved;
+  }
+
+  /** The mode without the session override (profile mode, user file mode, `auto`). */
+  baseMode(): PermMode {
+    return this.resolve().baseMode;
   }
 
   /** Work folders that may stand: absolute (after `~`), not the filesystem root, the home dir or an ancestor of it. Each drop and the outside-home case warn once. */

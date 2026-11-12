@@ -280,7 +280,10 @@ test("child ask: gate.childAsk deny, or no askDir in the binding, denies with th
   const text = /^pi-foreman: denied: nobody is at this session \(no pane\)\..*The call was: danger-install/;
   const dir = tmpAskDir(t);
   const denied = await childRig(t, dir, ASK, { childAsk: "deny" });
-  assert.match(String((await denied.call("bash", CMD))?.reason), text);
+  const off = /^pi-foreman: denied: .*gate\.childAsk.*The call was: danger-install/;
+  const offRes = await denied.call("bash", CMD);
+  assert.equal(offRes?.block, true);
+  assert.match(String(offRes?.reason), off);
   assert.equal(fs.existsSync(path.join(dir, "ask.md")), false);
   const none = await childRig(t, null, ASK);
   assert.match(String((await none.call("bash", CMD))?.reason), text);
