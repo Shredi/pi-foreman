@@ -43,7 +43,7 @@ function conformance() {
 
 function installer() {
   const files = fs.readdirSync(path.join(root, "tests", "installer")).filter((f) => f.endsWith(".test.mjs")).map((f) => `tests/installer/${f}`);
-  const r = exec(process.execPath, ["--test", ...files]);
+  const r = exec(process.execPath, ["--import", "./tests/installer/_hermetic-env.mjs", "--test", ...files]);
   const pass = /# pass (\d+)/.exec(r.out);
   const fail = /# fail (\d+)/.exec(r.out);
   return { status: r.ok ? "pass" : "fail", line: `${pass ? pass[1] : "?"} passed, ${fail ? fail[1] : "?"} failed`, out: r.out };

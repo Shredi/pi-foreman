@@ -13,6 +13,8 @@ It installs together with `pi-foreman/` (the Agents mod): that mod publishes the
    `{ "id": "plan", "type": "block", "content": { "mod": "pi-foreman-plan" } }`
 3. `herdr-app check ~/.config/herdr-app/mods/pi-foreman-plan`, then switch to the layout.
 
+Updating: `foreman setup --mods` refreshes both installed mods from the package (see the pi-foreman install in docs/herdr.md); the `cache/` folder is kept.
+
 The Agents mod's header has a "📄 Plan" button that brings the panel forward.
 
 ## Note tab, diagrams, code

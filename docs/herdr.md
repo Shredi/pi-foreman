@@ -620,6 +620,8 @@ spinner, red when blocked; `explorer · Running bash` from the hc record `msg`; 
    `"props": { "foreman": "<absolute path>" }` (optional when `foreman` is on the PATH of your environment).
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman`, then switch to the layout.
 
+The copy is the first install only. To update an installed copy, run `foreman setup --mods` in a terminal (`--dry-run` lists the changed files and writes nothing first). It copies only the files that differ from the package into `mods/<mod>/` for each installed mod (never the test files, the app's `cache/`, or a file that exists only in the installed folder; a mod that is not installed is left alone) and prints the next step: save reloads a mod, or restart the app if it does not pick the change up, then `herdr-app check` the folder. `/foreman doctor` warns with the differing files and the fix command when an installed copy differs from the package, and `foreman setup` offers the refresh when it finds one. A session cannot write user config, so the refresh runs in a terminal (or the foreman proposes it as an owner script).
+
 Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"` (both are part of `npm run test:node`).
 
 ### Versions
@@ -753,6 +755,8 @@ Install:
    and pin it to that document. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
    `tabs` mod has no slot for a third panel button, so the button lives in the Agents header.)
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman-plan`, then switch to the layout.
+
+Updating: `foreman setup --mods` refreshes both installed mods from the package, as described for `pi-foreman` above; the plan mod's `cache/` is kept.
 
 **Anchor.** The panel belongs to the tab it sits in: it shows the foreman of the agent terminal that owns the tab's pane, joined to its radar
 session like the Agents mod does, not the terminal that has keyboard focus. A floating or peek child window (a child session opened with

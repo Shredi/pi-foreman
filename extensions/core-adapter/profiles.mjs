@@ -1,6 +1,7 @@
 // Feature profiles, toggles and add-ons: the shared logic of setup.mjs, scripts/foreman_features.mjs and the doctor.
 // Plain JS so the installer (no TS toolchain) and the adapter import the same code. No TS syntax here.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -399,4 +400,83 @@ export function resolveSetupPython(agentDir) {
       ? "macOS: the Command Line Tools python3 is 3.9. Install 3.13 with `brew install python@3.13` (or https://www.python.org/downloads/)."
       : "Linux: a python3.13 package from your distro (Debian/Ubuntu: the deadsnakes PPA), or `uv python install 3.13`.";
   throw new Error(`No Python >= 3.13 found (tried: ${rejected.join("; ") || "nothing"}).\n${how}\nOr set python.path in foreman.json / PI_FOREMAN_PYTHON, then re-run.`);
+}
+
+// The Herdr app mods the package ships (integrations/herdr-app/<mod>/) and the copies installed under the app home's mods/ folder: `foreman setup --mods`, the setup offer and the /foreman doctor warning.
+export const MODS = ["pi-foreman", "pi-foreman-plan"];
+// Never copied: the test files, the .gitignore, and the two files `herdr-app check` writes into the app's mod folder.
+const SKIPPED_NAMES = new Set([".gitignore", "gpui-kit.d.ts", "jsconfig.json"]);
+const SKIPPED_TOP = new Set(["cache"]); // app-written state (the plan mod's rendered SVG cache)
+const FILE_CAP = 5;
+
+/** The app home: HERDR_APP_HOME when set, else `<home>/.config/herdr-app` on every OS (the app's documented default). */
+export function appHome(env = process.env, home = os.homedir()) {
+  return env.HERDR_APP_HOME || path.join(home, ".config", "herdr-app");
+}
+
+/** The app home the in-process `/foreman doctor` reads: HERDR_APP_HOME, else the test preload's seed (`Symbol.for("pi-foreman.herdr-app-home")`), else the default. */
+export function doctorAppHome(env = process.env, home = os.homedir()) {
+  return appHome({ HERDR_APP_HOME: env.HERDR_APP_HOME || globalThis[Symbol.for("pi-foreman.herdr-app-home")]?.seed }, home);
+}
+
+const isDir = (p) => fs.existsSync(p) && fs.statSync(p).isDirectory();
+
+/** The package's source files of one mod: regular files, recursive, relative paths with forward slashes, sorted. */
+export function sourceFiles(modDir) {
+  const out = [];
+  const walk = (dir, rel) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const r = rel ? `${rel}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) {
+        if (!rel && SKIPPED_TOP.has(ent.name)) continue;
+        walk(path.join(dir, ent.name), r);
+      } else if (ent.isFile() && !SKIPPED_NAMES.has(ent.name) && !ent.name.endsWith(".test.mjs")) out.push(r);
+    }
+  };
+  walk(modDir, "");
+  return out.sort();
+}
+
+const pkgModDir = (packageRoot, mod) => path.join(packageRoot, "integrations", "herdr-app", mod);
+const installedModDir = (home, mod) => path.join(home, "mods", mod);
+const fromRel = (base, rel) => path.join(base, ...rel.split("/"));
+
+/** Source files missing from the installed copy or differing from it by bytes. Only installed mods are compared. */
+export function diffMods({ packageRoot, appHome: home }) {
+  const out = [];
+  for (const mod of MODS) {
+    const installed = installedModDir(home, mod);
+    const src = pkgModDir(packageRoot, mod);
+    if (!isDir(installed) || !isDir(src)) continue;
+    const files = sourceFiles(src).filter((rel) => {
+      const have = fromRel(installed, rel);
+      return !fs.existsSync(have) || Buffer.compare(fs.readFileSync(fromRel(src, rel)), fs.readFileSync(have)) !== 0;
+    });
+    if (files.length) out.push({ mod, files });
+  }
+  return out;
+}
+
+/** Copies exactly the differing files into the installed mods (creating sub-folders); deletes nothing, installs no mod. `dryRun` writes nothing and returns the same list. */
+export function refreshMods({ packageRoot, appHome: home, dryRun = false }) {
+  const changed = diffMods({ packageRoot, appHome: home });
+  if (dryRun) return changed;
+  for (const { mod, files } of changed) {
+    for (const rel of files) {
+      const to = fromRel(installedModDir(home, mod), rel);
+      fs.mkdirSync(path.dirname(to), { recursive: true });
+      fs.copyFileSync(fromRel(pkgModDir(packageRoot, mod), rel), to);
+    }
+  }
+  return changed;
+}
+
+/** The file list as shown to the owner: the first few, then `+N more`. */
+export function fileList(files) {
+  return files.length > FILE_CAP ? `${files.slice(0, FILE_CAP).join(", ")}, +${files.length - FILE_CAP} more` : files.join(", ");
+}
+
+/** One WARN line per installed mod that differs from the package; none when every installed mod is in step, or none is installed. */
+export function modsDoctorLines(opts) {
+  return diffMods(opts).map(({ mod, files }) => `WARN herdr-app mod ${mod} differs from the package: ${fileList(files)} — fix: foreman setup --mods`);
 }

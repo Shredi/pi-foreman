@@ -38,3 +38,10 @@ if (process.platform !== "win32") {
   globalThis[Symbol.for("pi-foreman.npm-root")] = { seed: root };
   process.on("exit", () => fs.rmSync(root, { recursive: true, force: true }));
 }
+
+// The herdr-app home the in-process doctor reads (`doctorAppHome` in profiles.mjs): an empty temp dir, seeded like the npm root because HERDR_* is cleared here.
+{
+  const appHome = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-app-home-")));
+  globalThis[Symbol.for("pi-foreman.herdr-app-home")] = { seed: appHome };
+  process.on("exit", () => fs.rmSync(appHome, { recursive: true, force: true }));
+}

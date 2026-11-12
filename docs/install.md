@@ -58,8 +58,8 @@ setup from the clone once: `node <agentDir>/git/github.com/Shredi/pi-foreman/set
 Flags: `--dry-run`, `--project` (project-local settings), `--overlay npm:<pkg>@<exact-version>` (organisation overlay;
 ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `--develop` (see
 [Developing](#developing)), `--remove`, `--agent-dir <dir>` (overrides `PI_CODING_AGENT_DIR` / `~/.pi/agent`),
-`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]` and `--pick` (see
-[Profiles, features and add-ons](#profiles-features-and-add-ons)).
+`--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]`, `--pick` and `--mods` (see
+[Profiles, features and add-ons](#profiles-features-and-add-ons), and [herdr](herdr.md#herdr-app-and-herdr-core) for `--mods`).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
 
 ## Profiles, features and add-ons
@@ -80,6 +80,7 @@ Setup has a feature axis next to the model-map presets ([presets](presets.md)): 
 - `--no-env`: do not write environment variables into your shell profile (see [Add-ons](#add-ons)).
 - `--github-hosts <host>[,<host>]`: the GitHub hosts the PR tracker covers (`tools.prGithubHosts`, see [GitHub hosts for PR tracking](#github-hosts-for-pr-tracking)); 1 to 20 host names, lowercased and deduplicated. Counts as a flag (the picker does not open); refused with `--remove`, `--preview` and `--pick`.
 - `--pick`: open the picker again.
+- `--mods`: refresh the installed herdr-app mods (`pi-foreman`, `pi-foreman-plan`) from this package and stop; nothing else runs and no config is written. Only the files that differ are copied (never the test files or the app's `cache/`); a mod that is not installed is left alone. It prints the changed files and the next step (save reloads a mod, or restart the app; then `herdr-app check` the folder). `--dry-run` lists the changes and writes nothing. Run it in a terminal, since a session cannot write user config. A normal `foreman setup` lists installed mods that differ and asks before it refreshes them (no answer, or no terminal, leaves them as they are and prints this command). See [herdr](herdr.md#herdr-app-and-herdr-core).
 - `--preview [screen]`: draw one setup screen (`home`, `plan`, `updates`, `config`, `models`, `workfolders`, `apply`; default `home`) from built-in sample data. On a terminal it opens the full-screen view (`1`-`7` or Tab switch screens, arrows move, `q` quits; the footer shows other keys, but they are inactive); without a terminal it prints one 100x30 frame. It reads and writes nothing of yours, exits 2 for an unknown screen, and cannot be combined with any other flag. Needs Node 22.19+.
 
 Setup exits 2 and prints the valid ids or the rule for: an unknown profile, feature or add-on id; a feature that is not
@@ -419,5 +420,6 @@ claude setup-token                                                 # then export
 - `/foreman doctor` checks Python, that the generated block is in sync, required child extensions and auth per
   provider, and reports permission-config drift and the bridge folder state. Its last lines include
   `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).
+- `/foreman doctor` warns `WARN herdr-app mod <mod> differs from the package: <files> — fix: foreman setup --mods` when an installed herdr-app mod under the app home (`HERDR_APP_HOME`, default `~/.config/herdr-app`) differs from the package; it says nothing when the mod is not installed or the app home does not exist (see [herdr](herdr.md#herdr-app-and-herdr-core)).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
   Outside Pi: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).
