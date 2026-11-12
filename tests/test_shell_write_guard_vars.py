@@ -41,6 +41,14 @@ class ShellWriteVarsTest(unittest.TestCase):
     def allowed(self, cmd):
         self.assertIsNone(self.decide(cmd), cmd)
 
+    def main_allows(self, cmd):
+        """The line analysed with the local step off: what main decides."""
+        try:
+            swg.Analyzer(swg.Scope(self.ws, [".workflow"], self.scratch, [], self.hand)).text(cmd, self.ws, 0)
+        except (swg.Found, swg.Unreadable):
+            return False
+        return True
+
     def refused(self, cmd, unresolved, cwd=None):
         hit = self.decide(cmd, cwd)
         self.assertIsNotNone(hit, cmd)
@@ -88,11 +96,15 @@ class ShellWriteVarsTest(unittest.TestCase):
     def test_a_local_value_outside_the_workspace_is_refused(self):
         for cmd in ('D=..; echo x >> "$D/outside.txt"', 'D=.workflow; cd ..; echo x >> "$D/f"',
                     'D=../../.ssh; echo x >> "$D/authorized_keys"', 'D=../..; echo x > "$D/f"',
-                    'H="%s x"; echo y > "$H/f"' % self.outside, 'H="%s"; echo y > "$H/f"' % self.outside,
-                    "H='%s x'; echo y > \"$H/f\"" % self.outside, 'D="../.ssh"; echo x > "$D/id_rsa"',
+                    'H="%s x"; echo y > "$H/f"' % self.outside, "H='%s x'; echo y > \"$H/f\"" % self.outside, 'D="../.ssh"; echo x > "$D/id_rsa"',
                     'D=..; cp x "$D/y"', 'D=..; touch "$D/z"', 'D=..; tar xf a.tar -C "$D"'):
             with self.subTest(cmd=cmd):
                 self.refused(cmd, True)   # refused as a resolved target, no project file is written: no tier raise
+        cmd = 'H="%s"; echo y > "$H/f"' % self.outside
+        if os.name == "nt":   # main resolves a quoted drive value without blanks: the verdict is main's
+            self.assertEqual(self.decide(cmd) is None, self.main_allows(cmd), cmd)
+        else:
+            self.refused(cmd, True)
 
     def test_a_word_mixing_a_local_value_is_judged_on_the_final_path(self):
         self.refused('D=.workflow; echo x > "$D/../x"', False)
@@ -272,8 +284,8 @@ class ShellWriteVarsOutputTest(unittest.TestCase):
 
 class ShellWriteVarsDirTest(unittest.TestCase):
     """A local-step value used as a directory: outside the workspace and the always-writable places the cwd is unknown."""
-    setUp, decide, allowed, refused = (ShellWriteVarsTest.setUp, ShellWriteVarsTest.decide,
-                                       ShellWriteVarsTest.allowed, ShellWriteVarsTest.refused)
+    setUp, decide, allowed, refused, main_allows = (ShellWriteVarsTest.setUp, ShellWriteVarsTest.decide, ShellWriteVarsTest.allowed,
+                                                    ShellWriteVarsTest.refused, ShellWriteVarsTest.main_allows)
 
     def values(self):
         return (["..", "../../.ssh", '"%s"' % self.outside, '"%s/out dir"' % self.outside]
@@ -282,6 +294,9 @@ class ShellWriteVarsDirTest(unittest.TestCase):
     def each(self, template):
         for v in self.values():
             hit = self.decide("D=%s; %s" % (v, template))
+            if os.name == "nt" and v == self.values()[2]:   # main resolves a quoted drive value without blanks: the verdict is main's
+                self.assertEqual(hit is None, self.main_allows("D=%s; %s" % (v, template)), template)
+                continue
             self.assertIsNotNone(hit, template)
             if v in self.values()[4:]:   # a value inside the workspace: a project file is written, the tier is raised
                 self.assertFalse(hit.unresolved, "D=%s; %s" % (v, template))

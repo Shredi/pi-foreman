@@ -258,8 +258,9 @@ _NT = os.name == "nt"
 _G_NT_LIT = r"(?:[%s]|(?<=[A-Za-z0-9])~(?=[0-9]))" % GRAMMAR_LITERAL_CHARS
 GRAMMAR_ASSIGN_NT = re.compile(r'(%s)=(?:([A-Za-z]:/%s*)|"([A-Za-z]:[\\/](?:%s|\\)*)(?<!\\)")' % (_G_NAME, _G_NT_LIT, _G_NT_LIT))
 GRAMMAR_ASSIGN_NT_WORD = re.compile(r"(%s)=([A-Za-z]:[\\/](?:%s|\\)*)" % (_G_NAME, _G_NT_LIT))
-# local widening on Windows: a double-quoted drive value with blanks (`H="C:/agent dir/h"`), only on a local line
-LOCAL_ASSIGN_NT = re.compile(r'(%s)="([A-Za-z]:[\\/](?:%s| |\\)*)(?<!\\)"' % (_G_NAME, _G_NT_LIT))
+# local widening on Windows: a quoted drive value with blanks (`H="C:/agent dir/h"`, `H='C:/agent dir/h'`), only on a local line
+_G_NT_VAL = r"[A-Za-z]:[\\/](?:%s| |\\)*(?<!\\)" % _G_NT_LIT
+LOCAL_ASSIGN_NT = re.compile(r'(%s)=(?:"(%s)"|\'(%s)\')' % (_G_NAME, _G_NT_VAL, _G_NT_VAL))
 LOCAL_ASSIGN_NT_WORD = re.compile(r"(%s)=([A-Za-z]:[\\/](?:%s| |\\)*)" % (_G_NAME, _G_NT_LIT))
 _G_REF = r"\$(?:\{(%s)\}|(%s))" % (_G_NAME, _G_NAME)
 _G_WORD = re.compile(r"(?:[%s]|%s)+" % (GRAMMAR_WORD_CHARS, _G_REF))

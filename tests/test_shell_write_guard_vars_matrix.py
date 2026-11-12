@@ -1,7 +1,7 @@
 """shell_write_guard.py: a line that uses a same-line relative or quoted value is allowed only when every write on it
 lands in an always-writable place, unless the line was already allowed without resolving the value (the main
-behaviour). The property test below needs no copy of main: the same line with the assignment written as
-`D=$(echo VALUE)` (not admitted by the local step) behaves as on main. Strings are only parsed, nothing runs."""
+behaviour). The property test below needs no copy of main: the guard's first pass (the local step off) is main's
+verdict, whichever quoted values main resolves on the platform. Strings are only parsed, nothing runs."""
 import os
 import shutil
 import sys
@@ -12,6 +12,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 import shell_write_guard as swg  # noqa: E402
+
+def fwd(path):
+    """Forward slashes: a `\\` in an unquoted word is eaten by the shell lexer, so a path in a command is written the way bash reads it."""
+    return path.replace("\\", "/")
+
 
 # (line after the assignment `D=VALUE; `, how the writes resolve, path parts below the value, base override)
 #   phys: realpath(value/parts) (the kernel follows a symlink before a `..`)
@@ -79,11 +84,11 @@ class ShellWriteVarsMatrixTest(unittest.TestCase):
     def value(self, name):
         """(the text of the assignment value, the value as a path)."""
         if name == "OUTSIDE":
-            return '"%s"' % self.outside, self.outside
+            return '"%s"' % fwd(self.outside), self.outside
         if name == "OUTSIDE_BLANK":
-            return '"%s/a b"' % self.outside, self.outside + "/a b"
+            return '"%s/a b"' % fwd(self.outside), self.outside + "/a b"
         if name == "HANDOFF":
-            return '"%s"' % self.hand, self.hand
+            return '"%s"' % fwd(self.hand), self.hand
         return name, os.path.join(self.ws, name)
 
     def writable(self, p):
@@ -106,7 +111,7 @@ class ShellWriteVarsMatrixTest(unittest.TestCase):
         return self.writable(os.path.realpath(os.path.join(os.path.realpath(os.path.normpath(base)), *parts)))
 
     def lines(self):
-        """(line, the same line with an assignment the local step does not admit, whether every write lands in an always-writable place)."""
+        """(line, whether every write lands in an always-writable place)."""
         for name in VALUES:
             if name.endswith("link") and not self.linked:
                 continue
@@ -114,21 +119,27 @@ class ShellWriteVarsMatrixTest(unittest.TestCase):
             for form in FORMS:
                 writes_ok = self.lands_writable(form, base)
                 for sep in ("; ", ";", " && "):
-                    line = ("D=%s; %s" % (text, form[0])).replace("; ", sep)
-                    alt = ("D=$(echo %s); %s" % (text, form[0])).replace("; ", sep)
-                    yield line, alt, writes_ok
+                    yield ("D=%s; %s" % (text, form[0])).replace("; ", sep), writes_ok
 
     def test_an_allowed_line_is_a_main_allow_or_writes_only_to_always_writable_places(self):
         total = allowed = 0
-        for line, alt, writes_ok in self.lines():
+        for line, writes_ok in self.lines():
             total += 1
             if self.decide(line) is not None:
                 continue
             allowed += 1
             with self.subTest(line=line):
-                self.assertTrue(writes_ok or self.decide(alt) is None, line)
+                self.assertTrue(writes_ok or self.main_allows(line), line)
         self.assertGreater(total, 1000)
         self.assertGreater(allowed, 50)   # the writable places do resolve
+
+    def main_allows(self, cmd):
+        """The line analysed with the local step off: what main decides."""
+        try:
+            swg.Analyzer(swg.Scope(self.ws, [".workflow"], self.scratch, [], self.hand)).text(cmd, self.ws, 0)
+        except (swg.Found, swg.Unreadable):
+            return False
+        return True
 
     def loose_flags(self, cmd):
         """(handoff, unresolved) of the line analysed with the local step on and the scope not strict."""
@@ -146,7 +157,7 @@ class ShellWriteVarsMatrixTest(unittest.TestCase):
 
     def test_the_flags_of_a_refused_line_are_those_of_the_non_strict_analysis(self):
         checked = 0
-        for line, _, _ in self.lines():
+        for line, _ in self.lines():
             hit = self.decide(line)
             if hit is None:
                 continue
@@ -207,9 +218,9 @@ class ShellWriteVarsMatrixTest(unittest.TestCase):
     def test_a_line_mixing_a_writable_value_and_a_literal_write_outside_is_not_looser_than_main(self):
         # main refuses it (`$D` stays unresolved there); the head must refuse it too: the literal write is judged
         # strictly while the line uses a local value
-        line = 'D=.workflow; touch "$D/a"; touch %s/x' % self.outside
+        line = 'D=.workflow; touch "$D/a"; touch %s/x' % fwd(self.outside)
         self.refused(line)
-        self.allowed("touch %s/x" % self.outside)   # alone it is allowed as on main
+        self.allowed("touch %s/x" % fwd(self.outside))   # alone it is allowed as on main
 
     def test_a_symlinked_prefix_stays_refused(self):
         if not self.linked:
