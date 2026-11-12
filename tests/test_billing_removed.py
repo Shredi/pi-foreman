@@ -66,6 +66,11 @@ class BillingSchemaTest(unittest.TestCase):
         fc.validate_schema(full, schema, "", out)
         return [m for kind, _p, m in out if kind == "error"]
 
+    def test_bymodel_billing_rows_validate(self):
+        for billing in ("request", "token", "whatever"):
+            row = {"match": "gpt-*", "ttlSeconds": 600, "billing": billing}
+            self.assertEqual(self.issues({"byModel": [row]}), [], billing)
+
     def test_schema_keeps_the_deprecated_property(self):
         cache = json.loads((ROOT / "config" / "foreman.schema.json").read_text())["properties"]["providers"]
         cache = cache["additionalProperties"]["properties"]["cache"]["properties"]

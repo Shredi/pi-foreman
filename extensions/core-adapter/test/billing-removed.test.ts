@@ -22,7 +22,6 @@ test("billing at provider level and on a byModel row changes nothing in the poli
         assert.deepEqual(got, want, JSON.stringify(c));
         assert.deepEqual(resolveCachePolicy(cfg(c), P, "gpt-6"), wantCache, JSON.stringify(c));
         assert.ok(!("billing" in got));
-        assert.equal(got.keepaliveOwned, want.keepaliveOwned);
       }
     }
   }

@@ -157,7 +157,7 @@
                 "additionalProperties": false,
                 "description": "Keep-alive pings that renew the cache while the session is idle.",
                 "properties": {
-                  "enabled": { "type": "boolean", "description": "The only switch of the keep-alive: pi-foreman sends every idle warm itself, for every TTL above 10 s. Default true iff ttlSeconds is set and below 3600. A project or session can only set false." },
+                  "enabled": { "type": "boolean", "description": "The only switch of the keep-alive: pi-foreman sends every idle warm itself, for every TTL above 10 s. Default for a built-in provider (claude-bridge, github-copilot): true iff the TTL is known and below 3600 s, or derived from the bridge; any other provider defaults to false. A project or session can only set false." },
                   "intervalSeconds": { "type": "integer", "minimum": 30, "maximum": 3600, "description": "Deprecated and ignored: a warm goes out at min(0.9 x TTL, TTL - 10 s). Seconds between pings. Default 90% of ttlSeconds, at least 30. User or overlay config only." },
                   "windowMinutes": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Deprecated and ignored: the warming has no fixed window, the activity and cost rules end it. Minutes of idleness after which the pings stop (default 45; Pi's own idle cap is 30). A project or session can only shorten it." },
                   "budgetShare": { "type": "number", "minimum": 0, "maximum": 1, "description": "Warm budget per idle: the warms may cost at most this share of one cold re-cache of the prompt (default 0.5). A project or session can only lower it (at most 0.5)." },
