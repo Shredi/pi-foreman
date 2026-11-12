@@ -95,7 +95,7 @@ refusals as a running child run or a pending `foreman_wait`, so a parent's close
 A PR merged after the last poll does not block: before refusing, a close runs one fresh `pr_status` per watched PR and ends
 the watches of merged or closed PRs (without a message). While that lookup runs the close counts as in progress, so a second
 close (say from Herdr and from intercom) is refused as `a close is already in progress`. With no watch held the close needs
-no lookup and starts at once. A lookup that fails keeps the watch, and so the refusal.
+no lookup and starts at once. A lookup that fails keeps the watch, and so the refusal. For a main session a merged PR found this way also gets the return to the base branch of [Watch](tools.md#watch) (one UI notice, no message); a child session that closes itself on merge never does.
 
 ## Self-finish on merge
 

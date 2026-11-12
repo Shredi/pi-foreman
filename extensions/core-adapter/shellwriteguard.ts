@@ -115,7 +115,7 @@ function realpathOf(p: string): string | null {
 }
 
 /** The same precondition as `foreman_worktree_remove`: no tracked change. Tracked files only (`--untracked-files=no`); untracked and ignored files are checked by untrackedClash on a ref move. */
-async function cleanTree(cwd: string): Promise<string | null> {
+export async function cleanTree(cwd: string): Promise<string | null> {
   const r = await runGit(cwd, ["status", "--porcelain", "--untracked-files=no"]);
   if (!r.ok) return "git status failed";
   return r.out.trim() ? "working tree not clean" : null;
@@ -196,7 +196,7 @@ function lstatOf(p: string): fs.Stats | null {
 }
 
 /** A path that `ref` changes against HEAD exists in the worktree untracked or ignored, or lies under a path that is not a directory (`d` a file, `ref` adds `d/f`): `reset --hard` or a switch would overwrite or block it. Null when none. */
-async function untrackedClash(cwd: string, ref: string): Promise<string | null> {
+export async function untrackedClash(cwd: string, ref: string): Promise<string | null> {
   const top = await runGit(cwd, ["rev-parse", "--show-toplevel"]);
   if (!top.ok) return "git rev-parse failed";
   const diff = await runGit(top.out.trim(), ["diff", "--name-only", "-z", "HEAD", ref]);
@@ -244,10 +244,23 @@ async function postMerge(statements: string[], dir: string): Promise<BranchMove 
   if (del && !(del.length === 4 && del[1] === "branch" && (del[2] === "-d" || del[2] === "-D") && !del[3].startsWith("-"))) return null;
   const head = await runGit(dir, ["symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD"]);
   const def = head.ok ? head.out.trim().replace(/^origin\//, "") : "";
-  if (!def) return { allow: false, precondition: "default branch unknown" };
+  if (!def) return { allow: false, precondition: "default branch unknown (origin/HEAD is not set; example: `git remote set-head origin -a`)" };
   if (sw[2] !== def) return { allow: false, precondition: `${sw[2]} is not the default branch ${def}` };
   const moved = await switchChecks(dir, def);
   return moved.allow ? { allow: true, reason: "post_merge" } : moved;
+}
+
+const CHAIN_FIRST = /^(?:cd[ \t]+\S+[ \t]+&&[ \t]+)?git[ \t]+(?:switch|checkout)[ \t]+[\w./@:][\w./@:-]*[ \t]*(?:&&|;|\|)/;
+
+/** The accepted post-merge chain, as one sentence for a refusal. */
+const CHAIN_SHAPE = "the accepted chain is `git switch <default> && git pull --ff-only [&& git branch -d|-D <branch>]`, where <default> is the remote default branch (origin/HEAD): plain words, statements joined by ` && ` on one line (no `;`, no flags besides those, no further statement), clean tracked files";
+
+/**
+ * The shape hint for a refused multi-statement line that starts with `git switch|checkout <word>` (branchMove returned null for it): names the accepted chain.
+ * Null for any other line and for a child (`foreman` false).
+ */
+export function chainHint(command: string, foreman: boolean): string | null {
+  return foreman && CHAIN_FIRST.test(command.trim()) ? CHAIN_SHAPE : null;
 }
 
 async function moveToRef(cwd: string, ref: string): Promise<BranchMove> {
