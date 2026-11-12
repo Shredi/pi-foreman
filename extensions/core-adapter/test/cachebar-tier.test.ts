@@ -81,15 +81,15 @@ const line = (cache: ReturnType<typeof cacheViewOf>): string => {
 
 test("rendering: cells, countdown, keepalive glyph with warms left, tier glyph", () => {
   const l = line(cacheViewOf(src())!);
-  assert.match(l, /■■■■■■■■■■ 04:45 ♨ 3 ½$/);
-  assert.match(line(cacheViewOf(src({ tier: "quarter", warmsLeft: 1 }))!), /♨ last ¼$/);
+  assert.match(l, /■│■■■■■■■■■ 18:15 ♨ ½$/);
+  assert.match(line(cacheViewOf(src({ tier: "quarter", warmsLeft: 1 }))!), /■│■■■■■■■■■ 09:15 ♨ ¼$/);
 });
 
 test("ASCII fallback spells the tier glyphs 1/2 and 1/4", () => {
   assert.deepEqual(tierGlyphs("ascii"), { half: "1/2", quarter: "1/4" });
   assert.deepEqual(tierGlyphs("unicode"), { half: "½", quarter: "¼" });
-  assert.match(line(cacheViewOf(src({ symbols: "ascii" }))!), /\^ 3 1\/2$/);
-  assert.match(line(cacheViewOf(src({ symbols: "ascii", tier: "quarter" }))!), /\^ 3 1\/4$/);
+  assert.match(line(cacheViewOf(src({ symbols: "ascii" }))!), /■\|■■■■■■■■■ 18:15 \^ 1\/2$/);
+  assert.match(line(cacheViewOf(src({ symbols: "ascii", tier: "quarter" }))!), /■\|■■■■■■■■■ 18:15 \^ 1\/4$/);
 });
 
 test("no limiter word and no (away n) in any state", () => {
@@ -100,10 +100,10 @@ test("no limiter word and no (away n) in any state", () => {
 
 test("cold stays `□□□ ❄ cold`, the warm part follows with 0 and the tier glyph", () => {
   const l = line(cacheViewOf(src({ lastTouch: null, nextWarmAt: null }))!);
-  assert.match(l, /□□□□□□□□□□ ❄ cold ♨ 0 ½$/);
+  assert.match(l, /□□□□□□□□□□ ❄ cold ½$/);
 });
 
 test("no warms left or a running turn without a fresh count: `♨ 0` and the tier glyph", () => {
-  assert.match(line(cacheViewOf(src({ warmsLeft: 0 }))!), /04:45 ♨ 0 ½$/);
-  assert.match(line(cacheViewOf(src({ running: true }))!), /04:45 ♨ 0 ½$/);
+  assert.match(line(cacheViewOf(src({ warmsLeft: 0 }))!), /■■■■■■■■■■ 04:45 ½$/);
+  assert.match(line(cacheViewOf(src({ running: true }))!), /■■■■■■■■■■ 04:45 ½$/);
 });

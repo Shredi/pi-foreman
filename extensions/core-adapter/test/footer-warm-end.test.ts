@@ -27,8 +27,8 @@ test("a miss shows ♨ miss, an error ♨ err, without the count and the tier gl
 
 test("the ending text takes at most 7 columns (the warm part of a count and a tier glyph is 6)", () => {
   const normal = line(src({ endedBy: null, warmsLeft: 0 }));
-  assert.match(normal, / ♨ 0 ½$/);
-  const base = visibleWidth(normal) - visibleWidth(" ♨ 0 ½");
+  assert.match(normal, / 04:44 ½$/);
+  const base = visibleWidth(normal) - visibleWidth(" ½");
   for (const e of ["miss", "error"] as const) assert.ok(visibleWidth(line(src({ endedBy: e }))) - base <= 7, e);
 });
 
@@ -38,9 +38,9 @@ test("narrow widths keep the ending text", () => {
 
 test("cold with an ending keeps it; a running turn and a cleared ending show the usual count", () => {
   assert.match(line(src({ endedBy: "miss", now: T0 + 400_000 })), /cold ♨ miss$/);
-  assert.match(line(src({ endedBy: "miss", running: true })), / ♨ 4 ½$/);
-  assert.match(line(src({ endedBy: null, warmsLeft: 3, nextWarmAt: T0 + 270_000 })), / ♨ 3 ½$/);
-  assert.match(line(src({})), / ♨ 0 ½$/);
+  assert.match(line(src({ endedBy: "miss", running: true })), / ♨ ½$/);
+  assert.match(line(src({ endedBy: null, warmsLeft: 3, nextWarmAt: T0 + 270_000 })), / 18:14 ♨ ½$/);
+  assert.match(line(src({})), / 04:44 ½$/);
 });
 
 test("no bar, no ending: a policy that does not warm hides it", () => {
