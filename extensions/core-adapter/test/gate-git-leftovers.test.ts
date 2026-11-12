@@ -114,6 +114,13 @@ test("item 3: a forced tag move is unchanged", () => {
   for (const l of ["git tag -f x", "git tag -f x HEAD~1"]) for (const child of [false, true]) assert.equal(isDanger(l, child), false, `${l} child=${child}`);
 });
 
+test("item 6: an option word after a bare -- stays judged for a subagent, as the exact check read it", () => {
+  for (const l of ["git switch x -- --force-create", "git branch -- --force", "git branch x -- --move", "git tag -- --delete", "git tag x -- --delete"]) {
+    assert.equal(isDanger(l, true), true, `child ${l}`);
+    assert.equal(isDanger(l, false), false, `main ${l}`);
+  }
+});
+
 test("item 4: the floor message names the form used; the -c / --config-env text is byte-identical", () => {
   const global = "pi-foreman: denied by the permission floor (git-config). Setting 'core.sshcommand' with -c or --config-env changes where code is fetched or pushed, which program git runs or which credentials it uses. Run git without it. No review, policy entry or dialog lifts this floor.";
   for (const l of ["git -c core.sshcommand=x fetch", `git -c core.sshcommand=x clone ${U}`]) assert.equal(floorHit(l)?.reason, global, l);

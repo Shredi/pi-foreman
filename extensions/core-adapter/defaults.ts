@@ -773,7 +773,7 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return rest[0] === "fill";
     case "switch":
       // `--force` is another option (git reads `--forc` as ambiguous), so only the spellings longer than it count
-      return child && (flag(/^-[a-zA-Z]*C/) || gitOptSpellings(rest, "--force-create", { min: 8 }).length > 0);
+      return child && (flag(/^-[a-zA-Z]*C/) || gitOptSpellings(rest, "--force-create", { min: 8 }).length > 0 || rest.includes("--force-create"));
     case "update-ref":
     case "prune":
       return child;
@@ -788,7 +788,7 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
     case "restore":
       return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
     case "branch":
-      if (child && (flag(/^-[a-zA-Z]*[fmMC]/) || gitProgOpt(rest, "--force") || gitProgOpt(rest, "--move"))) return true;
+      if (child && (flag(/^-[a-zA-Z]*[fmMC]/) || gitProgOpt(rest, "--force") || gitProgOpt(rest, "--move") || rest.includes("--force") || rest.includes("--move"))) return true;
       return (flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete")) && !(s.cwd !== null && branchDeleteMerged(rest, s.cwd ?? env.cwd, env));
     case "push": {
       // s.cwd is already moved by every `-C` (shellast); null: a `-C` operand that cannot be resolved
@@ -810,7 +810,7 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
         if ((rest[i] === "--sort" || rest[i] === "--format") && own) i++;
         else words.push(rest[i]);
       }
-      return child && (words.some((w) => /^-[a-zA-Z]*d/.test(w)) || gitProgOpt(words, "--delete"));
+      return child && (words.some((w) => /^-[a-zA-Z]*d/.test(w)) || gitProgOpt(words, "--delete") || rest.includes("--delete"));
     }
     case "stash":
       return rest[0] === "drop" || rest[0] === "clear";
