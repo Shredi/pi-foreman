@@ -552,11 +552,10 @@ async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub:
     try {
       if (entry.withdrawn) {
         // a caller told "pending" gets exactly one wake whatever the late answer was; an untold one only hears of a late Yes
-        if ((yes === true || entry.told) && !entry.woke) {
-          entry.woke = true;
-          d.wake?.(label, yes === true
+        if (yes === true || entry.told) {
+          wakeOnce({ kind: "cancelled", r: { ok: false, text: yes === true
             ? `foreman_session_open ${label}: the call was cancelled and its dialog could not be withdrawn; the owner's Yes came too late and nothing was opened. Open it again if it is still wanted.`
-            : `foreman_session_open ${label}: the call was cancelled and its dialog was withdrawn or answered No; nothing was opened. Open it again if it is still wanted.`);
+            : `foreman_session_open ${label}: the call was cancelled and its dialog was withdrawn or answered No; nothing was opened. Open it again if it is still wanted.` } });
         }
         return { kind: "cancelled", r: { text: `session open ${label} cancelled; nothing was opened`, ok: false } };
       }
@@ -579,14 +578,17 @@ async function confirmThenOpen(d: SessionDeps, c: Extract<SessionCommand, { sub:
     void answer.then(() => resolve("answered"));
     if (d.confirmWaitMs && d.confirmWaitMs > 0) timer = setTimeout(() => resolve("timeout"), d.confirmWaitMs);
     if (d.signal) {
-      onAbort = () => resolve("aborted");
+      // decided here, at one synchronous point: a Yes processed after this spawns nothing; one already spawning is reported instead
+      onAbort = () => {
+        if (!entry.opening) entry.withdrawn = true;
+        resolve("aborted");
+      };
       d.signal.addEventListener("abort", onAbort, { once: true });
     }
   });
   clearTimeout(timer);
   if (onAbort) d.signal?.removeEventListener("abort", onAbort);
-  if (first === "aborted") {
-    entry.withdrawn = true;
+  if (first === "aborted" && !entry.opening) {
     if (pend.get(label) === entry) pend.delete(label);
     entry.abort.abort();
     return { text: `session open ${label} cancelled: its dialog was withdrawn and nothing was opened`, ok: false };
@@ -615,6 +617,7 @@ function wakeText(d: SessionDeps, label: string, o: OpenOutcome): string {
     const e = openEntryOf(d, label);
     return e ? describeEntry(e, `foreman_session_open ${label}: opened`) : `foreman_session_open ${label}: opened\n${o.r.text}`;
   }
+  if (o.kind === "cancelled") return o.r.text;
   return `foreman_session_open ${label}: open failed: ${o.r.text}`;
 }
 
