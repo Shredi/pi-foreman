@@ -54,14 +54,14 @@ for (const line of [
   });
 }
 
-test("a parent-owned handoff name through a resolved quoted variable is refused as handoffOnly, not unresolvedOnly", { skip: !py || process.platform === "win32" }, async () => {
+test("a parent-owned handoff name through a resolved quoted variable is refused as handoffOnly, not unresolvedOnly", { skip: !py }, async () => {
   const v = flags(await verdict(`H="${handoff}"; echo x > "$H/brief.md"`));
   assert.equal(v.decision, "refuse");
   assert.equal(v.handoffOnly, true);
   assert.equal(v.unresolvedOnly, undefined);
 });
 
-test("same-line literal assignments are allowed", { skip: !py || process.platform === "win32" }, async () => {
+test("same-line literal assignments are allowed", { skip: !py }, async () => {
   assert.equal(flags(await verdict('D=.workflow/closed; cp x "$D/y"')).decision, "allow");
   assert.equal(flags(await verdict(`H="${handoff}"; echo x > "$H/result.md"`)).decision, "allow");
 });
