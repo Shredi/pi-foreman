@@ -121,9 +121,10 @@ class Unreadable(Exception):
 # --------------------------------------------------------------------------- lexer
 
 class Word(object):
-    __slots__ = ("text", "dynamic", "glob", "quoted", "refs")
+    __slots__ = ("text", "dynamic", "glob", "quoted", "refs", "local")
 
     def __init__(self):
+        self.local = False     # built from a value of the local assignment step: only an always-writable place is allowed
         self.refs = []         # the source of each unresolved expansion, in order of the `\x00` placeholders of text
         self.text = ""
         self.dynamic = False   # an expansion ($x, ${..}, $(..), `..`) anywhere in the word
@@ -244,7 +245,7 @@ GRAMMAR_RESERVED_PREFIXES = ("BASH_", "FOREMAN_", "GIT_", "NODE_", "NPM_", "LD_"
 GRAMMAR_HARNESS_REFS = ("FOREMAN_SCRATCH", "PI_FOREMAN_HANDOFF_DIR")
 GRAMMAR_FORBIDDEN = ("|", "&", "(", ")", "{", "}", "[", "]", "`", "#", "<", ">", "$(", "${", "\\", "'")
 _G_NAME = r"[A-Za-z_][A-Za-z0-9_]*"
-# What only this guard resolves on top (`grammar_statements(local=True)`; shellvars.ts does not, the permission gate's
+# What only this guard resolves on top (`_grammar_statements(local=True)`; shellvars.ts does not, the permission gate's
 # allows stay as they were): a sole `NAME=<relative literal>` or a quoted literal (spaces allowed, no expansion, glob,
 # backslash or tilde inside). The value stays text and is judged against the cwd in force where the name is used.
 LOCAL_ASSIGN = re.compile(r"(%s)=(?:[A-Za-z0-9._][%s]*|\"([%s][ %s]*)\"|'([%s][ %s]*)')" % ((_G_NAME,) + (GRAMMAR_LITERAL_CHARS,) * 5))
@@ -258,6 +259,9 @@ _NT = os.name == "nt"
 _G_NT_LIT = r"(?:[%s]|(?<=[A-Za-z0-9])~(?=[0-9]))" % GRAMMAR_LITERAL_CHARS
 GRAMMAR_ASSIGN_NT = re.compile(r'(%s)=(?:([A-Za-z]:/%s*)|"([A-Za-z]:[\\/](?:%s|\\)*)(?<!\\)")' % (_G_NAME, _G_NT_LIT, _G_NT_LIT))
 GRAMMAR_ASSIGN_NT_WORD = re.compile(r"(%s)=([A-Za-z]:[\\/](?:%s|\\)*)" % (_G_NAME, _G_NT_LIT))
+# local widening on Windows: a double-quoted drive value with blanks (`H="C:/agent dir/h"`), only on a local line
+LOCAL_ASSIGN_NT = re.compile(r'(%s)="([A-Za-z]:[\\/](?:%s| |\\)*)(?<!\\)"' % (_G_NAME, _G_NT_LIT))
+LOCAL_ASSIGN_NT_WORD = re.compile(r"(%s)=([A-Za-z]:[\\/](?:%s| |\\)*)" % (_G_NAME, _G_NT_LIT))
 _G_REF = r"\$(?:\{(%s)\}|(%s))" % (_G_NAME, _G_NAME)
 _G_WORD = re.compile(r"(?:[%s]|%s)+" % (GRAMMAR_WORD_CHARS, _G_REF))
 _G_HEREDOC = re.compile(r"<<[A-Za-z_][A-Za-z0-9_]*")   # an unquoted opener, a word of its own
@@ -294,10 +298,14 @@ def grammar_header(text):
     return text if nl < 0 else text[:nl]
 
 
-def grammar_statements(text, local=False):
+def grammar_statements(text):
     """The statements of `text` (a list of `(name, raw_value)` for an assignment, `None` for a command) when every
-    statement is inside the closed grammar, else None. A `$NAME` that no statement assigns stays unresolved.
-    `local`: this guard's own widening (LOCAL_ASSIGN), never used for the shared grammar."""
+    statement is inside the closed grammar, else None. A `$NAME` that no statement assigns stays unresolved."""
+    return _grammar_statements(text, False)
+
+
+def _grammar_statements(text, local):
+    """`grammar_statements`; `local` adds this guard's own widening (LOCAL_ASSIGN), never used for the shared grammar."""
     parts = _G_SPLIT.split(text)
     stmts, seps = parts[0::2], parts[1::2]
     out = []
@@ -311,7 +319,7 @@ def grammar_statements(text, local=False):
                 return None
             continue
         words = re.split(r"[ \t]+", stmt)
-        m = GRAMMAR_ASSIGN.fullmatch(stmt) or (_NT and GRAMMAR_ASSIGN_NT.fullmatch(stmt)) or (local and LOCAL_ASSIGN.fullmatch(stmt)) or None
+        m = GRAMMAR_ASSIGN.fullmatch(stmt) or (_NT and GRAMMAR_ASSIGN_NT.fullmatch(stmt)) or (local and LOCAL_ASSIGN.fullmatch(stmt)) or (local and _NT and LOCAL_ASSIGN_NT.fullmatch(stmt)) or None
         if m:
             # a conditional assignment (`test -f x && D=/a`, `cmd || D=/a`) may not run: not a statement of its own
             if not grammar_name_ok(m.group(1)) or not (before in (None, ";", "\n") or (before == "&&" and prev_assign)):
@@ -360,7 +368,9 @@ class Lexer(object):
         self.vars = {}
         # variables resolve only on a line inside the closed grammar (see grammar_statements)
         self.header_end = len(grammar_header(text))
-        self.eligible = grammar_statements(text[:self.header_end], local=True) is not None
+        self.eligible = _grammar_statements(text[:self.header_end], True) is not None
+        # a line only the local widening admits: every value resolved on it is a local one
+        self.local_line = self.eligible and grammar_statements(text[:self.header_end]) is None
 
     # -- words
     def _expansion(self, w, quoted=False):
@@ -385,6 +395,7 @@ class Lexer(object):
         known = self.known_var(t[i:self.i])
         if known is not None and (quoted or not re.search(r"\s", known)):   # an unquoted value with a blank splits
             w.text += known
+            w.local = w.local or self.local_line
             return
         w.text += "\x00"
         w.dynamic = True
@@ -517,7 +528,7 @@ class Lexer(object):
                 self.vars[m.group(1)] = value
         else:
             self.vars.pop((re.match(r"(%s)=" % _G_NAME, c.words[0].text) or [None, None])[1], None)   # unknown again unless set below
-            m = LOCAL_ASSIGN_WORD.fullmatch(c.words[0].text)
+            m = LOCAL_ASSIGN_WORD.fullmatch(c.words[0].text) or (_NT and LOCAL_ASSIGN_NT_WORD.fullmatch(c.words[0].text))
             if m and not c.words[0].unresolvable:
                 self.vars[m.group(1)] = m.group(2)   # relative or quoted text, judged where it is used
 
@@ -729,12 +740,13 @@ class Scope(object):
         self.allowed = [os.path.normpath(os.path.join(self.ws_real, *parts))
                         for parts in map(_allowed_rel, dirs) if parts]
 
-    def project_path(self, abs_path, link=False):
-        """`link`: the operand is judged on the link itself (realpath of its directory + its name), as plain `rm link` removes the link."""
+    def project_path(self, abs_path, link=False, strict=False):
+        """`link`: the operand is judged on the link itself (realpath of its directory + its name), as plain `rm link` removes the link.
+        `strict`: only an always-writable place is not a project path (a path outside the workspace counts as one)."""
         if abs_path is None:
             return True
         if _drive_path(abs_path) and os.name != "nt":
-            return False
+            return strict
         if link:
             real = os.path.join(os.path.realpath(os.path.dirname(abs_path)), os.path.basename(abs_path))
         else:
@@ -743,13 +755,15 @@ class Scope(object):
             if self._handoff_refuses(abs_path, real):
                 return True
             return False   # a child-written name: writable before the allow_abs / outside-workspace returns
+        if strict and self.handoff and self.in_handoff(abs_path):
+            return False   # the handoff-ignoring pass sets the handoff dir aside, as it does for a literal path
         if self.scratch and _inside(self.scratch, real) and _fold(os.path.normpath(real)) != _fold(self.scratch):
             return False
         for owned in self.allow_abs:
             if _inside(owned, real) and _fold(os.path.normpath(real)) != _fold(owned):
                 return False
         if not (_inside(self.ws, abs_path) or _inside(self.ws_real, real)):
-            return False
+            return strict
         for allowed in self.allowed:
             if _inside(allowed, real) and _fold(os.path.normpath(real)) != _fold(allowed):
                 return False
@@ -797,7 +811,7 @@ class Scope(object):
             return False
         if text == "":
             return False
-        return self.project_path(absolute(text, cwd, lexical=False), link)
+        return self.project_path(absolute(text, cwd, lexical=False), link, isinstance(word, Word) and word.local)
 
     def set_aside(self, word):
         """The `ignore_unresolved` pass skips a word that is unresolvable only through variables or substitutions (no glob)."""
@@ -1098,7 +1112,7 @@ class Analyzer(object):
             for w in args:
                 if w.text.startswith("of="):
                     t = Word()
-                    t.text, t.dynamic, t.glob, t.refs = w.text[3:], w.dynamic, w.glob, w.refs
+                    t.text, t.dynamic, t.glob, t.refs, t.local = w.text[3:], w.dynamic, w.glob, w.refs, w.local
                     _hit(s, "dd", t, cwd)
             return
         if prog == "git":
@@ -1174,7 +1188,7 @@ class Analyzer(object):
             raise Found(kind, _show(word))
         else:
             d = absolute(word.text, cwd, lexical=False)
-        if d is None or self.scope.project_path(os.path.join(d, "file")):
+        if d is None or self.scope.project_path(os.path.join(d, "file"), strict=word is not None and word.local):
             raise Found(kind, _show(word) if word is not None else "<working dir>")
 
     def fetch_like(self, prog, args, cwd):
@@ -1462,6 +1476,7 @@ class Analyzer(object):
                             continue
                         raise Found(prog, _show(w))
                     named = lit(dest.text.rstrip("/\\") + "/" + re.split(r"[\\/]", w.text.rstrip("/\\"))[-1])
+                    named.local = dest.local
                     _hit(s, prog, named, cwd)
                 if prog == "mv":
                     for w in srcs:
@@ -1937,6 +1952,7 @@ def ps_units(text):
                     subst.append(body[m.end():_ps_paren_end(body, m.end()) - 1])
                 if "$" in body:
                     w.dynamic = True
+                    w.refs.append("$...")   # the text keeps the `$name`: no placeholder, so _show prints it as is
                 w.text += re.sub(r"`(.)", r"\1", body)
                 w.quoted = True
                 j = end
@@ -1947,6 +1963,7 @@ def ps_units(text):
                     j = end
                     w.text += "\x00"
                     w.dynamic = True
+                    w.refs.append("$(...)")
                     continue
                 m = re.compile(r"\$(null|true|false)\b", re.I).match(text, j)
                 if m and not w.text:
@@ -1956,6 +1973,7 @@ def ps_units(text):
                 w.text += "\x00"
                 w.dynamic = True
                 m = re.compile(r"\$(\{[^}]*\}|[\w:?^$]+)").match(text, j)
+                w.refs.append(m.group(0) if m else "$")
                 j = m.end() if m else j + 1
             else:
                 if c in "*?[":
