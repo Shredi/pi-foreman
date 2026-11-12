@@ -27,7 +27,7 @@ export interface CacheBar {
   coldAt: number | null;
   /** Ms until cold at the current TTL, never negative; null without a touch. */
   leftMs: number | null;
-  /** Share of the projected warm span still ahead, 0..1; null without a touch. Without warms: share of the touch-to-cold span. */
+  /** Share of the projected warm span still ahead, 0..1; null without a touch. Without warms: share of the touch-to-cold span. The footer no longer reads it. */
   share: number | null;
   warmsLeft: number;
   /** Tier that allows the warms; null when none is pending. */
@@ -43,6 +43,7 @@ export function cacheBar(s: CacheSnapshot): CacheBar {
   const leftMs = cold === null ? null : Math.max(0, cold - s.now);
   if (cold === null || s.lastTouch === null) return { coldAt: null, leftMs: null, share: null, warmsLeft: 0, tier: null, lifeShare: null, markShare: null };
   const warming = s.nextWarmAt !== null && s.warmsLeft > 0;
+  // the footer reads `lifeShare`; `share` (with `start`, `end`, `span`) stays for its test
   const start = warming && s.stretchStartAt !== null ? s.stretchStartAt : s.lastTouch;
   const end = warming && s.spanEndAt !== null ? s.spanEndAt : cold;
   const span = end - start;
