@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -112,6 +112,7 @@ export default class ForemanAgents extends View {
     this.hcProp = given.hc;
     this.recs = new Map(); // agent address -> {recs, tried}
     this.childPi = new Set(); // pane-less pi child terminals (set by render), polled for records too
+    this.remoteTargets = new Set(); // `<machine>/<t>` of the remote sessions drawn as registry rows (set by render), polled for records too
     this.noteSeen = new Map(); // `${machine}|${session key}` -> last note version seen on the radar
     this.shows = new Map(); // `${machine}|${dir}` -> what was read of a session's plan.json / note.json
     this.prsRan = new Map(); // busy key -> when its prs poll last ended
@@ -328,7 +329,7 @@ export default class ForemanAgents extends View {
   pollRecords(cx, now) {
     // Only pi terminals (listing field `app`) can have pi-subagents records.
     const paned = guard(() => agents().filter((a) => a?.app === "pi").map((a) => a.address).filter((x) => typeof x === "string" && x), []);
-    const list = [...new Set([...paned, ...this.childPi])];
+    const list = [...new Set([...paned, ...this.childPi, ...(this.remoteTargets ?? [])])];
     for (const addr of this.recs.keys()) if (!list.includes(addr)) this.recs.delete(addr);
     for (const addr of list) {
       const rec = this.recs.get(addr);
@@ -345,7 +346,7 @@ export default class ForemanAgents extends View {
           if (r.code === 0) { recs = parseRecords(r.stdout); attach = parseAttachTarget(r.stdout); }
         } catch { /* no hc here: no records */ }
         this.busy.delete(`hc:${addr}`);
-        if (this.childPi.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, attach, tried: Date.now() });
+        if (this.childPi.has(addr) || this.remoteTargets?.has(addr) || guard(() => agents().some((a) => a?.address === addr), false)) this.recs.set(addr, { recs, attach, tried: Date.now() });
         cx.notify();
       });
     }
@@ -475,9 +476,9 @@ export default class ForemanAgents extends View {
   // The one tree below a paned agent: its own agents (radar runs, hc records), its child sessions (radar children and joined
   // pane-less hc terminals) and theirs, all through sessionTree. `f` is the joined radar node or null; `live` the
   // hc child items of the agent.
-  agentItems(f, hcStatus, recs, skip, live, skipKeys) {
+  agentItems(f, hcStatus, recs, skip, live, skipKeys, recsOf = null, remoteOf = null) {
     if (!f) return { root: null, items: bareChildren(recs, live) };
-    const root = sessionTree(f, { hcStatus, recs, skip, skipKeys, extra: live });
+    const root = sessionTree(f, { hcStatus, recs, recsOf, remoteOf, skip, skipKeys, extra: live });
     return { root, items: root ? root.children : [] };
   }
 
@@ -694,6 +695,14 @@ export default class ForemanAgents extends View {
     }
     this.childPi = new Set(kids.filter((x) => x.app === "pi" || x.agent === "pi" || childJoined.has(x.address)).map((x) => x.address));
     const skip = new Set([...joined.values(), ...childJoined.values()]);
+    // A remote session the local registry draws as a row: its hc records come from the remote terminal, polled while the row is drawn
+    // (whatever local mirror terminals exist), and that terminal and its local mirror are no rows of their own.
+    const localTree = this.radar.get("local")?.ok ? this.radar.get("local").tree : [];
+    const remoteNodes = guard(() => remoteNodesOf(localTree), []);
+    this.remoteTargets = new Set(remoteNodes.map((x) => x.target));
+    const recsOfNode = (n) => (n.machine && n.hcTerminal ? this.recs.get(n.hcTerminal.includes("/") ? n.hcTerminal : `${n.machine}/${n.hcTerminal}`)?.recs ?? [] : []);
+    // The remote node joined to a registry node's remote terminal: its agents, runs and child sessions show under that node's row.
+    const remoteOf = (n) => joined.get(remoteTarget(n)) ?? null;
     // Item 25: a session drawn as a joined row anywhere is not drawn again as a radar child (matched by key).
     const skipKeys = new Set([...skip].map((n) => n.key).filter(Boolean));
     // A listed agent that is an hc child of another one is drawn once, nested under its parent (see withRows), not as a top-level row.
@@ -709,6 +718,8 @@ export default class ForemanAgents extends View {
       }
     }
     for (const addr of guard(() => attachNests(list, all, radarTargets, (a) => this.recs.get(a)?.attach ?? ""), new Set())) nested.add(addr);
+    const twins = guard(() => remoteTwins(list, localTree), new Set());
+    for (const addr of twins) if (!joined.has(addr)) nested.add(addr);
     const listedBy = new Map(list.map((a) => [a.address, a]));
     // `<machine>/<t>` targets already drawn as a session (radar nodes, listed agents): an attach of one is not drawn again.
     const drawnTargets = new Set(list.map((a) => a.address));
@@ -750,13 +761,19 @@ export default class ForemanAgents extends View {
         const own = workerStatus(term.status, listedStatus.get(term.address));
         return { node, recs, own, attach: this.recs.get(term.address)?.attach ?? "", status: guard(() => agentStatus(own, node, recs), own) };
       };
-      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets }), []);
-      const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys), { root: null, items: [] });
+      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets, remoteNodes, recsOf: recsOfNode, remoteOf }), []);
+      const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys, recsOfNode, remoteOf), { root: null, items: [] });
       drawnItems.push(...(root ? [root] : []), ...items);
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);
       return f ? [block, div().h(4).flex_none()] : [block];
     };
-    const rows = groups.flatMap((g) => [...header(g), ...g.members.flatMap(withRows)]);
+    const blocks = new Map(groups.flatMap((g) => g.members.map((a) => [a.address, withRows(a)])));
+    // A joined remote terminal that a drawn registry node follows is no row of its own: that node's row shows it (remoteOf).
+    const drawnRemote = drawnRemoteTargets(drawnItems);
+    const rows = groups.flatMap((g) => {
+      const shown = g.members.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
+      return shown.length ? [...header(g), ...shown.flatMap((a) => blocks.get(a.address))] : [];
+    });
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
     const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values(), ...childJoined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
