@@ -31,8 +31,8 @@ const py = (args: string[]): Promise<string> => new Promise((resolve) => execFil
 const ran = (result: Record<string, unknown>): SafeOpOutcome => ({ kind: "ran", result });
 
 /** main checkout `repo`, the round's worktree `wt` on branch `feat` (the session's cwd) whose commit was squash-merged into main. */
-function world() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-merged-cleanup-")));
+function buildTemplate() {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-merged-cleanup-tpl-")));
   const state = path.join(root, "agent", "pi-foreman", "state");
   fs.mkdirSync(state, { recursive: true });
   const origin = path.join(root, "origin.git");
@@ -56,6 +56,32 @@ function world() {
   git(repo, "push", "-q", "origin", "main");
   fs.mkdirSync(path.join(wt, ".workflow"), { recursive: true });
   fs.writeFileSync(path.join(wt, ".workflow", "LEDGER-x.md"), "# ledger\n");
+  return { root, tip };
+}
+
+// One template repository per test file (built on first use); each test gets a copy, so the git calls are spent once.
+let template: ReturnType<typeof buildTemplate> | null = null;
+process.on("exit", () => {
+  if (template) fs.rmSync(template.root, { recursive: true, force: true });
+});
+
+/** A copy of the template repository (the absolute paths in the copied git files rewritten, no git call), or a `lite` world: the directories only, for a test that uses the fake self-finish. */
+function world(lite = false) {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-merged-cleanup-")));
+  const repo = path.join(root, "repo");
+  const wt = path.join(root, "repo.worktrees", "feat");
+  let tip = "0".repeat(40);
+  if (lite) fs.mkdirSync(path.join(wt, ".workflow"), { recursive: true });
+  else {
+    template ??= buildTemplate();
+    fs.cpSync(template.root, root, { recursive: true, preserveTimestamps: true });
+    for (const f of [path.join(repo, ".git", "config"), path.join(repo, ".git", "worktrees", "feat", "gitdir"), path.join(wt, ".git")]) {
+      fs.writeFileSync(f, fs.readFileSync(f, "utf8").split(template.root).join(root));
+    }
+    tip = template.tip;
+  }
+  const state = path.join(root, "agent", "pi-foreman", "state");
+  fs.mkdirSync(state, { recursive: true });
   const handoff = path.join(root, "handoffs", "20261102-120000-demo");
   fs.mkdirSync(handoff, { recursive: true });
   return { root, state, repo, wt, tip, handoff, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
@@ -70,6 +96,10 @@ interface RigOpts {
   headSha?: string;
   /** The result file is a real file (the stub and the appended section land on disk too), as in a real session. */
   disk?: boolean;
+  /** A fake self-finish that starts the cleanup of `wt` and `feat` without any check (for a test that asserts nothing on git). */
+  fake?: boolean;
+  /** The pre-close pr_status waits for this promise. */
+  gate?: Promise<void>;
 }
 
 /** A real PrWatches (child, the tracker's store a fake) and a CloseFlow with the real selfFinish, wired as index.ts does. */
@@ -81,6 +111,7 @@ function rig(w: World, o: RigOpts = {}) {
   const sent: unknown[] = [];
   const merged: unknown[] = [];
   let runs = 0;
+  let waits: { id: string; kind: string; note: string }[] = [];
   let poll: WatchSnapshot = snap();
   let armed: (() => void) | null = null;
   const timers: Timers = { set: (fn) => ((armed = fn), 0), clear: () => undefined };
@@ -95,7 +126,10 @@ function rig(w: World, o: RigOpts = {}) {
     now: () => 0,
     timers,
     child: () => true,
-    fresh: async () => o.fresh ?? "merged",
+    fresh: async () => {
+      await o.gate;
+      return o.fresh ?? "merged";
+    },
     onMerged: (i) => {
       merged.push(i);
       const file = path.join(w.handoff, "result.md");
@@ -103,7 +137,7 @@ function rig(w: World, o: RigOpts = {}) {
     },
   });
   const deps: CloseDeps = {
-    activeWaits: () => [],
+    activeWaits: () => waits,
     activeRuns: () => runs,
     sendUserMessage: (t) => void log.push(`prompt:${t}`),
     runSync: async () => ({ text: "sync ok", ok: true }),
@@ -128,7 +162,9 @@ function rig(w: World, o: RigOpts = {}) {
       if (o.disk) fs.appendFileSync(f, t);
     },
     selfFinish: (req) =>
-      selfFinish({
+      o.fake
+        ? Promise.resolve({ lines: ["cleanup: started (fake)"], spawn: () => void spawned.push(["--ws", w.wt, "--branch", "feat"]) })
+        : selfFinish({
         cwd: w.wt, handoff: w.handoff, sessionId: "child-1", stateDir: w.state, pid: 99999999, trusted: false, sinceMs: Date.now() - 60_000,
         status: async () => ran({ state: "merged", headRefName: "feat", baseRef: "main", headSha: o.headSha ?? w.tip }),
         git: async (a, dir) => git(dir ?? w.wt, ...a),
@@ -158,7 +194,8 @@ function rig(w: World, o: RigOpts = {}) {
     await flow.onSettled(ctx);
   };
   const setRuns = (n: number): void => void (runs = n);
-  return { log, files, spawned, remote, sent, merged, watches, flow: () => flow, ctx, merge, close, finish, idle, setRuns };
+  const setWaits = (x: typeof waits): void => void (waits = x);
+  return { log, files, spawned, remote, sent, merged, watches, flow: () => flow, ctx, merge, close, finish, idle, setRuns, setWaits };
 }
 
 const parentClose = (w: World): CloseRequest => ({ source: "intercom-parent", file: path.join(w.wt, ".workflow", "result.md"), replyTo: "parent-1" });
@@ -193,9 +230,9 @@ test("path a: the watch's merged event closes with source pr-merged and starts t
 });
 
 test("path a: a merge close refused for an active child run tells the parent why", async () => {
-  const w = world();
+  const w = world(true);
   try {
-    const r = rig(w);
+    const r = rig(w, { fake: true });
     r.setRuns(1);
     r.watches.start(K, snap());
     await r.merge();
@@ -209,9 +246,9 @@ test("path a: a merge close refused for an active child run tells the parent why
 });
 
 test("path a: after a refused merge close, a later parent close still runs the cleanup", async () => {
-  const w = world();
+  const w = world(true);
   try {
-    const r = rig(w);
+    const r = rig(w, { fake: true });
     r.setRuns(1);
     r.watches.start(K, snap());
     await r.merge();
@@ -247,9 +284,9 @@ test("path b: the pre-close pr_status ends the merged watch, and the parent's cl
 });
 
 test("path b: a remote parent's close runs the cleanup too; the closed notice stays the existing one", async () => {
-  const w = world();
+  const w = world(true);
   try {
-    const r = rig(w, { report: { ready: true, removed: 0, handover: [], closeLine: "CLOSE: ready" } });
+    const r = rig(w, { fake: true, report: { ready: true, removed: 0, handover: [], closeLine: "CLOSE: ready" } });
     r.watches.start(K, snap());
     await r.close({ source: "remote-parent", file: path.join(w.wt, ".workflow", "result.md") });
     assertSpawnedFor(w, r.spawned);
@@ -260,9 +297,9 @@ test("path b: a remote parent's close runs the cleanup too; the closed notice st
 });
 
 test("path b: a PR closed unmerged is not remembered; the parent's close does a plain close", async () => {
-  const w = world();
+  const w = world(true);
   try {
-    const r = rig(w, { fresh: "closed" });
+    const r = rig(w, { fake: true, fresh: "closed" });
     r.watches.start(K, snap());
     await r.close(parentClose(w));
     assert.deepEqual(r.watches.mergedPrs(), []);
@@ -275,9 +312,9 @@ test("path b: a PR closed unmerged is not remembered; the parent's close does a 
 });
 
 test("a close without any watched PR does a plain close: no self-finish, nothing spawned", async () => {
-  const w = world();
+  const w = world(true);
   try {
-    const r = rig(w);
+    const r = rig(w, { fake: true });
     await r.close(parentClose(w));
     assert.equal(r.spawned.length, 0);
     assert.deepEqual(replies(r.log).map((t) => t.split(" ")[0]), ["foreman:closed"]);
@@ -305,16 +342,45 @@ test("a refused self-finish reaches the requester as its own reply before the fo
   }
 });
 
-test("a refused merge close for a pending wait is reported to the parent, and the merged PR stays remembered", async () => {
-  const w = world();
+test("a refused merge close for a pending wait that cannot be cancelled is reported to the parent, the merged PR stays remembered, and a later close runs the cleanup", async () => {
+  const w = world(true);
   try {
-    const r = rig(w);
-    r.setRuns(2);
+    const r = rig(w, { fake: true });
+    r.setWaits([{ id: "w1", kind: "pr", note: "" }]);
     r.watches.start(K, snap());
     await r.merge();
     await r.idle();
+    assert.equal(r.flow().active, false, "the self-close was refused");
     assert.deepEqual(r.watches.mergedPrs().map((k) => k.n), [7]);
-    assert.ok(replies(r.log).some((t) => t.includes("close refused: 2 child run(s) still active")));
+    assert.ok(replies(r.log).some((t) => t.startsWith("pi-foreman: close refused: 1 foreman_wait pending (w1 pr)")), replies(r.log).join("\n"));
+    assert.equal(r.spawned.length, 0);
+    r.setWaits([]);
+    await r.close(parentClose(w));
+    assertSpawnedFor(w, r.spawned);
+    assert.ok(replies(r.log).at(-1)!.startsWith("foreman:closed "));
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("a merge seen while the parent's close checks the PR status: the parent hears no refusal, one foreman:closed, one cleanup", async () => {
+  const w = world(true);
+  try {
+    let release!: () => void;
+    const r = rig(w, { fake: true, gate: new Promise<void>((res) => void (release = res)) });
+    r.watches.start(K, snap());
+    const closing = Promise.resolve(r.flow().request(parentClose(w), r.ctx));
+    await r.idle();
+    await r.merge(); // the watch's merged event starts the pr-merged close during the status check
+    assert.equal(r.merged.length, 1);
+    release();
+    await closing;
+    await r.idle();
+    await r.finish();
+    const out = replies(r.log);
+    assert.ok(!out.some((t) => t.includes("close refused")), out.join("\n"));
+    assert.equal(out.filter((t) => t.startsWith("foreman:closed ")).length, 1, out.join("\n"));
+    assert.equal(r.spawned.length, 1);
   } finally {
     w.cleanup();
   }
@@ -389,8 +455,9 @@ const watchesOf = (extra: Partial<ConstructorParameters<typeof PrWatches>[0]> = 
   const entries: { watches: WatchRecord[]; merged?: PrKey[] }[] = [];
   let armed: (() => void) | null = null;
   let state: "open" | "merged" | "closed" = "open";
+  let polled: WatchSnapshot["state"] = "open";
   const w = new PrWatches({
-    storeEntry: storeFromPoll(async () => ({ snap: snap() })),
+    storeEntry: storeFromPoll(async () => ({ snap: snap(polled) })),
     send: (m) => void sent.push(m),
     idle: () => true,
     trace: () => undefined,
@@ -403,7 +470,7 @@ const watchesOf = (extra: Partial<ConstructorParameters<typeof PrWatches>[0]> = 
     persist: (watches, mergedKeys) => void entries.push({ watches, merged: mergedKeys }),
     ...extra,
   });
-  return { w, sent, merged, entries, setState: (s: typeof state) => void (state = s), armed: () => armed };
+  return { w, sent, merged, entries, setState: (s: typeof state) => void (state = s), armed: () => armed, setPolled: (s: WatchSnapshot["state"]) => void (polled = s) };
 };
 
 test("the pre-close refresh remembers a merged PR silently, and not a closed one", async () => {
@@ -430,6 +497,30 @@ test("the remembered merged PR survives a reload with the watch entry", async ()
   const again = watchesOf();
   again.w.restore(latestWatches([entry], "s1"));
   assert.deepEqual(again.w.mergedPrs().map((k) => k.n), [7]);
+});
+
+test("a session that does not remember merged PRs stores and persists none, on both ways a watch sees the merge", async () => {
+  const m = watchesOf({ rememberMerged: () => false });
+  m.w.start(K, snap());
+  m.setState("merged");
+  await m.w.refresh();
+  m.w.start(K, snap());
+  m.setPolled("merged");
+  m.armed()!();
+  for (let i = 0; i < 100; i++) await new Promise((r) => setImmediate(r));
+  assert.equal(m.merged.length, 1, "the watch's merged event fired");
+  assert.deepEqual(m.w.mergedPrs(), []);
+  assert.ok(m.entries.length > 0, "the watch set was still persisted");
+  assert.ok(m.entries.every((e) => (e.merged ?? []).length === 0));
+});
+
+test("a session that remembers merged PRs persists them with the watch entry", async () => {
+  const m = watchesOf({ rememberMerged: () => true });
+  m.w.start(K, snap());
+  m.setState("merged");
+  await m.w.refresh();
+  assert.deepEqual(m.w.mergedPrs().map((k) => k.n), [7]);
+  assert.deepEqual(m.entries.at(-1)!.merged?.map((k) => k.n), [7]);
 });
 
 // ---------------------------------------------------------------- the result file of a parent's close outlives the worktree

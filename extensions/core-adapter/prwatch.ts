@@ -632,6 +632,8 @@ export interface PrWatchesDeps {
   cwd?(): string;
   /** The watch set, a watch's state or the merged PRs changed: write the session entry. */
   persist?(watches: WatchRecord[], merged: PrKey[]): void;
+  /** Whether a merged watched PR is remembered (`mergedPrs`) and persisted; default true. Only a child foreman session needs it. */
+  rememberMerged?(): boolean;
   send(msg: ReturnType<typeof prMessage>, idle: boolean): void;
   idle(): boolean;
   trace(rec: Record<string, unknown>): void;
@@ -790,6 +792,7 @@ export class PrWatches {
   }
 
   private remember(key: PrKey): void {
+    if (this.deps.rememberMerged && !this.deps.rememberMerged()) return;
     this.merged = [...this.merged.filter((k) => !samePr(k, key)), key];
   }
 

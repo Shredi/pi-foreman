@@ -379,7 +379,8 @@ export class CloseFlow {
    * the close turn and no close prompt is sent; the caller awaits the promise before it claims the run.
    */
   request(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake = false, inRun = false): void | Promise<void> {
-    if (this.phase) return this.refuse("a close is already in progress", req.source, answerTo(req));
+    // only the requester hears this: the adapter's own `pr-merged` close must not tell the parent a refusal while the parent's close is the one running
+    if (this.phase) return this.refuse("a close is already in progress", req.source, req.replyTo);
     if (!this.holdsWatch()) return this.begin(req, ctx, viaIntercomWake, false, inRun);
     this.phase = "refreshing";
     this.wakePending = viaIntercomWake;

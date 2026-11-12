@@ -806,6 +806,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const file = path.join(handoff, "result.md");
           void close.start(ctx, { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, info.key.n), pr: { n: info.key.n, parent: parentIntercomId(process.env), label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } }).catch(() => undefined);
         },
+        rememberMerged: () => !!process.env[HANDOFF_DIR_ENV]?.trim(),
         persist: (watches, merged) => pi.appendEntry(PRWATCH_ENTRY, { v: 2, piSessionId: s.id, watches, ...(merged.length ? { merged } : {}) }),
         send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
         idle: () => s.prCtx?.isIdle() ?? true,
