@@ -67,7 +67,8 @@ test("item 5: one spelling function: long prefix, glued value, short cluster, up
 });
 
 test("item 2: shortened spellings of the subagent-only long options are judged for a subagent only", () => {
-  // git accepts these (checked with git 2.54): switch --force-c.. --force-create, branch --forc/--force, --mo/--move, tag --d../--delete
+  // git accepts these (checked with git 2.54): switch --force-c.. --force-create, branch --forc/--force, --mo/--move, tag --d../--delete;
+  // `branch --fo` it refuses as ambiguous (only --force and --forc are accepted); the gate judges it anyway, matching it costs nothing
   for (const l of [
     "git switch --force-create main", "git switch --force-creat main", "git switch --force-cre main", "git switch --force-c main", "git switch --force- main", "git switch --force-create=x main",
     "git branch --force main HEAD", "git branch --forc main HEAD", "git branch --fo main HEAD",
@@ -119,6 +120,32 @@ test("item 6: an option word after a bare -- stays judged for a subagent, as the
     assert.equal(isDanger(l, true), true, `child ${l}`);
     assert.equal(isDanger(l, false), false, `main ${l}`);
   }
+});
+
+test("item 6: a value-taking global option without its value swallows the subcommand word, as in git 2.54: not judged; with its value given, judged", () => {
+  // git refuses each of these as written (exit 128/129, nothing changed; .workflow/scratch/git-refuses.md)
+  const swallowed: Array<[string, string | null]> = [
+    ["git --attr-source reset --hard", null], ["git --super-prefix reset --hard", null], ["git --attr-source fetch --upload-pack=x", null], ["git --attr-source clean -fd", null],
+    ["git --attr-source push --force origin main", null], ["git --namespace reset --hard", null], ["git --config-env reset --hard", "floor-git-config"],
+  ];
+  for (const [l, floor] of swallowed) {
+    for (const child of [false, true]) assert.equal(isDanger(l, child), false, `${l} child=${child}`);
+    assert.equal(floorHit(l)?.rule ?? null, floor, `floor ${l}`);
+  }
+  for (const l of ["git --attr-source=x reset --hard", "git --attr-source x reset --hard", "git --super-prefix p reset --hard", "git --attr-source x fetch --upload-pack=y", "git --attr-source x clean -fd"]) {
+    for (const child of [false, true]) assert.equal(isDanger(l, child), true, `${l} child=${child}`);
+  }
+});
+
+test("item 5: a character outside the BMP before the letter of a short cluster does not shift the position", () => {
+  for (const child of [false, true]) assert.equal(isDanger("git clone -\u{1F600}u x u", child), true, `child=${child}`);
+  assert.equal(floorHit(`git clone -\u{1F600}c core.sshCommand=x ${U}`)?.rule, "floor-git-config");
+  assert.equal(floorHit(`git clone -\u{1F600}ccore.sshCommand=x ${U}`)?.rule, "floor-git-config");
+  const sp = (w: string[]) => gitOptSpellings(w, "--config", { short: "c", consume: true });
+  assert.deepEqual(sp(["-\u{1F600}c", "k=v"]), ["k=v"]);
+  assert.deepEqual(sp(["-\u{1F600}cx=1"]), ["x=1"]);
+  assert.deepEqual(sp(["-\u{1F600}u", "c"]), []);
+  assert.deepEqual(sp(["-nccore.x=1", "-c", "k=v", "-bc", "x"]), ["core.x=1", "k=v"]);
 });
 
 test("item 4: the floor message names the form used; the -c / --config-env text is byte-identical", () => {

@@ -341,9 +341,10 @@ export function gitOptSpellings(words: string[], long: string, opts: { short?: s
       if (name.length < (opts.min ?? 3) || !long.startsWith(name)) continue;
       glued = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
     } else if (opts.short !== undefined && /^-[^-]/.test(w)) {
-      const at = [...w].findIndex((ch, n) => n > 0 && "obucj".includes(ch));
-      if (at < 0 || w[at] !== opts.short) continue;
-      glued = at + 1 < w.length ? w.slice(at + 1) : undefined;
+      const chars = [...w];
+      const at = chars.findIndex((ch, n) => n > 0 && "obucj".includes(ch));
+      if (at < 0 || chars[at] !== opts.short) continue;
+      glued = at + 1 < chars.length ? chars.slice(at + 1).join("") : undefined;
     } else continue;
     out.push(glued ?? (opts.consume ? (list[++i] ?? "") : undefined));
   }
