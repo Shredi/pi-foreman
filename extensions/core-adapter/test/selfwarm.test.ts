@@ -457,7 +457,7 @@ test("model change, compaction and shutdown abort an in-flight warm", async () =
   }
 });
 
-test("miss contingency: the first completed warm with cacheWrite >= cacheRead switches the warming off for the session", async () => {
+test("miss contingency: the first completed warm with cacheWrite >= cacheRead switches the warming off for the idle stretch it happened in", async () => {
   const h = make({ reply: async () => ({ ...HIT, usage: { ...HIT.usage, cacheRead: 0, cacheWrite: 100_000 } }) });
   h.open();
   await h.advance(54 * MIN);
@@ -535,12 +535,11 @@ test("deprecated keys do not change when the warm goes out or how many", async (
 
 // ---- replay ------------------------------------------------------------------------------------------------
 
-test("replay: system message first, rest converted, tools, session id, maxTokens 1, maxRetries 0, reasoning like Pi", async () => {
-  let seen: { context: { systemPrompt: string; messages: unknown[]; tools: unknown[] }; options: Record<string, unknown> } | null = null;
+test("replay: all captured messages converted (system head included), no systemPrompt, no tools, session id, maxTokens 1, maxRetries 0, reasoning like Pi", async () => {
+  let seen: { context: { systemPrompt?: string; messages: unknown[]; tools?: unknown[] }; options: Record<string, unknown> } | null = null;
   const ac = new AbortController();
   const reply = await replayWarm({ id: "m" }, [{ role: "system", content: [{ type: "text", text: "S1" }, { type: "text", text: "S2" }] }, { role: "user", content: "hi" }], ac.signal, {
     convertToLlm: (m) => m.map((x) => ({ converted: x })),
-    tools: () => [{ name: "t" }],
     thinkingLevel: () => "high",
     sessionId: () => "sess",
     cacheRetention: () => "long",
@@ -549,13 +548,12 @@ test("replay: system message first, rest converted, tools, session id, maxTokens
       return { result: async () => ({ provider: "p", model: "m", responseModel: "m-1", usage: { cacheRead: 5 }, stopReason: "length" }) };
     },
   });
-  assert.equal(seen!.context.systemPrompt, "S1S2");
-  assert.deepEqual(seen!.context.messages, [{ converted: { role: "user", content: "hi" } }]);
-  assert.deepEqual(seen!.context.tools, [{ name: "t" }]);
+  assert.deepEqual(Object.keys(seen!.context), ["messages"]);
+  assert.deepEqual(seen!.context.messages, [{ converted: { role: "system", content: [{ type: "text", text: "S1" }, { type: "text", text: "S2" }] } }, { converted: { role: "user", content: "hi" } }]);
   assert.deepEqual({ ...seen!.options, signal: undefined }, { sessionId: "sess", maxTokens: 1, maxRetries: 0, signal: undefined, reasoning: "high", cacheRetention: "long" });
   assert.equal(reply?.model, "m-1");
   const off = await replayWarm({}, [], ac.signal, {
-    convertToLlm: () => [], tools: () => [], thinkingLevel: () => "off", sessionId: () => "s", cacheRetention: () => undefined,
+    convertToLlm: () => [], thinkingLevel: () => "off", sessionId: () => "s", cacheRetention: () => undefined,
     streamSimple: (_m, _c, options) => {
       assert.equal("reasoning" in (options as object), false);
       assert.equal("cacheRetention" in (options as object), false);

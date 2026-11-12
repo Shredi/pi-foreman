@@ -1,7 +1,17 @@
 // Replay of the last real request for the self-warm (selfwarm.ts): the messages captured at `context_with_system`
-// (system message first) become Pi's Context again, and the call is sent with maxTokens 1. Nothing is sent that the
-// last real request did not send: same system prompt, messages, tools, session id and cache retention. The Pi side
-// (converter, tools, model registry) is injected so the module is testable without the Pi package.
+// (leading system message with its sections included) become the provider context again, converted by Pi's
+// convertToLlm, with no separate system prompt and no tools, as the agent loop's own context has neither: the provider
+// derives the system text from the messages as it does for a real turn. Declarations of tools that Pi hides from the
+// request (`hidden`) are projected out of the system messages the way Pi's projection does. A prompt that a
+// `before_agent_start` handler forced (an extension returning `systemPrompt`) reaches the provider as one head message
+// holding that text, because Pi projects it after the `context_with_system` handlers; `forcedProjection` applies the same
+// projection to the capture. The call is sent with
+// maxTokens 1, the session id, the thinking level and the cache retention. Not made equal to a real turn: the Pi
+// `identity` and `transformHeaders` options, the retention source (PI_CACHE_RETENTION), tools hidden by other
+// extensions, Pi's block-images filter (a real turn converts with `convertToLlmWithBlockImages`, the replay with plain
+// `convertToLlm`, so the requests differ when images are blocked and the context holds images) and the
+// `before_provider_request` payload hook (it rewrites the real request, not the warm). Each of these is a known cause
+// of a missed warm. The Pi side (converter, hidden names, model registry) is injected so the module is testable without the Pi package.
 import type { WarmReply } from "./selfwarm.ts";
 
 type Json = Record<string, unknown>;
@@ -24,7 +34,7 @@ const textOf = (content: unknown): string => {
   return content.map((b) => (isObj(b) && typeof b.text === "string" ? b.text : "")).join("");
 };
 
-/** The leading system message as the system prompt and the rest. */
+/** The leading system message as the system prompt and the rest. Not used by the replay (it keeps the head in the messages). */
 export function splitSystem(messages: unknown[]): { systemPrompt: string; rest: unknown[] } {
   const first = messages[0];
   if (isObj(first) && first.role === "system") return { systemPrompt: textOf(first.content), rest: messages.slice(1) };
@@ -34,8 +44,8 @@ export function splitSystem(messages: unknown[]): { systemPrompt: string; rest: 
 export interface ReplayApi {
   /** Pi's convertToLlm. */
   convertToLlm(messages: unknown[]): unknown[];
-  /** The declared tools in Pi's order (pi.getAllTools() filtered by pi.getActiveTools()), as name, description, parameters. */
-  tools(): unknown[];
+  /** Names of the tools whose declarations Pi hides from the request. */
+  hidden?(): readonly string[];
   thinkingLevel(): string | undefined;
   sessionId(): string;
   cacheRetention(): unknown;
@@ -45,9 +55,57 @@ export interface ReplayApi {
   onError?(message: string): void;
 }
 
+/** Pi's hidden-declarations projection: hidden names leave `toolsAdded` and `toolsRemoved` of the system messages. New objects; the input is not mutated. */
+export function withoutHidden(messages: unknown[], hidden: readonly string[]): unknown[] {
+  if (hidden.length === 0) return messages;
+  const skip = new Set(hidden);
+  const keep = (list: unknown): unknown[] => (Array.isArray(list) ? list.filter((t) => !(isObj(t) && typeof t.name === "string" && skip.has(t.name))) : []);
+  return messages.map((m) => {
+    if (!isObj(m) || m.role !== "system" || (!m.toolsAdded && !m.toolsRemoved)) return m;
+    const { toolsAdded, toolsRemoved, ...rest } = m;
+    const added = keep(toolsAdded);
+    const removed = keep(toolsRemoved);
+    return { ...rest, ...(added.length > 0 ? { toolsAdded: added } : {}), ...(removed.length > 0 ? { toolsRemoved: removed } : {}) };
+  });
+}
+
+const blockText = (content: unknown): string => (typeof content === "string" ? content : Array.isArray(content) ? content.filter((b) => isObj(b) && b.type === "text").map((b) => (b as Json).text).join("\n") : "");
+
+/**
+ * Pi's forced-prompt projection (`_installAgentForcedPromptProjection`), applied to the capture. Pi runs it after the
+ * `context_with_system` handlers: when a `before_agent_start` handler forced the prompt, the request carries one head with
+ * the forced text, the current tools and the first system message's timestamp, and no other system message. The forced
+ * text is not in the captured messages; `live` (`ctx.getSystemPrompt()`) renders it verbatim, and it differs from the
+ * rendering of the captured system messages exactly then (parts and length compared, so a mere section order is no forced prompt). Returns the messages themselves when nothing is forced; the
+ * input is never mutated.
+ */
+export function forcedProjection(messages: unknown[], live: unknown): unknown[] {
+  if (typeof live !== "string" || live.length === 0) return messages;
+  const system = messages.filter((m): m is Json => isObj(m) && m.role === "system");
+  if (system.length === 0) return messages;
+  const content: string[] = [];
+  const sections = new Map<string, string>();
+  const tools = new Map<string, unknown>();
+  for (const m of system) {
+    const text = blockText(m.content);
+    if (text.length > 0) content.push(text);
+    for (const [name, value] of Object.entries(isObj(m.sections) ? m.sections : {})) {
+      if (value === null) sections.delete(name);
+      else if (typeof value === "string") sections.set(name, value);
+    }
+    for (const t of Array.isArray(m.toolsRemoved) ? m.toolsRemoved : []) if (isObj(t)) tools.delete(String(t.name));
+    for (const t of Array.isArray(m.toolsAdded) ? m.toolsAdded : []) if (isObj(t)) tools.set(String(t.name), t);
+  }
+  const parts = [content.join("\n\n"), ...sections.values()].filter((p) => p.length > 0);
+  // the same parts in another order (a provider that renders patches apart keeps Pi's replay order) is no forced prompt
+  if (parts.join("\n\n").length === live.length && parts.every((p) => live.includes(p))) return messages;
+  const timestamp = system[0].timestamp ?? (tools.size > 0 ? 0 : Date.now());
+  const head = { role: "system", content: live, ...(tools.size > 0 ? { toolsAdded: [...tools.values()] } : {}), timestamp };
+  return [head, ...messages.filter((m) => !(isObj(m) && m.role === "system"))];
+}
+
 export async function replayWarm(model: unknown, messages: unknown[], signal: AbortSignal, api: ReplayApi): Promise<WarmReply | null> {
-  const { systemPrompt, rest } = splitSystem(messages);
-  const context = { systemPrompt, messages: api.convertToLlm(rest), tools: api.tools() };
+  const context = { messages: api.convertToLlm(withoutHidden(messages, api.hidden?.() ?? [])) };
   const cacheRetention = api.cacheRetention();
   const options: Json = { sessionId: api.sessionId(), maxTokens: 1, maxRetries: 0, signal };
   const reasoning = reasoningOf(api.thinkingLevel());

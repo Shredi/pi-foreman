@@ -157,6 +157,7 @@ import { BridgeCacheTtl, bridgeTtlSetting, derivedBridgeTtlS, type BridgeTtlSett
 import type { Presence } from "./presence.ts";
 import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
 import { createWarm } from "./warmwire.ts";
+import { forcedProjection } from "./warmreplay.ts";
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
@@ -587,6 +588,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       spanEndAt: snap.spanEndAt,
       warmsLeft: snap.warmsLeft,
       warmsFresh: snap.warmsFresh,
+      endedBy: snap.endedBy,
       tier: snap.tier ? snap.tier.tier : null,
       running: s.running,
       waiting: s.questionCalls.size > 0 || s.live?.isBlocked() === true,
@@ -744,7 +746,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
-    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
+    const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
     const s: Session = {
       id,
       cwd,
@@ -1862,9 +1864,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // reach the base options, so the request keeps the section: the null patch is dropped from what
   // the provider gets. Kept for Pi 1.1 compatibility (peer range `*`) and because after a
   // compaction (its stored head lacks the section, review N2) the cached text is put back.
+  /** `ctx.getSystemPrompt()`: what the request's head renders to (a forced prompt verbatim), or undefined without the api. */
+  const livePrompt = (ctx: ExtensionContext): string | undefined => {
+    try {
+      return ctx.getSystemPrompt();
+    } catch {
+      return undefined;
+    }
+  };
   pi.on("context_with_system", async (event, ctx) => {
     const s = sessionFor(ctx);
-    if (s?.isChild) s.selfWarm.capture(event.messages); // a child replays its request unchanged
+    if (s?.isChild) s.selfWarm.capture(forcedProjection(event.messages, livePrompt(ctx))); // a child replays its request unchanged (a forced prompt projected as Pi does after this hook)
     if (!s || s.isChild) return undefined;
     let messages = keepSection(event.messages, "pi-foreman", s.foremanSection);
     // after a compaction the stored head lacks the stable hint sections too: put them back the same way
@@ -1872,14 +1882,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // a section that first appears mid-session sits in another place of Pi's replay than in the fresh build: align the order
     // providers with mid-conversation system messages render the head and each later patch apart: folding patches into the head would break their prompt cache
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
-    let canonical: string | undefined;
-    try {
-      if (!midConvo) canonical = ctx.getSystemPrompt();
-    } catch {
-      // no prompt api: the order stays
-    }
-    if (typeof canonical === "string") messages = alignSections(messages ?? event.messages, canonical) ?? messages;
-    s.selfWarm.capture(messages ?? event.messages);
+    const live = livePrompt(ctx); // no prompt api: undefined, the order stays
+    if (!midConvo && typeof live === "string") messages = alignSections(messages ?? event.messages, live) ?? messages;
+    s.selfWarm.capture(forcedProjection(messages ?? event.messages, live)); // Pi projects a forced prompt after this hook; the warm replays what the request carries
     return messages ? { messages } : undefined;
   });
   // Review S12: each run (a wake or child-notice run too) gets its own single stop-gate continue.

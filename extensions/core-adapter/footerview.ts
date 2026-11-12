@@ -15,7 +15,7 @@ export interface CacheBarView {
   /** The cache is cold: empty red cells and the cold word. */
   cold: boolean;
   /** Warms a warm stretch allows (running: a fresh one's; 0 = none) and the tier that holds; always set while the bar shows, tier null = unknown. */
-  warms: { count: number; tier: "half" | "quarter" | null };
+  warms: { count: number; tier: "half" | "quarter" | null; /** The idle stretch ended by a miss or an error: ` ♨ miss` / ` ♨ err` replace the count and the tier glyph. */ ended?: "miss" | "err" };
   /** The idle model id of the step after the warms; null = no step. */
   step: string | null;
   glyphs: { keepalive: string; cold: string; downshift: string; half: string; quarter: string };
@@ -124,7 +124,7 @@ function cacheSegment(hit: number, theme: FooterTheme): string {
 
 /** Cache-timer bar: cells drain with the share of the projected warm span left (green above 50 %, yellow above 20 %, red at or below, dim unknown); the warm part (`♨ N` and the tier glyph) always follows. */
 function cacheBarSegment(c: CacheBarView, cells: number, theme: FooterTheme): string {
-  const warmPart = ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}${c.warms.tier ? ` ${c.warms.tier === "half" ? c.glyphs.half : c.glyphs.quarter}` : ""}`;
+  const warmPart = c.warms.ended ? ` ${c.glyphs.keepalive} ${c.warms.ended}` : ` ${c.glyphs.keepalive} ${c.warms.count === 1 ? "last" : c.warms.count}${c.warms.tier ? ` ${c.warms.tier === "half" ? c.glyphs.half : c.glyphs.quarter}` : ""}`;
   if (c.cold) return theme.fg("error", `${"□".repeat(cells)} ${c.glyphs.cold} cold`) + warmPart;
   const color: FooterColor = c.share === null ? "dim" : c.share > 0.5 ? "success" : c.share > 0.2 ? "warning" : "error";
   const filled = c.share === null ? 0 : Math.min(cells, Math.max(0, Math.round(c.share * cells)));
