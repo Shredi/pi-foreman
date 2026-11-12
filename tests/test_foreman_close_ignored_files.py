@@ -84,10 +84,10 @@ class IgnoredFilesRound(unittest.TestCase):
             code = fcl.main(["selfclean", "--ws", str(self.wt), "--branch", "feat", "--state", str(self.state),
                              "--session", "child-1", "--wait-pid", "99999999", "--out", str(result)])
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(result.read_text())["status"], "removed")
+        self.assertEqual(json.loads(result.read_text(encoding="utf-8"))["status"], "removed")
         self.assertFalse(self.wt.exists())
         self.assertTrue((self.repo / "README").is_file())
-        self.assertEqual((self.outside / "keep.txt").read_text(), "keep\n")
+        self.assertEqual((self.outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
 
     def test_other_ignored_file_is_refused_and_named(self):
         put(self.wt, ".pi/tasks/t1/x.output")
@@ -123,7 +123,7 @@ class IgnoredFilesRound(unittest.TestCase):
         _, out = self.selfclean()
         self.assertEqual(out["files"], [".pi/tasks"])
         self.assertIn("skipped: %s — ignored_files (.pi/tasks)" % self.wt, self.sweep())
-        self.assertEqual((self.outside / "keep.txt").read_text(), "keep\n")
+        self.assertEqual((self.outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
         self.assertTrue(self.wt.is_dir())
 
     def test_os_litter_and_pycache_folder_are_cleaned(self):

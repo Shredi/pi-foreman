@@ -2,6 +2,7 @@
 // Harbor writes a job-level result.json (no verifier_result) beside one directory per trial, and the trial's result.json (with verifier_result) sits one directory below the job dir.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 
 export const BENCH_JOB_PREFIX = "foreman-fake__detach-probe__r1__";
 
@@ -12,4 +13,15 @@ export function pickTrialResult(jobsDir) {
   const jobDir = path.join(jobsDir, jobs[jobs.length - 1]);
   const trials = fs.readdirSync(jobDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(jobDir, e.name, "result.json")).filter((f) => fs.existsSync(f)).sort();
   return trials.length === 0 ? null : trials[trials.length - 1];
+}
+
+// `node scripts/foreman_ci_bench.mjs <jobsDir>` prints the pick (the CI workflow's assertion step reads it); exits 1 with a message when there is none.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const jobsDir = process.argv[2];
+  const found = jobsDir && fs.existsSync(jobsDir) ? pickTrialResult(jobsDir) : null;
+  if (!found) {
+    console.error(`no ${BENCH_JOB_PREFIX}* trial result.json under ${jobsDir}`);
+    process.exit(1);
+  }
+  console.log(found);
 }

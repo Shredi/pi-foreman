@@ -35,7 +35,7 @@ class CommitKeysTest(unittest.TestCase):
         return res["config"]["safety"]["git"].get("commit")
 
     def test_defaults_carry_no_commit_keys(self):
-        defaults = json.loads(fc.DEFAULTS_PATH.read_text())
+        defaults = json.loads(fc.DEFAULTS_PATH.read_text(encoding="utf-8"))
         self.assertNotIn("commit", defaults["safety"]["git"])
         self.assertEqual(defaults["safety"]["git"]["protectedBranches"], ["main", "master"])
         self.assertIsNone(self.commit_of(self.load()))

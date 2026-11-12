@@ -183,6 +183,9 @@ export class McpChild {
   private loader: LoadMcpConfig | null = null;
   /** Keys of the servers named whole whose config says `hidden`, noted at each config read (before the child filters them out). */
   private readonly configHidden = new Set<string>();
+  private hiddenByConfig(server: string): boolean {
+    return this.configHidden.has(serverKey(server));
+  }
   private readonly loading: Promise<{ load: LoadMcpConfig | null; reason: string }>;
   private setupError: string | null = null;
   private readonly pi: ExtensionAPI;
@@ -272,7 +275,7 @@ export class McpChild {
         const exposure = new Map(this.pi.getAllTools().map((tool) => [tool.name, (tool as { exposure?: string }).exposure]));
         const hidden = this.allowed.servers.filter((server) => {
           const mine = [...this.labels].filter(([, label]) => serverKey(label.split("/", 1)[0] ?? "") === serverKey(server));
-          return this.configHidden.has(serverKey(server)) || (mine.length > 0 && !mine.some(([name]) => ["deferred", "codemode"].includes(exposure.get(name) ?? "")));
+          return this.hiddenByConfig(server) || (mine.length > 0 && !mine.some(([name]) => ["deferred", "codemode"].includes(exposure.get(name) ?? "")));
         });
         this.line = upfrontLine([], this.allowed.servers.filter((server) => !hidden.includes(server)), [], [], [], null, hidden);
       }
@@ -362,9 +365,9 @@ export class McpChild {
       const search = this.allowed.servers.filter((server) => {
         const key = serverKey(server);
         const w = whole.find((x) => serverKey(x.server) === key);
-        return (!w || w.searchable) && !quiet.some((s) => serverKey(s.server) === key) && !this.configHidden.has(key);
+        return (!w || w.searchable) && !quiet.some((s) => serverKey(s.server) === key) && !this.hiddenByConfig(server);
       });
-      const hiddenWhole = this.allowed.servers.filter((server) => this.configHidden.has(serverKey(server)) && !quiet.some((s) => serverKey(s.server) === serverKey(server)));
+      const hiddenWhole = this.allowed.servers.filter((server) => this.hiddenByConfig(server) && !quiet.some((s) => serverKey(s.server) === serverKey(server)));
       this.line = upfrontLine(this.stage?.upfront ?? [], search, this.stage?.missing ?? [], whole, quiet, this.capped ? { named: count, bulk: bulk.length, cap } : null, [...(this.stage?.hidden ?? []), ...hiddenWhole]);
     }
   }

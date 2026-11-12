@@ -136,11 +136,12 @@ jobs:
       - name: assert reward 1 and the detached child finished before the verifier
         run: |
           python scripts/foreman_bench.py table --preset bench/presets/smoke.json --jobs-dir "$RUNNER_TEMP/bench-jobs"
+          BENCH_RESULT="$(node scripts/foreman_ci_bench.mjs "$RUNNER_TEMP/bench-jobs")"
+          export BENCH_RESULT
           python - <<'EOF'
-          import glob, json, os
+          import json, os
           from datetime import datetime
-          files = [f for f in glob.glob(os.path.join(os.environ["RUNNER_TEMP"], "bench-jobs", "foreman-fake__detach-probe__r1__*", "*", "result.json"))]
-          r = [json.load(open(f)) for f in files if "trial_name" in json.load(open(f))][-1]
+          r = json.load(open(os.environ["BENCH_RESULT"]))
           assert r["verifier_result"]["rewards"]["reward"] == 1.0, r.get("exception_info")
           b = r["agent_result"]["metadata"]["bench"]
           runs = b["async_runs_at_end"]

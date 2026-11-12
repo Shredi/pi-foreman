@@ -93,7 +93,7 @@ class RefusalTest(unittest.TestCase):
 
 class BuildWorldTest(unittest.TestCase):
     def test_foreman_fake_row_names_the_allowing_review_model(self):
-        preset = json.loads((ROOT / "bench" / "presets" / "smoke.json").read_text())
+        preset = json.loads((ROOT / "bench" / "presets" / "smoke.json").read_text(encoding="utf-8"))
         r = next(x for x in preset["rows"] if x["id"] == "foreman-fake")
         cfg = ws.foreman_config(dict(r, roles={"foreman": {"model": "%s/foreman" % r["provider"]}}, _fake=True))
         self.assertEqual(cfg["providers"][r["provider"]]["review"]["model"], r["provider"] + "/review-allow")

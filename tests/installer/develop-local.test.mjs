@@ -25,6 +25,7 @@ function setupEnv(globalPackages) {
   fs.cpSync(path.join(ROOT, "config"), path.join(checkout, "config"), { recursive: true });
   fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(checkout, "extensions", "core-adapter", "profiles.mjs"));
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(checkout, "extensions", "core-adapter", "bridgelogin.mjs"));
   fs.writeFileSync(path.join(agentDir, "settings.json"), JSON.stringify({ packages: globalPackages({ agentDir, installed, checkout }) }));
   const r = spawnSync(process.execPath, [path.join(checkout, "setup.mjs"), "--develop", "--agent-dir", agentDir], {
     cwd: base, encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: `${base}-calls.jsonl` },

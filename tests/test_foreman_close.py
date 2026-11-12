@@ -226,7 +226,7 @@ class HandoverTest(Base):
         code, rep = self.report("--result", str(self.tmp / "result.md"))  # close.ts re-runs after sync
         self.assertEqual((code, rep["lines"], rep["handovers"]), (0, ["CLOSE: ready", "removed: %s" % wt], []))
         self.assertEqual(rep["removed"], [str(wt)])  # marked in the manifest, listed again, never a handover
-        self.assertIn("## Close\n\nCLOSE: ready\nremoved: %s\n" % wt, (self.tmp / "result.md").read_text())
+        self.assertIn("## Close\n\nCLOSE: ready\nremoved: %s\n" % wt, (self.tmp / "result.md").read_text(encoding="utf-8"))
 
     def test_sync_close_block_rejects_a_session_id_without_safe_characters(self):
         lines = fsync.close_block(str(self.state), "!!/..", str(self.repo), {}, False)

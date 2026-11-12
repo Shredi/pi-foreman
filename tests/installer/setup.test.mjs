@@ -211,9 +211,10 @@ test("lookalike package entries are not recognised as pi-foreman", () => {
 
 test("the bridge login hint is printed when pi-claude-bridge is a package", () => {
   const env = fresh();
-  assert.doesNotMatch(run(env, ["--dry-run"]).out, /log in once/);
+  const noToken = { CLAUDE_CODE_OAUTH_TOKEN: undefined };
+  assert.doesNotMatch(run(env, ["--dry-run"], noToken).out, /log in once/);
   seed(env, { packages: [FOREMAN, "npm:pi-claude-bridge@0.9.2"] });
-  assert.match(run(env, ["--dry-run"]).out, /pi-claude-bridge: log in once.*claude-config claude/);
+  assert.match(run(env, ["--dry-run"], noToken).out, /pi-claude-bridge: log in once.*claude-config claude/);
 });
 
 test("intercom config is written once (dry run shows it), never overwritten; trusted overrides warn", () => {
@@ -435,6 +436,7 @@ test("--develop writes <checkout>/.pi/settings.json (override of the installed p
   fs.cpSync(path.join(ROOT, "config"), path.join(checkout, "config"), { recursive: true });
   fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(checkout, "extensions", "core-adapter", "profiles.mjs"));
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(checkout, "extensions", "core-adapter", "bridgelogin.mjs"));
   const file = path.join(checkout, ".pi", "settings.json");
   fs.mkdirSync(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify({ theme: "light", packages: [FOREMAN, "npm:keep-me@1.0.0"] }));
@@ -1132,6 +1134,7 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   for (const d of ["scripts", "config", "core", "agents"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
   fs.mkdirSync(path.join(root, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(root, "extensions", "core-adapter", "profiles.mjs"));
+  fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(root, "extensions", "core-adapter", "bridgelogin.mjs"));
   seed(env, { packages: ["npm:pi-subagents@0.75.0", "npm:keep-me@1.0.0", FOREMAN] });
   const r = spawnSync(process.execPath, [path.join(root, "setup.mjs"), "--no-addons", "--agent-dir", env.agentDir], {
     cwd: env.cwd,

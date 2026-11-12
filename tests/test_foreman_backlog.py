@@ -62,7 +62,7 @@ class BacklogTest(unittest.TestCase):
         self.assertEqual((len(eid), how), (12, "created"))
         path, origin = self.store()
         self.assertEqual(origin, "central")
-        text = Path(path).read_text()
+        text = Path(path).read_text(encoding="utf-8")
         self.assertTrue(text.startswith("# Retro backlog: proj-"))
         self.assertIn("```retro-entry\nid: %s\nkind: permission\n" % eid, text)
         self.assertIn("evidence: asks=2 in file.py", text)
@@ -88,7 +88,7 @@ class BacklogTest(unittest.TestCase):
     def test_unknown_keys_preserved(self):
         self.rec([cand()])
         path = self.store()[0]
-        Path(path).write_text(Path(path).read_text().replace("status: open", "status: open\nnote: keep me"))
+        Path(path).write_text(Path(path).read_text(encoding="utf-8").replace("status: open", "status: open\nnote: keep me"))
         self.rec([cand()], session="s2")
         self.assertEqual(self.entries()[0]["note"], "keep me")
 
@@ -129,7 +129,7 @@ class BacklogTest(unittest.TestCase):
         path, origin = self.store("harness-bug")
         self.assertEqual((Path(path).name, origin), ("global.md", "global"))
         self.rec([cand(kind="harness-bug", text="guard crashed")])
-        self.assertIn("# Retro backlog: global", Path(path).read_text())
+        self.assertIn("# Retro backlog: global", Path(path).read_text(encoding="utf-8"))
 
     def test_repo_backlog_path_and_glob(self):
         for p in (str(self.ws), str(self.tmp / "pr*")):
@@ -158,7 +158,7 @@ class BacklogTest(unittest.TestCase):
         self.rec([cand(text="explorer read 40 files once")])
         out = self.tmp / "brief.md"
         self.cli("brief", "--out", str(out))
-        text = out.read_text()
+        text = out.read_text(encoding="utf-8")
         self.assertIn("never starts a session", text)
         self.assertNotIn("explorer read 40", text)
         self.assertLess(text.index("## skill"), text.index("## permission"))

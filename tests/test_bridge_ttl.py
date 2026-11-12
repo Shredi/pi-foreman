@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import _isolation  # noqa: E402,F401
 import foreman_config as fc  # noqa: E402
 
-CASES = json.loads((ROOT / "tests" / "fixtures" / "bridge_ttl_cases.json").read_text())["cases"]
+CASES = json.loads((ROOT / "tests" / "fixtures" / "bridge_ttl_cases.json").read_text(encoding="utf-8"))["cases"]
 
 
 def skip_of(pol):

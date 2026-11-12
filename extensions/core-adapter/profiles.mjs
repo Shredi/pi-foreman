@@ -441,7 +441,7 @@ const pkgModDir = (packageRoot, mod) => path.join(packageRoot, "integrations", "
 const installedModDir = (home, mod) => path.join(home, "mods", mod);
 const fromRel = (base, rel) => path.join(base, ...rel.split("/"));
 
-/** Source files missing from the installed copy or differing from it by bytes. Only installed mods are compared. */
+/** Source files missing from the installed copy, differing from it by bytes, or with a folder in their place. Only installed mods are compared. */
 export function diffMods({ packageRoot, appHome: home }) {
   const out = [];
   for (const mod of MODS) {
@@ -450,20 +450,45 @@ export function diffMods({ packageRoot, appHome: home }) {
     if (!isDir(installed) || !isDir(src)) continue;
     const files = sourceFiles(src).filter((rel) => {
       const have = fromRel(installed, rel);
-      return !fs.existsSync(have) || Buffer.compare(fs.readFileSync(fromRel(src, rel)), fs.readFileSync(have)) !== 0;
+      return !fs.existsSync(have) || isDir(have) || Buffer.compare(fs.readFileSync(fromRel(src, rel)), fs.readFileSync(have)) !== 0;
     });
     if (files.length) out.push({ mod, files });
   }
   return out;
 }
 
-/** Copies exactly the differing files into the installed mods (creating sub-folders); deletes nothing, installs no mod. `dryRun` writes nothing and returns the same list. */
+/** True when a refresh cannot write `rel` below `base`: a folder sits where the file belongs, or a file sits where one of its sub-folders belongs. */
+function inTheWay(base, rel) {
+  const parts = rel.split("/");
+  for (let i = 1; i < parts.length; i++) {
+    const dir = path.join(base, ...parts.slice(0, i));
+    if (fs.existsSync(dir) && !isDir(dir)) return true;
+  }
+  return isDir(fromRel(base, rel));
+}
+
+/** Splits a diff list into the entries a refresh writes and the entries it leaves alone because something else is in their place (`blocked`). */
+export function splitBlockedMods(home, changed) {
+  const writable = [];
+  const blocked = [];
+  for (const { mod, files } of changed) {
+    const base = installedModDir(home, mod);
+    const stuck = files.filter((rel) => inTheWay(base, rel));
+    if (stuck.length) blocked.push({ mod, files: stuck });
+    const rest = files.filter((rel) => !stuck.includes(rel));
+    if (rest.length) writable.push({ mod, files: rest });
+  }
+  return { writable, blocked };
+}
+
+/** Copies exactly the differing files into the installed mods (creating sub-folders); deletes nothing, installs no mod; a file or folder in the way of a copy is left as it is (the diff keeps reporting it; `splitBlockedMods` names it). `dryRun` writes nothing and returns the same list. */
 export function refreshMods({ packageRoot, appHome: home, dryRun = false }) {
   const changed = diffMods({ packageRoot, appHome: home });
   if (dryRun) return changed;
   for (const { mod, files } of changed) {
     for (const rel of files) {
       const to = fromRel(installedModDir(home, mod), rel);
+      if (inTheWay(installedModDir(home, mod), rel)) continue;
       fs.mkdirSync(path.dirname(to), { recursive: true });
       fs.copyFileSync(fromRel(pkgModDir(packageRoot, mod), rel), to);
     }

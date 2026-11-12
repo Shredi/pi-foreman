@@ -1,10 +1,11 @@
 // Bridge isolation: keeps the host's Claude Code config (settings, hooks, plugins, CLAUDE.md)
 // out of claude-bridge turns by pointing CLAUDE_CONFIG_DIR at an empty folder. The bridge
 // spawns its SDK child with `{...process.env}` at query time, so setting it here is enough.
-import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { isolationDir, keychainService, loginSigns, macKeychainProbe } from "./bridgelogin.mjs";
+
+export { isolationDir, keychainService, macKeychainProbe };
 
 export const BRIDGE_PROVIDER = "claude-bridge";
 
@@ -32,11 +33,6 @@ export function isolationOn(setting: unknown, provider: string | undefined): boo
   if (setting === true) return true;
   if (setting === false) return false;
   return provider === BRIDGE_PROVIDER;
-}
-
-/** setup.mjs bridgeLoginPresent mirrors this dir, keychainService and the login check in isolationDoctor; keep them in step. */
-export function isolationDir(agentDir: string): string {
-  return path.join(agentDir, "pi-foreman", "claude-config");
 }
 
 export class BridgeIsolation {
@@ -68,18 +64,7 @@ export class BridgeIsolation {
   }
 }
 
-/** Claude Code's macOS keychain service for a non-default config dir. */
-export function keychainService(dir: string): string {
-  return `Claude Code-credentials-${createHash("sha256").update(dir.normalize("NFC")).digest("hex").substring(0, 8)}`;
-}
-
 export type KeychainProbe = (service: string) => boolean;
-
-/** Presence only: `security find-generic-password -s` without -w/-g prints no secret. */
-export const macKeychainProbe: KeychainProbe = (service) => {
-  const r = spawnSync("security", ["find-generic-password", "-s", service], { stdio: "ignore", timeout: 5000 });
-  return r.status === 0;
-};
 
 /** Settings keys that load or run code, beyond COMMAND_SETTINGS_KEYS (defined below): MCP servers spawn processes. */
 const EXTRA_CODE_KEYS = ["mcpServers"];
@@ -164,10 +149,7 @@ export function isolationDoctor(input: IsoDoctorInput): string[] {
   for (const i of info) out.push(`INFO bridge isolation folder ${i}`);
   const cloud = CLOUD_ENTRIES.filter((e) => fs.existsSync(path.join(input.dir, e)));
   if (cloud.length) out.push(`INFO bridge isolation folder holds cloud-fetched ${cloud.join(", ")} (written by Claude Code from the account's managed settings; not host config)`);
-  const login: string[] = [];
-  if (fs.existsSync(path.join(input.dir, ".credentials.json"))) login.push("credentials file");
-  if (input.platform === "darwin" && (input.keychain ?? macKeychainProbe)(keychainService(input.dir))) login.push("keychain entry");
-  if (input.env.CLAUDE_CODE_OAUTH_TOKEN) login.push("CLAUDE_CODE_OAUTH_TOKEN set");
+  const login: string[] = [...loginSigns(input.dir, { env: input.env, platform: input.platform, keychain: input.keychain })];
   if (login.length) out.push(`OK   bridge login present (${login.join(", ")})`);
   else out.push(`WARN bridge login not found for ${input.dir} — fix: run CLAUDE_CONFIG_DIR=${input.dir} claude, then /login; or set CLAUDE_CODE_OAUTH_TOKEN (claude setup-token).`);
   return out;

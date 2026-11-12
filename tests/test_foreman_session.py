@@ -108,8 +108,8 @@ class SessionTest(unittest.TestCase):
         handoff = Path(entry["handoff"])
         self.assertEqual((entry["status"], entry["pane"], entry["label"]), ("open", "w2:p7", "demo"))
         self.assertRegex(entry["child"], r"^fm-demo-[0-9a-f]{6}$")
-        self.assertEqual((handoff / "parent").read_text().strip(), "parent-1")
-        self.assertEqual((handoff / "child").read_text().strip(), entry["child"])
+        self.assertEqual((handoff / "parent").read_text(encoding="utf-8").strip(), "parent-1")
+        self.assertEqual((handoff / "child").read_text(encoding="utf-8").strip(), entry["child"])
         self.assertTrue(handoff.parent == self.agent / "pi-foreman" / "handoffs")
         words = shlex.split(calls[2][3].split("; ", 1)[1])  # after the status-line printf
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",

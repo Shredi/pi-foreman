@@ -66,7 +66,7 @@ class Store(unittest.TestCase):
 
     def lines(self):
         p = self.agent / "pi-foreman" / "state" / "findings" / "s1.jsonl"
-        return [json.loads(ln) for ln in p.read_text().splitlines()]
+        return [json.loads(ln) for ln in p.read_text(encoding="utf-8").splitlines()]
 
     def test_record_writes_review_and_finding_and_prints_json(self):
         rc, out, _e = self.record()
@@ -149,12 +149,12 @@ class Export(unittest.TestCase):
         self.assertEqual((rc, err), (0, ""))
         task = Path(stdout.strip())
         self.assertEqual(rb.validate_task(task), [])
-        self.assertEqual((task / "base" / "src" / "app.py").read_text().count("changed"), 0)
-        self.assertIn("+line 20 changed", (task / "diff.patch").read_text())
-        gt = json.loads((task / "ground_truth.json").read_text())
+        self.assertEqual((task / "base" / "src" / "app.py").read_text(encoding="utf-8").count("changed"), 0)
+        self.assertIn("+line 20 changed", (task / "diff.patch").read_text(encoding="utf-8"))
+        gt = json.loads((task / "ground_truth.json").read_text(encoding="utf-8"))
         self.assertEqual((gt["clean"], gt["defects"][0]["lines"], gt["defects"][0]["description"]),
                          (False, [17, 23], "missing check"))
-        harvest = json.loads((task / "harvest.json").read_text())
+        harvest = json.loads((task / "harvest.json").read_text(encoding="utf-8"))
         self.assertEqual((harvest["source"], harvest["confirmed"], harvest["findingId"]), ("harvest", False, "abc123abc123"))
         self.assertEqual([t.name for t in rb.find_tasks(out)], [task.name])
         self.assertTrue(rb.unconfirmed_harvest(task))

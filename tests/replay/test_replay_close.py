@@ -40,7 +40,7 @@ class TestRemoteClose(ReplayCase):
         self.assertEqual(pi.proc.poll(), 0, "\n".join(pi.stderr[-15:]))
         res = tool_results(pi.seen)
         self.assertEqual([(n, e) for n, e, _ in res], [("write", False)], res)
-        self.assertIn("replay close", (rig.project / ".workflow" / "result-close.md").read_text())
+        self.assertIn("replay close", (rig.project / ".workflow" / "result-close.md").read_text(encoding="utf-8"))
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
         self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "report", "shutdown"])
@@ -99,7 +99,7 @@ class TestRemoteClose(ReplayCase):
         while a.proc.poll() is None and time.time() < deadline:
             time.sleep(0.2)
         self.assertEqual(a.proc.poll(), 0, "\n".join(a.stderr[-15:]))
-        self.assertIn("replay close", (rig.project / ".workflow" / "result-close.md").read_text())
+        self.assertIn("replay close", (rig.project / ".workflow" / "result-close.md").read_text(encoding="utf-8"))
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
         trace = rig.traces()["trace-" + safe]
         self.assertEqual([r["decision"] for r in trace if r.get("event") == "close"], ["accepted", "turn", "synced", "report", "shutdown"])

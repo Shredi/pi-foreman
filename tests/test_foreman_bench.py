@@ -704,7 +704,7 @@ class RetryAndPrebakedTests(unittest.TestCase):
             fake = ('n=$(cat "%s" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "%s"; [ $n -gt %d ]'
                     % (counter.as_posix(), counter.as_posix(), fail_times))
             code = subprocess.run(["sh", "-c", prefix + ha.retry_sh(fake, pause=0)]).returncode
-            return code, int(counter.read_text())
+            return code, int(counter.read_text(encoding="utf-8"))
         finally:
             shutil.rmtree(d, ignore_errors=True)
 

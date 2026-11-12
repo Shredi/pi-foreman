@@ -107,7 +107,7 @@ class ConfigTest(unittest.TestCase):
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
         self.assertTrue(presets)
         for preset in presets:  # opt-in overlay files: valid as an L2 layer, never merged by default
-            self.l2(json.loads(preset.read_text()))
+            self.l2(json.loads(preset.read_text(encoding="utf-8")))
             self.assertEqual(self.load()["errors"], [], preset.name)
 
     def test_deny_tools_union_across_layers(self):
@@ -439,7 +439,7 @@ class ConfigTest(unittest.TestCase):
         self.l2({"quiet": True, "fanout": {"max": 2}, "ladder": {"childPolicy": "any"}})
         rc, _o, _e = self.apply("google")
         self.assertEqual(rc, 0)
-        text = (self.agent / "foreman.json").read_text()
+        text = (self.agent / "foreman.json").read_text(encoding="utf-8")
         self.assertTrue(text.endswith("}\n"))
         got = json.loads(text)
         self.assertEqual((got["quiet"], got["fanout"]["max"]), (True, 2))
@@ -448,7 +448,7 @@ class ConfigTest(unittest.TestCase):
         baks = sorted(p.name for p in self.agent.glob("foreman.json.bak-*"))
         self.assertEqual(len(baks), 1)
         self.assertTrue(re.fullmatch(r"foreman\.json\.bak-\d{8}", baks[0]))
-        self.assertEqual(json.loads((self.agent / baks[0]).read_text())["fanout"]["max"], 2)
+        self.assertEqual(json.loads((self.agent / baks[0]).read_text(encoding="utf-8"))["fanout"]["max"], 2)
         self.assertEqual(self.load()["errors"], [])
         self.apply("google")
         baks = sorted(p.name for p in self.agent.glob("foreman.json.bak-*"))
@@ -461,16 +461,16 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(list(self.agent.iterdir()), [])
         self.assertEqual(json.loads(out)["providers"]["google"]["roles"]["foreman"]["model"], "google/other-model")
         self.assertEqual(self.apply("google", "--foreman", "google/other-model")[0], 0)
-        got = json.loads((self.agent / "foreman.json").read_text())
+        got = json.loads((self.agent / "foreman.json").read_text(encoding="utf-8"))
         self.assertEqual(got["providers"]["google"]["roles"]["foreman"]["model"], "google/other-model")
         self.assertEqual(list(self.agent.glob("foreman.json.bak-*")), [])  # no file before: no backup
 
     def test_apply_preset_refuses_invalid_merge_and_unknown_name(self):
         self.l2({"maxThinking": "bogus"})
-        before = (self.agent / "foreman.json").read_text()
+        before = (self.agent / "foreman.json").read_text(encoding="utf-8")
         rc, _o, err = self.apply("google")
         self.assertEqual(rc, 1)
-        self.assertEqual((self.agent / "foreman.json").read_text(), before)
+        self.assertEqual((self.agent / "foreman.json").read_text(encoding="utf-8"), before)
         self.assertEqual(list(self.agent.glob("foreman.json.bak-*")), [])
         rc, _o, err = self.apply("nope")
         self.assertEqual(rc, 2)
@@ -540,7 +540,7 @@ def review_loop_rewrite(want):
 
 class PackageFilesTest(unittest.TestCase):
     def test_package_json_private(self):
-        pkg = json.loads((ROOT / "package.json").read_text())
+        pkg = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
         self.assertIs(pkg["private"], True)
         self.assertEqual(pkg["name"], "pi-foreman")
 
@@ -548,7 +548,7 @@ class PackageFilesTest(unittest.TestCase):
         files = sorted(p.name for p in (ROOT / "agents").iterdir())
         self.assertEqual(files, sorted(r + ".md" for r in fc.CHILD_ROLES))
         for name in files:
-            text = (ROOT / "agents" / name).read_text()
+            text = (ROOT / "agents" / name).read_text(encoding="utf-8")
             front = text.split("---")[1]
             self.assertRegex(front, r"(?m)^async: true$", name)
             self.assertRegex(front, r"(?m)^name: " + re.escape(name[:-3]) + "$", name)
@@ -556,14 +556,14 @@ class PackageFilesTest(unittest.TestCase):
             self.assertLessEqual(len(text.splitlines()), 30, name)
 
     def test_research_lines_in_explorer_and_foreman_prompts(self):
-        explorer = (ROOT / "agents" / "explorer.md").read_text()
+        explorer = (ROOT / "agents" / "explorer.md").read_text(encoding="utf-8")
         self.assertIn("reported as missing under Gaps", explorer)
         self.assertNotIn("no network task", explorer.lower())
-        kept = render_prompt((ROOT / "instructions" / "foreman.md").read_text(), {"research": "on"})
+        kept = render_prompt((ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8"), {"research": "on"})
         self.assertIn("tag the explorer launch `[research]`", kept)
 
     def test_foreman_instructions_neutral(self):
-        text = (ROOT / "instructions" / "foreman.md").read_text().lower()
+        text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8").lower()
         # tagged variant lines (<!--key=a|b-->, ledgercall.ts applyVariants): each rendering counts
         for mode in ("tool", "bash", "off"):
             for heavy in ("strict", "eee843d"):
@@ -580,7 +580,7 @@ class PackageFilesTest(unittest.TestCase):
         old = subprocess.run(["git", "show", "eee843d:instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
         if old.returncode != 0:
             self.skipTest("commit eee843d not available")
-        text = (ROOT / "instructions" / "foreman.md").read_text()
+        text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         # trivialPath "off" = ceremony.required.trivial without builder; ladder "off" = the pre-ladder model line
         # (the adapter always renders ladder "on"); factRulings "off" = no rule on foreman rulings, reviewMarks "off" = no harness marks after a PASS (both always "on" too).
         knobs = {"ledgerHelper": "off", "heavyThreshold": "eee843d", "reviewPerRevision": "off", "trivialPath": "off", "ladder": "off", "factRulings": "off", "launchBriefs": "off", "reviewMarks": "off", "research": "off", "tools.pr": "off", "show": "off"}  # show "off" = no foreman_show explain rule (always "on" too)
@@ -639,21 +639,21 @@ class SlimRolesTest(unittest.TestCase):
     """Three launchable roles; the reviewer is modular (security-review skill); the rules text names no removed role."""
 
     def test_default_roles_are_foreman_session_foreman_explorer_builder_reviewer(self):
-        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())
+        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text(encoding="utf-8"))
         self.assertEqual(sorted(defaults["roles"]), ["builder", "explorer", "foreman", "reviewer", "session-foreman"])
         self.assertEqual(fc.CHILD_ROLES, ["explorer", "builder", "reviewer"])
         self.assertEqual(defaults["ceremony"]["required"]["heavy"], ["builder", "reviewer"])
         self.assertEqual(fc.REQUIRED_STEPS, ["builder", "reviewer"])
 
     def test_reviewer_default_skills_name_security_review(self):
-        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())
+        defaults = json.loads((ROOT / "config" / "foreman.defaults.json").read_text(encoding="utf-8"))
         self.assertEqual(defaults["roles"]["reviewer"]["skills"], ["security-review"])
         res = fc.load_config(agent_dir=tempfile.gettempdir() + os.sep + "pf-no-such-agent-dir")
         self.assertEqual((res["warnings"], res["errors"]), ([], []))
         self.assertEqual(res["config"]["roles"]["reviewer"]["skills"], ["security-review"])
 
     def test_security_review_skill_parses_with_its_name(self):
-        text = (ROOT / "skills" / "security-review" / "SKILL.md").read_text()
+        text = (ROOT / "skills" / "security-review" / "SKILL.md").read_text(encoding="utf-8")
         m = re.match(r"---\n(.*?)\n---\n", text, re.S)
         self.assertIsNotNone(m)
         front = dict(line.split(": ", 1) for line in m.group(1).splitlines())
@@ -661,7 +661,7 @@ class SlimRolesTest(unittest.TestCase):
         self.assertLess(len(front["description"]), 1024)
 
     def test_default_rules_render_has_the_loop_rule_and_names_no_removed_role(self):
-        text = (ROOT / "instructions" / "foreman.md").read_text()
+        text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         values = {"ledgerhelper": "tool", "heavythreshold": "strict", "reviewperrevision": "on", "trivialpath": "builder", "ladder": "on",
                   "factrulings": "on", "launchbriefs": "on", "reviewmarks": "on", "research": "on", "planreview": "on", "tools.pr": "on"}
         kept = render_prompt(text, values)
@@ -686,7 +686,7 @@ class SessionForemanRoleTest(unittest.TestCase):
             self.assertNotIn(fc.SESSION_FOREMAN, entries)
 
     def test_resolve_maps_for_claude_bridge_and_is_none_when_unmapped(self):
-        preset = json.loads((ROOT / "config" / "presets" / "claude-bridge.json").read_text())
+        preset = json.loads((ROOT / "config" / "presets" / "claude-bridge.json").read_text(encoding="utf-8"))
         res = fc.resolve_session_foreman({"providers": preset["providers"]}, "claude-bridge")
         self.assertEqual(res["model"], "claude-bridge/claude-opus-5-5")
         # unmapped: None means the session keeps its own (foreman) model
@@ -697,7 +697,7 @@ class SessionForemanRoleTest(unittest.TestCase):
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
         self.assertTrue(presets)
         for preset in presets:
-            providers = json.loads(preset.read_text()).get("providers", {})  # rank-tier templates carry none
+            providers = json.loads(preset.read_text(encoding="utf-8")).get("providers", {})  # rank-tier templates carry none
             for name in providers:
                 res = fc.resolve_session_foreman({"providers": providers}, name)
                 self.assertTrue(res and res["model"], "%s/%s" % (preset.name, name))

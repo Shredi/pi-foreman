@@ -34,7 +34,7 @@ class BinLedgerRetryTest(unittest.TestCase):
             proc = subprocess.run(
                 ["sh", str(SHIM), "mark", "1"], env=env, capture_output=True, text=True, timeout=30
             )
-            runs = len(counter.read_text().splitlines())
+            runs = len(counter.read_text(encoding="utf-8").splitlines())
             return proc, runs, list(state.iterdir())
 
     def test_marker_twice_then_success(self):

@@ -332,6 +332,9 @@ pi update git:github.com/Shredi/pi-foreman    # or: pi update --extensions
 foreman setup                                 # regenerate the managed block after an update
 ```
 
+After an update, reload or restart running sessions: a running session keeps the code it loaded and can call a file
+the update removed.
+
 Pi runs `git clean -fdx` in the clone on update, so never edit files under `<agentDir>/git/...`; edit a checkout
 (see [Developing](#developing)). To remove: `foreman setup --remove` (or `/foreman setup --remove`) drops the managed
 `settings.json` keys and the permission config it wrote, then `pi remove git:github.com/Shredi/pi-foreman` (add `-l`

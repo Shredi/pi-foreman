@@ -1,4 +1,4 @@
-"""r68: MCP tools on demand in a real Pi child, narrowed by the launch (replay fixture child_mcp_scope).
+"""r68: the MCP scope a launch names, in a real Pi child (a declared tool runs, codemode cannot reach one outside the launch) (replay fixture child_mcp_scope).
 
 roles.builder.mcp lists fx; the launch names fx/echo (`mcp` on subagent). echo is declared up front in the child's tool list,
 so tool_search finds nothing to load and the call runs. mcp__fx__shout, outside the launch, is never registered, so its call
