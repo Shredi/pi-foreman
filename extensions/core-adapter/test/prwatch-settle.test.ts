@@ -48,7 +48,7 @@ test("required unreadable (null or absent): a pass is held for the settle time, 
     const s = snap({ runs: [run("a", "passed")], ...(required === null ? { required } : {}) });
     const first = prDelta(base, s, false, undefined, "", undefined, true, at(0));
     assert.equal(first.delta, null);
-    assert.deepEqual(first.state.passSince, { head: SHA, sig: "a", at: 0 });
+    assert.deepEqual(first.state.passSince, { head: SHA, sig: "a#a", at: 0 });
     const inside = prDelta(first.state, s, false, undefined, "", undefined, true, at(SETTLE - 1));
     assert.equal(inside.delta, null);
     const after = prDelta(inside.state, s, false, undefined, "", undefined, true, at(SETTLE));
@@ -77,7 +77,7 @@ test("head changes again inside the settle time: the time restarts on the new he
   const first = prDelta(base, snap({ runs: [run("a", "passed")], required: [] }), false, undefined, "", undefined, true, at(0));
   const pushed = prDelta(first.state, snap({ head: SHA2, runs: [run("a", "passed")], required: [] }), false, undefined, "", undefined, true, at(SETTLE - 10));
   assert.equal(pushed.delta, null);
-  assert.deepEqual(pushed.state.passSince, { head: SHA2, sig: "a", at: SETTLE - 10 });
+  assert.deepEqual(pushed.state.passSince, { head: SHA2, sig: "a#a", at: SETTLE - 10 });
   const early = prDelta(pushed.state, snap({ head: SHA2, runs: [run("a", "passed")], required: [] }), false, undefined, "", undefined, true, at(SETTLE + 10));
   assert.equal(early.delta, null);
   const done = prDelta(early.state, snap({ head: SHA2, runs: [run("a", "passed")], required: [] }), false, undefined, "", undefined, true, at(SETTLE - 10 + SETTLE));
@@ -100,6 +100,17 @@ test("a rerun inside the settle time (a pending run between) restarts it even wi
   const rerun = prDelta(first.state, snap({ runs: [run("a", "pending")], required: [] }), false, undefined, "", undefined, true, at(SETTLE - 10));
   const again = prDelta(rerun.state, snap({ runs: [run("a", "passed")], required: [] }), false, undefined, "", undefined, true, at(SETTLE + 10));
   assert.equal(again.delta, null);
+});
+
+test("same names, a new run id inside the settle time: the time restarts", () => {
+  const base = baselineOf(snap({ runs: [run("a", "pending")], required: [] }));
+  const first = prDelta(base, snap({ runs: [run("a", "passed")], required: [] }), false, undefined, "", undefined, true, at(0));
+  const rerun = snap({ runs: [{ ...run("a", "passed"), id: "a-2" }], required: [] });
+  const second = prDelta(first.state, rerun, false, undefined, "", undefined, true, at(SETTLE - 10));
+  assert.equal(second.delta, null);
+  assert.deepEqual(second.state.passSince, { head: SHA, sig: "a#a-2", at: SETTLE - 10 });
+  assert.equal(prDelta(second.state, rerun, false, undefined, "", undefined, true, at(SETTLE + 10)).delta, null);
+  assert.deepEqual(prDelta(second.state, rerun, false, undefined, "", undefined, true, at(SETTLE - 10 + SETTLE)).delta?.events, ["checks finished: pass"]);
 });
 
 test("draft PR: 'checks finished: pass, draft' is held like any pass", () => {

@@ -1316,13 +1316,13 @@ def op_pr_batch(req):
                     "reviewDecision": _enum(pr.get("reviewDecision"), ("approved", "changes_requested", "review_required")),
                     "headRefName": s_or_none(pr.get("headRefName"), 200), "checks": map_rollup(roll)}
         if watch:
-            req = required_checks(pr, [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]])
-            runs = watch_runs(roll, req)
+            required = required_checks(pr, [x for x in errs if isinstance(x.get("path"), list) and x["path"][:1] == [alias]])
+            runs = watch_runs(roll, required)
             hr = pr.get("headRepository")
             item.update({"headSha": s_or_none(pr.get("headRefOid"), 64), "baseRef": s_or_none(pr.get("baseRefName"), 200),
                          "headRepo": s_or_none(hr.get("nameWithOwner"), 140) if isinstance(hr, dict) else None,
                          "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": runs,
-                         "required": readable_required(req, roll, runs),
+                         "required": readable_required(required, roll, runs),
                          "mergeState": _enum(pr.get("mergeStateStatus"), MERGE_STATES)})
         prs.append(item)
     return {"action": "pr_batch", "prs": prs, "errors": errors}

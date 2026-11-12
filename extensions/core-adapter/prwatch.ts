@@ -291,7 +291,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   // while the ready line is still to come the hold covers it too (a watch armed inside the window starts with the early pass as reported)
   let held = false;
   if (s.result === "pass" && gate && gate.settleMs > 0 && !snap.required?.length && (st.ci !== `${snap.head}:pass` || (child && st.readyHead !== snap.head))) {
-    const sig = gating.map((r) => r.name).sort().join("\n");
+    const sig = gating.map((r) => `${r.name}#${rid(r)}`).sort().join("\n");
     if (st.passSince?.head !== snap.head || st.passSince.sig !== sig) st.passSince = { head: snap.head, sig, at: gate.now };
     held = gate.now - st.passSince.at < gate.settleMs;
     if (held && st.ci !== `${snap.head}:pass`) s = { settled: false, result: "" };
