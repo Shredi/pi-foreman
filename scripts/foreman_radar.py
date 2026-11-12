@@ -711,6 +711,12 @@ def build(data, now):
                 prs = [p for p in (w.get("prs") or []) if isinstance(p, int) and not isinstance(p, bool)]
                 if prs:
                     wn["prs"] = prs
+                refs = [{"n": u["n"], "repo": str(u["repo"]), "host": str(u.get("host") or "")}
+                        for u in (w.get("prRefs") or []) if isinstance(w.get("prRefs"), list)
+                        if isinstance(u, dict) and isinstance(u.get("n"), int) and not isinstance(u.get("n"), bool)
+                        and isinstance(u.get("repo"), str) and u["repo"]]
+                if refs:  # the watched PRs with their repository (a PR of another repository than the session's)
+                    wn["prRefs"] = refs
                 unrev = [{"n": u["n"], "repo": str(u.get("repo") or ""), "host": str(u.get("host") or "")}
                          for u in (w.get("unreviewed") or [])
                          if isinstance(u, dict) and isinstance(u.get("n"), int) and not isinstance(u.get("n"), bool)]
