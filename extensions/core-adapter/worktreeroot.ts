@@ -374,9 +374,9 @@ export function treeRootOf(cwd: string, ceiling: string | null | undefined, top:
 }
 
 /**
- * The ceiling of a child session (the git guard lifts the start top up to it only): the round worktree of the foreman session holding `cwd`, else the launch
- * binding's workspace when it holds `cwd`, else the workspace top of `cwd`. Always contains `cwd`; "" for none. Never throws: git-guard is a required
- * child extension and a failure at its session start would fail the child.
+ * The ceiling of a child session (the start top is lifted up to it only): the round worktree of the foreman session holding `cwd`, else the launch
+ * binding's workspace when it holds `cwd`, else the workspace top of `cwd`. Always contains `cwd`; "" for none. Never throws: a failure at a child's
+ * session start would fail the child.
  */
 export function treeCeilingOf(i: { cwd: string; agentDir: string; foremanSession?: string | null; binding?: { workspace?: string | null } | null }): string {
   try {

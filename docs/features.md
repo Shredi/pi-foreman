@@ -77,12 +77,11 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
 | [protected-targets](#protected-targets) | safety |  | on | `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog. | on by default | [permissions](permissions.md#protected-targets) |
 | [review-critic](#review-critic) | review |  | on | Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
-| [git-guard](#git-guard) | safety |  | on | Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head. | on by default | [safety](safety.md#git-guard-and-pr-gate) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
 | [pr-sources](#pr-sources) | tools |  | opt-in | Lets the PR tracker run programs you configure per open PR to learn checks and comments GitHub does not have (an internal CI, a review bot), and lets ordered wake rules pick which watch events wake the session; source output is untrusted data and both settings are read from user or overlay config only. | `{"tools": {"prSources": {"ci": {"command": "ci-status --repo {repo} --pr {number} --sha {head}"}}}}` | [tools](tools.md#sources) |
 | [sidebar-status](#sidebar-status) | ui |  | opt-in | Runs a command you configure on an interval and shows its JSON items (label and state) as extra dots on the Herdr sidebar; the items are display data only, the program must lie outside the workspace, and the setting is read from user or overlay config only. | `{"sidebar": {"statusCommand": "/path/to/your-status-program", "statusSeconds": 60}}` | [herdr](herdr.md#external-status) |
-| [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#git-guard-and-pr-gate) |
+| [children-may-push](#children-may-push) | safety | toggle, relaxes safety | off | Lets subagent children push; by default they may commit but never push, and they never open PRs. | `{"safety": {"children": {"mayPush": true}}}` | [safety](safety.md#what-the-gate-floors-cover) |
 | [review-required](#review-required) | review | toggle | off | Requires a review before close-out in every session. | `{"safety": {"review": {"required": true}}}` | [safety](safety.md#further-safety-and-runtime-keys) |
 | [workflow-scripts](#workflow-scripts) | safety | toggle, relaxes safety | off | Lets the foreman run pi-subagents workflow scripts and `schedule.*` calls, which can launch any agent outside the role map; they stay refused at tier heavy. | `{"safety": {"subagents": {"allowWorkflow": true}}}` | [ceremony](ceremony.md#triage-and-delegation) |
 | [guards](#guards) | safety |  | on | Loads the guard extensions into every child, sets the limits of the precondition-checked copy and worktree-remove tools, and picks the Python that runs every guard. | on by default | [safety](safety.md#further-safety-and-runtime-keys) |
@@ -542,19 +541,6 @@ No config key.
 |---|---|---|
 | `review.critic` | `["(1) Is this lean — how would Claude Code solve it, and is a deterministic rule, a classifier rule or a human the right layer?", "(2) Real repeated friction or a reviewer-invented edge case?", "(3) Code or config we would not miss? (an item failing this is dropped, not built)", "(4) Does it move toward the Pi top-chair switch?"]` | any layer |
 
-### git-guard
-
-**Git guard and PR gate.** Lints the foreman's commits and pushes (protected branches, message pattern, trailers, an optional check command) and refuses a PR without a reviewer PASS on the current head.
-
-| Key | Default | Layer |
-|---|---|---|
-| `ceremony.reviewBeforePr` | `true` | tighten-only (only true is accepted) |
-| `safety.git.protectedBranches` | `["main", "master"]` | tighten-only (entries are added, never removed) |
-| `safety.git.commit.messagePattern` | `"^(feat\|fix\|docs\|style\|refactor\|perf\|test\|build\|ci\|chore\|revert)(\\([A-Za-z0-9._/-]+\\))?!?: \\S\|^merge: \\S"` | not in project/session (no tighten rule for this safety key) |
-| `safety.git.commit.requiredTrailers` | `[]` | tighten-only (entries are added, never removed) |
-| `safety.git.commit.forbiddenTrailers` | `[]` | tighten-only (entries are added, never removed) |
-| `safety.git.commit.checkCommand` | `null` | not in project/session (no tighten rule for this safety key) |
-
 ### git-tools
 
 **Git tool pack.** Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace.
@@ -573,6 +559,7 @@ Switch: `tools.pr` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `ceremony.reviewBeforePr` | `true` | tighten-only (only true is accepted) |
 | `tools.pr` | `true` | tighten-only (only false is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prGithubHosts` | unset | not in project/session (the GitHub hosts of the PR tracker come from the user or overlay config) |
@@ -844,6 +831,11 @@ No config key.
 | `gate.tmpAccess` | `true` | tighten-only (only false is accepted) |
 | `gate.readTools` | `{}` | not in project/session (user or overlay config only) |
 | `gate.logMaxBytes` | `20971520` | not in project/session (user or overlay config only) |
+| `safety.git.protectedBranches` | `["main", "master"]` | tighten-only (entries are added, never removed) |
+| `safety.git.commit.messagePattern` | unset | any layer (no longer used) |
+| `safety.git.commit.requiredTrailers` | unset | any layer (no longer used) |
+| `safety.git.commit.forbiddenTrailers` | unset | any layer (no longer used) |
+| `safety.git.commit.checkCommand` | unset | any layer (no longer used) |
 
 ### rule-workshop
 

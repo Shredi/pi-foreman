@@ -1,7 +1,7 @@
 // pi-foreman shell write guard (`scripts/shell_write_guard.py`, plan D3): the foreman's bash
 // (and its opt-in powershell tool) may not write project files at any tier. Its edit/write tools (measured by the trivial bound)
 // or a builder are the only paths; `.workflow/` stays writable. Children are not affected.
-// The script lives in the package's `scripts/`, not in `core/`. Fail-closed like the git guard.
+// The script lives in the package's `scripts/`, not in `core/`. Fail-closed like the destructive guard.
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";

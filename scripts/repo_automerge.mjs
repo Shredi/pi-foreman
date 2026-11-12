@@ -112,6 +112,12 @@ export function main(argv, { gh = ghApi, log = console.log } = {}) {
     }
     const current = json(got.text);
     if (!current) throw new Error("branch protection answer is not JSON");
+    if (!apply) {
+      const line = (label, open, state) => log(`  ${label}: ${state}${open ? " WARN" : " OK"}`);
+      line(`force pushes to ${branch}`, on(current.allow_force_pushes), on(current.allow_force_pushes) ? "allowed" : "not allowed");
+      line(`deletion of ${branch}`, on(current.allow_deletions), on(current.allow_deletions) ? "allowed" : "not allowed");
+      line("protection includes admins", !on(current.enforce_admins), on(current.enforce_admins) ? "yes" : "no (admins can bypass it)");
+    }
     const rsc = current.required_status_checks;
     const patch = rsc ? write("PATCH", `${base}/required_status_checks`, { strict: rsc.strict === true, contexts: list }) : { ok: false, text: "HTTP 404 required status checks not enabled" };
     if (!patch.ok) {

@@ -1,11 +1,12 @@
 """Replay: review before PR (ledger items 10-12, 17) on the fake provider, permissions="baseline".
 
-One foreman session walks the gate: `gh pr create` with no review is refused (no_review); a
-reviewer PASS at HEAD lets it through; a new commit makes the review stale; a `git push -o
-merge_request.create` is gated like it, `-o ci.skip` is not; a registered package PR tool goes
-through the permission system (the owner allows it) and is gated too. A child's `gh pr create`
-is refused (child) and a workspace that is not a repository refuses (head_unknown). `gh` is a
-fake program on PATH that leaves a marker file, so "allowed" means the program really ran.
+One foreman session walks the gate: a shell `gh pr create` is not refused for a missing or stale
+review (the PR watch reports an unreviewed head instead); a `git push -o merge_request.create` on
+the default branch meets the push floor, `-o ci.skip` is not gated by the PR rule; a registered
+package PR tool goes through the permission system (the owner allows it) and is refused without a
+reviewer PASS at HEAD (no_review, stale_review). A child's `gh pr create` is refused (child) and
+the PR tool in a workspace that is not a repository refuses (head_unknown). `gh` is a fake
+program on PATH that leaves a marker file, so "allowed" means the program really ran.
 
 Run: python -m unittest discover -s tests/replay -v (same prerequisites as test_replay.py).
 """
@@ -62,23 +63,19 @@ class TestPrGate(ReplayCase):
         rig, env, marker = self.pr_rig("prgate")
         pi = rig.start(env=env)
 
+        # a shell-opened PR is not refused for a missing review (the watch reports an unreviewed head)
         none = last(self.attempt(pi, "pr-gh"))
-        self.assertTrue(none[1], none)
-        self.assertIn("pr_refused:no_review", none[2])
-        self.assertFalse(marker.exists(), "gh ran without a review")
+        self.assertFalse(none[1], none)
+        self.assertNotIn("pr_refused", none[2])
+        self.assertIn("fake gh ran", none[2])
+        self.assertTrue(marker.exists(), "gh did not run without a review")
 
         self.attempt(pi, "pr-review")
         pi.wait_child_notify(timeout=120, answers=ASK_YES)
-        ok = last(self.attempt(pi, "pr-gh"))
-        self.assertFalse(ok[1], ok)
-        self.assertIn("fake gh ran", ok[2])
-        self.assertTrue(marker.exists(), "gh did not run after a PASS at HEAD")
-
         commit(rig.project, "feat: more work after the review")
         stale = last(self.attempt(pi, "pr-gh"))
-        self.assertTrue(stale[1], stale)
-        self.assertIn("pr_refused:stale_review", stale[2])
-        self.assertIn("reviewer", stale[2])
+        self.assertFalse(stale[1], stale)
+        self.assertNotIn("pr_refused", stale[2])
 
         mr = last(self.attempt(pi, "pr-mr"))
         # item 23: the rig sits on the default branch, so the gate floor git-push-protected refuses the push before the PR rule runs
@@ -93,7 +90,7 @@ class TestPrGate(ReplayCase):
         pi.close()
 
         reasons = [r.get("reason") for r in trace_of(rig.traces(), "foreman") if r.get("event") == "pr_refused"]
-        self.assertEqual(reasons, ["no_review", "stale_review", "stale_review"])
+        self.assertEqual(reasons, ["stale_review"])
 
     def test_pr_tool_without_review(self):
         rig, env, _ = self.pr_rig("prtool")
@@ -102,21 +99,6 @@ class TestPrGate(ReplayCase):
         pi.close()
         self.assertTrue(tool[1], tool)
         self.assertIn("pr_refused:no_review", tool[2])
-
-    def test_compound_refused(self):
-        # B-M1: a commit in the same command would move HEAD after the check; even a reviewed HEAD is refused.
-        rig, env, marker = self.pr_rig("prcompound")
-        pi = rig.start(env=env)
-        self.attempt(pi, "pr-review")
-        pi.wait_child_notify(timeout=120, answers=ASK_YES)
-        res = last(self.attempt(pi, "pr-compound"))
-        pi.close()
-        self.assertTrue(res[1], res)
-        self.assertIn("pr_refused:pr_compound", res[2])
-        self.assertIn("run the PR step on its own", res[2])
-        self.assertFalse(marker.exists(), "gh ran in a compound command")
-        reasons = [r.get("reason") for r in trace_of(rig.traces(), "foreman") if r.get("event") == "pr_refused"]
-        self.assertEqual(reasons, ["pr_compound"])
 
     def test_child_pr_refused(self):
         rig, env, marker = self.pr_rig("prchild")
@@ -133,7 +115,7 @@ class TestPrGate(ReplayCase):
         # rename, not delete: git objects are read-only on Windows and rmtree fails there
         os.rename(str(rig.project / ".git"), str(rig.project / "git-off"))
         pi = rig.start(env=env)
-        res = last(self.attempt(pi, "pr-gh"))
+        res = last(self.attempt(pi, "pr-tool"))
         pi.close()
         self.assertTrue(res[1], res)
         self.assertIn("pr_refused:head_unknown", res[2])

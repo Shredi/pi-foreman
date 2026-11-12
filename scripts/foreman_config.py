@@ -22,9 +22,6 @@ layer: it goes through the same rules. Neither can set a key that is not in the 
     safety.review.required           true = strict; only true is accepted
     safety.requiredChildExtensions   union
     safety.git.protectedBranches     union
-    safety.git.commit.requiredTrailers / forbiddenTrailers   union
-    safety.git.commit.messagePattern ignored (a pattern can loosen the lint)
-    safety.git.commit.checkCommand   ignored (it executes a program; L3/L2 only)
     safety.ops.copyMaxBytes          lower = tighter; only a lower value is accepted
     safety.scripts.silentFixLines    lower = tighter; only a lower value is accepted
     safety.ops.worktreeDisposable    loosens: ignored with a warning
@@ -193,11 +190,13 @@ TIGHTEN = {
     ("review", "required"): "true_only",
     ("requiredChildExtensions",): "union",
     ("git", "protectedBranches"): "union",
-    ("git", "commit", "requiredTrailers"): "union",
-    ("git", "commit", "forbiddenTrailers"): "union",
     ("ops", "copyMaxBytes"): "lower_only",
     ("scripts", "silentFixLines"): "lower_only",
 }
+
+# safety.git.commit.* is no longer used; every layer accepts it without a warning and the value
+# passes through the merge unchanged (only the adapter's doctor reads it).
+PASS_THROUGH = [("git", "commit")]
 
 # safety.* keys that only loosen: never from the project or session layer
 LOOSEN_ONLY = [("subagents", "allowWorkflow")]
@@ -844,17 +843,6 @@ def semantic_issues(cfg):
     presets = cfg.get("displayPresets")
     if isinstance(dn, str) and isinstance(presets, dict) and dn not in presets:
         issues.append(("error", "displayNames", "displayNames: unknown preset %s" % dn))
-    commit = ((cfg.get("safety") or {}).get("git") or {}).get("commit") or {}
-    if isinstance(commit, dict):
-        for key in ("messagePattern", "requiredTrailers", "forbiddenTrailers"):
-            val = commit.get(key)
-            for pat in (val if isinstance(val, list) else [val]):
-                if isinstance(pat, str):
-                    try:
-                        re.compile(pat)
-                    except re.error as exc:
-                        path = "safety.git.commit." + key
-                        issues.append(("error", path, "%s: invalid regular expression %r (%s)" % (path, pat, exc)))
     issues.extend(pr_host_issues((cfg.get("tools") or {}).get("prHost")))
     issues.extend(pr_github_hosts_issues((cfg.get("tools") or {}).get("prGithubHosts")))
     issues.extend(mcp_deny_issues(cfg))
@@ -975,13 +963,17 @@ def project_apply(base, proj, warnings, who="project", project_dir=None):
 
     def leaves(node, prefix):
         for k, v in node.items():
-            if isinstance(v, dict) and (prefix + (k,)) not in TIGHTEN:
+            if isinstance(v, dict) and (prefix + (k,)) not in TIGHTEN and (prefix + (k,)) not in PASS_THROUGH:
                 for x in leaves(v, prefix + (k,)):
                     yield x
             else:
                 yield prefix + (k,), v
 
     for keys, val in leaves(safety, ()):
+        if keys in PASS_THROUGH:
+            git = result.setdefault(keys[0], {})
+            git[keys[1]] = deep_merge(git[keys[1]], val) if keys[1] in git else copy.deepcopy(val)
+            continue
         name = "safety." + ".".join(keys)
         label = who + " " + name
         rule = TIGHTEN.get(keys)

@@ -229,6 +229,8 @@ def layer_rule(leaf):
         rest = leaf[1:]
         if rest in fc.LOOSEN_ONLY:
             return "not in project/session (a loosening key)"
+        if any(_keys_match(keys, rest) for keys in fc.PASS_THROUGH):
+            return "any layer (no longer used)"
         for keys, rule in fc.TIGHTEN.items():
             if _keys_match(keys, rest):
                 return "tighten-only (%s)" % _rule_text(rule, keys)

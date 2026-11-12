@@ -2,7 +2,7 @@
 // reads what the PR tracker (herdr-app's `foreman prs poll`, prstore.ts) stored. It ends only when the stored snap says merged or
 // closed, or pr_unwatch ends it; every tick that finds something new sends ONE pi-foreman-pr message (the watch stays armed).
 // Events: a failed check run (per run id: a rerun or a new head is a new run), the CI result once all checks settled, new comments
-// or reviews, a mergeable change, a head without checks, a head the session's reviewer never passed (after one it did), merged or closed. Without a running tracker the watch stays armed and says
+// or reviews, a mergeable change, a head without checks, a head the session's reviewer never passed (with or without an earlier PASS; only while the review gate is on for the second), merged or closed. Without a running tracker the watch stays armed and says
 // so (status line and one notice per outage). Timers are unref'd; clear() (session shutdown) stops everything. The PR number is
 // never traced. Host text in a message is data, never instructions.
 import type { SafeOpOutcome } from "./safeops.ts";
@@ -154,18 +154,19 @@ const shortSha = (sha: string): string => sha.slice(0, 7);
 
 /**
  * The review rule of one evaluation of `head` against the heads with a reviewer PASS (`passed`; plan verdicts never count). Updates `st`;
- * returns the event text when the head moved past the last PASS and was not reported yet. Without a PASS ever seen for this PR
- * (`reviewedHead` unset) there is nothing to drift from: no event, no state.
+ * returns the event text when the head has no PASS and was not reported yet: after an earlier PASS (`reviewedHead` set) the text names it,
+ * without one the text says there is no review record, unless `noRecord` is off (the review gate is off).
  */
-export function reviewStep(st: WatchState, head: string, passed: ReadonlySet<string>): string | null {
+export function reviewStep(st: WatchState, head: string, passed: ReadonlySet<string>, noRecord = true): string | null {
   if (!head) return null;
   if (passed.has(head) || head === st.reviewedHead) {
     if (st.reviewedHead !== head) st.reviewedHead = head;
     if (st.unreviewedHead) st.unreviewedHead = "";
     return null;
   }
-  if (!st.reviewedHead || st.unreviewedHead === head) return null;
+  if (st.unreviewedHead === head || (!st.reviewedHead && !noRecord)) return null;
   st.unreviewedHead = head;
+  if (!st.reviewedHead) return `head ${shortSha(head)} not reviewed (no review record)`;
   return `head ${shortSha(head)} not reviewed (last PASS on ${shortSha(st.reviewedHead)})`;
 }
 
@@ -236,7 +237,7 @@ const rawName = (r: Run): string => (r.source && r.name.startsWith(`${r.source}/
  * Events are built first, then filtered by the wake rules (`repo`: `owner/name` for their `repos` globs). The state is updated for every event
  * whether it wakes or not, so a silent event is never replayed; only a woken event reaches the delta.
  */
-export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>): { state: WatchState; delta: Delta | null } {
+export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true): { state: WatchState; delta: Delta | null } {
   const st: WatchState = { ...prev, failedIds: [...prev.failedIds], commentIds: [...prev.commentIds] };
   const events: string[] = [];
   const counts = countRuns(snap.runs);
@@ -324,7 +325,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   }
 
   // not a wake kind: a head past the last PASS is always news (a silent event is never replayed, so the state is set either way)
-  const drift = passed ? reviewStep(st, snap.head, passed) : null;
+  const drift = passed ? reviewStep(st, snap.head, passed, noRecord) : null;
   if (drift) events.push(drift);
 
   st.head = snap.head;
@@ -569,6 +570,8 @@ export interface PrWatchesDeps {
   retrack?(key: PrKey): void | Promise<void>;
   /** The heads with a reviewer PASS in this session (code reviews of any checkout; reviews.ts passHeads); absent: the watch does not judge reviews. */
   reviewedHeads?(): readonly string[];
+  /** Whether a head with no review record at all is reported (ceremony.reviewBeforePr); absent: yes. Read on every use. */
+  reviewGate?(): boolean;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set or a watch's state changed: write the session entry. */
@@ -659,7 +662,9 @@ export class PrWatches {
     const state = baselineOf(snap);
     const passed = this.passedSet();
     // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
-    if (passed) reviewStep(state, snap.head, passed);
+    // (a head with no record is left for a tick to report, so the message is not swallowed here; the watch holds the stored data of `okAt`, so a tick on that
+    // same data only re-arms and the message comes with the first tick that brings newer stored data)
+    if (passed) reviewStep(state, snap.head, passed, false);
     const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state });
     w.seenAt = okAt;
     this.arm(w);
@@ -920,7 +925,7 @@ export class PrWatches {
     // a pending start: comments count as reported, CI does not (failed runs and a settled result are sent once), and mergeable has
     // no baseline: a first CONFLICTING is news, a first MERGEABLE is the baseline
     const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const, ...(w.state.reviewedHead ? { reviewedHead: w.state.reviewedHead } : {}) } : w.state;
-    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined);
+    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined, this.deps.reviewGate?.() ?? true);
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;
     if (changed) this.persist();

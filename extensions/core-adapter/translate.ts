@@ -20,7 +20,6 @@ export type GuardOutcome = { kind: "decision"; d: HookDecision } | { kind: "fail
  *                       does not freeze all editing
  *   ledger_bind         open: side effect only; the user is notified
  *   ledger_guard_stop   open: a broken gate must not trap the session in a continue loop
- *   git_guard           closed: commit/push lint (main) and the child git block list
  *   shell_write_guard   closed: the foreman's bash may not write project files (plan D3)
  */
 export type FailPolicy = "closed" | "open" | "closed-if-ledger-target";
@@ -30,7 +29,6 @@ export const FAIL_POLICY: Record<GuardName, FailPolicy> = {
   ledger_guard_write: "closed-if-ledger-target",
   ledger_bind: "open",
   ledger_guard_stop: "open",
-  git_guard: "closed",
   shell_write_guard: "closed",
 };
 
@@ -40,7 +38,6 @@ const LABEL: Record<GuardName, string> = {
   ledger_guard_write: "ledger write gate",
   ledger_bind: "ledger binding",
   ledger_guard_stop: "stop gate",
-  git_guard: "git guard",
   shell_write_guard: "shell write guard",
 };
 

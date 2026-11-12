@@ -1,17 +1,15 @@
-// worktreeroot.ts consumers: owned roots, overlay block globs, round detection, tree lift, push guard, session inputs, doctor, git-guard ceilings.
+// worktreeroot.ts consumers: owned roots, overlay block globs, round detection, tree lift, push guard, session inputs, doctor.
 // A custom absolute root lives in a separate temp tree; one variant reaches it through a symlink. The default layout keeps its own tests.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import gitGuard from "../../git-guard/index.ts";
 import { ownedRoots } from "../owned.ts";
 import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { mainWorkflowReadable, roundRoots } from "../roundsurface.ts";
 import { ownWorktreeCheck } from "../ownworktree.ts";
 import { sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor, inNestedCheckout, rootTemplateGlobs, resolveWorktreeRoot } from "../worktreeroot.ts";
-import type { Spawner } from "../spawn.ts";
 import { buildSubmoduleRig } from "./_submodules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
@@ -125,34 +123,6 @@ test("doctor: effective root, writable, refused value", { skip }, () => {
     assert.ok(!/FAIL/.test(ok), ok);
     const bad = worktreeRootDoctor({ close: { worktreeDir: "~" } }, rig.superproject, process.platform).join("\n");
     assert.match(bad, /FAIL close\.worktreeDir refused/);
-  } finally {
-    rmTestTmp(path.dirname(rig.superproject));
-  }
-});
-
-test("git-guard: two sessions in one extension instance get their own tree ceiling", { skip }, async () => {
-  const rig = buildSubmoduleRig(real(mkTestTmp("pf-wtroot-gg-")));
-  try {
-    const seen: Array<string | undefined> = [];
-    const spawner: Spawner = async (_cmd, args, o) => {
-      if (args.includes("-c")) return { code: 0, stdout: "3.13\n/usr/bin/python3\n", stderr: "", timedOut: false };
-      seen.push((o as { env?: Record<string, string | undefined> }).env?.PI_FOREMAN_TREE_CEILING);
-      return { code: 0, stdout: "{}", stderr: "", timedOut: false };
-    };
-    const handlers: Record<string, (e: unknown, c: unknown) => Promise<unknown>> = {};
-    gitGuard({ on: (n: string, f: (e: unknown, c: unknown) => Promise<unknown>) => { handlers[n] = f; } } as never, { spawner, env: {}, platform: "linux" });
-    const ctx = (id: string, cwd: string) => ({ sessionManager: { getSessionId: () => id }, cwd, mode: "rpc", hasUI: false });
-    const a = ctx("a", rig.linkedSub);
-    const b = ctx("b", rig.plainSub);
-    await handlers.session_start({}, a);
-    await handlers.session_start({}, b);
-    await handlers.tool_call({ toolName: "bash", input: { command: "git status" } }, a);
-    await handlers.tool_call({ toolName: "bash", input: { command: "git status" } }, b);
-    await handlers.tool_call({ toolName: "bash", input: { command: "git status" } }, a);
-    assert.deepEqual(seen, [rig.linkedSub, rig.plainSub, rig.linkedSub]);
-    await handlers.session_shutdown({}, a);
-    await handlers.tool_call({ toolName: "bash", input: { command: "git status" } }, a);
-    assert.equal(seen[3], "");
   } finally {
     rmTestTmp(path.dirname(rig.superproject));
   }

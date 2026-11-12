@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { injection } from "./floors.ts";
+import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
@@ -215,7 +216,7 @@ function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boole
   const target = ref === "HEAD" ? cur : ref;
   if (target !== cur && !(c.facts.ownBranches?.(cwd) ?? []).includes(target)) return false;
   if (!NAME.test(target)) return false;
-  if (c.facts.protectedBranches(cwd).includes(target) || /^(?:main|master)$/.test(target)) return false;
+  if (protectedMatch(c.facts.protectedBranches(cwd), target, { ignoreCase: true }) !== undefined || /^(?:main|master)$/.test(target)) return false;
   return !c.facts.pushConfigured(cwd);
 }
 
@@ -737,7 +738,7 @@ function branchDeleteMerged(rest: string[], cwd: string, env: DangerEnv): boolea
   if (b.startsWith("-") || !NAME.test(b) || b.startsWith("refs/") || b.includes("..")) return false;
   // a case-insensitive filesystem resolves `Main` to main's loose ref
   const fold = env.platform === "darwin" || env.platform === "win32" ? (x: string) => x.toLowerCase() : (x: string) => x;
-  if (f.protectedBranches(cwd).some((p) => fold(p) === fold(b)) || /^(?:main|master)$/.test(fold(b))) return false;
+  if (protectedMatch(f.protectedBranches(cwd), b, { ignoreCase: env.platform === "darwin" || env.platform === "win32" }) !== undefined || /^(?:main|master)$/.test(fold(b))) return false;
   if (workFolderBarred({ roots: env.roots, facts: f, platform: env.platform, cwd: env.cwd }, cwd)) return false;
   return f.branchMerged(cwd, b);
 }

@@ -1,8 +1,8 @@
 // Reassembled guarded tokens (R6 lane 1c/1d): string fragments joined by `+`, `..`, `.concat`, `.join` or `.replace(All)` that spell a
-// whole guarded command token no single fragment spells. Mirrors `reassembles_token` in scripts/git_guard.py (parity fixture:
-// tests/fixtures/split-literal-cases.json). `probeFileHit` adds `String.fromCharCode` and base64 literals for the probe-file scan.
+// whole guarded command token no single fragment spells. Pinned by the shared cases in
+// tests/fixtures/split-literal-cases.json. `probeFileHit` adds `String.fromCharCode` and base64 literals for the probe-file scan.
 
-/** The reason shared with git_guard.py. */
+/** The reason the overlay reports. */
 export const SPLIT_LITERAL_REASON = "split literal reassembles a guarded token";
 
 const LIT = String.raw`(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*')`;

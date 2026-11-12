@@ -18,6 +18,8 @@ import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
 import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
+import { lineFloors } from "./floors.ts";
+import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
@@ -74,7 +76,6 @@ import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcp
 import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
-import { CHILD_TRACE_EVENT, gitGuardPayload, mainNeedsGitGuard, runGitGuard } from "./gitguard.ts";
 import { branchMergedFact, branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
@@ -91,7 +92,7 @@ import { patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "./chil
 import { boundLaunchId, ChildScratch, finishScratch, launchScratch, SCRATCH_ENV, scratchRoot, storeBrief, sweepScratch } from "./childscratch.ts";
 import { panelChecksLine } from "./panelchecks.ts";
 import type { PanelChecksCache } from "./panelchecks.ts";
-import { GitDriftWatch, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
+import { GitDriftWatch, mainNeedsGitGuard, patchForemanGitEnv, safeOpDriftPreflight } from "./gitdrift.ts";
 import { ClaudeConfigWatch } from "./claudedrift.ts";
 import { boundLedger, ensureSessionMarker, isLedgerTarget, markerPath } from "./marker.ts";
 import { applyVariants, findItemByText, isLedgerOnlyCommand, isPermissionDeny, LEDGER_ACTIONS, LEDGER_TOOL, ledgerHelperMode, mentionsLedger, planLedgerCall, retryLedgerRun, rewriteItemText } from "./ledgercall.ts";
@@ -120,7 +121,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passCheckouts, passHeads, PR_REFUSALS, prGateRefusal, reviewedHeadWhy, toplevelOf, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadWhy, toplevelOf, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -240,8 +241,8 @@ function launchDeny(input: Record<string, unknown>): { role: string; command: st
   return { role: roles, command: `subagent ${roles}`.trim() };
 }
 const ADAPTER_ID = "pi-foreman-core-adapter";
-const GIT_GUARD_ID = "pi-foreman-git-guard";
-const GIT_GUARD_ENTRY = path.join(PKG_ROOT, "extensions", "git-guard", "index.ts");
+/** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
+const REMOVED_GIT_GUARD_ID = "pi-foreman-git-guard";
 const ORIGINAL_PI_FOREMAN_PYTHON = process.env.PI_FOREMAN_PYTHON;
 
 /** A ledger hint that failed after the rename retries: a `hint_write_failed` trace record, not a silent drop. */
@@ -678,10 +679,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.live?.setBlocked(false);
     s?.questionCalls.forEach(releaseQuestion);
   });
-  pi.events?.on(CHILD_TRACE_EVENT, (data: unknown) => {
-    const e = (data ?? {}) as Record<string, unknown>;
-    if (e.event === "test_restore") sessions.get(String(e.sessionId))?.trace?.emit({ event: e.event, cmd: e.cmd });
-  });
   let isoSetting: unknown = "auto";
   const baseline = readBaseline(PKG_ROOT);
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
@@ -787,6 +784,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if ("hosts" in hosts && isTrackedKey(key, hosts.hosts) && prFeedOn(s)) await addTracked(agentDir, key.repo, key.n, undefined, key.host);
         },
         reviewedHeads: () => passHeads(s.reviews),
+        reviewGate: () => get(s.config.config, "ceremony.reviewBeforePr") !== false,
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
         fresh: async (key, cwd) => {
@@ -1254,7 +1252,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const extra = normaliseChildExtensions(get(s.config.config, "safety.requiredChildExtensions"), s.agentDir);
     s.childExtensionErrors = extra.errors;
     for (const e of extra.errors) ctx.ui.notify(`pi-foreman: ${e}`, "error");
-    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, { id: GIT_GUARD_ID, path: GIT_GUARD_ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== GIT_GUARD_ID)];
+    s.childExtensions = [{ id: ADAPTER_ID, path: ENTRY }, ...extra.list.filter((e) => e.id !== ADAPTER_ID && e.id !== REMOVED_GIT_GUARD_ID)];
     try {
       const { fn, via } = await loadRegister();
       s.registration = fn({ sessionId: s.id, extensions: s.childExtensions, requireForAllRunners: true });
@@ -1315,12 +1313,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { sessionId: s.id, cwd: ctx.cwd, transcriptPath, home: os.homedir() };
   }
 
+  /** `safety.git.protectedBranches` as configured: the strings of the list, nothing else. */
+  function configuredProtected(s: Session | undefined): string[] {
+    const v = s ? get(s.config.config, "safety.git.protectedBranches") : undefined;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  }
+
+  /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
+  function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
+    return baseFloorEnv(cwd, { ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
+  }
+
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
     const env = buildGuardEnv({ base: process.env, coreDir: CORE_DIR, sessionId: s.id, guard, markerDir: s.markerDir, threshold: guard === "ledger_guard_spawn" ? gateThreshold(s.ceremony) : null });
     const started = Date.now();
-    const r = guard === "git_guard"
-      ? await runGitGuard({ python: pyPath(s), pkgRoot: PKG_ROOT, mode: "main", payload, env, cwd: ctx.cwd, spawner })
-      : await runGuard({ python: pyPath(s), coreDir: CORE_DIR, guard, payload, env, cwd: ctx.cwd, spawner });
+    const r = await runGuard({ python: pyPath(s), coreDir: CORE_DIR, guard, payload, env, cwd: ctx.cwd, spawner });
     const outcome = evaluateRun(guard, r, pyPath(s));
     const decision = outcome.kind === "failure" ? "error" : outcome.d.decision;
     // a deny keeps its reason and redacted command like the gate's denials (trace.ts isDeny)
@@ -2455,7 +2462,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const resolved = rt ? rt.store.resolve() : undefined;
     if (gs && rt) for (const n of rt.store.drainNotices()) notifyOnce(gs, ctx, n, n);
     const roots = gs ? await gateRootsOf(gs, ctx.cwd, sessionDirOf(ctx), resolved?.additionalDirectories, resolved?.workFolders) : undefined;
-    const configured = ((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []))(gs ? get(gs.config.config, "safety.git.protectedBranches") : undefined);
+    const configured = configuredProtected(gs);
     // own worktrees for the push guard: the session's checkout and the worktrees it created (session manifest); other linked worktrees are not own
     const sessionFacts: GitFacts | undefined = gs && roots
       ? sessionGitFacts({ ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] }, ownWorktreeCheck([roots.worktree, ...roundWorktrees(path.join(gs.agentDir, "pi-foreman", "state"), gs.usage.line.foremanSession, platform)], platform))
@@ -2480,7 +2487,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (readTools && gs) warnUnknownReadTools(readTools, () => pi.getAllTools().map((t) => t.name), readToolsWarned, (rec) => gs.trace?.emit(rec as Parameters<NonNullable<typeof gs.trace>["emit"]>[0]));
     const out = gateEvaluate(event.toolName, event.input, ctx.cwd, {
       ...(readTools ? { readTools } : {}),
-      env: (cwd) => baseFloorEnv(cwd, { ...(gs?.agentDir ? { agentDir: gs.agentDir } : {}), ...(roots?.sessionDir ? { sessionDir: roots.sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configured, ...(gs?.isChild ? { child: true } : {}) }),
+      env: (cwd) => floorEnvOf(gs, cwd, roots?.sessionDir),
       ...(roots ? { roots: () => roots, facts: gateFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
@@ -2954,7 +2961,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (triage) return triage;
     }
     if (isPrToolName(event.toolName) && !isPackPrCreate(event.toolName) && mapTool(event.toolName).pre.length === 0) {
-      // A package tool that creates a pull request: the same review test as the git guard, against workspace HEAD.
+      // A package tool that creates a pull request: the PR gate's review test against workspace HEAD.
       try {
         const s = await ensureSession(ctx);
         if (!s.isChild) await s.reviewSync;
@@ -3322,15 +3329,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }
           setCeremony(s, beforeSpawn(s.ceremony, agents, trivialBuilderPath(get(s.config.config, "ceremony.required"))));
         }
-        // Children get the git guard in child mode from extensions/git-guard; main mode is the foreman lint.
-        if (guard === "git_guard" && (s.isChild || !mainNeedsGitGuard(input.command))) continue;
-        if (guard === "git_guard") {
-          const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), event.toolCallId);
-          if (drift) return drift;
-        }
-        if (guard === "git_guard") await s.reviewSync;
-        const prGate = { enabled: get(s.config.config, "ceremony.reviewBeforePr") !== false, reviewed_heads: passHeads(s.reviews), reviewed_checkouts: passCheckouts(s.reviews) };
-        const payload = guard === "git_guard" ? gitGuardPayload(event.toolName, input, pc, get(s.config.config, "safety.git"), prGate) : preToolPayload(event.toolName, input, pc);
+        const payload = preToolPayload(event.toolName, input, pc);
         if (guard === "ledger_guard_spawn") {
           (payload.tool_input as Record<string, unknown>).prompt = callerTask;
           payload.permission_mode = spawnPermissionMode(planModeOn(ctx.sessionManager.getBranch?.() ?? []), agents);
@@ -3350,14 +3349,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         });
         if (t.openFailure) notifyOnce(s, ctx, `open:${guard}`, t.openFailure);
         if (outcome.kind === "decision" && outcome.d.decision === "ask") s.trace?.emit({ event: "ask", guard, toolFamily: mapping.coreName, decision: askOutcome(s.isChild, t.result?.reason) });
-        const prReason = guard === "git_guard" && t.result && "block" in t.result ? /pr_refused:(\w+)/.exec(String(t.result.reason ?? ""))?.[1] : undefined;
-        if (prReason && (PR_REFUSALS as readonly string[]).includes(prReason)) s.trace?.emit({ event: "pr_refused", reason: prReason });
         if (t.result) return t.result;
         if (guard === "ledger_guard_spawn" && agents.length > 0) {
           setCeremony(s, afterSpawn(s.ceremony));
           const modelOf = roleModelsOf(input);
           for (const role of agents) s.trace?.emit({ event: "role_launch", role, ...(modelOf.has(role) ? { model: modelOf.get(role) } : {}), ...(REVIEW_ROLES.includes(role) ? { occasion: [...occasions].find(([e]) => e.agent === role)?.[1] ?? "item" } : {}) });
         }
+      }
+      // A main-session shell line that names git or a forge tool: hooks and git config changed since the snapshot stop it (after the destructive guard, as before).
+      if (isShellTool(event.toolName) && !s.isChild && mainNeedsGitGuard(input.command)) {
+        const drift = await s.gitDrift.gate(ctx.cwd, os.homedir(), "this git command", driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), event.toolCallId);
+        if (drift) return drift;
       }
       if (event.toolName === "subagent" && !s.isChild) {
         // Changes since the last launch are checked first, so a new launch cannot absorb them.
@@ -4540,9 +4542,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
     pushRefusal: async (ctx, cwd) => {
       const s = await ensureSession(ctx);
-      const out = await run(s, ctx, "git_guard", gitGuardPayload("bash", { command: "git push" }, { ...payloadCtx(s, ctx), cwd: cwd ?? ctx.cwd }, get(s.config.config, "safety.git"), { enabled: false, reviewed_heads: [] }), "pr_create");
-      if (out.kind === "failure") return out.message;
-      return out.d.decision === "deny" || out.d.decision === "ask" ? String(out.d.reason ?? out.d.decision) : null;
+      // The push floors alone (not the gate decision, whose dangerous-class ask on a bare push would refuse every PR) on a synthetic `git push` in the PR's checkout.
+      const at = cwd ?? ctx.cwd;
+      const floor = lineFloors("git push", parseShell("git push", { cwd: at, platform }), floorEnvOf(s, at, sessionDirOf(ctx)));
+      return floor ? floor.reason : null;
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),
@@ -5490,6 +5493,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.registration) ok(`required child extensions registered (${s.registrationVia}, requireForAllRunners)`);
     else fail(`required child extensions not registered${s.registrationError ? `: ${s.registrationError}` : ""}`, "check the paths above and restart the session.");
     out.push(`INFO required child extension registration path: ${registrationPathLabel(s.registrationVia)}`);
+    // The only reader of safety.git.commit.*: the keys are accepted so old configs load, nothing else may read them. Set means a non-blank string or a list with one.
+    const commitKeySet = ["messagePattern", "requiredTrailers", "forbiddenTrailers", "checkCommand"].some((k) => {
+      const v = get(s.config.config, `safety.git.commit.${k}`);
+      return Array.isArray(v) ? v.some((x) => typeof x === "string" && x.trim() !== "") : typeof v === "string" && v.trim() !== "";
+    });
+    if (commitKeySet) out.push("INFO safety.git.commit.* is no longer used; commit messages are checked by the project's commit hooks");
 
     // Host pressure: a fresh sample (the sampler timer's call); a missing probe is never a FAIL.
     try {

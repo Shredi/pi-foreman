@@ -13,7 +13,7 @@
 //   the child runs can call ssh (or a library) with a key file under ~/.ssh itself. The path
 //   overlay's deny on ~/.ssh covers the direct tool and shell forms.
 // - A remote.<n>.pushurl is not rewritten by pushInsteadOf (git applies it to url only).
-//   The git guard's child push block and the deny on child writes to .git/config (review
+//   The gate's child push floor and the deny on child writes to .git/config (review
 //   S1/S7, other safety-wave items) are the layers that keep a child from using or planting one.
 import type { Env } from "./env.ts";
 

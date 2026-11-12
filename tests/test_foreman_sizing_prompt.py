@@ -31,6 +31,9 @@ ROLE_PAIRS = [
     # fast merge policy
     ("removed after it exits.\n",
      "removed after it exits. Merge fast: merge a PR that is green and mergeable without merging the base into it or rerunning CI, even if the base moved. After each merge check the base's CI on the merge commit; if it is red, fix forward with a small PR. Merge the base into a branch only when the PR is CONFLICTING, or when the base fix is needed for that branch's own CI.\n"),
+    # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it
+    ("on the current head; the adapter refuses it otherwise. Start",
+     "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
 ]
 
 

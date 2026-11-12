@@ -1047,7 +1047,7 @@ function substitutions(src: string, shell: "posix" | "powershell"): string[] {
 
 const ANSI: Record<string, string> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
 
-/** Body of `$'...'` from `start` (after the quote) -> [decoded text, index of the closing quote]. Port of git_guard.py's decoder. */
+/** Body of `$'...'` from `start` (after the quote) -> [decoded text, index of the closing quote]. */
 function ansiC(src: string, start: number): [string, number] {
   let out = "";
   let j = start;
@@ -3472,7 +3472,7 @@ export function checkShell(rules: OverlayRules, rawCommand: string, ctx0: MatchC
     }
   }
   if (ctx.role === "child") {
-    // R14 ruling 5: a `git tag -F` message file has no exemption (git_guard lints commits only)
+    // R14 ruling 5: a `git tag -F` message file has no exemption (no commit-message check reads it)
     for (const w of c.tagMsgFiles!) {
       const hit = protectHit(rules.protect, w, pctx, true);
       if (hit) return { kind: "deny", reason: `pi-foreman: denied for a child: '${clip(w)}' is a git tag message file under the write protection (rule '${hit.rule.pattern}'). Only a git commit -F/--file message file may lie below .pi; put a tag message in .workflow/scratch/ or $FOREMAN_SCRATCH, or use -m.` };

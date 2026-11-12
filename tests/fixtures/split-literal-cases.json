@@ -1,5 +1,5 @@
 {
-  "_comment": "R6 lane 1c: lines whose string fragments (+, .., concat, join, replace) reassemble a guarded command token. Read by tests/test_git_guard_split_literal.py (git_guard.py, child mode) and extensions/core-adapter/test/gitguard-split.test.ts (splitliteral.ts).",
+  "_comment": "R6 lane 1c: lines whose string fragments (+, .., concat, join, replace) reassemble a guarded command token. Read by extensions/core-adapter/test/splitliteral.test.ts (splitliteral.ts).",
   "deny": [
     "\"r\"+\"m -rf\"",
     "\".\"..\"gi\"..\"t\"",

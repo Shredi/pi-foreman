@@ -97,15 +97,17 @@ test("a further unreviewed head alerts again, once", async () => {
   assert.match(got[1], new RegExp(NOT(C, A).replace(/[()]/g, "\\$&")));
 });
 
-test("followed-only PR: no PASS for any head of it, no alert and no token, also with PASS records for other heads", async () => {
+test("watched PR with no PASS for any head of it: one alert per head and the token, also with PASS records for other heads", async () => {
   const h = harness(["9999999zzz"]);
   h.w.start(K, snap(A), 1);
   h.entry(B, 2);
   await h.tick();
   h.entry(C, 3);
   await h.tick();
-  assert.equal(h.sent.length, 0);
-  assert.deepEqual(h.w.unreviewed(), []);
+  assert.equal(drifts(h.sent).length, 2);
+  assert.ok(drifts(h.sent)[0].includes(`head ${B.slice(0, 7)} not reviewed (no review record)`));
+  assert.ok(drifts(h.sent)[1].includes(`head ${C.slice(0, 7)} not reviewed (no review record)`));
+  assert.deepEqual(h.w.unreviewed(), [K]);
   assert.equal(h.last()?.reviewedHead ?? "", "");
 });
 
@@ -182,7 +184,7 @@ test("prDelta: the event is pure state plus the PASS set; without the set nothin
 
 test("reviewStep and reviewFact: reviewed, drifted, no record", () => {
   const st = baselineOf(snap(A));
-  assert.equal(reviewStep(st, B, new Set([A])), null);
+  assert.equal(reviewStep(st, B, new Set([A])), `head ${B.slice(0, 7)} not reviewed (no review record)`);
   assert.equal(st.reviewedHead, undefined);
   assert.equal(reviewStep(st, A, new Set([A])), null);
   assert.equal(st.reviewedHead, A);

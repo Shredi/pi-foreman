@@ -47,7 +47,7 @@ A tool call that no rule decides simply runs. Deploys, publishing, installs, net
 | [docs/install.md](docs/install.md) | Package install, `foreman setup`, developing, update and remove, config layers, Claude bridge login |
 | [docs/roles.md](docs/roles.md) | Roles, model ladder, rank policy, presets |
 | [docs/ceremony.md](docs/ceremony.md) | Tiers, review and finish gates, planning, budgets |
-| [docs/safety.md](docs/safety.md) | Shell and git guards, PR gate, the tool gate, known limits |
+| [docs/safety.md](docs/safety.md) | Shell-write guard, what the gate floors cover for git, the PR gate, the tool gate, known limits |
 | [docs/sessions.md](docs/sessions.md) | `/sync`, `/retro`, `/foreman close`, `/foreman session`, intercom, Herdr |
 | [docs/bench.md](docs/bench.md) | Measuring the harness with `foreman bench` |
 | [docs/overlays.md](docs/overlays.md) | Private and organisation overlays |

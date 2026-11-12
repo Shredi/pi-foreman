@@ -297,12 +297,12 @@ export function prHostLabel(prHost: unknown, workspace: string, env: NodeJS.Proc
 | 3 | TS hook | triage: `pr_create` is outward (A7, §6) | triage text |
 | 4 | TS | drift preflight, then the `tool_pack` trace | `blocked` |
 | 5 | TS | PR gate via `prGateRefusal` (below), with `input = {head}` | `[pr_refused:<reason>]`, trace `{event: "pr_refused", reason, toolFamily: "pr_create"}` |
-| 6 | TS | push guard: `deps.pushRefusal(ctx)` | `pr_create: the git guard would refuse pushing this branch (<reason>); nothing was done.`, `{decision: "push_refused"}` |
+| 6 | TS | push floors: `deps.pushRefusal(ctx)` (first built as a run of the git guard, since removed) | `pr_create: a push floor refuses pushing this branch (<reason>); nothing was done.`, `{decision: "push_refused"}` |
 | 7 | Py | args, detached, unknown branch, `base_is_head`, `unpushed`, host, auth | precondition texts |
 
-- **Push guard (decision).** It is a synthetic payload through the existing guard runner. In `index.ts`: `run(s, ctx, "git_guard", gitGuardPayload("bash", {command: "git push"}, payloadCtx(s, ctx), get(cfg, "safety.git"), {enabled: false, reviewed_heads: []}), "pr_create")`.
-  - The call is refused on `outcome.kind === "failure"` (fail-closed) and on `d.decision` `deny` or `ask`; the reason is `d.reason`.
-  - A bare `git push` makes the guard evaluate the current branch's push remote, `remote.<r>.push`, the mirror config and `protectedBranches`, the same as the foreman's own push.
+- **Push check (decision).** As first built it was a synthetic `git push` payload through the git guard runner; the guard was removed (see [docs/safety.md](../docs/safety.md#what-the-gate-floors-cover)). Now it is the gate's push floors (`lineFloors`) on the same synthetic `git push` line in the PR's checkout.
+  - A floor hit refuses; anything else passes. The whole gate decision is not used, because its dangerous-class ask on a bare `git push` would refuse every PR.
+  - A bare `git push` makes the floor read the current branch against `main`, `master`, the remote's default branch and `protectedBranches`.
 - **Shared gate (A6), in `reviews.ts`.**
 
   ```ts
@@ -313,7 +313,7 @@ export function prHostLabel(prHost: unknown, workspace: string, env: NodeJS.Proc
   2. `!gateOn` gives null.
   3. Otherwise it returns `prToolRefusal(cwd, reviewed, input)`.
 
-  `prToolRefusal` gains the B-M3 upstream check from `git_guard.pr_gate_check`: for each resolved ref, once its head passes, `up = await commitOf(cwd, (ref === "HEAD" ? "" : ref) + "@{upstream}")`, and `up && !reviewed.includes(up)` gives `stale_review`.
+  `prToolRefusal` gains the B-M3 upstream check (taken from the removed guard's PR gate check): for each resolved ref, once its head passes, `up = await commitOf(cwd, (ref === "HEAD" ? "" : ref) + "@{upstream}")`, and `up && !reviewed.includes(up)` gives `stale_review`.
 - **The hook at `index.ts:1084`.** It calls `prGateRefusal({tool: event.toolName, isChild: s.isChild, gateOn: reviewBeforePr !== false, reviewed: passHeads(s.reviews), cwd: ctx.cwd, input})` after `await s.reviewSync`. Its condition gains `&& event.toolName !== "pr_create"`, since `isPrToolName("pr_create")` is true, so the pack's own tool is gated once, in execute. Traces are unchanged.
 - **`PR_REFUSALS`.** Add `"checks_failed"`, reserved for a future merge op and not emitted this round.
 

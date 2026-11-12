@@ -6,7 +6,6 @@ export type GuardName =
   | "ledger_guard_spawn"
   | "ledger_bind"
   | "ledger_guard_stop"
-  | "git_guard"
   | "shell_write_guard";
 
 export interface ToolMapping {
@@ -29,10 +28,10 @@ const NONE: ToolMapping = Object.freeze({ coreName: null, pre: [], post: [] }) a
 // tool_name, so it would deny the Edit that the core documents as THE way to bind an
 // existing ledger (core hooks.json runs it for `^Write$` only).
 const TABLE: Record<string, ToolMapping> = {
-  bash: { coreName: "Bash", pre: ["destructive_guard", "git_guard"], post: [] },
-  powershell: { coreName: "Bash", pre: ["destructive_guard", "git_guard"], post: [] },
-  [FOREMAN_BG_TOOL]: { coreName: "Bash", pre: ["destructive_guard", "git_guard"], post: [] },
-  [ADDON_BG_TOOL]: { coreName: "Bash", pre: ["destructive_guard", "git_guard"], post: [] },
+  bash: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
+  powershell: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
+  [FOREMAN_BG_TOOL]: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
+  [ADDON_BG_TOOL]: { coreName: "Bash", pre: ["destructive_guard"], post: [] },
   write: { coreName: "Write", pre: ["ledger_guard_write"], post: ["ledger_bind"] },
   edit: { coreName: "Edit", pre: [], post: ["ledger_bind"] },
   subagent: { coreName: "Agent", pre: ["ledger_guard_spawn"], post: [] },
