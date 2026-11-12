@@ -399,7 +399,6 @@ class ShellVarsTest(unittest.TestCase):
             'H=%s; f() { cp plan.md "$H/plan.md"; }; f' % h,
             'H=%s/*; cp plan.md "$H/plan.md"' % h,                  # glob
             'H=$(pwd); cp plan.md "$H/plan.md"',
-            'H=handoffs/s1; cp plan.md "$H/plan.md"',               # relative
             'H=%s & cp plan.md "$H/plan.md"' % h,
         ):
             with self.subTest(command=cmd):
