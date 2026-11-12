@@ -330,11 +330,35 @@ function inOwnTemp(paths: string[], env: FloorEnv): boolean {
   return paths.every((p) => formsOf(p, env).every((f) => rootForms.some((r) => lexUnder(plat, r, f))));
 }
 
-/** All git floors of one segment: config writes in every form, remote changes, the push floors. */
+/**
+ * The `-c` and `--config` values among the words after `git clone`, up to `--`. A long option matches as any prefix of at least `--` and one letter, with
+ * or without `=value` (git rejects an ambiguous one, so matching it costs nothing); `-c` matches as a single-dash cluster where no value-taking letter
+ * of clone (`o`, `b`, `u`, `c`, `j`) comes before it. The value is the glued rest, else the next word.
+ */
+function cloneConfigs(rest: string[]): string[] {
+  const out: string[] = [];
+  const end = rest.indexOf("--");
+  const words = end < 0 ? rest : rest.slice(0, end);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (w.startsWith("--")) {
+      const name = w.split("=", 1)[0];
+      if (name.length < 3 || !"--config".startsWith(name)) continue;
+      out.push(w.includes("=") ? w.slice(w.indexOf("=") + 1) : (words[++i] ?? ""));
+    } else if (/^-[^-]/.test(w)) {
+      const at = [...w].findIndex((ch, n) => n > 0 && "obucj".includes(ch));
+      if (at < 0 || w[at] !== "c") continue;
+      out.push(at + 1 < w.length ? w.slice(at + 1) : (words[++i] ?? ""));
+    }
+  }
+  return out;
+}
+
+/** All git floors of one segment: config writes in every form (`git clone -c` included), remote changes, the push floors. */
 function gitFloors(seg: ShellSegment, env: FloorEnv): FloorHit | null {
   const call = gitCall(seg, env);
   if (!call) return null;
-  for (const o of call.overrides) {
+  for (const o of call.sub === "clone" ? [...call.overrides, ...cloneConfigs(call.rest)] : call.overrides) {
     const key = keyOfOverride(o);
     if (!isWord(key) || floorKey(key)) return hit("git-config", `Setting '${key || "?"}' with -c or --config-env changes where code is fetched or pushed, which program git runs or which credentials it uses. Run git without it.`);
     if (key.trim().toLowerCase() === "core.attributesfile") {

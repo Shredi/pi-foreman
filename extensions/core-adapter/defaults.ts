@@ -753,26 +753,60 @@ export function withMergedFacts(facts: GitFacts, merged: Map<string, boolean>): 
   return { ...facts, branchMerged: (cwd: string, branch: string) => merged.get(mergedFactKey(cwd, branch)) === true };
 }
 
+/**
+ * The option `long` (a program-running option) among `words` up to `--`: any prefix of it of at least `--` and one letter, with or without `=value` (git
+ * rejects an ambiguous one, so matching it costs nothing); with `short`, also a single-dash cluster where no value-taking letter of clone (`o`, `b`, `u`,
+ * `c`, `j`) comes before that letter.
+ */
+function gitProgOpt(words: string[], long: string, short?: string): boolean {
+  const end = words.indexOf("--");
+  return (end < 0 ? words : words.slice(0, end)).some((w) => {
+    if (w.startsWith("--")) {
+      const name = w.split("=", 1)[0];
+      return name.length >= 3 && long.startsWith(name);
+    }
+    return short !== undefined && /^-[^-]/.test(w) && [...w.slice(1)].find((ch) => "obucj".includes(ch)) === short;
+  });
+}
+
 function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   if (progOf(s) !== "git") return false;
   const { sub, rest } = gitParts(s.argv);
   const flag = (re: RegExp): boolean => rest.some((w) => re.test(w));
+  // forms that move, overwrite or delete a ref shared with the main checkout: judged for a subagent only
+  const child = env.roots.child;
   switch (sub) {
+    case "fetch":
+    case "pull":
+      return gitProgOpt(rest, "--upload-pack");
+    case "clone":
+      return gitProgOpt(rest, "--upload-pack", "u");
+    case "send-pack":
+    case "http-push":
+      return true;
+    case "credential":
+      return rest[0] === "fill";
+    case "switch":
+      return child && (flag(/^-[a-zA-Z]*C/) || rest.includes("--force-create"));
+    case "update-ref":
+    case "prune":
+      return child;
     case "reset":
       return rest.includes("--hard");
     case "clean":
       return (flag(/^-[a-z]*f/) || rest.includes("--force")) && !(flag(/^-[a-z]*n/) || rest.includes("--dry-run"));
     case "checkout": {
       const dd = rest.indexOf("--");
-      return (dd >= 0 && rest.length > dd + 1) || rest.includes(".") || rest.some((w) => ["-f", "--force", "--ours", "--theirs", "-p", "--patch"].includes(w));
+      return (dd >= 0 && rest.length > dd + 1) || rest.includes(".") || rest.some((w) => ["-f", "--force", "--ours", "--theirs", "-p", "--patch"].includes(w)) || (child && flag(/^-[a-zA-Z]*B/));
     }
     case "restore":
       return !((rest.includes("--staged") || rest.includes("-S")) && !rest.includes("--worktree") && !rest.includes("-W"));
     case "branch":
+      if (child && (flag(/^-[a-zA-Z]*[fmMC]/) || rest.includes("--force") || rest.includes("--move"))) return true;
       return (flag(/^-[a-zA-Z]*[dD]/) || rest.includes("--delete")) && !(s.cwd !== null && branchDeleteMerged(rest, s.cwd ?? env.cwd, env));
     case "push": {
       // s.cwd is already moved by every `-C` (shellast); null: a `-C` operand that cannot be resolved
-      return s.cwd === null || !pushOwn(rest, s.cwd ?? env.cwd, env);
+      return s.cwd === null || !pushOwn(rest, s.cwd ?? env.cwd, env) || gitProgOpt(rest, "--receive-pack") || gitProgOpt(rest, "--exec");
     }
     case "rebase":
     case "filter-branch":
@@ -780,12 +814,14 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
       return true;
     case "commit":
       return rest.includes("--amend") && env.facts?.hasUpstream?.(s.cwd ?? env.cwd) === true;
+    case "tag":
+      return child && (flag(/^-[a-zA-Z]*d/) || rest.includes("--delete"));
     case "stash":
       return rest[0] === "drop" || rest[0] === "clear";
     case "worktree":
-      return rest[0] === "remove" || rest[0] === "prune";
+      return rest[0] === "remove" || rest[0] === "prune" || (child && (rest[0] === "move" || (rest[0] === "add" && flag(/^-[a-zA-Z]*B/))));
     case "reflog":
-      return rest[0] === "expire";
+      return rest[0] === "expire" || (child && rest[0] === "delete");
     case "gc":
       return flag(/^--prune(?:=|$)/);
     default:
