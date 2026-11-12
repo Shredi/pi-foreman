@@ -65,6 +65,20 @@ process.on("exit", () => {
   if (template) fs.rmSync(template.root, { recursive: true, force: true });
 });
 
+/** Every spelling of an absolute path that git may write: native separators and forward slashes (Windows git writes `C:/x`). */
+const spellings = (p: string, sep: string): string[] => [...new Set([p, p.split(sep).join("/")])];
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** `text` with `from` replaced by `to` in each spelling, the replacement in the matching spelling (case-insensitive on Windows: drive letter). */
+function rewriteRoot(text: string, from: string, to: string, sep: string = path.sep, ci: boolean = process.platform === "win32"): string {
+  let out = text;
+  const target = spellings(to, sep);
+  spellings(from, sep).forEach((s, i) => {
+    out = out.replace(new RegExp(escapeRe(s), ci ? "gi" : "g"), () => target[Math.min(i, target.length - 1)]);
+  });
+  return out;
+}
+
 /** A copy of the template repository (the absolute paths in the copied git files rewritten, no git call), or a `lite` world: the directories only, for a test that uses the fake self-finish. */
 function world(lite = false) {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-merged-cleanup-")));
@@ -76,7 +90,12 @@ function world(lite = false) {
     template ??= buildTemplate();
     fs.cpSync(template.root, root, { recursive: true, preserveTimestamps: true });
     for (const f of [path.join(repo, ".git", "config"), path.join(repo, ".git", "worktrees", "feat", "gitdir"), path.join(wt, ".git")]) {
-      fs.writeFileSync(f, fs.readFileSync(f, "utf8").split(template.root).join(root));
+      const text = rewriteRoot(fs.readFileSync(f, "utf8"), template.root, root);
+      for (const s of spellings(template.root, path.sep)) {
+        const hit = process.platform === "win32" ? text.toLowerCase().includes(s.toLowerCase()) : text.includes(s);
+        assert.ok(!hit, `${f} still points at the template (${s})`);
+      }
+      fs.writeFileSync(f, text);
     }
     tip = template.tip;
   }
@@ -574,4 +593,14 @@ test("a failed copy of the result file does not stop the close or the cleanup; t
   } finally {
     w.cleanup();
   }
+});
+
+test("the copied git link files are rewritten in both the native and the forward-slash spelling (Windows git writes C:/x)", () => {
+  const from = "C:\\Users\\a\\tpl-1";
+  const to = "C:\\Users\\a\\copy-2";
+  const text = `gitdir: ${from}\\repo\\.git\\worktrees\\feat\nurl = C:/Users/a/tpl-1/origin.git\n`;
+  assert.equal(rewriteRoot(text, from, to, "\\", false), `gitdir: ${to}\\repo\\.git\\worktrees\\feat\nurl = C:/Users/a/copy-2/origin.git\n`);
+  assert.equal(rewriteRoot("gitdir: c:/users/a/TPL-1/x", from, to, "\\", true), "gitdir: C:/Users/a/copy-2/x");
+  const posix = rewriteRoot("gitdir: /tmp/tpl/x\n", "/tmp/tpl", "/tmp/copy", "/", false);
+  assert.equal(posix, "gitdir: /tmp/copy/x\n");
 });
