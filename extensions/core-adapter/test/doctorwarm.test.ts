@@ -138,7 +138,7 @@ test("refusals: no model, keep-alive off per skip reason with the fix, a turn in
     [{ policy: () => resolveWarmPolicy({ providers: { p: { cache: { keepalive: { enabled: true } } } } }, "p", "m") }, /refused \(ttl_unknown\).*providers\.p\.cache\.ttlSeconds/],
     [{ policy: () => resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 3600 } } } }, "p", "m") }, /refused \(ttl_long\)/],
     [{ policy: () => resolveWarmPolicy({ providers: { p: { cache: { ttlSeconds: 5, keepalive: { enabled: true } } } } }, "p", "m") }, /refused \(ttl_too_short\)/],
-    [{ busy: () => true }, /refused \(busy\).*turn is in flight/],
+    [{ busy: () => true }, /refused \(busy\).*turn is in flight or a message is queued/],
     [{ replayable: () => false }, /refused \(not_replayable\)/],
     [{ driftPending: () => true }, /refused \(claude_cfg_pending\)/],
   ];
@@ -193,6 +193,7 @@ test("both requests go through the shared replay function, with the same unique-
 // The adapter's /foreman doctor handler with a fake provider.
 async function adapter(t: { after(fn: () => void | Promise<void>): void }, confirm: () => Promise<boolean>) {
   const requests: unknown[] = [];
+  const models: unknown[] = [];
   const usages = [FRESH, HIT];
   let command: ((args: string, ctx: unknown) => Promise<void>) | undefined;
   const notes: string[] = [];
@@ -200,11 +201,11 @@ async function adapter(t: { after(fn: () => void | Promise<void>): void }, confi
     config: { providers: { fake: { roles: { explorer: { model: "fake/explorer" } }, cache: { ttlSeconds: 300, keepalive: { enabled: true } } } } },
     piExtra: { registerCommand: (n: string, d: { handler: typeof command }) => n === "foreman" && (command = d.handler) },
     ctx: {
-      modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }), streamSimple: (_m: unknown, c: unknown) => (requests.push(c), { result: async () => ({ stopReason: "stop", usage: usages[requests.length - 1] }) }) },
+      modelRegistry: { find: () => undefined, getProviderAuthStatus: () => ({ configured: false }), streamSimple: (m: unknown, c: unknown) => (models.push(m), requests.push(c), { result: async () => ({ stopReason: "stop", usage: usages[requests.length - 1] }) }) },
       ui: { notify: (m: string) => void notes.push(m), confirm, select: async () => "approve", setStatus: () => undefined, setWidget: () => undefined },
     },
   });
-  return { h, requests, notes, run: (a: string) => command!(a, h.ctx) };
+  return { h, requests, models, notes, run: (a: string) => command!(a, h.ctx) };
 }
 
 test("plain /foreman doctor sends no request and mentions the option; doctor warm sends two after a yes and leaves the session alone", async (t) => {
@@ -216,6 +217,8 @@ test("plain /foreman doctor sends no request and mentions the option; doctor war
   a.notes.length = 0;
   await a.run("doctor warm");
   assert.equal(a.requests.length, 2);
+  assert.equal(a.models.length, 2);
+  for (const m of a.models) assert.equal(m, a.h.ctx.model, "both requests carry the session's own model object, not a stripped copy");
   assert.match(a.notes.at(-1)!, /^doctor warm: HIT/);
   assert.equal((a.h.ctx.sessionManager.getEntries() as unknown[]).length, entries);
   assert.deepEqual(a.h.events("doctor_warm").map((r) => r.outcome), ["hit"]);

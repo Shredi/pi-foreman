@@ -98,7 +98,7 @@ export async function doctorWarm(d: DoctorWarmDeps): Promise<DoctorWarmResult> {
   }
   if (!d.replayable()) return refuse("not_replayable", `the idle warm cannot replay ${model.provider}/${model.id} at this thinking level (a budget-thinking anthropic-messages model), so there is no warm to prove`);
   if (d.driftPending()) return refuse("claude_cfg_pending", "a claude-bridge config approval is pending and the replay would start Claude Code on unapproved config");
-  if (d.busy()) return refuse("busy", "a turn is in flight and the probe must not interleave with it; run it when the session is idle");
+  if (d.busy()) return refuse("busy", "a turn is in flight or a message is queued and the probe must not interleave with it; run it when the session is idle");
   if (active) return refuse("busy", "a doctor warm probe is already running");
 
   const rates = d.rates(PROBE_PREFIX_TOKENS);

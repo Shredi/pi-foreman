@@ -136,7 +136,17 @@ test("the idle warm equals the last real request after every stage of a scripted
   });
   const handlers = (name: string): Handler[] => [...r.handlersOf(name), ...(foreignHandlers[name] ?? [])];
   const ran = new Set<string>(); // driven events that had a handler and ran it
-  let rewrites = 0; // times the adapter's context_with_system hook returned changed messages (the restore and align paths)
+  let restores = 0; // times the adapter's context_with_system hook changed the set of sections (put one back)
+  let reorders = 0; // times it only changed the order of the same sections (alignSections)
+  /** Section names the system messages render to, in Pi's replay order (a null patch removes the name). */
+  const sectionNames = (msgs: Msg[]): string[] => {
+    const merged = new Map<string, unknown>();
+    for (const m of msgs) {
+      if (m.role !== "system") continue;
+      for (const [k, v] of Object.entries((m.sections ?? {}) as Record<string, unknown>)) v === null ? merged.delete(k) : merged.set(k, v);
+    }
+    return [...merged.keys()];
+  };
   const each = async (name: string, event: Json, apply: (res: Json) => void = () => undefined): Promise<void> => {
     for (const h of handlers(name)) {
       ran.add(name);
@@ -226,8 +236,13 @@ test("the idle warm equals the last real request after every stage of a scripted
       ran.add("context_with_system");
       const res = (await h({ type: "context_with_system", messages }, r.ctx)) as { messages?: Msg[] } | undefined;
       if (res?.messages) {
+        // the hook result alone does not say which path ran: a changed section set is a restore (keepSection), the same set in another
+        // order is a reorder (alignSections)
+        const was = sectionNames(messages);
+        const now = sectionNames(res.messages);
+        if (was.slice().sort().join() !== now.slice().sort().join()) restores += 1;
+        else if (was.join() !== now.join()) reorders += 1;
         messages = res.messages;
-        rewrites += 1;
       }
     }
     // Pi's projections after the handlers: hidden declarations leave the system messages, a forced prompt becomes the one head
@@ -353,6 +368,20 @@ test("the idle warm equals the last real request after every stage of a scripted
   q = await warmEquals("background task");
   assert.match(textOf(q), /Background task bg-1 finished/, "the notification is in the request");
 
+  // 6b. a section that first appears mid-session, before any compaction: every adapter section is already stored, the patch appends the
+  // memo after them (Pi's replay renders it last), the fresh build puts it in the middle; only the hook's alignSections fixes the order
+  foreign.forcing = false;
+  let before = reorders;
+  const restoresBefore = restores;
+  await prompt("note something", ["memo", "## Memo\nremember this"]);
+  await real();
+  await reply("noted");
+  q = await warmEquals("new section mid-session");
+  assert.ok(reorders > before, "the late section made the hook re-order the sections");
+  assert.equal(restores, restoresBefore, "no section had to be put back in this stage");
+  assert.match(q.system ?? "", /## Memo/, "the late section is in the request");
+  assert.equal(q.system, renderSystem(), "the request's head renders in the live prompt's order");
+
   // 7. a compaction: the stored head loses the sections the adapter adds; the next prompt puts them back
   await each("session_before_compact", { preparation: { tokensBefore: 100_000 }, branchEntries: [], signal: new AbortController().signal }, (res) => assert.notEqual(res.cancel, true, "the compaction is not cancelled"));
   session.splice(0, session.length, { role: "system", content: "", sections: { ...BASE }, toolsAdded: active.map(decl), timestamp: 1 }, { role: "compactionSummary", summary: "Summary of the earlier work.", tokensBefore: 100_000, timestamp: 1 });
@@ -368,7 +397,7 @@ test("the idle warm equals the last real request after every stage of a scripted
 
   // 7b. a compaction in the middle of a run, no new prompt: the stored head lost the adapter's sections and nothing patches them back,
   // so the context_with_system hook puts them back (keepSection) for the request and the warm alike
-  let before = rewrites;
+  before = restores;
   await each("session_before_compact", { preparation: { tokensBefore: 100_000 }, branchEntries: [], signal: new AbortController().signal });
   const kept = session.filter((m) => m.role !== "system" && m.role !== "compactionSummary").slice(-2);
   session.splice(0, session.length, { role: "system", content: "", sections: { ...BASE }, toolsAdded: active.map(decl), timestamp: 1 }, { role: "compactionSummary", summary: "Second summary.", tokensBefore: 100_000, timestamp: 1 }, ...kept);
@@ -377,30 +406,20 @@ test("the idle warm equals the last real request after every stage of a scripted
   await real();
   await reply("going on after the compaction");
   q = await warmEquals("compaction mid-run");
-  assert.ok(rewrites > before, "the compaction stage made the hook rewrite the messages");
+  assert.ok(restores > before, "the compaction stage made the hook put sections back");
   assert.match(q.system ?? "", /Foreman rules/, "the foreman section is back in the request");
   assert.match(q.system ?? "", /Deferred tools/, "the deferred hint is back in the request");
   assert.equal(q.system, renderSystem(), "the request's head is the live prompt");
 
   // 7c. a `pi-foreman: null` patch in the middle of a run (a run Pi started without before_agent_start): the request keeps the section
-  before = rewrites;
+  before = restores;
   session.push({ role: "system", content: "", sections: { "pi-foreman": null }, timestamp: 1 });
   await real();
   await reply("after the null patch");
   q = await warmEquals("null patch");
-  assert.ok(rewrites > before, "the null patch made the hook rewrite the messages");
+  assert.ok(restores > before, "the null patch made the hook put the section back");
   assert.match(q.system ?? "", /Foreman rules/, "the foreman section survives the null patch");
   assert.equal(q.system, renderSystem(), "the request's head is the live prompt");
-
-  // 7d. a section that first appears mid-session: Pi's replay renders it last, the fresh build in the middle; the hook aligns the order
-  before = rewrites;
-  await prompt("note something", ["memo", "## Memo\nremember this"]);
-  await real();
-  await reply("noted");
-  q = await warmEquals("new section mid-session");
-  assert.ok(rewrites > before, "the late section made the hook rewrite the messages");
-  assert.match(q.system ?? "", /## Memo/, "the late section is in the request");
-  assert.equal(q.system, renderSystem(), "the request's head renders in the live prompt's order");
 
   // 8. a forced prompt again after the compaction, then the last turn
   foreign.forcing = true;
@@ -411,7 +430,8 @@ test("the idle warm equals the last real request after every stage of a scripted
 
   assert.equal(stages, streamCalls.length, "every stage sent exactly one warm");
   assert.equal(stages, 12);
-  assert.ok(rewrites >= 3, "the context_with_system hook rewrote the messages in the restore and the align stages");
+  assert.ok(restores >= 2, "the context_with_system hook put sections back in the compaction mid-run and null patch stages");
+  assert.ok(reorders >= 1, "the context_with_system hook re-ordered the sections in the late section stage");
 
   // ---- guard: every request-changing event the adapter registers is driven by this script ---------------------------------
   // Pi's own refresh is stopped: the adapter's warm is the only one (otherwise a second warm with other options goes out)
