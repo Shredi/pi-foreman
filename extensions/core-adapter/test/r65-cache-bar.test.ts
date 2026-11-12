@@ -24,7 +24,7 @@ const TOUCH = NOW - (SPAN - (38 * 60 + 12) * 1000);
 /** End of the TTL of the last of `n` warms, one tick apart from the touch. */
 const spanEnd = (n: number): number => TOUCH + n * TICK + TTL * 1000;
 
-/** 38:12 left to cold; 3 warms of the half tier ahead, so the span share is 12192 s of 13320 s (9 cells). */
+/** 38:12 left to cold; 3 warms of the half tier ahead, so the lifetime share is 2292 s of 3420 s (7 cells). */
 function source(over: Partial<CacheSource> = {}): CacheSource {
   return {
     policy: policy(),
@@ -137,7 +137,7 @@ test("colour codes of the cells and time at 60 / 40 / 10 % left; unknown is dim"
   assert.ok(cold.includes(`\x1b[${CODE.error}m□□□□□□□□□□ ❄ cold`), cold);
 });
 
-test("the last warm of the quarter tier shows `last ¼`", () => {
+test("one warm of the quarter tier shows `♨ ¼`", () => {
   const l = plain(renderFooter(view({ ...warm, warms: { count: 1, tier: "quarter" } }), 300, theme)[0]);
   assert.ok(l.includes("♨ ¼"), l);
 });
