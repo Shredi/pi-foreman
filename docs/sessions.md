@@ -117,7 +117,7 @@ Plain pi-intercom text, one line each:
 
 A child that opened a PR watches it itself (the parent does not watch child PRs) and reports the parent only that the PR is
 ready to merge (or, when the checks passed but a draft state, a review or a branch rule holds it back, the line the watch gives), or why it is stuck. The parent merges. When the child's watch reports `merged`, the child closes itself
-without a `foreman:close`: it writes `<handoff dir>/result.md` (PR number, merge commit, anything left open), sends the parent
+without a `foreman:close` (a `foreman:close` sent after the merge, or after a refused self-close, runs the same worktree and branch cleanup; a refused cleanup reaches the parent as a `PR #n merged, closing (cleanup: not started (<reason>); ...)` reply before the `foreman:closed` line): it writes `<handoff dir>/result.md` (PR number, merge commit, anything left open), sends the parent
 `PR #n merged, closing` and `Result from <label>: <path>`, archives its `.workflow/` files (a linked worktree keeps every regular file whatever its age; the written-since-start rule is only for the main checkout's shared `.workflow/`; capped at 16 MiB, never `closed/` or `archive/`, no links; see [Self-finish on merge](close.md#self-finish-on-merge)) into `<handoff dir>/workflow/` and exits.
 A detached process then removes its worktree and local branch and writes `<handoff dir>/cleanup.json`; a failed precondition
 keeps both and is named in `result.md` and in the message to the parent. A PR closed without a merge starts nothing: the child
