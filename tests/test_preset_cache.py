@@ -18,7 +18,7 @@ NAMES = ("claude-bridge", "claude-bridge-sonnet-reviewer")
 class PresetCacheTest(unittest.TestCase):
     def test_values(self):
         for name in NAMES:
-            prov = json.loads((ROOT / "config" / "presets" / (name + ".json")).read_text())["providers"][P]
+            prov = json.loads((ROOT / "config" / "presets" / (name + ".json")).read_text(encoding="utf-8"))["providers"][P]
             self.assertNotIn("byModel", prov["cache"], name)  # the TTL is derived from bridge.promptCacheTtl
             self.assertNotIn("ttlSeconds", prov["cache"], name)  # an explicit value would shadow the derived one
             self.assertEqual(prov["cache"]["keepalive"], {"enabled": True}, name)
@@ -28,7 +28,7 @@ class PresetCacheTest(unittest.TestCase):
 
     def test_policy(self):
         for name in NAMES:
-            preset = json.loads((ROOT / "config" / "presets" / (name + ".json")).read_text())
+            preset = json.loads((ROOT / "config" / "presets" / (name + ".json")).read_text(encoding="utf-8"))
             pol = fc.warm_policy(preset, P, "claude-opus-5-5", 3600)
             self.assertEqual((pol["ttlSeconds"], pol["enabled"], pol["keepaliveOwned"]), (3600, True, True), name)
 

@@ -71,7 +71,7 @@ for (const which of ["unicode", "emoji", "nerd", "ascii"] as const) {
     assert.equal(line1(s({ warmsLeft: 1, spanEndAt: spanEnd(1), tier: "quarter" })), `${HEAD}■■■■■■■${mk}□□□ 1h ${sym.keepalive} ${tg.quarter} · ${sym.downshift} ${RUNG}`, "quarter tier");
     assert.equal(line1(s({ lastTouch: null, nextWarmAt: null })), `${HEAD}□□□□□□□□□□ ${sym.cold} cold ${tg.half} · ${sym.downshift} ${RUNG}`, "cold");
     assert.equal(line1(s({ downshifted: true })), `${HEAD}■■■■■■■${mk}□□□ 3h ${sym.keepalive} ${tg.half}`, "downshifted: no step");
-    assert.equal(line1(s({ running: true })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "running turn: no fresh count in the source = 0");
+    assert.equal(line1(s({ running: true })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "running turn: no fresh warms left in the source = 0");
     assert.equal(line1(s({ policy: policy({ active: false, skip: "disabled" }) })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "keep-alive disabled");
     assert.equal(line1(s({ policy: policy({ skip: "ttl_long", selfWarm: false }) })), `${HEAD}■■■■■■■□□□ 38:12 ${tg.half} · ${sym.downshift} ${RUNG}`, "ttl_long without self-warm");
     const preset = resolveWarmPolicy({ providers: { "claude-bridge": { cache: { ttlSeconds: 300, byModel: [{ match: "claude-*", ttlSeconds: 3600 }], keepalive: { enabled: true } } } } }, "claude-bridge", "claude-opus-5-5");

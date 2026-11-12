@@ -72,7 +72,7 @@ class BillingSchemaTest(unittest.TestCase):
             self.assertEqual(self.issues({"byModel": [row]}), [], billing)
 
     def test_schema_keeps_the_deprecated_property(self):
-        cache = json.loads((ROOT / "config" / "foreman.schema.json").read_text())["properties"]["providers"]
+        cache = json.loads((ROOT / "config" / "foreman.schema.json").read_text(encoding="utf-8"))["properties"]["providers"]
         cache = cache["additionalProperties"]["properties"]["cache"]["properties"]
         self.assertIs(cache["billing"]["deprecated"], True)
         row = cache["byModel"]["items"]["properties"]["billing"]

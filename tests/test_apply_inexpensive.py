@@ -101,7 +101,7 @@ class ApplyInexpensiveTest(unittest.TestCase):
         self.fixture(BRIDGE)
         rc, _o, err = self.apply()
         self.assertEqual(rc, 0, err)
-        got = json.loads((self.agent / "foreman.json").read_text())
+        got = json.loads((self.agent / "foreman.json").read_text(encoding="utf-8"))
         self.assertNotIn("rankTiers", got)
         self.assertEqual(got["childMaxThinking"], "medium")
         self.assertEqual(got["ceremony"], {"planReview": {"heavy": True}})

@@ -19,7 +19,7 @@ FIX = Path(__file__).resolve().parent / "fixtures"
 
 
 def load(name):
-    return [json.loads(x) for x in (FIX / name).read_text().splitlines() if x.strip()]
+    return [json.loads(x) for x in (FIX / name).read_text(encoding="utf-8").splitlines() if x.strip()]
 
 
 def ts(sec):

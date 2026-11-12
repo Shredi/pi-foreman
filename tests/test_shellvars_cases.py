@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts"))
 import shell_write_guard as swg  # noqa: E402
 
-with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-cases.json")) as f:
+with open(os.path.join(os.path.dirname(__file__), "fixtures", "shellvars-cases.json"), encoding="utf-8") as f:
     FX = json.load(f)
 
 

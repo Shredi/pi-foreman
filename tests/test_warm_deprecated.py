@@ -38,7 +38,7 @@ class DeprecatedKeysTest(unittest.TestCase):
         presets = sorted((ROOT / "config" / "presets").glob("*.json"))
         self.assertTrue(presets)
         for path in presets:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             for name, prov in (data.get("providers") or {}).items():
                 ka = ((prov or {}).get("cache") or {}).get("keepalive") or {}
                 self.assertEqual(sorted(set(ka) & set(DEPRECATED)), [], "%s %s" % (path.name, name))

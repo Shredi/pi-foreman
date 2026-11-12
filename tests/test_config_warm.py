@@ -118,20 +118,20 @@ class WarmLayerTest(unittest.TestCase):
         self.assertTrue(any(k == ("presence", "command") for k, _ in fc.IGNORED_KEYS))
 
     def test_schema_and_features_list_every_key(self):
-        schema = json.loads((ROOT / "config" / "foreman.schema.json").read_text())
+        schema = json.loads((ROOT / "config" / "foreman.schema.json").read_text(encoding="utf-8"))
         keepalive = schema["properties"]["providers"]["additionalProperties"]["properties"]["cache"]["properties"]["keepalive"]["properties"]
         for key in ("budgetShare", "awayTicks", "whileWaiting", "beyondPiCap", "selfWarmWindowMinutes"):
             self.assertIn(key, keepalive)
         self.assertEqual(sorted(schema["properties"]["presence"]["properties"]), ["awayAfterMinutes", "command", "enabled"])
         role = schema["properties"]["providers"]["additionalProperties"]["properties"]["roles"]["additionalProperties"]["properties"]
         self.assertIn("idle", role)
-        feats = json.loads((ROOT / "config" / "features.json").read_text())
+        feats = json.loads((ROOT / "config" / "features.json").read_text(encoding="utf-8"))
         keys = next(f for f in feats["features"] if f["id"] == "idle-cache")["keys"]
         for key in ("budgetShare", "awayTicks", "whileWaiting", "beyondPiCap", "selfWarmWindowMinutes"):
             self.assertIn("providers.<x>.cache.keepalive." + key, keys)
         for key in ("enabled", "awayAfterMinutes", "command"):
             self.assertIn("presence." + key, keys)
-        docs = (ROOT / "docs" / "features.md").read_text()
+        docs = (ROOT / "docs" / "features.md").read_text(encoding="utf-8")
         self.assertIn("presence.awayAfterMinutes", docs)
 
 
@@ -161,7 +161,7 @@ class WarmPolicyMirrorTest(unittest.TestCase):
         self.assertEqual((p["budgetShare"], p["awayTicks"], p["whileWaiting"]), (0.2, 2, False))
 
     def test_constants_match_cachepolicy_ts(self):
-        src = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text()
+        src = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text(encoding="utf-8")
         self.assertIn("Math.floor((PI_IDLE_CAP_MINUTES * 60) / (2 * 0.9)) + 1", src)
         self.assertEqual(1001, fc.SELF_WARM_MIN_TTL_SECONDS)
         self.assertIsNotNone(re.search(r"budgetShare: clamp\(ka\.budgetShare, 0, 1, 0\.5\)", src))

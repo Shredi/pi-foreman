@@ -12,7 +12,7 @@ import foreman_config as fc  # noqa: E402
 PROV = {
     "p1": {"roles": {r: {"model": "p1/m-" + r, "thinking": "low"} for r in ["foreman"] + fc.CHILD_ROLES}},
 }
-ROLE_SCHEMA = json.loads((ROOT / "config" / "foreman.schema.json").read_text())["properties"]["roles"]["additionalProperties"]
+ROLE_SCHEMA = json.loads((ROOT / "config" / "foreman.schema.json").read_text(encoding="utf-8"))["properties"]["roles"]["additionalProperties"]
 
 
 def schema_issues(skills):
@@ -64,7 +64,7 @@ class RoleSkillsConfig(unittest.TestCase):
                               session_json=json.dumps(session) if session is not None else None)
 
     def test_every_default_role_has_an_empty_skills_list_except_the_reviewer(self):
-        roles = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())["roles"]
+        roles = json.loads((ROOT / "config" / "foreman.defaults.json").read_text(encoding="utf-8"))["roles"]
         self.assertTrue(roles)
         for role, entry in roles.items():
             self.assertEqual(entry.get("skills"), ["security-review"] if role == "reviewer" else [], role)
@@ -89,7 +89,7 @@ class RoleSkillsConfig(unittest.TestCase):
 
 class RoleSkillsGenerated(unittest.TestCase):
     def cfg(self, skills):
-        cfg = json.loads((ROOT / "config" / "foreman.defaults.json").read_text())
+        cfg = json.loads((ROOT / "config" / "foreman.defaults.json").read_text(encoding="utf-8"))
         cfg["providers"] = PROV
         if skills is not None:
             cfg["roles"]["builder"]["skills"] = skills
@@ -120,7 +120,7 @@ class RoleSkillsGenerated(unittest.TestCase):
 
 class BenchNoSkillsLines(unittest.TestCase):
     def test_bench_no_skills_lines_unchanged(self):
-        lines = (ROOT / "scripts" / "foreman_review_bench.py").read_text().splitlines()
+        lines = (ROOT / "scripts" / "foreman_review_bench.py").read_text(encoding="utf-8").splitlines()
         self.assertIn('            "--no-skills", "-e", str(ADAPTER)]', lines)
         self.assertIn('        self.log("launch: node <pi cli> -p --mode json --no-session --no-context-files --no-skills -e %s --model <model> "', lines)
 

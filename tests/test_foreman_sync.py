@@ -431,7 +431,7 @@ class SyncTest(unittest.TestCase):
             self.write("notes/b.md", "note\n")
             code, rep = self.run_sync()
         self.assertEqual(code, 0, rep)
-        exclude = Path(self.work / ".git" / "info" / "exclude").read_text().splitlines()
+        exclude = Path(self.work / ".git" / "info" / "exclude").read_text(encoding="utf-8").splitlines()
         self.assertEqual(exclude.count("/.workflow/retro-backlog.md"), 1)
         self.assertNotIn(".workflow/retro-backlog.md", g(self.work, "log", "--name-only", "--format="))
         self.assertTrue((self.work / ".workflow" / "retro-backlog.md").is_file())
@@ -461,7 +461,7 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(seen["cmd"][6:10], ["--trace", "T1", "--trace", "T2"])  # every trace file is forwarded
 
     def test_banned_argv_shapes_absent(self):
-        src = (SCRIPTS / "foreman_sync.py").read_text()
+        src = (SCRIPTS / "foreman_sync.py").read_text(encoding="utf-8")
         for shape in (r"""["']--hard["']""", r"""["']--force""", r"""["']reset["']""", r"""["']rebase["']""", r"""["']--no-verify["']"""):
             self.assertIsNone(re.search(shape, src), shape)
         argv = [n.value for lst in ast.walk(ast.parse(src)) if isinstance(lst, ast.List)

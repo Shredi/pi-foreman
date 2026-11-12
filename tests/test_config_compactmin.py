@@ -77,16 +77,16 @@ class CompactMinLayerTest(unittest.TestCase):
 
 class CompactMinSurfaceTest(unittest.TestCase):
     def test_schema_features_and_docs(self):
-        schema = json.loads((ROOT / "config" / "foreman.schema.json").read_text())
+        schema = json.loads((ROOT / "config" / "foreman.schema.json").read_text(encoding="utf-8"))
         keepalive = schema["properties"]["providers"]["additionalProperties"]["properties"]["cache"]["properties"]["keepalive"]["properties"]
         self.assertEqual(keepalive["compactMinTokens"]["type"], "integer")
         self.assertEqual(keepalive["compactMinTokens"]["minimum"], 0)
-        feats = json.loads((ROOT / "config" / "features.json").read_text())
+        feats = json.loads((ROOT / "config" / "features.json").read_text(encoding="utf-8"))
         keys = next(f for f in feats["features"] if f["id"] == "idle-cache")["keys"]
         self.assertIn("providers.<x>.cache.keepalive.compactMinTokens", keys)
-        docs = (ROOT / "docs" / "features.md").read_text()
+        docs = (ROOT / "docs" / "features.md").read_text(encoding="utf-8")
         self.assertIn("providers.<x>.cache.keepalive.compactMinTokens", docs)
-        self.assertIn("compactMinTokens", (ROOT / "docs" / "cache.md").read_text())
+        self.assertIn("compactMinTokens", (ROOT / "docs" / "cache.md").read_text(encoding="utf-8"))
 
     def test_warm_policy_mirror(self):
         def cfg(**kw):
@@ -95,7 +95,7 @@ class CompactMinSurfaceTest(unittest.TestCase):
         self.assertEqual(fc.warm_policy(cfg(compactMinTokens=0), P)["compactMinTokens"], 0)
         self.assertEqual(fc.warm_policy(cfg(compactMinTokens=250000), P)["compactMinTokens"], 250000)
         self.assertEqual(fc.warm_policy(cfg(compactMinTokens="x"), P)["compactMinTokens"], 100000)
-        src = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text()
+        src = (ROOT / "extensions" / "core-adapter" / "cachepolicy.ts").read_text(encoding="utf-8")
         self.assertIn("clamp(ka.compactMinTokens, 0, Number.MAX_SAFE_INTEGER, 100000)", src)
         self.assertEqual(fc.LAYER_FLOOR["compactMinTokens"], 100000)
 

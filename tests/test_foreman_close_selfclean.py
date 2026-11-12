@@ -80,7 +80,7 @@ class SelfClean(unittest.TestCase):
         code, _ = self.selfclean("--verified-merged", self.tip, "--exempt-workflow", "--wait-pid", "99999999",
                                  "--out", str(result))
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(result.read_text())["status"], "removed")
+        self.assertEqual(json.loads(result.read_text(encoding="utf-8"))["status"], "removed")
         self.assertFalse(self.wt.exists())
         self.assertEqual(g(self.repo, "branch", "--list", "feat"), "")
 
@@ -88,7 +88,7 @@ class SelfClean(unittest.TestCase):
         result = self.tmp / "cleanup.json"
         code, _ = self.selfclean("--exempt-workflow", "--wait-pid", "99999999", "--out", str(result))
         self.assertEqual(code, 3)
-        self.assertEqual(json.loads(result.read_text())["reason"], "not_merged")
+        self.assertEqual(json.loads(result.read_text(encoding="utf-8"))["reason"], "not_merged")
         self.assertTrue(self.wt.exists())
 
     def test_branch_delete_flag_is_per_call(self):

@@ -60,7 +60,7 @@ def put(root, rel, text="x\n"):
 
 class DisposableGlobTest(unittest.TestCase):
     def test_list_equals_the_config_defaults(self):
-        cfg = json.loads(DEFAULTS_JSON.read_text())
+        cfg = json.loads(DEFAULTS_JSON.read_text(encoding="utf-8"))
         self.assertEqual(cfg["safety"]["ops"]["worktreeDisposable"], safe_ops.DEFAULT_DISPOSABLE)
 
     def test_defaults_end_with_the_agreed_caches_in_order(self):
@@ -172,7 +172,7 @@ class CacheRefusedTest(CacheWorktreeBase):
             self.skipTest("symlinks not available")
         exc = self.refused()
         self.assertEqual(exc.files, [".pytest_cache"])
-        self.assertEqual((self.outside / "keep.txt").read_text(), "keep\n")
+        self.assertEqual((self.outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
 
 
 class FileOnlyEntryTest(CacheWorktreeBase):

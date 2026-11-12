@@ -54,14 +54,14 @@ class FlaggedAskTest(unittest.TestCase):
         # a committed repo store exists for this workspace: a flagged ask must not touch it
         repo_store = Path(fb.repo_store(str(self.ws)))
         repo_store.write_text("# Retro backlog: repo\n")
-        before = repo_store.read_text()
+        before = repo_store.read_text(encoding="utf-8")
         [c] = [c for c in fr.candidates({}, [flag()], [], None) if c["kind"] == "flagged-ask"]
         [(eid, how)] = self.rec([c])
         self.assertEqual(how, "created")
         path, origin = fb.store_path_for("flagged-ask", workspace_root=str(self.ws), cfg=self.cfg, agent_dir=str(self.agent))
         self.assertEqual(origin, "global")
-        self.assertEqual(repo_store.read_text(), before)
-        text = Path(path).read_text()
+        self.assertEqual(repo_store.read_text(encoding="utf-8"), before)
+        text = Path(path).read_text(encoding="utf-8")
         self.assertIn("kind: flagged-ask", text)
         self.assertIn("family: state_usage_read", text)
         [e] = fb.load(path)

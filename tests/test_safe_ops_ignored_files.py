@@ -122,7 +122,7 @@ class CheckWorktreeTest(unittest.TestCase):
             self.skipTest("symlinks not available")
         exc = self.refused()
         self.assertEqual(exc.files, [".pi/tasks"])
-        self.assertEqual((outside / "keep.txt").read_text(), "keep\n")
+        self.assertEqual((outside / "keep.txt").read_text(encoding="utf-8"), "keep\n")
 
     def test_symlink_inside_a_walked_folder_is_a_leaf(self):
         outside = self.tmp / "outside"

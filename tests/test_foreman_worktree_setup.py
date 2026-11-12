@@ -49,7 +49,7 @@ class WorktreeSetupTest(unittest.TestCase):
         self.assertNotEqual(os.stat(nm / "pkg" / "index.js").st_ino, os.stat(self.main / "node_modules" / "pkg" / "index.js").st_ino)
         self.assertEqual(len(err.strip().splitlines()), 1)
         (nm / "pkg" / "index.js").write_text("changed\n")
-        self.assertEqual((self.main / "node_modules" / "pkg" / "index.js").read_text(), "x\n")
+        self.assertEqual((self.main / "node_modules" / "pkg" / "index.js").read_text(encoding="utf-8"), "x\n")
 
     def test_failed_copy_keeps_the_link_and_leaves_no_partial_directory(self):
         (self.wt / "package-lock.json").write_text("{}\n")

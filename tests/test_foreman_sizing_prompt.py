@@ -46,7 +46,7 @@ class SizingPromptTest(unittest.TestCase):
         return k
 
     def test_sizing_on_fits_and_is_neutral(self):
-        text = (ROOT / "instructions" / "foreman.md").read_text()
+        text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         for mode in ("tool", "bash", "off"):
             for heavy in ("strict", "eee843d"):
                 for review in ("on", "off"):
@@ -62,7 +62,7 @@ class SizingPromptTest(unittest.TestCase):
         old = subprocess.run(["git", "show", BASE + ":instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
         if old.returncode != 0:
             self.skipTest("base commit not available")
-        text = (ROOT / "instructions" / "foreman.md").read_text()
+        text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
         for brief in ("off",):  # the merged launch-brief lines only render with launchBriefs on
             k = self.knobs(sizing="off", launchbriefs=brief, show="off")  # show "off": no foreman_show explain rule
             # round 68: the launch `mcp` field is named in the launch rule (no `mcp` = no MCP for the child)

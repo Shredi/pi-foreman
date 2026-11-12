@@ -79,7 +79,7 @@ class TestSessionClose(ReplayCase):
             time.sleep(0.2)
         self.assertEqual(child.proc.poll(), 0, "\n".join(child.stderr[-15:]))
         result = (rig.project / ".workflow" / "result-close.md").resolve()
-        self.assertIn("replay close", result.read_text())
+        self.assertIn("replay close", result.read_text(encoding="utf-8"))
         seen = drain_until(parent, "foreman:closed", 30)
         self.assertIn("foreman:closed %s" % result, json.dumps(seen).replace("\\\\", "\\"))
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")

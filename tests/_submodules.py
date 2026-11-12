@@ -22,13 +22,13 @@ def build_rig(base):
     for n in ("a", "b"):
         os.makedirs(j(src, n))
         git(j(src, n), "init", "-q", "-b", "main")
-        with open(j(src, n, "f"), "w") as fh:
+        with open(j(src, n, "f"), "w", encoding="utf-8") as fh:
             fh.write(n + "\n")
         git(j(src, n), "add", "f")
         git(j(src, n), "commit", "-q", "-m", "init")
     os.makedirs(sup)
     git(sup, "init", "-q", "-b", "main")
-    with open(j(sup, "r"), "w") as fh:
+    with open(j(sup, "r"), "w", encoding="utf-8") as fh:
         fh.write("r\n")
     git(sup, "add", "r")
     git(sup, "commit", "-q", "-m", "init")
@@ -40,7 +40,7 @@ def build_rig(base):
         git(sup, "update-index", "--add", "--cacheinfo", "160000,%s,%s" % (git(j(sup, p), "rev-parse", "HEAD"), p))
         mods += '[submodule "%s"]\n\tpath = %s\n\turl = %s\n' % (p, p, j(src, n))
         git(sup, "config", "submodule.%s.url" % p, j(src, n))
-    with open(j(sup, ".gitmodules"), "w") as fh:
+    with open(j(sup, ".gitmodules"), "w", encoding="utf-8") as fh:
         fh.write(mods)
     git(sup, "add", ".gitmodules")
     git(sup, "commit", "-q", "-m", "submodules")
@@ -64,6 +64,6 @@ def build_rig(base):
     forged = j(tree, "forged")
     os.makedirs(forged)
     admin_b = j(sup, ".git", "modules", "b")
-    with open(j(forged, ".git"), "w") as fh:
+    with open(j(forged, ".git"), "w", encoding="utf-8") as fh:
         fh.write("gitdir: %s\n" % admin_b)
     return SimpleNamespace(superproject=sup, tree=tree, linked_sub=linked, plain_sub=plain, stray_inner=inner, foreign=foreign, forged=forged)

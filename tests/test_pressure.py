@@ -88,7 +88,7 @@ class StateTest(unittest.TestCase):
         fp.write_state(self.path, rec)
         fp.write_state(self.path, rec)
         self.assertEqual(os.listdir(os.path.dirname(self.path)), ["pressure.json"])
-        self.assertEqual(json.load(open(self.path)), rec)
+        self.assertEqual(json.load(open(self.path, encoding="utf-8")), rec)
 
     def test_failed_write_leaves_no_tmp(self):
         os.makedirs(os.path.dirname(self.path))
@@ -184,7 +184,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         rec = json.loads(p.stdout)
         self.assertEqual((rec["level"], rec["reasons"]), ("critical", ["disk"]))
-        self.assertEqual(json.load(open(self.state)), rec)
+        self.assertEqual(json.load(open(self.state, encoding="utf-8")), rec)
         p = self.run_cli("read", "--state", self.state, "--sample-seconds", "30")
         self.assertEqual(json.loads(p.stdout), rec)
 

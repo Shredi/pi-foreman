@@ -69,7 +69,7 @@ class NestedGroupTest(unittest.TestCase):
 
     def test_dirty_inner_checkout_blocks_the_whole_group(self):
         r = self.rig
-        with open(os.path.join(r.linked_sub, "dirty.txt"), "w") as fh:
+        with open(os.path.join(r.linked_sub, "dirty.txt"), "w", encoding="utf-8") as fh:
             fh.write("x\n")
         res = self.run_cleanup()
         self.assertEqual(res["removed"], [])

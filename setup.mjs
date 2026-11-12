@@ -12,11 +12,12 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline/promises";
 import {
-  MODS, appHome, assignment, diffMods, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, refreshMods, resolveSetupPython, toggleable,
+  MODS, appHome, assignment, diffMods, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, refreshMods, resolveSetupPython, splitBlockedMods, toggleable,
 } from "./extensions/core-adapter/profiles.mjs";
+import { isolationDir, loginSigns } from "./extensions/core-adapter/bridgelogin.mjs";
 import { migrateGateConfig } from "./scripts/foreman_migrate_gate.mjs";
 
-// The script needs `config/` and `extensions/core-adapter/profiles.mjs` beside it (imported statically above); `@inquirer/prompts` is loaded only when the picker opens.
+// The script needs `config/` and `extensions/core-adapter/profiles.mjs` and `bridgelogin.mjs` beside it (imported statically above); `@inquirer/prompts` is loaded only when the picker opens.
 // The shared point rule and model data are loaded softly: without them the install still runs, minus the compaction step.
 const pointModule = await import("./extensions/core-adapter/compaction-point.mjs").catch(() => null);
 const dataModule = await import("./extensions/core-adapter/pi-model-data.mjs").catch(() => null);
@@ -63,15 +64,8 @@ const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
 const NO_PROFILE_HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
-// Keep in step with isolationDir/keychainService/macKeychainProbe/isolationDoctor in extensions/core-adapter/bridgeiso.ts.
-// Presence checks only: no credential content is read or printed.
-const macKeychainProbe = (service) => spawnSync("security", ["find-generic-password", "-s", service], { stdio: "ignore", timeout: 5000 }).status === 0;
-
-export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain = macKeychainProbe } = {}) {
-  const dir = path.join(agentDir, "pi-foreman", "claude-config");
-  if (fs.existsSync(path.join(dir, ".credentials.json"))) return true;
-  if (platform === "darwin" && keychain(`Claude Code-credentials-${crypto.createHash("sha256").update(dir.normalize("NFC")).digest("hex").substring(0, 8)}`)) return true;
-  return !!env.CLAUDE_CODE_OAUTH_TOKEN;
+export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain } = {}) {
+  return !loginSigns(isolationDir(agentDir), { env, platform, keychain }).next().done;
 }
 
 const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
@@ -879,6 +873,13 @@ function printModsNextStep(home, mods) {
   for (const mod of mods) say(`  then run: herdr-app check ${path.join(home, "mods", mod)}`);
 }
 
+/** The mod files a refresh leaves alone because a folder is in their place (or a file in place of their folder); the owner moves or removes it. */
+function printModsBlocked(blocked) {
+  for (const { mod, files } of blocked) {
+    say(`  ${mod}: ${files.join(", ")} not written: a folder is in the place of a mod file (or a file in the place of a mod folder); move or remove it, then foreman setup --mods refreshes it.`);
+  }
+}
+
 /** `foreman setup --mods`: refresh the installed herdr-app mods from this package and stop; no pi probing, no config writes. */
 function refreshModsCli(dryRun) {
   const home = appHome();
@@ -893,15 +894,22 @@ function refreshModsCli(dryRun) {
     say(`herdr-app mods: nothing to do, the installed mods match the package (${installed.join(", ")}).`);
     return;
   }
+  const { writable, blocked } = splitBlockedMods(home, changed);
   if (dryRun) {
-    say("herdr-app mods: dry run, nothing written. Would copy from the package:");
-    for (const { mod, files } of changed) say(`  ${mod}: ${files.join(", ")}`);
-    say("  run without --dry-run to copy them.");
+    if (writable.length) {
+      say("herdr-app mods: dry run, nothing written. Would copy from the package:");
+      for (const { mod, files } of writable) say(`  ${mod}: ${files.join(", ")}`);
+      say("  run without --dry-run to copy them.");
+    }
+    printModsBlocked(blocked);
     return;
   }
-  say("herdr-app mods: refreshed from the package:");
-  for (const { mod, files } of changed) say(`  ${mod}: ${files.join(", ")}`);
-  printModsNextStep(home, changed.map((c) => c.mod));
+  if (writable.length) {
+    say("herdr-app mods: refreshed from the package:");
+    for (const { mod, files } of writable) say(`  ${mod}: ${files.join(", ")}`);
+  }
+  printModsBlocked(blocked);
+  if (writable.length) printModsNextStep(home, writable.map((c) => c.mod));
 }
 
 /** The installed herdr-app mods that differ from the package: listed, then one yes/no to refresh them (never silent). `--dry-run` and no terminal only report. Returns true when it refreshed. */
@@ -919,7 +927,10 @@ async function offerModsRefresh({ st, dry }) {
     return false;
   }
   refreshMods({ packageRoot: ROOT, appHome: home });
-  printModsNextStep(home, changed.map((c) => c.mod));
+  const { writable, blocked } = splitBlockedMods(home, changed);
+  printModsBlocked(blocked);
+  if (!writable.length) return false;
+  printModsNextStep(home, writable.map((c) => c.mod));
   return true;
 }
 
