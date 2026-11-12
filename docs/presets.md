@@ -99,7 +99,7 @@ your user or overlay `foreman.json` (ids are placeholders):
       "roles": { "foreman": { "idle": { "model": "<provider-b>/<cheaper-model>", "thinking": "low" } } }
     },
     "<provider-b>": {
-      "cache": { "ttlSeconds": 1800, "keepalive": { "selfWarmWindowMinutes": 240 } }
+      "cache": { "ttlSeconds": 1800, "keepalive": { "enabled": true, "selfWarmWindowMinutes": 240 } }
     }
   }
 }

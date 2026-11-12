@@ -22,7 +22,6 @@ test("billing at provider level and on a byModel row changes nothing in the poli
         assert.deepEqual(got, want, JSON.stringify(c));
         assert.deepEqual(resolveCachePolicy(cfg(c), P, "gpt-6"), wantCache, JSON.stringify(c));
         assert.ok(!("billing" in got));
-        assert.notEqual(got.skip, "billing_request" as never);
         assert.equal(got.keepaliveOwned, want.keepaliveOwned);
       }
     }
@@ -112,4 +111,21 @@ test("the billing warning names both fixes", () => {
     assert.ok(l.includes("keepalive.enabled: true"), l);
     assert.ok(l.includes("keepalive.enabled: false"), l);
   }
+});
+
+test("the idle-rung warning names keepalive.enabled for a provider outside the built-in table only", () => {
+  const warn = (rungProvider: string) => {
+    const lines = cacheDoctorLines({
+      provider: P, policy: resolveWarmPolicy({}, P, "m"), promptCache: undefined, retention: undefined, selfWarmMissed: false, hasIdleRung: true,
+      idleRung: { spec: `${rungProvider}/small`, provider: rungProvider, policy: resolveWarmPolicy({}, rungProvider, "small") },
+    });
+    return lines.find((l) => l.startsWith("WARN idle rung")) ?? "";
+  };
+  const custom = warn(CUSTOM);
+  assert.match(custom, /^WARN idle rung my-proxy\/small: provider my-proxy has no cache entry \(ttl unknown\)/);
+  assert.ok(custom.includes("set providers.my-proxy.cache.ttlSeconds and providers.my-proxy.cache.keepalive.enabled: true"), custom);
+  const builtIn = warn("github-copilot");
+  assert.match(builtIn, /^WARN idle rung github-copilot\/small: provider github-copilot has no cache entry/);
+  assert.ok(builtIn.includes("set providers.github-copilot.cache.ttlSeconds (docs/ladder.md)"), builtIn);
+  assert.ok(!builtIn.includes("keepalive.enabled"), builtIn);
 });

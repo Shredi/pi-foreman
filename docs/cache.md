@@ -4,7 +4,7 @@
 > session resuming cold, the activity rule and cost rule that bound it, the presence gate, and the final warm
 > compaction.
 
-On token-billed providers with a cache TTL (`claude-bridge`: 3600 s for the foreman, 300 s for subagents, derived; keep-alive on by default) an idle
+On providers with a cache TTL (`claude-bridge`: 3600 s for the foreman, 300 s for subagents, derived; keep-alive on by default; any other provider needs `keepalive.enabled: true` too) an idle
 session otherwise pays for a cold prompt on resume. Layer rules are below; the idle model downshift is in [ladder](ladder.md#idle-rung-foreman-downshift).
 
 ## Config
@@ -34,7 +34,7 @@ The warm tick and the on/off default follow the TTL of the matched row, so a fam
 
 | family | TTL | keep-alive |
 |---|---|---|
-| Anthropic direct | none built in (`no_entry`; 300 s is the provider's own TTL) | off until you set `cache.ttlSeconds` |
+| Anthropic direct | none built in (`no_entry`; 300 s is the provider's own TTL) | off until you set `cache.ttlSeconds` and `cache.keepalive.enabled: true` |
 | Claude through `claude-bridge`, foreman and session foremen | derived from `bridge.promptCacheTtl.main`: 3600 s (`1h`, default), 300 s (`5m`, `inherit`, or `FORCE_PROMPT_CACHING_5M`) | pi-foreman's warm, one per 3240 s (3600 s TTL) or 270 s (300 s TTL) |
 | Claude through `claude-bridge`, subagents | derived from `bridge.promptCacheTtl.subagent`: 300 s (`5m`, default) | pi-foreman's warm (a child session warms its own cache the same way) |
 | `github-copilot`, Claude-type model (`claude-*`) | 300 s (built-in row; owner measurement 2026-11 on Claude Opus, not published by GitHub) | pi-foreman's warm, one per 270 s |
@@ -97,7 +97,7 @@ For Copilot see also [github-copilot](#github-copilot).
 
 ## Layers
 
-The user and overlay layers may set every cache key. The project and session layers can only tighten: `keepalive.enabled` accepts only `false`; `keepalive.budgetShare` only a lower value (at most 0.5); `keepalive.children` accepts only `false`; `keepalive.compactMinTokens` only a higher value (at least 100000 without an earlier value); `presence.enabled` accepts only `true` (more gating is the tightening direction), `presence.awayAfterMinutes` only a lower value (at most 11). `presence.command` (it runs a program), `ttlSeconds` and `warmCompact` are ignored there. The deprecated keys keep their old layer rule and do nothing. An ignored or loosening value is dropped with a warning, and a `cache` or `keepalive` value that is not an object is dropped with an "expected an object" warning.
+The user and overlay layers may set every cache key. The project and session layers can only tighten: `keepalive.enabled` accepts only `false`; `keepalive.budgetShare` only a lower value (at most 0.5); `keepalive.children` accepts only `false`; `keepalive.compactMinTokens` only a higher value (at least 100000 without an earlier value); `presence.enabled` accepts only `true` (more gating is the tightening direction), `presence.awayAfterMinutes` only a lower value (at most 11). `presence.command` (it runs a program), `ttlSeconds` and `warmCompact` are ignored there. The deprecated keepalive keys keep their old layer rule and do nothing; `billing` (provider level or a `byModel` row) is accepted in any layer and ignored there too. An ignored or loosening value is dropped with a warning, and a `cache` or `keepalive` value that is not an object is dropped with an "expected an object" warning.
 
 ## Keep-alive
 
@@ -210,7 +210,7 @@ Keep-alive spends tokens: every warm reads the whole prefix from the cache.
 | `github-copilot` | per model: `claude-*` 300 s, `gpt-*`/`o1*`/`o3*`/`o4*` 1800 s, else unknown | on for models with a TTL row (children included; `keepalive.children: false` stops them); off for other models |
 | others | no entry | none; silent (no trace) |
 
-A provider with no entry and no `cache` config is not traced at all. Add `providers.<p>.cache` with `ttlSeconds` to give another provider the same treatment.
+A provider with no entry and no `cache` config is not traced at all. Add `providers.<p>.cache` with `ttlSeconds` and `keepalive.enabled: true` to give another provider the same treatment (a provider outside the built-in table keeps the keep-alive off without `keepalive.enabled: true`).
 
 ## Trace events
 

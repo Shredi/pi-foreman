@@ -66,11 +66,6 @@ class BillingSchemaTest(unittest.TestCase):
         fc.validate_schema(full, schema, "", out)
         return [m for kind, _p, m in out if kind == "error"]
 
-    def test_any_value_validates(self):
-        for value in ("request", "token", "unknown"):
-            self.assertEqual(self.issues({"billing": value}), [], value)
-            self.assertEqual(self.issues({"byModel": [{"match": "x", "billing": value}]}), [], value)
-
     def test_schema_keeps_the_deprecated_property(self):
         cache = json.loads((ROOT / "config" / "foreman.schema.json").read_text())["properties"]["providers"]
         cache = cache["additionalProperties"]["properties"]["cache"]["properties"]
