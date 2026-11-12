@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { baselineOf, latestWatches, PRWATCH_ENTRY, pollWatch, prDelta, PrWatches } from "../prwatch.ts";
+import { baselineOf, latestWatches, PRWATCH_ENTRY, pollWatch, prDelta, prMessage, PrWatches } from "../prwatch.ts";
 import type { Bucket, Run, SettleGate, Timers, WatchSnapshot } from "../prwatch.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { clearStoreCache, readStoreEntry, storeKey, trackedStateFile } from "../prstore.ts";
@@ -125,9 +125,9 @@ test("a failure stays immediate: with a required check missing, and inside the s
 test("blocked merge state holds the ready line; it is sent when the state clears", () => {
   const base = baselineOf(snap({ runs: [run("a", "pending")], required: ["a"], mergeState: "blocked" }));
   const blocked = prDelta(base, snap({ runs: [run("a", "passed")], required: ["a"], mergeState: "blocked" }), true);
-  assert.deepEqual(blocked.delta?.events, ["checks finished: pass"]);
+  assert.deepEqual(blocked.delta?.events, ["checks finished: pass", "checks passed, merge state blocked (a review or a branch rule is still open)"]);
   assert.equal(blocked.delta?.ready, undefined);
-  for (const mergeState of ["behind", "dirty", "draft", "unknown"]) {
+  for (const mergeState of ["dirty", "draft", "unknown"]) {
     assert.equal(prDelta(blocked.state, snap({ runs: [run("a", "passed")], required: ["a"], mergeState }), true).delta, null, mergeState);
   }
   const clear = prDelta(blocked.state, snap({ runs: [run("a", "passed")], required: ["a"], mergeState: "clean" }), true);
@@ -207,4 +207,106 @@ test("pollWatch: the pr_batch answer's required and mergeState reach the snapsho
   const b = (await pollWatch(answer({ required: null, mergeState: null }) as never, K, { updatedAt: "t0" })) as { snap: WatchSnapshot };
   assert.equal(b.snap.required, null);
   assert.equal("mergeState" in b.snap, false);
+});
+
+// ---- merge state and the ready line (child sessions)
+const BLOCKED = "checks passed, merge state blocked (a review or a branch rule is still open)";
+const BEHIND = "checks passed, merge state behind the base";
+const passing = (o: Partial<WatchSnapshot> = {}): WatchSnapshot => snap({ runs: [run("a", "passed")], required: ["a"], ...o });
+const pendingBase = (): ReturnType<typeof baselineOf> => baselineOf(snap({ runs: [run("a", "pending")], required: ["a"] }));
+
+test("armed with start inside the early window, required set empty or unreadable: the ready line waits out the settle time", () => {
+  for (const required of [[], null]) {
+    const early = snap({ runs: [run("a", "passed")], required });
+    const base = baselineOf(early);
+    assert.equal(base.ci, `${SHA}:pass`, "the baseline counts the early pass as reported");
+    const first = prDelta(base, early, true, undefined, "", undefined, true, at(0));
+    assert.equal(first.delta, null, "no ready line on the first tick");
+    const pending = prDelta(first.state, snap({ runs: [run("a", "passed"), run("b", "pending")], required }), true, undefined, "", undefined, true, at(1000));
+    assert.equal(pending.delta, null);
+    const full = snap({ runs: [run("a", "passed"), run("b", "passed")], required });
+    const settling = prDelta(pending.state, full, true, undefined, "", undefined, true, at(2000));
+    assert.deepEqual(settling.delta?.events, undefined);
+    assert.equal(prDelta(settling.state, full, true, undefined, "", undefined, true, at(2000 + SETTLE - 1)).delta, null);
+    assert.deepEqual(prDelta(settling.state, full, true, undefined, "", undefined, true, at(2000 + SETTLE)).delta?.events, ["checks finished: pass", "ready to merge"]);
+  }
+  // the unchanged early set alone: held on the first ticks, the ready line after the settle time
+  const early = snap({ runs: [run("a", "passed")], required: [] });
+  const first = prDelta(baselineOf(early), early, true, undefined, "", undefined, true, at(0));
+  assert.equal(first.delta, null);
+  assert.deepEqual(prDelta(first.state, early, true, undefined, "", undefined, true, at(SETTLE)).delta?.events, ["ready to merge"]);
+  assert.equal(prDelta(prDelta(first.state, early, true, undefined, "", undefined, true, at(SETTLE)).state, early, true, undefined, "", undefined, true, at(SETTLE + 5)).delta, null, "sent once");
+});
+
+test("merge state unknown: the ready line is held, then sent once the state settles", () => {
+  const held = prDelta(pendingBase(), passing({ mergeState: "unknown" }), true);
+  assert.deepEqual(held.delta?.events, ["checks finished: pass"]);
+  assert.equal(prDelta(held.state, passing({ mergeState: "unknown" }), true).delta, null);
+  const clear = prDelta(held.state, passing({ mergeState: "clean" }), true);
+  assert.deepEqual(clear.delta?.events, ["ready to merge"]);
+  assert.equal(clear.delta?.ready, true);
+});
+
+test("merge state dirty: no ready line and no new line", () => {
+  const r = prDelta(pendingBase(), passing({ mergeState: "dirty" }), true);
+  assert.deepEqual(r.delta?.events, ["checks finished: pass"]);
+  assert.equal(prDelta(r.state, passing({ mergeState: "dirty" }), true).delta, null);
+  assert.equal(r.delta?.ready, undefined);
+});
+
+test("merge state draft: no ready line and no new line", () => {
+  const r = prDelta(pendingBase(), passing({ mergeState: "draft" }), true);
+  assert.deepEqual(r.delta?.events, ["checks finished: pass"]);
+  assert.equal(r.delta?.ready, undefined);
+  assert.equal(prDelta(r.state, passing({ mergeState: "draft" }), true).delta, null);
+});
+
+test("merge state blocked: no ready line, one line naming the state", () => {
+  const r = prDelta(pendingBase(), passing({ mergeState: "blocked" }), true);
+  assert.deepEqual(r.delta?.events, ["checks finished: pass", BLOCKED]);
+  assert.equal(r.delta?.ready, undefined);
+  assert.equal(r.delta?.notReady, BLOCKED);
+  assert.match(prMessage(7, r.delta as NonNullable<typeof r.delta>).content, /report to the parent: PR #7 checks passed, merge state blocked/);
+});
+
+test("merge state behind: no ready line, one line naming the state", () => {
+  const r = prDelta(pendingBase(), passing({ mergeState: "behind" }), true);
+  assert.deepEqual(r.delta?.events, ["checks finished: pass", BEHIND]);
+  assert.equal(r.delta?.ready, undefined);
+});
+
+test("blocked and behind are sent once per head and state; a new head or a changed state reports again", () => {
+  const first = prDelta(pendingBase(), passing({ mergeState: "blocked" }), true);
+  assert.equal(prDelta(first.state, passing({ mergeState: "blocked" }), true).delta, null);
+  assert.deepEqual(prDelta(first.state, passing({ mergeState: "behind" }), true).delta?.events, [BEHIND]);
+  const pushed = prDelta(first.state, passing({ head: SHA2, mergeState: "blocked" }), true);
+  assert.deepEqual(pushed.delta?.events, ["checks finished: pass", BLOCKED]);
+  assert.equal(prDelta(pushed.state, passing({ head: SHA2, mergeState: "blocked" }), true).delta, null);
+  // a parent session (not a child) gets none of it
+  assert.deepEqual(prDelta(pendingBase(), passing({ mergeState: "blocked" }), false).delta?.events, ["checks finished: pass"]);
+});
+
+test("blocked, then clean on the same head: the ready line is sent then", () => {
+  const blocked = prDelta(pendingBase(), passing({ mergeState: "blocked" }), true);
+  const clean = prDelta(blocked.state, passing({ mergeState: "clean" }), true);
+  assert.deepEqual(clean.delta?.events, ["ready to merge"]);
+  assert.equal(prDelta(clean.state, passing({ mergeState: "blocked" }), true).delta, null, "blocked again on the same head: already reported");
+});
+
+test("no merge state reported: the ready line as before", () => {
+  const r = prDelta(pendingBase(), passing(), true);
+  assert.deepEqual(r.delta?.events, ["checks finished: pass", "ready to merge"]);
+});
+
+test("notReadyKey persists and restores; an old record without it restores too", () => {
+  const state = { ...baselineOf(snap({ runs: [run("a", "pending")] })), notReadyKey: `${SHA}:blocked` };
+  const rec = { key: K, cwd: "/work", startedAt: 1, state };
+  const entry = (r: unknown) => [{ type: "custom", customType: PRWATCH_ENTRY, data: { v: 2, piSessionId: "s", watches: [r] } }];
+  const back = latestWatches(entry(JSON.parse(JSON.stringify(rec))), "s");
+  assert.ok(back.status === "ok");
+  if (back.status === "ok") assert.equal(back.watches[0].state.notReadyKey, `${SHA}:blocked`);
+  const { notReadyKey: _drop, ...old } = state;
+  const oldBack = latestWatches(entry({ ...rec, state: old }), "s");
+  assert.ok(oldBack.status === "ok");
+  if (oldBack.status === "ok") assert.equal(oldBack.watches[0].state.notReadyKey, undefined);
 });

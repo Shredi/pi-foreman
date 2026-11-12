@@ -75,6 +75,25 @@ class PolicyBatchTest(prt.RepoLessCase):
         self.assertEqual(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch=True)["error"], "pr_host_failed")
         self.assertEqual(len(self.calls()), 1)
 
+    def test_other_error_is_not_retried_and_is_reported(self):
+        queries = []
+
+        def fake(argv, root, subst=()):
+            queries.append(argv)
+            return 1, "", "gh: HTTP 401: Bad credentials"
+
+        with mock.patch.object(pr_ops, "run_host", fake):
+            got = self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch=True)
+        self.assertEqual(len(queries), 1)
+        self.assertIn("error", got)
+        self.assertIn("401", json.dumps(got))
+
+    def test_unrelated_graphql_error_is_not_retried(self):
+        bad = {"errors": [{"type": "FORBIDDEN", "message": "Resource not accessible"}]}
+        self.scn({"gh api graphql": {"stdout": prt.j(bad), "exit": 1}})
+        self.assertEqual(self.at("pr_batch", prs=[{"repo": "acme/lib", "n": 5}], watch=True)["error"], "pr_host_failed")
+        self.assertEqual(len(self.calls()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

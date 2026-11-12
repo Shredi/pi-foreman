@@ -1218,6 +1218,17 @@ def _enum(v, allowed):
     return v if v in allowed else None
 
 
+POLICY_FIELDS = ("mergeStateStatus", "baseRef", "branchProtectionRule", "requiredStatusCheckContexts", "RequiredStatusChecksParameters",
+                 "requiredStatusChecks", "rules", "parameters")
+
+
+def _rejects_policy_fields(e):
+    """An undefined-field style GraphQL error that names one of the merge state / required check fields."""
+    msg = str(e.get("message") or "")
+    undefined = e.get("type") in ("undefinedField", "UNDEFINED_FIELD") or re.search(r"doesn't exist on type|unknown field|undefined field|no such field", msg, re.I)
+    return bool(undefined) and re.search(r"\b(%s)\b" % "|".join(POLICY_FIELDS), msg) is not None
+
+
 def op_pr_batch(req):
     args, cfg, pr_host = _setup(req, ("host", "prs", "watch"))
     hostname = arg_host(args)
@@ -1247,8 +1258,12 @@ def op_pr_batch(req):
         return code, err, d, errs
 
     code, err, d, errs = ask(True)
-    if watch and not any(x.get("type") == "RATE_LIMITED" for x in errs) and not (isinstance(d, dict) and isinstance(d.get("data"), dict)):
-        code, err, d, errs = ask(False)   # a host that rejects the merge state and required check fields: without them, required unreadable
+    if watch and not (isinstance(d, dict) and isinstance(d.get("data"), dict)) and any(_rejects_policy_fields(x) for x in errs):
+        # a host that does not know the merge state and required check fields: without them, required unreadable;
+        # any other failure (auth, network, rate limit) is not retried, and a retry that fails too leaves the first error
+        again = ask(False)
+        if isinstance(again[2], dict) and isinstance(again[2].get("data"), dict):
+            code, err, d, errs = again
     if not isinstance(d, dict):
         if code != 0:
             host_error(host, "batch", code, err)

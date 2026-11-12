@@ -152,6 +152,8 @@ export interface WatchState {
   unreviewedHead?: string;
   /** A would-be pass waiting out the settle time: the head, the signature of the gating run set and when the watch first saw that set (epoch ms); absent when none. */
   passSince?: { head: string; sig: string; at: number };
+  /** Child sessions: `<head>:<merge state>` the checks-passed-but-blocked/behind line was reported for, "" (or absent) when none. */
+  notReadyKey?: string;
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
 }
@@ -164,6 +166,12 @@ export interface SettleGate {
 
 /** Merge states of the forge that keep the ready-to-merge line back. */
 const NOT_READY = new Set(["blocked", "behind", "dirty", "draft", "unknown"]);
+
+/** The line for a PR whose checks passed but whose merge state is blocked or behind (unknown is held, dirty and draft have their own lines). */
+const NOT_READY_LINES: Record<string, string> = {
+  blocked: "checks passed, merge state blocked (a review or a branch rule is still open)",
+  behind: "checks passed, merge state behind the base",
+};
 
 const shortSha = (sha: string): string => sha.slice(0, 7);
 
@@ -238,6 +246,8 @@ export interface Delta {
   moreComments: number;
   /** Child session lines (PI_FOREMAN_HANDOFF_DIR set). */
   ready?: boolean;
+  /** The checks-passed line of a blocked or behind merge state. */
+  notReady?: string;
   draftReady?: boolean;
   conflict?: boolean;
   closedUnmerged?: boolean;
@@ -277,12 +287,16 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   // a pending run the tracker made up for a source that did not answer does not reset the recorded result
   if (gating.some((r) => r.bucket === "pending" && !r.noAnswer)) st.ci = "";
   let s = settledOf(snap.runs, snap.required);
-  // no readable required set to wait for (none, or unreadable): a pass holds until the same gating run set has stood for the settle time
-  if (s.result === "pass" && gate && gate.settleMs > 0 && !snap.required?.length && st.ci !== `${snap.head}:pass`) {
+  // no readable required set to wait for (none, or unreadable): a pass holds until the same gating run set has stood for the settle time;
+  // while the ready line is still to come the hold covers it too (a watch armed inside the window starts with the early pass as reported)
+  let held = false;
+  if (s.result === "pass" && gate && gate.settleMs > 0 && !snap.required?.length && (st.ci !== `${snap.head}:pass` || (child && st.readyHead !== snap.head))) {
     const sig = gating.map((r) => r.name).sort().join("\n");
     if (st.passSince?.head !== snap.head || st.passSince.sig !== sig) st.passSince = { head: snap.head, sig, at: gate.now };
-    if (gate.now - st.passSince.at < gate.settleMs) s = { settled: false, result: "" };
+    held = gate.now - st.passSince.at < gate.settleMs;
+    if (held && st.ci !== `${snap.head}:pass`) s = { settled: false, result: "" };
   } else delete st.passSince;
+  const green = s.result === "pass" && !held;
   let ciFired = false;
   let ciWakes = false;
   if (s.settled && st.ci !== `${snap.head}:${s.result}`) {
@@ -340,12 +354,19 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     }
   } else st.noCi = 0;
 
-  if (child && s.result === "pass" && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
+  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
     st.readyHead = snap.head;
     d.ready = true;
     events.push("ready to merge");
   }
-  if (child && s.result === "pass" && snap.mergeable === "mergeable" && snap.draft && st.draftHead !== snap.head) {
+  // blocked or behind: never silent, once per head and state; like the ready line it always wakes (not a rule event)
+  const notReady = NOT_READY_LINES[snap.mergeState ?? ""];
+  if (child && green && snap.mergeable === "mergeable" && !snap.draft && notReady && st.notReadyKey !== `${snap.head}:${snap.mergeState}`) {
+    st.notReadyKey = `${snap.head}:${snap.mergeState}`;
+    d.notReady = notReady;
+    events.push(notReady);
+  }
+  if (child && green && snap.mergeable === "mergeable" && snap.draft && st.draftHead !== snap.head) {
     st.draftHead = snap.head;
     d.draftReady = true;
     events.push("green, still a draft");
@@ -380,6 +401,7 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
     content = next;
   }
   if (more > 0) content += `\n(+${more} more: call pr_comments)`;
+  if (d.notReady) content += `\nreport to the parent: PR #${number} ${d.notReady}`;
   if (d.ready) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
   if (d.draftReady) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, still a draft`;
   if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch, then push via the parent`;
@@ -546,7 +568,7 @@ function parseState(v: unknown): WatchState | null {
   const ps = s.passSince as Record<string, unknown> | null | undefined;
   const passSince = ps && typeof ps === "object" && typeof ps.head === "string" && typeof ps.sig === "string" && finite(ps.at) ? { passSince: { head: ps.head, sig: ps.sig, at: ps.at } } : {};
   const review = { ...passSince, ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...review, last: s.last };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...review, last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */
