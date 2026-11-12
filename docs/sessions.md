@@ -450,7 +450,7 @@ the `foreman` launcher in `bin/` (`.cmd` and `.ps1` on Windows) runs the same sc
 and their layer rules are in the tables of [ceremony](ceremony.md) and [safety](safety.md) and in the schema
 `config/foreman.schema.json`.
 
-While an idle prompt-cache keep-alive window is open (`providers.<p>.cache`, on by default for `claude-bridge`) the
+While an idle prompt-cache keep-alive window is open (`providers.<p>.cache`, on by default for the built-in providers `claude-bridge` and `github-copilot` when their TTL is known) the
 status line shows a keep-alive glyph (`♨`, or a nerd-font icon with `ui.symbols`). The refresh requests are not part of the
 per-turn cost; `/foreman cost` sums them on a `keep-alive` line, split into Pi's and the foreman's own warms ([cache](cache.md)).
 This status slot applies to `footer.style: "pi"`; the foreman footer carries the cache bar instead. The same status slot shows one glyph at a time, next to the keep-alive glyph: a cold-cache glyph (`❄`, nerd-font icon

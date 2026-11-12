@@ -4,14 +4,14 @@
 > session resuming cold, the activity rule and cost rule that bound it, the presence gate, and the final warm
 > compaction.
 
-On providers with a cache TTL (`claude-bridge`: 3600 s for the foreman, 300 s for subagents, derived; keep-alive on by default; any other provider needs `keepalive.enabled: true` too) an idle
+On providers with a cache TTL (`claude-bridge`: 3600 s for the foreman, 300 s for subagents, derived; keep-alive on by default; any provider outside the built-in table (`claude-bridge`, `github-copilot`) needs `keepalive.enabled: true` too) an idle
 session otherwise pays for a cold prompt on resume. Layer rules are below; the idle model downshift is in [ladder](ladder.md#idle-rung-foreman-downshift).
 
 ## Config
 
 Built-in values exist for `claude-bridge` (`ttlSeconds` 300; the TTL is derived from `bridge.promptCacheTtl` first, see below) and `github-copilot` (`ttlSeconds` null, plus built-in per-model rows that give Claude and GPT ids their TTL; see [github-copilot](#github-copilot)). A key set in the config wins over the built-in value. `config/foreman.defaults.json` stays `providers: {}`; the built-in table lives in code. Keep-alive is on by default for `claude-bridge` through these built-in provider defaults; the claude-bridge presets set `keepalive.enabled: true` and a foreman idle model ([presets](presets.md#claude-bridge-cache-values)). For `github-copilot` it is on for Claude (`claude-*`) and GPT (`gpt-*`) model ids, which have a built-in TTL row, and off for any other model (no TTL). It is silent for providers without any cache entry. A user on a legacy per-request plan switches the keep-alive off with `keepalive.enabled: false`. On a subscription the cost figures are list-price equivalents that count against the plan's usage.
 
-`keepalive.enabled` is the only switch. It is on by default for the built-in providers (`claude-bridge`, `github-copilot`) when the TTL is known and below 3600 s (or derived on the bridge); any other provider stays off until you set `keepalive.enabled: true`. A custom provider that used `billing: "token"` to get the keep-alive now needs `keepalive.enabled: true`. pi-foreman sends every idle warm itself, for every TTL above 10 s; Pi's own cache warmer is never used (it is always told `stop`), so Pi's `cacheWarming` setting is not read.
+`keepalive.enabled` is the only switch. It is on by default for the built-in providers (`claude-bridge`, `github-copilot`) when the TTL is known and below 3600 s (or derived on the bridge); any other provider stays off until it has a TTL and you set `keepalive.enabled: true`. A custom provider that used `billing: "token"` to get the keep-alive now needs `keepalive.enabled: true`. pi-foreman sends every idle warm itself, for every TTL above 10 s; Pi's own cache warmer is never used (it is always told `stop`), so Pi's `cacheWarming` setting is not read.
 
 | key | default | meaning |
 |---|---|---|
@@ -26,7 +26,7 @@ Built-in values exist for `claude-bridge` (`ttlSeconds` 300; the TTL is derived 
 | `presence.awayAfterMinutes` | 11 | Minutes without keyboard or mouse input after which the owner counts as away (1..1440). |
 | `presence.command` | unset | A command that prints the seconds since the last input, replacing the platform probe. User or overlay config only. |
 
-**Deprecated keys.** `keepalive.beyondPiCap`, `keepalive.windowMinutes`, `keepalive.selfWarmWindowMinutes`, `keepalive.awayTicks`, `keepalive.whileWaiting` and `keepalive.intervalSeconds` are accepted and ignored: nothing reads them. So are `providers.<p>.cache.billing` and `billing` on a `byModel` row; `keepalive.enabled: false` is the switch (a provider that is not built in sets `keepalive.enabled: true` to keep the keep-alive). `foreman doctor` warns once per key set; delete them from your `foreman.json`. The warm window has no fixed length any more (the activity and cost rules end the warming), the interval is fixed (see Keep-alive), and `awayTicks` is replaced by the quarter tier.
+**Deprecated keys.** `keepalive.beyondPiCap`, `keepalive.windowMinutes`, `keepalive.selfWarmWindowMinutes`, `keepalive.awayTicks`, `keepalive.whileWaiting` and `keepalive.intervalSeconds` are accepted and ignored: nothing reads them. So are `providers.<p>.cache.billing` and `billing` on a `byModel` row; `keepalive.enabled: false` is the switch (a provider that is not built in and has a TTL sets `keepalive.enabled: true` to turn the keep-alive on). `foreman doctor` warns once per key set; delete them from your `foreman.json`. The warm window has no fixed length any more (the activity and cost rules end the warming), the interval is fixed (see Keep-alive), and `awayTicks` is replaced by the quarter tier.
 
 ### TTL by family
 
