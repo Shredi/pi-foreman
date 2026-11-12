@@ -25,7 +25,8 @@
 // The close turn passes the permission system, triage gate and drift checks like any other turn.
 // A session that watches an open PR refuses the close (`PR #n open and watched`); with a watch held, request/closeTurn first run
 // one fresh pr_status per watched PR (phase `refreshing`). Source `pr-merged` (a child whose PR merged) adds the self-finish:
-// result in the handoff dir, parent report, cleanup checks, detached cleanup (selffinish.ts, docs/close.md).
+// result in the handoff dir, parent report, cleanup checks, detached cleanup (selffinish.ts, docs/close.md). A child that saw its
+// watched PR merged (CloseDeps.mergedPr) runs the same self-finish when a close of any other source comes first or after a refusal.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -226,6 +227,8 @@ export interface CloseDeps {
   refreshWatched?: () => Promise<void>;
   /** `pr-merged`: the checks of the self-finish (after the report and markClosed); the lines for result.md and the parent, and the last step (detached cleanup). */
   selfFinish?: (req: CloseRequest) => Promise<SelfFinish>;
+  /** A child foreman session: the number of the watched PR it saw merged (the watch's merged event or a pre-close status), else null. A close from any source then runs the self-finish for it. */
+  mergedPr?: () => number | null;
   /** Append `text` to the result file. */
   appendResult?: (file: string, text: string) => void;
 }
@@ -234,6 +237,8 @@ export interface CloseDeps {
 export interface SelfFinish {
   lines: string[];
   spawn?: () => void;
+  /** With `spawn`: the path to name instead of `file` after the cleanup removes the worktree (a copy kept outside it); throws when the copy fails. */
+  keepResult?: (file: string) => string;
 }
 
 /** The parts of `<state>/sessions/<sid>/close.json` the close flow uses (scripts/foreman_close.py). */
@@ -291,6 +296,9 @@ export interface CloseRequest {
   prompt?: string;
   pr?: { n: number; parent?: string; label: string };
 }
+
+/** Who hears a refusal of `req`: its requester; for the adapter's own `pr-merged` close, the parent named in `pr`. */
+const answerTo = (req: CloseRequest): string | undefined => req.replyTo ?? (req.source === "pr-merged" ? req.pr?.parent : undefined);
 
 /** The `pr-merged` close prompt: the result file asks for the PR number, the merge commit and what is left open. */
 export function prMergedPrompt(file: string, n: number): string {
@@ -371,7 +379,7 @@ export class CloseFlow {
    * the close turn and no close prompt is sent; the caller awaits the promise before it claims the run.
    */
   request(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake = false, inRun = false): void | Promise<void> {
-    if (this.phase) return this.refuse("a close is already in progress", req.source, req.replyTo);
+    if (this.phase) return this.refuse("a close is already in progress", req.source, answerTo(req));
     if (!this.holdsWatch()) return this.begin(req, ctx, viaIntercomWake, false, inRun);
     this.phase = "refreshing";
     this.wakePending = viaIntercomWake;
@@ -382,7 +390,7 @@ export class CloseFlow {
   }
 
   private begin(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake: boolean, refreshed: boolean, inRun: boolean): void {
-    if (this.waitsBlock(req.source, req.replyTo)) {
+    if (this.waitsBlock(req.source, answerTo(req))) {
       this.wakePending = false;
       return;
     }
@@ -396,7 +404,7 @@ export class CloseFlow {
     if (inRun || ctx.isIdle()) {
       this.closeTurn(refreshed, inRun).catch((e) => {
         this.reset();
-        this.refuse(`${CLOSE_START_FAILED_REASON} ${e instanceof Error ? e.message : String(e)}`, req.source, req.replyTo);
+        this.refuse(`${CLOSE_START_FAILED_REASON} ${e instanceof Error ? e.message : String(e)}`, req.source, answerTo(req));
       });
     }
     else this.phase = "idle-wait";
@@ -409,7 +417,7 @@ export class CloseFlow {
       await this.fresh();
       if (this.phase !== "refreshing" || !this.req) return;
     }
-    if (this.waitsBlock(this.req.source, this.req.replyTo)) return this.reset();
+    if (this.waitsBlock(this.req.source, answerTo(this.req))) return this.reset();
     this.phase = "result-turn";
     this.promptPending = !inRun;
     this.d.trace({ event: "close", cause: this.req.source, decision: "turn" });
@@ -437,7 +445,7 @@ export class CloseFlow {
     if (this.phase !== "result-turn" || this.started || !this.req) return;
     const req = this.req;
     this.reset();
-    this.refuse(`the close turn did not start within ${CLOSE_START_DEADLINE_MS / 1000} s (a check or another handler stopped it); nothing was synced. Send the close again`, req.source, req.replyTo);
+    this.refuse(`the close turn did not start within ${CLOSE_START_DEADLINE_MS / 1000} s (a check or another handler stopped it); nothing was synced. Send the close again`, req.source, answerTo(req));
   }
 
   /** `agent_start` after the close prompt passed `input`: the close run began, the start deadline is met (N3). */
@@ -484,11 +492,11 @@ export class CloseFlow {
     if (!this.started) {
       const req = this.req;
       this.reset();
-      return this.refuse("the close turn was stopped before it produced a reply (a check or another handler stopped it); nothing was synced. Send the close again", req.source, req.replyTo);
+      return this.refuse("the close turn was stopped before it produced a reply (a check or another handler stopped it); nothing was synced. Send the close again", req.source, answerTo(req));
     }
     this.phase = "finishing";
     const req = this.req;
-    if (this.waitsBlock(req.source, req.replyTo)) return this.reset();
+    if (this.waitsBlock(req.source, answerTo(req))) return this.reset();
     let childLines: string[] = [];
     try {
       childLines = this.d.closeChildren ? await this.d.closeChildren() : [];
@@ -524,10 +532,13 @@ export class CloseFlow {
       this.d.notify(`pi-foreman: could not mark the registry entry closed: ${(err as Error).message}`, "warning");
     }
     let spawn: (() => void) | undefined;
-    if (req.source === "pr-merged" && req.pr) {
+    let shown = req.file; // the result file as the later messages name it
+    const remembered = req.source === "pr-merged" ? null : this.d.mergedPr?.() ?? null;
+    const selfReq: CloseRequest | null = req.source === "pr-merged" ? (req.pr ? req : null) : remembered === null ? null : { ...req, pr: { n: remembered, label: "" } };
+    if (selfReq?.pr) {
       let fin: SelfFinish;
       try {
-        fin = this.d.selfFinish ? await this.d.selfFinish(req) : { lines: ["cleanup: not started (no self-finish)"] };
+        fin = this.d.selfFinish ? await this.d.selfFinish(selfReq) : { lines: ["cleanup: not started (no self-finish)"] };
       } catch (err) {
         fin = { lines: [`cleanup: not started (${(err as Error).message})`] };
       }
@@ -539,12 +550,26 @@ export class CloseFlow {
         // the lines still go to the parent
       }
       this.d.notify(fin.lines.join("\n"), spawn ? "info" : "warning");
-      if (req.pr.parent) {
+      if (spawn && req.source !== "pr-merged" && fin.keepResult) {
+        try {
+          shown = fin.keepResult(req.file);
+        } catch (err) {
+          this.d.notify(`pi-foreman: could not keep a copy of the result file ${req.file} outside the worktree: ${(err as Error).message}`, "warning");
+        }
+      }
+      const tail = spawn || fin.lines.length === 0 ? "" : ` (${fin.lines.join("; ")})`; // a refusal goes to the parent too
+      if (req.pr?.parent) {
         const to = req.pr.parent;
-        const tail = spawn || fin.lines.length === 0 ? "" : ` (${fin.lines.join("; ")})`; // a refusal goes to the parent too
         try {
           await this.d.reply(to, `PR #${req.pr.n} merged, closing${tail}`.replace(/[\r\n]+/g, " "));
-          await this.d.reply(to, `Result from ${req.pr.label}: ${req.file}`);
+          await this.d.reply(to, `Result from ${req.pr.label}: ${shown}`);
+        } catch {
+          // best effort, as the ack
+        }
+      } else if (!req.pr && req.replyTo && tail) {
+        // a close from the parent after the merge: the reason is its own reply, before the `foreman:closed` line (that line is parsed)
+        try {
+          await this.d.reply(req.replyTo, `PR #${selfReq.pr.n} merged, closing${tail}`.replace(/[\r\n]+/g, " "));
         } catch {
           // best effort, as the ack
         }
@@ -552,7 +577,7 @@ export class CloseFlow {
     }
     if (req.replyTo) {
       try {
-        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${req.file}${report ? ` ${report.closeLine}` : ""}`);
+        await this.d.reply(req.replyTo, `${CLOSED_TEXT} ${shown}${report ? ` ${report.closeLine}` : ""}`);
       } catch {
         // the ack is best effort; the close itself is done
       }
@@ -622,6 +647,8 @@ export interface CloseSession {
   refreshWatched?: () => Promise<void>;
   /** `pr-merged` close: verify, archive `.workflow/`, check the worktree; the lines and the detached cleanup (see SelfFinish). */
   selfFinish?: (ctx: ExtensionContext, req: CloseRequest) => Promise<SelfFinish>;
+  /** The number of the watched PR this child session saw merged, else null (see CloseDeps.mergedPr). */
+  mergedPr?: () => number | null;
 }
 
 type Bus = { emit(channel: string, data: unknown): void; on?(channel: string, handler: (data: unknown) => void): (() => void) | void } | undefined;
@@ -695,6 +722,7 @@ export function registerClose(
       watchedPrs: s.watchedPrs,
       refreshWatched: s.refreshWatched,
       selfFinish: s.selfFinish ? (req) => s.selfFinish!(holder.ctx, req) : undefined,
+      mergedPr: s.mergedPr,
       appendResult: (file, text) => fs.appendFileSync(file, text, "utf8"),
       pushNotice: s.pushNotice ? () => s.pushNotice!(holder.ctx) : undefined,
       closeChildren: s.closeChildren ? () => s.closeChildren!((to, text) => outboxSend(pi.events, to, text, "close", SEND_WAIT_MS)) : undefined,

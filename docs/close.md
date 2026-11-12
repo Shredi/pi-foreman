@@ -93,15 +93,33 @@ or pr_unwatch)`. Merge or close the PR, or end the watch with `pr_unwatch`, then
 refusals as a running child run or a pending `foreman_wait`, so a parent's close of a child gets the refusal as a reply.
 
 A PR merged after the last poll does not block: before refusing, a close runs one fresh `pr_status` per watched PR and ends
-the watches of merged or closed PRs (without a message). While that lookup runs the close counts as in progress, so a second
+the watches of merged or closed PRs (without a message; a merged one is remembered, see [Self-finish on merge](#self-finish-on-merge)). While that lookup runs the close counts as in progress, so a second
 close (say from Herdr and from intercom) is refused as `a close is already in progress`. With no watch held the close needs
 no lookup and starts at once. A lookup that fails keeps the watch, and so the refusal.
 
 ## Self-finish on merge
 
-A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose watched PR is merged closes itself; nobody sends `foreman:close`.
+A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose watched PR is merged closes itself; the parent need not send `foreman:close`.
 When the watch reports `merged`, the adapter starts the normal close sequence with the source `pr-merged` (it is not a
 `close.from` source). The sequence is the one above, with these differences:
+
+- **A close from any source.** The session remembers a watched PR it saw merged: the watch's `merged` event, or the fresh
+  `pr_status` that ends the watch before a close (a PR closed without a merge is not remembered). The memory is saved with the
+  watch state, so a reload keeps it. A close from any source (the parent's `foreman:close`, a remote parent's order,
+  `/foreman close`) in a session with such a memory runs the same self-finish as the `pr-merged` close: `## Merge cleanup` in
+  the result file, the same checks and the detached cleanup as the last step. This holds when the merge close was refused
+  (for example a child run still active) and when the parent closes first.
+  Without a handoff dir nothing changes. A merge close that is refused sends the parent the refusal (`pi-foreman: close
+  refused: <reason>`), and the memory stays for the next close. When the cleanup of a parent's close does not start, the
+  parent gets the reason as its own reply, `PR #n merged, closing (cleanup: not started (<reason>); ...)`, before the
+  `foreman:closed <file>[ CLOSE: x]` line, which never carries the reason; a remote parent's reply cannot carry a line, so the
+  reason is in the result file only. The result file of a parent's close sits in the worktree's `.workflow/` and the cleanup
+  removes it with the worktree. When the cleanup starts, the finished file (with `## Merge cleanup`) is first copied into the
+  handoff dir under a name that is not taken (its own file name, with a number added when that exists; `result.md` and other
+  files there are never overwritten), and the `foreman:closed <path>` reply names the copy. A copy that fails does not stop the
+  close or the cleanup: the reply keeps the original path and a notice says so; the archive below still holds the file as it was
+  before the section. When no cleanup starts, nothing is copied and the reply names the original file. Uncommitted files of another repository (a `sync.repos`
+  entry) show in the CLOSE report but are no cleanup precondition: only the round's own worktree is checked.
 
 - The close prompt asks for the result file `<handoff dir>/result.md`: the PR number, the merge commit and anything left open.
 - After the result file the session tells its parent `PR #n merged, closing` and the usual `Result from <label>: <path>`.

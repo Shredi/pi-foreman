@@ -547,8 +547,10 @@ export interface WatchEntry {
   v: 2;
   piSessionId: string;
   watches: WatchRecord[];
+  /** The watched PRs this session saw merged (absent: none). */
+  merged?: PrKey[];
 }
-export type WatchRestore = { status: "none" } | { status: "other_session" } | { status: "malformed" } | { status: "ok"; watches: WatchRecord[]; bad: number };
+export type WatchRestore = { status: "none" } | { status: "other_session" } | { status: "malformed" } | { status: "ok"; watches: WatchRecord[]; bad: number; merged?: PrKey[] };
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((c) => typeof c === "string");
@@ -601,7 +603,8 @@ export function latestWatches(entries: unknown[], piSessionId: string): WatchRes
       if (r) watches.push(r);
       else bad += 1;
     }
-    return { status: "ok", watches, bad };
+    const merged = (Array.isArray(d.merged) ? d.merged : []).flatMap((k) => parseKey(k) ?? []);
+    return { status: "ok", watches, bad, ...(merged.length ? { merged } : {}) };
   }
   return { status: "none" };
 }
@@ -627,8 +630,8 @@ export interface PrWatchesDeps {
   reviewGate?(): boolean;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
-  /** The watch set or a watch's state changed: write the session entry. */
-  persist?(watches: WatchRecord[]): void;
+  /** The watch set, a watch's state or the merged PRs changed: write the session entry. */
+  persist?(watches: WatchRecord[], merged: PrKey[]): void;
   send(msg: ReturnType<typeof prMessage>, idle: boolean): void;
   idle(): boolean;
   trace(rec: Record<string, unknown>): void;
@@ -670,6 +673,8 @@ export const samePr = (a: PrKey, b: PrKey): boolean => a.n === b.n && (!a.repo |
 export class PrWatches {
   private watches = new Map<string, Watch>();
   private reserved: PrKey[] = [];
+  /** Watched PRs this session saw merged, oldest first (kept after the watch ended; persisted with the watches). */
+  private merged: PrKey[] = [];
   /** The one "no PR tracker running" notice of the current outage was sent. */
   private trackerDown = false;
   /** The one notice of the current tools.prGithubHosts error was sent. */
@@ -764,6 +769,7 @@ export class PrWatches {
   private register(r: WatchRecord): Watch {
     const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "" };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
+    this.merged = this.merged.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
     return w;
   }
@@ -778,9 +784,18 @@ export class PrWatches {
     return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state }));
   }
 
+  /** The watched PRs this session saw merged (the watch's merged event, or a pre-close fresh status), oldest first. */
+  mergedPrs(): PrKey[] {
+    return [...this.merged];
+  }
+
+  private remember(key: PrKey): void {
+    this.merged = [...this.merged.filter((k) => !samePr(k, key)), key];
+  }
+
   private persist(): void {
     try {
-      this.deps.persist?.(this.records());
+      this.deps.persist?.(this.records(), this.mergedPrs());
     } catch {
       // the session file is not writable now: the next change tries again
     }
@@ -793,7 +808,8 @@ export class PrWatches {
 
   /**
    * Before a close refuses on an open watched PR: one fresh state per watch; a merged or closed PR ends its watch without a
-   * message and without onMerged (the closing session is the one asking). A failed lookup keeps the watch.
+   * message and without onMerged (the closing session is the one asking). A merged one is remembered (`mergedPrs`), so the
+   * close that follows still knows it. A failed lookup keeps the watch.
    */
   async refresh(): Promise<void> {
     for (const w of [...this.watches.values()]) {
@@ -807,6 +823,7 @@ export class PrWatches {
       w.ended = true;
       this.timers.clear(w.poller);
       this.remove(w);
+      if (state === "merged") this.remember(w.key);
       this.persist();
       this.deps.changed?.();
       this.deps.trace({ event: "pr_watch", outcome: state });
@@ -842,6 +859,7 @@ export class PrWatches {
     if (r.status === "malformed") lost.push([null, "the stored watch state is unreadable; start the watch again with pr_watch"]);
     else {
       for (let i = 0; i < r.bad; i++) lost.push([null, "a stored watch is unreadable; start the watch again with pr_watch"]);
+      for (const k of r.merged ?? []) this.remember(k);
       const hosts = this.deps.githubHosts?.() ?? DEFAULT_HOSTS;
       for (const x of r.watches) {
         // the tracker serves the listed hosts only: an older record (another host, or a number-only key) could never end.
@@ -997,6 +1015,7 @@ export class PrWatches {
     w.ended = true;
     this.timers.clear(w.poller);
     this.remove(w);
+    if (d.final === "merged") this.remember(w.key);
     this.persist();
     this.deps.changed?.();
     this.deps.send(prMessage(w.key.n, d), this.idle());

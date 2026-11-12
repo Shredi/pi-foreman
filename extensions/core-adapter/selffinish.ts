@@ -221,7 +221,27 @@ export async function selfFinish(d: SelfFinishDeps, n: number): Promise<SelfFini
   if (typeof out.remoteBranch === "string") lines.push(`kept: remote branch ${branch} (enable delete head branch on merge)`);
   const cleanup = path.join(d.handoff, CLEANUP_FILE);
   lines.push(`cleanup: worktree ${target} and branch ${branch} are removed after this session exits (result: ${cleanup})`);
-  return { lines, spawn: () => d.spawnCleanup([...common, "--exempt-workflow", "--wait-pid", String(d.pid), "--out", cleanup]) };
+  return { lines, spawn: () => d.spawnCleanup([...common, "--exempt-workflow", "--wait-pid", String(d.pid), "--out", cleanup]), keepResult: (file) => keepResult(file, target, d.handoff) };
+}
+
+/**
+ * A result file inside the worktree that is about to be removed: copy it into the handoff dir under a name that is not taken
+ * (its own basename, then `-2`, `-3`, ...; never an existing file) and return the copy's path. Any other file: returned as is.
+ */
+export function keepResult(file: string, target: string, handoff: string): string {
+  if (!isInside(pathKey(file), pathKey(target))) return file;
+  const ext = path.extname(file);
+  const stem = path.basename(file, ext);
+  for (let i = 1; ; i++) {
+    const copy = path.join(handoff, `${stem}${i === 1 ? "" : `-${i}`}${ext}`);
+    if (/[\r\n]/.test(copy)) throw new Error("the handoff path has a line break");
+    try {
+      fs.copyFileSync(file, copy, fs.constants.COPYFILE_EXCL);
+      return copy;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || i >= 1000) throw err;
+    }
+  }
 }
 
 const since = (d: SelfFinishDeps): string[] => (d.sinceMs === undefined ? [] : ["--since", String(d.sinceMs / 1000)]);
