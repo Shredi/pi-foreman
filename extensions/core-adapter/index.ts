@@ -45,7 +45,7 @@ import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
+import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -122,7 +122,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadWhy, toplevelOf, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -421,6 +421,9 @@ interface Session {
   launchHeadsByCall: Map<string, Map<string, string | null>>;
   /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
   launchHeads: Map<string, Map<string, string | null>>;
+  /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
+  launchTreesByCall: Map<string, Map<string, string | null>>;
+  launchTrees: Map<string, Map<string, string | null>>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a session opened by another session reloads an approval only from the parent's ruling.md, roundstate.ts). */
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
@@ -909,6 +912,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       touchUps: new Set(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
+      launchTreesByCall: new Map(),
+      launchTrees: new Map(),
       plan: null,
       script: newScriptState(),
       planReviews: new PlanReviews(),
@@ -2184,6 +2189,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
+          const startTrees = s.launchTrees.get(runId);
+          s.launchTrees.delete(runId);
           const counting = reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).filter((x) => x.counts && x.verdict !== null);
           let nth = 0;
           for (const r of reviewsWithOutput(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
@@ -2192,7 +2199,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
-              const h = reviewedHeadWhy(start, cwd, await headOf(cwd));
+              const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
               const top = await toplevelOf(cwd);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
@@ -2200,7 +2207,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
               if (r.outputPath) appendHeadLine(r.outputPath, h);
-              s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why });
+              s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why, ...(h.via ? { via: h.via } : {}) });
               persistCeremonyState(s);
             });
           }
@@ -3424,7 +3431,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
-          capSet(s.launchHeadsByCall, event.toolCallId, await headsAt(launchCwds(input, ctx.cwd)));
+          const cwds = launchCwds(input, ctx.cwd);
+          const [heads, trees] = await Promise.all([headsAt(cwds), treesAt(cwds, worktreeTree)]);
+          capSet(s.launchHeadsByCall, event.toolCallId, heads);
+          capSet(s.launchTreesByCall, event.toolCallId, trees);
         }
       }
       // Kept for the tool result only once the launch passed every check.
@@ -4192,16 +4202,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
+        const trees = s.launchTreesByCall.get(event.toolCallId);
+        s.launchTreesByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         const launched = s.scratch.onLaunched(boundLaunchId(event.input), runId);
         finishScratch(s, launched);
         closeChildAsk(s, launched);
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
-          s.childRuns.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
+          const rowRoles = s.launchedRoles.get(runId) ?? [];
+          if (actionOf(event.input as Record<string, unknown>) === "resume") s.childRuns.onResumed(event.toolCallId, runId, resumeTarget(event.input as Record<string, unknown>), rowRoles);
+          else s.childRuns.onLaunched(event.toolCallId, runId, rowRoles);
           radarTouch(s, ctx);
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
+        if (trees && runId) capSet(s.launchTrees, runId, trees);
         const rl = s.reviewRuns.byCall.get(event.toolCallId);
         s.reviewRuns.byCall.delete(event.toolCallId);
         if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);

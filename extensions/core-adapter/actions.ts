@@ -136,7 +136,8 @@ export function endActive(active: Set<string>, data: unknown): void {
 /**
  * Record a run id from a `subagent` tool_result. pi-subagents returns `details.runId`
  * (also `asyncId`) for a launch and for a resume. Only single-agent launches are recorded
- * (`agent`, no `tasks`/`chain`); a resume inherits the record of the run it resumed.
+ * (`agent`, no `tasks`/`chain`); a resume inherits the record of the run it resumed (the live-state row
+ * follows it the same way, ChildRuns.onResumed).
  */
 export function recordLaunch(runs: RunRegistry, input: unknown, details: unknown, isError: boolean): void {
   if (isError || !isObj(input) || !isObj(details)) return;
@@ -185,7 +186,8 @@ export function roundSteps(input: Json, runs: RunRegistry): string[][] {
   return role ? [[role]] : [];
 }
 
-function resumeTarget(input: Json): string | null {
+/** Run id a resume call names (`id`, else `runId`), or null when absent or the two differ. */
+export function resumeTarget(input: Json): string | null {
   const id = typeof input.id === "string" ? input.id.trim() : "";
   const runId = typeof input.runId === "string" ? input.runId.trim() : "";
   if (id && runId && id !== runId) return null;

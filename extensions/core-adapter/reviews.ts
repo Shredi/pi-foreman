@@ -185,26 +185,70 @@ function spellings(dir: string): string[] {
   return [...out].map((p) => (process.platform === "win32" ? p.toLowerCase() : p));
 }
 
+/** The start entry of `cwd`: the key whose spelling matches (`exact`), else the only entry of a one-directory map. */
+function startEntryOf(start: ReadonlyMap<string, string | null>, cwd: string): { key: string; head: string | null; exact: boolean } | null {
+  const want = new Set(spellings(cwd));
+  for (const [k, v] of start) if (spellings(k).some((p) => want.has(p))) return { key: k, head: v, exact: true };
+  if (start.size === 1) {
+    const [k, v] = [...start][0];
+    return { key: k, head: v, exact: false };
+  }
+  return null;
+}
+
 /** {@link reviewedHead} with the reason for a null head. */
 export function reviewedHeadWhy(start: ReadonlyMap<string, string | null> | undefined, cwd: string, end: string | null): { head: string | null; why?: NoHeadWhy } {
   if (!start) return { head: null, why: "no_launch_head" };
-  const want = new Set(spellings(cwd));
-  let at: string | null | undefined;
-  let found = false;
-  for (const [k, v] of start) {
-    if (!spellings(k).some((p) => want.has(p))) continue;
-    at = v;
-    found = true;
-    break;
-  }
-  if (!found && start.size === 1) {
-    at = [...start.values()][0];
-    found = true;
-  }
-  if (!found) return { head: null, why: "cwd_unmatched" };
-  if (!at) return { head: null, why: "no_launch_head" };
+  const at = startEntryOf(start, cwd);
+  if (!at) return { head: null, why: "cwd_unmatched" };
+  if (!at.head) return { head: null, why: "no_launch_head" };
   if (!end) return { head: null, why: "head_unread" };
-  return at === end ? { head: end } : { head: null, why: "head_moved" };
+  return at.head === end ? { head: end } : { head: null, why: "head_moved" };
+}
+
+/** Working-tree snapshot (`snap`, commentonly.ts worktreeTree) of each directory when a reviewer run starts. */
+export async function treesAt(cwds: readonly string[], snap: (cwd: string) => Promise<string | null>): Promise<Map<string, string | null>> {
+  return new Map(await Promise.all(cwds.map(async (c) => [c, await snap(c).catch(() => null)] as [string, string | null])));
+}
+
+/** The tree id of `commit` in `cwd`; null on any failure. */
+export function treeOfCommit(cwd: string, commit: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("git", ["rev-parse", "--verify", "--quiet", `${commit}^{tree}`], { cwd, timeout: HEAD_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+      const sha = err ? "" : String(stdout).trim().toLowerCase();
+      resolve(/^[0-9a-f]{40,64}$/.test(sha) ? sha : null);
+    });
+  });
+}
+
+/**
+ * {@link reviewedHeadWhy}, and a moved head is kept when the end commit's tree id is exactly the working-tree
+ * snapshot taken at launch (`trees`, same keys as `start`): the reviewer saw that content, so a commit of it
+ * (made in the launch's own message, before the launch ran) leaves the verdict valid. Any failure to take or
+ * compare the snapshot, or an entry that is not the run's own checkout, stays `head_moved`.
+ */
+export async function reviewedHeadVia(
+  start: ReadonlyMap<string, string | null> | undefined,
+  trees: ReadonlyMap<string, string | null> | undefined,
+  cwd: string,
+  end: string | null,
+  treeOf: (cwd: string, commit: string) => Promise<string | null> = treeOfCommit,
+): Promise<{ head: string | null; why?: NoHeadWhy; via?: "same_tree" }> {
+  const r = reviewedHeadWhy(start, cwd, end);
+  if (r.why !== "head_moved" || !start || !trees || !end) return r;
+  try {
+    const at = startEntryOf(start, cwd);
+    const snap = at ? trees.get(at.key) : null;
+    if (!at || !snap) return r;
+    // a differently spelled cwd (single-entry fallback) counts only when it is the same checkout
+    if (!at.exact) {
+      const [a, b] = await Promise.all([toplevelOf(at.key), toplevelOf(cwd)]);
+      if (!a || !b || a !== b) return r;
+    }
+    return (await treeOf(cwd, end)) === snap ? { head: end, via: "same_tree" } : r;
+  } catch {
+    return r;
+  }
 }
 
 /** Map set that drops the oldest entries past `max` (launch heads whose run end never arrives). */
