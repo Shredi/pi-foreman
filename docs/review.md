@@ -135,10 +135,13 @@ with `plan_review_required` until a `[plan-review]` reviewer run ended with a ve
 the plan version hash (sha256 of the plan body above any `## Ruling`, `## Rulings`, `## Parent ruling`,
 `## Decision log`, `## Addendum…` heading or `<!-- plan-appendix -->` line; see [ceremony](ceremony.md)). A ruling appended
 below such a heading neither needs a new review nor resets the checkpoint; a body edit is a new version. Verdicts are kept per plan path (in memory, for the session); a new plan path
-starts a new lineage. The first FAIL of a lineage refuses once with `plan_revision_required`, so the foreman revises the plan
-before the owner sees it; once the revised plan (new bytes) has a verdict, the checkpoint opens whatever it says. The
+starts a new lineage. A FAIL below the round cap refuses with `plan_revision_required`: the foreman revises the plan with the findings and has
+it reviewed again until it passes, asking nobody while the findings are defects or gaps. A finding that needs a decision
+(the reviewer marks it `DECISION:` after the verdict word of its item line, `3. FAIL: DECISION: ...`; prompt only, the
+adapter does not parse it) goes to the checkpoint with a FAIL, which opens at the round cap
+(`ceremony.planReviewRounds`). The
 owner's dialog shows `Plan review: PASS|FAIL (reviewer <model>)` and up to 8 located findings (`file:line class note`).
-The `[plan-review]` runs are not capped; the loop guard stops a plan review that fails twice in a row with the same findings on the same plan version (see [ceremony](ceremony.md)).
+The `[plan-review]` runs are not capped; the loop guard stops a plan review that fails again on the same plan version with the same findings or nothing new, and a revised plan that fails again with the same located finding (`at:` key); new findings under the same ledger item on a revised plan do not stop it (see [ceremony](ceremony.md)). A finding located in the ledger keeps stopping revised plans, because the ledger does not change between plan versions.
 The facts block of a `[plan-review]` launch also has one `Owner section (<plan>): ...` line per plan; the reviewer FAILs a plan whose `## For the owner` section is missing, not the first `##` section, too long (over about 10 lines), without the implicit decisions, or full of jargon (see [ceremony](ceremony.md)).
 Trace `plan_review {model, decision}`. The foreman's instructions carry the plan-review step only while it is on
 (`<!--planReview=on-->` variant). Plan review uses the model rule like any other occasion.

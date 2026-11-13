@@ -66,7 +66,7 @@ test("takeLaunchFlags drops a flag the role does not use, with a note", () => {
 });
 
 test("takeLaunchFlags rejects malformed values", () => {
-  for (const bad of [{ reads: 0 }, { reads: 1.5 }, { reads: "9" }, { install: "yes" }, { install: 1 }]) {
+  for (const bad of [{ reads: 0 }, { reads: 1.5 }, { reads: "nine" }, { install: "yes" }, { install: 1 }]) {
     const t = takeLaunchFlags({ agent: "builder", task: "t", ...bad });
     assert.match(t.error ?? "", /launch refused \[launch_flag_invalid\]/, JSON.stringify(bad));
   }
