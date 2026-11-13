@@ -143,7 +143,7 @@ test("r18 child: an escalating classifier is a child deny with the no-pane text 
   const r = await c.bash(PROBE);
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /nobody is at this session \(no pane\)/);
-  assert.equal(c.sent.length, 1);
+  assert.equal(c.sent.length, 2);
 });
 
 test("r18 child: a classifier deny is final and blocks naming the whitelist rule", async (t) => {
