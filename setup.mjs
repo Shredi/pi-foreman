@@ -68,7 +68,97 @@ export function bridgeLoginPresent(agentDir, { env = process.env, platform = pro
   return !loginSigns(isolationDir(agentDir), { env, platform, keychain }).next().done;
 }
 
-const BRIDGE_HINT = "pi-claude-bridge: log in once. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
+// Windows only: Pi runs its bash tool through Git Bash and reads the `shellPath` setting before it searches. findGitBash is pure over injected
+// env, platform and exists (no child process); ensureShellPath writes `shellPath` into the user settings when it is unset.
+const envGet = (env, name) => {
+  if (typeof env[name] === "string" && env[name]) return env[name];
+  const key = Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase());
+  return key !== undefined && typeof env[key] === "string" ? env[key] : "";
+};
+
+/** The Git Bash executable, or null (also off Windows). Order: %ProgramFiles%, %ProgramFiles(x86)%, then PATH without the WSL launcher in the Windows directory. */
+export function findGitBash({ env = process.env, platform = process.platform, exists = fs.existsSync, pathApi = path.win32 } = {}) {
+  if (platform !== "win32") return null;
+  for (const name of ["ProgramFiles", "ProgramFiles(x86)"]) {
+    const root = envGet(env, name);
+    if (!root) continue;
+    const candidate = pathApi.join(root, "Git", "bin", "bash.exe");
+    if (exists(candidate)) return candidate;
+  }
+  const norm = (p) => p.toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
+  const winDir = norm(envGet(env, "SystemRoot") || envGet(env, "windir") || "C:\\Windows");
+  for (const raw of envGet(env, "PATH").split(pathApi.delimiter)) {
+    const dir = raw.trim().replace(/^"(.*)"$/, "$1");
+    if (!dir) continue;
+    const n = norm(dir);
+    if (n === winDir || n.startsWith(`${winDir}/`)) continue; // System32\bash.exe is the WSL launcher
+    const candidate = pathApi.join(dir, "bash.exe");
+    if (exists(candidate)) return candidate;
+  }
+  return null;
+}
+
+const readJsonObject = (file) => {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") return {};
+    throw err;
+  }
+  const v = JSON.parse(text);
+  if (v === null || typeof v !== "object" || Array.isArray(v)) throw new Error("not a JSON object");
+  return v;
+};
+const isSetting = (v) => typeof v === "string" && v.trim() !== "";
+
+/**
+ * Sets `shellPath` in the user settings file to `bash` when neither it nor a project settings file in `projectFiles` sets it.
+ * Returns "written" | "kept" | "missing" (nothing found, nothing set) | "unreadable". A set value is never touched; project files are only read.
+ */
+export function ensureShellPath({ userFile, projectFiles = [], bash, dry = false, log }) {
+  let user;
+  try {
+    user = readJsonObject(userFile);
+  } catch (err) {
+    log(`  shell: ${userFile} is not readable as JSON (${err.message}); shellPath left alone`);
+    return "unreadable";
+  }
+  if (isSetting(user.shellPath)) {
+    log(`  shell: shellPath already set in ${userFile} (${user.shellPath}); kept`);
+    return "kept";
+  }
+  for (const file of projectFiles) {
+    let project = {};
+    try {
+      project = readJsonObject(file);
+    } catch {
+      // an unreadable project file does not decide anything here
+    }
+    if (isSetting(project.shellPath)) {
+      log(`  shell: shellPath already set in ${file} (${project.shellPath}); kept`);
+      return "kept";
+    }
+  }
+  if (!bash) return "missing";
+  if (dry) {
+    log(`  shell: would write shellPath ${bash} to ${userFile}`);
+    return "written";
+  }
+  fs.mkdirSync(path.dirname(userFile), { recursive: true });
+  const tmp = `${userFile}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(tmp, `${JSON.stringify({ ...user, shellPath: bash }, null, 2)}\n`, { flag: "wx" });
+    fs.renameSync(tmp, userFile);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  log(`  shell: wrote shellPath ${bash} to ${userFile}`);
+  return "written";
+}
+
+const BRIDGE_HINT = "pi-claude-bridge: log in once, if you are not logged in yet. Run `CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude` and enter /login, or run `claude setup-token` and export CLAUDE_CODE_OAUTH_TOKEN (docs/install.md, \"Claude bridge: log in once\").";
 const INTERCOM = "pi-intercom";
 // pi-subagents runs this after creating a managed worktree (config: <agent dir>/extensions/subagent/config.json). POSIX only:
 // pi-subagents spawns the hook without a shell, so a script cannot run on Windows (docs/safety.md, known limits).
@@ -1731,9 +1821,22 @@ async function main(argv) {
     }
     if (await offerModsRefresh({ st, dry })) anyChange = true;
     if (opts.develop && developSettings()) anyChange = true;
+    // Windows: Pi's bash tool needs Git Bash; point `shellPath` at it when unset. A missing Git Bash fails the run after every other step is done.
+    // PI_FOREMAN_GITBASH_PLATFORM is the test seam (PI_FOREMAN_PLATFORM fakes Windows for the env step alone).
+    const shellPlatform = process.env.PI_FOREMAN_GITBASH_PLATFORM || process.platform;
+    let gitBashMissing = false;
+    if (shellPlatform === "win32") {
+      const userFile = path.join(agentDir, "settings.json");
+      const bash = findGitBash({ platform: shellPlatform, pathApi: process.platform === "win32" ? path.win32 : path });
+      const result = ensureShellPath({ userFile, projectFiles: [path.join(projectDir, ".pi", "settings.json")], bash, dry, log: say });
+      if (result === "written" && !dry) anyChange = true;
+      gitBashMissing = result === "missing";
+      if (gitBashMissing) say(`  missing step: Git Bash not found. Install Git for Windows (https://git-scm.com/download/win), or set "shellPath" in ${userFile} to your bash.exe, then run foreman setup again.`);
+    }
     if (!anyChange) say("pi-foreman: up to date, nothing to change.");
     else if (dry) say("pi-foreman: dry run complete, nothing written.");
     else say("pi-foreman: done. Run /foreman doctor inside pi to check the setup.");
+    if (gitBashMissing) throw new Fatal("pi-foreman: setup is incomplete, Git Bash is missing (see the missing step above).");
   }
 }
 
