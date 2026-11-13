@@ -464,6 +464,7 @@
       "additionalProperties": false,
       "properties": {
         "backend": { "type": "string", "enum": ["auto", "herdr", "hc", "terminal"], "description": "Where a local `foreman session open` runs the child (default `auto`): `herdr` when HERDR_PANE_ID is set and herdr is found, else herdr-core (`hc run`) when HC_TERMINAL_ID is set and hc is found, else the printed command. `herdr`, `hc` and `terminal` force one; a forced backend that cannot run is refused. Experimental for hc. User or overlay config only." },
+        "blockedNoticeSeconds": { "type": "number", "minimum": 0, "maximum": 86400, "description": "Seconds a child session of this session may wait on its owner (an approval dialog, an owner question, a checkpoint or a confirm dialog) before this session gets one information-only message about it (default 600; 0 turns the notice off). Once per wait; one quiet note when the dialog is answered. User or overlay config only." },
         "confirmWaitSeconds": { "type": "number", "minimum": 0, "maximum": 3600, "description": "Seconds `foreman_session_open` waits for the owner's confirm dialog (default 20) before it returns \"pending owner confirmation\"; the dialog stays and the owner's answer is reported to the foreman by a wake message. 0 waits without limit." },
         "hc": {
           "type": "object",

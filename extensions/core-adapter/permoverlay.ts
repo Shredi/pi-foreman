@@ -1439,8 +1439,23 @@ const RO_WRITERS = new Map<string, "all" | "last" | "mode">([
 /** Read-only verbs (with unitReadOnly) and shell builtins that never write a path by themselves. */
 const RO_READERS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk", "find", "echo", "printf", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "tr", "ls", "cd", "pwd", "nl", "column", "diff", "true", "false", "stat", "file", "tree", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "date", "which", "basename", "dirname", "realpath", "readlink", "jq", "od", "hexdump", "xxd", "test", "[", "[[", ":", "sleep", "uname", "whoami", "id", "export", "local", "declare", "typeset", "readonly", "read", "set", "unset", "shift", "return", "exit", "break", "continue", "wait", "type"]);
 
-/** Read-only git subcommands, and the ones that touch only .git (branch/tag/remote list and edit refs, never the worktree). `config` is a read only in the forms of gitConfigRead. */
-const GIT_RO_SUBS = new Set(["status", "log", "diff", "show", "blame", "rev-parse", "ls-files", "ls-tree", "describe", "grep", "shortlog", "cat-file", "rev-list", "for-each-ref", "show-ref", "name-rev", "merge-base", "diff-tree", "diff-files", "diff-index", "count-objects", "branch", "tag", "remote", "worktree", "fetch", "version", "help"]);
+/**
+ * Git subcommands that never write the worktree: the pure readers, the ones that touch only .git (branch/tag/remote edit refs) and the two that talk to a
+ * remote (`fetch` writes .git, `ls-remote` writes nothing). `config` is a read only in the forms of gitConfigRead. `ls-remote` is read-only only without a form
+ * that runs a program (roEffect, GIT_LS_REMOTE_EXEC and the environment rule).
+ */
+const GIT_RO_SUBS = new Set(["status", "log", "diff", "show", "blame", "rev-parse", "ls-files", "ls-tree", "describe", "grep", "shortlog", "cat-file", "rev-list", "for-each-ref", "show-ref", "name-rev", "merge-base", "diff-tree", "diff-files", "diff-index", "count-objects", "branch", "tag", "remote", "worktree", "fetch", "ls-remote", "version", "help"]);
+
+/** A `git ls-remote` word that starts a program: `--upload-pack`/`--exec` by any prefix (value attached or separate), `-u`, a `<transport>::` remote. */
+function lsRemoteProgram(a: string): boolean {
+  if (/^-[^-]*u/.test(a) || /^[A-Za-z][\w+.-]*::/.test(a)) return true;
+  if (!a.startsWith("--")) return false;
+  const name = a.slice(2).split("=")[0];
+  return name !== "" && ("upload-pack".startsWith(name) || "exec".startsWith(name));
+}
+
+/** A command position (line start, after `;` `&` `|` `(` `{` or a block keyword) that sets or exports a variable: an assignment, `export`, `env`, `declare -x`, `typeset -x`, `readonly X=`. */
+const ENV_SET = /(?:^|[;&|(){\n`]|\$\(|\b(?:do|then|else|elif|if|while|until)\b|!)\s*(?:(?:builtin|command)\s+)?(?:[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=|(?:export|env)(?![\w-])|(?:declare|typeset)\s+-[A-Za-z]*x|readonly\s+[A-Za-z_][A-Za-z0-9_]*=)/;
 
 /** Options of a build/test run that name an output path, a cache, a log or a program. */
 const BUILD_OUT_OPT = /^--?(o\b|[\w-]*(out|dir|file|log|xml|report|exec|command|cache|profile|prefix|script-shell)[\w-]*(=|$))/;
@@ -1620,7 +1635,7 @@ function buildTestRun(verb: string, args: string[]): boolean {
  * (a relative one resolves against the cwd; `.` stands for the cwd itself), or `unknown` when it is neither a known reader,
  * a test run nor a known writer. `inner` = a shell whose -c script is collected separately.
  */
-function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets: string[]; unknown?: string; deny?: string; run?: boolean; script?: string; operands?: string[] } {
+function roEffect(core: string[], skip: Set<number>, inner: boolean, envSet = false): { targets: string[]; unknown?: string; deny?: string; run?: boolean; script?: string; operands?: string[] } {
   if (!core.length) return { targets: [] };
   const verb = baseName(core[0]);
   const args = core.slice(1);
@@ -1650,8 +1665,10 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
     let k = 1;
     let dir: string | undefined;
     const repoOpts: string[] = [];
+    let execPath = false;
     while (k < core.length && core[k].startsWith("-")) {
       if (core[k] === "-C" && k + 1 < core.length) dir = core[k + 1];
+      else if (/^--exec-path=./.test(core[k])) execPath = true;
       else if (core[k] === "-c") return { targets: [], unknown: "git -c" };
       else if (/^--(git-dir|work-tree)=./.test(core[k])) repoOpts.push(core[k].slice(core[k].indexOf("=") + 1));
       k += /^-[Cc]$/.test(core[k]) || /^--(git-dir|work-tree)$/.test(core[k]) ? 2 : 1;
@@ -1660,12 +1677,14 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean): { targets:
     const sub = core[k];
     if (!sub) return { targets: [] };
     const rest = core.slice(k + 1);
-    const outs = rest.filter((a) => /^--output=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1));
+    const outs = [...rest.filter((a) => /^--output=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1)), ...rest.filter((a, i) => rest[i - 1] === "--output" && a !== "")];
     // a config write is denied whatever repository it names: the cwd (the round worktree) is always a target, next to -C, --git-dir and --work-tree
     // (a write also names `--global`/`--system` files, so a read-only child is denied it from any cwd: `deny`)
     if (sub === "config") return gitConfigRead(rest) ? { targets: outs } : { targets: [".", ...(dir ? [dir] : []), ...repoOpts, ...outs], deny: "git config" };
     // `git grep -O<cmd>` / `--open-files-in-pager` (any `--op` prefix) runs a program on the matched files
     if (sub === "grep" && rest.some((a) => GIT_GREP_PAGER.test(a))) return { targets: [], unknown: "git grep -O" };
+    // `git ls-remote` runs a program on `--upload-pack`/`--exec`, a `<transport>::` remote, `--exec-path=<dir>` before it, or a variable the line sets (GIT_SSH_COMMAND, HOME, ..)
+    if (sub === "ls-remote" && (envSet || execPath || rest.some(lsRemoteProgram))) return { targets: [], unknown: "git ls-remote" };
     if (GIT_RO_SUBS.has(sub)) return { targets: outs };
     if (sub === "stash" && (rest[0] === "list" || rest[0] === "show")) return { targets: outs };
     if (sub === "apply" && rest.some((a) => /^--(check|stat|numstat|summary)$/.test(a)) && !rest.includes("--apply")) return { targets: outs };
@@ -1802,6 +1821,8 @@ interface Collected {
   shadowed?: Set<string>;
   /** A `cd`/`pushd`/`export`/`env` command or an env assignment prefix was found (refused next to a run for a read-only child). */
   roCdEnv?: boolean;
+  /** Some command position of the line (or of a nested script) sets or exports a variable (ENV_SET): `git ls-remote` is then no plain read. */
+  envSet?: boolean;
   /** Top level only: the session cwd and file probes, to resolve `..` words after a `cd` that ran first. */
   cdBase?: { cwd: string; realpath: (p: string) => string | null; isDir: (p: string) => boolean };
 }
@@ -2255,6 +2276,7 @@ const psProfile = (s: string): string => s.replace(/\$\{env:USERPROFILE\}(?=[\\/
 
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
   const src = shell === "powershell" ? psProfile(psDashes(src0)) : src0;
+  if (shell === "posix" && ENV_SET.test(src)) out.envSet = true;
   const parsed = parseShell(src, shell);
   // same-line variables (shellvars.ts): the expanded words and texts are checked next to the line as written
   const resolved = depth === 0 && shell === "posix" && out.vars ? resolveVars(parsed.pipelines, parsed.seps, out.vars, (u) => REDIRECTS.has(u), src, out.platform) : new Map<string[], string[]>();
@@ -2375,7 +2397,7 @@ function collect(src0: string, shell: "posix" | "powershell", depth: number, out
         }
       }
       if (out.roTargets && !neutral && v.core.length) {
-        const e = roEffect(rcore, skip, innerScript(v.core) !== null);
+        const e = roEffect(rcore, skip, innerScript(v.core) !== null, out.envSet === true || unitWords.slice(0, off).some((w) => /^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=/.test(w) || baseName(w) === "env"));
         if (e.run) {
           out.roRun = true;
           if (e.script !== undefined) (out.roScripts ??= []).push(e.script);

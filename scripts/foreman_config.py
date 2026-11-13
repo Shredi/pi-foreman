@@ -119,6 +119,7 @@ Keys outside safety that the project and session layers cannot loosen either
     sessions.backend, sessions.hc    ignored (where a local session opens and the herdr-core options: user or overlay config only)
     sessions.worktree                ignored (the branch prefix of `session open --worktree`: user or overlay config only)
     sessions.remote                  ignored (the fetch timeout of a remote child's notice file: user or overlay config only)
+    sessions.blockedNoticeSeconds    ignored (when a parent is told its child waits on the owner: user or overlay config only)
     compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
                                      the session layer is ignored with a warning (setup applies it)
     compaction.priceTiers, compaction.threshold   removed in r52: a warning, the keys are dropped (see REMOVED_COMPACTION_KEYS)
@@ -249,6 +250,7 @@ IGNORED_KEYS = [
     (("sessions", "backend"), "where a local session opens comes from the user or overlay config"),
     (("sessions", "hc"), "the herdr-core session options come from the user or overlay config"),
     (("sessions", "remote"), "the fetch timeout of a remote child's notice file comes from the user or overlay config"),
+    (("sessions", "blockedNoticeSeconds"), "when a parent is told its child waits on the owner comes from the user or overlay config"),
     (("sessions", "worktree"), "the branch prefix of a session's own worktree comes from the user or overlay config"),
     (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model and the reviewer pair map come from the user or overlay config"),

@@ -173,10 +173,12 @@ import { frictionOfRunEnd } from "./friction.ts";
 import { extractRetro, lastAssistantText, knownLimitsArg, modelRetroPrompt, RETRO_INSTRUCTIONS } from "./retrodigest.ts";
 import { UsageFooter, cacheStatus, footerStyleOf, lookupRate, type CacheSource } from "./footer.ts";
 import { symbolSet } from "./symbols.ts";
-import { blockedConfirm, installBlockedShim, withBlocked } from "./herdr.ts";
+import { blockedConfirmOn, cleanLabel, installBlockedShim, withBlockedOn } from "./herdr.ts";
+import type { BlockClass } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
 import { installBgRecords } from "./bgrecords.ts";
 import { RemoteWatcher } from "./remotewatch.ts";
+import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds } from "./childblocked.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
@@ -186,6 +188,12 @@ import { claimCore, emitReady, installInert, markCoreStarted, missingBundled, se
 
 /** pi.events of the loaded extension, for the Herdr blocked signal (set in the factory). */
 let herdrEvents: EventBus | undefined;
+/** The classes the dialog and hold sites declare (herdr.ts BlockClass): who the source waits on and its fixed kind word. */
+const BLOCK_APPROVAL: BlockClass = { on: "owner", kind: "approval" };
+const BLOCK_CHECKPOINT: BlockClass = { on: "owner", kind: "checkpoint" };
+const BLOCK_SCRIPT: BlockClass = { on: "owner", kind: "script" };
+const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
+const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
 import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
@@ -525,9 +533,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     },
   }) as never);
   let remoteWatch: RemoteWatcher | null = null; // hc events watcher of the remote children (remotewatch.ts), a foreman session only
+  let childBlocked: ChildBlocked | null = null; // the parent's notice that a child session waits on the owner (childblocked.ts), a foreman session only
   pi.on("session_shutdown", async () => {
     remoteWatch?.stop();
     remoteWatch = null;
+    childBlocked?.stop();
+    childBlocked = null;
     core.release();
   });
   // Before any session_start (pi-intercom reads PI_INTERCOM_STABLE_ID when it connects): review S6.
@@ -651,17 +662,40 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Herdr blocked shim (herdr.ts); `blockedShim.onChange((active) => ...)` can feed other consumers.
   const blockedShim = installBlockedShim(pi, { enabled: () => [...sessions.values()].every((x) => get(x.config.config, "herdr.blockedShim") !== false) });
   // Own asks hold each session's presence blocked directly (Pi can suppress ui_prompt_start, see herdr.ts).
-  blockedShim.onOwn(() => {
-    const holds = [...sessions.values()].map((s) => s.live?.hold());
-    return () => holds.forEach((release) => release?.());
+  // The hook also records blocked_open / blocked_closed (trace) for every own source: who it waits on, its kind word, its short label, and how long it waited.
+  /** Per session, the owner-class own sources open now: the one event per dialog comes from the classed source, so Pi's prompt events add one only for a dialog nobody classed (a wait on the parent does not mute them). */
+  const classedOpen = new Map<string, number>();
+  blockedShim.onOwnOn((label, cls) => {
+    const held = [...sessions.values()].map((s) => ({ s, release: s.live?.holdOn(cls) }));
+    const rec = { on: cls?.on ?? "owner", kind: cls?.kind ?? "dialog", label: cleanLabel(label) };
+    const opened = Date.now();
+    for (const h of held) {
+      if (rec.on === "owner") classedOpen.set(h.s.id, (classedOpen.get(h.s.id) ?? 0) + 1);
+      h.s.trace?.emit({ event: "blocked_open", ...rec });
+    }
+    let closed = false;
+    return () => {
+      if (closed) return;
+      closed = true;
+      for (const h of held) {
+        if (rec.on === "owner") {
+          const n = (classedOpen.get(h.s.id) ?? 1) - 1;
+          if (n > 0) classedOpen.set(h.s.id, n);
+          else classedOpen.delete(h.s.id);
+        }
+        h.release?.();
+        h.s.trace?.emit({ event: "blocked_closed", ...rec, waitedMs: Date.now() - opened });
+      }
+    };
   });
+  const uiLabels = new Map<string, string>();
   // A question tool call holds an own blocked source from tool_call to tool_execution_end, independent of Pi's ui_prompt_* events (Pi suppresses them under a stuck dialog depth).
   const questionBlocks = new Map<string, () => void>();
   const holdQuestion = (id: string, input: unknown): void => {
     questionBlocks.get(id)?.();
     const first = (input as { questions?: { header?: unknown }[] } | undefined)?.questions?.[0]?.header;
     const label = typeof first === "string" && first.trim() ? first : "question";
-    questionBlocks.set(id, blockedShim.own(label));
+    questionBlocks.set(id, blockedShim.ownOn(label, { on: "owner", kind: "question" }));
   };
   const releaseQuestion = (id: string): void => {
     const release = questionBlocks.get(id);
@@ -682,12 +716,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.live?.onAgentStart();
     radarTouch(s, ctx);
   });
-  pi.on("ui_prompt_start", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(true));
-  pi.on("ui_prompt_end", async (_e, ctx) => sessionFor(ctx)?.live?.setBlocked(false));
+  // Pi's prompt events are the `ui` choke point: the live state's blocker and, through the single-key rule (herdr.ts uiKeyAction), its owner key.
+  const uiClosed = (s: Session, r: { waitedMs?: number } | undefined): void => {
+    if (r?.waitedMs === undefined || !uiLabels.has(s.id)) return; // only a dialog this path opened
+    s.trace?.emit({ event: "blocked_closed", on: "owner", kind: "dialog", label: uiLabels.get(s.id) ?? "dialog", waitedMs: r.waitedMs });
+    uiLabels.delete(s.id);
+  };
+  pi.on("ui_prompt_start", async (e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.setBlocked(true);
+    if (!s || !s.live?.uiKey("prompt_start").opened) return;
+    const p = e as { title?: unknown; kind?: unknown };
+    const label = cleanLabel(typeof p.title === "string" && p.title.trim() ? p.title : typeof p.kind === "string" ? p.kind : "dialog");
+    if (classedOpen.has(s.id)) return; // an owner-class own source of this session is open: it emits the pair
+    uiLabels.set(s.id, label);
+    s.trace?.emit({ event: "blocked_open", on: "owner", kind: "dialog", label });
+  });
+  pi.on("ui_prompt_end", async (_e, ctx) => {
+    const s = sessionFor(ctx);
+    s?.live?.setBlocked(false);
+    if (s) uiClosed(s, s.live?.uiKey("prompt_end"));
+  });
   // orphaned dialog (see herdr.ts): Pi may swallow ui_prompt_end, so any input or the end of the turn also clears the "ui" source
+  // (the owner key only on typed input: an extension's input and a turn end keep it while a dialog may still be open)
   pi.on("input", async (e, ctx) => {
     const s = sessionFor(ctx);
     s?.live?.setBlocked(false);
+    if (s) uiClosed(s, s.live?.uiKey("input", (e as { source?: unknown }).source));
     if (s && (e as { source?: string }).source !== "extension") gateStopped.delete(s.id); // a new user prompt ends a "deny and stop"
   });
   pi.on("agent_end", async (_e, ctx) => {
@@ -1452,6 +1507,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       });
       remoteWatch.start();
     }
+    childBlocked?.stop();
+    childBlocked = null;
+    if (!s.isChild && process.env.PI_SUBAGENT_CHILD !== "1") {
+      const watch = remoteWatch;
+      // one custom message of its own type (never foreman_wake, never system text); the quiet "answered" note starts no turn
+      childBlocked = new ChildBlocked({
+        agentDir: s.agentDir,
+        sessionId: s.id,
+        opener: () => openerIntercomId(process.env, s.agentDir, s.id),
+        seconds: () => noticeSeconds(get(s.config.config, "sessions.blockedNoticeSeconds")),
+        contact: (child) => (watch as RemoteWatcher | null)?.lastContact(child),
+        send: (text, wake) => {
+          let idle = true;
+          try {
+            idle = ctx.isIdle();
+          } catch {
+            // a stale context: treat as idle
+          }
+          pi.sendMessage({ customType: CHILD_BLOCKED_TYPE, content: text, display: true }, wake ? (idle ? { triggerTurn: true } : { deliverAs: "followUp" }) : { triggerTurn: false });
+        },
+        trace: (rec) => s.trace?.emit(rec),
+      });
+      childBlocked.start();
+    }
     sidebarLive.start(ctx, { python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, sessionId: s.id, symbols: get(s.config.config, "ui.symbols"), spinner: get(s.config.config, "ui.spinner") !== false, live: s.live });
     if (!s.isChild && s.live) {
       s.extStatus.start();
@@ -2121,7 +2200,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const proposed = dangerName ? rememberOf(dangerName, a.tool, a.payload, undefined, undefined, s.cwd) : undefined;
     // under the parent's own mode allow a sentence would never be used: only the exact-command rule is offered
     const remember = proposed && rt.store.resolve().mode === "allow" ? { ...proposed, noSentence: true } : proposed;
-    const ans = await withBlocked(herdrEvents, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run }, ...(remember ? { remember } : {}) }, ownerDeps(s, ctx, rt)));
+    const ans = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run }, ...(remember ? { remember } : {}) }, ownerDeps(s, ctx, rt)));
     return ans.allow === true ? { allow: true, how: ans.how === "remember" ? "allow-remember" : ans.refused ? "allow-remember-refused" : "allow-once" } : { allow: false, reason: ans.reason, how: ans.how };
   }
   let childAskChain: Promise<void> = Promise.resolve();
@@ -2355,7 +2434,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.isChild && toolName === "bash" && typeof input.command === "string" && mctx.install && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
     // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
     const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
-    const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) });
+    const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirmOn(herdrEvents, BLOCK_APPROVAL, (title, msg) => ctx.ui.confirm(title, msg)) });
     if (d) {
       const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);
       const asked = !(r && d.kind === "deny");
@@ -2766,7 +2845,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const askCause = a.dangerName ?? (cause === "no rule matches" || cause.startsWith("rule ") ? cause : cause.startsWith("self-modification") ? "selfmod" : cause);
         const n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, deadline: Date.now() + timeoutMs });
         const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
-        const w = await withBlocked(herdrEvents, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, timeoutMs, 250, notBefore, () => gs.presence.away()));
+        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, timeoutMs, 250, notBefore, () => gs.presence.away()));
         if (w.answer === "allow") return done("parent-allow", true);
         if (w.answer === "away") return done("parent-away", false, OWNER_AWAY_TEXT);
         if (w.answer === "timeout") return done("parent-timeout", false, `pi-foreman: denied: the parent did not answer within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this line to the foreman and continue with what you can.`);
@@ -2779,7 +2858,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (kind !== "owner") return done("no-ui", false, NO_PANE_TEXT); // no UI: an immediate deny
     const remember = a.noRemember ? undefined : rememberOf(a.dangerName ?? "unmatched", tool, payload, input, a.segments, ctx.cwd);
-    const ans: OwnerAnswer = await withBlocked(herdrEvents, `pi-foreman: ${tool} asks`, () => askOwner({ tool, payload, cwd: ctx.cwd, cause, ...(a.classifierReason ? { classifierReason: a.classifierReason } : {}), ...(remember ? { remember } : {}) }, ownerDeps(gs, ctx, rt)));
+    const ans: OwnerAnswer = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `pi-foreman: ${tool} asks`, () => askOwner({ tool, payload, cwd: ctx.cwd, cause, ...(a.classifierReason ? { classifierReason: a.classifierReason } : {}), ...(remember ? { remember } : {}) }, ownerDeps(gs, ctx, rt)));
     if (ans.allow === true) return done(ans.how === "remember" ? "allow-remember" : ans.refused ? "allow-remember-refused" : "allow-once", true);
     if (ans.how === "stop") gateStopped.add(gs.id);
     return done(ans.how, false, ans.reason);
@@ -2847,7 +2926,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
     let yes = false;
     try {
-      const confirm = blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg));
+      const confirm = blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => ctx.ui.confirm(title, msg));
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), PROTECT_CONFIRM_MS); timer.unref?.(); });
       yes = (await Promise.race([confirm("Protected target", text), timeout])) === true;
@@ -3426,7 +3505,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           outcome,
           piTool: event.toolName,
           input,
-          ask: { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) },
+          ask: { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => ctx.ui.confirm(title, msg)) },
           ledgerTarget: target ? isLedgerTarget(target) : false,
         });
         if (t.openFailure) notifyOnce(s, ctx, `open:${guard}`, t.openFailure);
@@ -3931,7 +4010,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function askContractFor(s: Session): AskContract {
     let c = asks.get(s.id);
     if (!c) {
-      c = new AskContract({ ownDirs: () => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.own(label) });
+      c = new AskContract({ ownDirs: () => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.ownOn(label, BLOCK_PARENT) });
       asks.set(s.id, c);
     }
     return c;
@@ -5037,7 +5116,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           s.trace?.emit({ event: "dialog", surface: "checkpoint" });
           try {
             ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
-            answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
+            answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
           } catch {
             answer = undefined;
           }
@@ -5067,7 +5146,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (verdict?.kind === "revise") note = verdict.note;
           else {
             try {
-              note = await withBlocked(herdrEvents, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
+              note = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
             } catch {
               note = undefined;
             }
@@ -5201,7 +5280,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         try {
           // One notice: the terminal replaces an info status line by the next one sent back to back.
           ctx.ui.notify([...scriptNoticeLines(p), scriptUndoLine(p)].join("\n"), "info");
-          answer = await withBlocked(herdrEvents, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
+          answer = await withBlockedOn(herdrEvents, BLOCK_SCRIPT, title, () => ctx.ui.select(title, [...SCRIPT_CHOICES], { signal }));
         } catch {
           answer = undefined;
         }
@@ -5214,7 +5293,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (answer === "revise") {
           let note: string | undefined;
           try {
-            note = await withBlocked(herdrEvents, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
+            note = await withBlockedOn(herdrEvents, BLOCK_SCRIPT, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
           } catch {
             note = undefined;
           }
@@ -5415,7 +5494,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return;
         }
         // the owner's confirm dialog only: no auto review, no model answer
-        ctx.ui.notify(await trustBridgeCommand(s.agentDir, s.cwd, projectBridgeConfigRisks(s.cwd), { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
+        ctx.ui.notify(await trustBridgeCommand(s.agentDir, s.cwd, projectBridgeConfigRisks(s.cwd), { hasUI: ctx.hasUI, mode: ctx.mode, confirm: blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => ctx.ui.confirm(title, msg)) }), "info");
         return;
       }
       if (sub === "perms") {
@@ -5529,7 +5608,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           driftPending: () => !!m && m.provider === BRIDGE_PROVIDER && s.claudeCfg.pending(ctx.cwd).length > 0,
           busy: () => !ctx.isIdle() || warmQueued(s),
           hasUI: ctx.hasUI,
-          confirm: blockedConfirm(herdrEvents, (title, msg) => ctx.ui.confirm(title, msg)),
+          confirm: blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => ctx.ui.confirm(title, msg)),
           rates: (promptTokens) => (m ? warmRates({ table: loadPrices(PKG_ROOT), registry: lookupRate(ctx.modelRegistry as never, m.provider, m.id), model: m.id, promptTokens, ttlSeconds: resolveWarmPolicy(s.config.config, m.provider, m.id, bridgeTtlS).ttlSeconds }) : null),
           api: () => liveReplayApi({ pi, hidden: () => deferred.hidden }, ctx),
           trace: (rec) => s.trace?.emit(rec),
@@ -5767,7 +5846,7 @@ function driftAsk(ctx: ExtensionContext, trace?: TraceWriter | null) {
   return {
     mode: ctx.mode,
     hasUI: ctx.hasUI,
-    confirm: blockedConfirm(herdrEvents, (title, msg) => {
+    confirm: blockedConfirmOn(herdrEvents, BLOCK_CONFIRM, (title, msg) => {
       trace?.emit({ event: "dialog", surface: "drift" });
       return ctx.ui.confirm(title, msg);
     }),
