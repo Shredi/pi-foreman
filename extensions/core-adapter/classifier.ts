@@ -223,7 +223,7 @@ export type ReadResult =
 export class Classifier {
   /** `tool\0cwd\0role\0payload` -> the allow entry that covered it. */
   private readonly allowed = new Map<string, string>();
-  /** The read question's cache: an accepted clear, keyed by the line, the cwd, the inside directories, the session kind and the switch value. */
+  /** The read question's cache: an accepted clear, keyed by the tool, the line, the cwd, the role, the inside directories, the session kind, the switch value and the deny sentences. */
   private readonly readCleared = new Set<string>();
   private readStamp: string | undefined;
   private stamp: string | undefined;
@@ -256,7 +256,7 @@ export class Classifier {
     } catch {
       this.readCleared.clear();
     }
-    const key = [call.tool, call.cwd, call.role, call.kind, call.inside.join("\n"), "readClear=true", call.payload].join("\0");
+    const key = [call.tool, call.cwd, call.role, call.kind, call.inside.join("\n"), "readClear=true", JSON.stringify(ctx.prose.deny.map((d) => d.text)), call.payload].join("\0");
     const done = (r: ReadResult, cached = false): ReadResult => {
       try {
         ctx.trace?.({ decision: r.cleared ? "allow" : "escalate", entry: "read-clear", cached, latencyMs: r.latencyMs, reasoning: READ_REASONING });
