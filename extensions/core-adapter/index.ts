@@ -1872,6 +1872,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ownerScript: "on",
       // Owner-readable plans, questions and notes (ownertext.ts; "off" only drops the added lines).
       ownerReadable: "on",
+      // The working-ahead rules ("off"/absent only renders the baseline before them).
+      proactive: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
