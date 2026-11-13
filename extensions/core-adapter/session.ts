@@ -216,11 +216,17 @@ export function writeBrief(dir: string, data: string | Uint8Array): string {
 }
 
 /**
- * Writes the empty send-back marker `rework-<k>` in `dir`: k is the markers' own sequence (the lowest free number, independent of brief and ruling
- * numbers); flag "wx" never overwrites, a name taken meanwhile is tried again with the next number.
+ * Writes the empty send-back marker `rework-<k>` in `dir`: k is the markers' own sequence (the highest marker on disk plus one, independent of brief
+ * and ruling numbers): the child's watermark only rises, so a lower number would go unseen. The child reads at most 999 (rework.ts), so a marker past
+ * that is refused. Flag "wx" never overwrites, a name taken meanwhile is tried again with the next number.
  */
 export function writeRework(dir: string): string {
-  for (let k = 1; ; k++) {
+  let top = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const k = /^rework-([1-9][0-9]{0,2})$/.exec(name)?.[1];
+    if (k !== undefined) top = Math.max(top, Number(k));
+  }
+  for (let k = top + 1; k <= 999; k++) {
     const file = path.join(dir, `rework-${k}`);
     try {
       fs.writeFileSync(file, "", { flag: "wx" });
@@ -229,6 +235,7 @@ export function writeRework(dir: string): string {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
     }
   }
+  throw new Error("rework-999 is the highest the child reads; no send-back marker can be written");
 }
 
 export const briefText = (opener: string, file: string): string => `Brief from ${opener}: read ${file} and act on it`;

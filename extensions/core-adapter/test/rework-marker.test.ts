@@ -77,15 +77,58 @@ test("remote path: the flag is passed on to the script, only when given", async 
   assert.equal(d.sent.length, 0, "the script delivers, not this side");
 });
 
-test("marker numbers are their own sequence: lowest free, never shared, independent of brief and ruling numbers", (t) => {
+test("marker numbers are their own sequence: the one after the highest on disk, never shared, independent of brief and ruling numbers", (t) => {
   const dir = tmp(t);
   for (const n of ["brief-7.md", "ruling-2.md", "ruling.md"]) fs.writeFileSync(path.join(dir, n), "x");
   assert.equal(path.basename(writeRework(dir)), "rework-1", "a high brief number does not start the markers high");
   assert.equal(path.basename(writeRework(dir)), "rework-2");
   fs.rmSync(path.join(dir, "rework-1"));
-  assert.equal(path.basename(writeRework(dir)), "rework-1", "the lowest free number");
-  assert.equal(path.basename(writeRework(dir)), "rework-3");
-  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith("rework")).sort(), ["rework-1", "rework-2", "rework-3"]);
+  assert.equal(path.basename(writeRework(dir)), "rework-3", "no reuse of a free low number below the highest");
+  assert.equal(path.basename(writeRework(dir)), "rework-4");
+  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith("rework")).sort(), ["rework-2", "rework-3", "rework-4"]);
+});
+
+test("markers 1 and 3 present: the next is 4", (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, "rework-1"), "");
+  fs.writeFileSync(path.join(dir, "rework-3"), "");
+  assert.equal(path.basename(writeRework(dir)), "rework-4");
+});
+
+test("marker 2 handled and removed: the next send-back is above the child's watermark and is seen", (t) => {
+  const dir = tmp(t);
+  for (const n of ["rework-1", "rework-2", "rework-3"]) fs.writeFileSync(path.join(dir, n), "");
+  const watermark = highestRework(dir);
+  assert.equal(watermark, 3);
+  fs.rmSync(path.join(dir, "rework-2"));
+  const next = path.basename(writeRework(dir));
+  assert.equal(next, "rework-4");
+  assert.ok(highestRework(dir) > watermark, "the scanner sees the new send-back");
+});
+
+test("a stray high marker: the next send-back still goes above the watermark and is seen", (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, "rework-900"), "");
+  const watermark = highestRework(dir);
+  assert.equal(watermark, 900);
+  assert.equal(path.basename(writeRework(dir)), "rework-901");
+  assert.ok(highestRework(dir) > watermark, "the scanner sees the new send-back");
+});
+
+test("two deliveries never share a marker", (t) => {
+  const dir = tmp(t);
+  const first = writeRework(dir);
+  const second = writeRework(dir);
+  assert.notEqual(first, second);
+  assert.equal(fs.readdirSync(dir).filter((n) => n.startsWith("rework")).length, 2);
+});
+
+test("rework-999 is the highest the scanner reads: no marker past it is written, and none is overwritten", (t) => {
+  const dir = tmp(t);
+  fs.writeFileSync(path.join(dir, "rework-999"), "");
+  assert.throws(() => writeRework(dir), /rework-999 is the highest/);
+  assert.deepEqual(fs.readdirSync(dir), ["rework-999"]);
+  assert.equal(highestRework(dir), 999);
 });
 
 test("scanner: only regular rework-<k> files count; the highest k wins", (t) => {

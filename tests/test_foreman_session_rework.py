@@ -68,12 +68,40 @@ class CliPathTest(unittest.TestCase):
         self.assertEqual(markers(self.handoff), ["rework-1", "rework-2"])
         self.assertTrue((self.handoff / "brief-2.md").is_file())
 
-    def test_new_rework_takes_the_lowest_free_number_and_never_overwrites(self):
+    def test_new_rework_takes_the_number_after_the_highest_and_never_overwrites(self):
         self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-1")
         self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-2")
         (self.handoff / "rework-1").unlink()
-        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-1")
-        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-3")
+        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-3", "no reuse of a free low number below the highest")
+        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-4")
+        self.assertEqual(markers(self.handoff), ["rework-2", "rework-3", "rework-4"])
+
+    def test_markers_1_and_3_present_the_next_is_4(self):
+        (self.handoff / "rework-1").write_text("", "utf-8")
+        (self.handoff / "rework-3").write_text("", "utf-8")
+        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-4")
+
+    def test_marker_2_handled_and_removed_the_next_send_back_is_above_the_watermark(self):
+        for n in ("rework-1", "rework-2", "rework-3"):
+            (self.handoff / n).write_text("", "utf-8")
+        (self.handoff / "rework-2").unlink()
+        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-4", "above the watermark 3")
+
+    def test_a_stray_high_marker_does_not_hide_the_next_send_back(self):
+        (self.handoff / "rework-900").write_text("", "utf-8")
+        self.assertEqual(fsn.new_rework(self.handoff), self.handoff / "rework-901")
+
+    def test_two_deliveries_never_share_a_marker(self):
+        first = fsn.new_rework(self.handoff)
+        second = fsn.new_rework(self.handoff)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(markers(self.handoff)), 2)
+
+    def test_rework_999_is_the_last_one_refused_past_it_and_nothing_is_overwritten(self):
+        (self.handoff / "rework-999").write_text("", "utf-8")
+        with self.assertRaises(fsn.Refused):
+            fsn.new_rework(self.handoff)
+        self.assertEqual(markers(self.handoff), ["rework-999"])
 
 
 class RemotePathTest(unittest.TestCase):

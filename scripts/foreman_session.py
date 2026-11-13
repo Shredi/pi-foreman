@@ -2350,10 +2350,18 @@ def new_brief(handoff, data):
 
 
 def new_rework(handoff):
-    """Write the empty send-back marker `rework-<k>` in the handoff dir: k is the markers' own sequence (the lowest free number,
-    independent of brief and ruling numbers), created exclusively so two deliveries never share one. Returns its path."""
-    k = 1
+    """Write the empty send-back marker `rework-<k>` in the handoff dir: k is the markers' own sequence (the highest marker on disk plus
+    one, independent of brief and ruling numbers), created exclusively so two deliveries never share one. The child's watermark only rises,
+    so a lower number would be ignored; the child reads at most 999 (rework.ts), so a marker past that is refused. Returns its path."""
+    try:
+        names = os.listdir(str(handoff))
+    except OSError as e:
+        raise Refused("cannot write the rework marker: %s" % e)
+    top = max([int(m.group(1)) for m in (re.match(r"rework-([1-9][0-9]{0,2})$", n) for n in names) if m] or [0])
+    k = top + 1
     while True:
+        if k > 999:
+            raise Refused("cannot write the rework marker: rework-999 is the highest the child reads")
         target = Path(handoff) / ("rework-%d" % k)
         try:
             with open(target, "xb"):
