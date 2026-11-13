@@ -253,6 +253,8 @@ export interface Delta {
   closedUnmerged?: boolean;
   /** The PR ended the watch. */
   final?: "merged" | "closed" | "gone";
+  /** The line of the return to the base branch (merged only; appended last). */
+  returned?: string;
 }
 
 const isReview = (e: CommentEntry): boolean => e.kind === "review" || e.kind === "review_summary";
@@ -406,6 +408,7 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   if (d.draftReady) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, still a draft`;
   if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch, then push via the parent`;
   if (d.closedUnmerged) content += `\nreport to the parent: PR #${number} closed unmerged`;
+  if (d.returned) content += `\n${oneLine(d.returned, 600)}`;
   return { customType: PR_MESSAGE_TYPE, content, display: true, details: { number, outcome: d.final ?? "event", delta: d } };
 }
 
@@ -649,6 +652,13 @@ export interface PrWatchesDeps {
   child?(): boolean;
   /** The watched PR was merged (the watch has ended and its message is sent). */
   onMerged?(info: MergedInfo): void;
+  /**
+   * The merged PR's checkout goes back to the base branch (returntobase.ts mergedReturn): the line for the merged message and the outcome; null: nothing to say (the key is off).
+   * Not called in a child session. `cwd` is the watch's directory. A throw is reported in the line; it never stops the ending.
+   */
+  returnToBase?(info: { key: PrKey; cwd: string }): Promise<{ line: string; outcome: "returned" | "kept" } | null>;
+  /** A line for the UI only (no message, no turn): the return of a PR that merged before a close. */
+  notice?(text: string): void;
   /** One fresh state of a watched PR (a pr_status; `cwd` is the arming directory); "unknown" = could not tell. */
   fresh?(key: PrKey, cwd: string | undefined): Promise<"open" | "merged" | "closed" | "unknown">;
 }
@@ -830,7 +840,24 @@ export class PrWatches {
       this.persist();
       this.deps.changed?.();
       this.deps.trace({ event: "pr_watch", outcome: state });
+      if (state === "merged") {
+        const r = await this.returned(w);
+        if (r) this.deps.notice?.(`PR #${w.key.n}: ${r.line}`);
+      }
     }
+  }
+
+  /** The return-to-base step for a merged watch: its line and outcome (traced), null in a child session or when there is nothing to say. Never throws. */
+  private async returned(w: Watch): Promise<{ line: string; outcome: string } | null> {
+    if (!this.deps.returnToBase || this.deps.child?.()) return null;
+    let r: { line: string; outcome: string } | null;
+    try {
+      r = await this.deps.returnToBase({ key: w.key, cwd: w.cwd });
+    } catch (err) {
+      r = { line: `checkout left as it is: the return to the base branch failed (${oneLine((err as Error).message, 160)}); the owner checks the state with git status`, outcome: "error" };
+    }
+    if (r) this.deps.trace({ event: "pr_watch", outcome: `return_${r.outcome}` });
+    return r;
   }
 
   /** pr_unwatch: end the watches of PR number `n` (of repository `repo` owner/name and host `host` when given) without a message; the count ended. */
@@ -929,7 +956,7 @@ export class PrWatches {
       r = { kind: "down" };
     }
     w.busy = false;
-    this.settle(w, r);
+    await this.settle(w, r);
   }
 
   private setStatus(w: Watch, status: string): void {
@@ -938,7 +965,7 @@ export class PrWatches {
     this.deps.changed?.();
   }
 
-  private settle(w: Watch, r: StoreRead): void {
+  private settle(w: Watch, r: StoreRead): void | Promise<void> {
     if (w.ended) return;
     // a PASS recorded since the alert clears it on the next tick, whatever the store says (no event: the state is only cleared)
     const passed = this.passedSet();
@@ -1013,7 +1040,7 @@ export class PrWatches {
     this.arm(w);
   }
 
-  private end(w: Watch, d: Delta): void {
+  private async end(w: Watch, d: Delta): Promise<void> {
     if (w.ended) return;
     w.ended = true;
     this.timers.clear(w.poller);
@@ -1021,6 +1048,10 @@ export class PrWatches {
     if (d.final === "merged") this.remember(w.key);
     this.persist();
     this.deps.changed?.();
+    if (d.final === "merged") {
+      const r = await this.returned(w);
+      if (r) d.returned = r.line;
+    }
     this.deps.send(prMessage(w.key.n, d), this.idle());
     this.deps.trace({ event: "pr_watch", outcome: d.final });
     if (d.final === "merged") {

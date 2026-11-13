@@ -77,7 +77,7 @@ import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcp
 import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
-import { branchMergedFact, branchMove, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
+import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
 import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
@@ -197,6 +197,7 @@ import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { mergedReturn, realGit } from "./returntobase.ts";
 import { selfFinish, spawnDetached } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
@@ -806,6 +807,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const file = path.join(handoff, "result.md");
           void close.start(ctx, { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, info.key.n), pr: { n: info.key.n, parent: parentIntercomId(process.env), label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } }).catch(() => undefined);
         },
+        returnToBase: ({ key, cwd }) => {
+          const dir = cwd || (s.prCtx?.cwd ?? s.cwd);
+          return mergedReturn({
+            enabled: () => get(s.config.config, "tools.prReturnToBase") !== false,
+            sessionCwd: () => s.cwd,
+            busy: () => s.activeRuns.size > 0 || s.pendingLaunches.size > 0,
+            git: realGit,
+            status: (n) => prRun(s, dir, "pr_status", { number: n, ...(key.repo ? { repo: key.repo, ...(key.host ? { host: key.host } : {}) } : {}) }),
+          }, { cwd: dir, number: key.n });
+        },
+        notice: (text) => s.prCtx?.ui.notify(text, "info"),
         rememberMerged: () => !!process.env[HANDOFF_DIR_ENV]?.trim(),
         persist: (watches, merged) => pi.appendEntry(PRWATCH_ENTRY, { v: 2, piSessionId: s.id, watches, ...(merged.length ? { merged } : {}) }),
         send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
@@ -4002,7 +4014,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         return undefined;
       }
       const precondition = move && "precondition" in move ? move.precondition : undefined;
-      const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : v.reason;
+      const hint = move ? null : chainHint(command, !s.isChild);
+      const reason = precondition ? `${v.reason} branch move refused: ${precondition}.` : hint ? `${v.reason} ${hint}.` : v.reason;
       s.trace?.emit({ event: "shell_write_refused", role: "foreman", kind: v.kind, mode, ...(precondition ? { precondition } : {}) });
       // a refusal caused only by a parent-owned name in the own handoff dir, or only by a target the guard cannot resolve, is no sign the task needs a builder: no tier escalation
       const more = v.handoffOnly || v.unresolvedOnly ? "" : onEditRefused(s, mode, "shell");
