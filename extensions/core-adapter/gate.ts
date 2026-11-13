@@ -75,7 +75,7 @@ export const denialFragment = (r: GateResult): string | undefined => (r ? fragme
 /** The floor's own sentence of a floor denial (without the appended tool and fragment), else the reason: what the child repeat stop counts. */
 export const denialSentence = (r: { reason: string }): string => sentences.get(r) ?? r.reason;
 
-/** A floor denial: the floor's sentence unchanged, then the tool and the matched fragment (the agent's own text, cut to 80 characters). */
+/** A floor denial: the floor's sentence unchanged, then the tool and the matched fragment (the agent's text after redaction, cut to 80 characters). */
 const blocked = (h: FloorHit, tool: string): GateResult => {
   const r: GateResult = { block: true, reason: `${h.reason} (tool: ${cutFragment(tool)}${h.fragment ? `; matched: ${h.fragment}` : ""})`, rule: h.rule, layer: "floor" };
   if (h.fragment) fragments.set(r, h.fragment);

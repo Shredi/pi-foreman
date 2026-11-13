@@ -61,11 +61,11 @@ export interface FloorHit {
    * asked before the mode step. Never classifier-allowable, never run under mode `allow`. A deny always wins over an ask on the same line.
    */
   kind: "deny" | "ask";
-  /** The text that matched (raw and opaque-text floors: the regex match; segment floors: program and deciding argument; path floors: the path as written), cut by `cutFragment`. The gate appends it to the denial; `reason` itself does not carry it. */
+  /** The text that matched (raw and opaque-text floors: the regex match; segment floors: program and deciding argument; path floors: the path as written), redacted like the gate log (secrets `[redacted]`, home directory `~`) and cut by `cutFragment`. The gate appends it to the denial; `reason` itself does not carry it. */
   fragment?: string;
 }
 
-/** A fragment of the matched text for a denial: control characters removed, cut to 80 characters. */
+/** A fragment of the matched text for a denial: redacted (as the gate log), control characters removed, cut to 80 characters. */
 export const cutFragment = (s: string): string => redactCommand(s).replace(/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}\p{Cf}]/gu, "").slice(0, 80); // redact the whole text first: a cut inside a secret would defeat the patterns that need a closing quote or `@`
 
 const hit = (name: string, reason: string, fragment?: string): FloorHit => ({ rule: `floor-${name}`, kind: "deny", reason: `pi-foreman: denied by the permission floor (${name}). ${reason} No review, policy entry or dialog lifts this floor.`, ...(fragment ? { fragment: cutFragment(fragment) } : {}) });
