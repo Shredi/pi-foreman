@@ -66,7 +66,7 @@ test("the gate log carries the tool and the redacted fragment", async (t) => {
   const r = await r11RigNoSpawn(t);
   const res = await r.call("bash", { command: "API_TOKEN=abcDEF1234567890xyz sudo ls" });
   assert.ok(res?.block);
-  assert.match(res.reason ?? "", /\(tool: bash; matched: API_TOKEN=abcDEF1234567890xyz sudo\)$/, "the agent sees its own text");
+  assert.match(res.reason ?? "", /\(tool: bash; matched: API_TOKEN=\[redacted\] sudo\)$/, "the agent sees the redacted text");
   const rows = fs.readFileSync(gateLogFile(r.agentDir), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, string>);
   const row = rows.at(-1)!;
   assert.equal(row.tool, "bash");

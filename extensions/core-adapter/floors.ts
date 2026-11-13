@@ -11,6 +11,7 @@ import { globMatch } from "./glob.ts";
 import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
 import { nonPathArgs } from "./permoverlay.ts";
 import { protectedMatch } from "./protectedmatch.ts";
+import { redactCommand } from "./trace.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -65,7 +66,7 @@ export interface FloorHit {
 }
 
 /** A fragment of the matched text for a denial: control characters removed, cut to 80 characters. */
-export const cutFragment = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}\p{Cf}]/gu, "").slice(0, 80);
+export const cutFragment = (s: string): string => redactCommand(s).replace(/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}\p{Cf}]/gu, "").slice(0, 80); // redact the whole text first: a cut inside a secret would defeat the patterns that need a closing quote or `@`
 
 const hit = (name: string, reason: string, fragment?: string): FloorHit => ({ rule: `floor-${name}`, kind: "deny", reason: `pi-foreman: denied by the permission floor (${name}). ${reason} No review, policy entry or dialog lifts this floor.`, ...(fragment ? { fragment: cutFragment(fragment) } : {}) });
 const askHit = (name: string, reason: string, fragment?: string): FloorHit => ({ rule: `floor-${name}`, kind: "ask", reason: `${reason} (the line is not plain enough for the parser, so the owner decides)`, ...(fragment ? { fragment: cutFragment(fragment) } : {}) });
