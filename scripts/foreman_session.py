@@ -135,6 +135,18 @@ SETUP_TIMEOUT_MAX = 600  # hc exec's own maximum; `machine setup` waits this lon
 SETUP_READER_JOIN = 3  # seconds `machine setup` waits for the stderr copy after hc has exited
 HC_TIMED_OUT_RE = re.compile(r"\[hc\] timed out after \d+ ms")
 REAP_POLLS, REAP_POLL_SECONDS = 3, 2  # close-remote: how long it waits for the remote terminal to finish before `hc rm`
+CLOSE_DEADLINE = 90  # seconds for every remote call of one close-remote together; the caller (session.ts) gives up at 120
+FORCE_ATTACH_SLICE = 10  # seconds of that kept for the local attach kill of `--force`
+CLOSE_SEND_TIMEOUT = 10  # the remote `close` verb's wait for the intercom send; below CLOSE_TIMEOUT, the call that carries it
+CLOSE_ORDER_LIFETIME = 15 * 60  # as CLOSE_ORDER_MAX_AGE_MS in close.ts
+CLOSE_ATTEMPT_LIFETIME = CLOSE_ORDER_LIFETIME + 5 * 60  # plus the child's close turn and the travel of its notice
+WATCHER_REAP_WAIT = 40 * 3  # seconds: REAP_POLLS times REAP_POLL_MS in remotewatch.ts
+PASS_TOTAL_LIMIT, PASS_READ_TIMEOUT = 60, 10  # seconds: all reads of the expiry pass together, one read
+SHELL_NAMES = {"sh", "bash", "zsh", "fish", "dash", "ash", "ksh", "tcsh", "csh", "cmd", "powershell", "pwsh"}  # as remotewatch.ts
+NOTICE_LABEL_RE = re.compile(r"^([0-9]+):(plan|result|update|ask|closed):([0-9a-f]{64}|-):([0-9]+)\Z")  # as NOTICE_RE there
+REFUSED_LABEL_RE = re.compile(r"^([0-9]+):refused:([a-z0-9-]{1,40})\Z")
+EXPIRED_NOTE = "close order expired without an answer"
+FORCE_HINT = "; if the child is gone: foreman session close-remote --force %s"
 CLOSE_FILE = "close.json"
 RESULT_PATH_RE = re.compile(r"^[A-Za-z0-9._/-]{1,200}\Z")  # as close.ts RESULT_PATH_RE
 REFUSE_SLUG_RE = re.compile(r"^[a-z0-9-]{1,40}\Z")
@@ -428,7 +440,27 @@ def open_attach(adir, binary, machine, child, remote_address):
         return None
 
 
-def kill_attach(entry):
+class Deadline:
+    """One time limit for several calls: `left()` seconds remain, `cap(limit)` is the smaller of `limit` and what is left."""
+
+    def __init__(self, seconds):
+        self.end = time.monotonic() + seconds
+
+    def left(self):
+        return max(0.0, self.end - time.monotonic())
+
+    def slice(self, limit):
+        """`limit`, or what is left when that is less, but at least a second (the caller checked `left()`)."""
+        return min(limit, max(self.left(), 1.0))
+
+    def cap(self, limit):
+        left = self.left()
+        if left < 1:
+            raise Refused("no time left in the %d s limit of close-remote" % CLOSE_DEADLINE, "out_of_time")
+        return min(limit, left)
+
+
+def kill_attach(entry, timeout=HC_TIMEOUT):
     """Best effort: end the local attach terminal of a remote entry (errors ignored; --rm removes it)."""
     attach = entry.get("attach") if isinstance(entry, dict) else None
     address = attach.get("address") if isinstance(attach, dict) else None
@@ -437,33 +469,81 @@ def kill_attach(entry):
         return
     try:
         subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
+                       stdin=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         pass
 
 
-def hc_terminal_state(binary, address):
-    """`hc get <address> --json`: "finished", "gone" (not_found), "live" or "unknown" (hc could not tell)."""
+def notice_kind(value):
+    """The kind of an `fm.notice` label value (`closed`, `refused`, `result` ...), None when it is outside the grammar;
+    as `parseNoticeLabel` in remotewatch.ts (`-:0` only for `closed`). The value is compared, never used anywhere else."""
+    if not isinstance(value, str):
+        return None
+    m = NOTICE_LABEL_RE.match(value)
+    if m:
+        if m.group(3) == "-" and (m.group(2) != "closed" or m.group(4).strip("0") != ""):
+            return None
+        return m.group(2)
+    return "refused" if REFUSED_LABEL_RE.match(value) else None
+
+
+def is_shell_name(name):
+    """A foreground program name that means pi is gone and `--keep` left a shell (as `isShellName` in remotewatch.ts)."""
+    if not isinstance(name, str):
+        return False
+    return re.sub(r"\.exe$", "", re.sub(r"^.*[\\/]", "", name.strip().lower())) in SHELL_NAMES
+
+
+def hc_terminal_info(binary, address, timeout=HC_TIMEOUT):
+    """`hc get <address> --json`: {"state": "finished", "gone" (not_found), "live" or "unknown" (hc could not tell), "foreground":
+    the foreground program's name or None, "notice": the terminal's `fm.notice` label or None} (the last two for a live
+    terminal; the reply carries them as `foreground.name` and `labels`, see remotewatch.ts)."""
+    info = {"state": "unknown", "foreground": None, "notice": None}
     try:
         r = subprocess.run([binary, "get", address, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
+                           stdin=subprocess.DEVNULL, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return info
+    if r.returncode == 3 and b"not_found" in r.stderr + r.stdout:
+        return dict(info, state="gone")
+    if r.returncode != 0:
+        return info
+    try:
+        data = json.loads(r.stdout.decode("utf-8", "replace"))
+        state = data.get("state")
+    except (ValueError, AttributeError):
+        return info
+    if state == "finished":
+        return dict(info, state="finished")
+    if state != "live":
+        return info
+    fg, labels = data.get("foreground"), data.get("labels")
+    return {"state": "live", "foreground": fg.get("name") if isinstance(fg, dict) else None,
+            "notice": labels.get("fm.notice") if isinstance(labels, dict) else None}
+
+
+def hc_terminal_state(binary, address, timeout=HC_TIMEOUT):
+    """"finished", "gone" (not_found), "live" or "unknown" (hc could not tell)."""
+    return hc_terminal_info(binary, address, timeout)["state"]
+
+
+def rm_remote_terminal(binary, address, timeout=HC_TIMEOUT):
+    """`hc rm` of a finished remote terminal: "removed", "gone" (not_found: another reap won the race) or "unknown"."""
+    try:
+        r = subprocess.run([binary, "rm", address], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         return "unknown"
     if r.returncode == 3 and b"not_found" in r.stderr + r.stdout:
         return "gone"
-    if r.returncode != 0:
-        return "unknown"
-    try:
-        state = json.loads(r.stdout.decode("utf-8", "replace")).get("state")
-    except (ValueError, AttributeError):
-        return "unknown"
-    return "finished" if state == "finished" else "live" if state == "live" else "unknown"
+    return "removed" if r.returncode == 0 else "unknown"
 
 
-def reap_remote_terminal(entry, polls=0):
+def reap_remote_terminal(entry, polls=0, deadline=None):
     """Remove the remote `--keep` terminal of a machine entry once it has finished: `hc get`, then `hc rm` when finished
     (`not_found` is done). Polls `polls` more times, REAP_POLL_SECONDS apart, while it is live. Returns "removed", "gone",
-    "live" or "unknown"; an `hc rm` that fails is "unknown" (never silent: the caller reports it)."""
+    "live" or "unknown"; an `hc rm` that fails is "unknown" (never silent: the caller reports it). With a `deadline`
+    every call gets at most what is left, and no time left reads as "live"."""
     at = entry.get("hc") if isinstance(entry, dict) else None
     address = at.get("address") if isinstance(at, dict) else None
     binary = hc_bin()
@@ -471,50 +551,49 @@ def reap_remote_terminal(entry, polls=0):
         return "unknown"
     state = "unknown"
     for i in range(polls + 1):
-        state = hc_terminal_state(binary, address)
+        if deadline and deadline.left() < 1:
+            return "live"
+        state = hc_terminal_state(binary, address, deadline.slice(HC_TIMEOUT) if deadline else HC_TIMEOUT)
         if state == "gone":
             return "gone"
         if state == "finished":
-            try:
-                r = subprocess.run([binary, "rm", address], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
-            except (OSError, subprocess.TimeoutExpired):
-                return "unknown"
-            if r.returncode == 3 and b"not_found" in r.stderr + r.stdout:  # the watcher's reap won the race
-                return "gone"
-            return "removed" if r.returncode == 0 else "unknown"
+            return rm_remote_terminal(binary, address, deadline.slice(HC_TIMEOUT) if deadline else HC_TIMEOUT)
         if i < polls:
-            time.sleep(REAP_POLL_SECONDS)
+            time.sleep(min(REAP_POLL_SECONDS, deadline.left()) if deadline else REAP_POLL_SECONDS)
     return state
 
 
-def force_close_remote(adir, entry):
-    """`close-remote --force` on a `closing` entry: kill the remote terminal when it still runs, remove it, end the attach
-    terminal, mark the entry `closed`. A terminal that cannot be removed is reported on stderr and dropped (the entry is
-    closed and reaped regardless). Returns 0."""
+def force_close_remote(adir, entry, deadline):
+    """`close-remote --force` on a `closing` entry, or an `open` one with a failed or expired close attempt: kill the remote
+    terminal when it still runs, remove it, end the attach terminal, mark the entry `closed`. A terminal that cannot be
+    removed, or that the `deadline` left no time for, is reported on stderr and dropped (the entry is closed and reaped
+    regardless). Returns 0."""
     label = entry.get("label")
     at = entry.get("hc") if isinstance(entry.get("hc"), dict) else {}
     address = at.get("address")
     binary = hc_bin()
     skipped = None
+    no_time = "no time left in the %d s limit; the remote terminal may still exist" % CLOSE_DEADLINE
     if not (isinstance(address, str) and VALUE_RE.match(address)):
         skipped = "the entry has no usable remote terminal address"
     elif not binary:
         skipped = "hc is not available"
+    elif deadline.left() < 1:
+        skipped = no_time
     else:
-        if hc_terminal_state(binary, address) == "live":
+        if hc_terminal_state(binary, address, deadline.slice(HC_TIMEOUT)) == "live" and deadline.left() >= 1:
             try:
                 subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                               stdin=subprocess.DEVNULL, timeout=HC_TIMEOUT)
+                               stdin=subprocess.DEVNULL, timeout=deadline.slice(HC_TIMEOUT))
             except (OSError, subprocess.TimeoutExpired):
                 pass
-        result = reap_remote_terminal(entry, polls=2)
+        result = reap_remote_terminal(entry, polls=2, deadline=deadline)
         if result not in ("removed", "gone"):
-            skipped = "it is still %s (machine unreachable or hc rm failed)" % result
+            skipped = no_time if deadline.left() < 1 else "it is still %s (machine unreachable or hc rm failed)" % result
     if skipped:
         sys.stderr.write("pi-foreman session: remote terminal %s of %s was not removed: %s; %s is marked closed anyway\n"
                          % (address, label, skipped, label))
-    kill_attach(entry)
+    kill_attach(entry, FORCE_ATTACH_SLICE)
     mark_entry(adir, entry, status="closed", reaped=True, note="closed by --force")
     print_json({"ok": True, "forced": True, "label": label})
     return 0
@@ -1438,7 +1517,7 @@ def remote_close(adir, params):
         except OSError:
             pass
         raise
-    woke, _ = send_intercom(child, "foreman:close")
+    woke, _ = send_intercom(child, "foreman:close", CLOSE_SEND_TIMEOUT)
     return {"woke": woke}
 
 
@@ -1507,7 +1586,7 @@ def next_notice_seq(handoff):
         try:
             fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):  # Windows refuses the open with a PermissionError while the holder deletes it
             try:
                 if time.time() - os.stat(lock).st_mtime > 10:
                     os.unlink(lock)
@@ -1627,10 +1706,10 @@ def hc_required():
     return binary
 
 
-def check_hc_machine(binary, name):
+def check_hc_machine(binary, name, timeout=DISCOVERY_TIMEOUT):
     """`name` must be a machine of `hc machine ls --json` (exact case); fail closed."""
     try:
-        data = hc_read(binary, ["machine", "ls", "--json"], DISCOVERY_TIMEOUT)
+        data = hc_read(binary, ["machine", "ls", "--json"], timeout)
     except HcError as e:
         raise Refused("cannot list the hc machines: %s" % e, "machine_unknown")
     rows = data.get("machines") if isinstance(data, dict) else None
@@ -1661,14 +1740,20 @@ def strip_control(text):
     return "".join(c for c in str(text) if not (ord(c) < 0x20 or 0x7f <= ord(c) <= 0x9f))
 
 
-def hc_exec_verb(binary, name, argv, verb, payload, timeout):
+def hc_exec_verb(binary, name, argv, verb, payload, timeout, deadline=None):
     """Run `<argv> session remote <verb> --json` on machine `name` over `hc exec` (argv list, no shell, the JSON request
-    on stdin); the remote's reply dict. A failure of hc itself (machine down, timeout) is Unreachable."""
+    on stdin); the remote's reply dict. A failure of hc itself (machine down, timeout) is Unreachable. With a `deadline`
+    the local wait (`timeout` plus the slack) and hc's own `--timeout` shrink to what is left; no time left is refused
+    before the call (nothing was started)."""
+    local = timeout + HC_EXEC_SLACK
+    if deadline:
+        local = deadline.cap(local)
+        timeout = min(timeout, max(1, int(local) - HC_EXEC_SLACK))
     cmd = ([binary, "exec", "--on", name, "--timeout", str(timeout), "-i", "--json", "--"] + list(argv)
            + ["session", "remote", verb, "--json"])
     try:
         r = subprocess.run(cmd, input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout + HC_EXEC_SLACK)
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=local)
     except subprocess.TimeoutExpired:
         raise Unreachable("remote %s unreachable: no answer within %d s" % (name, timeout))
     except OSError as e:
@@ -2069,37 +2154,74 @@ def remote_brief(a, adir, entry):
     return 0
 
 
+def number_of(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def attempt_without_notice(entry):
+    """True for an entry with a tried time or the expiry mark and no notice since: its last notice (`last.at`, the parent's
+    clock like the two) is missing or older than the later of them. A child that answered after the attempt is not gone."""
+    marks = [n for n in (number_of(entry.get("closeTriedAt")), number_of(entry.get("closeExpiredAt"))) if n is not None]
+    if not marks:
+        return False
+    last = entry.get("last")
+    if not isinstance(last, dict) or "at" not in last:
+        return True
+    at = parse_iso(last["at"])
+    return at is not None and at.timestamp() < max(marks)
+
+
 def cmd_close_remote(a):
-    """`close-remote <label|child> [--path p]`: order the remote child to close; the entry becomes `closing`."""
+    """`close-remote <label|child> [--path p] [--force]`: order the remote child to close. A woken child makes the entry
+    `closing` (exit 0); any other outcome of the send leaves its status, is reported as not sent and exits 1. Every remote
+    call shares one deadline below the caller's limit."""
     adir = agent_dir(a.agent_dir)
     entry = find_entry(adir, a.target)
     if not entry:
         raise Refused("no session with label or child id %r (see: foreman session list)" % a.target)
     if not isinstance(entry.get("machine"), str) or not entry["machine"]:
         raise Refused("%s is not a session on a remote machine" % a.target, "not_remote")
-    if getattr(a, "force", False) and entry.get("status") == "closing":
-        return force_close_remote(adir, entry)
-    if entry.get("status") not in ("open", "pending"):
-        raise Refused("%s is %s, not open" % (a.target, entry.get("status")), "not_open")
+    status = entry.get("status")
+    if getattr(a, "force", False):
+        if status == "closing" or (status == "open" and attempt_without_notice(entry)):
+            return force_close_remote(adir, entry, Deadline(CLOSE_DEADLINE - FORCE_ATTACH_SLICE))
+        if status == "open":
+            raise Refused("%s is open with no close attempt left unanswered: try a normal close first "
+                          "(foreman session close-remote %s)" % (a.target, a.target), "not_open")
+    if status not in ("open", "pending", "closing"):
+        raise Refused("%s is %s, not open" % (a.target, status), "not_open")
     if a.path is not None and not (RESULT_PATH_RE.match(a.path) and a.path.endswith(".md")):
         raise Refused("--path may use only A-Z a-z 0-9 . _ / - (at most 200 characters) and must end in .md")
     name = entry["machine"]
     payload = {"handoffName": entry.get("handoffName"), "parentAddress": entry.get("parentAddress")}
     if a.path is not None:
         payload["path"] = a.path
+    deadline = Deadline(CLOSE_DEADLINE)
+    tried = time.time()
+    why = None
+    started = False  # the remote call began: the order may have arrived, so the attempt gets a tried time
     try:
         _, argv = machine_entry(adir, name)
         binary = hc_required()
-        check_hc_machine(binary, name)
-        reply = hc_exec_verb(binary, name, argv, "close", payload, CLOSE_TIMEOUT)
+        check_hc_machine(binary, name, deadline.cap(DISCOVERY_TIMEOUT))
+        started = True
+        reply = hc_exec_verb(binary, name, argv, "close", payload, CLOSE_TIMEOUT, deadline)
+        if reply.get("woke") is not True:
+            why = "the remote could not wake the child"
     except Refused as e:
         why = str(e) if isinstance(e, Unreachable) or not e.code else "[%s] %s" % (e.code, e)
-        mark_entry(adir, entry, lastError=why)
-        sys.stderr.write("pi-foreman session: close for %s@%s not sent (%s).\n" % (entry.get("label"), name, why))
+        started = isinstance(e, Unreachable)
+    if why is not None:
+        fields = {"lastError": why}
+        if started:
+            fields.update(closeTriedAt=tried, closeExpiredAt=None)
+        mark_entry(adir, entry, **fields)
+        hint = FORCE_HINT % entry.get("label") if started and status == "open" else ""
+        sys.stderr.write("pi-foreman session: close for %s@%s not sent (%s)%s.\n" % (entry.get("label"), name, why, hint))
         return 1
-    mark_entry(adir, entry, status="closing", closeSentAt=time.strftime("%Y-%m-%dT%H:%M:%S"), lastError=None)
-    kill_attach(entry)
-    result = reap_remote_terminal(entry, polls=REAP_POLLS)
+    mark_entry(adir, entry, status="closing", closeSentAt=time.strftime("%Y-%m-%dT%H:%M:%S"), closeTriedAt=tried,
+               closeExpiredAt=None, lastError=None)
+    result = reap_remote_terminal(entry, polls=REAP_POLLS, deadline=deadline)
     if result == "live":
         sys.stderr.write("pi-foreman session: remote terminal still running; prune will remove it\n")
     elif result == "unknown":
@@ -2250,12 +2372,120 @@ def cmd_prune(a):
     return 0
 
 
-def prune_remote_terminals(adir):
+def expired_attempt(entry, now):
+    """True when the entry's close attempt (`closeTriedAt`, a number) is older than its lifetime. The field alone decides."""
+    tried = number_of(entry.get("closeTriedAt"))
+    return tried is not None and now - tried > CLOSE_ATTEMPT_LIFETIME
+
+
+def shell_may_end(entry, now):
+    """A shell left in a remote terminal may be ended when the closed label was seen on an earlier run (`closedSeenAt`), or
+    when the entry's last notice is a `closed` one older than the watcher's wait."""
+    if number_of(entry.get("closedSeenAt")) is not None:
+        return True
+    last = entry.get("last") if isinstance(entry.get("last"), dict) else {}
+    at = parse_iso(last.get("at"))
+    return last.get("kind") == "closed" and at is not None and now - at.timestamp() > WATCHER_REAP_WAIT
+
+
+def settle_entry(adir, entry, **fields):
+    """Write `fields` to the entry only when its status and tried time are still what the caller read (the watcher's own
+    write in between wins). True when written."""
+    reg = read_registry(adir)
+    for s in reg["sessions"]:
+        if isinstance(s, dict) and s.get("child") == entry.get("child"):
+            if s.get("status") != entry.get("status") or s.get("closeTriedAt") != entry.get("closeTriedAt"):
+                return False
+            s.update(fields)
+            write_registry(adir, reg)
+            return True
+    return False
+
+
+def end_shell(binary, address, deadline):
+    """End the shell left in a remote terminal and remove the terminal: True when it is removed or gone."""
+    try:
+        subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       stdin=subprocess.DEVNULL, timeout=deadline.slice(PASS_READ_TIMEOUT))
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return reap_remote_terminal({"hc": {"address": address}}, polls=2, deadline=deadline) in ("removed", "gone")
+
+
+def settle_close_attempts(adir, out):
+    """The pass: every machine entry in `closing`, `open` or `pending` whose close attempt has expired gets one read of its
+    recorded remote terminal. Finished or gone: `closed`, the terminal removed, the attach terminal ended. Live with the
+    child's `closed` label: the first sighting is only recorded; a later run closes the entry and ends a shell left in the
+    foreground. Live without it: nothing is ended or removed, the tried time is cleared and a `closing` entry is `open`
+    again. Unreadable: unchanged. One total limit; after a failed read the rest of that machine waits. Lines go to `out`.
+    Returns (the children it took, the labels it could not handle)."""
+    now = time.time()
+    todo = [s for s in read_registry(adir)["sessions"] if isinstance(s, dict) and s.get("machine")
+            and s.get("status") in ("closing", "open", "pending") and expired_attempt(s, now)]
+    taken, failed, down = set(), [], set()
+    if not todo:
+        return taken, failed
+    binary, deadline = hc_bin(), Deadline(PASS_TOTAL_LIMIT)
+    for s in todo:
+        taken.add(s.get("child"))
+        at = s.get("hc") if isinstance(s.get("hc"), dict) else {}
+        address = at.get("address")
+        if s["machine"] in down or deadline.left() < 1 or not binary or not (isinstance(address, str) and VALUE_RE.match(address)):
+            failed.append(str(s.get("label")))
+            continue
+        info = hc_terminal_info(binary, address, deadline.slice(PASS_READ_TIMEOUT))
+        if info["state"] == "unknown":
+            down.add(s["machine"])
+            failed.append(str(s.get("label")))
+        elif info["state"] != "live":
+            result = "gone" if info["state"] == "gone" else rm_remote_terminal(binary, address, deadline.slice(PASS_READ_TIMEOUT))
+            if result not in ("removed", "gone"):
+                failed.append(str(s.get("label")))
+            elif settle_entry(adir, s, status="closed", reaped=True, note="pruned: remote terminal finished"):
+                kill_attach(s, deadline.slice(HC_TIMEOUT))
+                print("reaped %s  %s  %s" % (s.get("label"), s.get("child"), result), file=out)
+        elif notice_kind(info["notice"]) == "closed":
+            seen = number_of(s.get("closedSeenAt"))
+            if seen is None:  # the child may still be shutting down: a first sighting ends nothing
+                settle_entry(adir, s, closedSeenAt=now)
+                continue
+            shell = is_shell_name(info["foreground"]) and shell_may_end(s, now)
+            if shell and not end_shell(binary, address, deadline):
+                failed.append(str(s.get("label")))
+                continue
+            first = datetime.datetime.fromtimestamp(seen, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            fields = {"status": "closed", "note": "closed: notice read from the terminal (a result the watcher never fetched stays on the other machine)",
+                      "last": {"kind": "closed", "at": first}}
+            if shell:
+                fields["reaped"] = True
+            if settle_entry(adir, s, **fields):
+                kill_attach(s, deadline.slice(HC_TIMEOUT))
+                print("closed %s  %s  notice read from the terminal" % (s.get("label"), s.get("child")), file=out)
+        else:  # alive and no closed label: nothing on the other machine is touched
+            fields = {"closeTriedAt": None, "closedSeenAt": None}
+            reopen = s.get("status") == "closing"
+            if reopen:
+                fields.update(status="open", lastError=EXPIRED_NOTE, closeExpiredAt=now)
+            if settle_entry(adir, s, **fields) and reopen:
+                print("pi-foreman session: close for %s@%s expired without an answer; it is open again%s"
+                      % (s.get("label"), s.get("machine"), FORCE_HINT % s.get("label")), file=out)
+    return taken, failed
+
+
+def warn_unremoved(failed):
+    if failed:
+        sys.stderr.write("pi-foreman session: remote terminal could not be removed (hc get/rm failed) for %s; "
+                         "prune or close-remote --force retries\n" % ", ".join(failed))
+
+
+def prune_remote_terminals(adir, out=None):
     """Machine entries in `closing`, or `closed` with a terminal not yet reaped: remove the finished remote terminal
-    (`not_found` counts) and mark a `closing` entry `closed`. A terminal that still runs is left alone."""
-    failed = []
+    (`not_found` counts) and mark a `closing` entry `closed`. A terminal that still runs is left alone. The pass for
+    expired close attempts runs first; the entries it took are not read again."""
+    out = out or sys.stdout
+    taken, failed = settle_close_attempts(adir, out)
     for s in read_registry(adir)["sessions"]:
-        if not isinstance(s, dict) or not s.get("machine") or s.get("reaped"):
+        if not isinstance(s, dict) or not s.get("machine") or s.get("reaped") or s.get("child") in taken:
             continue
         if s.get("status") not in ("closing", "closed") or not isinstance(s.get("hc"), dict):
             continue
@@ -2265,16 +2495,16 @@ def prune_remote_terminals(adir):
             if s.get("status") == "closing":
                 fields.update(status="closed", note="pruned: remote terminal finished")
             mark_entry(adir, s, **fields)
-            print("reaped %s  %s  %s" % (s.get("label"), s.get("child"), result))
+            print("reaped %s  %s  %s" % (s.get("label"), s.get("child"), result), file=out)
         elif result == "unknown":
             failed.append(str(s.get("label")))
-    if failed:
-        sys.stderr.write("pi-foreman session: remote terminal could not be removed (hc get/rm failed) for %s; "
-                         "prune or close-remote --force retries\n" % ", ".join(failed))
+    warn_unremoved(failed)
 
 
 def cmd_list(a):
-    reg = read_registry(agent_dir(a.agent_dir))
+    adir = agent_dir(a.agent_dir)
+    warn_unremoved(settle_close_attempts(adir, sys.stderr)[1])  # stdout stays the list (or one JSON document)
+    reg = read_registry(adir)
     if a.json:
         print(json.dumps(reg, indent=1))
         return 0
@@ -2318,14 +2548,14 @@ def intercom_cli():
     return None
 
 
-def send_intercom(to, text):
+def send_intercom(to, text, timeout=HERDR_TIMEOUT):
     """Send `text` to the intercom id `to` through pi-intercom's CLI (argv list, no shell); (ok, detail)."""
     cli, node = intercom_cli(), shutil.which("node")
     if not cli or not node:
         return False, "pi-intercom's cli.mjs or node was not found"
     try:
         r = subprocess.run([node, str(cli), "send", "--to", to, "--text", text], stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=HERDR_TIMEOUT)
+                           stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     detail = (r.stderr.decode("utf-8", "replace").strip() or r.stdout.decode("utf-8", "replace").strip())[:300]

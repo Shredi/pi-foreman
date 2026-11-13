@@ -130,7 +130,7 @@ class CloseRemoteCommandTest(CloseBase):
     def test_not_open(self):
         self.assertEqual(self.close("demo")[0], 0)  # closing now
         calls = len(self.exec_calls())
-        for status in ("closing", "closed", "failed"):
+        for status in ("closed", "failed"):
             reg = fsn.read_registry(self.padir)
             reg["sessions"][0]["status"] = status
             fsn.write_registry(self.padir, reg)
@@ -138,6 +138,16 @@ class CloseRemoteCommandTest(CloseBase):
             self.assertEqual(rc, 1, status)
             self.assertIn("[not_open]", err)
         self.assertEqual(len(self.exec_calls()), calls)
+
+    def test_closing_is_sent_again(self):
+        self.assertEqual(self.close("demo")[0], 0)  # closing now
+        first = self.registry_row()["closeTriedAt"]
+        calls = len(self.exec_calls())
+        rc, out, err = self.close("demo")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(len(self.exec_calls()), calls + 1)
+        self.assertEqual(self.registry_row()["status"], "closing")
+        self.assertGreaterEqual(self.registry_row()["closeTriedAt"], first)
 
     def test_pending_may_be_closed(self):
         reg = fsn.read_registry(self.padir)

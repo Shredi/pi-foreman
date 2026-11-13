@@ -85,6 +85,11 @@ A removed entry is marked `removed: <ts>` in the manifest, so a second run of th
 `timeout`, `not sent`) under the CLOSE report. This never fails the parent's close. See
 [sessions](sessions.md#closing-the-children-with-the-parent).
 
+For a child on another machine the order is sent with `foreman session close-remote`. It is confirmed (the entry is
+`closing`) or reported as `not sent` and the entry stays as it was; a refused or failed close removes nothing on either
+machine, and an order nobody answered expires at the next `foreman session list` or `prune`. The rules are in
+[sessions](sessions.md#remote-child-sessions).
+
 ## Close refused while a PR is open
 
 A session that holds a [PR watch](tools.md#watch) on a PR that is not merged or closed refuses every close (`/foreman close`,
