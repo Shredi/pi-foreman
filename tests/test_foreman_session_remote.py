@@ -1724,10 +1724,20 @@ class AttachPaneTest(RemoteBase):
         self.assertIn("warning: the local attach terminal did not start", err)
         self.assertNotIn("attach", self.parent_registry()[0])
 
-    def test_close_kills_the_attach_terminal(self):
+    def test_close_leaves_the_attach_terminal_alone(self):
         self.run_main(*self.open_args(), HC_TERMINAL_ID="t0")
         code, out, err = self.run_main("close-remote", "demo")
         self.assertEqual(code, 0, err)
+        self.assertEqual(self.hc_calls("kill"), [])
+
+    def test_the_pass_ends_the_attach_terminal_when_it_closes_the_entry(self):
+        self.run_main(*self.open_args(), HC_TERMINAL_ID="t0")
+        self.assertEqual(self.run_main("close-remote", "demo")[0], 0)
+        reg = fsn.read_registry(self.padir)
+        reg["sessions"][0]["closeTriedAt"] = time.time() - 3600
+        fsn.write_registry(self.padir, reg)
+        self.assertEqual(self.run_main("prune")[0], 0)
+        self.assertEqual(self.parent_registry()[0]["status"], "closed")
         self.assertEqual(self.hc_calls("kill"), [["kill", "t2"]])
 
     def test_close_without_an_attach_kills_nothing(self):

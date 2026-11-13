@@ -102,11 +102,19 @@ class ForceTest(ReapBase):
         self.assertNotIn(["kill", "alpha/t9"], self.hc_calls("kill"))
         self.assertEqual(self.row()["status"], "closed")
 
-    def test_closing_is_refused_without_force(self):
+    def test_closing_is_not_refused_without_force(self):
         self.seed("closing")
         code, out, err = self.run_main("close-remote", "demo")
-        self.assertEqual(code, 1)
-        self.assertIn("not_open", err)
+        self.assertNotIn("not_open", err)  # it is sent again (this seeded entry has no handoff, so the remote refuses)
+        self.assertEqual(self.row()["status"], "closing")
+
+    def test_closing_is_sent_again_and_stays_closing(self):
+        self.assertEqual(self.run_main(*self.open_args())[0], 0)
+        self.assertEqual(self.run_main("close-remote", "demo")[0], 0)
+        calls = len(self.exec_calls())
+        code, out, err = self.run_main("close-remote", "demo")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.exec_calls()), calls + 1)
         self.assertEqual(self.row()["status"], "closing")
 
 
