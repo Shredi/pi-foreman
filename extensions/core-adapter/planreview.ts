@@ -5,8 +5,9 @@
 // is called). A body edit is a new version, so the earlier verdict no longer counts; an appended
 // ruling is not and needs no new review.
 // `planReviewHash` (sha1 of the whole file) is kept for callers that want the byte hash. A FAIL sends the plan back for
-// a revision once (`plan_revision_required`); after the revised plan (a new hash) is reviewed again,
-// the checkpoint opens whatever that verdict says, and the owner sees it in the dialog. The lineage
+// a revision (`plan_revision_required`); the session revises and has the new version reviewed until it
+// passes. The checkpoint opens on a verdict for the current version at the round cap below, with a FAIL
+// for findings that need a decision, and the owner sees it in the dialog. The lineage
 // is the real plan path, in memory for the session: a new plan path starts a new one.
 // `ceremony.planReviewRounds` (default 2) generalises that: each recorded verdict is a round of its
 // lineage; a FAIL before the cap goes back for a revision, a FAIL at the cap opens the checkpoint
@@ -103,7 +104,7 @@ export class PlanReviews {
 export function planReviewRefusalText(reason: PlanReviewRefusal, rel: string, tier: string, stale: boolean): string {
   const head = `pi-foreman: ${CHECKPOINT_TOOL} refused [${reason}]:`;
   if (reason === "plan_revision_required") {
-    return `${head} the plan review of ${rel} failed. Revise the plan once with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, then call ${CHECKPOINT_TOOL} again; after that re-review the checkpoint opens whatever the verdict.`;
+    return `${head} the plan review of ${rel} failed. Revise the plan with the review's findings. Revise the body above the appendix: an Addendum is not a revision and keeps the same plan version. Then launch the reviewer with "[plan-review]" on the revised plan and the ledger, and repeat until it passes; ask nobody while the findings are defects or gaps. A finding that needs a decision goes to the checkpoint with a FAIL: call ${CHECKPOINT_TOOL} again after the revised plan has a verdict, and at the round cap (ceremony.planReviewRounds) it opens with the open findings.`;
   }
   const why = stale ? "the plan changed since its last review, so that verdict no longer counts" : "the plan has no review yet";
   return `${head} at tier ${tier} the checkpoint needs a reviewer verdict on the current version of the plan (ceremony.planReview), and ${why}. Launch the reviewer with "[plan-review]" in its task, naming ${rel} and the ledger, wait for its verdict, then call ${CHECKPOINT_TOOL} again.`;
