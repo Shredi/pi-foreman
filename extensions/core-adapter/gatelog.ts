@@ -209,7 +209,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             layer: rec.layer,
             verdict: field(rec.verdict),
             rule: field(rec.rule),
-            reason: scrubReason(redactCommand(normalizeShape(typeof rec.reason === "string" ? rec.reason : "", opts.roots, true))).slice(0, MAX_REASON),
+            reason: scrubReason(redactCommand(normalizeShape(redactCommand(typeof rec.reason === "string" ? rec.reason : ""), opts.roots, true))).slice(0, MAX_REASON),
             ...(rec.fragment ? { fragment: field(rec.fragment) } : {}),
             ...(typeof rec.latencyMs === "number" ? { latencyMs: Math.round(rec.latencyMs) } : {}),
             ...(rec.model ? { model: field(rec.model) } : {}),

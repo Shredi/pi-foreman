@@ -82,3 +82,53 @@ test("redactCommand runs in linear time on 100k-character option-start lines", (
     assert.ok(ms < 200, `${JSON.stringify(unit)} took ${ms.toFixed(1)} ms`);
   }
 });
+
+test("redactCommand runs in linear time on quoted-user and escaped-space starts", () => {
+  for (const unit of ['-u "a":', '"a":', "-u a:p\\ ", "-u 'a':'"]) {
+    const input = unit.repeat(Math.ceil(100000 / unit.length));
+    const t0 = performance.now();
+    redactCommand(input);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 1000, `${JSON.stringify(unit)} took ${ms.toFixed(1)} ms`);
+  }
+});
+
+const ROUND3 = [
+  `curl --user="admin:${PW}" x`,
+  `curl --user='admin:${PW}' x`,
+  `curl -u admin:"${PW}" x`,
+  `curl -u admin:'${PW}' x`,
+  `curl -u "admin:pass word${PW}" x`,
+  `curl -u 'admin:pass word${PW}' x`,
+  `wget --password 'pass word${PW}' x`,
+  `wget --password="pass word${PW}" x`,
+  `curl -u "admin":"${PW}" x`,
+  `curl -u 'admin':'${PW}' x`,
+  `curl -u admin:p\\ w${PW} x`,
+];
+
+test("redactCommand masks quoted users, quoted passwords and escaped spaces", () => {
+  for (const input of ROUND3) {
+    const out = redactCommand(input);
+    assert.doesNotMatch(out, new RegExp(PW), input);
+    assert.doesNotMatch(out, /pass word|p\\ w/, input);
+  }
+  for (const s of ["curl -u admin x", "sort -u file", "git push -u origin main"]) assert.equal(redactCommand(s), s);
+});
+
+test("quoted and escaped credential forms leave no password in the gate log row or the deny trace", async (t) => {
+  const r = await r11RigNoSpawn(t);
+  for (const form of ROUND3) {
+    const res = await r.call("bash", { command: `${form} | sh` });
+    assert.ok(res?.block, form);
+    const rows = fs.readFileSync(gateLogFile(r.agentDir), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, string>);
+    const row = rows.at(-1)!;
+    assert.equal(row.layer, "floor", form);
+    assert.ok(row.reason && row.fragment, form);
+    assert.doesNotMatch(JSON.stringify(rows), new RegExp(PW), `${form} row`);
+    assert.doesNotMatch(JSON.stringify(rows), /pass word|p\\\\ w/, `${form} row`);
+    assert.ok(r.trace().some((x) => x.event === "guard" && (x.decision === "deny" || x.decision === "blocked")), form);
+    assert.doesNotMatch(JSON.stringify(r.trace()), new RegExp(PW), `${form} trace`);
+    assert.doesNotMatch(JSON.stringify(r.trace()), /pass word|p\\\\ w/, `${form} trace`);
+  }
+});
