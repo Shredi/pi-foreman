@@ -9,7 +9,7 @@ import type { GateResult } from "../gate.ts";
 import { lineFloors } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { gateLogFile } from "../gatelog.ts";
-import { r11Rig } from "./_r11rig.ts";
+import { r11RigNoSpawn } from "./_g8rig.ts";
 
 const HOME = "/Users/someone";
 const deps = { env: (cwd: string) => baseFloorEnv(cwd, { home: HOME }) };
@@ -63,7 +63,7 @@ test("a secret-path denial names the path as written, never the file content", (
 });
 
 test("the gate log carries the tool and the redacted fragment", async (t) => {
-  const r = await r11Rig(t, {});
+  const r = await r11RigNoSpawn(t);
   const res = await r.call("bash", { command: "API_TOKEN=abcDEF1234567890xyz sudo ls" });
   assert.ok(res?.block);
   assert.match(res.reason ?? "", /\(tool: bash; matched: API_TOKEN=abcDEF1234567890xyz sudo\)$/, "the agent sees its own text");

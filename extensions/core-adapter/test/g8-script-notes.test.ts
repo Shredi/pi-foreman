@@ -116,10 +116,10 @@ test("floors.noteTools in the project file (trusted or not) and in the tracked f
   assert.match(notices, /not honoured/);
 });
 
-import { r11Rig } from "./_r11rig.ts";
+import { r11RigNoSpawn } from "./_g8rig.ts";
 
 test("a nested shell call of a script carrying an injected git-config variable in front of a version query is refused with the tool and the fragment", async (t) => {
-  const r = await r11Rig(t, {}, {});
+  const r = await r11RigNoSpawn(t);
   const fire = async (toolName: string, toolCallId: string, input: Record<string, unknown>) =>
     (await r.fire("tool_call", { toolName, toolCallId, input })) as { block?: boolean; reason?: string } | undefined;
   const command = "GIT_CONFIG_COUNT=0 git version";
