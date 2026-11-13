@@ -235,22 +235,28 @@ def parent_of(live):
     return None
 
 
+def _cwd_inside(cwd, path):
+    """True when `cwd` is an absolute path on this platform that resolves to `path` or below."""
+    return (isinstance(cwd, str) and bool(cwd) and os.path.isabs(cwd)
+            and safe_ops.is_inside(os.path.realpath(path), os.path.realpath(cwd), True))
+
+
 def in_use_by(state, sid, path):
-    """Session id of a live, non-done session other than `sid` whose cwd is inside `path`."""
+    """Session id of a live, non-done session other than `sid` whose cwd is inside `path`.
+
+    A session on another machine (a registry entry with `machine`) never holds a local path, and a cwd that is
+    missing, empty or not absolute on this platform holds nothing."""
     for d in live_files(state):
         if d.get("sessionId") in (sid, safe_sid(sid)) or d.get("state") == "done":
             continue
-        cwd = d.get("cwd")
-        if isinstance(cwd, str) and cwd and safe_ops.is_inside(os.path.realpath(path), os.path.realpath(cwd), True):
+        if _cwd_inside(d.get("cwd"), path):
             return str(d.get("sessionId"))
     # a session opened by `foreman session open` (its registry entry) still holds its cwd until the entry is closed
     reg = read_json(os.path.join(state, "sessions.json"))
     for s in (reg.get("sessions") if isinstance(reg, dict) else None) or []:
-        cwd = s.get("cwd") if isinstance(s, dict) else None
-        if isinstance(s, dict) and s.get("machine") and s.get("status") in ("closing", "closed"):
-            continue  # a remote entry on its way out holds no local directory (its cwd is a path on the other machine)
-        if (isinstance(cwd, str) and cwd and s.get("status") in LIVE_REGISTRY
-                and safe_ops.is_inside(os.path.realpath(path), os.path.realpath(cwd), True)):
+        if not isinstance(s, dict) or s.get("machine"):
+            continue  # a remote entry holds no local directory (its cwd is a path on the other machine)
+        if s.get("status") in LIVE_REGISTRY and _cwd_inside(s.get("cwd"), path):
             return str(s.get("child") or s.get("label"))
     return None
 
