@@ -435,6 +435,18 @@
       "enable": ""
     },
     {
+      "id": "read-clear",
+      "area": "review",
+      "title": "The classifier model clears a line that only reads",
+      "purpose": "Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before.",
+      "doc": "docs/permissions.md#the-read-question",
+      "keys": ["gate.readClear"],
+      "commands": [],
+      "switch": {"key": "gate.readClear", "on": "true"},
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "protected-targets",
       "area": "safety",
       "title": "Protected targets with a context check",
