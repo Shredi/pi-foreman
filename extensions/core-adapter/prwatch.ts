@@ -164,6 +164,19 @@ export interface SettleGate {
   now: number;
 }
 
+/** `tools.prSettleSeconds` (default 90) as ms; a missing, negative or non-finite value is the default. */
+export const settleMsOf = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 90) * 1000;
+
+/**
+ * The settle hold of a would-be pass: it restarts on a new head or a changed gating run set and holds until that set has stood for `settleMs`.
+ * Used by prDelta (the watch) and by the tracker poll, so both hold by one rule.
+ */
+export function holdPass(prev: WatchState["passSince"], head: string, runs: Run[], now: number, settleMs: number): { since: { head: string; sig: string; at: number }; held: boolean } {
+  const sig = gatingOf(runs).map((r) => `${r.name}#${rid(r)}`).sort().join("\n");
+  const since = prev?.head === head && prev.sig === sig ? prev : { head, sig, at: now };
+  return { since, held: now - since.at < settleMs };
+}
+
 /** Merge states of the forge that keep the ready-to-merge line back. */
 const NOT_READY = new Set(["blocked", "behind", "dirty", "draft", "unknown"]);
 
@@ -207,7 +220,7 @@ const gatingOf = (runs: Run[]): Run[] => runs.filter((r) => r.gates !== false);
 const isCheck = (r: Run, name: string): boolean => r.name === name || rawName(r) === name;
 
 /** A pass is not settled while a required check has no run on the head (a failure is settled at once). */
-const settledOf = (all: Run[], required?: string[] | null): { settled: boolean; result: "pass" | "fail" | "" } => {
+export const settledOf = (all: Run[], required?: string[] | null): { settled: boolean; result: "pass" | "fail" | "" } => {
   const runs = gatingOf(all);
   const c = countRuns(runs);
   if (runs.length === 0 || c.pending > 0) return { settled: false, result: "" };
@@ -293,9 +306,9 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
   // while the ready line is still to come the hold covers it too (a watch armed inside the window starts with the early pass as reported)
   let held = false;
   if (s.result === "pass" && gate && gate.settleMs > 0 && !snap.required?.length && (st.ci !== `${snap.head}:pass` || (child && st.readyHead !== snap.head))) {
-    const sig = gating.map((r) => `${r.name}#${rid(r)}`).sort().join("\n");
-    if (st.passSince?.head !== snap.head || st.passSince.sig !== sig) st.passSince = { head: snap.head, sig, at: gate.now };
-    held = gate.now - st.passSince.at < gate.settleMs;
+    const h = holdPass(st.passSince, snap.head, snap.runs, gate.now, gate.settleMs);
+    st.passSince = h.since;
+    held = h.held;
     if (held && st.ci !== `${snap.head}:pass`) s = { settled: false, result: "" };
   } else delete st.passSince;
   const green = s.result === "pass" && !held;

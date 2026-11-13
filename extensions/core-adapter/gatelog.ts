@@ -158,6 +158,10 @@ export interface GateRecord {
   model?: string;
   /** The verdict came from the decision cache. */
   cached?: boolean;
+  /** The `id` of an earlier row that belongs to the same call (a read-clear row follows the classifier row of the same call). */
+  follows?: string;
+  /** The reasoning level the model call ran with (the read question). */
+  reasoning?: string;
 }
 
 export interface GateLogOptions {
@@ -174,7 +178,8 @@ export interface GateLogOptions {
 
 export interface GateLog {
   readonly file: string;
-  record(rec: GateRecord): void;
+  /** Writes one row; returns its `id` (also when the write failed, then no row carries it). */
+  record(rec: GateRecord): string;
 }
 
 export const gateLogFile = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "gate", "log.jsonl");
@@ -191,6 +196,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
   return {
     file,
     record(rec) {
+      const id = crypto.randomBytes(6).toString("hex");
       try {
         if (!ready) {
           fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -198,7 +204,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
         }
         const line =
           JSON.stringify({
-            id: crypto.randomBytes(6).toString("hex"),
+            id,
             ts: now().toISOString(),
             session: field(opts.session),
             kind: rec.kind ?? opts.kind,
@@ -211,6 +217,8 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             ...(typeof rec.latencyMs === "number" ? { latencyMs: Math.round(rec.latencyMs) } : {}),
             ...(rec.model ? { model: field(rec.model) } : {}),
             ...(rec.cached ? { cached: true } : {}),
+            ...(rec.follows ? { follows: field(rec.follows) } : {}),
+            ...(rec.reasoning ? { reasoning: field(rec.reasoning) } : {}),
             shape: normalizeShape(rec.input ?? "", opts.roots),
             cwdHash,
           }) + "\n";
@@ -233,6 +241,7 @@ export function openGateLog(opts: GateLogOptions): GateLog {
       } catch {
         // the log is best effort
       }
+      return id;
     },
   };
 }

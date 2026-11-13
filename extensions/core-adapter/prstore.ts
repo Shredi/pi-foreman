@@ -60,6 +60,10 @@ export interface StateEntry {
   sources?: Record<string, SourceStatus>;
   meta?: StateMeta;
   okAt?: number;
+  /** The settle hold of a would-be pass, in the watch's shape (`WatchState.passSince`): head, gating run set signature, when that set was first seen. */
+  passSince?: { head: string; sig: string; at: number };
+  /** Set only while a pass is not settled (the watch's settle rule): the checks seen may be a partial set. */
+  unsettled?: true;
   error?: string;
   errorAt?: number;
   /** The last poll found the PR not found. */
