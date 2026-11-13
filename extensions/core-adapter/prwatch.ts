@@ -165,7 +165,7 @@ export interface WatchState {
 }
 
 /** The readiness rule's part of a delta (prready.ts): `ok` the review facts hold for the host's head; `managed` the watch is under draft handling (an owned PR). */
-export interface RuleInput {
+export interface ReadyRule {
   ok: boolean;
   managed: boolean;
 }
@@ -309,7 +309,7 @@ const rawName = (r: Run): string => (r.source && r.name.startsWith(`${r.source}/
  * Events are built first, then filtered by the wake rules (`repo`: `owner/name` for their `repos` globs). The state is updated for every event
  * whether it wakes or not, so a silent event is never replayed; only a woken event reaches the delta.
  */
-export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true, gate?: SettleGate, rule?: RuleInput): { state: WatchState; delta: Delta | null } {
+export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true, gate?: SettleGate, rule?: ReadyRule): { state: WatchState; delta: Delta | null } {
   const st: WatchState = { ...prev, failedIds: [...prev.failedIds], commentIds: [...prev.commentIds] };
   const events: string[] = [];
   const counts = countRuns(snap.runs);
@@ -1144,7 +1144,7 @@ export class PrWatches {
   }
 
   /** The rule input of one watch (`undefined`: no readiness rule: no facts dependency, or the review gate is off). A throwing facts source withholds the ready line. */
-  private ruleOf(w: Watch, head: string): RuleInput | undefined {
+  private ruleOf(w: Watch, head: string): ReadyRule | undefined {
     if (!this.deps.reviewFacts || (this.deps.reviewGate?.() ?? true) === false) return undefined;
     try {
       return { ok: this.deps.reviewFacts(head) === "ok", managed: this.managed(w) };
