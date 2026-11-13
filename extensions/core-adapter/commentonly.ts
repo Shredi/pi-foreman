@@ -357,8 +357,8 @@ function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<stri
 
 /** The working tree of `cwd` as a git tree (index + non-ignored worktree files) via a temporary index; null on any failure. */
 export async function worktreeTree(cwd: string): Promise<string | null> {
-  const top = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
-  const idx = (await git(cwd, ["rev-parse", "--git-path", "index"]))?.trim();
+  // one call, two lines: the toplevel, then the index path (relative to `cwd`, resolved below)
+  const [top, idx] = ((await git(cwd, ["rev-parse", "--show-toplevel", "--git-path", "index"])) ?? "").split("\n").map((l) => l.trim());
   if (!top || !idx) return null;
   let dir: string | null = null;
   try {

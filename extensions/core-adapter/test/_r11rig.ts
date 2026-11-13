@@ -86,7 +86,7 @@ export async function r11Rig(t: { after(fn: () => void | Promise<void>): void },
     sendMessage: () => undefined,
     ...opts.piExtra,
   };
-  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), ...opts.deps });
+  coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null, ...opts.deps });
   const ctx = {
     sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
     cwd: project,
