@@ -1,10 +1,11 @@
 // pi-foreman shell write guard (`scripts/shell_write_guard.py`, plan D3): the foreman's bash
 // (and its opt-in powershell tool) may not write project files at any tier. Its edit/write tools (measured by the trivial bound)
-// or a builder are the only paths; `.workflow/` stays writable. Children are not affected.
+// or a builder are the only paths; `.workflow/` stays writable. Subagent children are not checked here (the gate's child floor judges them). A session that is a child of another session runs it with its own handoff dir, where only the child-written names (HANDOFF_CHILD_NAMES, sent as `handoff_names`) are writable.
 // The script lives in the package's `scripts/`, not in `core/`. Fail-closed like the destructive guard.
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { HANDOFF_CHILD_NAMES } from "./pathrules.ts";
 import { preToolPayload } from "./payload.ts";
 import type { PayloadContext } from "./payload.ts";
 import { runGuard } from "./runguard.ts";
@@ -20,7 +21,7 @@ export const SHELL_WRITE_REFUSAL = "shell write into project files refused: use 
  *  `ownedDirs`: absolute dirs the foreman owns (owned.ts `allowDirs`; the script's `allow_dirs`), a write
  *  strictly inside one never counts, so `cp -R node_modules ../<repo>.worktrees/<b>/node_modules` passes. */
 export function shellWriteGuardPayload(input: Record<string, unknown>, pc: PayloadContext, workspace: string, piTool: "bash" | "powershell" = "bash", allowedDirs: string[] = [".workflow"], ownedDirs: string[] = [], harness: { handoffDir?: string } = {}): Record<string, unknown> {
-  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}), ...(harness.handoffDir ? { handoff_dir: harness.handoffDir } : {}) };
+  return { ...preToolPayload(piTool, input, pc), workspace, shell: piTool, allowed_dirs: allowedDirs, ...(ownedDirs.length ? { allow_dirs: ownedDirs } : {}), ...(harness.handoffDir ? { handoff_dir: harness.handoffDir, handoff_names: [...HANDOFF_CHILD_NAMES] } : {}) };
 }
 
 export interface ShellWriteRunInput {

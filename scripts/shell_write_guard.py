@@ -699,7 +699,18 @@ def absolute(text, cwd, lexical=True):
 
 
 DEFAULT_ALLOWED_DIRS = [".workflow"]
+# the fallback: the harness sends the one list as `handoff_names` in the payload (pathrules.ts HANDOFF_CHILD_NAMES)
 HANDOFF_CHILD_NAMES = ("plan.md", "result.md", "ask.md", ".ask", ".seen", ".steer-last-read.json")
+
+
+def _payload_handoff_names(v):
+    """The payload's `handoff_names` when well-formed (a non-empty list of plain file names, no `..`), else None."""
+    if not isinstance(v, list) or not v:
+        return None
+    for n in v:
+        if not (isinstance(n, str) and re.match(r"^[A-Za-z0-9._-]+$", n) and ".." not in n):
+            return None
+    return tuple(v)
 
 
 def _native_dir(d):
@@ -722,7 +733,8 @@ def _allowed_rel(d):
 
 
 class Scope(object):
-    def __init__(self, workspace, allowed_dirs=None, scratch_dir=None, allow_dirs=None, handoff_dir=None):
+    def __init__(self, workspace, allowed_dirs=None, scratch_dir=None, allow_dirs=None, handoff_dir=None, handoff_names=None):
+        self.handoff_names = _payload_handoff_names(handoff_names) or HANDOFF_CHILD_NAMES
         self.handoff = None
         self.handoff_lex = None
         self.handoff_nt = False
@@ -795,9 +807,12 @@ class Scope(object):
             if any(":" in c or re.search(r"~[0-9]", c) for c in comps):
                 return True
             first = first.rstrip(". ")
+            comps = [c.rstrip(". ") for c in comps]
+        if any(c.lower() == ".git" for c in comps):
+            return True   # a .git segment is never writable, whatever the platform or case
         if first == "work" and len(comps) > 1:
             return False   # below work/ only: the bare entry is refused (rm -rf / mv would replace it)
-        return not (len(comps) == 1 and (first in HANDOFF_CHILD_NAMES or re.match(r"^ask-[0-9]+\.md$", first)))
+        return not (len(comps) == 1 and (first in self.handoff_names or re.match(r"^ask-[0-9]+\.md$", first)))
 
     def target(self, word, cwd, link=False):
         """True when writing to `word` (a Word or str) counts as a project write."""
@@ -2173,7 +2188,7 @@ class Decision(tuple):
 
 
 def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratch_dir=None, allow_dirs=None,
-           handoff_dir=None):
+           handoff_dir=None, handoff_names=None):
     """None (no project write) or (kind, target). `shell`: "bash" or "powershell".
     `allowed_dirs`: workspace-relative dirs that stay writable (None = [".workflow"]).
     `scratch_dir`: absolute child scratch dir; writes strictly inside it never count.
@@ -2190,7 +2205,7 @@ def decide(command, cwd, workspace=None, shell="bash", allowed_dirs=None, scratc
     strict = False   # pass S, see below: set only for a refused line that has a local assignment
 
     def run(ignore_handoff, ignore_unresolved=False, flags=False):
-        scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs, handoff_dir)
+        scope = Scope(workspace or cwd, allowed_dirs, scratch_dir, allow_dirs, handoff_dir, handoff_names)
         scope.local = strict
         scope.strict = strict and not flags   # the flag passes ask whether a project file is written: local step on, scope not strict
         scope.ignore_handoff = ignore_handoff
@@ -2253,7 +2268,7 @@ def main(argv=None):
         else:
             del args[:1]
     hit = decide(command, cwd, ws, "powershell" if payload.get("shell") == "powershell" else "bash", allowed,
-                 payload.get("scratch_dir"), owned, payload.get("handoff_dir"))
+                 payload.get("scratch_dir"), owned, payload.get("handoff_dir"), payload.get("handoff_names"))
     if hit is None:
         return 0
     kind, target = hit
