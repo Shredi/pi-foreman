@@ -926,7 +926,7 @@ const OPEN_PARAMS = {
     brief: { type: "string", description: "Path of the brief file the new session reads." },
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>." },
-    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks questions via ask_user_question until the plan is decision-complete." },
+    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks only for real decisions until the plan is decision-complete: the owner via ask_user_question, everything else the parent by file (ask.md)." },
     planMode: { type: "boolean", description: "Open the session in plan mode (the brief prompt runs as `/plan <brief prompt>`); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },

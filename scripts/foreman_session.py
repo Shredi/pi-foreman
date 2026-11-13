@@ -246,7 +246,7 @@ def opener_id(given, adir, env=None):
 
 PLAN_FIRST_NOTES = [
     "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
-    "   Ask the parent questions with `ask_user_question` until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
+    "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent by file (`ask.md`). When unsure whether it is a decision, ask the parent. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
     "   `plan.md` starts with a `## For the owner` section (at most about 10 lines in plain words: the goal, the essential steps, heads-ups, the implicit decisions; no paths or ids), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
 ]
 

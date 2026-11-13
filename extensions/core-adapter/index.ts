@@ -196,7 +196,7 @@ const BLOCK_CONFIRM: BlockClass = { on: "owner", kind: "confirm" };
 const BLOCK_PARENT: BlockClass = { on: "parent", kind: "parent-ask" };
 import { completedAgents, CritiqueCounter, initialRounds, isOwnerPrompt, NOTIFY_TYPE, onReviewDone, REVIEW_ROLES, rulingReset, verdictOf, walkLaunch } from "./rounds.ts";
 import type { LaunchRounds, RoundState } from "./rounds.ts";
-import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
+import { loopRefusal, loopRefusalParented, loopVerdictOf, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
 import { bgBashNotice, resolveBgShell } from "./bgshell.ts";
@@ -2355,7 +2355,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** Loop guard: the round just recorded (last of its kind in `s.reviews`) against `prev`, the last round of that kind before the run; a trip sets the stop. One round per run. */
   function loopCheck(s: Session, runId: string, prev: ReviewRecord | undefined, cur: ReviewRecord): void {
     if (!cur.kind) return;
-    const rule = loopVerdict(prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [] } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [] });
+    const rule = loopVerdictOf(cur.kind, prev ? { verdict: prev.verdict, state: prev.state ?? "", sig: prev.sig ?? [] } : null, { verdict: cur.verdict, state: cur.state ?? "", sig: cur.sig ?? [] });
     if (!rule) return;
     s.loopStop = { rule, kind: cur.kind, sig: cur.sig ?? [] };
     s.trace?.emit({ event: "review_loop", rule, kind: cur.kind, runId });
@@ -3320,7 +3320,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           await s.reviewSync; // a review round still being recorded lands (and may set the stop) before the gate reads it
           if (s.loopStop && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
-            return { block: true, reason: loopRefusal(s.loopStop) };
+            return { block: true, reason: (checkpointMode(undefined, process.env) === "parent" ? loopRefusalParented : loopRefusal)(s.loopStop) };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
