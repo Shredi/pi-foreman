@@ -801,8 +801,7 @@ export function parseShell(command: string, opts: ShellParseOptions = {}): Shell
   let script: Script | undefined;
   try {
     script = parse(command);
-  } catch (e) {
-    if (e instanceof RangeError) return unreadable();
+  } catch {
     script = undefined;
   }
   if (!script || (script as any).errors?.length) return unreadable();

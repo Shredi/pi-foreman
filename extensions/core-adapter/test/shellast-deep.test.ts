@@ -1,4 +1,4 @@
-// A line too deep for any stack: parseShell ends it as the one unreadable segment (it does not throw), and the gate decides it as it
+// A line too deep for the stack sizes in use (measured up to `--stack-size=7000`): parseShell ends it as the one unreadable segment (it does not throw), and the gate decides it as it
 // decides an unreadable line (main and child), never `gate-error` and never an allow.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -33,13 +33,13 @@ test("parseShell: a line too deep for the stack is one opaque parse_error segmen
 });
 
 test("parseShell: an error that is not a stack overflow still propagates", () => {
-  const opts = {
-    platform: "linux",
-    get env(): Record<string, string> {
+  // the walk reads `rn.env.FOREMAN_SCRATCH` in `prepare`, so the TypeError arises inside the walk, after the parse succeeded
+  const env = new Proxy({} as Record<string, string>, {
+    get(): never {
       throw new TypeError("boom");
     },
-  } as unknown as Parameters<typeof parseShell>[1];
-  assert.throws(() => parseShell("echo hi", opts), TypeError);
+  });
+  assert.throws(() => parseShell("echo $X", { platform: "linux", env }), TypeError);
 });
 
 let root = "";
