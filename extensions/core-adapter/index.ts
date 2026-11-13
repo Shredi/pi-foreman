@@ -2420,6 +2420,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       ...(s.isChild && launchBinding?.handoffDir ? { childHandoff: launchBinding.handoffDir } : {}),
+      ...(!s.isChild && ownChildHandoff(s) ? { ownHandoff: ownChildHandoff(s) } : {}),
+      ...(!s.isChild ? { childHandoffs: childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)) } : {}),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
@@ -3994,14 +3996,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (children are not checked). */
-  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. */
+  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. For a session-level child (not a subagent) its child-written names are writable by the shell guard and by the gate (`ownHandoff`). */
   function ownChildHandoff(s: Session): string | undefined {
     const env = (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim();
     const dir = env || childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))[0];
     return dir && (path.isAbsolute(dir) || path.win32.isAbsolute(dir)) ? dir : undefined;
   }
 
+  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (subagent children are not checked here; their writes meet the gate's child floor; a session-level child runs it with its handoff dir). */
   async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);

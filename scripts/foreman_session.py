@@ -261,6 +261,9 @@ def footer(label, plan_first):
         "handoff dir. Its file `parent` holds the parent's intercom id; read it again before every",
         "message (the parent can change). Send each message with the intercom tool (`send`) to that id.",
         "",
+        "Write the files below (`plan.md`, `result.md`, `ask.md`) with the write tool or with `cp <file> <handoff dir>/<name>`: both",
+        "work in every permission mode. A shell redirect (`echo >`, a heredoc) may ask for approval in some modes.",
+        "",
     ]
     n = 1
     if plan_first:
@@ -314,6 +317,9 @@ def remote_footer(label, plan_first):
         "handoff dir. You cannot reach the parent with the intercom tool: report with the commands below, run through",
         "your bash tool. Each prints one JSON line and exits 1 when the notice was not recorded. A notice is a label on your",
         "own hc terminal that names the file by its sha256 and size; the parent fetches the file itself.",
+        "",
+        "Write the files below (`plan.md`, `result.md`, `ask.md`) with the write tool or with `cp <file> <handoff dir>/<name>`: both",
+        "work in every permission mode. A shell redirect (`echo >`, a heredoc) may ask for approval in some modes.",
         "",
     ]
     n = 1
