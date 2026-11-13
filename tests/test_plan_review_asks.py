@@ -1,5 +1,4 @@
 """A planning session asks the owner only for real decisions: the instruction, reviewer and brief-footer texts."""
-import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -39,18 +38,17 @@ class ForemanTextTest(unittest.TestCase):
         self.assertIn("At a `[review_loop]` stop in such a session, report the open findings to the parent by file instead and wait for its ruling.", out)
 
     def test_no_rendering_gains_a_line(self):
-        old = subprocess.run(["git", "show", "HEAD:instructions/foreman.md"], cwd=str(ROOT), capture_output=True)
-        if old.returncode != 0:
-            self.skipTest("HEAD not available")
-        was = old.stdout.decode("utf-8")
-        for plan_review in ("on", "off"):
-            for multi in ("on", "off"):
-                for mode in ("tool", "bash", "off"):
-                    knobs = {**KNOBS, "planreview": plan_review, "multisession": multi, "ledgerhelper": mode}
-                    now = render_prompt((ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8"), knobs)
-                    self.assertEqual(len(now.splitlines()), len(render_prompt(was, knobs).splitlines()), (plan_review, multi, mode))
-                    if multi == "off":
-                        self.assertLessEqual(len(now.splitlines()), 70, (plan_review, mode))
+        # pinned line counts of the current instructions/foreman.md per (planreview, multisession, ledgerhelper)
+        pinned = {
+            ("on", "on", "tool"): 68, ("on", "on", "bash"): 73, ("on", "on", "off"): 73,
+            ("on", "off", "tool"): 65, ("on", "off", "bash"): 70, ("on", "off", "off"): 70,
+            ("off", "on", "tool"): 67, ("off", "on", "bash"): 72, ("off", "on", "off"): 72,
+            ("off", "off", "tool"): 64, ("off", "off", "bash"): 69, ("off", "off", "off"): 69,
+        }
+        text = (ROOT / "instructions" / "foreman.md").read_text(encoding="utf-8")
+        for (plan_review, multi, mode), lines in pinned.items():
+            knobs = {**KNOBS, "planreview": plan_review, "multisession": multi, "ledgerhelper": mode}
+            self.assertEqual(len(render_prompt(text, knobs).splitlines()), lines, (plan_review, multi, mode))
 
 
 class ReviewerTextTest(unittest.TestCase):

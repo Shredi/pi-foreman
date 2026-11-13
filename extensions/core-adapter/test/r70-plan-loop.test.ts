@@ -104,11 +104,21 @@ const isLoop = (s: string | null): boolean => /\[review_loop\]/.test(s ?? "");
 test("a parented session: a revised plan failing under the same item goes on; the same version failing again stops with the parented text; a ruling lifts it", async (t) => {
   const w = world(t, { handoff: true, parent: true });
   const a = await w.adapter("startup");
+  // polls the plan_review trace event of this round (emitted when the verdict is kept), 10 s deadline, every 25 ms
+  let planRounds = 0;
+  const until = async (what: string, cond: () => Promise<boolean>): Promise<void> => {
+    const end = Date.now() + 10_000;
+    while (!(await cond())) {
+      assert.ok(Date.now() < end, `${what} within 10 s`);
+      await tick(25);
+    }
+  };
   const review = async (report: string): Promise<string | null> => {
     const r = await a.reviewLaunch();
     if (r.blocked) return r.blocked;
+    const want = ++planRounds;
     a.endRun(r.id, report);
-    await tick(400); // the plan round is recorded after the findings step
+    await until(`plan review ${want} was recorded`, async () => (await w.traceEvents()).filter((e) => e.event === "plan_review").length >= want);
     return null;
   };
   assert.equal(await review(FAIL1), null);
@@ -116,6 +126,7 @@ test("a parented session: a revised plan failing under the same item goes on; th
   assert.equal(await review(FAIL2), null, "a revised plan under the same item");
   assert.equal((await w.traceEvents()).filter((e) => e.event === "review_loop").length, 0, "no stop for a revised plan");
   assert.equal(await review(FAIL2), null, "the next review is launched");
+  await until("the loop stop is set", async () => (await w.traceEvents()).some((e) => e.event === "review_loop"));
   const refused = await review(FAIL2);
   assert.ok(isLoop(refused), "the same version failing again with nothing new stops");
   assert.match(refused ?? "", /to the parent by file \(ask\.md in the handoff dir\)/);
