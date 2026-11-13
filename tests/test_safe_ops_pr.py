@@ -770,7 +770,7 @@ class RepolessCommentsTest(RepoLessCase):
 
 class PrOpsSetTest(unittest.TestCase):
     def test_only_the_watch_poller_op_is_left(self):
-        self.assertEqual(set(safe_ops.PR_OPS), {"pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch"})
+        self.assertEqual(set(safe_ops.PR_OPS), {"pr_create", "pr_status", "pr_checks", "pr_comments", "pr_repo", "pr_find", "pr_batch", "pr_draft"})
         for op in ("pr_search", "pr_poll", "pr_login"):
             self.assertEqual(safe_ops.handle({"op": op})["precondition"], "bad_request")
 

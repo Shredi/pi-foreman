@@ -27,6 +27,8 @@ export interface ReviewRecord {
   state?: string;
   /** The finding set of the round's report (reviewloop.ts sigOf). */
   sig?: string[];
+  /** The review's occasion when the verdict was recorded (`pre-pr` or `item`); absent in a record from before it: such a record is not a `[pre-pr]` PASS (prready.ts). */
+  occasion?: "item" | "pre-pr";
 }
 
 export const MAX_REVIEWS = 50;
@@ -307,6 +309,7 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
       ...(r.kind === "plan" || r.kind === "code" ? { kind: r.kind } : {}),
       ...(typeof r.state === "string" ? { state: r.state } : {}),
       ...(sig ? { sig } : {}),
+      ...(r.occasion === "item" || r.occasion === "pre-pr" ? { occasion: r.occasion } : {}),
     });
   }
   return out.slice(-MAX_REVIEWS);

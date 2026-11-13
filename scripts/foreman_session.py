@@ -1361,8 +1361,8 @@ def read_small(path):
 
 
 def remote_deliver(adir, params):
-    spec = {"handoffName": str, "parentAddress": str, "kind": str, "name": str, "content": str}
-    check_fields(params, spec, tuple(spec))
+    spec = {"handoffName": str, "parentAddress": str, "kind": str, "name": str, "content": str, "rework": bool}
+    check_fields(params, spec, [k for k in spec if k != "rework"])  # `rework`: sent only with --rework; absent = no send-back
     if not ADDRESS_RE.match(params["parentAddress"]):
         raise Refused("parentAddress must be <id>@<machine>", "bad_request")
     d = deliver_dir(adir, params["handoffName"])
@@ -1389,6 +1389,8 @@ def remote_deliver(adir, params):
         except OSError:
             pass
         raise
+    if params.get("rework") is True:
+        new_rework(d)
     woke, _ = send_intercom(child, "Brief from %s: read %s and act on it" % (params["parentAddress"], target))
     return {"path": str(target), "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data), "woke": woke}
 
@@ -2030,6 +2032,8 @@ def remote_brief(a, adir, entry):
         raise Refused("cannot read the brief: %s" % e)
     payload = {"handoffName": entry.get("handoffName"), "parentAddress": entry.get("parentAddress"), "kind": kind,
                "name": file_name, "content": content}
+    if getattr(a, "rework", False):
+        payload["rework"] = True
     try:
         _, argv = machine_entry(adir, name)
         binary = hc_required()
@@ -2345,6 +2349,29 @@ def new_brief(handoff, data):
     return target
 
 
+def new_rework(handoff):
+    """Write the empty send-back marker `rework-<k>` in the handoff dir: k is the markers' own sequence (the highest marker on disk plus
+    one, independent of brief and ruling numbers), created exclusively so two deliveries never share one. The child's watermark only rises,
+    so a lower number would be ignored; the child reads at most 999 (rework.ts), so a marker past that is refused. Returns its path."""
+    try:
+        names = os.listdir(str(handoff))
+    except OSError as e:
+        raise Refused("cannot write the rework marker: %s" % e)
+    top = max([int(m.group(1)) for m in (re.match(r"rework-([1-9][0-9]{0,2})$", n) for n in names) if m] or [0])
+    k = top + 1
+    while True:
+        if k > 999:
+            raise Refused("cannot write the rework marker: rework-999 is the highest the child reads")
+        target = Path(handoff) / ("rework-%d" % k)
+        try:
+            with open(target, "xb"):
+                return target
+        except FileExistsError:
+            k += 1
+        except OSError as e:
+            raise Refused("cannot write the rework marker: %s" % e)
+
+
 def cmd_brief(a):
     adir = agent_dir(a.agent_dir)
     entry = find_entry(adir, a.target)
@@ -2365,6 +2392,8 @@ def cmd_brief(a):
     else:
         data = (a.text + "\n").encode("utf-8")
     brief = new_brief(handoff, data).resolve()
+    if getattr(a, "rework", False):
+        new_rework(handoff)
     message = "Brief from %s: read %s and act on it" % (opener, brief.as_posix())
     ok, detail = send_intercom(to, message)
     if ok:
@@ -2401,6 +2430,7 @@ def main(argv=None):
     b.add_argument("target")
     b.add_argument("text")
     b.add_argument("--parent-id")
+    b.add_argument("--rework", action="store_true")
     b.add_argument("--agent-dir", dest="agent_dir_sub")
     rm = sub.add_parser("remote")
     verbs = rm.add_subparsers(dest="verb")

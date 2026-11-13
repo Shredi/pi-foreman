@@ -494,7 +494,7 @@
       "title": "PR tools",
       "purpose": "Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display.",
       "doc": "docs/tools.md#pr-tools",
-      "keys": ["tools.pr", "tools.prHost", "tools.prGithubHosts", "tools.prWatchSeconds", "tools.prSettleSeconds", "tools.prReturnToBase", "ceremony.reviewBeforePr"],
+      "keys": ["tools.pr", "tools.prHost", "tools.prGithubHosts", "tools.prWatchSeconds", "tools.prSettleSeconds", "tools.prReturnToBase", "tools.prDraft", "ceremony.reviewBeforePr"],
       "commands": [],
       "switch": {"key": "tools.pr", "on": "true"},
       "state": "on",

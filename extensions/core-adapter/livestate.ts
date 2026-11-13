@@ -39,6 +39,8 @@ export interface LiveWait {
   prRefs?: { n: number; repo: string; host: string }[];
   /** The `pr_watch` entry: the watched PRs whose head moved past the session's last reviewer PASS (herdr-app shows `unreviewed head`). */
   unreviewed?: { n: number; repo: string; host: string }[];
+  /** The `pr_watch` entry: the session's review facts of its owned PRs (the pill). `head` is the host head the fact is about; `noChecks` when the watch confirmed that the PR has no checks. Absent in an older live file. */
+  review?: { n: number; repo: string; host: string; head: string; state: "ok" | "wip" | "unreviewed"; noChecks?: boolean }[];
 }
 
 /** An open ask of this session's own handoff (`# Ask <n>: <topic>` in ask.md). */
@@ -147,11 +149,11 @@ export function presenceState(i: { done: boolean; owner: boolean; asks?: boolean
 export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
 
 /** The synthetic `pr_watch` wait of a session's PR watches (numbers, `prRefs` with repository and host, `unreviewed` when any); null without a watch. */
-export function prWatchWait(watches: { n: number; key: { repo: string; host: string } }[], unreviewed: { n: number; repo: string; host: string }[]): LiveWait | null {
+export function prWatchWait(watches: { n: number; key: { repo: string; host: string } }[], unreviewed: { n: number; repo: string; host: string }[], review: NonNullable<LiveWait["review"]> = []): LiveWait | null {
   if (watches.length === 0) return null;
   const prs = watches.map((p) => p.n);
   const prRefs = watches.map((p) => ({ n: p.n, repo: p.key.repo, host: p.key.host }));
-  return { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs, prRefs, ...(unreviewed.length > 0 ? { unreviewed: unreviewed.map((k) => ({ n: k.n, repo: k.repo, host: k.host })) } : {}) };
+  return { id: "pr_watch", kind: "pr", note: `${prs.length} pr watch`, ageSeconds: 0, leftSeconds: 0, prs, prRefs, ...(unreviewed.length > 0 ? { unreviewed: unreviewed.map((k) => ({ n: k.n, repo: k.repo, host: k.host })) } : {}), ...(review.length > 0 ? { review } : {}) };
 }
 
 /** `<YYYYmmdd-HHMMSS>-<slug>[-<6hex>]` -> slug, else null. */
@@ -318,7 +320,7 @@ export class LiveState {
 
   private waitList(): LiveWait[] {
     try {
-      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.filter((u) => Number.isInteger(u.n) && typeof u.repo === "string" && u.repo).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}) }));
+      return (this.waits?.() ?? []).slice(0, MAX_WAITS).map((w) => ({ id: short(w.id, 40), kind: short(w.kind, 20), note: short(w.note, 80), ageSeconds: Math.round(w.ageSeconds), leftSeconds: Math.round(w.leftSeconds), ...(w.bg === true ? { bg: true } : {}), ...(Array.isArray(w.prs) ? { prs: w.prs.filter((n) => Number.isInteger(n)).slice(0, MAX_WAITS) } : {}), ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.filter((u) => Number.isInteger(u.n) && typeof u.repo === "string" && u.repo).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.filter((u) => Number.isInteger(u.n)).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100) })) } : {}), ...(Array.isArray(w.review) ? { review: w.review.filter((u) => Number.isInteger(u.n) && typeof u.head === "string" && (u.state === "ok" || u.state === "wip" || u.state === "unreviewed")).slice(0, MAX_WAITS).map((u) => ({ n: u.n, repo: short(u.repo, 200), host: short(u.host, 100), head: short(u.head, 64), state: u.state, ...(u.noChecks === true ? { noChecks: true } : {}) })) } : {}) }));
     } catch {
       return []; // waits are best effort
     }

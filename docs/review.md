@@ -37,6 +37,12 @@ The reviewer diff-scan base is set at the first builder launch and resets on an 
 
 The ledger is the scope source. The adapter prepends the ledger text to every `reviewer` launch: the cited items when the task cites any (`item 3`, `#3`), else the whole ledger (header and items). The binding is the session marker, so a review launched with `cwd` in a worktree gets it too. The adapter does not append the owner's prompt. A diff fact is in scope when the prepended ledger block or the task text asks for it; the reviewer quotes the ledger item that asks for the change, else FAIL. A foreman statement in the task never overrides a fact. Because the ledger is the only scope source, an item the foreman upserts mid-round also widens scope; a future round can snapshot the ledger at checkpoint approval.
 
+## Readiness of a PR
+
+The review record in the session keeps the occasion of the review (`item`, `pre-pr` and so on). A record from an older session entry has none and never counts as a `[pre-pr]` PASS.
+
+A PR is ready to merge only on a `[pre-pr]` PASS that is the session's newest code review and covers the pushed head, with no work since (see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)).
+
 ## Verdict file
 
 When a reviewer run ends with a verdict, the adapter appends one last line to that run's `<runId>_reviewer_output.md` (the artifact pi-subagents wrote just before the run-end event): `Head: <full sha>` when HEAD of the run's cwd is unchanged since launch (or moved only by a commit whose tree id is exactly the tree id of the working-tree snapshot taken at launch: any head whose tree id equals the snapshot, typically the commit issued in the launch's own message; the `review_recorded` trace event then carries `via: "same_tree"`; a commit that leaves out or adds any file or changes a mode, or a snapshot that cannot be taken or compared, stays `head_moved`), else `Head: unknown (<why>)` with the reason the review carries no head (`no_launch_head`, `cwd_unmatched`, `head_moved`, `head_unread`). A reviewer's own text may quote a `Head:` line, so a reader takes the last match. A run without an output file gets no line (the file is never created).

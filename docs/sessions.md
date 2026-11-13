@@ -22,6 +22,7 @@ again. All four subcommands are yours to type; a subagent child refuses every on
   `Brief from <your id>: read <absolute path> and act on it` (the message names that file). A single word naming an
   existing file is copied; anything else is written as typed. See the message contract below.
   Example: `/foreman session brief docs ./more-context.md`, `/foreman session brief docs also cover the CLI flags`
+  `/foreman session brief <target> --rework <file|text…>` also [sends the work back](#send-work-back). The flag counts only directly after the target; the same word inside the brief text is text.
   Briefs, rulings and `result.md` follow the package's `handoff` skill (`skills/handoff`).
 - `/foreman session close <target> [result-path]` sends `foreman:close [result-path]` (see the contract below)
   and marks the registry entry `closing` once the send went out. The result path may use only `A-Z a-z 0-9 . _ / -`,
@@ -43,7 +44,7 @@ pi-intercom as the address. Spaces in a brief path or `--cwd` do not survive the
   `PI_INTERCOM_SESSION_ID`, else `PI_INTERCOM_STABLE_ID`, else `stableId` in `<agent dir>/intercom/config.json`; without any, `open` is refused.
 - `foreman session list [--json] [--agent-dir DIR]` prints label, model (`-` when none was given), state, handoff dir and child id.
 - `foreman session prune [--dry-run] [--agent-dir DIR]` marks `closed` (note `pruned: process and terminal gone`) the local `open` or `closing` entries whose process is gone (no live file with a running pid or a fresh heartbeat) and whose hc terminal or Herdr pane is provably not listed. Never touched: an entry with a live process, a still listed terminal, a terminal listing that could not be read (hc or Herdr unreachable: treated as present), a remote entry or one without a terminal record. `--dry-run` writes nothing. It prints one line per entry and the count. The radar applies the same convergence rule when it draws: such an entry shows as closed, never live or idle, so the Herdr sidebar converges without the command.
-- `foreman session brief <handoff dir|label|child id> <text|file> [--parent-id ID] [--agent-dir DIR]` delivers a brief to the
+- `foreman session brief <handoff dir|label|child id> <text|file> [--rework] [--parent-id ID] [--agent-dir DIR]` delivers a brief to the
   child through pi-intercom (`cli.mjs send`, run without a shell). A handoff dir resolves through its `child` file, a label
   to the newest registry entry; a target with no handoff dir is refused. The brief is written to `<handoff dir>/brief-<n>.md`
   (n = the lowest free number from 1; the file is created exclusively, so an existing `brief-<n>.md` is never overwritten and
@@ -92,6 +93,16 @@ prompt "Read the handoff brief at <dir>/brief.md and proceed." The registry is
 `<agent dir>/pi-foreman/state/sessions.json` (`{version, sessions[]}`, written atomically). An entry holds
 `label`, `child`, `parent`, `handoff`, `cwd`, `opened`, `status` and `last` (`{kind, path, at}`). Status is
 `pending` (command printed, not run by Herdr), `open`, `closing` (a close was sent), `closed` or `failed`.
+
+### Send work back
+
+`--rework` on `foreman session brief` (CLI, or `/foreman session brief <target> --rework …` in Pi) says that the brief asks for more work on a PR that the child already opened. Without the flag nothing changes.
+
+- The side that writes the delivered brief also writes an empty marker file `rework-<k>` beside it in the child's handoff dir. `k` is the markers' own sequence: one more than the highest `rework-<k>` already in the handoff dir, created exclusively. It is independent of the brief and ruling numbers. If no number up to the highest one the child reads is free, the send-back is refused with an error and no marker is written. No brief text is read or parsed.
+- The child looks for a new marker at its next tool call and at each PR watch tick. It then puts the PR it opened back into draft (see [draft handling](tools.md#draft)). A marker is handled once; one left on disk does not send the work back again.
+- The PR leaves draft again only after a new `[pre-pr]` review PASS on the pushed head (see [review](review.md#readiness-of-a-pr)).
+- A marker can only move a PR toward draft. A forged or stale one can do no more.
+- With a remote child the flag travels with the delivery. A remote machine on an older version refuses a delivery that carries it; resend the brief without the flag.
 
 ### Message contract
 

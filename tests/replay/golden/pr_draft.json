@@ -1,0 +1,21 @@
+{
+ "calls": [
+  [
+   "gh",
+   "pr",
+   "ready",
+   "7",
+   "-R",
+   "ghe.example.com/own/repo"
+  ],
+  [
+   "gh",
+   "pr",
+   "ready",
+   "7",
+   "-R",
+   "github.com/own/repo",
+   "--undo"
+  ]
+ ]
+}

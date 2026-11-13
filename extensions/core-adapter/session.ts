@@ -53,7 +53,7 @@ export const WORKTREE_MARK = "session worktree: ";
 
 export type SessionCommand =
   | { sub: "open"; label: string; brief: string; cwd?: string; model?: string; planFirst: boolean; focus: boolean; dryRun: boolean; planMode?: boolean; firstCommands?: string[]; machine?: string; trust?: boolean; worktree?: boolean; base?: string }
-  | { sub: "brief"; target: string; body: string }
+  | { sub: "brief"; target: string; body: string; rework?: true }
   | { sub: "close"; target: string; path?: string }
   | { sub: "list" }
   | { error: string };
@@ -64,8 +64,9 @@ export function parseSessionArgs(args: string): SessionCommand {
   const [sub = "", ...rest] = t.split(/\s+/);
   if (sub === "list") return rest.length ? { error: SESSION_USAGE } : { sub: "list" };
   if (sub === "brief") {
-    const m = /^brief\s+(\S+)\s+(\S[\s\S]*)$/.exec(t);
-    return m ? { sub: "brief", target: m[1], body: m[2].trim() } : { error: SESSION_USAGE };
+    // `--rework` counts only directly after the target, before the body; the same word inside the body is text
+    const m = /^brief\s+(\S+)\s+(?:(--rework)\s+(?=\S))?(\S[\s\S]*)$/.exec(t);
+    return m ? { sub: "brief", target: m[1], body: m[3].trim(), ...(m[2] ? { rework: true as const } : {}) } : { error: SESSION_USAGE };
   }
   if (sub === "close") {
     if (rest.length < 1 || rest.length > 2) return { error: SESSION_USAGE };
@@ -212,6 +213,29 @@ export function writeBrief(dir: string, data: string | Uint8Array): string {
   const file = path.join(dir, `brief-${n}.md`);
   fs.writeFileSync(file, data, { flag: "wx" });
   return file.split(path.sep).join("/");
+}
+
+/**
+ * Writes the empty send-back marker `rework-<k>` in `dir`: k is the markers' own sequence (the highest marker on disk plus one, independent of brief
+ * and ruling numbers): the child's watermark only rises, so a lower number would go unseen. The child reads at most 999 (rework.ts), so a marker past
+ * that is refused. Flag "wx" never overwrites, a name taken meanwhile is tried again with the next number.
+ */
+export function writeRework(dir: string): string {
+  let top = 0;
+  for (const name of fs.readdirSync(dir)) {
+    const k = /^rework-([1-9][0-9]{0,2})$/.exec(name)?.[1];
+    if (k !== undefined) top = Math.max(top, Number(k));
+  }
+  for (let k = top + 1; k <= 999; k++) {
+    const file = path.join(dir, `rework-${k}`);
+    try {
+      fs.writeFileSync(file, "", { flag: "wx" });
+      return file.split(path.sep).join("/");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+  }
+  throw new Error("rework-999 is the highest the child reads; no send-back marker can be written");
 }
 
 export const briefText = (opener: string, file: string): string => `Brief from ${opener}: read ${file} and act on it`;
@@ -718,14 +742,14 @@ function briefTarget(reg: Registry, dir: string, target: string): { to: string; 
   return child ? { to: child, handoff: dir } : { to: resolveTarget(reg, target), handoff: resolveHandoff(reg, target) };
 }
 
-export async function sessionBrief(d: SessionDeps, target: string, body: string): Promise<SessionResult> {
+export async function sessionBrief(d: SessionDeps, target: string, body: string, rework = false): Promise<SessionResult> {
   const reg = readRegistry(d.agentDir);
   const newest = [...reg.sessions].reverse().find((s) => s.label === target || s.child === target); // as find_entry in the script
   if (newest && typeof newest.machine === "string") {
     // a remote child is briefed over hc exec by the script (`remote deliver`), not over the local intercom
     if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
     const file = /\s/.test(body) ? body : path.resolve(d.cwd, body);
-    const r = await d.spawner(d.python, ["-E", "-s", path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "brief", target, fs.existsSync(file) ? file : body], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
+    const r = await d.spawner(d.python, ["-E", "-s", path.join(d.pkgRoot, "scripts", "foreman_session.py"), "--agent-dir", d.agentDir, "brief", ...(rework ? ["--rework"] : []), target, fs.existsSync(file) ? file : body], { timeoutMs: OPEN_TIMEOUT_MS, cwd: d.cwd });
     const text = [r.stdout.trim(), r.stderr.trim()].filter(Boolean).join("\n") || (r.error ? r.error.message : r.timedOut ? "foreman_session.py timed out" : "foreman_session.py produced no output.");
     return { text, ok: !r.error && !r.timedOut && r.code === 0 };
   }
@@ -736,6 +760,7 @@ export async function sessionBrief(d: SessionDeps, target: string, body: string)
   let brief: string;
   try {
     brief = writeBrief(handoff, isFile ? fs.readFileSync(file!) : `${body}\n`);
+    if (rework) writeRework(handoff);
   } catch (err) {
     return { text: `pi-foreman session: brief to ${target} refused: ${(err as Error).message}`, ok: false };
   }
@@ -774,7 +799,7 @@ export async function runSessionCommand(d: SessionDeps, args: string): Promise<S
   const c = parseSessionArgs(args);
   if ("error" in c) return { text: c.error, ok: false };
   if (c.sub === "open") return sessionOpen(d, c);
-  if (c.sub === "brief") return sessionBrief(d, c.target, c.body);
+  if (c.sub === "brief") return sessionBrief(d, c.target, c.body, c.rework === true);
   if (c.sub === "close") return sessionClose(d, c.target, c.path);
   return sessionList(d);
 }

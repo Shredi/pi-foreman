@@ -10,6 +10,8 @@ import { isTrackedKey, keyString } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { DEFAULT_RULES, wakes } from "./prwake.ts";
 import type { WakeEvent, WakeKind, WakeRule } from "./prwake.ts";
+import { readiness } from "./prready.ts";
+import type { ReviewFacts } from "./prready.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
@@ -154,8 +156,18 @@ export interface WatchState {
   passSince?: { head: string; sig: string; at: number };
   /** Child sessions: `<head>:<merge state>` the checks-passed-but-blocked/behind line was reported for, "" (or absent) when none. */
   notReadyKey?: string;
+  /** Owned watch under draft handling: the last draft target asked of the host for a head, and the `okAt` of the store entry it was asked on (a store entry no newer than that is stale: no second call). */
+  draftAsk?: { head: string; draft: boolean; okAt: number };
+  /** Managed watch: the draft state seen at the last settle (a change restarts the no-checks count). */
+  draftSeen?: boolean;
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
+}
+
+/** The readiness rule's part of a delta (prready.ts): `ok` the review facts hold for the host's head; `managed` the watch is under draft handling (an owned PR). */
+export interface ReadyRule {
+  ok: boolean;
+  managed: boolean;
 }
 
 /** The settle time (`tools.prSettleSeconds`) and the clock it runs on; prDelta without one never holds a pass for time. */
@@ -229,6 +241,18 @@ export const settledOf = (all: Run[], required?: string[] | null): { settled: bo
   return { settled: true, result: "pass" };
 };
 
+/**
+ * The checks part of the readiness rule, from the state after prDelta: `green` when every gating check finished green and the pass is past the settle hold
+ * (`st.ci` is set only then), or no checks are confirmed (two ticks); `red` on a settled failure; else `running`.
+ */
+export function checksOf(st: WatchState, snap: WatchSnapshot, now: number, settleMs: number): "green" | "red" | "running" {
+  if (gatingOf(snap.runs).length === 0) return st.noCi >= 2 ? "green" : "running";
+  const s = settledOf(snap.runs, snap.required);
+  if (s.result === "fail") return "red";
+  const holding = !!st.passSince && st.passSince.head === snap.head && now - st.passSince.at < settleMs;
+  return s.result === "pass" && st.ci === `${snap.head}:pass` && !holding ? "green" : "running";
+}
+
 /** The state a new watch starts from: what is on the PR now counts as reported. */
 export function baselineOf(snap: WatchSnapshot): WatchState {
   const s = settledOf(snap.runs, snap.required);
@@ -259,6 +283,8 @@ export interface Delta {
   moreComments: number;
   /** Child session lines (PI_FOREMAN_HANDOFF_DIR set). */
   ready?: boolean;
+  /** The ready line of a head with no checks (the rule input only). */
+  readyNoChecks?: boolean;
   /** The checks-passed line of a blocked or behind merge state. */
   notReady?: string;
   draftReady?: boolean;
@@ -283,7 +309,7 @@ const rawName = (r: Run): string => (r.source && r.name.startsWith(`${r.source}/
  * Events are built first, then filtered by the wake rules (`repo`: `owner/name` for their `repos` globs). The state is updated for every event
  * whether it wakes or not, so a silent event is never replayed; only a woken event reaches the delta.
  */
-export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true, gate?: SettleGate): { state: WatchState; delta: Delta | null } {
+export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, rules: readonly WakeRule[] = DEFAULT_RULES, repo = "", passed?: ReadonlySet<string>, noRecord = true, gate?: SettleGate, rule?: ReadyRule): { state: WatchState; delta: Delta | null } {
   const st: WatchState = { ...prev, failedIds: [...prev.failedIds], commentIds: [...prev.commentIds] };
   const events: string[] = [];
   const counts = countRuns(snap.runs);
@@ -361,18 +387,29 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     st.mergeable = snap.mergeable;
   }
 
+  // a managed watch restarts the no-checks count when the draft state changes (a repository may start CI only outside draft)
+  const draftNow = !!snap.draft;
+  const draftMoved = !!rule?.managed && st.draftSeen !== undefined && st.draftSeen !== draftNow;
+  if (rule?.managed) st.draftSeen = draftNow;
   if (gating.length === 0) {
-    st.noCi = st.head !== snap.head ? 1 : st.noCi + 1;
+    st.noCi = st.head !== snap.head || draftMoved ? 1 : st.noCi + 1;
     if (st.noCi >= 2 && st.noCiHead !== snap.head) {
       st.noCiHead = snap.head;
       if (wakeOf("no_checks", "github")) events.push(`no checks reported for ${head7}`);
     }
   } else st.noCi = 0;
 
-  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
+  // with the rule input the line also needs the review facts (`ok`); a withheld line leaves the latch unset, so it is sent once the rule holds
+  if (child && green && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head && (!rule || rule.ok)) {
     st.readyHead = snap.head;
     d.ready = true;
     events.push("ready to merge");
+  }
+  // no checks confirmed on the non-draft PR (the rule input only): its own ready line, once per head
+  if (rule?.ok && child && gating.length === 0 && st.noCi >= 2 && snap.mergeable === "mergeable" && !snap.draft && !NOT_READY.has(snap.mergeState ?? "") && st.readyHead !== snap.head) {
+    st.readyHead = snap.head;
+    d.readyNoChecks = true;
+    events.push("ready to merge, no checks");
   }
   // blocked or behind: never silent, once per head and state; like the ready line it always wakes (not a rule event)
   const notReady = NOT_READY_LINES[snap.mergeState ?? ""];
@@ -381,7 +418,7 @@ export function prDelta(prev: WatchState, snap: WatchSnapshot, child: boolean, r
     d.notReady = notReady;
     events.push(notReady);
   }
-  if (child && green && snap.mergeable === "mergeable" && snap.draft && st.draftHead !== snap.head) {
+  if (child && green && snap.mergeable === "mergeable" && snap.draft && st.draftHead !== snap.head && !rule?.managed) {
     st.draftHead = snap.head;
     d.draftReady = true;
     events.push("green, still a draft");
@@ -418,6 +455,7 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   if (more > 0) content += `\n(+${more} more: call pr_comments)`;
   if (d.notReady) content += `\nreport to the parent: PR #${number} ${d.notReady}`;
   if (d.ready) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
+  if (d.readyNoChecks) content += `\nreport to the parent: PR #${number} no checks on ${d.head.slice(0, 7)}, mergeable, ready to merge`;
   if (d.draftReady) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, still a draft`;
   if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch, then push via the parent`;
   if (d.closedUnmerged) content += `\nreport to the parent: PR #${number} closed unmerged`;
@@ -558,6 +596,8 @@ export interface WatchRecord {
   cwd: string;
   startedAt: number;
   state: WatchState;
+  /** pr_create armed this watch in this session (a PR opened as a draft under draft handling); absent: not owned (pr_watch, pr_follow). */
+  owned?: boolean;
 }
 export interface WatchEntry {
   v: 2;
@@ -586,7 +626,12 @@ function parseState(v: unknown): WatchState | null {
   const ps = s.passSince as Record<string, unknown> | null | undefined;
   const passSince = ps && typeof ps === "object" && typeof ps.head === "string" && typeof ps.sig === "string" && finite(ps.at) ? { passSince: { head: ps.head, sig: ps.sig, at: ps.at } } : {};
   const review = { ...(typeof s.reviewedHead === "string" && s.reviewedHead ? { reviewedHead: s.reviewedHead } : {}), ...(typeof s.unreviewedHead === "string" && s.unreviewedHead ? { unreviewedHead: s.unreviewedHead } : {}) };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, last: s.last };
+  const da = s.draftAsk as Record<string, unknown> | null | undefined;
+  const draft = {
+    ...(da && typeof da === "object" && typeof da.head === "string" && typeof da.draft === "boolean" && finite(da.okAt) ? { draftAsk: { head: da.head, draft: da.draft, okAt: da.okAt } } : {}),
+    ...(typeof s.draftSeen === "boolean" ? { draftSeen: s.draftSeen } : {}),
+  };
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */
@@ -596,7 +641,7 @@ export function parseWatchRecord(v: unknown): WatchRecord | null {
   if ("key" in r) {
     const key = parseKey(r.key);
     const state = parseState(r.state);
-    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state } : null;
+    return key && state ? { key, cwd: r.cwd, startedAt: r.startedAt, state, ...(r.owned === true ? { owned: true } : {}) } : null;
   }
   if (!finite(r.n) || !Number.isInteger(r.n) || r.n < 1 || !strings(r.commentIds)) return null;
   const state: WatchState = { head: "", failedIds: [], ci: "", mergeable: "", commentIds: r.commentIds, updatedAt: "", noCi: 0, noCiHead: "", readyHead: "", last: "watching" };
@@ -644,6 +689,14 @@ export interface PrWatchesDeps {
   reviewedHeads?(): readonly string[];
   /** Whether a head with no review record at all is reported (ceremony.reviewBeforePr); absent: yes. Read on every use. */
   reviewGate?(): boolean;
+  /** The review facts of the PR's host head (prready.ts reviewFacts over the session's records); absent: no readiness rule, today's report lines and no draft handling. */
+  reviewFacts?(head: string): ReviewFacts;
+  /** Draft handling is on (tools.prDraft not false, the review gate and the PR feed on). Read on every use; absent: off. */
+  draftFlow?(): boolean;
+  /** Called at the start of every watch tick (the send-back marker scan, index.ts); absent: nothing. Must not throw. */
+  tick?(): void;
+  /** The host op `pr_draft` for an owned watch's PR (not a model-facing tool): the repository and host of the watch's key, `cwd` the watch's directory. */
+  draft?(key: PrKey, cwd: string, draft: boolean): Promise<SafeOpOutcome>;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set, a watch's state or the merged PRs changed: write the session entry. */
@@ -690,7 +743,18 @@ interface Watch {
   retrackedAt: number | null;
   /** The status line while the store has no news ("" = nothing to say). */
   status: string;
+  /** pr_create armed this watch in this session: its draft state is handled (tools.prDraft). */
+  owned: boolean;
+  /** A draft call is on its way. */
+  drafting: boolean;
+  /** Failed draft calls of the current head (not persisted): count, the earliest next try (ms) and whether the cap was reached. */
+  draftFail?: { head: string; n: number; nextAt: number; capped: boolean };
 }
+
+/** Failed draft calls per head before the handling of that head stops, and the first pause (doubled per failure, at most DRAFT_PAUSE_MAX_MS). */
+export const DRAFT_FAIL_CAP = 4;
+const DRAFT_PAUSE_MS = 30_000;
+const DRAFT_PAUSE_MAX_MS = 600_000;
 
 /** The same PR: equal keys, or one of them has no repository (resolution failed) and the numbers match. */
 export const samePr = (a: PrKey, b: PrKey): boolean => a.n === b.n && (!a.repo || !b.repo || keyString(a) === keyString(b));
@@ -743,14 +807,14 @@ export class PrWatches {
   }
 
   /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
-  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null): void {
+  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false): void {
     const state = baselineOf(snap);
     const passed = this.passedSet();
     // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
     // (a head with no record is left for a tick to report, so the message is not swallowed here; the watch holds the stored data of `okAt`, so a tick on that
     // same data only re-arms and the message comes with the first tick that brings newer stored data)
     if (passed) reviewStep(state, snap.head, passed, false);
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state, ...(owned ? { owned: true } : {}) });
     w.seenAt = okAt;
     this.arm(w);
     this.persist();
@@ -761,9 +825,9 @@ export class PrWatches {
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string, reviewedHead?: string): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
-    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) } });
+    const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}) });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
@@ -785,6 +849,24 @@ export class PrWatches {
     return [...this.watches.values()].filter((w) => !!w.state.unreviewedHead && !passed?.has(w.state.unreviewedHead)).map((w) => w.key);
   }
 
+  /**
+   * The session's review facts of its owned PRs for the live file (the pill, prready.ts reviewFactsOf): per owned watch the host head last evaluated, the facts for it and
+   * `noChecks` once the watch confirmed that the head has no checks. Empty without the facts source or with the review gate off; a throwing source gives none.
+   */
+  reviewLive(): { n: number; repo: string; host: string; head: string; state: ReviewFacts; noChecks?: true }[] {
+    if (!this.deps.reviewFacts || (this.deps.reviewGate?.() ?? true) === false) return [];
+    const out: { n: number; repo: string; host: string; head: string; state: ReviewFacts; noChecks?: true }[] = [];
+    for (const w of this.watches.values()) {
+      if (!w.owned || w.ended || !w.state.head) continue;
+      try {
+        out.push({ n: w.key.n, repo: w.key.repo, host: w.key.host, head: w.state.head, state: this.deps.reviewFacts(w.state.head), ...(w.state.noCi >= 2 ? { noChecks: true as const } : {}) });
+      } catch {
+        // facts are best effort
+      }
+    }
+    return out;
+  }
+
   /** The last PASS head the watch of PR `key` holds ("" when none), null without a watch. */
   reviewOf(key: PrKey): string | null {
     const w = this.find(key);
@@ -792,7 +874,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "" };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, drafting: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.merged = this.merged.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
@@ -806,7 +888,7 @@ export class PrWatches {
 
   /** The active watches as session-entry records. */
   records(): WatchRecord[] {
-    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state }));
+    return [...this.watches.values()].map((w) => ({ key: w.key, cwd: w.cwd, startedAt: w.started, state: w.state, ...(w.owned ? { owned: true } : {}) }));
   }
 
   /** The watched PRs this session saw merged (the watch's merged event, or a pre-close fresh status), oldest first. */
@@ -961,6 +1043,11 @@ export class PrWatches {
   /** One tick: read the store entry of the watch (never a GitHub call) and settle it. */
   private async tick(w: Watch): Promise<void> {
     if (w.ended || w.busy) return;
+    try {
+      this.deps.tick?.();
+    } catch {
+      // a failing scan never stops the watch
+    }
     w.busy = true;
     let r: StoreRead;
     try {
@@ -1027,6 +1114,8 @@ export class PrWatches {
     if (w.seenAt !== null && r.okAt <= w.seenAt) {
       // nothing newer than what the watch holds: re-arm only (no settle, so the baseline and the no-CI count stay)
       this.setStatus(w, "");
+      // the draft target follows the session's facts, which can move while the store does not
+      void this.reconcile(w, r.snap, r.okAt);
       return this.arm(w);
     }
     this.setStatus(w, "");
@@ -1041,16 +1130,108 @@ export class PrWatches {
     // a pending start: comments count as reported, CI does not (failed runs and a settled result are sent once), and mergeable has
     // no baseline: a first CONFLICTING is news, a first MERGEABLE is the baseline
     const from = w.state.last === "arming" ? { ...baselineOf(snap), failedIds: [], ci: "", noCi: 0, mergeable: "" as const, ...(w.state.reviewedHead ? { reviewedHead: w.state.reviewedHead } : {}) } : w.state;
-    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined, this.deps.reviewGate?.() ?? true, { settleMs: this.deps.settleMs?.() ?? 0, now: this.deps.now() });
+    const { state, delta } = prDelta(from, snap, child, this.deps.wakeRules?.() ?? DEFAULT_RULES, w.key.repo, passed ?? undefined, this.deps.reviewGate?.() ?? true, { settleMs: this.deps.settleMs?.() ?? 0, now: this.deps.now() }, this.ruleOf(w, snap.head));
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;
     if (changed) this.persist();
+    void this.reconcile(w, snap, r.okAt);
     if (delta) {
       this.deps.send(prMessage(w.key.n, delta), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "event" });
     }
     if (changed || delta) this.deps.changed?.();
     this.arm(w);
+  }
+
+  /** The rule input of one watch (`undefined`: no readiness rule: no facts dependency, or the review gate is off). A throwing facts source withholds the ready line. */
+  private ruleOf(w: Watch, head: string): ReadyRule | undefined {
+    if (!this.deps.reviewFacts || (this.deps.reviewGate?.() ?? true) === false) return undefined;
+    try {
+      return { ok: this.deps.reviewFacts(head) === "ok", managed: this.managed(w) };
+    } catch {
+      return { ok: false, managed: false };
+    }
+  }
+
+  /** The watch's draft state is handled: pr_create armed it in this session, the flow is on and the host op exists. */
+  private managed(w: Watch): boolean {
+    try {
+      return w.owned && w.key.repo !== "" && !!this.deps.draft && !!this.deps.reviewFacts && (this.deps.draftFlow?.() ?? false);
+    } catch {
+      return false;
+    }
+  }
+
+  /** The draft target of the watch now (prready.ts readiness over the watch state `w.state`); null: no change. */
+  private draftTarget(w: Watch, snap: WatchSnapshot): boolean | null {
+    const facts = this.deps.reviewFacts?.(snap.head);
+    if (!facts) return null;
+    return readiness({ facts, checks: checksOf(w.state, snap, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable === "mergeable", mergeState: snap.mergeState ?? "", draft: !!snap.draft }).draft;
+  }
+
+  /**
+   * Bring the PR's draft state to the target: a tick (before the early return for an unchanged store) and the revision hooks come here. Only an owned watch of
+   * this session under the flow; the host op carries the key's repository and host. The memo (target per head and the store entry's `okAt`) stops a second call while
+   * the store still shows the old state; a failure is traced and retried with a growing pause, at the cap one notice and no more calls for that head.
+   * Never throws; never blocks the watch.
+   */
+  private async reconcile(w: Watch, snap: WatchSnapshot, okAt: number): Promise<void> {
+    try {
+      if (w.ended || w.drafting || snap.state !== "open" || !snap.head || !this.managed(w)) return;
+      const target = this.draftTarget(w, snap);
+      if (target === null || target === !!snap.draft) return;
+      const ask = w.state.draftAsk;
+      if (ask && ask.head === snap.head && ask.draft === target && okAt <= ask.okAt) return;
+      const f = w.draftFail;
+      if (f && f.head === snap.head && (f.capped || this.deps.now() < f.nextAt)) return;
+      w.drafting = true;
+      w.state = { ...w.state, draftAsk: { head: snap.head, draft: target, okAt } };
+      let o: SafeOpOutcome;
+      try {
+        o = await this.deps.draft!(w.key, w.cwd || this.deps.cwd?.() || "", target);
+      } catch (err) {
+        o = { kind: "error", message: String((err as Error)?.message ?? err) };
+      }
+      w.drafting = false;
+      if (w.ended) return;
+      if (o.kind === "ran") {
+        w.draftFail = undefined;
+        this.persist();
+        this.deps.trace({ event: "pr_watch", outcome: target ? "draft_on" : "draft_off" });
+        this.deps.changed?.();
+        return;
+      }
+      const { draftAsk: _ask, ...rest } = w.state;
+      w.state = rest;
+      if (o.kind === "precondition" && o.precondition === "pr_unsupported") {
+        w.owned = false;
+        this.persist();
+        this.deps.trace({ event: "pr_watch", outcome: "draft_unsupported" });
+        this.deps.changed?.();
+        return;
+      }
+      const n = (f && f.head === snap.head ? f.n : 0) + 1;
+      const capped = n >= DRAFT_FAIL_CAP;
+      w.draftFail = { head: snap.head, n, nextAt: this.deps.now() + Math.min(DRAFT_PAUSE_MS * 2 ** (n - 1), DRAFT_PAUSE_MAX_MS), capped };
+      this.deps.trace({ event: "pr_watch", outcome: capped ? "draft_failed_capped" : "draft_failed" });
+      if (capped) this.deps.send(noticeMessage(w.key.n, `draft state not changed after ${n} tries (${oneLine(o.message, 160)}); draft handling stops for this head`, "draft_failed"), this.idle());
+      this.deps.changed?.();
+    } catch {
+      w.drafting = false;
+    }
+  }
+
+  /** The session's facts moved (a project edit, a builder launch): reconcile every owned open PR from the store now. Never throws. */
+  async reconcileOwned(): Promise<void> {
+    for (const w of [...this.watches.values()]) {
+      if (!w.owned || w.ended) continue;
+      try {
+        const r = await this.stored(w.key);
+        if (r.kind === "entry") await this.reconcile(w, r.snap, r.okAt);
+      } catch {
+        // the store is unreadable now: the tick tries again
+      }
+    }
   }
 
   private async end(w: Watch, d: Delta): Promise<void> {
