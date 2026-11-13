@@ -8,7 +8,8 @@ import { applyVariants } from "../ledgercall.ts";
 import { r11Rig } from "./_r11rig.ts";
 
 const root = path.join(import.meta.dirname, "..", "..", "..");
-const rules = fs.readFileSync(path.join(root, "instructions", "foreman.md"), "utf8");
+// A Windows checkout has CRLF line endings, so the files are read with LF only.
+const rules = fs.readFileSync(path.join(root, "instructions", "foreman.md"), "utf8").replace(/\r\n/g, "\n");
 const TAG = "<!--proactive=on-->";
 const defaults = { ladder: "on", ownerScript: "on", ownerReadable: "on", reviewMarks: "on", show: "on", protect: "on" };
 
@@ -84,7 +85,8 @@ test("a default session's system text contains the section", async (t) => {
 });
 
 test("docs/ceremony.md carries the Working ahead section with both ruling additions", () => {
-  const doc = fs.readFileSync(path.join(root, "docs", "ceremony.md"), "utf8");
+  // CRLF-safe for a Windows checkout, as with `rules` above.
+  const doc = fs.readFileSync(path.join(root, "docs", "ceremony.md"), "utf8").replace(/\r\n/g, "\n");
   const at = doc.indexOf("\n## Working ahead\n");
   assert.ok(at > 0, "the section exists");
   const end = doc.indexOf("\n## ", at + 1);
