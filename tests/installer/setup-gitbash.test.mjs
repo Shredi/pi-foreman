@@ -15,11 +15,40 @@ const FAKE_PI = path.join(HERE, "fixtures", "fake-pi.mjs");
 const EMPTY_DATA = fs.mkdtempSync(path.join(os.tmpdir(), "pf-pi-ai-data-"));
 after(() => fs.rmSync(EMPTY_DATA, { recursive: true, force: true }));
 
-const noBashOnPath = () =>
-  (process.env.PATH ?? "")
+/** The value of an env name, matched case-insensitively (Windows env names are). */
+const envValue = (env, name) => {
+  const key = Object.keys(env).find((k) => k.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : env[key];
+};
+
+const noBashOnPath = (env = process.env) =>
+  (envValue(env, "PATH") ?? "")
     .split(path.delimiter)
     .filter((d) => d && !fs.existsSync(path.join(d, "bash.exe")))
     .join(path.delimiter);
+
+/** A child env: a copy of `base` where each override replaces every key that equals its name case-insensitively, so one name never appears twice. */
+function childEnv(base, overrides) {
+  const env = { ...base };
+  for (const [name, value] of Object.entries(overrides)) {
+    for (const key of Object.keys(env)) if (key.toLowerCase() === name.toLowerCase()) delete env[key];
+    env[name] = value;
+  }
+  return env;
+}
+
+/** The env for a setup child in a temp tree: no bash.exe on PATH, the temp ProgramFiles, and the fake platform. */
+const setupEnv = ({ agentDir, base, programFiles, platform }) =>
+  childEnv(process.env, {
+    PATH: noBashOnPath(),
+    PI_CODING_AGENT_DIR: agentDir,
+    PI_FOREMAN_PI_BIN: FAKE_PI,
+    FAKE_PI_LOG: `${base}-calls.jsonl`,
+    PI_FOREMAN_PI_AI_DATA: EMPTY_DATA,
+    PI_FOREMAN_GITBASH_PLATFORM: platform,
+    ProgramFiles: programFiles,
+    "ProgramFiles(x86)": path.join(base, "none"),
+  });
 
 /** Runs setup in a fresh temp tree. `userSettings`/`projectSettings` are objects; `bash` places a Git Bash under the temp ProgramFiles. */
 function runSetup({ platform = "win32", bash = true, userSettings = {}, projectSettings = null, args = [] } = {}) {
@@ -44,7 +73,7 @@ function runSetup({ platform = "win32", bash = true, userSettings = {}, projectS
     const r = spawnSync(process.execPath, [SETUP, "--no-addons", ...args, "--agent-dir", agentDir], {
       cwd,
       encoding: "utf8",
-      env: { ...process.env, PATH: noBashOnPath(), PI_CODING_AGENT_DIR: agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: `${base}-calls.jsonl`, PI_FOREMAN_PI_AI_DATA: EMPTY_DATA, PI_FOREMAN_GITBASH_PLATFORM: platform, ProgramFiles: programFiles, "ProgramFiles(x86)": path.join(base, "none") },
+      env: setupEnv({ agentDir, base, programFiles, platform }),
     });
     const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8") : null);
     return { code: r.status, out: `${r.stdout}${r.stderr}`, bashExe, userFile, before, user: read(userFile), project: read(projectFile) };
@@ -140,6 +169,18 @@ test("findGitBash: the WSL launcher in the Windows directory is skipped", () => 
   assert.equal(findGitBash({ env: { PATH: "C:\\Windows\\System32" }, platform: "win32", exists }), null);
 });
 
+test("childEnv: one key per name case-insensitively, with the override values", () => {
+  const base = { PROGRAMFILES: "real", "PROGRAMFILES(X86)": "real86", Path: "p" };
+  const overrides = { PATH: "q", ProgramFiles: "temp", "ProgramFiles(x86)": "temp86" };
+  const env = childEnv(base, overrides);
+  for (const name of ["PATH", "ProgramFiles", "ProgramFiles(x86)"]) {
+    const keys = Object.keys(env).filter((k) => k.toLowerCase() === name.toLowerCase());
+    assert.equal(keys.length, 1, `${name}: ${keys.join(", ")}`);
+    assert.equal(env[keys[0]], overrides[name]);
+  }
+  assert.equal(Object.keys(env).length, 3);
+});
+
 test("findGitBash: returns null off Windows", () => {
   assert.equal(findGitBash({ env: { ProgramFiles: "C:\\PF" }, platform: "linux", exists: () => true }), null);
 });
@@ -158,7 +199,7 @@ test("windows: a dry run after shellPath was removed says would-write, closes as
     fs.writeFileSync(bashExe, "");
     const userFile = path.join(agentDir, "settings.json");
     fs.writeFileSync(userFile, `${JSON.stringify({ packages: ["git:github.com/Shredi/pi-foreman"] }, null, 2)}\n`);
-    const env = { ...process.env, PATH: noBashOnPath(), PI_CODING_AGENT_DIR: agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: `${base}-calls.jsonl`, PI_FOREMAN_PI_AI_DATA: EMPTY_DATA, PI_FOREMAN_GITBASH_PLATFORM: "win32", ProgramFiles: programFiles, "ProgramFiles(x86)": path.join(base, "none") };
+    const env = setupEnv({ agentDir, base, programFiles, platform: "win32" });
     const run = (args) => spawnSync(process.execPath, [SETUP, "--no-addons", ...args, "--agent-dir", agentDir], { cwd, encoding: "utf8", env });
     const first = run([]);
     assert.equal(first.status, 0, `${first.stdout}${first.stderr}`);
