@@ -96,6 +96,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -131,6 +132,7 @@ MAX_CONTENT_BYTES = 64 * 1024
 PROBE_TIMEOUT, OPEN_TIMEOUT, DELIVER_TIMEOUT, CLOSE_TIMEOUT = 15, 60, 20, 20
 HC_EXEC_SLACK = 10  # seconds the local process waits beyond hc's own `--timeout`
 SETUP_TIMEOUT_MAX = 600  # hc exec's own maximum; `machine setup` waits this long by default
+SETUP_READER_JOIN = 3  # seconds `machine setup` waits for the stderr copy after hc has exited
 HC_TIMED_OUT_RE = re.compile(r"\[hc\] timed out after \d+ ms")
 REAP_POLLS, REAP_POLL_SECONDS = 3, 2  # close-remote: how long it waits for the remote terminal to finish before `hc rm`
 CLOSE_FILE = "close.json"
@@ -1967,13 +1969,26 @@ def cmd_machine_setup(a):
     if a.dry_run:
         print(" ".join(shlex.quote(c) for c in cmd))
         return 0
-    # stdout streams live; stderr goes to a file so an hc timeout line can be told from the remote's own output
-    with tempfile.TemporaryFile() as err:
+    # stdout streams live; stderr goes through a pipe that a reader thread copies to ours line by line while hc runs, and keeps for the timeout check
+    read_fd, write_fd = os.pipe()
+    chunks = []
+
+    def pump():
+        with os.fdopen(read_fd, "rb") as src:
+            for raw in src:
+                line = raw.decode("utf-8", "replace")
+                chunks.append(line)
+                sys.stderr.write(line)
+                sys.stderr.flush()
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    with os.fdopen(write_fd, "wb", buffering=0) as err:
         rc = subprocess.call(cmd, stderr=err)
-        err.seek(0)
-        text = err.read().decode("utf-8", "replace")
-    if text:
-        sys.stderr.write(text if text.endswith("\n") else text + "\n")
+    reader.join(SETUP_READER_JOIN)  # a grandchild that keeps stderr open must not hang us; what was read so far is used
+    text = "".join(chunks)
+    if text and not text.endswith("\n"):
+        sys.stderr.write("\n")
     timed_out = HC_TIMED_OUT_RE.search(text)
     if rc != 0 or timed_out:
         why = timed_out.group(0) if timed_out else "hc exec exited %s" % rc

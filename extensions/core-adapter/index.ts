@@ -199,7 +199,7 @@ import type { LaunchRounds, RoundState } from "./rounds.ts";
 import { loopRefusal, loopVerdict, sigOf } from "./reviewloop.ts";
 import type { LoopStop, ReviewKind } from "./reviewloop.ts";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
-import { applyBgShellEnv } from "./bgshell.ts";
+import { bgBashNotice, resolveBgShell } from "./bgshell.ts";
 import { shellPathSetting } from "./bg.ts";
 import type { ShellConfigFn } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
@@ -493,7 +493,7 @@ export interface AdapterDeps {
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
   /** Tests: the working-tree snapshot taken at a reviewer launch (default: commentonly.ts worktreeTree); the shared rigs pass a no-op, so the run end keeps head_moved. */
   worktreeSnapshot?: (cwd: string) => Promise<string | null>;
-  /** Tests: replaces Pi's shell resolution that the read question's entry condition asks (is the bash tool's shell a bash). */
+  /** Tests: replaces Pi's shell resolution, used by the read question's entry condition (is the bash tool's shell a bash) and the win32 background-shell setup (default: Pi's getShellConfig). */
   getShellConfig?: ShellConfigFn;
 }
 
@@ -516,7 +516,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
   // win32: the pi-background-tasks add-on reads PI_BG_SHELL* in its own factory, which loads after this one; set them now, before any await
-  if (platform === "win32") applyBgShellEnv({ platform, getShellConfig: piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) });
+  const bgShell = platform === "win32" ? resolveBgShell({ platform, getShellConfig: deps.getShellConfig ?? piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) }) : { set: false, noBash: false };
   // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
@@ -1094,6 +1094,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
 
     if (!python.ok) ctx.ui.notify(`pi-foreman: no Python ≥ 3.13 found — shell commands and subagent launches are blocked until it is fixed. ${NO_PYTHON_FIX}`, "error");
+    const bgNotice = bgBashNotice(bgShell, s.isChild);
+    if (bgNotice) notifyOnce(s, ctx, "bg-no-bash", bgNotice, "warning");
     for (const e of config.errors) ctx.ui.notify(e, "error");
     if (config.source === "defaults") s.trace?.emit({ event: "config_fallback", reason: config.fallbackReason ?? "unknown", source: config.source });
     if (config.safetyFallback) ctx.ui.notify(config.source === "cli" ? "pi-foreman: invalid safety config; L1 safety values apply." : "pi-foreman: config CLI unavailable; L1 defaults apply and presence stays off.", "warning");
