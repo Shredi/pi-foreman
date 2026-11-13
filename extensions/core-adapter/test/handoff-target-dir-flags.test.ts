@@ -46,7 +46,10 @@ test("any option other than the known-safe flags gives main's result (the real w
   ];
   for (const kind of Object.keys(KINDS)) {
     for (const f of forms) {
-      assert.equal(seen(kind, f.replace(/\bW$/, work(kind))), REFUSED[kind], `${kind}: ${f}`);
+      const got = seen(kind, f.replace(/\bW$/, work(kind)));
+      // a recursive cp is also caught by the hard floor when the temp dir lies outside the floor's write roots (Linux CI: under home), which fires first
+      if (f.startsWith("cp -r ")) assert.ok([REFUSED[kind], "block:floor-overwrite-outside"].includes(got), `${kind}: ${f}: ${got}`);
+      else assert.equal(got, REFUSED[kind], `${kind}: ${f}`);
       mkSrc();
     }
   }

@@ -33,6 +33,11 @@ const seen = (kind: string, command: string): string => {
   return res?.block ? `block:${res.rule}` : out.danger?.name ?? (res?.allow ? `allow:${res.rule}` : "none");
 };
 const REFUSED: Record<string, string> = { sub: "block:child-write-outside", own: "danger-write-outside", parent: "danger-write-outside" };
+// a recursive cp is also caught by the hard floor when the temp dir lies outside the floor's write roots (Linux CI: under home), which fires first
+const assertRefused = (kind: string, name: string, got: string): void => {
+  if (name === "cp -rT") assert.ok([REFUSED[kind], "block:floor-overwrite-outside"].includes(got), `${kind}: ${name}: ${got}`);
+  else assert.equal(got, REFUSED[kind], `${kind}: ${name}`);
+};
 const dirOf = (kind: string): string => (kind === "parent" ? O : H);
 const FORMS: Array<[string, string]> = [
   ["cp -T", "cp -T"], ["cp -rT", "cp -rT"], ["cp -fT", "cp -fT"], ["cp --no-target-directory", "cp --no-target-directory"], ["cp --no-t", "cp --no-t"],
@@ -43,7 +48,7 @@ test("-T and --no-target-directory onto the handoff dir itself: refused as witho
   for (const kind of Object.keys(KINDS)) {
     for (const [name, prog] of FORMS) {
       const src = prog.startsWith("mv") ? `${wt}/a` : `${wt}/plan.md`;
-      assert.equal(seen(kind, `${prog} ${src} ${dirOf(kind)}`), REFUSED[kind], `${kind}: ${name}`);
+      assertRefused(kind, name, seen(kind, `${prog} ${src} ${dirOf(kind)}`));
       fs.writeFileSync(path.join(wt, "a"), "a");
     }
   }
@@ -51,7 +56,7 @@ test("-T and --no-target-directory onto the handoff dir itself: refused as witho
 
 test("-T onto work/ of a handoff dir: refused for the child kinds", { skip: !posix }, () => {
   for (const kind of ["sub", "own"]) {
-    for (const [name, prog] of FORMS) assert.equal(seen(kind, `${prog} ${wt}/a ${H}/work`), REFUSED[kind], `${kind}: ${name}`);
+    for (const [name, prog] of FORMS) assertRefused(kind, name, seen(kind, `${prog} ${wt}/a ${H}/work`));
   }
 });
 
