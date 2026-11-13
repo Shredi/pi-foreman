@@ -655,6 +655,7 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `sessions.blockedNoticeSeconds` | unset | not in project/session (when a parent is told its child waits on the owner comes from the user or overlay config) |
 | `sessions.confirmWaitSeconds` | `20` | any layer |
 
 ### herdr-core
@@ -1033,6 +1034,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `sessions.backend` | where a local session opens comes from the user or overlay config |
 | `sessions.hc` | the herdr-core session options come from the user or overlay config |
 | `sessions.remote` | the fetch timeout of a remote child's notice file comes from the user or overlay config |
+| `sessions.blockedNoticeSeconds` | when a parent is told its child waits on the owner comes from the user or overlay config |
 | `sessions.worktree` | the branch prefix of a session's own worktree comes from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model and the reviewer pair map come from the user or overlay config |
