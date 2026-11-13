@@ -438,6 +438,8 @@ function writeBytes(file: string, data: Buffer): void {
 
 export class RemoteWatcher {
   state: WatchState = new Map();
+  /** Per child, the time (ms) of the last stream line of its machine or successful `hc get` of its terminal; in memory only (childblocked.ts reads it). */
+  private readonly contacts = new Map<string, number>();
   private machines = new Map<string, MachineRun>();
   private chain: Promise<void> = Promise.resolve();
   private cancelRefresh: Cancel | null = null;
@@ -454,6 +456,11 @@ export class RemoteWatcher {
     this.hc = d.hc ?? runHc;
     this.events = d.events ?? spawnEvents;
     this.timer = d.timer ?? defaultTimer;
+  }
+
+  /** The last time the watcher heard from the child's machine or terminal, or undefined when it has not since this watcher was built. */
+  lastContact(child: string): number | undefined {
+    return this.contacts.get(child);
   }
 
   /** Watches until `stop()`: re-reads the registry now and every 10 s. */
@@ -551,6 +558,8 @@ export class RemoteWatcher {
     const stream = this.events(
       (line) => {
         arm();
+        const at = (this.d.now ?? Date.now)();
+        for (const w of this.state.values()) if (w.machine === machine) this.contacts.set(w.child, at);
         let raw: unknown;
         try {
           raw = JSON.parse(line);
@@ -672,6 +681,7 @@ export class RemoteWatcher {
       } catch {
         return;
       }
+      this.contacts.set(child, (this.d.now ?? Date.now)());
       this.run(applyGet(this.state, child, reply));
     } else if (r.code === 3 && notFound(r.stderr)) {
       this.run([{ type: "live", child, state: "lost" }]);

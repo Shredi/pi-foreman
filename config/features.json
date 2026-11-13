@@ -435,6 +435,18 @@
       "enable": ""
     },
     {
+      "id": "read-clear",
+      "area": "review",
+      "title": "The classifier model clears a line that only reads",
+      "purpose": "Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before.",
+      "doc": "docs/permissions.md#the-read-question",
+      "keys": ["gate.readClear"],
+      "commands": [],
+      "switch": {"key": "gate.readClear", "on": "true"},
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "protected-targets",
       "area": "safety",
       "title": "Protected targets with a context check",
@@ -581,7 +593,7 @@
       "title": "Opened sessions over pi-intercom",
       "purpose": "`/foreman session` opens a second pi-foreman session on a brief (in a Herdr tab or a printed command), briefs it and closes it over the bundled pi-intercom. The session runs on the `session-foreman` role's model (default: the opening session's own model); each open from a Pi session first shows the owner a confirm window. `foreman_session_open` waits `sessions.confirmWaitSeconds` (default 20) for the answer, then returns \"pending owner confirmation\" and reports the outcome by wake message.",
       "doc": "docs/sessions.md#session-commands",
-      "keys": ["sessions.confirmWaitSeconds"],
+      "keys": ["sessions.confirmWaitSeconds", "sessions.blockedNoticeSeconds"],
       "commands": ["/foreman session", "foreman session", "foreman session open --profile"],
       "switch": null,
       "state": "on",

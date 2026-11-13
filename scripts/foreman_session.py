@@ -96,6 +96,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -131,6 +132,7 @@ MAX_CONTENT_BYTES = 64 * 1024
 PROBE_TIMEOUT, OPEN_TIMEOUT, DELIVER_TIMEOUT, CLOSE_TIMEOUT = 15, 60, 20, 20
 HC_EXEC_SLACK = 10  # seconds the local process waits beyond hc's own `--timeout`
 SETUP_TIMEOUT_MAX = 600  # hc exec's own maximum; `machine setup` waits this long by default
+SETUP_READER_JOIN = 3  # seconds `machine setup` waits for the stderr copy after hc has exited
 HC_TIMED_OUT_RE = re.compile(r"\[hc\] timed out after \d+ ms")
 REAP_POLLS, REAP_POLL_SECONDS = 3, 2  # close-remote: how long it waits for the remote terminal to finish before `hc rm`
 CLOSE_DEADLINE = 90  # seconds for every remote call of one close-remote together; the caller (session.ts) gives up at 120
@@ -256,7 +258,7 @@ def opener_id(given, adir, env=None):
 
 PLAN_FIRST_NOTES = [
     "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
-    "   Ask the parent questions with `ask_user_question` until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
+    "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent by file (`ask.md`). When unsure whether it is a decision, ask the parent. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
     "   `plan.md` starts with a `## For the owner` section (at most about 10 lines in plain words: the goal, the essential steps, heads-ups, the implicit decisions; no paths or ids), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
 ]
 
@@ -2052,13 +2054,26 @@ def cmd_machine_setup(a):
     if a.dry_run:
         print(" ".join(shlex.quote(c) for c in cmd))
         return 0
-    # stdout streams live; stderr goes to a file so an hc timeout line can be told from the remote's own output
-    with tempfile.TemporaryFile() as err:
+    # stdout streams live; stderr goes through a pipe that a reader thread copies to ours line by line while hc runs, and keeps for the timeout check
+    read_fd, write_fd = os.pipe()
+    chunks = []
+
+    def pump():
+        with os.fdopen(read_fd, "rb") as src:
+            for raw in src:
+                line = raw.decode("utf-8", "replace")
+                chunks.append(line)
+                sys.stderr.write(line)
+                sys.stderr.flush()
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    with os.fdopen(write_fd, "wb", buffering=0) as err:
         rc = subprocess.call(cmd, stderr=err)
-        err.seek(0)
-        text = err.read().decode("utf-8", "replace")
-    if text:
-        sys.stderr.write(text if text.endswith("\n") else text + "\n")
+    reader.join(SETUP_READER_JOIN)  # a grandchild that keeps stderr open must not hang us; what was read so far is used
+    text = "".join(chunks)
+    if text and not text.endswith("\n"):
+        sys.stderr.write("\n")
     timed_out = HC_TIMED_OUT_RE.search(text)
     if rc != 0 or timed_out:
         why = timed_out.group(0) if timed_out else "hc exec exited %s" % rc

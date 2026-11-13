@@ -10,6 +10,8 @@ import { readOwnAddonTasks } from "./bg.ts";
 import type { AddonTask } from "./bg.ts";
 import { askOpen } from "./ruling.ts";
 import { childHandoffDirs } from "./owned.ts";
+import { UNCLASSED, uiKeyAction } from "./herdr.ts";
+import type { BlockClass, BlockKind, BlockOn } from "./herdr.ts";
 
 export const HEARTBEAT_MS = 30_000;
 const WRITE_GAP_MS = 1000;
@@ -107,6 +109,12 @@ export interface LiveFile {
   blockedSince: string | null;
   /** Sidebar presence (R11 P4); `state` stays for older readers: blocked = needs-you (an own dialog), waiting-external reads as working. */
   presence: PresenceName;
+  /** Who the open sources wait on: `owner` while any owner source is open (a dialog, an owner question), else `parent`; present only while a classed source is open. */
+  blockedOn?: BlockOn;
+  /** The fixed kind word of the owner source that opened the episode (of the first parent source when none is owner); no dialog text. */
+  blockedKind?: BlockKind;
+  /** ISO time the set of open owner sources went from empty to non-empty (an older dialog closing while a younger stays open keeps it); present only while an owner source is open. */
+  ownerBlockedSince?: string;
   /** Host pressure (pressure.ts); present only when the level is high or critical. */
   pressure?: { level: "high" | "critical"; reasons: string[] };
   /** A foreman warm window is open and the owner is away (limited warms); present only then. */
@@ -194,6 +202,13 @@ export class LiveState {
   private readonly blockers = new Set<string>();
   private holds = 0;
   private blockedSinceMs: number | null = null;
+  /** Open sources by class (the `ui` key is an owner source of kind `dialog`); insertion order is open order. */
+  private readonly ownerKinds = new Map<string, BlockKind>();
+  private readonly parentKinds = new Map<string, BlockKind>();
+  private readonly classOf = new Map<string, BlockClass>();
+  private ownerSinceMs: number | null = null;
+  private ownerKind: BlockKind | null = null;
+  private uiSinceMs = 0;
   private done = false;
   private lastWrite = 0;
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -361,12 +376,58 @@ export class LiveState {
 
   /** One source on or off; the session is blocked while any source is open, so sources never clear each other. */
   setBlocked(active: boolean, source = "ui"): void {
+    if (source !== "ui") this.track(active, source);
     const was = this.blockers.size > 0;
     if (active) this.blockers.add(source);
     else this.blockers.delete(source);
     if (!was && this.blockers.size > 0) this.blockedSinceMs = Date.now();
     else if (this.blockers.size === 0) this.blockedSinceMs = null;
     this.touch();
+  }
+
+  /** An own source opened or closed: filed under the class it declared (`holdOn`), an unclassed one counts as an owner wait. */
+  private track(active: boolean, source: string): void {
+    if (active) {
+      const c = this.classOf.get(source) ?? UNCLASSED;
+      const m = c.on === "owner" ? this.ownerKinds : this.parentKinds;
+      if (!m.has(source)) m.set(source, c.kind);
+    } else {
+      this.ownerKinds.delete(source);
+      this.parentKinds.delete(source);
+      this.classOf.delete(source);
+    }
+    this.syncOwner();
+  }
+
+  /** The owner episode: starts when the owner set goes empty -> non-empty (with the kind of that source), ends when it is empty again. */
+  private syncOwner(): void {
+    if (this.ownerKinds.size === 0) {
+      this.ownerSinceMs = null;
+      this.ownerKind = null;
+    } else if (this.ownerSinceMs === null) {
+      this.ownerSinceMs = Date.now();
+      this.ownerKind = [...this.ownerKinds.values()][0];
+    }
+  }
+
+  /**
+   * Pi's prompt events as the owner key (herdr.ts uiKeyAction: one key, set by a prompt start, cleared by a prompt end and by typed input, kept
+   * across extension input and a turn end). `opened` on the set that was new, `waitedMs` on the clear that ended a dialog. `state` and
+   * `blockedSince` follow `setBlocked` and its own clearing, not this key.
+   */
+  uiKey(event: "prompt_start" | "prompt_end" | "input" | "agent_end", inputSource?: unknown): { opened?: true; waitedMs?: number } {
+    const action = uiKeyAction(event, inputSource);
+    let out: { opened?: true; waitedMs?: number } = {};
+    if (action === "set" && !this.ownerKinds.has("ui")) {
+      this.ownerKinds.set("ui", "dialog");
+      this.uiSinceMs = Date.now();
+      out = { opened: true };
+    } else if (action === "clear" && this.ownerKinds.delete("ui")) out = { waitedMs: Date.now() - this.uiSinceMs };
+    if (out.opened || out.waitedMs !== undefined) {
+      this.syncOwner();
+      this.touch();
+    }
+    return out;
   }
 
   /** A prompt or own ask is open now (any blocker source): read by the warm tier. */
@@ -376,7 +437,13 @@ export class LiveState {
 
   /** An own ask: blocked until the returned release runs (idempotent), whatever Pi's prompt events do. */
   hold(): () => void {
+    return this.holdOn();
+  }
+
+  /** `hold` for a source that declares who it waits on and its kind word (none: an owner wait of kind `dialog`). */
+  holdOn(cls?: BlockClass): () => void {
     const key = `own:${++this.holds}`;
+    if (cls) this.classOf.set(key, cls);
     this.setBlocked(true, key);
     let done = false;
     return () => {
@@ -444,7 +511,9 @@ export class LiveState {
     } catch {
       // show is best effort
     }
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}) };
+    const blockedOn: BlockOn | undefined = this.ownerKinds.size > 0 ? "owner" : this.parentKinds.size > 0 ? "parent" : undefined;
+    const blockedKind = blockedOn === "owner" ? this.ownerKind : blockedOn === "parent" ? [...this.parentKinds.values()][0] : null;
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}) };
   }
 
   private schedule(): void {

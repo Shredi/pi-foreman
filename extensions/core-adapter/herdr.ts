@@ -19,6 +19,29 @@ export const HERDR_BLOCKED_CHANNEL = "herdr:blocked";
 export const HERDR_NATIVE_PROMPT_VERSION = 10;
 const LABEL_MAX = 80;
 
+/** Who a blocked source waits on: the owner (a dialog, an owner question) or the parent session (ask-by-file, a gate ask waiting on its ruling). */
+export type BlockOn = "owner" | "parent";
+/** The fixed words a source names its kind with (no dialog text ever); `parent-ask` is the only `parent` kind. */
+export type BlockKind = "approval" | "question" | "checkpoint" | "script" | "confirm" | "dialog" | "parent-ask";
+export interface BlockClass {
+  on: BlockOn;
+  kind: BlockKind;
+}
+/** A source opened with no class counts as an owner wait of kind `dialog`, so a new dialog site cannot fall silent. */
+export const UNCLASSED: BlockClass = { on: "owner", kind: "dialog" };
+
+/**
+ * The single `ui` key rule (Pi's prompt events, any extension's dialog): a prompt start sets it, a prompt end and typed (interactive) input clear it,
+ * extension input and a turn end keep it while a dialog may still be open. Pi can drop a dialog without its end event, so the one key is cleared by
+ * whatever of the two comes next. Shared by the Herdr shim and the live state's owner tracking.
+ */
+export function uiKeyAction(event: "prompt_start" | "prompt_end" | "input" | "agent_end", inputSource?: unknown): "set" | "clear" | undefined {
+  if (event === "prompt_start") return "set";
+  if (event === "prompt_end") return "clear";
+  if (event === "input" && inputSource === "interactive") return "clear";
+  return undefined;
+}
+
 export interface EventBus {
   emit(channel: string, data: unknown): void;
   on(channel: string, handler: (data: unknown) => void): (() => void) | void;
@@ -51,7 +74,7 @@ type Rank = keyof typeof RANK;
 export class BlockedTracker {
   private readonly open = new Map<string, { label: string; rank: Rank }>();
   private readonly listeners = new Set<(active: boolean, label?: string) => void>();
-  private readonly ownHooks = new Set<(label: string) => (() => void) | void>();
+  private readonly ownHooks = new Set<(label: string, cls?: BlockClass) => (() => void) | void>();
   private seq = 0;
   private readonly events: EventBus | undefined;
   private readonly enabled: () => boolean;
@@ -96,14 +119,25 @@ export class BlockedTracker {
     return () => void this.ownHooks.delete(fn);
   }
 
+  /** `onOwn` for a hook that also wants the source's class (none when the source declared none). Returns an unsubscribe. */
+  onOwnOn(fn: (label: string, cls?: BlockClass) => (() => void) | void): () => void {
+    this.ownHooks.add(fn);
+    return () => void this.ownHooks.delete(fn);
+  }
+
   /** Open an own-ask source (Herdr when enabled, plus every `onOwn` hook); returns its release (idempotent). */
   own(label: string): () => void {
+    return this.ownOn(label);
+  }
+
+  /** `own` with the class the source declares: who it waits on and which fixed kind word names it. */
+  ownOn(label: string, cls?: BlockClass): () => void {
     const key = `own:${++this.seq}`;
     this.add(key, label, "own");
     const releases: (() => void)[] = [];
     for (const fn of this.ownHooks) {
       try {
-        const r = fn(label);
+        const r = fn(label, cls);
         if (r) releases.push(r);
       } catch {
         // a hook never breaks the ask
@@ -151,7 +185,12 @@ const trackers = new WeakMap<object, BlockedTracker>();
 
 /** Run `fn` as an own-ask source of the bus's tracker (no tracker: just run it). */
 export async function withBlocked<T>(events: EventBus | undefined, label: string, fn: () => Promise<T>): Promise<T> {
-  const release = events ? trackers.get(events)?.own(label) : undefined;
+  return withBlockedOn(events, undefined, label, fn);
+}
+
+/** `withBlocked` for a source that declares its class (`undefined`: an unclassed source, which counts as an owner wait). */
+export async function withBlockedOn<T>(events: EventBus | undefined, cls: BlockClass | undefined, label: string, fn: () => Promise<T>): Promise<T> {
+  const release = events ? trackers.get(events)?.ownOn(label, cls) : undefined;
   try {
     return await fn();
   } finally {
@@ -161,7 +200,12 @@ export async function withBlocked<T>(events: EventBus | undefined, label: string
 
 /** Wrap a `ctx.ui.confirm`-style function so each ask shows as blocked in Herdr. */
 export function blockedConfirm(events: EventBus | undefined, confirm: (title: string, msg: string) => Promise<boolean>): (title: string, msg: string) => Promise<boolean> {
-  return (title, msg) => withBlocked(events, title, () => confirm(title, msg));
+  return blockedConfirmOn(events, undefined, confirm);
+}
+
+/** `blockedConfirm` for a confirm that declares its class. */
+export function blockedConfirmOn(events: EventBus | undefined, cls: BlockClass | undefined, confirm: (title: string, msg: string) => Promise<boolean>): (title: string, msg: string) => Promise<boolean> {
+  return (title, msg) => withBlockedOn(events, cls, title, () => confirm(title, msg));
 }
 
 export interface ShimOptions {
@@ -186,13 +230,15 @@ export function installBlockedShim(pi: Pick<ExtensionAPI, "on" | "events">, opts
   if (!live || !events) return tracker;
   pi.on("ui_prompt_start", async (e) => {
     const title = str(e.title);
-    tracker.add("ui", title || e.kind, title ? "title" : "kind");
+    if (uiKeyAction("prompt_start") === "set") tracker.add("ui", title || e.kind, title ? "title" : "kind");
   });
-  pi.on("ui_prompt_end", async () => tracker.remove("ui"));
+  pi.on("ui_prompt_end", async () => {
+    if (uiKeyAction("prompt_end") === "clear") tracker.remove("ui");
+  });
   // Pi 1.1 can orphan a dialog (a second one opened while the first is up replaces it without settling it), so its
   // ui_prompt_end never comes. Typed input proves no dialog holds the editor: release a stale "ui" source then.
   pi.on("input", async (e) => {
-    if ((e as { source?: unknown }).source === "interactive") tracker.remove("ui");
+    if (uiKeyAction("input", (e as { source?: unknown }).source) === "clear") tracker.remove("ui");
   });
   // agent_end: an own ask cut short must not leave Herdr
   // blocked. An open Pi dialog is kept: it can outlive a turn (a command's dialog, or one an extension opens

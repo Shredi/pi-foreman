@@ -33,7 +33,7 @@ import type { ManifestEntry } from "./manifest.ts";
 import { readLive } from "./identity.ts";
 import { intercomConfigPath, intercomInbound } from "./intercomguard.ts";
 import { applyRemoteNotice, parseRemoteNotice, remoteOrigin } from "./remotesession.ts";
-import { withBlocked } from "./herdr.ts";
+import { withBlockedOn } from "./herdr.ts";
 import type { EventBus } from "./herdr.ts";
 import { SESSION_FOREMAN } from "./roles.ts";
 import type { SpawnResult, Spawner } from "./spawn.ts";
@@ -443,7 +443,7 @@ export const NO_UI_REFUSAL = "session open refused [no_ui]: opening a session ne
 export function ownerConfirm(ctx: ExtensionContext, events: EventBus | undefined): SessionDeps["confirm"] {
   if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return undefined;
   const ask = (title: string, message: string, signal?: AbortSignal): Promise<boolean> =>
-    withBlocked(events, title, () => (signal ? ctx.ui.confirm(title, message, { signal }) : ctx.ui.confirm(title, message)));
+    withBlockedOn(events, { on: "owner", kind: "confirm" }, title, () => (signal ? ctx.ui.confirm(title, message, { signal }) : ctx.ui.confirm(title, message)));
   return async (title, message, signal) => {
     try {
       return (await ask(title, message, signal)) === true;
@@ -926,7 +926,7 @@ const OPEN_PARAMS = {
     brief: { type: "string", description: "Path of the brief file the new session reads." },
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>." },
-    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks questions via ask_user_question until the plan is decision-complete." },
+    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks only for real decisions until the plan is decision-complete: the owner via ask_user_question, everything else the parent by file (ask.md)." },
     planMode: { type: "boolean", description: "Open the session in plan mode (the brief prompt runs as `/plan <brief prompt>`); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },

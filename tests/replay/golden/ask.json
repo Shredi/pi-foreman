@@ -37,6 +37,12 @@
    "decision": "ask"
   },
   {
+   "event": "blocked_open"
+  },
+  {
+   "event": "blocked_closed"
+  },
+  {
    "event": "ask",
    "toolFamily": "Bash",
    "guard": "destructive_guard",
@@ -74,6 +80,12 @@
    "toolFamily": "Bash",
    "guard": "destructive_guard",
    "decision": "ask"
+  },
+  {
+   "event": "blocked_open"
+  },
+  {
+   "event": "blocked_closed"
   },
   {
    "event": "ask",

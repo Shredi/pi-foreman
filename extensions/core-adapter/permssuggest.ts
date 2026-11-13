@@ -32,6 +32,9 @@ export const APPROXIMATION =
   "An opaque, truncated or multi-segment shape never matches a single-segment rule.";
 
 export interface LogRow {
+  /** The row's own id, and the id of the row it follows (a read-clear row follows the classifier row of the same call). */
+  id?: string;
+  follows?: string;
   ts: number;
   session: string;
   tool: string;
@@ -59,7 +62,7 @@ export function readGateLog(agentDir: string): LogRow[] {
         const ts = typeof o.ts === "string" ? Date.parse(o.ts) : NaN;
         if (!Number.isFinite(ts) || typeof o.tool !== "string" || typeof o.layer !== "string") continue;
         const s = (v: unknown): string => (typeof v === "string" ? v : "");
-        rows.push({ ts, session: s(o.session), tool: o.tool, layer: o.layer, verdict: s(o.verdict), rule: s(o.rule), shape: s(o.shape) });
+        rows.push({ id: s(o.id), follows: s(o.follows), ts, session: s(o.session), tool: o.tool, layer: o.layer, verdict: s(o.verdict), rule: s(o.rule), shape: s(o.shape) });
       } catch {
         // a torn line is skipped
       }
@@ -72,6 +75,18 @@ export function readGateLog(agentDir: string): LogRow[] {
 export function costly(r: LogRow): boolean {
   if (r.layer === "classifier" || r.layer === "cache" || r.layer === "review" || r.layer === "dialog" || r.layer === "child-ask") return true;
   return r.layer === "mode" && r.verdict === "allow" && r.rule.startsWith("danger-");
+}
+
+/** A row of the read question (rule `read-clear` for a clear, `read-clear:<cause>` for a non-clear). */
+export const readClearRow = (r: LogRow): boolean => r.rule === "read-clear" || r.rule.startsWith("read-clear:");
+
+/**
+ * The decisions that count as costly over `rows`: no read-clear row ever counts, and a first-call row (cause `model` or `no_entries`) does not count when
+ * the row that follows it cleared the call. A call the read question did not clear counts exactly as before (its first-call row and its dialog row).
+ */
+export function costlyIn(rows: LogRow[]): (r: LogRow) => boolean {
+  const cleared = new Set(rows.filter((r) => r.rule === "read-clear" && r.verdict === "allow" && r.follows).map((r) => r.follows as string));
+  return (r) => costly(r) && !readClearRow(r) && !(r.id && cleared.has(r.id));
 }
 
 /** An owner or a parent said no to this shape. */
@@ -147,8 +162,9 @@ export function suggest(rows: LogRow[], opts: { now: number; sinceDays?: number;
   const sinceDays = opts.sinceDays ?? DEFAULT_SINCE_DAYS;
   const minHits = opts.minHits ?? DEFAULT_MIN_HITS;
   const from = opts.now - sinceDays * DAY_MS;
+  const isCostly = costlyIn(rows);
   const period = rows.filter((r) => r.ts >= from && r.ts <= opts.now);
-  const shellRows = period.filter((r) => BASH_TOOLS.has(r.tool) && r.tool !== "powershell" && r.shape.trim() !== "");
+  const shellRows = period.filter((r) => BASH_TOOLS.has(r.tool) && r.tool !== "powershell" && r.shape.trim() !== "" && !readClearRow(r));
 
   // one parse per distinct shape; counts per shape
   const shapes = new Map<string, { segs: ShellSegment[]; count: number; costly: number; denied: number }>();
@@ -156,13 +172,13 @@ export function suggest(rows: LogRow[], opts: { now: number; sinceDays?: number;
     let e = shapes.get(r.shape);
     if (!e) shapes.set(r.shape, (e = { segs: segmentsOf(r.shape), count: 0, costly: 0, denied: 0 }));
     e.count++;
-    if (costly(r)) e.costly++;
+    if (isCostly(r)) e.costly++;
     if (humanDenied(r)) e.denied++;
   }
 
   const groups = new Map<string, Group>();
   for (const r of shellRows) {
-    if (!costly(r)) continue;
+    if (!isCostly(r)) continue;
     const seenKeys = new Set<string>();
     for (const seg of shapes.get(r.shape)!.segs) {
       if (seg.program === "") continue;
@@ -215,7 +231,7 @@ export function suggest(rows: LogRow[], opts: { now: number; sinceDays?: number;
     ];
     return { n: i + 1, rule: g.rule, sentence, hits: g.hits, sessions: g.sessions.size, shapes: texts.size, wouldAllow, wouldAllowCostly, conflicts, review: conflicts > 0, safety };
   });
-  return { version: REPORT_VERSION, generated: new Date(opts.now).toISOString(), sinceDays, minHits, rows: period.length, costly: period.filter(costly).length, approximation: APPROXIMATION, candidates };
+  return { version: REPORT_VERSION, generated: new Date(opts.now).toISOString(), sinceDays, minHits, rows: period.length, costly: period.filter(isCostly).length, approximation: APPROXIMATION, candidates };
 }
 
 const num = (v: number | null): string => (v === null ? "-" : String(v));
@@ -427,6 +443,15 @@ export function review(agentDir: string, now: number = Date.now()): string {
 /** The `/retro` line, or null below SUGGEST_AFTER. */
 export function suggestHint(agentDir: string, now: number = Date.now()): string | null {
   const from = now - DEFAULT_SINCE_DAYS * DAY_MS;
-  const n = readGateLog(agentDir).filter((r) => r.ts >= from && r.ts <= now && costly(r)).length;
+  const rows = readGateLog(agentDir);
+  const isCostly = costlyIn(rows);
+  const n = rows.filter((r) => r.ts >= from && r.ts <= now && isCostly(r)).length;
   return n >= SUGGEST_AFTER ? `${n} decisions cost a dialog or a classifier call in the last ${DEFAULT_SINCE_DAYS} days; run foreman perms suggest` : null;
+}
+
+/** The `/retro` line that counts the lines the read question cleared in the last week (rule `read-clear` in the decision log), or null when none. */
+export function readClearHint(agentDir: string, now: number = Date.now()): string | null {
+  const from = now - DEFAULT_SINCE_DAYS * DAY_MS;
+  const n = readGateLog(agentDir).filter((r) => r.ts >= from && r.ts <= now && r.rule === "read-clear" && r.verdict === "allow").length;
+  return n > 0 ? `${n} shell lines the gate could not read were cleared by the read judge (a model) in the last ${DEFAULT_SINCE_DAYS} days (rule read-clear in the decision log); gate.readClear false switches it off` : null;
 }

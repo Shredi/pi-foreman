@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { isBriefName, isRulingName, rulingFresh } from "./ruling.ts";
-import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, freshBgLogPath, shellPathSetting, spawnDetached } from "./bg.ts";
+import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, freshBgLogPath, shellPathSetting, spawnWithFreshLog } from "./bg.ts";
 import { get } from "./config.ts";
 import { underOwned } from "./owned.ts";
 import { isProtectedPath } from "./permoverlay.ts";
@@ -864,9 +864,9 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if (full) return refuse(full);
       const id = rt.nextId();
       const note = oneLine(params.note, NOTE_MAX) || oneLine(command, 60);
-      const log = freshBgLogPath(path.join(s.agentDir, "pi-foreman", "state"), s.id, id);
-      const run = spawnDetached(command, ctx.cwd, log, deps.platform, { shellPath: shellPathSetting(s.agentDir, ctx.cwd), config: s.config() });
+      const run = spawnWithFreshLog(command, ctx.cwd, () => freshBgLogPath(path.join(s.agentDir, "pi-foreman", "state"), s.id, id), deps.platform, { shellPath: shellPathSetting(s.agentDir, ctx.cwd), config: s.config() });
       if ("error" in run) return refuse(run.error);
+      const log = run.log;
       const spec: ValidSpec = { kind: "pid", pid: run.pid, note, log, bg: true };
       const r = rt.start(spec);
       if ("error" in r) {

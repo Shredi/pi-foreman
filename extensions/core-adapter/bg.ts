@@ -1,7 +1,7 @@
 // `foreman_bg` (ledger item 5) and the optional background-tasks add-on (item 6).
 //
 // `foreman_bg {command, note}` runs one shell command detached (own process group on POSIX, see bgSpawnFlags for win32; stdout and stderr to
-// `<stateDir>/scratch/<session>/wait-<id>.log`, or `wait-<id>-<token>.log` with a run token when the plain name already exists, e.g. after a reload) and registers a `pid` wait for it, so the foreman ends its turn and is
+// `<stateDir>/scratch/<session>/wait-<id>.log`, created exclusively: when that name already exists, e.g. after a reload, the run gets `wait-<id>-<token>.log`, and an existing log is never truncated or appended to) and registers a `pid` wait for it, so the foreman ends its turn and is
 // woken when the process is gone. The call is guarded exactly like a foreground `bash` call with the same command:
 // index.ts routes `foreman_bg` through the same tool_call guards (overlay, shell write guard, destructive guard and the config-change check)
 // and the gate treats it as a shell tool (`SHELL_TOOLS` in gate.ts).
@@ -93,26 +93,56 @@ export function bgSpawnFlags(platform: string = process.platform): { detached: b
   return { detached: platform !== "win32", windowsHide: true };
 }
 
-/** Spawn `command` detached (bgSpawnFlags) with stdout and stderr appended to `logPath`; the pid, or why not. */
-export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv } = {}): { pid: number } | { error: string } {
+type SpawnOpts = { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv };
+
+/** Creates `logPath` exclusively and spawns `command` detached (bgSpawnFlags) with stdout and stderr going to it; the pid, or why not (`exists` when the log name was taken). `spawnFn` is a test seam. */
+export function spawnIntoNewLog(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: SpawnOpts = {}, spawnFn: typeof spawn = spawn): { pid: number } | { error: string; exists?: true } {
   let fd: number | null = null;
+  let taken = false;
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
+    // Exclusive create ("wx"/"ax": EEXIST when the name is taken), so a run never truncates or interleaves with an earlier run's log, even when two runs pick the same name at once.
     // win32: node's "a" opens the handle with FILE_APPEND_DATA only; the MSYS runtime of Git Bash takes such a handle as not writable, so a bash builtin
-    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access; the log name is fresh per run (freshBgLogPath: `wait-<id>-<token>.log` when `wait-<id>.log` exists), so "w" never truncates an earlier run's log; nothing to keep.
-    fd = fs.openSync(logPath, platform === "win32" ? "w" : "a", 0o600);
+    // (`echo`) printed nothing (CI) while a native grandchild (node) still wrote. "w" grants write access, and the file is new, so nothing is truncated.
+    try {
+      fd = fs.openSync(logPath, platform === "win32" ? "wx" : "ax", 0o600);
+    } catch (err) {
+      taken = (err as NodeJS.ErrnoException).code === "EEXIST";
+      throw err;
+    }
     const sh = shellFor(command, platform, opts);
     // the log fd stays open until spawn has returned (the child holds its own duplicate by then); `finally` closes ours
-    const child = spawn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
+    const child = spawnFn(sh.file, sh.args, { cwd, ...bgSpawnFlags(platform), stdio: ["ignore", fd, fd], env: { ...(opts.env ?? process.env), ...msysEnv(platform, opts.config) }, windowsVerbatimArguments: sh.verbatim });
     child.on("error", () => undefined);
     child.unref();
     if (!child.pid) return { error: `${BG_TOOL}: could not start ${sh.file}.` };
     return { pid: child.pid };
   } catch (err) {
-    return { error: `${BG_TOOL}: could not start the command (${oneLine((err as Error).message, 160)}).` };
+    const error = `${BG_TOOL}: could not start the command (${oneLine((err as Error).message, 160)}).`;
+    return taken ? { error, exists: true } : { error };
   } finally {
     if (fd !== null) fs.closeSync(fd);
   }
+}
+
+/** Spawn `command` detached (bgSpawnFlags) with stdout and stderr going to `logPath`; the pid, or why not. An existing log is never truncated or appended to: the call then fails. */
+export function spawnDetached(command: string, cwd: string, logPath: string, platform: string = process.platform, opts: { getShellConfig?: ShellConfigFn; shellPath?: string; config?: unknown; env?: NodeJS.ProcessEnv } = {}): { pid: number } | { error: string } {
+  const run = spawnIntoNewLog(command, cwd, logPath, platform, opts);
+  return "pid" in run ? run : { error: run.error };
+}
+
+/** Number of log names `spawnWithFreshLog` tries before it gives up. */
+export const BG_LOG_TRIES = 5;
+
+/** `spawnIntoNewLog` with a new log name (`nextLog`) for each try that finds the name taken; at most `BG_LOG_TRIES` tries. The pid and the log used, or why not. */
+export function spawnWithFreshLog(command: string, cwd: string, nextLog: () => string, platform: string = process.platform, opts: SpawnOpts = {}, spawnFn: typeof spawn = spawn): { pid: number; log: string } | { error: string } {
+  for (let i = 0; i < BG_LOG_TRIES; i++) {
+    const log = nextLog();
+    const run = spawnIntoNewLog(command, cwd, log, platform, opts, spawnFn);
+    if ("pid" in run) return { pid: run.pid, log };
+    if (!run.exists) return { error: run.error };
+  }
+  return { error: `${BG_TOOL}: could not create a new log file after ${BG_LOG_TRIES} tries; the log names are taken.` };
 }
 
 /** Pi's `shellPath` setting: the project's `.pi/settings.json` over the agent dir's `settings.json`; undefined when unset. */

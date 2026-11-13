@@ -18,11 +18,12 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // R62 `remote_pull` keys `machine`, `label`, `entries` and `error` (`skipped` and `ms` are pinned fields already).
 // R72 `mcp_child_direct` keys `provider` and `servers` (`count` is a pinned field already).
 // `mcp_child_direct_capped` key `cap` (`provider` and `count` as above); `mcp_child_named_capped` likewise.
+// `blocked_open` / `blocked_closed` (a dialog opened or answered): `on` (owner|parent), `waitedMs`; `kind` and `label` are allowed already. `child_blocked_notice` / `child_blocked_cleared` carry `label` and `waitedMs`.
 // `mcp_launch` key `upfront` (the named-tool count of a launch; `role` and `servers` as above), `mcp_launch_whole` (`role`, `servers`, `cap`).
 // Protected-target check `protected_check`: `kinds`, `globs`, `classes`, `remoteClasses`, `opaque`, `effect`, `confidence`, `accepted`, `away`, `cached`, `entry` (the cited D entry); `entries` the matched P ids.
 // Token diet `tools_deferred` (`names`, comma-joined tool names) and `tool_found` (`name`, `unhidden`; `kind` is a pinned field already).
 // Owner scripts (`script`, `script_fix`, `script_run`): `hash` (short), `added`, `seconds` (`removed`, `exit`, `kind`, `from`, `to` are pinned fields already).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "hash", "added", "seconds", "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "via", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry", "tags", "paths", "model_applied", "cap", "upfront"]);
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "hash", "added", "seconds", "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "via", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry", "tags", "paths", "model_applied", "cap", "upfront", "reasoning", "on", "waitedMs"]);
 const MAX_STRING = 120;
 const MAX_NAMES = 600; // the deferred tool names of one session
 const MAX_COMMAND = 200; // a denied command (lane 3h)
@@ -47,8 +48,10 @@ export function redactCommand(cmd: string): string {
   let out = cmd
     .replace(/(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s'"]+/gi, `$1${R}`)
     .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
-    .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s'"&;]+)/gi, `$1${R}`)
+    .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
     .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
+    .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
+    .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`) // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
     .replace(/\b(?:gh[pousr]_|github_pat_|npm_|glpat-|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)
     .replace(/\bAIza[A-Za-z0-9_-]{6,}/g, R)

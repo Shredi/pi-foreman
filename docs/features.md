@@ -75,6 +75,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
 | [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
+| [read-clear](#read-clear) | review |  | on | Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before. | on by default | [permissions](permissions.md#the-read-question) |
 | [protected-targets](#protected-targets) | safety |  | on | `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog. | on by default | [permissions](permissions.md#protected-targets) |
 | [review-critic](#review-critic) | review |  | on | Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
@@ -526,6 +527,16 @@ No config key.
 | `gate.askTimeoutMs` | `900000` | tighten-only (lower only) |
 | `gate.childAsk` | `"parent"` | tighten-only (toward deny; tightest first: deny, parent) |
 
+### read-clear
+
+**The classifier model clears a line that only reads.** Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before.
+
+Switch: `gate.readClear` is true.
+
+| Key | Default | Layer |
+|---|---|---|
+| `gate.readClear` | `true` | tighten-only (only false is accepted) |
+
 ### protected-targets
 
 **Protected targets with a context check.** `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.
@@ -656,6 +667,7 @@ Switch: `safety.subagents.allowWorkflow` is true.
 
 | Key | Default | Layer |
 |---|---|---|
+| `sessions.blockedNoticeSeconds` | unset | not in project/session (when a parent is told its child waits on the owner comes from the user or overlay config) |
 | `sessions.confirmWaitSeconds` | `20` | any layer |
 
 ### herdr-core
@@ -1034,6 +1046,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `sessions.backend` | where a local session opens comes from the user or overlay config |
 | `sessions.hc` | the herdr-core session options come from the user or overlay config |
 | `sessions.remote` | the fetch timeout of a remote child's notice file comes from the user or overlay config |
+| `sessions.blockedNoticeSeconds` | when a parent is told its child waits on the owner comes from the user or overlay config |
 | `sessions.worktree` | the branch prefix of a session's own worktree comes from the user or overlay config |
 | `ceremony.checkpoint` | who approves the plan checkpoint comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model and the reviewer pair map come from the user or overlay config |
