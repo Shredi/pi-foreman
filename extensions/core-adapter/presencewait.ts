@@ -30,6 +30,8 @@ export const OWNER_AWAY_REASON = "owner-away";
 export const OWNER_AWAY_TEXT = "pi-foreman: denied: the owner is away from the machine (no input for a while), so nobody can answer. The owner is absent; do not wait or retry, report this line and continue with what you can.";
 /** The deny text for a session with no pane to ask in (headless, or a child without a parent pane). */
 export const NO_PANE_TEXT = "pi-foreman: denied: nobody is at this session (no pane). The owner is absent; do not wait or retry, report this line and continue with what you can.";
+/** The deny text for a child whose ask cannot go to the parent because child asks are off (`gate.childAsk` is `deny`), not because nobody is at the pane. */
+export const childAskOffText = (cause: string): string => `pi-foreman: denied: this call needs the owner's answer and child asks are off (gate.childAsk is "deny"). Report this line to the foreman, who can run it or ask the owner. The call was: ${cause}.`;
 
 export interface WaitOptions {
   /** `presence.enabled`; false skips the probe and the watchdog. Default true. */

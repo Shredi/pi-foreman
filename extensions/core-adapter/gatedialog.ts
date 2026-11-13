@@ -46,7 +46,7 @@ export interface OwnerAsk {
   /** A child's ask shown in its parent's pane. */
   child?: { role: string; run: string };
   /** Offered only for dangerous-class escalations and unmatched calls under mode ask: the sentence (describeCall) and the pattern rules (proposeRule), if any. */
-  remember?: { sentence: string; rules: string[] | null; /** The exact rules of every segment, or null when one cannot be pinned. */ exact?: string[] | null };
+  remember?: { sentence: string; rules: string[] | null; /** The exact rules of every segment, or null when one cannot be pinned. */ exact?: string[] | null; /** No sentence option: the exact-command rule is the only remember offered (a child's ask in a parent whose mode is allow). */ noSentence?: boolean };
 }
 
 /** The slice of Pi's `ctx.ui` the dialog uses. `editor` has no signal: the owner is at the keyboard while editing. */
@@ -61,6 +61,8 @@ export interface OwnerUI {
 export interface RememberStore {
   projectDistrust(): string | null;
   writeRemember(input: { prose?: string; rule?: string }): { ok: true; file: string } | { ok: false; reason: string };
+  /** The mode without the session override (profile, user file, `auto`). */
+  baseMode?(): string;
 }
 
 export interface OwnerDeps {
@@ -76,7 +78,7 @@ export interface OwnerDeps {
 }
 
 export type OwnerAnswer =
-  | { allow: true; how: "once" | "remember"; notes: string[] }
+  | { allow: true; how: "once" | "remember"; notes: string[]; /** how is "once" because the remember write was refused */ refused?: true }
   | { allow: false; how: "comment" | "stop" | "dismissed" | "cancelled" | "away"; reason: string };
 
 /** Control characters other than newline and tab are shown as `?` (nothing a command carries may drive the terminal). */
@@ -124,6 +126,17 @@ export function ownerTitle(a: OwnerAsk, command: string): string {
   ].join("\n");
 }
 
+/** The notice after a successful remember: the project (name, then the file), what was stored, and for a stored sentence outside base mode `auto` that it is only used there. */
+function rememberedNotice(file: string, sentences: string[], rules: string[], baseMode?: string): string {
+  const project = path.basename(path.dirname(path.dirname(file)));
+  return printable([
+    `remembered for project ${project} in ${file}`,
+    ...sentences.map((s) => `sentence: ${s}`),
+    ...rules.map((r) => `rule: ${r}`),
+    ...(sentences.length && baseMode !== undefined && baseMode !== "auto" ? [`The sentence is only used under mode auto; sessions here otherwise run mode ${baseMode}.`] : []),
+  ].join("\n"));
+}
+
 /** Ask the owner. Never throws for a dismissed dialog; an away owner denies without or during the dialog. */
 export async function askOwner(a: OwnerAsk, d: OwnerDeps): Promise<OwnerAnswer> {
   const shown = commandDisplay(a.payload, d.stateDir);
@@ -136,7 +149,8 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
   const { ui } = d;
   const dismissed: OwnerAnswer = { allow: false, how: "dismissed", reason: userDeny("the dialog was dismissed") };
   const exact = a.remember?.exact && a.remember.exact.length > 0 && d.remember ? a.remember.exact : null;
-  const options: string[] = a.remember && d.remember ? DIALOG_OPTIONS.flatMap((o) => (o === "allow and remember" && exact ? [o, EXACT_OPTION] : [o])) : DIALOG_OPTIONS.filter((o) => o !== "allow and remember");
+  const noSentence = a.remember?.noSentence === true;
+  const options: string[] = a.remember && d.remember ? DIALOG_OPTIONS.flatMap((o) => (o === "allow and remember" ? (noSentence ? (exact ? [EXACT_OPTION] : []) : exact ? [o, EXACT_OPTION] : [o]) : [o])) : DIALOG_OPTIONS.filter((o) => o !== "allow and remember");
   const choice = await ui.select(title, options, { signal });
   if (choice === "allow once") return { allow: true, how: "once", notes: [] };
   if (choice === "deny with comment") {
@@ -147,27 +161,32 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
   if ((choice !== "allow and remember" && !(choice === EXACT_OPTION && exact)) || !a.remember || !d.remember) return dismissed;
 
   const once = (note: string): OwnerAnswer => {
-    ui.notify(note, "warning");
-    return { allow: true, how: "once", notes: [note] };
+    ui.notify(printable(note), "warning");
+    return { allow: true, how: "once", notes: [note], refused: true };
   };
   const { store, afterWrite } = d.remember;
   const why = store.projectDistrust();
-  if (why !== null) return once(`pi-foreman: not remembered: ${why}. The call runs once. Add \`.workflow/\` to .git/info/exclude to allow remembering.`);
+  if (why !== null) return once(`pi-foreman: not remembered: ${why}. The call runs once and nothing was stored. Add \`.workflow/\` to .git/info/exclude to allow remembering.`);
   if (choice === EXACT_OPTION && exact) {
     // one exact rule per segment into the project file's allow; no sentence is written
     let file = "";
+    const stored: string[] = [];
     for (const rule of exact) {
       const w = store.writeRemember({ rule });
-      if (w.ok === false) return once(`pi-foreman: ${w.reason} The call runs once.`);
+      if (w.ok === false) {
+        const left = exact.slice(stored.length);
+        return once(`pi-foreman: ${w.reason} The call runs once. ${stored.length ? `Stored: ${stored.join(", ")}. Not stored: ${left.join(", ")}.` : "Nothing was stored."}`);
+      }
       file = w.file;
+      stored.push(rule);
     }
     afterWrite();
     const note = `remembered ${exact.length === 1 ? "the exact command" : `${exact.length} exact segment rules`} in ${file}`;
-    ui.notify(`pi-foreman: ${note}`, "info");
+    ui.notify(`pi-foreman: ${rememberedNotice(file, [], stored)}`, "info");
     return { allow: true, how: "remember", notes: [note] };
   }
 
-  const pick = await ui.select(`Remember this as a whitelist sentence?\n\n${a.remember.sentence}`, [...REMEMBER_OPTIONS], { signal });
+  const pick = await ui.select(`Remember this as a whitelist sentence?\n\n${printable(a.remember.sentence)}`, [...REMEMBER_OPTIONS], { signal });
   if (pick === undefined) return dismissed;
   let sentence = a.remember.sentence;
   if (pick === "edit the sentence") {
@@ -178,22 +197,23 @@ async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSig
 
   let rules: string[] = [];
   if (a.remember.rules && a.remember.rules.length) {
-    const yes = await ui.select(`Also add the pattern rule${a.remember.rules.length > 1 ? "s" : ""} ${a.remember.rules.join(" and ")}?`, ["yes", "no"], { signal });
+    const yes = await ui.select(`Also add the pattern rule${a.remember.rules.length > 1 ? "s" : ""} ${printable(a.remember.rules.join(" and "))}?`, ["yes", "no"], { signal });
     if (yes === undefined) return dismissed;
     if (yes === "yes") rules = a.remember.rules;
   }
   const notes: string[] = [];
   const w = store.writeRemember({ prose: sentence, ...(rules[0] ? { rule: rules[0] } : {}) });
-  if (w.ok === false) return once(`pi-foreman: ${w.reason} The call runs once.`);
+  if (w.ok === false) return once(`pi-foreman: ${w.reason} The call runs once and nothing was stored.`);
   notes.push(`remembered in ${w.file}`);
+  const storedRules = rules.slice(0, 1);
   for (const extra of rules.slice(1)) {
     const x = store.writeRemember({ rule: extra });
     if (x.ok === false) {
-      ui.notify(`pi-foreman: ${x.reason}`, "warning");
+      ui.notify(printable(`pi-foreman: ${x.reason} The rule ${extra} was not stored.`), "warning");
       notes.push(x.reason);
-    }
+    } else storedRules.push(extra);
   }
   afterWrite();
-  ui.notify(`pi-foreman: ${notes[0]}`, "info");
+  ui.notify(`pi-foreman: ${rememberedNotice(w.file, [sentence], storedRules, store.baseMode?.())}`, "info");
   return { allow: true, how: "remember", notes };
 }

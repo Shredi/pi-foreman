@@ -59,6 +59,8 @@ export interface LaunchBinding {
   worktree?: true;
   /** The parent-owned ask dir (childask.ts) where the child's gate writes `ask.md` for a policy ask; absent = the child cannot ask. */
   askDir?: string;
+  /** Why the launch has no ask dir: the parent's `gate.childAsk` is `deny`, or the parent has no pane; absent = unknown. */
+  noAsk?: "deny" | "no-pane";
   /** r79: the parent's resolved permissions mode, its session override (`/foreman perms mode`) and the profile name; the child re-reads the permission files per decision. `childDeny` marks the child deny set (gate.ts childDenied): a child's write outside its worktree and own scratch and its PR creation are denied before any allow rule, built-in allow or classifier verdict, whatever the mode. */
   perms?: { mode: string; override?: string; profile?: string; childDeny?: true };
 }
@@ -247,10 +249,11 @@ export function readBinding(env: Env): LaunchBinding | null {
     const scratch = str(b.scratch);
     const askDir = str(b.askDir);
     const handoffDir = str(b.handoffDir);
+    const noAsk = b.noAsk === "deny" || b.noAsk === "no-pane" ? b.noAsk : undefined;
     const pm = isObj(b.perms) && str(b.perms.mode) ? b.perms : null;
     const perms = pm ? { mode: str(pm.mode) as string, ...(str(pm.override) ? { override: str(pm.override) as string } : {}), ...(str(pm.profile) ? { profile: str(pm.profile) as string } : {}), ...(pm.childDeny === true ? { childDeny: true as const } : {}) } : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}) };
   } catch {
     return null;
   }

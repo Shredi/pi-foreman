@@ -35,6 +35,8 @@ export interface ChildAsk {
 export interface ChildAnswer {
   allow: boolean;
   reason?: string;
+  /** The dialog answer (`allow-once`, `allow-remember`, `dismissed`, ...); goes to the parent's gate log, not into the ruling file. */
+  how?: string;
 }
 
 /** What a child's gate puts into `ask.md`. */
@@ -256,7 +258,7 @@ export class ChildAskWatch {
         }
         try {
           writeChildRuling(a.dir, a.n, ans);
-          this.report({ kind: "answered", ask: a, allow: ans.allow });
+          this.report({ kind: "answered", ask: a, allow: ans.allow, ...(ans.how ? { detail: ans.how } : {}) });
         } catch (e) {
           this.report({ kind: "failed", ask: a, detail: e instanceof Error ? e.message : String(e) });
         }
