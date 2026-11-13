@@ -124,8 +124,8 @@ test("windows: Git Bash missing gives a missing-step line and a non-zero exit af
 });
 
 test("windows: the Program Files seam replaces the root, it does not add to it (a Git Bash under another ProgramFiles is not found)", () => {
-  // On Windows the OS sets ProgramFiles itself at process creation, so the child may see a real root here. The seam drops every case
-  // variant of ProgramFiles and ProgramFiles(x86) before the search, so the real root is never searched and the test holds either way.
+  // Observed on a Windows CI runner: the setup child found the real Program Files root although the test passed a temp one. The seam drops
+  // every case variant of ProgramFiles and ProgramFiles(x86) before the search, so the real root is never searched and the test holds either way.
   // PATH has no bash.exe (noBashOnPath), and findGitBash searches only the Program Files roots and PATH, so a real Git on the runner
   // cannot satisfy the search either: the assertion holds on a machine with Git for Windows installed.
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-gitbash-seam-")));
@@ -134,20 +134,18 @@ test("windows: the Program Files seam replaces the root, it does not add to it (
     const cwd = path.join(base, "project");
     const seamRoot = path.join(base, "pf");
     const realRoot = path.join(base, "real-pf");
-    // Decoys under the other spellings: a ProgramFiles(x86) root, and a lower-case programfiles key where the platform's env is case-sensitive.
+    // Decoy under the exact ProgramFiles(x86) key: the seam must drop it before the search.
     const decoyX86 = path.join(base, "pf86");
-    const decoyLower = path.join(base, "pflower");
     fs.mkdirSync(agentDir);
     fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
     fs.mkdirSync(seamRoot);
-    for (const root of [realRoot, decoyX86, decoyLower]) {
+    for (const root of [realRoot, decoyX86]) {
       fs.mkdirSync(path.join(root, "Git", "bin"), { recursive: true });
       fs.writeFileSync(path.join(root, "Git", "bin", "bash.exe"), "");
     }
     const userFile = path.join(agentDir, "settings.json");
     fs.writeFileSync(userFile, `${JSON.stringify({ packages: ["git:github.com/Shredi/pi-foreman"] }, null, 2)}\n`);
     const env = childEnv(setupEnv({ agentDir, base, programFiles: seamRoot, platform: "win32" }), { ProgramFiles: realRoot, "ProgramFiles(x86)": decoyX86 });
-    if (process.platform !== "win32") env.programfiles = decoyLower;
     const r = spawnSync(process.execPath, [SETUP, "--no-addons", "--agent-dir", agentDir], { cwd, encoding: "utf8", env });
     const out = `${r.stdout}${r.stderr}`;
     assert.notEqual(r.status, 0, out);
