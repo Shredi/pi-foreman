@@ -1,6 +1,6 @@
 // r42: who a blocked session waits on (owner or parent) in the live file, and the two trace events, with the real sources.
 import "./_hermetic-env.mjs";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,6 +15,21 @@ const mk = () => {
   return { d, l, read: () => JSON.parse(fs.readFileSync(path.join(liveDir(d), "s.json"), "utf8")) as Record<string, unknown>, done: () => { l.stop(); fs.rmSync(d, { recursive: true, force: true }); } };
 };
 const snap = (l: LiveState) => l.snapshot() as unknown as Record<string, unknown>;
+
+// One adapter session for the two trace cases (a session start runs git and python); each case reads the trace from its own start on.
+type Rig = Awaited<ReturnType<typeof r11Rig>>;
+const cleanups: (() => void | Promise<void>)[] = [];
+let shared: Rig;
+before(async () => {
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) });
+}, { timeout: 20_000 });
+after(async () => {
+  for (const fn of cleanups.reverse()) await fn();
+}, { timeout: 20_000 });
+const traceRig = (): Rig => {
+  const start = shared.trace().length;
+  return { ...shared, events: (name: string) => shared.trace().slice(start).filter((x) => x.event === name) };
+};
 
 test("live state: each owner kind and the parent classes; no fields while nothing is open", (t) => {
   const { l, done } = mk();
@@ -113,8 +128,8 @@ test("herdr: the class travels to the hook; the old functions pass none; every h
   assert.equal(await blockedConfirmOn(undefined, { on: "owner", kind: "confirm" }, async () => true)("a", "b"), true);
 });
 
-test("trace: blocked_open and blocked_closed for a ui dialog and an owner question carry on, kind, label and waitedMs", async (t) => {
-  const rig = await r11Rig(t);
+test("trace: blocked_open and blocked_closed for a ui dialog and an owner question carry on, kind, label and waitedMs", async () => {
+  const rig = traceRig();
   await rig.fire("ui_prompt_start", { title: "Allow tool?", kind: "select" });
   await rig.fire("ui_prompt_end", {});
   const q = { toolName: "ask_user_question", toolCallId: "q1", input: { questions: [{ header: "Pick one", question: "x" }] } };
@@ -128,8 +143,8 @@ test("trace: blocked_open and blocked_closed for a ui dialog and an owner questi
   assert.deepEqual(closed.map((x) => [x.on, x.kind]), [["owner", "dialog"], ["owner", "question"]]);
 });
 
-test("trace: a dropped dialog (no end event) is cleared by a later interactive input; an extension input keeps it", async (t) => {
-  const rig = await r11Rig(t);
+test("trace: a dropped dialog (no end event) is cleared by a later interactive input; an extension input keeps it", async () => {
+  const rig = traceRig();
   await rig.fire("ui_prompt_start", { title: "Stuck", kind: "confirm" });
   await rig.input("extension", "x");
   assert.equal(rig.events("blocked_closed").length, 0);

@@ -2,7 +2,7 @@
 // node's mock setInterval, the child's live file and registry entry are written for real. The notice is one custom message of its own type, never
 // `foreman_wake`; it leaves armed waits, the waiting-for-parent flag, the finish gate and the turn cause as they were.
 import "./_hermetic-env.mjs";
-import { test } from "node:test";
+import { after, before, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -17,11 +17,26 @@ type Sent = { customType: string; content: string; display?: boolean };
 type Tool = { execute: (...a: unknown[]) => Promise<{ content: { text: string }[]; details?: Record<string, unknown> }> };
 const MIN = 60_000;
 
+// One adapter session for the whole file (a session start runs git and python), its 60 s interval mocked from the start; each case
+// starts with an empty `sent`, its own trace window and a fresh registry entry, live file and handoff dir.
+const sent: { m: Sent; opts: Record<string, unknown> | undefined }[] = [];
+const tools = new Map<string, Tool>();
+const cleanups: (() => void | Promise<void>)[] = [];
+let shared: Awaited<ReturnType<typeof r11Rig>>;
+before(async () => {
+  mock.timers.enable({ apis: ["setInterval"] });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { piExtra: { sendMessage: (m: Sent, opts?: Record<string, unknown>) => void sent.push({ m, opts }), registerTool: (d: { name: string } & Tool) => void tools.set(d.name, d) } });
+}, { timeout: 20_000 });
+after(async () => {
+  for (const fn of cleanups.reverse()) await fn();
+  mock.timers.reset();
+}, { timeout: 20_000 });
+
 async function rig(t: T) {
-  t.mock.timers.enable({ apis: ["setInterval"] });
-  const sent: { m: Sent; opts: Record<string, unknown> | undefined }[] = [];
-  const tools = new Map<string, Tool>();
-  const r = await r11Rig(t, {}, { piExtra: { sendMessage: (m: Sent, opts?: Record<string, unknown>) => void sent.push({ m, opts }), registerTool: (d: { name: string } & Tool) => void tools.set(d.name, d) } });
+  sent.length = 0;
+  await shared.fire("agent_end", {}); // ends the turn an earlier case left open, so its cause is not read by this one
+  const start = shared.trace().length;
+  const r = { ...shared, events: (name: string) => shared.trace().slice(start).filter((x) => x.event === name) };
   const handoff = path.join(r.agentDir, "pi-foreman", "handoffs", "20261113-080000-job");
   fs.mkdirSync(handoff, { recursive: true });
   fs.writeFileSync(path.join(handoff, "live.json"), JSON.stringify({ intercomId: "fm-job-1", piSessionId: "child-sess" }));
@@ -31,7 +46,7 @@ async function rig(t: T) {
     fs.writeFileSync(path.join(liveDir(r.agentDir), "child-sess.json"), JSON.stringify({ heartbeatAt: new Date().toISOString(), ...f }));
   };
   const blocked = () => live({ blockedOn: "owner", blockedKind: "approval", ownerBlockedSince: new Date(Date.now() - 20 * MIN).toISOString() });
-  const tick = () => t.mock.timers.tick(MIN);
+  const tick = () => mock.timers.tick(MIN);
   const wait = (params: Record<string, unknown>) => tools.get("foreman_wait")!.execute("w", params, undefined, undefined, r.ctx);
   /** The adapter's side of a message the harness appended: message_end, then the turn it started (before_agent_start, agent_start, agent_end). */
   const deliver = async (customType: string, content: string, details?: unknown) => {

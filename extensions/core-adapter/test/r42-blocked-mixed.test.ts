@@ -1,7 +1,7 @@
 // r42: mixed blocked sources: a wait on the parent does not mute Pi's prompt events, an owner-classed dialog does.
 // Exactly one `blocked_open` / `blocked_closed` per dialog in every combination.
 import "./_hermetic-env.mjs";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -25,7 +25,19 @@ async function until(f: () => boolean, ms = 4000): Promise<void> {
 const config = { providers: { fake: { review: { model: "m" }, roles: {} } }, presence: { enabled: false } };
 const ui = { notify: () => undefined, confirm: async () => true, select: async () => "", input: async () => "", setStatus: () => undefined, setWidget: () => undefined };
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
-const rig = (t: T) => r11Rig(t, {}, { ctx: { ui }, config });
+// One adapter session for the whole file (a session start runs git and python); each case reads the trace from its own start on.
+const cleanups: (() => void | Promise<void>)[] = [];
+let shared: Rig;
+before(async () => {
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui }, config });
+}, { timeout: 20_000 });
+after(async () => {
+  for (const fn of cleanups.reverse()) await fn();
+}, { timeout: 20_000 });
+const rig = async (_t: T): Promise<Rig> => {
+  const start = shared.trace().length;
+  return { ...shared, events: (name: string) => shared.trace().slice(start).filter((x) => x.event === name) };
+};
 const shape = (r: Rig, ev: string) => r.events(ev).map((x) => `${x.on}/${x.kind}`).sort();
 
 /** Opens a wait on the parent (ask.md) and returns a closer for it. */

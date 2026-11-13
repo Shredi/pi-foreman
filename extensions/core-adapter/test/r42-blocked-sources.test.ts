@@ -1,7 +1,7 @@
 // r42: the real blocked sources through the adapter rig: what each opens in the live file (`blockedOn`, `blockedKind`) and the one
 // `blocked_open` / `blocked_closed` pair per dialog (the classed source emits; Pi's prompt events add one only for a dialog nobody classed).
 import "./_hermetic-env.mjs";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -35,19 +35,16 @@ const config = { providers: { fake: { review: { model: "m" }, roles: Object.from
 const ASK_FIELDS = { tool: "bash", payload: "pip install requests", cwd: "/w", session: "child-s", role: "builder", run: "L9" };
 
 /** A ui whose confirm / select stay open until the test answers them. */
-function holdUi() {
-  const confirms: ((v: boolean) => void)[] = [];
-  const selects: ((v: string) => void)[] = [];
-  const ui = {
-    notify: () => undefined,
-    confirm: () => new Promise<boolean>((res) => confirms.push(res)),
-    select: () => new Promise<string>((res) => selects.push(res)),
-    input: async () => "",
-    setStatus: () => undefined,
-    setWidget: () => undefined,
-  };
-  return { ui, confirms, selects };
-}
+const confirms: ((v: boolean) => void)[] = [];
+const selects: ((v: string) => void)[] = [];
+const holdUi = {
+  notify: () => undefined,
+  confirm: () => new Promise<boolean>((res) => confirms.push(res)),
+  select: () => new Promise<string>((res) => selects.push(res)),
+  input: async () => "",
+  setStatus: () => undefined,
+  setWidget: () => undefined,
+};
 const liveOf = (r: Rig): Record<string, unknown> => JSON.parse(fs.readFileSync(path.join(liveDir(r.agentDir), `${r.sessionId}.json`), "utf8")) as Record<string, unknown>;
 /** The live file once it shows (`on`) or stops showing (undefined) a blocked class. */
 const liveBlocked = (r: Rig, on: string | undefined) => until(() => {
@@ -60,10 +57,24 @@ const liveBlocked = (r: Rig, on: string | undefined) => until(() => {
 });
 const pairs = (r: Rig) => [r.events("blocked_open").length, r.events("blocked_closed").length];
 
-async function ownerRig(t: T, reply = V("ask", "package-install")) {
-  const h = holdUi();
-  const r = await r11Rig(t, {}, { ctx: { ui: h.ui, modelRegistry: registry(reply) }, config });
-  return { ...r, ...h };
+// One adapter session for the owner-rig cases (a session start runs git and python): each case swaps in its classifier reply, empties the held
+// dialogs and reads the trace from its own start on.
+const cleanups: (() => void | Promise<void>)[] = [];
+let shared: Rig;
+before(async () => {
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("ask", "package-install")) }, config });
+}, { timeout: 20_000 });
+after(async () => {
+  for (const fn of cleanups.reverse()) await fn();
+}, { timeout: 20_000 });
+
+async function ownerRig(_t: T, reply = V("ask", "package-install")) {
+  confirms.length = 0;
+  selects.length = 0;
+  await liveBlocked(shared, undefined); // the live file of an earlier case may still show its last dialog
+  shared.ctx.modelRegistry = registry(reply);
+  const start = shared.trace().length;
+  return { ...shared, events: (name: string) => shared.trace().slice(start).filter((x) => x.event === name), confirms, selects };
 }
 
 test("guard approval dialog (askOwner path): owner/approval in the live file, one open and one closed event", async (t) => {
