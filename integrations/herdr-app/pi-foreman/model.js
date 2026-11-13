@@ -111,9 +111,9 @@ function normNode(raw, depth, budget) {
     prs: Array.isArray(w.prs) ? w.prs.slice(0, 50).map(int).filter((x) => x !== null) : [],
     // the watched PRs whose head moved past the session's last reviewer PASS (livestate.ts LiveWait.unreviewed)
     ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
-    // the watched PRs with their repository (livestate.ts LiveWait.prRefs); absent in an older live file
     // the session's review facts of its owned PRs (livestate.ts LiveWait.review); absent in an older live file
     ...(Array.isArray(w.review) ? { review: w.review.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null && typeof u.head === "string" && ["ok", "wip", "unreviewed"].includes(u.state)).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host), head: u.head, state: u.state, ...(u.noChecks === true ? { noChecks: true } : {}) })) } : {}),
+    // the watched PRs with their repository (livestate.ts LiveWait.prRefs); absent in an older live file
     ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null && str(u.repo)).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
   })) : [];
   const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ id: str(t.id), label: str(t.label), ageS: num(t.ageSeconds) })) : [];

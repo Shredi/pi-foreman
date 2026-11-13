@@ -98,7 +98,7 @@ prompt "Read the handoff brief at <dir>/brief.md and proceed." The registry is
 
 `--rework` on `foreman session brief` (CLI, or `/foreman session brief <target> --rework …` in Pi) says that the brief asks for more work on a PR that the child already opened. Without the flag nothing changes.
 
-- The side that writes the delivered brief also writes an empty marker file `rework-<k>` beside it in the child's handoff dir. `k` is the markers' own sequence (the lowest free number, created exclusively), independent of the brief and ruling numbers. No brief text is read or parsed.
+- The side that writes the delivered brief also writes an empty marker file `rework-<k>` beside it in the child's handoff dir. `k` is the markers' own sequence: one more than the highest `rework-<k>` already in the handoff dir, created exclusively. It is independent of the brief and ruling numbers. If no number up to the highest one the child reads is free, the send-back is refused with an error and no marker is written. No brief text is read or parsed.
 - The child looks for a new marker at its next tool call and at each PR watch tick. It then puts the PR it opened back into draft (see [draft handling](tools.md#draft)). A marker is handled once; one left on disk does not send the work back again.
 - The PR leaves draft again only after a new `[pre-pr]` review PASS on the pushed head (see [review](review.md#readiness-of-a-pr)).
 - A marker can only move a PR toward draft. A forged or stale one can do no more.
