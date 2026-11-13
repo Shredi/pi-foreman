@@ -481,6 +481,8 @@ export interface AdapterDeps {
   piVersion?: () => Promise<string | null>;
   /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
+  /** Tests: the working-tree snapshot taken at a reviewer launch (default: commentonly.ts worktreeTree); the shared rigs pass a no-op, so the run end keeps head_moved. */
+  worktreeSnapshot?: (cwd: string) => Promise<string | null>;
   /** Tests: replaces Pi's shell lookup the win32 background-shell setup uses (default: Pi's getShellConfig). */
   getShellConfig?: typeof piGetShellConfig;
 }
@@ -488,6 +490,7 @@ export interface AdapterDeps {
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
+  const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
@@ -1876,6 +1879,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ownerScript: "on",
       // Owner-readable plans, questions and notes (ownertext.ts; "off" only drops the added lines).
       ownerReadable: "on",
+      // The working-ahead rules ("off"/absent only renders the baseline before them).
+      proactive: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
@@ -2431,6 +2436,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       ...(s.isChild && launchBinding?.handoffDir ? { childHandoff: launchBinding.handoffDir } : {}),
+      ...(!s.isChild && ownChildHandoff(s) ? { ownHandoff: ownChildHandoff(s) } : {}),
+      ...(!s.isChild ? { childHandoffs: childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)) } : {}),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
@@ -3449,7 +3456,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
           const cwds = launchCwds(input, ctx.cwd);
-          const [heads, trees] = await Promise.all([headsAt(cwds), treesAt(cwds, worktreeTree)]);
+          const [heads, trees] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot)]);
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
           capSet(s.launchTreesByCall, event.toolCallId, trees);
         }
@@ -4021,14 +4028,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (children are not checked). */
-  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. */
+  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. For a session-level child (not a subagent) its child-written names are writable by the shell guard and by the gate (`ownHandoff`). */
   function ownChildHandoff(s: Session): string | undefined {
     const env = (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim();
     const dir = env || childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))[0];
     return dir && (path.isAbsolute(dir) || path.win32.isAbsolute(dir)) ? dir : undefined;
   }
 
+  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (subagent children are not checked here; their writes meet the gate's child floor; a session-level child runs it with its handoff dir). */
   async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);

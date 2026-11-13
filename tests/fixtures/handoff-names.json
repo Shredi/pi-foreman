@@ -1,0 +1,4 @@
+{
+  "childWritten": ["plan.md", "result.md", "ask.md", ".ask", ".seen", ".steer-last-read.json"],
+  "parentWritten": ["ruling.md", "ruling-1.md", "ruling-plan.md", "brief.md", "brief-1.md", "steer.md", "steer-1.md", "parent", "child", "close.json", "live.json", "launch.txt", "notice-seq.lock"]
+}

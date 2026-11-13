@@ -3,7 +3,7 @@
 // returns null and falls through to the review. Rule names: `default-<name>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { contained, effectCtx, gitReadWrites, GIT_READ, redirectOk, segmentEffect } from "./effects.ts";
+import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
 import { gitGlobalWidth, gitOptSpellings, injection } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
@@ -108,8 +108,10 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
     ec.realpath = real;
     ec.exists = (p) => real(p) !== null;
   }
-  if (r.child && r.childHandoff) {
-    const root = r.childHandoff;
+  // a subagent child writes its launch binding's handoff dir, a session-level child the dir where it is the child side
+  const handoff = r.child ? r.childHandoff : r.ownHandoff;
+  if (handoff) {
+    const root = handoff;
     const real = r.realpath ?? realDefault;
     ec.handoffWrite = (abs, ra) => childHandoffWrite(root, abs, ra, c.platform, real);
   }
@@ -378,8 +380,51 @@ export function toChain(seg: ShellSegment): Segment | null {
   return { words, redirects: seg.redirects as Redirect[], text: words.map(quote).join(" ") };
 }
 
+const RULING_PROGRAMS: ReadonlySet<string> = new Set(["echo", "printf", "cat", "cp", "mv"]);
+
+/**
+ * A parent session's shell write of a ruling or brief: an `echo`, `printf`, `cat`, `cp` or `mv` segment whose every write target (redirect, cp/mv destination,
+ * `dest/<name>` for an existing dir) is one the path rule allows as `path-write-handoff-ruling` (a dir this session opened, `ruling*.md` / `brief*.md`, never a
+ * dir where it is the child). The same allow the write tool has, in every mode. `mv` sources must be worktree or scratch files, `cp` and `cat` sources readable.
+ */
+function rulingWrite(seg: ShellSegment, c: DefaultCtx, ec: EffectCtx): boolean {
+  const cwd = seg.cwd;
+  const chain = toChain(seg);
+  if (c.roots.child || cwd === null || !chain || !RULING_PROGRAMS.has(seg.program)) return false;
+  const ruling = (w: string): boolean => {
+    const abs = resolveWord(c.platform, cwd, w);
+    return !!abs && pathDecide("write", { path: abs }, cwd, c.roots, c.platform)?.rule === "path-write-handoff-ruling";
+  };
+  let targets = 0;
+  for (const r of chain.redirects) {
+    if (r.op === "<" || r.op === "dup" || nullDevice(c.platform, r.target)) {
+      if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform)) return false;
+    } else if (ruling(r.target)) targets++;
+    else return false;
+  }
+  const a = seg.argv;
+  if (seg.program === "echo" || seg.program === "printf") return targets > 0;
+  if (seg.program === "cat") return targets > 0 && a.every((w) => !w.startsWith("-") && contained(ec, cwd, w, false));
+  if (targets > 0 || !a.filter((w) => w.startsWith("-")).every((w) => /^-[fnv]+$/.test(w))) return false;
+  const ops = a.filter((w) => !w.startsWith("-"));
+  if (ops.length < 2) return false;
+  const destAbs = resolveWord(c.platform, cwd, ops[ops.length - 1]);
+  if (!destAbs) return false;
+  const x = c.platform === "win32" ? path.win32 : path.posix;
+  const isDir = (ec.isDir ?? ((p: string): boolean => { try { return fs.statSync(p).isDirectory(); } catch { return false; } }))(destAbs);
+  const srcs = ops.slice(0, -1);
+  if (!isDir && srcs.length > 1) return false;
+  const dests = isDir ? srcs.map((s) => x.join(destAbs, x.basename(s))) : [destAbs];
+  // a link at the destination is written through
+  if (dests.some((d) => { try { return fs.lstatSync(d).isSymbolicLink(); } catch { return false; } })) return false;
+  if (!dests.every(ruling)) return false;
+  const where = [...(ec.root ? [ec.root] : []), ...(ec.scratch ?? [])];
+  return srcs.every((s) => (seg.program === "mv" ? contained(ec, cwd, s, true, where) : contained(ec, cwd, s, false)));
+}
+
 /** The default rule one segment matches, or null. */
 export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, ec: EffectCtx = effectCtxOf(c)): string | null {
+  if (seg.opaque === null && seg.wrappers.length === 0 && rulingWrite(seg, c, ec)) return "default-write-handoff-ruling";
   if (seg.opaque !== null || seg.heredoc || !seg.wrappers.every((w) => w === "timeout")) return null;
   if (seg.program === "") return seg.argv.length === 0 && seg.redirects.length === 0 ? "default-assign" : null;
   const cwd = seg.cwd;
@@ -387,7 +432,7 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;
   // r79 item 3: a segment of the dangerous class is never a built-in allow (the class is the question the classifier answers)
   if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts }) !== null) return null;
-  for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform)) return null;
+  for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform) && !handoffRedirect(r, ec, cwd)) return null;
   if (seg.program === "cd" && cdIntoOwn(seg.argv, cwd, c)) return "default-read";
   if (seg.program === "git") return gitDefault(seg.argv, text, cwd, c, ec, chain);
   if (seg.program === "gh" || seg.program === "glab") return ghDefault(seg.program, seg.argv, cwd, ec) ? "default-gh-read" : null;
@@ -846,21 +891,25 @@ function injectSeg(s: ShellSegment): boolean {
 
 const segs = (test: (s: ShellSegment, env: DangerEnv) => boolean) => (c: DangerCall, env: DangerEnv): boolean => live(c).some((s) => test(s, env));
 
-/** A path tool that writes where no path rule allows (`pathDecide` found no root that covers it). */
-function pathWriteOutside(c: DangerCall, env: DangerEnv): boolean {
-  if (!["write", "edit", "foreman_move", "foreman_copy"].includes(c.tool)) return false;
+/** A path tool that writes where no path rule allows (`pathDecide` found no root that covers it): the path it names (absolute when it resolves), else null. */
+function pathOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
+  if (!["write", "edit", "foreman_move", "foreman_copy"].includes(c.tool)) return null;
   const i = (c.input && typeof c.input === "object" ? c.input : {}) as Record<string, unknown>;
-  if (!["path", "file_path", "filePath", "dst"].some((k) => typeof i[k] === "string")) return false;
-  if (pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) !== undefined) return false;
+  if (!["path", "file_path", "filePath", "dst"].some((k) => typeof i[k] === "string")) return null;
+  if (pathDecide(c.tool, c.input, env.cwd, env.roots, env.platform) !== undefined) return null;
   // an uncovered write in an `auto` work folder is no write outside (the call then reaches the mode step); reads must be covered as usual
   const ops = opsOf(c.tool, i);
-  if (env.roots.child || !ops) return true;
-  return !ops.every(([w, dir]) => {
+  const covered = ([w, dir]: [unknown, "read" | "write"]): boolean => {
     const abs = resolveWord(env.platform, env.cwd, w);
     if (!abs) return false;
     return dir === "write" ? pathDecide("write", { path: abs }, env.cwd, env.roots, env.platform) !== undefined || inAutoFolder(env, abs, env.cwd) : pathDecide("read", { path: abs }, env.cwd, env.roots, env.platform) !== undefined;
-  });
+  };
+  if (!env.roots.child && ops && ops.every(covered)) return null;
+  const bad = ops?.find((o) => !covered(o))?.[0] ?? ["path", "file_path", "filePath", "dst"].map((k) => i[k]).find((v) => typeof v === "string");
+  return typeof bad === "string" ? (resolveWord(env.platform, env.cwd, bad) ?? bad) : "";
 }
+
+const pathWriteOutside = (c: DangerCall, env: DangerEnv): boolean => pathOutsideTarget(c, env) !== null;
 
 /** Operands of a command: the words that are no option, past `--` all of them; the options in `valued` swallow the next word. */
 function operands(a: string[], valued: ReadonlySet<string> = new Set()): string[] {
@@ -1029,22 +1078,71 @@ function writable(w: string, cwd: string | null, env: DangerEnv, folders = false
   return pathDecide("write", { path: w, link }, cwd ?? env.cwd, env.roots, env.platform) !== undefined || (folders && inAutoFolder(env, w, cwd ?? env.cwd));
 }
 
-/** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp. */
-function shellWriteOutside(c: DangerCall, env: DangerEnv): boolean {
+/**
+ * `writeTargets` of a segment; a `cp` / `mv` into an existing dir writes `dest/<name>` for each source (the dir itself is no write of its own: a handoff dir's
+ * `work/` is not a writable name, the files below it are). An `mv` still lists its sources.
+ */
+function intoDirTargets(s: ShellSegment, env: DangerEnv, ec: EffectCtx): string[] {
+  const targets = writeTargets(s);
+  const p = progOf(s);
+  if (p !== "cp" && p !== "mv") return targets;
+  // only when every option word is a known-safe flag of the program (WRITE_FLAGS, as the effect parser reads it): any other option (-t in any spelling, -T,
+  // --target-directory and its abbreviations, --backup, -S) may move the real destination, so main's stricter result stands
+  const dd = s.argv.indexOf("--");
+  if ((dd < 0 ? s.argv : s.argv.slice(0, dd)).some((w) => w.startsWith("-") && w !== "-" && !WRITE_FLAGS[p].test(w))) return targets;
+  const ops = operands(s.argv);
+  const abs = ops.length >= 2 && s.cwd !== null ? resolveWord(env.platform, s.cwd, ops[ops.length - 1]) : null;
+  if (!abs || !(ec.isDir ?? ((q: string): boolean => { try { return fs.statSync(q).isDirectory(); } catch { return false; } }))(abs)) return targets;
+  const x = env.platform === "win32" ? path.win32 : path.posix;
+  return [...(p === "mv" ? ops.slice(0, -1) : []), ...ops.slice(0, -1).map((o) => x.join(ops[ops.length - 1], x.basename(o)))];
+}
+
+/** `w` run from `cwd` as an absolute path, as written when it does not resolve. */
+const shown = (env: DangerEnv, cwd: string | null, w: string): string => resolveWord(env.platform, cwd ?? env.cwd, w) ?? w;
+
+/** A shell segment that writes (a redirect, an in-place or output-flag form, a write-class effect) outside the worktree, scratch and tmp: the first such target (a write-class effect: its cwd), else null. */
+function shellOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
   // work folders count only when every live segment is a built-in default with them as write roots; otherwise today's context
   const fa = folderAware(c, env);
   // a cp source is a read here: only the destination is a write target (writeTargets)
   const ec = { ...(fa ? fa.ec : effectCtxOf(env)), cpSourceRead: true };
-  for (const s of live(c)) if (writeTargets(s).some((w) => !writable(w, s.cwd, env, !!fa, linkOperand(s, w)))) return true;
+  for (const s of live(c)) {
+    const bad = intoDirTargets(s, env, ec).find((w) => !writable(w, s.cwd, env, !!fa, linkOperand(s, w)));
+    if (bad !== undefined) return shown(env, s.cwd, bad);
+  }
   for (const s of live(c)) {
     const cwd = s.cwd ?? env.cwd;
     const chain = toChain(s);
     if (!chain) continue;
-    for (const r of chain.redirects) if (r.op !== "<" && r.op !== "dup" && !redirectOk(r, ec, cwd, ec.scratch ?? [], env.platform) && !contained(ec, cwd, r.target, true)) return true;
+    for (const r of chain.redirects) if (r.op !== "<" && r.op !== "dup" && !redirectOk(r, ec, cwd, ec.scratch ?? [], env.platform) && !contained(ec, cwd, r.target, true)) return shown(env, cwd, r.target);
     // the redirects are judged above; the effect class of the words alone (a redirect into the worktree is write-out to segmentEffect)
-    if (segmentEffect(ec, cwd, { ...chain, redirects: [] }).cls === "write-out") return true;
+    if (segmentEffect(ec, cwd, { ...chain, redirects: [] }).cls === "write-out") {
+      // a cp / mv refused for its destination names it; the cwd only when the cwd is what was refused
+      const dest = progOf(s) === "cp" || progOf(s) === "mv" ? operands(s.argv).slice(-1)[0] : undefined;
+      return dest !== undefined && s.cwd !== null ? shown(env, s.cwd, dest) : cwd;
+    }
   }
-  return false;
+  return null;
+}
+
+const shellWriteOutside = (c: DangerCall, env: DangerEnv): boolean => shellOutsideTarget(c, env) !== null;
+
+/**
+ * A subagent child's `tee` with a literal path operand outside its worktree, scratch dir and handoff names (the parser marks every `tee` opaque, so this reads
+ * the opaque segment's words): the first such operand. The null device and the standard sinks are exempt; a word with a variable, substitution or `~`, and a
+ * relative word under an unknown cwd, cannot be resolved and stay at the mode step.
+ */
+function teeOutsideTarget(c: DangerCall, env: DangerEnv): string | null {
+  if (!env.roots.child) return null;
+  for (const s of c.segments ?? []) {
+    if (progOf(s) !== "tee") continue;
+    for (const w of operands(s.argv)) {
+      if (/[$`]/.test(w) || w.startsWith("~") || SINK.has(w) || nullDevice(env.platform, w)) continue;
+      if (s.cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) continue;
+      if (!writable(w, s.cwd, env)) return shown(env, s.cwd, w);
+    }
+  }
+  return null;
 }
 
 /**
@@ -1120,9 +1218,14 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
 ];
 
-/** True when the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry on its own; gate.ts childDenied). */
+/** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */
+export function outsideTarget(call: DangerCall, env: DangerEnv): string | null {
+  return pathOutsideTarget(call, env) ?? shellOutsideTarget(call, env) ?? teeOutsideTarget(call, env);
+}
+
+/** True when the call writes outside the worktree and the session's scratch (gate.ts childDenied, and the `danger-write-outside` entry on its own plus a child's `tee`). */
 export function writesOutside(call: DangerCall, env: DangerEnv): boolean {
-  return pathWriteOutside(call, env) || shellWriteOutside(call, env);
+  return outsideTarget(call, env) !== null;
 }
 
 /** `gh pr create`, `glab mr create`: opens a pull or merge request. */

@@ -1,6 +1,6 @@
 # Triage, delegation and finish gates
 
-> Covers the tiers, the trivial builder path, bounded mode, finish gates, plan and checkpoint, waiting, read budgets, the ledger tool and the key table.
+> Covers the tiers, the trivial builder path, bounded mode, finish gates, plan and checkpoint, waiting, read budgets, working ahead, the ledger tool and the key table.
 > Read it when the foreman refuses a step, or when you tune how much process a task gets.
 > The foreman records a tier first and the adapter checks the claim instead of trusting it.
 
@@ -107,6 +107,18 @@ When a triaged session finishes with no child run active (and is not waiting for
 Every round goes through a PR. The foreman works on a branch `round/<n>-<topic>` cut from `main`; a reviewer pre-pr PASS on the branch head comes first, then `pr_create` opens the PR and arms a watch that stays until the PR is merged or closed and reports each CI result, failing job, comment, review and conflict. When CI is green the foreman squash-merges it. `main` is branch-protected (required checks `ci-ok` and `pr-policy`, non-strict, see [development](development.md#auto-merge)), so nothing lands on it except through that merge.
 
 **Fast merge.** A green, mergeable PR is merged as it stands: no merge of the base into the branch and no CI rerun, even if the base moved since CI ran (a reviewer does not count that as a finding). After each merge the foreman checks the base's CI on the merge commit and, if it is red, fixes forward with a small PR. The base is merged into a branch only when the PR is CONFLICTING, or when the base fix is needed for that branch's own CI. Run `npm run test:ci` before the PR (see [development](development.md#ci)).
+
+## Working ahead
+
+The foreman does not wait to be told what comes next. While it works, findings collect: faults it hit, review remarks left open, entries in its own notes and in the retro backlog (read with `foreman backlog list`, see [retro](retro.md#commands)). At a natural pause (a round merged, a wait on children or CI, the task done) it looks at them and takes up what is ripe. Ripe means findings that share a cause, a finding seen a second time, or a fault that blocks or slows running work. A single cosmetic finding can wait. Each ripe group is taken up once; when nothing is ripe the foreman finishes as usual and names in its reply what it holds back.
+
+The dividing line is whether the owner has anything to decide. A fix that restores behaviour already stated in the docs, a test or the code's own contract, with one sensible way to do it, starts without a question; the foreman tells you in a sentence or two what it started and why. A command in the docs that fails as written, or a test that flaked in a second round, is such a fix. A choice you would care about is asked first: a default that changes, a gate, guard or permission that loosens, a new config key, a wire or file format, cost that grows, something outside the repository, an architectural decision, or the foreman's own doubt whether it is a fix at all. A fix that turns out to hold such a choice stops there and is asked. Several follow-ups come in one question, with what the foreman would do as the first option.
+
+A finding is a lead, not a fact: the foreman confirms it on disk first, because backlog entries partly come from child reports. When an item of the running ledger already covers the fix, it is done there. Otherwise the fix runs in a separate session with its own triage, ledger and review, and a session for a new topic opens plan-first (see [sessions](sessions.md)). An installation without a way to open further sessions has the foreman propose the fix and wait.
+
+Working ahead moves inside the gates, never around them. Tier, ledger, review before a PR, the checkpoint at heavy, the confirm for a new session, owner scripts and guard approvals all hold, and children never push or merge. The same goes for a budget or limit you stated. When the budget or the host's resources are tight, or you are in the middle of something else with the foreman, it proposes instead of starting.
+
+A session a parent opened finishes its brief and puts follow-ups beyond it in its result; the parent decides about them. The rule is text in the foreman's instructions with no key and no off switch. It adds text to every foreman request and leads to more sessions, and with them more cost.
 
 ## Further ceremony keys
 

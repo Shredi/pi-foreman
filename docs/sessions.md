@@ -77,7 +77,7 @@ A label that already has a registry entry that is not closed or failed is not op
 - `brief.md`: your brief plus a footer telling the child how to report back (below).
 - `parent`: the opener's intercom id, one line. The child's close check reads it every time. The parent-id path works for a Pi parent only; other parents (for example a Claude session) are reached through the handoff files ([ask by file](#ask-by-file-parent-that-is-not-a-pi-session)).
 - `child`: the child's intercom id, `fm-<slug>-<6 hex>`. The child also gets it as `PI_INTERCOM_STABLE_ID`.
-- later, written by the child: `plan.md` (with `--plan-first`) and `result.md`.
+- later, written by the child: `plan.md` (with `--plan-first`) and `result.md`, and for a question `ask.md`, `ask-<n>.md`, `.seen` and files below `work/`; no dialog in any mode for the write tool and `cp` (in mode `ask` an `echo >`, `printf >` or heredoc redirect still reaches the mode step). A subagent of a child session may write the same names.
 - `live.json`: `{intercomId, piSessionId, at}`, written by the child's adapter at each session start. It binds the handoff dir to the Pi session. It is write-ask, like `parent` and `child`.
 
 #### Identity after a restart

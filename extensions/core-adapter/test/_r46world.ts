@@ -26,6 +26,8 @@ export interface WorldOpts {
   /** Also PI_FOREMAN_PARENT_INTERCOM: checkpoint mode `parent` (the verdict comes from ruling-plan.md). */
   parent?: boolean;
   ceremony?: Record<string, unknown>;
+  /** Production wiring of the launch snapshot (no `worktreeSnapshot` dependency); by default the rig passes a no-op. */
+  realSnapshot?: boolean;
 }
 
 export function world(t: { after(fn: () => void | Promise<void>): void }, o: WorldOpts = {}) {
@@ -98,7 +100,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setThinkingLevel: () => undefined,
       sendMessage: () => undefined,
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
       sessionManager: { getSessionId: () => sessionId, getSessionFile: () => sessionFile, getEntries: () => entries, getBranch: () => entries },
       cwd: project,
