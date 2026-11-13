@@ -149,6 +149,8 @@ export interface GateRecord {
   /** Rule id or policy entry id. */
   rule?: string;
   reason?: string;
+  /** The text a floor matched (the denial's `matched:` part); written through the redacting field writer, like the tool name. */
+  fragment?: string;
   /** The raw command or target text; written only as its normalised shape. */
   input?: string;
   role?: string;
@@ -213,7 +215,8 @@ export function openGateLog(opts: GateLogOptions): GateLog {
             layer: rec.layer,
             verdict: field(rec.verdict),
             rule: field(rec.rule),
-            reason: scrubReason(redactCommand(normalizeShape(typeof rec.reason === "string" ? rec.reason : "", opts.roots, true))).slice(0, MAX_REASON),
+            reason: scrubReason(redactCommand(normalizeShape(redactCommand(typeof rec.reason === "string" ? rec.reason : ""), opts.roots, true))).slice(0, MAX_REASON),
+            ...(rec.fragment ? { fragment: field(rec.fragment) } : {}),
             ...(typeof rec.latencyMs === "number" ? { latencyMs: Math.round(rec.latencyMs) } : {}),
             ...(rec.model ? { model: field(rec.model) } : {}),
             ...(rec.cached ? { cached: true } : {}),
