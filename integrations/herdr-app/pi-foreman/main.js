@@ -517,7 +517,7 @@ export default class ForemanAgents extends View {
   // unbroken from the row's chevron through these rows to the first child.
   extras(t, item, ind, x = null) {
     if (item.type !== "session") return [];
-    const detail = detailLine(item.node);
+    const detail = detailLine(item.node, item.recs);
     const line = statusLine(detail);
     const blocked = detail.blocked;
     const shows = item.node?.show ? showRows(item.node.show, this.shows?.get(`${this.machineOf?.get(item.node) ?? "local"}|${item.node.show.dir}`), Date.now()) : [];

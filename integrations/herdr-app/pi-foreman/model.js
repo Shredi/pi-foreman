@@ -66,6 +66,8 @@ const MERGEABLE = ["MERGEABLE", "CONFLICTING", "UNKNOWN"];
 const prExtras = (p) => ({
   title: str(p.title), bodyText: str(p.bodyText), branch: str(p.headRefName),
   baseRef: str(p.baseRefName), mergeable: MERGEABLE.includes(p.mergeable) ? p.mergeable : "",
+  // set by the poll while a pass is not settled yet (the watch's settle rule): the checks seen may be a partial set
+  ...(p.unsettled === true ? { unsettled: true } : {}),
 });
 
 function cleanRepoUrl(v) {
@@ -110,7 +112,7 @@ function normNode(raw, depth, budget) {
     // the watched PRs with their repository (livestate.ts LiveWait.prRefs); absent in an older live file
     ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null && str(u.repo)).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
   })) : [];
-  const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ label: str(t.label), ageS: num(t.ageSeconds) })) : [];
+  const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ id: str(t.id), label: str(t.label), ageS: num(t.ageSeconds) })) : [];
   const asks = Array.isArray(raw.asks) ? raw.asks.filter((a) => isObj(a) && int(a.n) !== null).map((a) => ({ n: a.n, topic: str(a.topic) })) : [];
   const own = isObj(raw.own) ? num(raw.own.cost) : 0;
   const children = [];
@@ -513,6 +515,9 @@ export function prUrl(node, pr) {
 }
 
 const listOf = (x) => (Array.isArray(x) ? x : []);
+const AGENT_ROOT = "background-agents/";
+// record -> its `background-agents/` key segment (parseRecords output keeps its shape)
+const AGENT_SEGMENTS = new WeakMap();
 const isTaskRecord = (r) => r.app === "pi-foreman" && typeof r.id === "string" && r.id.startsWith("background-tasks/");
 // The records that are agents: shell-task records are not (their gear line is the view), they only keep the session busy.
 const agentRecs = (recs) => listOf(recs).filter((r) => !r.task);
@@ -529,7 +534,11 @@ export function parseRecords(text) {
   const rows = Array.isArray(doc.records) ? doc.records : isObj(doc.records) ? Object.entries(doc.records).map(([id, r]) => (isObj(r) ? { id, ...r } : r)) : [];
   return rows
     .filter((r) => isObj(r) && (r.app === "pi-subagents" || r.app === "pi-foreman") && (r.state === "working" || r.state === "blocked"))
-    .slice(0, 50).map((r) => ({ title: str(r.title), state: r.state, msg: str(r.msg), ...(isTaskRecord(r) ? { task: true } : {}) }));
+    .slice(0, 50).map((r) => {
+      const rec = { title: str(r.title), state: r.state, msg: str(r.msg), ...(isTaskRecord(r) ? { task: true } : {}) };
+      if (typeof r.id === "string" && r.id.startsWith(AGENT_ROOT)) AGENT_SEGMENTS.set(rec, r.id.slice(AGENT_ROOT.length));
+      return rec;
+    });
 }
 
 /** The `<machine>/<terminal>` a hand-made `hc attach` terminal follows, from the text of `hc get <terminal> --json` (its `argv`
@@ -674,9 +683,15 @@ export function agentLines(node, recs = [], skip = new Set()) {
   return out;
 }
 
-function bgText(node) {
-  const t = listOf(node.tasks)[0];
-  return t ? `bg: ${t.label || "task"}${t.ageS ? ` ${fmtAge(t.ageS)}` : ""}${node.tasks.length > 1 ? ` +${node.tasks.length - 1}` : ""}` : "";
+// The record key segment of a task id, as extensions/core-adapter/bgrecords.ts forms it.
+const idSegment = (id) => str(id).replace(/[^A-Za-z0-9_+-]/g, "-").slice(0, 12) || "task";
+
+// The gear line is for shell tasks: a task with a `background-agents/<id>` record is a robot row already.
+function bgText(node, recs = []) {
+  const agents = new Set(listOf(recs).map((r) => AGENT_SEGMENTS.get(r)).filter((s) => s !== undefined));
+  const tasks = listOf(node.tasks).filter((t) => !(t.id && agents.has(idSegment(t.id))));
+  const t = tasks[0];
+  return t ? `bg: ${t.label || "task"}${t.ageS ? ` ${fmtAge(t.ageS)}` : ""}${tasks.length > 1 ? ` +${tasks.length - 1}` : ""}` : "";
 }
 
 /** Data of the lines under a top-most session's agent row. `hcStatus` is the status of the joined hc terminal. */
@@ -687,7 +702,7 @@ export function sessionRows(node, hcStatus = null, recs = []) {
   const total = totalCost(node);
   return {
     label: node.name, tier: node.tier || node.rung || "", cost: total, costText: total > 0 ? fmtCost(total) : "",
-    sessions: sessionCount(node), ask: ask || agentsText(node, recs) || bgText(node) || waitText(node), blocked: Boolean(ask),
+    sessions: sessionCount(node), ask: ask || agentsText(node, recs) || bgText(node, recs) || waitText(node), blocked: Boolean(ask),
     prs: sortPrs(node.prs), summary: prSummary(node.prs), status,
   };
 }
@@ -819,10 +834,10 @@ export function statusLine(line) {
 }
 
 /** The line under a top-most session's name: the open ask, else the background task, else the waits. */
-export function detailLine(node) {
+export function detailLine(node, recs = []) {
   if (!isObj(node)) return { text: "", blocked: false };
   const ask = askText(node);
-  return { text: ask || bgText(node) || waitText(node), blocked: Boolean(ask) };
+  return { text: ask || bgText(node, recs) || waitText(node), blocked: Boolean(ask) };
 }
 
 /** Tree of one session: its own agents and its child sessions are siblings, each child session carrying its own agents and
@@ -871,7 +886,7 @@ export function sessionTree(node, { hcStatus = null, recs = [], recsOf = null, r
       id, type: "session", node: n, label: n.name, dim: closed, elsewhere: !isTop && (n.machine || !n.hcTerminal) ? n.machine || "elsewhere" : "", tier: n.tier || n.rung || "", costText: total > 0 ? fmtCost(total) : "", top: isTop,
       sessions: isTop ? sessionCount(n) : 0, status: closed ? "idle" : status,
       urgent: urgentStatus([closed ? "idle" : status, ...children.map((c) => c.urgent)]), children,
-      prs, summary: prSummary(prs), ...splitPrs(prs),
+      prs, summary: prSummary(prs), ...splitPrs(prs), recs: root ? listOf(recs) : recsOf ? listOf(recsOf(n)) : [],
     };
   };
   return build(node, nodeStatus(node, hcStatus, recs), rootId || node.key || node.name || "root", 0, true);
@@ -1035,6 +1050,8 @@ export function prDotState(pr) {
   const fail = count("fail");
   const ok = count("ok");
   const run = count("pending");
+  // not settled (a passed check may be a partial set): the pending state, until a check fails
+  if (pr?.unsettled === true && !fail && ok) return { ring: true, fill: "amber", conflict: pr?.mergeable === "CONFLICTING" };
   return { ring: run > 0, fill: fail ? "red" : ok ? "green" : run ? "amber" : "dim", conflict: pr?.mergeable === "CONFLICTING" };
 }
 
@@ -1055,7 +1072,8 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
     return {
       ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
       baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
-      ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks } : {}),
+      ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks, ...(twin.unsettled ? { unsettled: true } : {}) } : {}),
+      ...(pr.unsettled ? { unsettled: true } : {}),
     };
   });
 }

@@ -111,7 +111,7 @@ import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn,
 import type { PrPackSession } from "./gitpack.ts";
 import { addTracked, readStoreEntry } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
-import { PRWATCH_ENTRY, PrWatches, latestWatches, watchIntervalMs } from "./prwatch.ts";
+import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
 import { parseWakeRules } from "./prwake.ts";
 import { PrHost, branchOf, isTrackedKey, resolveGithubHosts } from "./prhost.ts";
 import { PushNotice } from "./pushnotice.ts";
@@ -834,10 +834,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         idle: () => s.prCtx?.isIdle() ?? true,
         trace: (r) => s.trace?.emit(r),
         intervalMs: () => watchIntervalMs(get(s.config.config, "tools.prWatchSeconds")),
-        settleMs: () => {
-          const v = get(s.config.config, "tools.prSettleSeconds");
-          return (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 90) * 1000;
-        },
+        settleMs: () => settleMsOf(get(s.config.config, "tools.prSettleSeconds")),
         now: () => Date.now(),
         changed: () => s.live?.touch(),
       }),
