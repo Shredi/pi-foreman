@@ -13,6 +13,8 @@ import { r11Rig } from "./_r11rig.ts";
 
 type T = Parameters<typeof r11Rig>[0];
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
+/** A native path in a bash line: the shell parser drops backslashes, so Windows paths go in with forward slashes. */
+const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
 const ROLES = ["explorer", "builder", "reviewer"];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until<X>(f: () => X | undefined | false, ms = 4000): Promise<X> {
@@ -96,8 +98,9 @@ test("guard approval dialog (resolveDecision path): a self-ruling ask opens owne
   const r = await ownerRig(t, V("allow", "read-only-inspection"));
   const dir = r.handoff("up", "child");
   // names a ruling and the handoff dir, and writes (a scratch file): the self-ruling ask, judged in overlayBlock
-  const p = r.call("bash", { command: `cp ${r.project}/.workflow/x ${r.project}/.workflow/scratch/y.md # ruling ${dir}` });
-  await until(() => r.confirms.length === 1, 25_000); // the Python guard round trip: seconds on a slow Windows runner
+  const proj = inBash(r.project);
+  const p = r.call("bash", { command: `cp ${proj}/.workflow/x ${proj}/.workflow/scratch/y.md # ruling ${inBash(dir)}` });
+  await until(() => r.confirms.length === 1);
   const f = await liveBlocked(r, "owner");
   assert.equal(f.blockedKind, "approval");
   r.confirms[0](true);
