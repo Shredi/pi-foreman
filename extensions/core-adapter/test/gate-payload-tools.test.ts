@@ -56,7 +56,7 @@ test("pr_create runs with no classifier call", async (t) => {
   assert.equal(r.reg.calls.length, 0);
 });
 
-test("a codemode payload with rm -rf / is a floor deny, no review call", async (t) => {
+test("a nested shell call of a script with rm -rf / is a floor deny, no review call", async (t) => {
   const r = await rig(t, [V("allow", "read-only-inspection")]);
   const res = (await r.fire("tool_call", { toolName: "bash", toolCallId: "cm1/1", input: { command: "rm -rf /" } })) as { block?: boolean } | undefined; // a nested shell call of a script
   assert.ok(res && res.block);
@@ -71,7 +71,7 @@ test("an unknown tool is unmatched and not dangerous: it runs under mode auto", 
 });
 
 // Prose fields are not floored on raw text: a builder brief legitimately says "never use sudo". Only structured fields are floored.
-test("subagent and intercom prose is not floored on raw text; structured fields are", () => {
+test("subagent and intercom prose is not floored on raw text, structured fields are, and a nested shell call of a script with sudo is refused", () => {
   const env = (cwd: string) => baseFloorEnv(cwd);
   const deps = { env };
   assert.equal(gateDecide("subagent", { agent: "builder", task: "never use sudo; do not run rm -rf /" }, process.cwd(), deps), undefined);
