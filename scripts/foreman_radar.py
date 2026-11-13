@@ -282,6 +282,8 @@ def _tracked_entries(adir):
                 checks.append({"n": r["name"][:120], "state": TRACKED_BUCKET.get(r.get("bucket"), "run"), "label": r["name"][:20]})
         ent = {"repo": repo[:140], "number": number, "title": title[:200], "url": url,
                "state": "draft" if meta.get("draft") is True else "open", "author": "", "checks": checks}
+        if e.get("unsettled") is True:  # the poll holds a pass until the PR watch's settle rule is met: the display shows pending
+            ent["unsettled"] = True
         if isinstance(snap.get("updatedAt"), str) and snap["updatedAt"]:
             ent["updated"] = snap["updatedAt"][:40]
         mergeable = snap.get("mergeable")

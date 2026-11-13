@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
@@ -222,6 +222,8 @@ export interface GateOutcome {
   danger: DangerHit | null;
   /** The parse of a shell tool's line (proposeRule reads it). */
   segments?: ShellSegment[];
+  /** A shell line that fell into the dangerous class: the names of every entry it matches (`danger` is the first); the read question's entry condition reads it. */
+  dangers?: string[];
 }
 
 const baseProg = (p: string): string => (p.split(/[\\/]/).pop() ?? p).toLowerCase().replace(/\.exe$/, "");
@@ -309,7 +311,11 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       };
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
       if (result) return { result, danger: null, segments: segs };
-      return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp, segments: segs, text: cmd }, { roots, platform, cwd, facts }), segments: segs };
+      const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
+      const denv = { roots, platform, cwd, facts };
+      const hits = DANGER_RULES.filter((r) => r.test(dcall, denv));
+      const danger: DangerHit | null = hits.length ? { name: hits[0].name, reason: hits[0].reason } : null;
+      return { result: undefined, danger, segments: segs, ...(hits.length ? { dangers: hits.map((r) => r.name) } : {}) };
     }
     const readField = readFieldOf(readTools, toolName);
     if (PATH_TOOLS.has(toolName) || readField !== undefined) {

@@ -46,7 +46,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 export const PROVIDERS = ["foreman-fake", "foreman-fake-b"];
 export const ROLE_MODELS = ["foreman", "planner", "explorer", "builder", "reviewer", "senior-reviewer", "finalizer"];
 // Classifier models: allow, deny, ask (escalate), invalid (closed JSON verdicts against the whitelist ids A1 / D1), unreachable (throws like review-error).
-export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "child-unreachable", "child-ask", "error", "hang"].map((k) => `review-${k}`);
+export const REVIEW_MODELS = ["allow", "deny", "ask", "invalid", "unreachable", "child-unreachable", "child-ask", "error", "hang", "read", "readvague"].map((k) => `review-${k}`);
 const REVIEW_REPLIES: Record<string, string> = {
   "review-allow": '{"verdict":"allow","entry":"A1","reason":"scripted allow"}',
   "review-deny": '{"verdict":"deny","entry":"D1","reason":"scripted deny"}',
@@ -54,6 +54,13 @@ const REVIEW_REPLIES: Record<string, string> = {
   "review-child-ask": '{"verdict":"allow","entry":"A1","reason":"scripted allow (owner)"}',
   "review-child-unreachable": '{"verdict":"allow","entry":"A1","reason":"scripted allow (owner)"}',
   "review-invalid": '{"verdict":"allow","entry":"not-an-entry"}',
+  // the whitelist call escalates; the read question (its own system text) is answered with an exact read verdict (read) or a vague sentence (readvague)
+  "review-read": '{"verdict":"escalate","entry":null,"reason":"scripted ask"}',
+  "review-readvague": '{"verdict":"escalate","entry":null,"reason":"scripted ask"}',
+};
+const READ_REPLIES: Record<string, string> = {
+  "review-read": '{"verdict":"read","check":{"writes":"no","network":"no","runs":"no","secrets":"no","paths":"inside"},"reason":"scripted read"}',
+  "review-readvague": "this looks fine to me",
 };
 const TAG = /\[\[replay:([A-Za-z0-9_.-]+)\]\]/;
 
@@ -216,7 +223,7 @@ function streamFake(model: Model<Api>, context: TranscriptContext, options?: Sim
   const stream = createAssistantMessageEventStream();
   const summary = [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))]
     .some((t) => typeof t === "string" && t.startsWith("You are a context summarization assistant"));
-  const step: Step = model.id.startsWith("review-") ? { text: childAsk ? REVIEW_REPLIES["review-ask"] : REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
+  const step: Step = model.id.startsWith("review-") ? { text: childAsk ? REVIEW_REPLIES["review-ask"] : [context.systemPrompt, ...(context.messages as { role: string; content: unknown }[]).filter((m) => m.role === "system").map((m) => textOf(m.content))].some((t) => typeof t === "string" && t.startsWith("You are the read judge")) && READ_REPLIES[model.id] ? READ_REPLIES[model.id] : REVIEW_REPLIES[model.id] } : summary ? { text: "fake: summary" } : pickStep(loadScript(), model.id, context.messages as { role: string; content: unknown }[]);
   if (process.env.FOREMAN_FAKE_FROZEN === "1" && !model.id.startsWith("review-") && !summary) freezeTools(step, context);
   const output: AssistantMessage = {
     role: "assistant",
