@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { worktreeTree } from "../commentonly.ts";
 import { headOf, headsAt, reviewedHeadVia, reviewedHeadWhy, treesAt } from "../reviews.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
@@ -16,18 +16,33 @@ interface Rig {
   write: (rel: string, text: string) => void;
 }
 
+// One base repository (a.txt, b.txt, one commit) built once; every rig is a plain copy of it, so a case starts no git for its setup.
+let base: string | null = null;
+after(() => {
+  if (base) rmTestTmp(base);
+});
+
+function baseRepo(): string {
+  if (base) return base;
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-tree-base-")));
+  fs.writeFileSync(path.join(dir, "a.txt"), "a\n");
+  fs.writeFileSync(path.join(dir, "b.txt"), "b\n");
+  const g = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.autocrlf=false", ...a], { encoding: "utf8" });
+  g("init", "-q");
+  g("add", "-A");
+  g("commit", "-q", "-m", "base");
+  base = dir;
+  return dir;
+}
+
 function rig(): Rig {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-tree-")));
+  fs.cpSync(baseRepo(), dir, { recursive: true });
   const git = (...a: string[]) => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "core.autocrlf=false", ...a], { encoding: "utf8" }).trim();
-  git("init", "-q");
   const write = (rel: string, text: string) => {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, rel), text);
   };
-  write("a.txt", "a\n");
-  write("b.txt", "b\n");
-  git("add", "-A");
-  git("commit", "-q", "-m", "base");
   return { dir, git, write };
 }
 
@@ -93,13 +108,16 @@ test("a commit that adds a file not in the snapshot stays head_moved", async () 
   }
 });
 
-test("a commit that changes a mode bit stays head_moved", { skip: process.platform === "win32" ? "mode bits are not tracked the same way on Windows" : false }, async () => {
+test("a commit that changes a mode bit stays head_moved", async () => {
   const r = rig();
   try {
     r.write("a.txt", "a2\n");
     const { start, trees } = await launch(r);
+    // the launch snapshot saw b.txt as 100644 (index copy; with core.fileMode=false on Windows `add -A` keeps the index mode);
+    // update-index sets 100755 in the index whatever core.fileMode says, so the commit tree differs on every platform
     r.git("add", "-A");
     r.git("update-index", "--chmod=+x", "b.txt");
+    assert.match(r.git("ls-files", "-s", "b.txt"), /^100755 /);
     r.git("commit", "-q", "-m", "mode");
     const out = await reviewedHeadVia(start, trees, r.dir, await headOf(r.dir));
     assert.deepEqual(out, { head: null, why: "head_moved" });

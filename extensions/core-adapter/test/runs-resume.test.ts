@@ -74,6 +74,20 @@ test("a resumed run that already ended before its result is done at once", () =>
   assert.equal(c.views()[0].state, "done");
 });
 
+test("an early end is consumed: a run resumed under the same run id is working until its next run end", () => {
+  const c = new ChildRuns();
+  c.onLaunchCall("call1", { launchId: "L1", role: "builder", rung: "model", model: MODEL });
+  c.onRunEnd("run1", 1500);
+  c.onLaunched("call1", "run1", [], 1000);
+  assert.equal(c.views()[0].state, "done");
+  c.onResumed("call2", "run1", "run1", ["builder"], 3000);
+  assert.equal(c.views()[0].state, "working");
+  assert.equal(c.views()[0].endedAt, null);
+  c.onRunEnd("run1", 4000);
+  assert.equal(c.views()[0].state, "done");
+  assert.equal(c.views()[0].endedAt, 4000);
+});
+
 test("livestate file: the resumed row carries the model, one row for the work", () => {
   const d = tmp();
   const c = new ChildRuns();

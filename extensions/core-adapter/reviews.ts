@@ -212,7 +212,8 @@ export async function treesAt(cwds: readonly string[], snap: (cwd: string) => Pr
 }
 
 /** The tree id of `commit` in `cwd`; null on any failure. */
-export function treeOfCommit(cwd: string, commit: string): Promise<string | null> {
+function treeOfCommit(cwd: string, commit: string): Promise<string | null> {
+  if (!/^[0-9a-f]+$/i.test(commit)) return Promise.resolve(null);
   return new Promise((resolve) => {
     execFile("git", ["rev-parse", "--verify", "--quiet", `${commit}^{tree}`], { cwd, timeout: HEAD_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
       const sha = err ? "" : String(stdout).trim().toLowerCase();
