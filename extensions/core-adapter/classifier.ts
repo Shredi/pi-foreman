@@ -10,6 +10,8 @@ import type { GateKind, GateLog } from "./gatelog.ts";
 import type { ProseEntry } from "./permconfig.ts";
 import { acceptProtected } from "./protected.ts";
 import type { ProtectedFacts, ProtectedMatch, ProtectedVerdict } from "./protected.ts";
+import { parseReadVerdict, readRequestText, readSystemPrompt } from "./readclear.ts";
+import type { ReadCall } from "./readclear.ts";
 import { DEFAULT_REVIEW_TIMEOUT_MS, autoReviewTarget, errorKind, reviewTarget, withEstimatedUsage } from "./review.ts";
 import type { RegistryLike, ReviewTarget } from "./review.ts";
 
@@ -54,7 +56,7 @@ export interface ClassifierCtx {
   /** Usage record of the model reply (role `classifier`). */
   recordUsage?: (reply: unknown) => void;
   /** Trace record `classifier {decision, entry, cached, latencyMs}`. */
-  trace?: (rec: { decision: string; entry: string; cached: boolean; latencyMs: number }) => void;
+  trace?: (rec: { decision: string; entry: string; cached: boolean; latencyMs: number; reasoning?: string }) => void;
   log?: GateLog;
   /** One-time session notice (no model configured). */
   notify?: (text: string) => void;
@@ -162,7 +164,16 @@ export function parseVerdict(text: string, prose: ClassifierCtx["prose"]): Parse
 
 type Call = { ok: true; text: string } | { ok: false; cause: "timeout" | "provider_error" | "no_model"; detail: string };
 
-async function callModel(ctx: ClassifierCtx, target: ReviewTarget | null, system: string, text: string): Promise<Call> {
+/**
+ * The reasoning level of the read question's model call. Measured on the small classifier model: at `high` no wrong clear came through, at the lower levels and
+ * with reasoning off wrong clears did. A model without reasoning support gets no such protection. The first classifier question passes no level.
+ */
+export const READ_REASONING = "high";
+
+/** `maxTokens` of a call with reasoning: the reasoning is spent from the same budget, so the answer needs room beyond the default. */
+const REASONING_MAX_TOKENS = 4096;
+
+async function callModel(ctx: ClassifierCtx, target: ReviewTarget | null, system: string, text: string, reasoning?: typeof READ_REASONING): Promise<Call> {
   if (!target) return { ok: false, cause: "no_model", detail: "no classifier model is configured (set providers.<p>.roles.review.model)" };
   const model = ctx.registry.find(target.provider, target.modelId);
   if (!model) return { ok: false, cause: "no_model", detail: `classifier model ${target.provider}/${target.modelId} not found` };
@@ -177,7 +188,7 @@ async function callModel(ctx: ClassifierCtx, target: ReviewTarget | null, system
   });
   try {
     const call = Promise.resolve()
-      .then(() => ctx.registry.complete(model as never, { systemPrompt: system, messages: [{ role: "user", content: text, timestamp: Date.now() }] } as never, { signal: ac.signal, maxTokens: 1024, cacheRetention: "none" } as never))
+      .then(() => ctx.registry.complete(model as never, { systemPrompt: system, messages: [{ role: "user", content: text, timestamp: Date.now() }] } as never, { signal: ac.signal, maxTokens: reasoning ? REASONING_MAX_TOKENS : 1024, cacheRetention: "none", ...(reasoning ? { reasoning } : {}) } as never))
       .catch((e: unknown) => ({ thrown: e instanceof Error ? e.message : String(e) }));
     const r = await Promise.race([call, timeout]);
     if (r === "timeout") return { ok: false, cause: "timeout", detail: `the classifier model did not answer within ${ms} ms` };
@@ -199,14 +210,22 @@ async function callModel(ctx: ClassifierCtx, target: ReviewTarget | null, system
 
 // ------------------------------------------------------------------ classify
 
-export const NO_MODEL_NOTICE = "pi-foreman: no classifier model is configured, so every call of the dangerous class asks you (a child or headless session denies it). Set providers.<p>.roles.review.model in foreman.json.";
+export const NO_MODEL_NOTICE = "pi-foreman: no classifier model is configured, so every call of the dangerous class asks you (a child or headless session denies it), and the read question never runs either. Set providers.<p>.roles.review.model in foreman.json.";
 
 /** The deny text of a prose deny entry. */
 export const denyText = (id: string, text: string): string => `pi-foreman: denied by whitelist rule ${id}: ${flat(text).slice(0, DENY_TEXT_CAP)}`;
 
+export type ReadCause = "model" | "invalid_verdict" | "timeout" | "provider_error" | "no_model";
+export type ReadResult =
+  | { cleared: true; reason: string; cached: boolean; latencyMs: number }
+  | { cleared: false; cause: ReadCause; reason: string; latencyMs: number };
+
 export class Classifier {
   /** `tool\0cwd\0role\0payload` -> the allow entry that covered it. */
   private readonly allowed = new Map<string, string>();
+  /** The read question's cache: an accepted clear, keyed by the line, the cwd, the inside directories, the session kind and the switch value. */
+  private readonly readCleared = new Set<string>();
+  private readStamp: string | undefined;
   private stamp: string | undefined;
   private noticed = false;
   /** The protected-target check's own cache; it clears wherever this one does. */
@@ -215,7 +234,56 @@ export class Classifier {
   /** `/foreman perms reload` and every remember write: the cached allows were decided against an older whitelist. */
   clearCache(): void {
     this.allowed.clear();
+    this.readCleared.clear();
     this.protectedCache.clearCache();
+  }
+
+  /**
+   * The read question (readclear.ts): one model call with its own rulebook, asked after `classify` came back with a well-formed escalate or no entries.
+   * Only the exact `read` shape clears; every other answer and every failure is no clear and is not cached. Writes its own log row (`follows` names the
+   * row of the first question), the trace record and the usage line.
+   */
+  async readClear(call: ReadCall, ctx: ClassifierCtx): Promise<ReadResult> {
+    const now = ctx.now ?? Date.now;
+    const t0 = now();
+    let model = "";
+    try {
+      const st = ctx.stamp?.();
+      if (st !== undefined) {
+        if (this.readStamp !== undefined && st !== this.readStamp) this.readCleared.clear();
+        this.readStamp = st;
+      }
+    } catch {
+      this.readCleared.clear();
+    }
+    const key = [call.tool, call.cwd, call.role, call.kind, call.inside.join("\n"), "readClear=true", call.payload].join("\0");
+    const done = (r: ReadResult, cached = false): ReadResult => {
+      try {
+        ctx.trace?.({ decision: r.cleared ? "allow" : "escalate", entry: "read-clear", cached, latencyMs: r.latencyMs, reasoning: READ_REASONING });
+        ctx.log?.record({ tool: call.tool, layer: cached ? "cache" : "classifier", verdict: r.cleared ? "allow" : "ask", rule: "cause" in r ? `read-clear:${r.cause}` : "read-clear", reason: r.reason, input: call.payload, role: call.role, kind: call.kind, latencyMs: r.latencyMs, cached, reasoning: READ_REASONING, ...(model ? { model } : {}), ...(call.follows ? { follows: call.follows } : {}) });
+      } catch {
+        // trace and log are best effort
+      }
+      return r;
+    };
+    const refuse = (cause: ReadCause, reason: string): ReadResult => done({ cleared: false, cause, reason, latencyMs: now() - t0 });
+    if (this.readCleared.has(key)) return done({ cleared: true, reason: "an earlier identical line was cleared by the read question this session", cached: true, latencyMs: now() - t0 }, true);
+    const target = classifierTarget(ctx.config, ctx.provider, ctx.registry);
+    if (!target && !this.noticed) {
+      this.noticed = true;
+      try {
+        ctx.notify?.(NO_MODEL_NOTICE);
+      } catch {
+        // a notice is best effort
+      }
+    }
+    if (target) model = `${target.provider}/${target.modelId}`;
+    const reply = await callModel(ctx, target, readSystemPrompt(), readRequestText(call, ctx.prose.deny), READ_REASONING);
+    if (reply.ok === false) return refuse(reply.cause, reply.detail);
+    const p = parseReadVerdict(reply.text);
+    if (p.read === false) return refuse(p.cause, p.reason);
+    this.readCleared.add(key);
+    return done({ cleared: true, reason: p.reason, cached: false, latencyMs: now() - t0 });
   }
 
   async classify(call: ClassifyCall, ctx: ClassifierCtx): Promise<ClassifyResult> {

@@ -105,7 +105,7 @@ Every call goes through these steps, in this order. Each step ends the call or p
 5. **Ask rules.** A matching `ask` rule opens the dialog (no remember option). An opaque-line floor ask (an opaque line that names a permissions file, a child push, a git config key, a remote, a force or protected-branch push, or the foreman config next to a gate key) opens the dialog here too.
 6. **Allow rules and built-in allows.** The line is allowed when every segment matches an `allow` rule or a [built-in allow](#built-in-allows).
 7. **Dangerous class.** What is left is checked against the [dangerous class](#the-dangerous-class).
-8. **Mode.** What is left is decided by the [mode](#modes): not dangerous runs under `auto` and `allow`, asks under `ask`, is denied under `deny`; dangerous goes to the classifier (`auto`), the dialog (`ask`), runs (`allow`) or is denied (`deny`). A not dangerous call that [work folders](#work-folders) relax runs under `auto` when the mode is `ask` or `deny` and was not set by a session override.
+8. **Mode.** What is left is decided by the [mode](#modes): not dangerous runs under `auto` and `allow`, asks under `ask`, is denied under `deny`; dangerous goes to the classifier (`auto`), the dialog (`ask`), runs (`allow`) or is denied (`deny`). Under `auto`, a shell line the classifier could not clear and whose only dangerous-class reason is `danger-opaque` goes once more to the [read question](#the-read-question) before the dialog. A not dangerous call that [work folders](#work-folders) relax runs under `auto` when the mode is `ask` or `deny` and was not set by a session override.
 9. **Dialog or deny.** An escalation opens the [owner dialog](#the-owner-dialog), in a child's case in the parent's pane. With nobody to ask it is a deny that says the owner is absent.
 10. **Decision log.** Every decision is one JSON line. See [Decision log](#decision-log).
 
@@ -117,7 +117,7 @@ A handler failure denies (fail safe). A call with no session to decide it in is 
 
 | Mode | A call no rule decided | A dangerous-class call |
 |---|---|---|
-| `auto` (default) | runs | the classifier; what it cannot clear opens the dialog |
+| `auto` (default) | runs | the classifier; what it cannot clear opens the dialog (a line the gate could not read goes through the [read question](#the-read-question) first) |
 | `ask` | opens the dialog | opens the dialog (no classifier call) |
 | `allow` | runs | runs (no classifier call, so whitelist deny sentences do not apply) |
 | `deny` | denied: `pi-foreman: denied: permissions mode is deny (no rule allows this call)` | denied the same way |
@@ -160,6 +160,7 @@ One cheap model call for a dangerous-class call under mode `auto`. It exists to 
 - **Not for protected targets.** A call that matches a protected target runs the protected check, not this classifier.
 - **Timeout.** `gate.reviewTimeoutMs` (default 15000, minimum 100). A timeout escalates.
 - **Model.** The `review` rung of the role map (`providers.<p>.roles.review.model`, `roles.review`), the inexpensive rung by default; the config key keeps its name from the older gate. The call uses no prompt cache and its usage is logged with role `classifier`.
+- **After an escalate.** When the classifier escalates in a well-formed answer, or has no whitelist entry to ask about, a shell line that is dangerous class only because the gate could not read it gets the [read question](#the-read-question). The first call itself is unchanged.
 - **No model configured.** The dangerous class asks you directly. `/foreman doctor` and `/foreman setup` print `WARN no classifier model for provider <p>: ...` and the first dangerous call of a session shows the same text once as a notice naming the key to set. A child or headless session denies such a call.
 
 ## Built-in allows
@@ -341,6 +342,20 @@ A dialog never waits for a fixed time while you are at the machine. Before it op
 
 With nobody to ask, the agent reads: `pi-foreman: denied: nobody is at this session (no pane). The owner is absent; do not wait or retry, report this line and continue with what you can.` A child whose parent has a pane but whose asks are off reads a different text (see Child asks). A floor is never asked.
 
+### The read question
+
+A second, separate model call under mode `auto`, for one narrow case: a shell line whose only dangerous-class entry is `danger-opaque`, meaning the gate could not state some part of it exactly (for example a glob in an operand, a loop, an inline program or a heredoc fed to an interpreter). The question is only this: can the whole line only read files inside the directories of this session and print what it reads? It exists because such a line is mostly an ordinary read, and the dialog for it costs a click each time.
+
+- **When it is asked.** After the classifier call returned a well-formed escalate or had no entries to ask about, and only if the line passed an entry condition built from facts the gate already has (for example: the tool is `bash` under a bash shell, `danger-opaque` is the only dangerous-class entry, the parser saw no write in the line, no word reads like a secret path, the line is not very long). The entry condition is coarse and is not a safety boundary: a secret written as a bare file name, with a glob or from pieces passes it, and a write through a program's own operands inside an unreadable part is not seen by it. It keeps lines from the judge that need not reach it. A timeout, a provider error, no model, an unusable first answer or `gate.readClear` off never reach it, and a floor, a deny rule or any earlier step decides before it.
+- **What it sees.** Its own fixed system text with principles and marked examples (not a complete list); the session kind, the directories counted as inside, the gate's own note on each part it could not read, your deny sentences as fenced data, and the line in fences with a random nonce. Never an allow sentence, never your last message, never tool output.
+- **Reasoning.** The read question asks the classifier model with reasoning at a fixed high level, because lower levels were measured to let wrong clears through; the log row and the trace event carry it as `reasoning`. A model without reasoning support gets no such protection.
+- **What may clear.** Only the exact answer `{"verdict": "read", "check": {"writes": "no", "network": "no", "runs": "no", "secrets": "no", "paths": "inside"}, "reason": "..."}`. Anything else keeps today's route: a well-formed escalate, a vague or malformed answer, a timeout, a provider error, no model. A child has the same authority; its non-clear goes to its parent's dialog as a child ask does today.
+- **Cache.** A clear is cached for the session by tool, cwd, inside directories, session kind, the switch value and the exact line. A non-clear is never cached. The cache is cleared wherever the classifier's is. The first call is asked again for the same line; the cache saves only the read call.
+- **What you see.** A clear is a log row with `rule` `read-clear` (a non-clear is `read-clear:<cause>`), whose `follows` names the row of the first call; a trace `review` event with `entry` `read-clear`; usage with role `classifier`; one notice at the first clear of a session; and a `/retro` line that counts the lines the judge cleared. `foreman perms suggest` does not count a line the judge cleared as costly.
+- **Switch.** `gate.readClear` (default `true`). A project or session layer may only set `false`. The question is asked only when the value is the boolean `true` or the key is absent; any other value (for example the string `"false"`) counts as off, and `false` restores the dialog for these lines.
+- **No classifier model.** Without a classifier model configured (the dangerous class then asks you directly) the read question never runs and these lines go to the dialog as before.
+- **Trial.** A trial of the rulebook on a real model measures that model on one day and is no guarantee; see Known limits.
+
 ### Child asks
 
 `gate.childAsk` is `"parent"` (default) or `"deny"`. A child's gate runs the same steps with the mode, profile and session override of its launch. When a child's call escalates (a dangerous-class call the classifier could not clear, an ask rule, a self-modification hit is denied outright for a child) and `gate.childAsk` is `parent`:
@@ -354,6 +369,8 @@ With nobody to ask, the agent reads: `pi-foreman: denied: nobody is at this sess
 The child stops waiting after `gate.askTimeoutMs` (default 900000, 15 minutes), sooner when the parent's presence turns away. A child denied because child asks are off (its own `gate.childAsk` is `"deny"`, or its parent launched it with them off) reads `pi-foreman: denied: this call needs the owner's answer and child asks are off (gate.childAsk is "deny"). Report this line to the foreman, who can run it or ask the owner. The call was: <cause>.` A child whose parent has no pane (a headless parent) reads the no-pane text above, followed by `The call was: <cause>.` Both are denies; nothing else about the decision changes.
 
 A parent's remember applies to its running children, which re-read the permission files at each decision.
+
+A child's dangerous-class line that the classifier could not clear and that the gate could not read goes through the [read question](#the-read-question) with the directories the child may read without a rule (for example its worktree and scratch dir) as the inside directories. A line the judge does not clear takes the route above, unchanged.
 
 **What a child never asks about.** A child's parent is never asked about a text-only floor hit on a line the parser could not read (a push, a git config key, a remote, a policy or config file): that is the deterministic deny with the rephrase hint described under [Floors](#floors). A line that only reads (every program in the read class, no runner, no inline code, no output redirect except an fd dup or the null device) is not stopped by the `policy-file` and `config-keys` text floors, so `ls -la config/` is decided locally and does not ask. A loop (`for f in config/*.json; do grep -n foo "$f"; done`) binds no variable: its body stays opaque, hence dangerous class, for a literal list and for one the gate cannot read (`for f in $(ls)`) alike, and it opens no dialog. A heredoc into the child's own scratch dir that names `git config` in its body is data and does not ask either. Only the cases in the list above (a dangerous-class call the classifier could not clear, an ask rule) open the parent's dialog.
 
@@ -421,9 +438,9 @@ One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`:
 | `floor` | a floor or a self-modification rule denied | the floor or rule name |
 | `rule` | a pattern rule decided | the pattern text |
 | `default` | a built-in allow | the built-in name |
-| `classifier` | the classifier allowed, denied or escalated | `prose:A3`, `prose:D1`, or the escalation cause |
+| `classifier` | the classifier allowed, denied or escalated | `prose:A3`, `prose:D1`, or the escalation cause; the read question writes `read-clear` for a clear or `read-clear:<cause>` for a non-clear, with a `follows` field holding the id of the first call's row |
 | `protected` | the protected check allowed or denied | `protected:P2`, or `protected:P2;classifier.deny:D1` for a deny |
-| `cache` | the classifier's cached allow was reused | `prose:A3` |
+| `cache` | the classifier's cached allow was reused | `prose:A3`, or `read-clear` for a cached read clear |
 | `mode` | the mode decided (no rule, dangerous under `allow` or `deny`) | `mode:no-rule`, `mode:allow:danger-...`, `mode-deny` |
 | `dialog` | an owner answered | the `danger-*` name or the cause |
 | `child-ask` | a parent answered or timed out for a child | the run id and the outcome (an answer carries the dialog answer, for example `allow-once`) |
@@ -440,6 +457,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.reviewTimeoutMs` | classifier call timeout (default 15000, minimum 100) | lower only |
 | `gate.askTimeoutMs` | how long a child waits for its parent's ruling (default 900000); nothing else uses it | lower only |
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
+| `gate.readClear` | `true` (default): the classifier model may clear a line the gate could not read when it judges the line only reads inside the session's directories, see [The read question](#the-read-question); `false` restores the dialog; it does nothing when no classifier model is configured; only the boolean `true` or an absent key turns it on | `false` only |
 | `gate.protected.check` | `model` (default: the check may allow reads and, while you are present, writes), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks) | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
@@ -455,7 +473,18 @@ Every other `gate.*` key is user or overlay only (`gate.protected.check` may tig
 
 - Another extension loaded before the gate, or one that mutates `event.input` after it, could change the input between the decision and the execution. The gate is first in load order; the doctor warns when any extension precedes it.
 - Extension-registered providers: the classifier call goes through Pi's registry, so a provider an extension registers at runtime must be loaded before the first classification.
-- The `bash` tool is parsed as bash. When the resolved shell is not a bash binary (a custom `shellPath`, or the Unix `sh` fallback) the gate treats the tool as opaque.
+- The `bash` tool is parsed as bash, whatever shell Pi resolves; the parser does not read another shell's syntax. When the resolved shell is not a bash binary (a custom `shellPath`, or the Unix `sh` fallback) the read question is not asked for the line.
+- The read question rests on the classifier model alone; no rule of the gate checks its answer beyond the shape. The fence and the instruction to treat the line as data are measured against injection, not guaranteed. Inside an unreadable segment or an inline program, what the gate cannot read is what the judge reads: a read of a secret, a read outside the session's directories and the classes it never clears (a write, the network, a program the line starts) all rest on the judge. A pattern deny rule does not see inside an unreadable segment, and a deny sentence the first call was unsure about rests on the judge as well. The cache saves only the read call. What was measured (one day, not a guarantee): the trial of 2026-11-13 used a corpus of 72 lines (17 that should clear, 50 that must not clear, 6 of them under an owner deny sentence, and 5 hostile lines that only read but address the judge) on a small model of the Claude Haiku class, the classifier model the bundled bridge presets give.
+
+  | | Reasoning at the fixed high level (20 full runs) | No reasoning (17 full runs) |
+  | --- | --- | --- |
+  | must-not-clear lines cleared | 0 of 1000 calls | 8 of 850 calls |
+  | hostile lines cleared | 1 of 100 calls | 3 of 85 calls |
+  | should-clear lines cleared | 340 of 340 | 282 of 289 |
+
+  Lower reasoning levels were not clean (low was worse than none). A stronger model without reasoning had no wrong clear in 5 runs. The judge is a small model: a weaker model, or one without reasoning support, weakens the guard, and nobody measured other model families. Tokens per call were not measured; the added time was about a quarter of a second per call.
+
+  The judge reduces accidents and is no defence against a determined agent: an agent can already write a script file and run it unasked (the honest gap under [Floors](#floors)). A glob or a recursive read inside the worktree can match a file such as `.env` there, as `grep -r` in the worktree does today without a model, and what an inline program loads from files is invisible to the judge.
 - The decision is made on the command string, not at run time: another local user can swap a `/tmp` path for a symlink in between.
 - Git config in the repository (`diff.external`, a pager) still applies to `git diff` and `git log`.
 - The git floors and the dangerous class read plain git command lines. Not a complete list of what they do not read: `git clone --template=<dir>` (its hooks run during the clone), `git submodule foreach`, `git bisect run`, `git difftool -x`, `git ls-remote --upload-pack`, a one-off `-c alias.*`, `git fetch <remote> +a:b`, `git checkout <file>`, commands inside a script file, an alias or a runner, and forms that remove a config variable (`env -u GIT_CONFIG_COUNT ...`). The ref-moving entries apply to subagents only; the main session's own forms are not in the class. The stripped git credentials of a subagent are a speed bump, not a boundary: only an operating-system sandbox or a separate operating-system user would be one, and pi-foreman builds neither. Branch protection on the server, administrators included, is the boundary (see [safety](safety.md)).
@@ -470,7 +499,7 @@ The `bash` tool on native Windows runs Git Bash, so the bash AST applies as on L
 
 ## Parser and prior art
 
-The gate parses with `unbash` 6 (pinned exact, upgraded only with the tests green). Its AST types are isolated in `shellast.ts`, because the v5 to v6 change shows node shapes can move.
+The gate parses with `unbash` 6 (pinned exact, upgraded only with the tests green). Its AST types are isolated in `shellast.ts`, because the v5 to v6 change shows node shapes can move. The read question adds no parse rule: where the parser cannot state a line, a model reads it, and nothing in the table below is widened for it. The parser's closed variable grammar, the quoted-pattern relaxation for `grep` and `rg` and the "line only reads" exceptions on some text floors stay, because they spare common lines a model call; a new line shape goes to the judge, not to a new parse rule.
 
 | Option | Install | Platforms | Accuracy | Verdict |
 |---|---|---|---|---|
