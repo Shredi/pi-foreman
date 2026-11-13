@@ -45,7 +45,7 @@ import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
-import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
+import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
 import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -122,7 +122,7 @@ import type { Spawner } from "./spawn.ts";
 import { ADDON_BG_TOOL, FOREMAN_BG_TOOL, isShellTool, mapTool } from "./toolmap.ts";
 import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
-import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadWhy, toplevelOf, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
+import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
@@ -217,7 +217,7 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, ranksOf, rolesOfModel } from "./ranks.ts";
+import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -429,6 +429,9 @@ interface Session {
   launchHeadsByCall: Map<string, Map<string, string | null>>;
   /** Foreman only: HEAD per directory at launch, by run id until the run ends (reviews.ts reviewedHead). */
   launchHeads: Map<string, Map<string, string | null>>;
+  /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
+  launchTreesByCall: Map<string, Map<string, string | null>>;
+  launchTrees: Map<string, Map<string, string | null>>;
   /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a session opened by another session reloads an approval only from the parent's ruling.md, roundstate.ts). */
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
@@ -486,11 +489,14 @@ export interface AdapterDeps {
   piVersion?: () => Promise<string | null>;
   /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
+  /** Tests: the working-tree snapshot taken at a reviewer launch (default: commentonly.ts worktreeTree); the shared rigs pass a no-op, so the run end keeps head_moved. */
+  worktreeSnapshot?: (cwd: string) => Promise<string | null>;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
   const spawner = deps.spawner ?? defaultSpawner;
   const platform = deps.platform ?? process.platform;
+  const launchSnapshot = deps.worktreeSnapshot ?? worktreeTree;
   // Deferred tool declarations (deferred.ts): the hidden set is fixed at session start; the harness tool_search finds hidden tools and un-hides one only without codemode.
   const deferred = { patterns: [] as string[], loaded: new Set<string>(), hidden: [] as string[], planMode: false, warnings: [] as string[], hint: "", trace: (_r: Record<string, unknown>): void => {} };
   // Skill visibility (skillvisibility.ts): the split is made once per session so the prefix stays stable.
@@ -964,6 +970,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       touchUps: new Set(),
       launchHeadsByCall: new Map(),
       launchHeads: new Map(),
+      launchTreesByCall: new Map(),
+      launchTrees: new Map(),
       plan: null,
       script: newScriptState(),
       planReviews: new PlanReviews(),
@@ -1946,6 +1954,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ownerScript: "on",
       // Owner-readable plans, questions and notes (ownertext.ts; "off" only drops the added lines).
       ownerReadable: "on",
+      // The working-ahead rules ("off"/absent only renders the baseline before them).
+      proactive: "on",
       // ceremony.planReview at heavy: the plan-review step before the checkpoint (planreview.ts).
       planReview: planReviewOn(s.config.config, "heavy") ? "on" : "off",
       // ladder.reviewPanel with shadow models: the foreman issues the listed shadow launches (panel.ts).
@@ -2263,6 +2273,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
           const start = s.launchHeads.get(runId);
           s.launchHeads.delete(runId);
+          const startTrees = s.launchTrees.get(runId);
+          s.launchTrees.delete(runId);
           const counting = reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId)).filter((x) => x.counts && x.verdict !== null);
           let nth = 0;
           for (const r of reviewsWithOutput(countingView(data, reviewResultsOfRunEnd(data, s.reviewRuns.byRun.get(runId))))) {
@@ -2271,7 +2283,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             s.reviewFailOpen = r.verdict === "fail";
             s.reviewSync = s.reviewSync.then(async () => {
               const cwd = r.cwd ?? s.cwd;
-              const h = reviewedHeadWhy(start, cwd, await headOf(cwd));
+              const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
               const top = await toplevelOf(cwd);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
@@ -2279,7 +2291,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
               if (r.outputPath) appendHeadLine(r.outputPath, h);
-              s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why });
+              s.trace?.emit({ event: "review_recorded", role: r.role, runId, verdict: r.verdict, head: h.head, why: h.why, ...(h.via ? { via: h.via } : {}) });
               persistCeremonyState(s);
             });
           }
@@ -2499,6 +2511,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       roundFlow: mainWorkflowReadable(rounds, platform).filter((d) => !d.endsWith("/*")),
       handoffs: ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       ...(s.isChild && launchBinding?.handoffDir ? { childHandoff: launchBinding.handoffDir } : {}),
+      ...(!s.isChild && ownChildHandoff(s) ? { ownHandoff: ownChildHandoff(s) } : {}),
+      ...(!s.isChild ? { childHandoffs: childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)) } : {}),
       openedHandoffs: openedHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)),
       child: s.isChild,
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
@@ -3359,6 +3373,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const rungs: RungContext = { roles: resolution.roles, ranks: ranksOf(s.config.config), top: sizingTop };
           sizingRecords = sizedPlans.map((p) => sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
         }
+        const equalLines: string[] = []; // the launch lines of the builders that ladder.equalOnStrongRisk let run on the foreman's own model
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
@@ -3390,9 +3405,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (occ.overrode.size > 0 && roles.length === 0) continue;
             const no = rankRefusalFor(s.config.config, foremanModel, m, roles);
             if (!no) continue;
+            // ladder.equalOnStrongRisk (ranks.ts): a tie of the foreman's own model with the builder's strong model, for builder entries only whose risk tag sent them to the strong rung.
+            const strongModel = get(resolution.roles, "builder.strong.model");
+            const carrying = launchEntries(input).filter((e) => typeof e.agent === "string" && e.model === m && !occ.overrode.has(e));
+            const plans = carrying.map((e) => sizedPlans.find((p) => p.entry === e));
+            const tie = carrying.length > 0 && foremanModel !== null && splitLevel(m).base === foremanModel && typeof strongModel === "string" && splitLevel(strongModel).base === foremanModel
+              && rankTie(s.config.config, foremanModel, m, "builder") && carrying.every((e, i) => e.agent === "builder" && plans[i]?.role === "builder" && plans[i]?.target === "strong" && (plans[i]?.probe.length ?? 0) > 0);
+            if (tie && equalOnStrongRisk(s.config.config)) {
+              const risk = [...new Set(plans.flatMap((p) => p?.probe ?? []))].join(",");
+              s.trace?.emit({ event: "rank_equal_model", role: "builder", model: foremanModel, foreman: foremanModel, policy: no.policy, risk });
+              equalLines.push(`pi-foreman: builder runs on the foreman's own model ${foremanModel} (ladder.equalOnStrongRisk, risk: ${risk}).`);
+              continue;
+            }
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
-            return { block: true, reason: marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message };
+            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (tie ? ` ${equalKeySentence()}` : "") };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null);
@@ -3411,7 +3438,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
-        notices = launched.notices.map((n) => n.text);
+        notices = [...launched.notices.map((n) => n.text), ...equalLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
@@ -3503,7 +3530,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
         const action = actionOf(input);
         if (action === "resume" || (action === null && subagentAgents(input).some((r) => REVIEW_ROLES.includes(r)))) {
-          capSet(s.launchHeadsByCall, event.toolCallId, await headsAt(launchCwds(input, ctx.cwd)));
+          const cwds = launchCwds(input, ctx.cwd);
+          const [heads, trees] = await Promise.all([headsAt(cwds), treesAt(cwds, launchSnapshot)]);
+          capSet(s.launchHeadsByCall, event.toolCallId, heads);
+          capSet(s.launchTreesByCall, event.toolCallId, trees);
         }
       }
       // Kept for the tool result only once the launch passed every check.
@@ -4073,14 +4103,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (children are not checked). */
-  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. */
+  /** The handoff dir where this session is the child side (its `PI_FOREMAN_HANDOFF_DIR`, else the dir whose `child` file names it), absolute, or undefined. For a session-level child (not a subagent) its child-written names are writable by the shell guard and by the gate (`ownHandoff`). */
   function ownChildHandoff(s: Session): string | undefined {
     const env = (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim();
     const dir = env || childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))[0];
     return dir && (path.isAbsolute(dir) || path.win32.isAbsolute(dir)) ? dir : undefined;
   }
 
+  /** Plan D3: the foreman's bash/powershell may not write project files, at any tier (subagent children are not checked here; their writes meet the gate's child floor; a session-level child runs it with its handoff dir). */
   async function shellWriteBlock(ctx: ExtensionContext, toolName: "bash" | "powershell", input: Record<string, unknown>): Promise<{ block: true; reason: string } | undefined> {
     try {
       const s = await ensureSession(ctx);
@@ -4271,16 +4301,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
         const heads = s.launchHeadsByCall.get(event.toolCallId);
         s.launchHeadsByCall.delete(event.toolCallId);
+        const trees = s.launchTreesByCall.get(event.toolCallId);
+        s.launchTreesByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
         const launched = s.scratch.onLaunched(boundLaunchId(event.input), runId);
         finishScratch(s, launched);
         closeChildAsk(s, launched);
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
-          s.childRuns.onLaunched(event.toolCallId, runId, s.launchedRoles.get(runId) ?? []);
+          const rowRoles = s.launchedRoles.get(runId) ?? [];
+          if (actionOf(event.input as Record<string, unknown>) === "resume") s.childRuns.onResumed(event.toolCallId, runId, resumeTarget(event.input as Record<string, unknown>), rowRoles);
+          else s.childRuns.onLaunched(event.toolCallId, runId, rowRoles);
           radarTouch(s, ctx);
         }
         if (heads && runId) capSet(s.launchHeads, runId, heads);
+        if (trees && runId) capSet(s.launchTrees, runId, trees);
         const rl = s.reviewRuns.byCall.get(event.toolCallId);
         s.reviewRuns.byCall.delete(event.toolCallId);
         if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);

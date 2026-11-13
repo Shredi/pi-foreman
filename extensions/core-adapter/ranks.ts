@@ -14,6 +14,8 @@
 // foreman can launch nothing ranked-checked either (fail closed). With no ranks anywhere the
 // policy is inert (ASSUMPTION A1), so the shipped defaults behave as before.
 // `ladder.rolePolicy.<role>` overrides the policy for one role; an explicit launch `model:` is the model checked.
+// `ladder.equalOnStrongRisk` (default false; index.ts rank loop): under "below" a builder whose risk tag sent it to its strong rung may
+// run on the foreman's own model when that is exactly the strong model; `rankTie` says whether a refusal is such a tie of two ranked models.
 import { get, type Json } from "./config.ts";
 import { splitLevel } from "./launchmodel.ts";
 
@@ -37,6 +39,11 @@ export function childPolicy(config: Json | undefined): ChildPolicy {
 export function rolePolicy(config: Json | undefined, role?: string): ChildPolicy {
   const v = role ? get(config, `ladder.rolePolicy.${role}`) : undefined;
   return (CHILD_POLICIES as readonly unknown[]).includes(v) ? (v as ChildPolicy) : childPolicy(config);
+}
+
+/** ladder.equalOnStrongRisk: true only for a literal `true`. */
+export function equalOnStrongRisk(config: Json | undefined): boolean {
+  return get(config, "ladder.equalOnStrongRisk") === true;
 }
 
 /** Every provider's valid ranks entries, keyed by provider (key order kept). */
@@ -94,6 +101,19 @@ export function rankRefusal(config: Json | undefined, foremanModel: string | nul
   if (fTier === null) return refuse(`the foreman model ${foreman} is unranked, so no child rank can be checked against it.`);
   const ok = policy === "below" ? cTier > fTier : cTier >= fTier;
   return ok ? null : refuse(`child model ${requested} (tier ${cTier}) is not ${policy === "below" ? "below" : "at or below"} the foreman model ${foreman} (tier ${fTier}).`);
+}
+
+/** Whether `childModel` and the foreman are both ranked at the same tier while `role`'s policy is "below" (never with an unranked model). */
+export function rankTie(config: Json | undefined, foremanModel: string | null, childModel: string, role: string): boolean {
+  const ranks = ranksOf(config);
+  if (ranks.size === 0 || !foremanModel || rolePolicy(config, role) !== "below") return false;
+  const f = tierOf(ranks, foremanModel);
+  return f !== null && f === tierOf(ranks, childModel);
+}
+
+/** The sentence a tie refusal gets while ladder.equalOnStrongRisk is off. */
+export function equalKeySentence(): string {
+  return "A builder launch whose risk tag sends it to the strong rung may run on the foreman's own model when ladder.equalOnStrongRisk is true (user or overlay config).";
 }
 
 /** The first refusal of `childModel` for any of `roles` (each under its own rolePolicy); no roles = ladder.childPolicy. */

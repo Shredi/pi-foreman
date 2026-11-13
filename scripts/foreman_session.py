@@ -261,6 +261,9 @@ def footer(label, plan_first):
         "handoff dir. Its file `parent` holds the parent's intercom id; read it again before every",
         "message (the parent can change). Send each message with the intercom tool (`send`) to that id.",
         "",
+        "Write the files below (`plan.md`, `result.md`, `ask.md`) with the write tool or with `cp <file> <handoff dir>/<name>`: both",
+        "work in every permission mode. A shell redirect (`echo >`, a heredoc) may ask for approval in some modes.",
+        "",
     ]
     n = 1
     if plan_first:
@@ -314,6 +317,9 @@ def remote_footer(label, plan_first):
         "handoff dir. You cannot reach the parent with the intercom tool: report with the commands below, run through",
         "your bash tool. Each prints one JSON line and exits 1 when the notice was not recorded. A notice is a label on your",
         "own hc terminal that names the file by its sha256 and size; the parent fetches the file itself.",
+        "",
+        "Write the files below (`plan.md`, `result.md`, `ask.md`) with the write tool or with `cp <file> <handoff dir>/<name>`: both",
+        "work in every permission mode. A shell redirect (`echo >`, a heredoc) may ask for approval in some modes.",
         "",
     ]
     n = 1
@@ -1250,32 +1256,39 @@ def installed_addon_ids(adir):
 
 
 def project_resources(cwd, adir):
-    """Conservative: cwd or an ancestor holds `.pi` or `.agents` (not the global one next to the agent dir), or cwd
-    holds `extensions` or `skills`."""
+    """Conservative: the first path (cwd, then each ancestor nearest first: `.pi`, `.agents`; not the global one next to
+    the agent dir; then `extensions`, `skills` in cwd) or None when cwd and its ancestors hold none of them."""
     own = Path(adir).resolve().parent
     for d in [cwd] + list(cwd.parents):
         for n in (".pi", ".agents"):
             if (d / n).is_dir() and (d / n).resolve() != own:
-                return True
-    return any((cwd / n).is_dir() for n in ("extensions", "skills"))
+                return d / n
+    return next((cwd / n for n in ("extensions", "skills") if (cwd / n).is_dir()), None)
+
+
+def resource_label(cwd, resource):
+    """`resource` relative to `cwd` for a refusal text: forward slashes, no control characters, at most 200 characters."""
+    return strip_control(os.path.relpath(str(resource), str(cwd)).replace(os.sep, "/"))[:200]
 
 
 def check_trust(adir, cwd, trust, dry_run):
     """Refuse `remote_untrusted` for a folder with project resources and no stored `true` decision, unless `trust`
     (then grant it). The path pi-foreman granted, else None."""
-    if not project_resources(cwd, adir) or managed_worktree(cwd, adir):
+    resource = project_resources(cwd, adir)
+    if resource is None or managed_worktree(cwd, adir):
         return None
     import foreman_trust
     if foreman_trust.decision(adir, cwd) is True:
         return None
+    first = resource_label(cwd, resource)
     if not trust:
-        raise Refused("%s has project resources and Pi has no trust decision for it on this machine; "
-                      "open with --trust to trust it" % cwd, "remote_untrusted")
+        raise Refused("%s has project resources (first: %s) and Pi has no trust decision for it on this machine; "
+                      "open with --trust to trust it" % (cwd, first), "remote_untrusted")
     if dry_run:
         return None
     added = foreman_trust.grant(adir, cwd)
     if foreman_trust.decision(adir, cwd) is not True:
-        raise Refused("%s is not trusted: a stored decision refuses it" % cwd, "remote_untrusted")
+        raise Refused("%s is not trusted (first: %s): a stored decision refuses it" % (cwd, first), "remote_untrusted")
     return os.path.realpath(str(cwd)) if added else None
 
 
@@ -1897,9 +1910,11 @@ def cmd_open_remote(a):
     mirror.mkdir(parents=True, exist_ok=True)
     info = {k: probe.get(k) for k in ("protocol", "foremanVersion", "piVersion", "platform")}
     made = reply.get("hc") if isinstance(reply.get("hc"), dict) else None
+    seen = probe.get("intercomMachineName")
+    origin_machine = (strip_control(seen) or None) if isinstance(seen, str) else None
     row = {"label": a.label, "child": child, "parent": parent, "parentAddress": address, "handoff": str(mirror),
            "cwd": a.cwd, "model": a.model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": status,
-           "last": None, "machine": name, "originMachine": probe.get("intercomMachineName"), "remoteHandoff": reply["handoff"],
+           "last": None, "machine": name, "originMachine": origin_machine, "remoteHandoff": reply["handoff"],
            "handoffName": handoff_name, "mirror": str(mirror), "remote": info, "lastError": None, "briefs": 0}
     if made and isinstance(made.get("address"), str) and VALUE_RE.match(made["address"]):
         row.update(backend="hc", hc={"address": "%s/%s" % (name, made["address"]) if "/" not in made["address"] else made["address"],

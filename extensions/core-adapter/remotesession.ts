@@ -78,18 +78,23 @@ export function writeMirror(file: string, data: string): void {
   fs.renameSync(tmp, file);
 }
 
+/** `name` without C0, DEL and C1 control characters (removed, like strip_control in scripts/foreman_session.py). */
+export const cleanMachine = (name: string): string => name.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+
 /**
  * Apply a notice from a cross-machine sender to the registry entry it matches: `machine` set, `originMachine` equal to
- * the origin machine (case-insensitive), `child` equal to the origin session id, status open, pending or closing.
+ * the origin machine (both cleaned of control characters, case-insensitive; a name empty after cleaning matches nothing), `child` equal to the origin session id, status open, pending or closing.
  * Returns null when nothing matches (silently ignored); a result with `changed: false` and a `message` is shown only.
  * `checked`: the caller already compared the exact bytes with the hash and size, so the UTF-8 re-hash of the text is skipped.
  */
 export function applyRemoteNotice(reg: Registry, origin: RemoteOrigin, notice: RemoteNotice, write: (file: string, data: string) => void = writeMirror, now: Date = new Date(), checked = false): RemoteApplied | null {
+  const from = cleanMachine(origin.machine).toLowerCase();
   const entry = [...reg.sessions].reverse().find(
     (s) =>
       typeof s.machine === "string" &&
       typeof s.originMachine === "string" &&
-      s.originMachine.toLowerCase() === origin.machine.toLowerCase() &&
+      from !== "" &&
+      cleanMachine(s.originMachine).toLowerCase() === from &&
       s.child === origin.sessionId &&
       (s.status === "open" || s.status === "pending" || s.status === "closing"),
   );

@@ -186,6 +186,8 @@ Where a finding goes:
 
 Writes are atomic (temp file, then replace) under a lock file next to the store.
 
+The foreman reads open entries at a pause and takes up the ripe ones; the rule is in [ceremony](ceremony.md#working-ahead).
+
 ## Recurrence and aging
 
 - A finding seen again bumps `count` and `last_seen`. The same session counts once: its id is in `sessions`, so
