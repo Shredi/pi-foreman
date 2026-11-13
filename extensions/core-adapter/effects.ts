@@ -211,6 +211,13 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   return false;
 }
 
+/** `word` (run from `cwd`) names a child-written file of the session's own handoff dir (`handoffWrite`); false without that root. */
+export function handoffTarget(c: EffectCtx, cwd: string | null, word: string): boolean {
+  if (!c.handoffWrite) return false;
+  const abs = resolveWord(c, cwd, word);
+  return !!abs && c.handoffWrite(abs, realSpelling(c, abs) ?? abs);
+}
+
 /**
  * `abs` with its deepest existing ancestor through the native realpath (win32: 8.3 short names expanded; posix: a symlinked dir such as `/var` -> `/private/var`), else null.
  * posix never resolves the final component: it may be a link an `rm` / `mv` acts on (`OUT/lnk` -> `WT/file` is still a write outside); realInside judges what a write goes through.
@@ -404,7 +411,7 @@ function sedEffect(c: EffectCtx, cwd: string | null, words: string[]): { cls: Ef
   return parsed.files.every((f) => f === "-" || contained(c, cwd, f, false)) ? { cls: "read", label: "sed-read" } : { cls: "unknown" };
 }
 
-const WRITE_FLAGS: Record<string, RegExp> = { mkdir: /^-[pv]+$/, touch: /^-[acm]+$/, cp: /^-[Rapfnv]+$/, mv: /^-[fnv]+$/, rm: /^-[rRfdv]+$/, tee: /^-[aip]+$/ };
+export const WRITE_FLAGS: Record<string, RegExp> = { mkdir: /^-[pv]+$/, touch: /^-[acm]+$/, cp: /^-[Rapfnv]+$/, mv: /^-[fnv]+$/, rm: /^-[rRfdv]+$/, tee: /^-[aip]+$/ };
 
 function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[]): EffectClass {
   const ops: string[] = [];
@@ -425,6 +432,8 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
   const writes = prog === "cp" ? ops.slice(-1) : ops;
   // rm and mv never reach into the shared /tmp (as tmp-scratch: `rm -rf /tmp/...` stays reviewed)
   const where = prog === "rm" || prog === "mv" ? [...(c.root ? [c.root] : []), ...(c.scratch ?? [])] : undefined;
+  // mv into an existing dir: every moved name was judged above, so the dir itself needs no check of its own
+  let movedIntoDir = false;
   if (prog === "cp" || prog === "mv") {
     // the path really written: the destination itself, or `dest/<basename of src>` in an existing dir,
     // and neither may be a symlink (cp writes through it; `d/f -> outside` may be committed)
@@ -436,11 +445,13 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
       const x = px(c);
       for (const s of ops.slice(0, -1)) {
         const t = x.join(dest, x.basename(s));
-        if (!contained(c, cwd, t, true, where) || isLink(t)) return "write-out";
+        // an mv destination may be a child-written handoff name (`where` skips the handoff exemption of `contained`); the source rule stays
+        if (!(contained(c, cwd, t, true, where) || (prog === "mv" && handoffTarget(c, cwd, t))) || isLink(t)) return "write-out";
       }
+      movedIntoDir = prog === "mv";
     }
   }
-  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o))) ? "write-in" : "write-out";
+  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o)) || (prog === "mv" && i === writes.length - 1 && (movedIntoDir || handoffTarget(c, cwd, o)))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);
@@ -708,13 +719,27 @@ export function editorBackupCommand(command: unknown): boolean {
   return units.some(editorBackupDelete);
 }
 
-/** The effect of one segment of a split chain (shellchain.ts), with `cwd` the cwd it runs in. */
+/** A write redirect (not `<`, not an fd dup) into a child-written name of the session's own handoff dir. */
+export function handoffRedirect(r: Redirect, c: EffectCtx | null, cwd: string | null): boolean {
+  return !!c && r.op !== "<" && r.op !== "dup" && handoffTarget(c, cwd, r.target);
+}
+
+/**
+ * The effect of one segment of a split chain (shellchain.ts), with `cwd` the cwd it runs in. A redirect into a handoff name is accepted like one into
+ * scratch; the segment is then a write (a `cat f > result.md` is never a read).
+ */
 export function segmentEffect(c: EffectCtx, cwd: string | null, seg: Segment): SegmentEffect {
+  const e = segmentEffectBase(c, cwd, seg);
+  if (e.cls === "read" && seg.redirects.some((r) => handoffRedirect(r, c, cwd))) return { ...e, cls: "write-in" };
+  return e;
+}
+
+function segmentEffectBase(c: EffectCtx, cwd: string | null, seg: Segment): SegmentEffect {
   const no = (cls: EffectClass, known: boolean, unit = seg.text): SegmentEffect => ({ cls, known, cwd, unit });
   if (refusedProgram(seg.words)) return no("unknown", true);
   // R31c: a network read has its own redirect rules (netread.ts), so it is judged before the generic redirect check
   if (netReadSegment(seg, c.role, c.netOut ?? [], cwd)) return { cls: "net-read", known: true, label: "net-read", cwd, unit: seg.text };
-  for (const r of seg.redirects) if (!redirectOk(r, c, cwd, c.scratch ?? [], plat(c))) return no(r.op === "<" ? "unknown" : "write-out", true);
+  for (const r of seg.redirects) if (!redirectOk(r, c, cwd, c.scratch ?? [], plat(c)) && !handoffRedirect(r, c, cwd)) return no(r.op === "<" ? "unknown" : "write-out", true);
   let words = seg.words;
   let unit = seg.text;
   let wrapped = false;

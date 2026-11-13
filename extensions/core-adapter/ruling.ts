@@ -197,7 +197,7 @@ export function selfRulingAsk(toolName: string, input: Record<string, unknown>, 
   return { kind: "ask", reason: "pi-foreman: this line writes, names a ruling and a handoff dir; a session never writes its own parent's ruling, so it needs approval.", rule: "self-ruling" };
 }
 
-/** The handoff files a session writes in a dir where it is the child (the child-role names; `ruling*`, `brief*`, `steer*`, `parent` and `child` are never among them). */
+/** The handoff files a session writes in a dir where it is the child (the child-role names; a broader pattern for another purpose, not the shell guard's allow-list `HANDOFF_CHILD_NAMES` in pathrules.ts; `ruling*`, `brief*`, `steer*`, `parent` and `child` are never among them). */
 const CHILD_ROLE_NAME = /^(?:plan|result)\.md$|^(?:update|ask)[A-Za-z0-9_-]*\.md$/;
 const HEREDOC_TARGET = "[A-Za-z0-9._/@%+,-][A-Za-z0-9._/@%+=,-]*";
 const HEREDOC_A = new RegExp(`^cat[ \\t]+(>>?)[ \\t]*(${HEREDOC_TARGET})[ \\t]+<<'([A-Za-z_][A-Za-z0-9_]*)'[ \\t]*$`);

@@ -784,20 +784,32 @@ function walkScript(script: Script, src: string, sc: Scope): void {
 
 /**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
+ * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
+ * one `parse_error` segment, none of the partial ones. Any other error propagates.
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
-  const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform };
-  const sc: Scope = { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
+  const start = (): Scope => {
+    const run: Run = { out: [], vars: new Map(), assignOk: new Set(), env: opts.env ?? {}, platform: opts.platform ?? process.platform };
+    return { run, cwd: opts.cwd ?? null, wrappers: [], depth: 0, stdin: false, redirects: [], heredoc: false, reason: null };
+  };
+  const unreadable = (): ShellSegment[] => {
+    const sc = start();
+    seg(sc, "", [], "parse_error");
+    return sc.run.out;
+  };
+  const sc = start();
   let script: Script | undefined;
   try {
     script = parse(command);
   } catch {
     script = undefined;
   }
-  if (!script || (script as any).errors?.length) {
-    seg(sc, "", [], "parse_error");
-    return run.out;
+  if (!script || (script as any).errors?.length) return unreadable();
+  try {
+    walkScript(script, command, sc);
+  } catch (e) {
+    if (e instanceof RangeError) return unreadable();
+    throw e;
   }
-  walkScript(script, command, sc);
-  return run.out;
+  return sc.run.out;
 }
