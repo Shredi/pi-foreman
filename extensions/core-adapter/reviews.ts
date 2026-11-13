@@ -207,8 +207,8 @@ export function reviewedHeadWhy(start: ReadonlyMap<string, string | null> | unde
 }
 
 /** Working-tree snapshot (`snap`, commentonly.ts worktreeTree) of each directory when a reviewer run starts. */
-export async function treesAt(cwds: readonly string[], snap: (cwd: string) => Promise<string | null>): Promise<Map<string, string | null>> {
-  return new Map(await Promise.all(cwds.map(async (c) => [c, await snap(c).catch(() => null)] as [string, string | null])));
+export async function treesAt(cwds: readonly string[], snap?: (cwd: string) => Promise<string | null>): Promise<Map<string, string | null>> {
+  return new Map(await Promise.all(cwds.map(async (c) => [c, snap ? await snap(c).catch(() => null) : null] as [string, string | null])));
 }
 
 /** The tree id of `commit` in `cwd`; null on any failure. */
