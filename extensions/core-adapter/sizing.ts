@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { get, type Json } from "./config.ts";
+import { fromJsonText } from "./jsontext.ts";
 import { locateRepo } from "./gitdrift.ts";
 import { splitLevel } from "./launchmodel.ts";
 import { hasStrongRung, ranksAbove, launchEntries } from "./ladder.ts";
@@ -61,7 +62,9 @@ function count(v: unknown): boolean {
   return typeof v === "number" && Number.isInteger(v) && v >= 0;
 }
 
-function parseOne(size: unknown, risk: unknown): { declared: Declared; error?: string } {
+function parseOne(sizeRaw: unknown, riskRaw: unknown): { declared: Declared; error?: string } {
+  const size = fromJsonText(sizeRaw, "object");
+  const risk = fromJsonText(riskRaw, "array");
   const declared: Declared = { size: null, risk: null };
   if (size !== undefined) {
     if (!isObj(size)) return { declared, error: "size is not an object" };
@@ -195,12 +198,14 @@ export function takeLaunchFlags(input: Json): { entries: Map<Json, LaunchFlags>;
   const list = launchEntries(input);
   const own = (e: Json): { reads?: number; install?: boolean } => {
     const out: { reads?: number; install?: boolean } = {};
+    const reads = fromJsonText(e.reads, "number");
+    const install = fromJsonText(e.install, "boolean");
     if (e.reads !== undefined) {
-      if (typeof e.reads === "number" && Number.isInteger(e.reads) && e.reads >= 1) out.reads = e.reads;
+      if (typeof reads === "number" && Number.isInteger(reads) && reads >= 1) out.reads = reads;
       else bad("reads is not a positive integer");
     }
     if (e.install !== undefined) {
-      if (typeof e.install === "boolean") out.install = e.install;
+      if (typeof install === "boolean") out.install = install;
       else bad("install is not true or false");
     }
     return out;

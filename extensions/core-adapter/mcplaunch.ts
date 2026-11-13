@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
 import { allowedMcp, allowedMcpNamed, directMaxTools, inCeiling, roleMcpEntries, serverKey, splitEntry } from "./mcpscope.ts";
+import { fromJsonText } from "./jsontext.ts";
 import { groupEntryObjects, singleLaunchRole } from "./usage.ts";
 
 type Json = Record<string, unknown>;
@@ -64,7 +65,8 @@ const refuse = (reason: McpRefusal["reason"], text: string): McpPlan => ({ refus
 export const namedCapText = (count: number, cap: number): string =>
   `pi-foreman: launch mcp names ${count} tools as server/tool, over the cap of ${cap} (mcp.directMaxTools); a child gets named tools up front only up to the cap. Name fewer tools: the rest of a server named whole (mcp: ["server", "server/tool"]) is found with tool_search.`;
 
-function checkList(value: unknown, role: string, configRoles: unknown, cap: number): { list?: string[]; text?: string; reason?: McpRefusal["reason"] } {
+function checkList(raw: unknown, role: string, configRoles: unknown, cap: number): { list?: string[]; text?: string; reason?: McpRefusal["reason"] } {
+  const value = fromJsonText(raw, "array");
   if (!Array.isArray(value) || !value.every((x) => typeof x === "string" && splitEntry(x) !== null)) {
     return { text: "pi-foreman: launch mcp must be an array of non-empty strings, each `server` or `server/tool`" };
   }

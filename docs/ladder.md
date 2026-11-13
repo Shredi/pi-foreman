@@ -150,6 +150,8 @@ A builder launch may carry two extra top-level fields (like `reason`, per `tasks
 - `size: { files: string[], largestFileLines?: number, modules?: number }`: the files the builder will touch.
 - `risk: string[]`, from `guard, permission, parser, concurrency, security, design`.
 
+The upstream schema does not declare these keys, so some provider paths send them as JSON text (`size: '{"files": ["a.py"]}'`, `risk: '["guard"]'`). The adapter accepts a string that parses, once, to exactly the declared type (an object for `size`, an array for `risk`) and runs every check on the parsed value; the launch fields `mcp` (array), `reads` (number) and `install` (`true`/`false`) get the same strict treatment. Any other string is refused as before.
+
 Malformed fields (wrong type, unknown tag, negative or non-integer number, a directory in `files`) refuse the foreman's launch with `[sizing_invalid]` and a one-line fix. Other roles ignore the fields.
 
 **Measurement.** The adapter reads at most 20 named files, each against the entry's `cwd` (else the session cwd), inside that checkout only. A missing file counts 0 lines (new file); a file over 1 MiB or an unreadable one counts as large; files past the 20th count as large. `modules` counts distinct components: the first two directory segments of each file, leaving out root files, `docs/`, `*.md` and test directories. The claim only raises: the rule sees `max(declared, measured)`.
