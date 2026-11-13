@@ -35,7 +35,6 @@ const realSpawn = cp.spawn;
 cp.spawn = ((file: string, args: string[] = [], ...rest: unknown[]) => {
   const script = args.find((a) => a.endsWith(".py")) ?? "";
   const answered = args.includes(PROBE_CODE) || script.endsWith("foreman_config.py") || script.endsWith("ledger_guard_spawn.py") || script.endsWith("foreman_findings.py");
-  if (!answered) console.log('REAL', args.filter((a) => a.endsWith('.py') || a.length < 12).join(' '));
   if (!answered) return (realSpawn as (...a: unknown[]) => unknown)(file, args, ...rest);
   const child = Object.assign(new EventEmitter(), { stdout: Object.assign(new EventEmitter(), { setEncoding: () => undefined }), stderr: Object.assign(new EventEmitter(), { setEncoding: () => undefined }), kill: () => true, stdin: Object.assign(new EventEmitter(), { end: (input?: string) => {
     const run = script.endsWith("ledger_guard_spawn.py") || script.endsWith("foreman_findings.py") ? Promise.resolve({ code: 0, stdout: script.endsWith("foreman_findings.py") ? '{"findings": []}' : "", stderr: "", timedOut: false }) : launchSpawner(file, args, { input, timeoutMs: 1000 });
@@ -94,6 +93,8 @@ before(async () => {
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();
   mock.timers.reset();
+  cp.spawn = realSpawn;
+  syncBuiltinESMExports();
 }, { timeout: 20_000 });
 
 test("a pending gate ask (the child's ask in the parent's pane) stays pending after a notice for another child; no ruling is written", async (t) => {

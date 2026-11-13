@@ -13,14 +13,14 @@ import { writeChildAsk } from "../childask.ts";
 import { r11Rig } from "./_r11rig.ts";
 import type { Spawner } from "../spawn.ts";
 
-/** The in-process spawner, plus the `roles` the config CLI adds for a provider (a launch reads the role's model): the builder's, as the CLI gives it for this config. */
 const GUARDS = new Set(["shell_write_guard.py", "destructive_guard.py", "ledger_guard_spawn.py"]);
 /**
  * The three guard lines this file sends through the gate (the install line, the self-ruling cp line, a subagent launch) are lines every Python guard
  * lets pass (stdout empty, exit 0: the real guards were run on them); the dialogs under test come from the classifier and the gate after the guards.
- * The real guards on `pip install requests` run in gate-child-ask-headless.test.ts and gate-remember-away-wiring.test.ts, on a self-ruling cp line
- * in handoff-parent-shell-ruling.test.ts and r14-self-ruling-names.test.ts, on a launch in the tests/replay goldens. Any other line goes to the real spawner.
+ * The stubbed answers (empty allow) were checked against the real guards for these exact lines; tests/test_shell_write_guard.py pins the guard itself,
+ * and a launch runs through the real guard in the tests/replay goldens. Any other line goes to the real spawner.
  */
+/** The in-process spawner, plus the `roles` the config CLI adds for a provider (a launch reads the role's model): the builder's, as the CLI gives it for this config. */
 const launchSpawner: Spawner = async (command, args, options) => {
   if (args.includes("--provider")) {
     const r = await inprocSpawner(command, args, options);
