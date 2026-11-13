@@ -1824,7 +1824,8 @@ async function main(argv) {
     // Windows: Pi's bash tool needs Git Bash; point `shellPath` at it when unset. A missing Git Bash fails the run after every other step is done.
     // PI_FOREMAN_GITBASH_PLATFORM is the test seam (PI_FOREMAN_PLATFORM fakes Windows for the env step alone).
     // PI_FOREMAN_GITBASH_PROGRAMFILES is the test seam for the Program Files root: when set, it is the only root searched
-    // (every case variant of ProgramFiles and ProgramFiles(x86) is dropped, since Windows sets those itself at process creation).
+    // (every case variant of ProgramFiles and ProgramFiles(x86) is dropped: on a Windows CI runner the setup child found the real Program Files root
+    // although the test passed a temp one, so the seam names the only root searched and the other spellings must not add to it).
     const shellPlatform = process.env.PI_FOREMAN_GITBASH_PLATFORM || process.platform;
     const programFilesSeam = process.env.PI_FOREMAN_GITBASH_PROGRAMFILES;
     let gitBashMissing = false;

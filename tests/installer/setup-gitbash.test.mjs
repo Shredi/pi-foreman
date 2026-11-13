@@ -134,14 +134,20 @@ test("windows: the Program Files seam replaces the root, it does not add to it (
     const cwd = path.join(base, "project");
     const seamRoot = path.join(base, "pf");
     const realRoot = path.join(base, "real-pf");
+    // Decoys under the other spellings: a ProgramFiles(x86) root, and a lower-case programfiles key where the platform's env is case-sensitive.
+    const decoyX86 = path.join(base, "pf86");
+    const decoyLower = path.join(base, "pflower");
     fs.mkdirSync(agentDir);
     fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
     fs.mkdirSync(seamRoot);
-    fs.mkdirSync(path.join(realRoot, "Git", "bin"), { recursive: true });
-    fs.writeFileSync(path.join(realRoot, "Git", "bin", "bash.exe"), "");
+    for (const root of [realRoot, decoyX86, decoyLower]) {
+      fs.mkdirSync(path.join(root, "Git", "bin"), { recursive: true });
+      fs.writeFileSync(path.join(root, "Git", "bin", "bash.exe"), "");
+    }
     const userFile = path.join(agentDir, "settings.json");
     fs.writeFileSync(userFile, `${JSON.stringify({ packages: ["git:github.com/Shredi/pi-foreman"] }, null, 2)}\n`);
-    const env = childEnv(setupEnv({ agentDir, base, programFiles: seamRoot, platform: "win32" }), { ProgramFiles: realRoot });
+    const env = childEnv(setupEnv({ agentDir, base, programFiles: seamRoot, platform: "win32" }), { ProgramFiles: realRoot, "ProgramFiles(x86)": decoyX86 });
+    if (process.platform !== "win32") env.programfiles = decoyLower;
     const r = spawnSync(process.execPath, [SETUP, "--no-addons", "--agent-dir", agentDir], { cwd, encoding: "utf8", env });
     const out = `${r.stdout}${r.stderr}`;
     assert.notEqual(r.status, 0, out);
