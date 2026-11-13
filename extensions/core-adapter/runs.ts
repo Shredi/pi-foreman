@@ -130,8 +130,31 @@ export class ChildRuns {
     const p = this.pending.get(callId);
     this.pending.delete(callId);
     const list = p?.role ? [p.role] : [...roles];
-    this.rows.set(runId, { runId, launchId: p?.launchId ?? null, roles: list, rung: p?.rung ?? null, model: p?.model ?? null, startedAt: now, endedAt: this.ended.get(runId) ?? null });
+    this.rows.set(runId, { runId, launchId: p?.launchId ?? null, roles: list, rung: p?.rung ?? null, model: p?.model ?? null, startedAt: now, endedAt: this.takeEnded(runId) });
     if (this.rows.size > 64) this.rows.delete(this.rows.keys().next().value as string);
+  }
+
+  /**
+   * tool_result of a resume that got a run id: the row of the resumed run (`target`) continues under the
+   * new id, with its launch id, model, rung, roles and start time, and works again. An unknown target is
+   * a plain launch.
+   */
+  onResumed(callId: string, runId: string, target: string | null, roles: readonly string[], now = Date.now()): void {
+    const prev = target ? this.rows.get(target) : undefined;
+    if (!target || !prev) {
+      this.onLaunched(callId, runId, roles, now);
+      return;
+    }
+    this.pending.delete(callId);
+    if (target !== runId) this.rows.delete(target);
+    this.rows.set(runId, { ...prev, runId, endedAt: this.takeEnded(runId) });
+  }
+
+  /** The early end recorded for `runId`, consumed so a later resume under the same id starts working. */
+  private takeEnded(runId: string): number | null {
+    const at = this.ended.get(runId) ?? null;
+    this.ended.delete(runId);
+    return at;
   }
 
   onRunEnd(runId: string, now = Date.now()): void {

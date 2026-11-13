@@ -615,7 +615,7 @@ function wakeText(d: SessionDeps, label: string, o: OpenOutcome): string {
   if (o.kind === "declined") return `foreman_session_open ${label}: declined by the owner; nothing was opened`;
   if (o.kind === "opened") {
     const e = openEntryOf(d, label);
-    return e ? describeEntry(e, `foreman_session_open ${label}: opened`) : `foreman_session_open ${label}: opened\n${o.r.text}`;
+    return e ? describeEntry(e, `foreman_session_open ${label}: opened`, `. Wait for its plan or result with foreman_wait kind child on ${label}.`, "starting (live.json appears once the session has started)") : `foreman_session_open ${label}: opened\n${o.r.text}`;
   }
   if (o.kind === "cancelled") return o.r.text;
   return `foreman_session_open ${label}: open failed: ${o.r.text}`;
@@ -635,15 +635,18 @@ function terminalOf(e: SessionEntry): string {
   return "a terminal started by hand from the printed command";
 }
 
-/** `<lead> in <terminal>, handoff dir <dir>`, with the intercom id and whether live.json shows it live. */
-function describeEntry(e: SessionEntry, lead: string): string {
+/**
+ * `<lead> in <terminal>, handoff dir <dir>`, with the intercom id and whether live.json shows it live, then `tail`.
+ * The default tail adopts an existing session; a session just opened has no live.json yet, so its caller says `notLive` plainly.
+ */
+function describeEntry(e: SessionEntry, lead: string, tail = ". Adopt it: foreman_wait kind child on its label, or foreman session brief; close it or pick another label to open a new one.", notLive = "not live yet (no live.json)"): string {
   const live = e.handoff ? readLive(e.handoff) : null;
   return [
     `${lead} in ${terminalOf(e)}, handoff dir ${e.handoff ?? "(unknown)"}`,
     `intercom id ${live?.intercomId ?? e.child}`,
     `status ${e.status ?? "?"}`,
-    live ? "live (live.json is written)" : "not live yet (no live.json)",
-  ].join("; ") + ". Adopt it: foreman_wait kind child on its label, or foreman session brief; close it or pick another label to open a new one.";
+    live ? "live (live.json is written)" : notLive,
+  ].join("; ") + tail;
 }
 
 /** The spawn of `foreman_session.py open` (never killed by an abort: it ends with the registry entry or a message) and its result. */
