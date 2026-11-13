@@ -143,3 +143,38 @@ test("findGitBash: the WSL launcher in the Windows directory is skipped", () => 
 test("findGitBash: returns null off Windows", () => {
   assert.equal(findGitBash({ env: { ProgramFiles: "C:\\PF" }, platform: "linux", exists: () => true }), null);
 });
+
+test("windows: a dry run after shellPath was removed says would-write, closes as dry run complete, and leaves the file alone", () => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-gitbash-dry-")));
+  try {
+    const agentDir = path.join(base, "agent");
+    const cwd = path.join(base, "project");
+    const programFiles = path.join(base, "pf");
+    fs.mkdirSync(agentDir);
+    fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+    fs.mkdirSync(programFiles);
+    const bashExe = path.join(programFiles, "Git", "bin", "bash.exe");
+    fs.mkdirSync(path.dirname(bashExe), { recursive: true });
+    fs.writeFileSync(bashExe, "");
+    const userFile = path.join(agentDir, "settings.json");
+    fs.writeFileSync(userFile, `${JSON.stringify({ packages: ["git:github.com/Shredi/pi-foreman"] }, null, 2)}\n`);
+    const env = { ...process.env, PATH: noBashOnPath(), PI_CODING_AGENT_DIR: agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: `${base}-calls.jsonl`, PI_FOREMAN_PI_AI_DATA: EMPTY_DATA, PI_FOREMAN_GITBASH_PLATFORM: "win32", ProgramFiles: programFiles, "ProgramFiles(x86)": path.join(base, "none") };
+    const run = (args) => spawnSync(process.execPath, [SETUP, "--no-addons", ...args, "--agent-dir", agentDir], { cwd, encoding: "utf8", env });
+    const first = run([]);
+    assert.equal(first.status, 0, `${first.stdout}${first.stderr}`);
+    const settled = JSON.parse(fs.readFileSync(userFile, "utf8"));
+    assert.equal(settled.shellPath, bashExe);
+    delete settled.shellPath;
+    fs.writeFileSync(userFile, `${JSON.stringify(settled, null, 2)}\n`);
+    const before = fs.readFileSync(userFile, "utf8");
+    const dry = run(["--dry-run"]);
+    const out = `${dry.stdout}${dry.stderr}`;
+    assert.equal(dry.status, 0, out);
+    assert.match(out, /would write shellPath/);
+    assert.doesNotMatch(out, /up to date/);
+    assert.ok(out.trimEnd().endsWith("pi-foreman: dry run complete, nothing written."), out);
+    assert.equal(fs.readFileSync(userFile, "utf8"), before);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});

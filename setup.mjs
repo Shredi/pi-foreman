@@ -1829,7 +1829,7 @@ async function main(argv) {
       const userFile = path.join(agentDir, "settings.json");
       const bash = findGitBash({ platform: shellPlatform, pathApi: process.platform === "win32" ? path.win32 : path });
       const result = ensureShellPath({ userFile, projectFiles: [path.join(projectDir, ".pi", "settings.json")], bash, dry, log: say });
-      if (result === "written" && !dry) anyChange = true;
+      if (result === "written") anyChange = true;
       gitBashMissing = result === "missing";
       if (gitBashMissing) say(`  missing step: Git Bash not found. Install Git for Windows (https://git-scm.com/download/win), or set "shellPath" in ${userFile} to your bash.exe, then run foreman setup again.`);
     }
