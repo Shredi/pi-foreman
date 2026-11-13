@@ -1,6 +1,7 @@
-// The no-bash notice as the adapter wires it (index.ts): a win32 session whose shell lookup finds no bash says so once at session
-// start, not again on a second start of the same session, and not when the user set the shell variables. The lookup is the
-// adapter's `getShellConfig` seam, so no host bash is needed.
+// The no-bash notice as the adapter wires it (index.ts): a win32 session whose shell lookup finds no bash says so once per session
+// start, adds none on later events of that session (per turn or per command), and says nothing when the user set PI_BG_SHELL.
+// The lookup is the adapter's `getShellConfig` seam, so no host bash is needed. A second start (reload or resume) builds a new
+// session and shows the notice again; this file does not test that.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
