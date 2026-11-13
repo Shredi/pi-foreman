@@ -1,6 +1,6 @@
 # Install and configure
 
-> Covers installing pi-foreman as a Pi package, `foreman setup`, what setup writes, the `foreman.json` provider map, config layers, updating and removing, developing from a checkout, Windows notes and the Claude bridge login.
+> Covers installing pi-foreman as a Pi package, `foreman setup`, what setup writes, the `foreman.json` provider map, config layers, updating and removing, developing from a checkout, Windows notes (a fresh Windows machine, step by step) and the Claude bridge login.
 > Read it when you set up pi-foreman, change models, or after pulling a pin change.
 > Run `foreman setup --dry-run` first; a second run changes nothing and says "up to date". `foreman setup` here means `/foreman setup` in Pi, or `bin/foreman setup` in a checkout.
 
@@ -401,13 +401,34 @@ in `foreman.json` (`null` auto-detects; the adapter tries `python.path` before `
 Node. Python is found as `py -3`, then `python`; the Microsoft Store alias stub is rejected. If none works, install
 Python 3.13+ from python.org (or `winget install Python.Python.3.13`) with the py launcher.
 
+### A fresh Windows machine, from zero
+
+Pi's `bash` tool and `foreman_bg` run commands in Git Bash, so Git for Windows is a prerequisite, not an extra. In a new PowerShell window:
+
+1. **Git for Windows**: `winget install Git.Git` (or the installer from git-scm.com). Keep the default location (`C:\Program Files\Git`); setup also finds `bash.exe` on `PATH`, but never the WSL launcher in `C:\Windows\System32`.
+2. **Node 22.19 or newer**: `winget install OpenJS.NodeJS.LTS`. Check with `node --version`.
+3. **Python 3.13 or newer** with the py launcher: `winget install Python.Python.3.13`. Check with `py -3 --version`.
+4. **Open a new terminal**, so `PATH` has all three, then **Pi**: `npm i -g @earendil-works/pi-coding-agent@1.5.2` (the pinned version is in `packages.lock.json`). Check with `pi --version`.
+5. **The package**: `pi install git:github.com/Shredi/pi-foreman`.
+6. **Setup**: `foreman setup --dry-run`, read it, then `foreman setup` (inside Pi `/foreman setup`, or `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs` before Pi has loaded the package; `<agentDir>` is `%USERPROFILE%\.pi\agent` unless `PI_CODING_AGENT_DIR` is set).
+
+On Windows setup also finds Git Bash (`%ProgramFiles%\Git\bin\bash.exe`, then `%ProgramFiles(x86)%\Git\bin\bash.exe`, then `bash.exe` on `PATH`) and handles Pi's `shellPath` setting in `<agentDir>\settings.json`:
+
+- `shellPath` unset: setup writes it and prints `shell: wrote shellPath <path> to <settings file>`. It changes no other key, and never writes `shellPath` to a project settings file.
+- `shellPath` set (in the user or the project settings): left as it is; setup prints `shell: shellPath already set in <file> (<value>); kept`.
+- Git Bash not found and `shellPath` unset: setup finishes every other step, then prints `missing step: Git Bash not found. Install Git for Windows ...` and exits non-zero. Install Git for Windows (step 1), or set `"shellPath"` in `<agentDir>\settings.json` to your `bash.exe`, and run `foreman setup` again. A rerun is safe: it changes only what is still missing.
+
+`--dry-run` prints `shell: would write shellPath ...` and writes nothing; `--remove` and `--preview` do not touch the setting. Off Windows setup prints nothing about the shell.
+
+First check: start `pi` in a project, then ask the foreman to run `foreman_bg` with `echo hello; uname -s` and read the log file it names; the log shows `hello` and `MINGW64_NT-...`. If Git Bash is still not found when the session starts, pi-foreman prints one line at the start (`no bash found, so background commands run in cmd.exe ...`); fix Git Bash as above and restart Pi. Setting `PI_BG_SHELL` or `PI_BG_SHELL_PATH` yourself turns that line off.
+
 ## Claude bridge: log in once
 
 When the active provider is `claude-bridge`, pi-foreman points `CLAUDE_CONFIG_DIR` at an empty folder,
 `<agent dir>/pi-foreman/claude-config/`, so the host's Claude Code settings, hooks, plugins and
 `CLAUDE.md` do not load into every bridge turn (config key `bridge.isolateClaudeConfig`: `"auto"` by
 default, `true`, or `false`; a project file cannot set it). The folder starts without a login, and the
-installer does not log in; setup prints the log-in hint only when no login is found (credentials file, macOS keychain entry or `CLAUDE_CODE_OAUTH_TOKEN`). Do one of these once:
+installer does not log in; setup prints the log-in hint (worded "if you are not logged in yet") only when it finds no login: a credentials file in that folder, a macOS keychain entry, or `CLAUDE_CODE_OAUTH_TOKEN` in setup's own environment. A token you exported only in another shell is invisible to setup, so the hint can appear although you are logged in; ignore it then. Do one of these once:
 
 ```sh
 CLAUDE_CONFIG_DIR=<agent dir>/pi-foreman/claude-config claude    # then /login
