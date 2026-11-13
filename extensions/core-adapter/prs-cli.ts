@@ -13,7 +13,7 @@ import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { resolveGithubHosts } from "./prhost.ts";
 import type { GithubHosts } from "./prhost.ts";
-import { pollWatchBatch } from "./prwatch.ts";
+import { holdPass, pollWatchBatch, settleMsOf, settledOf } from "./prwatch.ts";
 import type { CommentEntry, RunOp, SourceStatus, WatchPoll } from "./prwatch.ts";
 import { inScope, noAnswerRun, parsePrSources, runSource, sourceComments, sourceRuns } from "./prsources.ts";
 import type { PrContext, SourceCfg, SourceResult } from "./prsources.ts";
@@ -70,6 +70,8 @@ export interface PollDeps {
 
 /** What the tracked step needs to run the configured PR sources. */
 interface SourceEnv {
+  /** tools.prSettleSeconds in ms (the PR watch's key and default): how long a pass without a required-check set is held. */
+  settleMs: number;
   cfgs: SourceCfg[];
   run: NonNullable<PollDeps["runSource"]>;
   trace: (rec: Record<string, unknown>) => void;
@@ -157,7 +159,8 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
       try {
         const ps = parsePrSources(get(config.config, "tools.prSources"));
         if (ps.errors.length > 0) res.error ??= ps.errors[0];
-        const sx: SourceEnv = { cfgs: ps.sources, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
+        const settle = get(config.config, "tools.prSettleSeconds");
+        const sx: SourceEnv = { settleMs: settleMsOf(settle), cfgs: ps.sources, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
         if (!deps.runSource) sx.cfgs = [];
         await trackedStep(deps, py.info.executable, res, hosts.hosts, sx);
       } catch (err) {
@@ -280,7 +283,11 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
       }
       const row = rows.get(rk);
       const meta = row ? metaOf(row.row) : prev?.meta;
-      prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, at: now };
+      const s = settledOf(snap.runs, snap.required);
+      const hold = s.result === "pass" && sx.settleMs > 0 && !snap.required?.length ? holdPass(prev?.passSince, snap.head, snap.runs, now, sx.settleMs) : null;
+      const held = hold?.held ?? false;
+      const unsettled = s.result !== "fail" && snap.runs.some((x) => x.bucket === "passed") && (!s.settled || held);
+      prs[k] = { repo: p.repo, number: p.number, snap, ...(meta ? { meta } : {}), okAt: row?.startedAt ?? now, ...(hold ? { passSince: hold.since } : {}), ...(unsettled ? { unsettled: true as const } : {}), at: now };
       if (fetched) newComments[k] = { updatedAt: snap.updatedAt, comments: fetched.slice(0, MAX_COMMENTS).map(cap) };
     } else if ("error" in r && r.error === DEADLINE) {
       // keeps its entry and its turn
