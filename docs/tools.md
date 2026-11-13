@@ -260,7 +260,7 @@ The rule needs `ceremony.reviewBeforePr`. With it off there is no draft handling
 
 **No checks.** A repository with no checks may become ready. The no-checks count restarts when the draft state changes, so no checks must be confirmed once on the draft and once on the non-draft PR before the no-checks ready line goes out. A repository that runs CI only outside draft therefore shows CI running after the PR leaves draft, not ready.
 
-**A hand-set draft state is overruled.** A draft state you set by hand on the host (in the web page or with `gh pr ready`) for a managed PR is overruled at the next watch tick, once the tracker store shows it. The harness does not know holds such as "merge only after I have looked". Use `tools.prDraft` off for a PR that you want to hold by hand.
+**A hand-set draft state is overruled.** A draft state you set by hand on the host (in the web page or with `gh pr ready`) for a managed PR is overruled at the next watch tick, once the tracker store shows it. The harness does not know holds such as "merge only after I have looked".
 
 ### Sources
 
