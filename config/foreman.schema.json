@@ -220,6 +220,7 @@
         "maxTurns": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 }, "description": "Assistant-turn cap per role (L1: builder 100); wins over childMaxTurns, which stays the fallback for roles without an entry. A child that reaches it traces child_turn_limit. User or overlay config only." },
         "rolePolicy": { "type": "object", "additionalProperties": { "type": "string", "enum": ["below", "at-or-below", "any"] }, "description": "Per-role override of childPolicy, e.g. {\"reviewer\": \"at-or-below\", \"builder\": \"below\"}. Unset role = childPolicy. User or overlay config only." },
         "childPolicy": { "type": "string", "enum": ["below", "at-or-below", "any"], "description": "Which child models a foreman may launch by providers.<p>.ranks: below = strictly lower tier than the foreman's model (default), at-or-below = the same tier too, any = no check. Inert while no provider has ranks." },
+        "equalOnStrongRisk": { "type": "boolean", "description": "true: a builder launch whose risk tag (ladder.sizing.strongRisks) sends it to the strong rung may run on the foreman's own model when that model is exactly the builder's strong model, although the child policy below would refuse the tie (default: false; docs/roles.md). Every other launch keeps the policy. A project or session can only set false." },
         "reviewerClimb": {
           "type": "object",
           "additionalProperties": false,
