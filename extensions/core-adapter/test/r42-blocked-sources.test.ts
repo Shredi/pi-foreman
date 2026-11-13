@@ -1,6 +1,7 @@
 // r42: the real blocked sources through the adapter rig: what each opens in the live file (`blockedOn`, `blockedKind`) and the one
 // `blocked_open` / `blocked_closed` pair per dialog (the classed source emits; Pi's prompt events add one only for a dialog nobody classed).
 import "./_hermetic-env.mjs";
+import { inprocSpawner } from "./_read-clear-inproc.ts"; // first after the preload: the git answers are in place before the adapter loads
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -10,6 +11,34 @@ import { liveDir } from "../livestate.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 import { writeChildAsk } from "../childask.ts";
 import { r11Rig } from "./_r11rig.ts";
+import type { Spawner } from "../spawn.ts";
+
+/** The in-process spawner, plus the `roles` the config CLI adds for a provider (a launch reads the role's model): the builder's, as the CLI gives it for this config. */
+const GUARDS = new Set(["shell_write_guard.py", "destructive_guard.py", "ledger_guard_spawn.py"]);
+/**
+ * The three guard lines this file sends through the gate (the install line, the self-ruling cp line, a subagent launch) are lines every Python guard
+ * lets pass (stdout empty, exit 0: the real guards were run on them); the dialogs under test come from the classifier and the gate after the guards.
+ * The real guards on `pip install requests` run in gate-child-ask-headless.test.ts and gate-remember-away-wiring.test.ts, on a self-ruling cp line
+ * in handoff-parent-shell-ruling.test.ts and r14-self-ruling-names.test.ts, on a launch in the tests/replay goldens. Any other line goes to the real spawner.
+ */
+const launchSpawner: Spawner = async (command, args, options) => {
+  if (args.includes("--provider")) {
+    const r = await inprocSpawner(command, args, options);
+    return { ...r, stdout: JSON.stringify({ ...(JSON.parse(r.stdout) as object), roles: { builder: { model: "fake/builder", thinking: null, codemode: false, tools: ["read", "bash"] } } }) };
+  }
+  const guard = args.find((a) => GUARDS.has(path.basename(a)));
+  if (guard) {
+    let tool = "";
+    let cmd = "";
+    try {
+      const i = JSON.parse(String(options.input)) as { tool_name?: string; tool_input?: { command?: string } };
+      tool = i.tool_name ?? "";
+      cmd = i.tool_input?.command ?? "";
+    } catch { /* not a hook input: the real guard */ }
+    if (cmd === "pip install requests" || (tool === "Bash" && cmd.startsWith("cp ") && cmd.includes("/.workflow/scratch/y.md # ruling ")) || tool === "Agent") return { code: 0, stdout: "", stderr: "", timedOut: false };
+  }
+  return inprocSpawner(command, args, options);
+};
 
 type T = Parameters<typeof r11Rig>[0];
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
@@ -64,7 +93,7 @@ const pairs = (r: Rig) => [r.events("blocked_open").length, r.events("blocked_cl
 const cleanups: (() => void | Promise<void>)[] = [];
 let shared: Rig;
 before(async () => {
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("ask", "package-install")) }, config });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui: holdUi, modelRegistry: registry(V("ask", "package-install")) }, config, deps: { spawner: launchSpawner } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();
@@ -204,7 +233,7 @@ test("a subagent child's gate ask that waits on its parent is classed parent (tr
     if (prev === undefined) delete process.env[BINDINGS_ENV];
     else process.env[BINDINGS_ENV] = prev;
   });
-  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("ask", "package-install")) }, config, child: true });
+  const r = await r11Rig(t, {}, { ctx: { modelRegistry: registry(V("ask", "package-install")) }, config, child: true, deps: { spawner: launchSpawner } });
   const p = r.call("bash", { command: "pip install requests" });
   await until(() => fs.existsSync(path.join(dir, "ask.md")));
   assert.deepEqual(r.events("blocked_open").map((x) => [x.on, x.kind]), [["parent", "parent-ask"]]);

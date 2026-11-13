@@ -1,5 +1,6 @@
 // r42: who a blocked session waits on (owner or parent) in the live file, and the two trace events, with the real sources.
 import "./_hermetic-env.mjs";
+import { inprocSpawner } from "./_read-clear-inproc.ts"; // first after the preload: the git answers are in place before the adapter loads
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -21,7 +22,7 @@ type Rig = Awaited<ReturnType<typeof r11Rig>>;
 const cleanups: (() => void | Promise<void>)[] = [];
 let shared: Rig;
 before(async () => {
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { deps: { spawner: inprocSpawner } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();

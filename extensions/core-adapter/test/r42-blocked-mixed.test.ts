@@ -1,6 +1,7 @@
 // r42: mixed blocked sources: a wait on the parent does not mute Pi's prompt events, an owner-classed dialog does.
 // Exactly one `blocked_open` / `blocked_closed` per dialog in every combination.
 import "./_hermetic-env.mjs";
+import { inprocSpawner } from "./_read-clear-inproc.ts"; // first after the preload: the git answers are in place before the adapter loads
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -29,7 +30,7 @@ type Rig = Awaited<ReturnType<typeof r11Rig>>;
 const cleanups: (() => void | Promise<void>)[] = [];
 let shared: Rig;
 before(async () => {
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui }, config });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui }, config, deps: { spawner: inprocSpawner } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();

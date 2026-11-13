@@ -1,6 +1,7 @@
 // r42: the blocked-child notice is information only and never an approval: a pending checkpoint and a pending gate ask stay pending after it,
 // nothing is written into a handoff dir, and typing into another session's pane is still refused by the floor.
 import "./_hermetic-env.mjs";
+import { inprocSpawner } from "./_read-clear-inproc.ts"; // first after the preload: the git answers are in place before the adapter loads
 import { after, before, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -13,6 +14,36 @@ import { writeRegistry } from "../session.ts";
 import { BINDING_NS } from "../usage.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { world } from "./_r46world.ts";
+import cp from "node:child_process";
+import { EventEmitter } from "node:events";
+import { syncBuiltinESMExports } from "node:module";
+import type { Spawner } from "../spawn.ts";
+import { PROBE_CODE } from "../python.ts";
+
+/** The in-process spawner, plus the `roles` the config CLI adds for a provider (a launch reads the role's model): each role's, as the CLI gives it for this config. */
+const launchSpawner: Spawner = async (command, args, options) => {
+  const r = await inprocSpawner(command, args, options);
+  if (!args.includes("--provider")) return r;
+  const roles = Object.fromEntries(["explorer", "builder", "reviewer"].map((n) => [n, { model: `fake/${n}`, thinking: null, codemode: false, tools: ["read", "bash"] }]));
+  return { ...r, stdout: JSON.stringify({ ...(JSON.parse(r.stdout) as object), roles }) };
+};
+// world() (the checkpoint case) takes no spawner, so the python calls of its session start and its reviewer launch are answered at node's spawn, with the
+// same answers (the version probe, the merged config, the ledger guard on the reviewer launch: stdout empty, exit 0, as the real guard gives; the real
+// guard on a launch runs in the tests/replay goldens; the findings record of the PASS review: no findings, the script itself is pinned by
+// tests/test_foreman_findings.py); anything else starts for real.
+const realSpawn = cp.spawn;
+cp.spawn = ((file: string, args: string[] = [], ...rest: unknown[]) => {
+  const script = args.find((a) => a.endsWith(".py")) ?? "";
+  const answered = args.includes(PROBE_CODE) || script.endsWith("foreman_config.py") || script.endsWith("ledger_guard_spawn.py") || script.endsWith("foreman_findings.py");
+  if (!answered) console.log('REAL', args.filter((a) => a.endsWith('.py') || a.length < 12).join(' '));
+  if (!answered) return (realSpawn as (...a: unknown[]) => unknown)(file, args, ...rest);
+  const child = Object.assign(new EventEmitter(), { stdout: Object.assign(new EventEmitter(), { setEncoding: () => undefined }), stderr: Object.assign(new EventEmitter(), { setEncoding: () => undefined }), kill: () => true, stdin: Object.assign(new EventEmitter(), { end: (input?: string) => {
+    const run = script.endsWith("ledger_guard_spawn.py") || script.endsWith("foreman_findings.py") ? Promise.resolve({ code: 0, stdout: script.endsWith("foreman_findings.py") ? '{"findings": []}' : "", stderr: "", timedOut: false }) : launchSpawner(file, args, { input, timeoutMs: 1000 });
+    void run.then((r) => setImmediate(() => { if (r.stdout) child.stdout.emit("data", r.stdout); child.emit("close", r.code); }));
+  } }) });
+  return child;
+}) as typeof cp.spawn;
+syncBuiltinESMExports();
 
 const MIN = 60_000;
 /** Fails fast instead of hanging when the awaited call never settles. */
@@ -58,7 +89,7 @@ before(async () => {
   const reply = JSON.stringify({ verdict: "allow", entry: "read-only-inspection", reason: "r" });
   const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => ({ content: [{ type: "text", text: reply }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
   const roles = Object.fromEntries(["explorer", "builder", "reviewer"].map((r) => [r, { model: `fake/${r}` }]));
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui, modelRegistry: registry }, config: { providers: { fake: { review: { model: "m" }, roles } }, presence: { enabled: false } }, piExtra: { sendMessage: (m: { customType: string }) => void sent.push(m) } });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { ctx: { ui, modelRegistry: registry }, config: { providers: { fake: { review: { model: "m" }, roles } }, presence: { enabled: false } }, deps: { spawner: launchSpawner }, piExtra: { sendMessage: (m: { customType: string }) => void sent.push(m) } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();

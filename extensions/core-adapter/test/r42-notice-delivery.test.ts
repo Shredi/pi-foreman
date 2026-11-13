@@ -2,6 +2,7 @@
 // node's mock setInterval, the child's live file and registry entry are written for real. The notice is one custom message of its own type, never
 // `foreman_wake`; it leaves armed waits, the waiting-for-parent flag, the finish gate and the turn cause as they were.
 import "./_hermetic-env.mjs";
+import { inprocSpawner } from "./_read-clear-inproc.ts"; // first after the preload: the git answers are in place before the adapter loads
 import { after, before, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -25,7 +26,7 @@ const cleanups: (() => void | Promise<void>)[] = [];
 let shared: Awaited<ReturnType<typeof r11Rig>>;
 before(async () => {
   mock.timers.enable({ apis: ["setInterval"] });
-  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { piExtra: { sendMessage: (m: Sent, opts?: Record<string, unknown>) => void sent.push({ m, opts }), registerTool: (d: { name: string } & Tool) => void tools.set(d.name, d) } });
+  shared = await r11Rig({ after: (fn) => void cleanups.push(fn) }, {}, { deps: { spawner: inprocSpawner }, piExtra: { sendMessage: (m: Sent, opts?: Record<string, unknown>) => void sent.push({ m, opts }), registerTool: (d: { name: string } & Tool) => void tools.set(d.name, d) } });
 }, { timeout: 20_000 });
 after(async () => {
   for (const fn of cleanups.reverse()) await fn();
