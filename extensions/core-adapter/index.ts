@@ -481,6 +481,8 @@ export interface AdapterDeps {
   piVersion?: () => Promise<string | null>;
   /** Tests: the child's MCP loader root and import, and the SDK's createMcpExtension (mcpchild.ts). */
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
+  /** Tests: replaces Pi's shell lookup the win32 background-shell setup uses (default: Pi's getShellConfig). */
+  getShellConfig?: typeof piGetShellConfig;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
@@ -501,7 +503,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const core = claimCore(PKG_ROOT); // once-guard (registry.ts): a second copy from another root registers only a notice
   if ("notice" in core) return installInert(pi, core.notice);
   // win32: the pi-background-tasks add-on reads PI_BG_SHELL* in its own factory, which loads after this one; set them now, before any await
-  const bgShell = platform === "win32" ? resolveBgShell({ platform, getShellConfig: piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) }) : { set: false, noBash: false };
+  const bgShell = platform === "win32" ? resolveBgShell({ platform, getShellConfig: deps.getShellConfig ?? piGetShellConfig, shellPath: shellPathSetting(piAgentDir(process.env, os.homedir()), process.cwd()) }) : { set: false, noBash: false };
   // The tool_search exists in every session of the real copy, so a child allowlisting it never fails at agent_start; an inert copy registers none (it would replace this one).
   pi.registerTool(createToolSearchTool({
     host: pi as never,
