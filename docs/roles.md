@@ -59,6 +59,8 @@ configured, model ranked); otherwise the role map decides. Tiers are compared ac
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
 no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. There is no automatic climb.
 
+`ladder.equalOnStrongRisk` (user or overlay config; default `false`; a project or session can only set `false`) lets a builder whose risk tag (`ladder.sizing.strongRisks`) sent it to the strong rung run on the foreman's own model, although `below` refuses the tie. It applies only when both models are ranked, the foreman's model is exactly the builder's strong model, and every entry of the launch on that model is such a builder. "Own model" means exactly the same model, not another model of the same tier, and the launch must be made without an explicit `model`. The launch result then says `pi-foreman: builder runs on the foreman's own model <model> (ladder.equalOnStrongRisk, risk: <tags>).` and the trace records `rank_equal_model`. While the key is off, the refusal of such a launch names the key; every other refusal keeps its text.
+
 **Session model.** A session opened from Pi needs the owner's confirmation, whatever model it runs on (see [sessions](sessions.md)); there is no rank rule for sessions. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with

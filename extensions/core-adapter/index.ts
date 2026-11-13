@@ -209,7 +209,7 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, ranksOf, rolesOfModel } from "./ranks.ts";
+import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -3287,6 +3287,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const rungs: RungContext = { roles: resolution.roles, ranks: ranksOf(s.config.config), top: sizingTop };
           sizingRecords = sizedPlans.map((p) => sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
         }
+        const equalLines: string[] = []; // the launch lines of the builders that ladder.equalOnStrongRisk let run on the foreman's own model
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
         if (shadow.kind === "launch") input.model = shadow.model;
         else if (!s.isChild && actionOf(input) === null) {
@@ -3318,9 +3319,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             if (occ.overrode.size > 0 && roles.length === 0) continue;
             const no = rankRefusalFor(s.config.config, foremanModel, m, roles);
             if (!no) continue;
+            // ladder.equalOnStrongRisk (ranks.ts): a tie of the foreman's own model with the builder's strong model, for builder entries only whose risk tag sent them to the strong rung.
+            const strongModel = get(resolution.roles, "builder.strong.model");
+            const carrying = launchEntries(input).filter((e) => typeof e.agent === "string" && e.model === m && !occ.overrode.has(e));
+            const plans = carrying.map((e) => sizedPlans.find((p) => p.entry === e));
+            const tie = carrying.length > 0 && foremanModel !== null && splitLevel(m).base === foremanModel && typeof strongModel === "string" && splitLevel(strongModel).base === foremanModel
+              && rankTie(s.config.config, foremanModel, m, "builder") && carrying.every((e, i) => e.agent === "builder" && plans[i]?.role === "builder" && plans[i]?.target === "strong" && (plans[i]?.probe.length ?? 0) > 0);
+            if (tie && equalOnStrongRisk(s.config.config)) {
+              const risk = [...new Set(plans.flatMap((p) => p?.probe ?? []))].join(",");
+              s.trace?.emit({ event: "rank_equal_model", role: "builder", model: foremanModel, foreman: foremanModel, policy: no.policy, risk });
+              equalLines.push(`pi-foreman: builder runs on the foreman's own model ${foremanModel} (ladder.equalOnStrongRisk, risk: ${risk}).`);
+              continue;
+            }
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
-            return { block: true, reason: marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message };
+            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (tie ? ` ${equalKeySentence()}` : "") };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null);
@@ -3339,7 +3352,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
-        notices = launched.notices.map((n) => n.text);
+        notices = [...launched.notices.map((n) => n.text), ...equalLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }

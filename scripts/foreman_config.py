@@ -60,6 +60,7 @@ Keys outside safety that the project and session layers cannot loosen either
     presence.command                 ignored (SECURITY: it runs a program)
     providers.*.cache (or .keepalive)   not an object: ignored
     ladder.strongOnRevision, roles.*.strongOnRevision   only false is accepted (true climbs after a FAIL)
+    ladder.equalOnStrongRisk         only false is accepted (true lets a risk-tagged builder run on the foreman's own model)
     tools.git                        only false is accepted (true adds tools)
     tools.pr                         only false is accepted (true adds tools)
     tools.deferred                   union only (a project can defer more tools, not fewer)
@@ -72,7 +73,7 @@ Keys outside safety that the project and session layers cannot loosen either
     radar.openPrs                    ignored (it makes the extension search GitHub through gh: user or overlay only)
     sidebar.statusCommand / statusSeconds   ignored (the command runs a program: L1/L3/L2 only)
     childMaxThinking                 lower only (off < ... < max)
-    ladder.* (but strongOnRevision), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
+    ladder.* (but strongOnRevision, equalOnStrongRisk), providers.*.ranks   ignored (the ladder and the child rank policy: L1/L3/L2 only)
     providers.*.modelDataFrom        ignored (it decides the reserve setup writes: L1/L3/L2 only)
     providers.*.strongAbove / childMaxTurns, roles.*.strongAbove / childMaxTurns   ignored (ladder)
     ceremony.requireTriage           only true is accepted (false lets the foreman edit untriaged)
@@ -289,6 +290,7 @@ LAYER_TIGHTEN = [
     (("presence", "enabled"), "true_only"),
     (("presence", "awayAfterMinutes"), "lower_only"),
     (("ladder", "strongOnRevision"), "false_only"),
+    (("ladder", "equalOnStrongRisk"), "false_only"),
     (("ladder", "idleDownshift", "enabled"), "false_only"),
     (("ladder", "idleDownshift", "causes"), "intersect"),
     (("roles", "*", "strongOnRevision"), "false_only"),

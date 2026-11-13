@@ -137,7 +137,7 @@
       "title": "Rank policy for child models",
       "purpose": "Ranks models into tiers so children may only launch below (or at) the foreman's tier; with no ranks anywhere the policy does nothing.",
       "doc": "docs/roles.md#role-ladder-rank-policy-and-presets",
-      "keys": ["providers.<x>.ranks", "ladder.childPolicy", "ladder.rolePolicy"],
+      "keys": ["providers.<x>.ranks", "ladder.childPolicy", "ladder.rolePolicy", "ladder.equalOnStrongRisk"],
       "commands": [],
       "switch": {"key": "providers.*.ranks", "on": "nonempty"},
       "state": "opt-in",

@@ -283,6 +283,7 @@ Switch: `providers.*.ranks` is non-empty.
 | `providers.<x>.ranks` | unset | not in project/session (model ranks decide which children may launch: user or overlay config only) |
 | `ladder.rolePolicy` | unset | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
 | `ladder.childPolicy` | unset | not in project/session (the ladder and the child rank policy come from the user or overlay config) |
+| `ladder.equalOnStrongRisk` | unset | tighten-only (only false is accepted) |
 
 ### reviewer-climb
 
