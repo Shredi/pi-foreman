@@ -25,7 +25,7 @@ const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 export const GIT_PACK = "git";
 export const PACK_ENV = "PI_FOREMAN_TOOL_PACKS";
 export const PR_PACK = "pr";
-export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch";
+export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch" | "pr_draft";
 export type GitReadOp = "status" | "log" | "diff_stat" | "branch_state";
 
 const str = (max: number, description: string) => ({ type: "string", minLength: 1, maxLength: max, description });
@@ -285,6 +285,8 @@ export interface PrPackSession {
   track?(repo: string, n: number, host?: string): Promise<TrackOutcome>;
   /** The PR tracker's GitHub hosts (tools.prGithubHosts). Absent: github.com only. */
   githubHosts?(): GithubHosts;
+  /** Draft handling is on (tools.prDraft not false, the review gate and the PR feed on). Absent: off, pr_create as it always was. */
+  draftFlow?(): boolean;
 }
 
 export type TrackOutcome = AddOutcome | "off";
@@ -404,14 +406,30 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           const push = await deps.pushRefusal(ctx, dir);
           if (push) return failure(`pr_create: a push floor refuses pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
-        const outcome = await run(t.op as PrOp, params);
+        // pr_create under the draft flow opens as a draft; GitHub's refusal of drafts (a repository without them) is answered by one more create without it
+        let draftAsked = t.op === "pr_create" && (await askDraft(s, ctx, dir));
+        let outcome = await run(t.op as PrOp, draftAsked ? { ...params, draft: true } : params);
+        if (draftAsked && outcome.kind !== "ran" && draftRefused(outcome)) {
+          draftAsked = false;
+          outcome = await run("pr_create", { ...params, draft: false });
+        }
         const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);
         if (t.op !== "pr_create" || outcome.kind !== "ran" || !validNumber(outcome.result.number)) return res;
         // the session that opened the PR follows and watches it; a failed add or arm never fails the create
         const openedOn = typeof params.head === "string" && params.head ? await commitOf(dir ?? ctx.cwd, params.head) : await headOf(dir ?? ctx.cwd);
-        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
-        const r = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
-        const out = armed.tracked ? { ...r, details: { ...r.details, tracked: armed.tracked } } : r;
+        const armed: Armed = await armWatch(s, ctx, outcome.result.number, outcome.result.url, true, dir, openedOn, draftAsked).catch((err) => ({ error: String((err as Error)?.message ?? err) }));
+        const r0 = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
+        let draftNote = "";
+        let out = armed.tracked ? { ...r0, details: { ...r0.details, tracked: armed.tracked } } : r0;
+        // a draft nobody watches could never be taken out of draft: no arm, or a PR the tracker will not report, and it leaves draft at once
+        if (draftAsked && !("key" in armed && armed.owned)) {
+          const key = "key" in armed ? armed.key : await watchKey(s, ctx, outcome.result.number, outcome.result.url, dir).catch(() => ({ host: "", repo: "", n: outcome.result.number as number }));
+          const undone = await run("pr_draft", { number: outcome.result.number, ...(key.repo ? { repo: key.repo, ...(key.host ? { host: key.host } : {}) } : {}), draft: false }).catch((): SafeOpOutcome => ({ kind: "error", message: "no answer" }));
+          s.trace({ event: "pr_watch", outcome: undone.kind === "ran" ? "draft_undone" : "draft_undo_failed" });
+          draftNote = `\n${undone.kind === "ran" ? "the PR is not handled as a draft (it is not watched or not tracked), so it was taken out of draft" : "the PR was opened as a draft and is not watched or tracked: take it out of draft by hand"}`;
+        }
+        const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote }] };
+        out = { ...out, content: r.content };
         if ("duplicate" in armed) return out;
         if ("error" in armed) return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: not armed (${oneLine(armed.error)})` }] };
         return { ...out, content: [{ type: "text" as const, text: `${r.content[0].text}\npr_watch: armed (until the PR is merged or closed; pr_unwatch ends it)${armNote(armed)}` }] };
@@ -524,7 +542,22 @@ type Armed =
   | { error: string; hostUnsupported?: true; hostsError?: true; tracked?: TrackOutcome }
   | { duplicate: true; tracked?: TrackOutcome }
   /** `snap`: the stored snap the watch started from; null: the tracker has none yet. `down`: no tracker runs. */
-  | { key: PrKey; snap: WatchSnapshot | null; down: boolean; tracked?: TrackOutcome };
+  | { key: PrKey; snap: WatchSnapshot | null; down: boolean; tracked?: TrackOutcome; owned?: boolean };
+
+/** pr_create: ask for a draft when the flow is on and the PR's host is a GitHub host the watch covers (a template or GitLab host never gets one). */
+async function askDraft(s: PrPackSession, ctx: ExtensionContext, dir?: string): Promise<boolean> {
+  if (!s.draftFlow?.()) return false;
+  const hosts = hostsOf(s);
+  if ("error" in hosts) return false;
+  const at = await s.tracker?.repoFor?.(dir ?? ctx.cwd).catch(() => null);
+  return !!at && isTrackedKey({ host: at.host, repo: at.repo, n: 1 }, hosts.hosts);
+}
+
+/** GitHub's answer for a repository without draft pull requests, matched loosely (the wording is the host's). */
+function draftRefused(o: SafeOpOutcome): boolean {
+  const m = o.kind === "ran" ? "" : o.message;
+  return /draft/i.test(m) && /(not|n't|un)\s*(be\s+)?(supported|available|allowed|enabled)|unsupported|disabled|cannot|can't/i.test(m);
+}
 
 function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
   if (a.down) return `; ${TRACKER_DOWN}`;
@@ -536,7 +569,7 @@ function armNote(a: { snap: WatchSnapshot | null; down: boolean }): string {
  * No GitHub call: a merged, closed or not-found refusal comes from the stored entry when there is one; else the watch starts pending and the tracker's
  * first poll decides.
  */
-async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null): Promise<Armed> {
+async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url: unknown, created = false, cwd?: string, createdHead?: string | null, draftAsked = false): Promise<Armed> {
   const hosts = hostsOf(s);
   if ("error" in hosts) return { error: hosts.error, hostsError: true };
   const key = await watchKey(s, ctx, n, url, cwd);
@@ -555,14 +588,16 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
       return { error: "the pull request was not found", tracked };
     }
     tracked ??= await track();
-    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt);
+    // the watch owns the PR's draft state only when it was opened as a draft and the tracker will report it
+    const owned = draftAsked && (tracked === "added" || tracked === "present");
+    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
       const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
-      s.watches.startPending(key, undefined, seed);
+      s.watches.startPending(key, undefined, seed, owned);
     }
     s.trace({ event: "pr_watch", outcome: "started" });
-    return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked };
+    return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked, owned };
   } catch (err) {
     s.watches.release(key);
     throw err;

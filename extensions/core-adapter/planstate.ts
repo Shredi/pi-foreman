@@ -67,13 +67,17 @@ export interface CeremonyStateEntry {
   loopStop?: LoopStop;
   /** Absent in an entry from before the gate progress was recorded (index.ts rebuilds it from the PASS reviews). */
   gate?: PersistedGate;
+  /** A parent sent the work back (a `rework-<k>` marker, index.ts reworkScan) and no `[pre-pr]` PASS followed; absent: false. */
+  sentBack?: boolean;
+  /** The highest handled `rework-<k>` number (its own watermark); absent: none handled. */
+  reworkSeen?: number;
 }
 
 export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; reworkSeen?: number }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -83,9 +87,11 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tier: o.tier ?? null,
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
-    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}) })),
+    reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.occasion ? { occasion: r.occasion } : {}) })),
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
     ...(o.gate ? { gate: o.gate } : {}),
+    ...(o.sentBack ? { sentBack: true } : {}),
+    ...(o.reworkSeen ? { reworkSeen: o.reworkSeen } : {}),
   };
 }
 
@@ -124,6 +130,9 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     if (ls && typeof ls === "object" && (ls.rule === "repeat" || ls.rule === "stalled") && (ls.kind === "plan" || ls.kind === "code") && Array.isArray(ls.sig) && ls.sig.every((x) => typeof x === "string")) out.loopStop = { rule: ls.rule, kind: ls.kind, sig: ls.sig as string[] };
     const g = gateOfEntry(d.gate);
     if (g) out.gate = g;
+    if (d.sentBack === true) out.sentBack = true;
+    const rw = count(d.reworkSeen);
+    if (rw) out.reworkSeen = rw;
     return out;
   }
   return null;

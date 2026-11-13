@@ -68,6 +68,8 @@ const prExtras = (p) => ({
   baseRef: str(p.baseRefName), mergeable: MERGEABLE.includes(p.mergeable) ? p.mergeable : "",
   // set by the poll while a pass is not settled yet (the watch's settle rule): the checks seen may be a partial set
   ...(p.unsettled === true ? { unsettled: true } : {}),
+  // the host's head sha and merge state of a tracked entry (the pill's inputs); absent in an older feed
+  ...(typeof p.head === "string" && p.head ? { head: p.head } : {}), ...(typeof p.mergeState === "string" && p.mergeState ? { mergeState: p.mergeState } : {}),
 });
 
 function cleanRepoUrl(v) {
@@ -110,6 +112,8 @@ function normNode(raw, depth, budget) {
     // the watched PRs whose head moved past the session's last reviewer PASS (livestate.ts LiveWait.unreviewed)
     ...(Array.isArray(w.unreviewed) ? { unreviewed: w.unreviewed.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
     // the watched PRs with their repository (livestate.ts LiveWait.prRefs); absent in an older live file
+    // the session's review facts of its owned PRs (livestate.ts LiveWait.review); absent in an older live file
+    ...(Array.isArray(w.review) ? { review: w.review.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null && typeof u.head === "string" && ["ok", "wip", "unreviewed"].includes(u.state)).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host), head: u.head, state: u.state, ...(u.noChecks === true ? { noChecks: true } : {}) })) } : {}),
     ...(Array.isArray(w.prRefs) ? { prRefs: w.prRefs.slice(0, 50).filter((u) => isObj(u) && int(u.n) !== null && str(u.repo)).map((u) => ({ n: u.n, repo: str(u.repo), host: str(u.host) })) } : {}),
   })) : [];
   const tasks = Array.isArray(raw.tasks) ? raw.tasks.filter(isObj).map((t) => ({ id: str(t.id), label: str(t.label), ageS: num(t.ageSeconds) })) : [];
@@ -166,12 +170,15 @@ const keyHost = (h) => (h ? hostOf(`https://${h}`) : "");
  *  matched by number, repository and host (an unknown repository or host on either side matches). Followed-only PRs have no entry. */
 function markUnreviewed(n) {
   const marks = listOf(n.waits).flatMap((w) => listOf(w?.unreviewed));
-  if (!marks.length) return;
+  const facts = listOf(n.waits).flatMap((w) => listOf(w?.review));
+  if (!marks.length && !facts.length) return;
   n.prs = listOf(n.prs).map((pr) => {
     const repo = nameOf(pr.repo || n.repoUrl).toLowerCase();
     const host = hostOf(pr.url) || hostOf(pr.repo) || hostOf(n.repoUrl);
-    const hit = marks.some((u) => u.n === pr.number && (!repo || !u.repo || repo === u.repo.toLowerCase()) && (!host || !u.host || host === keyHost(u.host)));
-    return hit ? { ...pr, unreviewed: true } : pr;
+    const same = (u) => u.n === pr.number && (!repo || !u.repo || repo === u.repo.toLowerCase()) && (!host || !u.host || host === keyHost(u.host));
+    const hit = marks.some(same);
+    const fact = facts.find(same);
+    return hit || fact ? { ...pr, ...(hit ? { unreviewed: true } : {}), ...(fact ? { review: { state: fact.state, head: fact.head, ...(fact.noChecks ? { noChecks: true } : {}) } } : {}) } : pr;
   });
 }
 
@@ -416,7 +423,7 @@ export function childTerminals(all, address) {
 
 /** Colours of the PR dot fill and the card groups from a theme `t`. Green is the ANSI green (the theme `done` is blue), amber the ANSI yellow. */
 export function prTones(t) {
-  return { green: t.ansi2 ?? t.ansi10 ?? t.done ?? t.working, red: t.blocked, amber: t.ansi3 ?? t.ansi11 ?? t.working, dim: t.dim };
+  return { green: t.ansi2 ?? t.ansi10 ?? t.done ?? t.working, red: t.blocked, amber: t.ansi3 ?? t.ansi11 ?? t.working, dim: t.dim, blue: t.ansi4 ?? t.ansi12 ?? t.done ?? t.working, violet: t.ansi5 ?? t.ansi13 ?? t.muted ?? t.dim };
 }
 
 /** Colour role of a PR check dot: green ok, red fail, amber (warning) pending, dim otherwise. */
@@ -448,10 +455,10 @@ export function sessionCount(node) {
  *  failed), "ok" (green) or "none" (no checks known). */
 export function prState(pr) {
   const d = prDotState(pr);
-  return d.fill === "red" ? "fail" : d.ring || d.fill === "amber" ? "pending" : d.fill === "green" ? "ok" : "none";
+  return d.fill === "red" ? "fail" : d.ring || d.fill === "amber" ? "pending" : d.fill === "violet" ? "wip" : d.fill === "blue" ? "unreviewed" : d.fill === "green" ? "ok" : "none";
 }
 
-const urgency = (pr) => ({ fail: 0, pending: 1 })[prState(pr)] ?? 2;
+const urgency = (pr) => ({ fail: 0, pending: 1, unreviewed: 2, wip: 4 })[prState(pr)] ?? 3;
 
 /** The open PRs of a list, each once (its URL, else repo and number): a merged or closed one and a repeat are dropped. */
 function openOnce(prs) {
@@ -479,7 +486,9 @@ export function prSummary(prs) {
   if (list.every((p) => prState(p) === "none")) return noun;
   const failing = list.filter((p) => urgency(p) === 0).length;
   const pending = list.filter((p) => urgency(p) === 1).length;
-  const parts = [failing && `${failing} failing`, pending && `${pending} pending`].filter(Boolean);
+  const unrev = list.filter((p) => prState(p) === "unreviewed").length;
+  const wip = list.filter((p) => prState(p) === "wip").length;
+  const parts = [failing && `${failing} failing`, pending && `${pending} pending`, unrev && `${unrev} not reviewed`, wip && `${wip} in progress`].filter(Boolean);
   const rest = parts.length ? parts : list.every((p) => prState(p) === "ok") ? ["all green"] : [];
   return [noun, ...rest].join(" · ");
 }
@@ -500,6 +509,10 @@ export function chipPrs(prs) {
 /** The state a PR's dot shows, in words (the chip's hover card names it): the colours are not explained anywhere else. */
 export function prStateText(pr) {
   const d = prDotState(pr);
+  const p = pillOf(pr, baseDot(pr));
+  if (p.state === "wip") return "work in progress";
+  if (p.state === "unreviewed") return "CI passing, not reviewed";
+  if (p.state === "ready") return p.reviewed ? "ready to merge" : "ready to merge (CI passing, no review claim)";
   return d.fill === "red" ? "CI failing" : d.ring ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
 
@@ -1045,6 +1058,43 @@ export function displayStatus(item, folded) {
 /** The two-part dot of a PR: `ring` (outer, animated) while any job runs; `fill` (inner) "amber" while no job finished, "red"
  *  once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
 export function prDotState(pr) {
+  const d = baseDot(pr);
+  const p = pillOf(pr, d);
+  if (p.state === "wip") return { ring: false, fill: "violet", conflict: d.conflict };
+  if (p.state === "unreviewed") return { ring: false, fill: "blue", conflict: d.conflict };
+  if (p.state === "running" && !d.ring && d.fill === "green") return { ring: true, fill: "amber", conflict: d.conflict };
+  if (p.state === "ready" && d.fill === "dim") return { ring: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
+  return d;
+}
+
+/**
+ * The pill state from the host's current head, draft flag, checks and merge state plus the session's review fact (`pr.review`, set from the live file's
+ * `review` list), `d` being the checks' dot. `state` is wip | running | red | unreviewed | ready, or null for a PR the pill has nothing to add to (today's dot):
+ * an older feed without head and merge state and without a session fact, a PR without checks, a green PR that is not mergeable.
+ *  - wip: a draft on the host, or the session fact for the host's head is `wip`; red: a failed check; running: checks running or unsettled, or all else holds
+ *    but the merge state is blocked or behind;
+ *  - unreviewed: settled green (or no checks confirmed for the head) and the fact is `unreviewed` or about another head than the host's;
+ *  - ready: settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
+ *    facts alone (`reviewed` false: no review claim).
+ */
+function pillOf(pr, d) {
+  const rev = isObj(pr?.review) && typeof pr.review.head === "string" ? pr.review : null;
+  const head = str(pr?.head);
+  const ms = str(pr?.mergeState).toLowerCase();
+  if (!head && !ms && !rev) return { state: null };
+  const mine = rev && head && rev.head === head ? rev : null;
+  if (pr?.state === "draft" || mine?.state === "wip") return { state: "wip" };
+  if (d.fill === "red") return { state: "red" };
+  if (d.ring || d.fill === "amber") return { state: "running" };
+  const settled = d.fill === "green" || (d.fill === "dim" && mine?.noChecks === true);
+  if (!settled) return { state: null };
+  if (rev && (!mine || mine.state === "unreviewed")) return { state: "unreviewed" };
+  if (ms === "blocked" || ms === "behind") return { state: "running" };
+  if (pr?.mergeable === "MERGEABLE" && !["dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
+  return { state: null };
+}
+
+function baseDot(pr) {
   const checks = listOf(pr?.checks).map(jobOf).filter(Boolean).map((j) => j.state);
   const count = (s) => checks.filter((c) => c === s).length;
   const fail = count("fail");
@@ -1072,6 +1122,7 @@ export function enrichPrs(prs, feed, fallbackRepo = "") {
     return {
       ...pr, url: pr.url || twin.url, title: pr.title || twin.title, bodyText: pr.bodyText || twin.bodyText, mergeable: pr.mergeable || twin.mergeable,
       baseRef: pr.baseRef || twin.baseRef, branch: pr.branch || twin.branch, state: pr.state || twin.state,
+      ...(pr.head || twin.head ? { head: pr.head || twin.head } : {}), ...(pr.mergeState || twin.mergeState ? { mergeState: pr.mergeState || twin.mergeState } : {}),
       ...(!named && listOf(twin.jobs).length ? { jobs: twin.jobs, checks: twin.checks, ...(twin.unsettled ? { unsettled: true } : {}) } : {}),
       ...(pr.unsettled ? { unsettled: true } : {}),
     };

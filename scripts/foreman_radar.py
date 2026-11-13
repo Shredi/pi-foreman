@@ -289,6 +289,10 @@ def _tracked_entries(adir):
         mergeable = snap.get("mergeable")
         if isinstance(mergeable, str) and mergeable.upper() in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
             ent["mergeable"] = mergeable.upper()
+        for key, dst in (("head", "head"), ("mergeState", "mergeState")):  # the host's head and merge state: the pill's inputs
+            v = snap.get(key)
+            if isinstance(v, str) and v:
+                ent[dst] = v[:64]
         for src, key, dst in ((meta, "headRefName", "headRefName"), (meta, "headRepo", "headRepo"), (snap, "base", "baseRefName")):
             v = src.get(key)
             if isinstance(v, str) and v:
@@ -724,6 +728,13 @@ def build(data, now):
                          if isinstance(u, dict) and isinstance(u.get("n"), int) and not isinstance(u.get("n"), bool)]
                 if unrev:  # PRs whose head moved past the session's last reviewer PASS
                     wn["unreviewed"] = unrev
+                rev = [{"n": u["n"], "repo": str(u.get("repo") or ""), "host": str(u.get("host") or ""), "head": u["head"][:64], "state": u["state"],
+                        **({"noChecks": True} if u.get("noChecks") is True else {})}
+                       for u in (w.get("review") or [])
+                       if isinstance(u, dict) and isinstance(u.get("n"), int) and not isinstance(u.get("n"), bool)
+                       and isinstance(u.get("head"), str) and u.get("state") in ("ok", "wip", "unreviewed")]
+                if rev:  # the session's review facts of its owned PRs (the pill)
+                    wn["review"] = rev
                 n["waits"].append(wn)
         for t in d.get("tasks") or []:
             if isinstance(t, dict):

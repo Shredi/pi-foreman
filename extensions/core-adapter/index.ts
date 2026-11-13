@@ -145,6 +145,8 @@ import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
+import { reviewFactsOf } from "./prready.ts";
+import { highestRework } from "./rework.ts";
 import { LiveState, intercomIdOf, labelOfHandoff, prWatchWait } from "./livestate.ts";
 import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
@@ -369,6 +371,9 @@ interface Session {
   steps: StepCounts;
   /** The reviewer step under ceremony.reviewGate "pass": latest verdict and a revision since (bound.ts). */
   reviewGate: ReviewGate;
+  /** A parent sent the work back (rework marker, reworkScan) and no `[pre-pr]` PASS followed; the highest handled marker number (its own watermark). Both persisted in the ceremony entry. */
+  sentBack: boolean;
+  reworkSeen: number;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
   /** Foreman only: a handoff wait or a pending checkpoint waits for the parent/owner; the finish gate lets the turn end. Cleared by the next user/parent input. */
@@ -801,6 +806,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         },
         reviewedHeads: () => passHeads(s.reviews),
         reviewGate: () => get(s.config.config, "ceremony.reviewBeforePr") !== false,
+        // the readiness rule (prready.ts)
+        reviewFacts: (head) => reviewFactsOf(s.reviews, head, s.reviewGate.revised, s.sentBack),
+        tick: () => reworkScan(s),
+        draftFlow: () => draftFlowOn(s),
+        draft: (key, cwd, draft) => prRun(s, cwd, "pr_draft", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), draft }, 30_000),
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
         fresh: async (key, cwd) => {
@@ -891,6 +901,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       launchedRoles: new Map(),
       steps: emptySteps(),
       reviewGate: initialReviewGate(),
+      sentBack: false,
+      reworkSeen: 0,
       finishRefusals: 0,
       waitingForParent: false,
       handoffWaits: new Set(),
@@ -971,7 +983,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const pw = prWatchWait(sessions.get(id)?.prWatches.list() ?? [], sessions.get(id)?.prWatches.unreviewed() ?? []); return pw ? [...w, pw] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const pw = prWatchWait(sessions.get(id)?.prWatches.list() ?? [], sessions.get(id)?.prWatches.unreviewed() ?? [], sessions.get(id)?.prWatches.reviewLive() ?? []); return pw ? [...w, pw] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       if (s.live) {
         const live = s.live;
         s.show = Show.start({ agentDir, sessionId: id, cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir, handoffDir: (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null, trace: (r) => s.trace?.emit(r), onChange: () => live.flush() });
@@ -1079,6 +1091,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviews: s.reviews,
       loopStop: s.loopStop,
       gate: { steps: { ...s.steps }, reviewGate: s.reviewGate, passMark: s.passMark },
+      sentBack: s.sentBack,
+      reworkSeen: s.reworkSeen,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1123,6 +1137,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
+    if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.reworkSeen = e.reworkSeen ?? 0);
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -1371,6 +1386,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function prFeedOn(s: Session): boolean {
     const h = get(s.config.config, "tools.prHost") ?? "auto";
     return openPrsConfig(get(s.config.config, "radar.openPrs")).enabled && (h === "auto" || h === "gh");
+  }
+
+  /** Draft handling (tools.prDraft, default true; docs/review.md): needs the review gate and the PR feed, which the readiness rule and the draft state's host facts come from. */
+  function draftFlowOn(s: Session): boolean {
+    return get(s.config.config, "tools.prDraft") !== false && get(s.config.config, "ceremony.reviewBeforePr") !== false && prFeedOn(s);
   }
 
   /** The config the PR ops get: the merged safety.ops plus the effective tools.prHost and, when set, tools.prGithubHosts (only a valid list; unset or invalid means the read tools add no host). */
@@ -2208,8 +2228,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
               const top = await toplevelOf(cwd);
-              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
+              const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
+              if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
+              s.live?.flush(); // the pill's review facts
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
               if (r.outputPath) appendHeadLine(r.outputPath, h);
@@ -2915,6 +2937,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const ms = sessionFor(ctx);
     if (ms && !ms.isChild) {
       capsReset(ms, event.toolCallId);
+      reworkScan(ms);
       if (MUTATING_TOOLS.has(event.toolName)) ms.mutating.add(event.toolCallId);
       if (event.toolName === "bash" || event.toolName === "powershell") ms.commandCalls.add(event.toolCallId);
       if (event.toolName === ASK_USER_TOOL || event.toolName === "plan_mode_question") {
@@ -4009,6 +4032,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.trace?.emit({ event: "cap_reset", by: isBriefName(hits[0]) ? "brief" : "ruling", count: hits.length });
   }
 
+  /**
+   * The send-back marker (rework.ts): a `rework-<k>` above the handled watermark in the handoff dir where this session is the child sets `sentBack`, counts as a
+   * revision, drafts the owned open PRs at once and refreshes the live file. Runs at the top of a tool call and at each PR watch tick (not capsReset, not its watermark).
+   * A handled marker left on disk never sets it again; only a `[pre-pr]` PASS clears it. No brief text is read.
+   */
+  function reworkScan(s: Session): void {
+    if (s.isChild) return;
+    const dir = ownChildHandoff(s);
+    const k = dir ? highestRework(dir) : 0;
+    if (k <= s.reworkSeen) return;
+    s.reworkSeen = k;
+    s.sentBack = true;
+    s.reviewGate = onRevision(s.reviewGate);
+    persistCeremonyState(s);
+    void s.prWatches.reconcileOwned().finally(() => s.live?.flush());
+  }
+
   /** One of this session's own handoff dirs (owned.ts ownHandoffDirs) holds a plan.md or result.md written in the last day (a round is waiting on its parent). */
   function handoffContext(s: Session): boolean {
     for (const dir of ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id))) {
@@ -4224,6 +4264,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (!touchUp) {
         owner.reviewGate = onRevision(owner.reviewGate);
         persistCeremonyState(owner);
+        owner.live?.flush();
+        void owner.prWatches.reconcileOwned().finally(() => owner.live?.flush());
       }
     }
     if (owner && event.toolName === "bash") recordBashLog(owner, event.details);
@@ -4277,6 +4319,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               if (s.reviewGate.last === "pass" && !s.reviewGate.revised && !roles.some((r) => REVIEW_ROLES.includes(r))) s.touchUps.add(runId);
               s.reviewGate = onRevision(s.reviewGate);
               persistCeremonyState(s);
+              s.live?.flush();
+              void s.prWatches.reconcileOwned().finally(() => s.live?.flush());
             }
             const after = reopened(s.reviewGate);
             if (after) for (const role of roles.filter((r) => REVIEW_ROLES.includes(r))) s.trace?.emit({ event: "rereview", role, after });
@@ -4624,6 +4668,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       tracker: s.prHost,
       track: s.isChild ? undefined : async (repo, n, host) => (prFeedOn(s) ? addTracked(s.agentDir, repo, n, undefined, host) : "off"),
       githubHosts: () => resolveGithubHosts(s.config.config),
+      draftFlow: () => draftFlowOn(s),
     };
   };
   registerPrFollow(pi, { isChild: process.env.PI_SUBAGENT_CHILD === "1", session: prSession });

@@ -1328,5 +1328,25 @@ def op_pr_batch(req):
     return {"action": "pr_batch", "prs": prs, "errors": errors}
 
 
+def op_pr_draft(req):
+    """Put a pull request into draft (`draft` true: `gh pr ready --undo`) or out of it (`gh pr ready`). GitHub only (gh); a GitLab or template host answers
+    pr_unsupported. Not a model-facing tool: the session's PR watch calls it for the PRs its own pr_create opened, with the watch's repository and host."""
+    args, cfg, pr_host = _setup(req, ("number", "repo", "host", "draft"))
+    number = arg_number(args)
+    if number is None:
+        raise _bad("number is required")
+    draft = args.get("draft")
+    if not isinstance(draft, bool):
+        raise _bad("draft must be a boolean")
+    repo, hostname = arg_repo(args), arg_host(args)
+    root = workspace_root(req.get("cwd"))
+    host = _gh_only(pr_host, root, "pr_draft")
+    argv = [host.program, "pr", "ready", str(number)] + repo_flag(host, repo, hostname) + (["--undo"] if draft else [])
+    code, out, err = run_host(argv, root, [repo or ""])
+    if code != 0:
+        host_error(host, "draft", code, err)
+    return {"action": "pr_draft", "number": number, "draft": draft}
+
+
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
-       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch}
+       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft}

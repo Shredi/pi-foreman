@@ -147,6 +147,8 @@ A built-in table in `defaults.ts` (`DANGER_RULES`). A call that falls into one e
 | `danger-mcp-act` | An MCP tool whose name is not a read (`list_*`, `get_*`, `search_*`, `read_*`, `take_*`, `find_*`, `describe_*`; `navigate_page` to a plain URL) | `mcp__chrome__click` |
 | `danger-launch-outside` | A `subagent` launch with a `cwd` or worktree outside the owned roots, or a workflow script, `tasks` or `chain` form | `subagent` with `cwd: "/srv/other-repo"` |
 
+A PR's draft state is changed by the harness only, in process, for a PR the session itself opened with `pr_create` (see [tools](tools.md#draft)). No model-facing tool does it. `gh pr ready` from a shell is a forge write like any other and stays under `danger-forge` for every agent.
+
 Everything else that no rule decides is safe under `auto`: reads of unfloored paths, GET fetches, `curl` and `wget` reads, build and test commands, in-worktree writes, routine git (including a push of the own branch to a named remote, from the session's checkout or a worktree it created, and merges), `gh pr create`, `pr_create` (the ceremony's PR gate and reviewer PASS still apply), intercom, `foreman_session_open`, harness tools. `codemode` is not special: each call its script makes passes the gate on its own.
 
 ## The classifier
