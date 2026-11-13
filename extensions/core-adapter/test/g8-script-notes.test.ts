@@ -115,3 +115,20 @@ test("floors.noteTools in the project file (trusted or not) and in the tracked f
   assert.match(notices, /floors/);
   assert.match(notices, /not honoured/);
 });
+
+import { r11Rig } from "./_r11rig.ts";
+
+test("a nested shell call of a script carrying an injected git-config variable in front of a version query is refused with the tool and the fragment", async (t) => {
+  const r = await r11Rig(t, {}, {});
+  const fire = async (toolName: string, toolCallId: string, input: Record<string, unknown>) =>
+    (await r.fire("tool_call", { toolName, toolCallId, input })) as { block?: boolean; reason?: string } | undefined;
+  const command = "GIT_CONFIG_COUNT=0 git version";
+  const nested = await fire("bash", "cm9/1", { command });
+  assert.equal(nested?.block, true);
+  const sentence =
+    "pi-foreman: denied by the permission floor (git-config). Injecting git config through GIT_CONFIG_* variables can change hooks, remotes and credentials. Run git without them. No review, policy entry or dialog lifts this floor.";
+  assert.ok(nested?.reason?.startsWith(sentence));
+  assert.equal(nested?.reason, `${sentence} (tool: bash; matched: GIT_CONFIG_COUNT=)`);
+  const code = `await tools.bash({command: ${JSON.stringify(command)}});`;
+  assert.notEqual((await fire("codemode", "cm9", { code }))?.block, true, "the script text itself is not blocked; its nested call is");
+});
