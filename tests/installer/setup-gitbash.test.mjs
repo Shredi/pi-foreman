@@ -21,9 +21,11 @@ const envValue = (env, name) => {
   return key === undefined ? undefined : env[key];
 };
 
+/** PATH without the folders that hold a bash.exe; each entry is read as findGitBash reads it (trimmed, surrounding double quotes stripped). */
 const noBashOnPath = (env = process.env) =>
   (envValue(env, "PATH") ?? "")
     .split(path.delimiter)
+    .map((d) => d.trim().replace(/^"(.*)"$/, "$1"))
     .filter((d) => d && !fs.existsSync(path.join(d, "bash.exe")))
     .join(path.delimiter);
 
@@ -37,7 +39,7 @@ function childEnv(base, overrides) {
   return env;
 }
 
-/** The env for a setup child in a temp tree: no bash.exe on PATH, the temp ProgramFiles, and the fake platform. */
+/** The env for a setup child in a temp tree: no bash.exe on PATH, the temp ProgramFiles as the Git Bash search root (the seam), and the fake platform. */
 const setupEnv = ({ agentDir, base, programFiles, platform }) =>
   childEnv(process.env, {
     PATH: noBashOnPath(),
@@ -46,8 +48,7 @@ const setupEnv = ({ agentDir, base, programFiles, platform }) =>
     FAKE_PI_LOG: `${base}-calls.jsonl`,
     PI_FOREMAN_PI_AI_DATA: EMPTY_DATA,
     PI_FOREMAN_GITBASH_PLATFORM: platform,
-    ProgramFiles: programFiles,
-    "ProgramFiles(x86)": path.join(base, "none"),
+    PI_FOREMAN_GITBASH_PROGRAMFILES: programFiles,
   });
 
 /** Runs setup in a fresh temp tree. `userSettings`/`projectSettings` are objects; `bash` places a Git Bash under the temp ProgramFiles. */
@@ -120,6 +121,35 @@ test("windows: Git Bash missing gives a missing-step line and a non-zero exit af
   assert.match(r.out, /Install Git for Windows/);
   assert.match(r.out, /pi-foreman: (done|up to date)/, "the other steps finished first");
   assert.equal(JSON.parse(r.user).shellPath, undefined);
+});
+
+test("windows: the Program Files seam replaces the root, it does not add to it (a Git Bash under another ProgramFiles is not found)", () => {
+  // On Windows the OS sets ProgramFiles itself at process creation, so the child may see a real root here. The seam drops every case
+  // variant of ProgramFiles and ProgramFiles(x86) before the search, so the real root is never searched and the test holds either way.
+  // PATH has no bash.exe (noBashOnPath), and findGitBash searches only the Program Files roots and PATH, so a real Git on the runner
+  // cannot satisfy the search either: the assertion holds on a machine with Git for Windows installed.
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-gitbash-seam-")));
+  try {
+    const agentDir = path.join(base, "agent");
+    const cwd = path.join(base, "project");
+    const seamRoot = path.join(base, "pf");
+    const realRoot = path.join(base, "real-pf");
+    fs.mkdirSync(agentDir);
+    fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
+    fs.mkdirSync(seamRoot);
+    fs.mkdirSync(path.join(realRoot, "Git", "bin"), { recursive: true });
+    fs.writeFileSync(path.join(realRoot, "Git", "bin", "bash.exe"), "");
+    const userFile = path.join(agentDir, "settings.json");
+    fs.writeFileSync(userFile, `${JSON.stringify({ packages: ["git:github.com/Shredi/pi-foreman"] }, null, 2)}\n`);
+    const env = childEnv(setupEnv({ agentDir, base, programFiles: seamRoot, platform: "win32" }), { ProgramFiles: realRoot });
+    const r = spawnSync(process.execPath, [SETUP, "--no-addons", "--agent-dir", agentDir], { cwd, encoding: "utf8", env });
+    const out = `${r.stdout}${r.stderr}`;
+    assert.notEqual(r.status, 0, out);
+    assert.match(out, /missing step: Git Bash not found/);
+    assert.equal(JSON.parse(fs.readFileSync(userFile, "utf8")).shellPath, undefined);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("windows: Git Bash missing but shellPath set is not a failure", () => {

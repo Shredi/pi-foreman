@@ -1823,11 +1823,20 @@ async function main(argv) {
     if (opts.develop && developSettings()) anyChange = true;
     // Windows: Pi's bash tool needs Git Bash; point `shellPath` at it when unset. A missing Git Bash fails the run after every other step is done.
     // PI_FOREMAN_GITBASH_PLATFORM is the test seam (PI_FOREMAN_PLATFORM fakes Windows for the env step alone).
+    // PI_FOREMAN_GITBASH_PROGRAMFILES is the test seam for the Program Files root: when set, it is the only root searched
+    // (every case variant of ProgramFiles and ProgramFiles(x86) is dropped, since Windows sets those itself at process creation).
     const shellPlatform = process.env.PI_FOREMAN_GITBASH_PLATFORM || process.platform;
+    const programFilesSeam = process.env.PI_FOREMAN_GITBASH_PROGRAMFILES;
     let gitBashMissing = false;
     if (shellPlatform === "win32") {
       const userFile = path.join(agentDir, "settings.json");
-      const bash = findGitBash({ platform: shellPlatform, pathApi: process.platform === "win32" ? path.win32 : path });
+      let bashEnv = process.env;
+      if (programFilesSeam) {
+        bashEnv = { ...process.env };
+        for (const key of Object.keys(bashEnv)) if (/^programfiles(\(x86\))?$/i.test(key)) delete bashEnv[key];
+        bashEnv.ProgramFiles = programFilesSeam;
+      }
+      const bash = findGitBash({ env: bashEnv, platform: shellPlatform, pathApi: process.platform === "win32" ? path.win32 : path });
       const result = ensureShellPath({ userFile, projectFiles: [path.join(projectDir, ".pi", "settings.json")], bash, dry, log: say });
       if (result === "written") anyChange = true;
       gitBashMissing = result === "missing";
