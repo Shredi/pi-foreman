@@ -30,6 +30,8 @@ The tool gate's floors (see [permissions](permissions.md#floors)) hold in every 
 | A child's `gh pr create`, `glab mr create` and the `pr_create` tool | `child-pr-create` |
 | A push, remote or protected-branch word in a line the parser cannot read | the text floors: a deny for a child, a question for the owner |
 
+Restart, privilege and disk tools (`reboot`, `sudo`, `fdisk`, ...) are floored by one rule: a cleanly parsed line is judged by the program of each segment, and the word match stays only on lines the parser cannot read or that feed text to an interpreter; see [permissions](permissions.md#floors). Two consequences are risks, not features: on a clean line there is no second net against a parser mistake, and the source of a `codemode` script is no longer word-matched, so the floor for a script rests on Pi gating each nested call of the script through `tool_call` (read in the pinned Pi range `1.5.x`; setup refuses another range) and on the exemption going by the tool name `codemode`. Notes are exempt too: the prose of `foreman_show` and the `foreman_session_open` brief, and of the note tools `scratchpad` and `memory_write` of the `pi-memory` package plus the owner's `floors.noteTools` list (by tool name, user file only). A floor denial names the tool and the matched fragment after its unchanged sentence, and the gate log carries the redacted fragment.
+
 The protected-branch comparison is one matcher for the push floor, `pr_create`'s push check, the push default and the text floor; see the key table for the patterns. Besides the floors, a git line of the foreman is stopped when the repository's hooks or git config changed since the last snapshot (config drift, below).
 
 ### The PR gate

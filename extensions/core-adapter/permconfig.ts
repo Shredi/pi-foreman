@@ -49,6 +49,8 @@ export interface PermBody {
   deny: string[];
   additionalDirectories: string[];
   classifier: { allow: string[]; deny: string[] };
+  /** `floors.noteTools`: tool names whose prose fields skip the raw-text floors (user file and its profiles only; dropped everywhere else). */
+  noteTools?: string[];
 }
 
 export type FileKind = "user" | "project" | "tracked";
@@ -108,6 +110,8 @@ export interface Resolved {
   projectTrusted: boolean;
   /** The project file as the remember writer would write it. */
   projectFile: string;
+  /** `floors.noteTools` of the user file and the selected profile: note tools added to the built-in list (gate.ts `NOTE_TOOLS`). */
+  noteTools: string[];
 }
 
 export interface GitRun {
@@ -233,6 +237,20 @@ function protectedList(v: unknown, where: string, notices: string[]): ProtectedR
   return out;
 }
 
+/** `floors.noteTools`: a list of tool names; a non-string item is skipped with a notice, a bad shape is ignored with one. */
+function noteToolList(v: unknown, where: string, notices: string[]): string[] {
+  if (!isObj(v)) {
+    notices.push(`${where}floors must be an object; ignored`);
+    return [];
+  }
+  const l = strList(v.noteTools, `${where}floors.noteTools`, notices);
+  if (l === null) {
+    notices.push(`${where}floors.noteTools must be a list of tool names; ignored`);
+    return [];
+  }
+  return l;
+}
+
 function parseBody(o: Json, where: string, notices: string[], dropped?: string[]): PermBody | string {
   const body: PermBody = { allow: [], ask: [], deny: [], additionalDirectories: [], classifier: { allow: [], deny: [] } };
   if (o.protected !== undefined) {
@@ -277,6 +295,10 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
   if (typeof body === "string") return { ok: false, error: body };
   const profiles: Record<string, PermBody> = {};
   const workFolders: WorkFolder[] = [];
+  if (raw.floors !== undefined) {
+    if (kind !== "user") dropped.push("floors");
+    else body.noteTools = noteToolList(raw.floors, "", notices);
+  }
   if (raw.workFolders !== undefined) {
     if (kind !== "user") dropped.push("workFolders");
     else if (!Array.isArray(raw.workFolders)) notices.push("workFolders must be a list; ignored");
@@ -305,7 +327,10 @@ function parseText(text: string, kind: FileKind): ParsedFile | { ok: false; erro
         if (v.workFolders !== undefined) dropped.push(`profiles.${name}.workFolders`);
         const b = parseBody(v, `profiles.${name}.`, notices, dropped);
         if (typeof b === "string") notices.push(`${b}; profile skipped`);
-        else profiles[name] = b;
+        else {
+          if (v.floors !== undefined) b.noteTools = noteToolList(v.floors, `profiles.${name}.`, notices);
+          profiles[name] = b;
+        }
       }
     }
   }
@@ -548,7 +573,7 @@ export class PermStore {
       mode = this.sessionMode;
       modeSource = "session";
     }
-    const resolved: Resolved = { mode, modeSource, baseMode, profile, rules: sets, entries, prose, protected: prot, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project") };
+    const resolved: Resolved = { mode, modeSource, baseMode, profile, rules: sets, entries, prose, protected: prot, version: ++this.ver, additionalDirectories: [...new Set(dirs)], workFolders, workFolderNotes, projectTrusted: project.parsed?.ok ? distrust === null : this.projectDistrust() === null, projectFile: this.filePath("project"), noteTools: [...new Set([...(userBody?.noteTools ?? []), ...(profileBody?.noteTools ?? [])])] };
     this.cached = { sig, resolved };
     return resolved;
   }

@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -36,7 +36,18 @@ export interface GateDeps {
   readTools?: ReadToolMap;
   /** The merged protected targets (permconfig `Resolved.protected`); absent or empty: no protected check. */
   protected?: ProtectedEntry[];
+  /** `floors.noteTools` of the owner's permissions file (`Resolved.noteTools`): note tools by name, added to `NOTE_TOOLS`; their prose fields skip the raw floors. */
+  noteTools?: readonly string[];
 }
+
+/**
+ * Note tools of the public `pi-memory` package (`scratchpad` takes its note in `text`, `memory_write` in `content`): their prose fields are notes, not commands.
+ * The owner's `floors.noteTools` adds to this list; it goes by tool name.
+ */
+export const NOTE_TOOLS: ReadonlySet<string> = new Set(["scratchpad", "memory_write"]);
+
+/** pi-foreman tools outside OWN_TOOLS whose prose fields (the note's markdown, the session brief) are text for a reader: prose fields skip the raw floors, every other field keeps them. */
+const PROSE_FIELD_TOOLS = new Set(["foreman_show", "foreman_session_open"]);
 
 /** What asks the owner before the mode step: a self-modification rule, an ask-kind floor hit (opaque text), a pattern `ask` rule, a protected-target match. */
 export type AskCause = "selfmod" | "floor" | "rule" | "protected";
@@ -55,7 +66,17 @@ export type GateResult =
 const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run"]);
 const PATH_TOOLS = PATH_TOOL_NAMES;
 
-const blocked = (h: FloorHit): GateResult => ({ block: true, reason: h.reason, rule: h.rule, layer: "floor" });
+const fragments = new WeakMap<object, string>();
+
+/** The matched fragment of a floor denial (the `matched:` part of its reason), for the gate log; the result object keeps its shape. */
+export const denialFragment = (r: GateResult): string | undefined => (r ? fragments.get(r) : undefined);
+
+/** A floor denial: the floor's sentence unchanged, then the tool and the matched fragment (the agent's own text, cut to 80 characters). */
+const blocked = (h: FloorHit, tool: string): GateResult => {
+  const r: GateResult = { block: true, reason: `${h.reason} (tool: ${cutFragment(tool)}${h.fragment ? `; matched: ${h.fragment}` : ""})`, rule: h.rule, layer: "floor" };
+  if (h.fragment) fragments.set(r, h.fragment);
+  return r;
+};
 const askFromFloor = (h: FloorHit): GateResult => ({ ask: true, rule: h.rule, reason: h.reason, cause: "floor" });
 
 /** A self-modification hit: a child is denied outright (with what to report), every other session kind is asked. */
@@ -99,15 +120,16 @@ function powershellSegment(cwd: string): ShellSegment {
 const PROSE_TOOLS = new Set(["subagent", "intercom", "contact_supervisor", "subagent_supervisor", "ask_user_question", "pr_create"]);
 const STRUCTURED_PATH_KEYS = ["cwd", "worktree", "output", "outputPath", "output_path", "outputFile"];
 
-/** Every string leaf of a JSON value, one per line (so a floor regex sees `rm -rf /` as the line it is, not as JSON). */
-function stringLeaves(v: unknown, out: string[] = [], depth = 0): string[] {
-  if (typeof v === "string") out.push(v);
-  else if (depth < 8 && v && typeof v === "object") for (const x of Object.values(v)) stringLeaves(x, out, depth + 1);
+/** Every string leaf of a JSON value, one per line (so a floor regex sees `rm -rf /` as the line it is, not as JSON); `skipProse`: leaves under a prose field are left out. */
+function stringLeaves(v: unknown, out: string[] = [], depth = 0, skipProse = false, key = ""): string[] {
+  if (typeof v === "string") {
+    if (!(skipProse && PROSE_FIELDS.has(key))) out.push(v);
+  } else if (depth < 8 && v && typeof v === "object") for (const [k, x] of Object.entries(v)) stringLeaves(x, out, depth + 1, skipProse, Array.isArray(v) ? key : k);
   return out;
 }
 
 /** Free-text fields of pi-foreman's own tools (notes, plans, messages, PR text, dialog questions): quoting a floored command there is prose, not a command. */
-const PROSE_FIELDS = new Set(["text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
+export const PROSE_FIELDS = new Set(["markdown", "brief", "text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
 /** Fields that name a file or directory: a secret path there is a floor deny. */
 const PATH_FIELD = /^(?:path|paths|cwd|worktree|file|files|dir|dirs|directory|target|dest|destination|src|source|from|to|root|repo|output|outputPath|output_path|outputFile)$/i;
 
@@ -133,8 +155,12 @@ function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth
   return found;
 }
 
-/** Floors for a tool that is neither shell nor path: structured path fields for prose tools, raw-text floors on the payload for the rest. */
-function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv): FloorHit | null {
+/**
+ * Floors for a tool that is neither shell nor path: structured path fields for prose tools, raw-text floors on the payload for the rest.
+ * `codemode`: its source is not word-matched, only its structured path fields are floored; the script's tool calls are decided by the gate one by one (they
+ * pass `tool_call` as nested calls of the pinned Pi range). `proseExempt`: leaves under a prose field are left out of the raw scan.
+ */
+function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv, proseExempt = false): FloorHit | null {
   if (PROSE_TOOLS.has(tool)) {
     for (const k of STRUCTURED_PATH_KEYS) {
       const v = inp[k];
@@ -147,7 +173,8 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
   // segment floors (secret paths) stay with the inner calls of codemode, which the gate decides one by one.
   const pathHit = fieldFloors(inp, "", env, false);
   if (pathHit) return pathHit;
-  const leaves = stringLeaves(inp);
+  if (tool === "codemode") return null;
+  const leaves = stringLeaves(inp, [], 0, proseExempt);
   const text = leaves.join("\n");
   if (!text) return null;
   let found: FloorHit | null = null;
@@ -244,7 +271,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       const h = lineFloors(cmd, parsed, env);
       // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
       const segs = parsed.map(relaxPatternWords);
-      if (h && h.kind === "deny") return decided(blocked(h));
+      if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       if (toolName !== "powershell") {
         const sm = selfmodResult(shellSelfmod(segs, cwd, roots, platform), roots.child);
@@ -279,7 +306,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       const ph0 = pathFloors(inp, env, toolName, readField, readOnly);
       const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(inp, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
-      if (h && h.kind === "deny") return decided(blocked(h));
+      if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
@@ -293,8 +320,9 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp }, { roots, platform, cwd, facts }) };
     }
     // own tools carry free text (ledger notes, plans) that may quote a floor pattern: only their prose fields skip the floors
-    const ph = OWN_TOOLS.has(toolName) ? fieldFloors(inp, "", env, true) : payloadFloors(toolName, inp, env);
-    if (ph && ph.kind === "deny") return decided(blocked(ph));
+    const proseExempt = PROSE_FIELD_TOOLS.has(toolName) || NOTE_TOOLS.has(toolName) || (deps.noteTools?.includes(toolName) ?? false);
+    const ph = OWN_TOOLS.has(toolName) ? fieldFloors(inp, "", env, true) : payloadFloors(toolName, inp, env, proseExempt);
+    if (ph && ph.kind === "deny") return decided(blocked(ph, toolName));
     if (!roots) return decided(ph ? askFromFloor(ph) : undefined);
     if (roots.child) {
       const cd = childDenied(toolName, inp, undefined, null, { roots, facts, platform, cwd });

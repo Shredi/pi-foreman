@@ -58,7 +58,7 @@ test("pr_create runs with no classifier call", async (t) => {
 
 test("a codemode payload with rm -rf / is a floor deny, no review call", async (t) => {
   const r = await rig(t, [V("allow", "read-only-inspection")]);
-  const res = await r.call("codemode", { code: "await sh('rm -rf /')" });
+  const res = (await r.fire("tool_call", { toolName: "bash", toolCallId: "cm1/1", input: { command: "rm -rf /" } })) as { block?: boolean } | undefined; // a nested shell call of a script
   assert.ok(res && res.block);
   assert.equal(r.reg.calls.length, 0);
   assert.deepEqual([r.log().at(-1)!.layer, r.log().at(-1)!.verdict], ["floor", "deny"]);
@@ -78,7 +78,7 @@ test("subagent and intercom prose is not floored on raw text; structured fields 
   assert.equal(gateDecide("intercom", { message: "sudo reboot is forbidden" }, process.cwd(), deps), undefined);
   const hit = gateDecide("subagent", { agent: "builder", task: "x", cwd: "/Users/someone/.ssh/id_rsa" }, process.cwd(), { env: (cwd) => baseFloorEnv(cwd, { home: "/Users/someone" }) });
   assert.ok(hit && "block" in hit);
-  assert.ok((gateDecide("codemode", { code: "sudo ls" }, process.cwd(), deps) as { block?: true }).block);
+  assert.ok((gateDecide("bash", { command: "sudo ls" }, process.cwd(), deps) as { block?: true }).block); // a nested shell call of a script
 });
 
 // Own tools skip payload floors (their text is prose); pr_create text is prose and still reaches review.

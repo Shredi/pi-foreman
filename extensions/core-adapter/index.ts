@@ -17,7 +17,7 @@ import { childHandoffDirs, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandof
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
-import { baseFloorEnv, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
+import { baseFloorEnv, denialFragment, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
@@ -2527,15 +2527,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ...(roots ? { roots: () => roots, facts: gateFacts ?? { ...gitFacts, protectedBranches: (cwd: string) => [...gitFacts.protectedBranches(cwd), ...configured] } } : {}),
       ...(resolved ? { rules: { sets: resolved.rules, env: { cwd: ctx.cwd, home: os.homedir(), platform, checkout: rt ? rt.store.main() : ctx.cwd } } } : {}),
       ...(resolved?.protected.length ? { protected: resolved.protected } : {}),
+      ...(resolved?.noteTools.length ? { noteTools: resolved.noteTools } : {}),
     });
     const r = out.result;
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
     const kind: GateKind = gs?.isChild ? "child" : ctx.hasUI ? "owner" : "headless";
     const payload = gatePayload(event.toolName, event.input);
-    const note = (layer: GateLayer, verdict: string, rule: string, reason?: string): void => rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), input: payload, role, kind });
+    const note = (layer: GateLayer, verdict: string, rule: string, reason?: string, fragment?: string): void => rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), ...(fragment ? { fragment } : {}), input: payload, role, kind });
     if (r && "block" in r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
-      note(r.layer ?? "floor", "deny", r.rule, r.reason);
+      note(r.layer ?? "floor", "deny", r.rule, r.reason, denialFragment(r));
       return (gs && (repeatedDeny(gs, ctx, r.reason) ?? undefined)) || { block: true as const, reason: r.reason };
     }
     // no session: no dialog, classifier or log to decide with, and the overlay below is no replacement for the gate; floors and rules ran above

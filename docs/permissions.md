@@ -14,8 +14,8 @@ One short JSON file holds the whole policy. Three files can exist; all use the s
 
 | File | Location | What it may contain |
 |---|---|---|
-| user | `<agentDir>/pi-foreman/permissions.json` | every key, including `mode`, `profiles` and `workFolders` |
-| project | `<main checkout>/.workflow/permissions.json` | everything except `mode`, `profiles` and `workFolders` (see the trust rule) |
+| user | `<agentDir>/pi-foreman/permissions.json` | every key, including `mode`, `profiles`, `workFolders` and `floors` |
+| project | `<main checkout>/.workflow/permissions.json` | everything except `mode`, `profiles`, `workFolders` and `floors` (see the trust rule) |
 | tracked | `<worktree>/.pi/permissions.json` | `deny`, `ask` and `classifier.deny` only |
 
 A missing user file is `mode: "auto"` with empty lists. The project file lives in the **main checkout**, found with `git worktree list`, so every worktree of a repository shares it.
@@ -39,6 +39,7 @@ A missing user file is `mode: "auto"` with empty lists. The project file lives i
 - **The tracked file** `.pi/permissions.json` is reviewed code that every contributor can change, so it can only tighten: `deny`, `ask` and `classifier.deny`. Other keys are dropped with one notice.
 - **Invalid files.** An invalid user file (not JSON, wrong shapes) makes the mode `ask` and the other files still apply; an invalid project or tracked file contributes nothing. One in-session notice names the file and the error at the first gate decision, and `/foreman doctor` warns. A bad entry inside a valid file (an unparseable rule, a sentence over 300 characters, a non-string) is skipped on its own, with a notice that names it.
 - **Reading.** The files are read at the first decision, when their modification time changes, after a remember write and on `/foreman perms reload`. A child re-reads them at each decision, so a remember in the parent applies to running children.
+- **`floors.noteTools`** (user file and its profiles only; a project or tracked file's value is dropped with the usual notice): a list of tool names whose prose fields are notes, not commands, so the raw-text floors skip them. Built-in list, always on: `scratchpad` (note in `text`) and `memory_write` (note in `content`), the note tools of the public `pi-memory` package. The key adds to it (there is no removal), and it goes **by tool name**: any extension that registers a tool of a listed name gets the exemption. Only the prose fields (`text`, `content`, `note`, `message`, `markdown`, `brief` and the other free-text names of the gate) are exempt; path-like fields keep the secret-path floor and every other string field keeps the raw-text floors. Example: `{ "floors": { "noteTools": ["my_journal_add"] } }`.
 - **Protected.** The agent cannot write any of the three files (floor, see [Floors](#floors)); you edit them, or the dialog's remember step does for the project file.
 - `additionalDirectories` (user and trusted project file, `~/` and relative paths allowed; relative means to the main checkout) are added to the owned roots, which widen reads and count as inside for role launches. Under mode `auto` reads outside the roots are not dangerous anyway; the key matters under mode `ask`.
 
@@ -282,7 +283,15 @@ Floors deny with a reason and no model call, for every session kind and every mo
 - **Child:** a deterministic deny with the hint "Rephrase without a variable or loop, or let the foreman do it." A child never asks its parent about a text-only hit.
 - **Owner or an opened session:** a dialog (never the classifier, never run under mode `allow`).
 
-The same words on a parsed segment are a deny for every kind. The `rawFloors` list (download piped into a shell, privilege, shutdown, disk, `GIT_CONFIG_*`, `--config-env`), publish and `rm` of system dirs stay denies on the raw text.
+The same words on a parsed segment are a deny for every kind. The `rawFloors` list (download piped into a shell, privilege, shutdown, disk, `GIT_CONFIG_*`, `--config-env`), publish and `rm` of system dirs stay denies on the raw text, with one rule for the three program floors below.
+
+**Restart, privilege and disk tools: one rule.** `sudo`, `su`, `doas`, `pkexec`; `shutdown`, `reboot`, `halt`, `poweroff`; `mkfs*`, `fdisk`, `sfdisk`, `parted`, `wipefs`, `diskpart` are judged by the **program of each parsed segment** (wrapper-stripped: `env`, `xargs`, `nohup`, `timeout`, `nice`, `command`, `time`, `sh -c`, `eval`, subshells, `$( )`, backticks, `if`/`while`/`for`/`case` bodies, absolute paths, `.exe`, quoted or escaped spellings). The command-position word match for these three groups applies only to a line that is **not clean**: the parse failed, a segment is opaque (a function body, `exec`, `coproc`, `[[ ]]`, a variable as the program), or a segment feeds text to an interpreter (a shell or runner given code, `-exec`, a here-document or here-string into a shell). A clean line is read by its programs alone, so a search such as `grep -rn a\|reboot src` (an escaped pipe before a word) passes. The price: on a clean line there is no second net against a parser mistake. Lines no judge reads as the program stay open (remote login, `docker exec`, `find -exec`, `telinit`, `busybox <applet>`, an alias then its call, `eval "$x"`, text piped into a shell, `powershell -Command`, `cmd /c`); they are pinned as documented gaps in `g8-matrix.test.ts`. Every other raw entry (download into a shell, `dd` to a device, injected git config, profile, adopt) is unchanged.
+
+**Script source is not word-matched.** The source of a `codemode` script is no longer scanned as raw text; its structured path fields keep the secret-path floor. What a script does is decided call by call: every tool call it makes goes through Pi's nested tool pipeline (`tool_call` with a `parentToolCallId`), where this gate applies the floors, rules, dangerous class and classifier to it like a direct call. That rests on two things, both stated as risks: the runner of the pinned Pi range (`1.5.x`, enforced at setup) gating nested calls, and the exemption going by the tool name `codemode` (a different extension registering a tool of that name that runs its text itself would not be word-matched). Probe after a Pi update: a script with one nested shell call carrying a floored line must be refused.
+
+**Notes are not commands.** The prose fields of `foreman_show` (`markdown`) and `foreman_session_open` (`brief`), and of the note tools above, skip the raw-text floors. A command or a path in any other field of those tools is floored as before; MCP tools and every unlisted tool keep the raw-text floors on all fields.
+
+**Denial text.** A floor denial keeps its sentence and appends the tool and the matched fragment: `... No review, policy entry or dialog lifts this floor. (tool: bash; matched: reboot)`. The fragment is the regex match (raw and opaque-text floors), the program and the operand that decided (segment floors) or the path as written (path and secret-path floors, never file content), cut to 80 characters with control characters removed. It is the agent's own text. The decision log carries it as `fragment`, written through the same redacting field writer as `tool`.
 
 What the text floors read, so that data is not mistaken for a command:
 
@@ -414,7 +423,7 @@ Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) an
 
 ## Decision log
 
-One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `latencyMs`, `model` and `cached` when a model decided. For a dialog the `reason` of an allow holds the answer (for example `allow-once`, `allow-remember`, `allow-remember-refused` when the remember write was refused and the call ran once, `parent-allow` on the child's line); a deny keeps its deny text.
+One JSON line per gate decision in `<agentDir>/pi-foreman/state/gate/log.jsonl`: `id, ts, session, kind (owner|child|headless), role, tool, layer, verdict, rule, reason, shape, cwdHash`, plus `fragment` on a floor denial (the matched text, redacted), and `latencyMs`, `model` and `cached` when a model decided. For a dialog the `reason` of an allow holds the answer (for example `allow-once`, `allow-remember`, `allow-remember-refused` when the remember write was refused and the call ran once, `parent-allow` on the child's line); a deny keeps its deny text.
 
 | Layer | Written when | `rule` holds |
 |---|---|---|
