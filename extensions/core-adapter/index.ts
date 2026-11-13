@@ -29,7 +29,8 @@ import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
 import { readToolsOf, warnUnknownReadTools } from "./readtools.ts";
-import { adopt as adoptSuggested, entriesFromReport, parsePicks, review as reviewAdopted, runSuggest, suggestHint } from "./permssuggest.ts";
+import { adopt as adoptSuggested, entriesFromReport, parsePicks, readClearHint, review as reviewAdopted, runSuggest, suggestHint } from "./permssuggest.ts";
+import { insideDirs, readClearEntry, readNotes, shellIsBash } from "./readclear.ts";
 import type { AdoptPick } from "./permssuggest.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
@@ -192,6 +193,7 @@ import type { LoopStop, ReviewKind } from "./reviewloop.ts";
 import { getShellConfig as piGetShellConfig } from "@earendil-works/pi-coding-agent";
 import { bgBashNotice, resolveBgShell } from "./bgshell.ts";
 import { shellPathSetting } from "./bg.ts";
+import type { ShellConfigFn } from "./bg.ts";
 import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDoctor, formatWaits, readAddonTasks, readOwnAddonTasks, wakingBgTaskIds } from "./bg.ts";
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
@@ -483,8 +485,8 @@ export interface AdapterDeps {
   mcpChild?: Partial<Pick<McpChildOpts, "resolveRoot" | "importFile" | "createMcp" | "env">>;
   /** Tests: the working-tree snapshot taken at a reviewer launch (default: commentonly.ts worktreeTree); the shared rigs pass a no-op, so the run end keeps head_moved. */
   worktreeSnapshot?: (cwd: string) => Promise<string | null>;
-  /** Tests: replaces Pi's shell lookup the win32 background-shell setup uses (default: Pi's getShellConfig). */
-  getShellConfig?: typeof piGetShellConfig;
+  /** Tests: replaces Pi's shell resolution, used by the read question's entry condition (is the bash tool's shell a bash) and the win32 background-shell setup (default: Pi's getShellConfig). */
+  getShellConfig?: ShellConfigFn;
 }
 
 export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): void {
@@ -2541,7 +2543,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const role = gs?.isChild ? gs.usage.line.role : "foreman";
     const kind: GateKind = gs?.isChild ? "child" : ctx.hasUI ? "owner" : "headless";
     const payload = gatePayload(event.toolName, event.input);
-    const note = (layer: GateLayer, verdict: string, rule: string, reason?: string): void => rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), input: payload, role, kind });
+    const note = (layer: GateLayer, verdict: string, rule: string, reason?: string): void => void rt?.log.record({ tool: event.toolName, layer, verdict, rule, ...(reason ? { reason } : {}), input: payload, role, kind });
     if (r && "block" in r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
       note(r.layer ?? "floor", "deny", r.rule, r.reason);
@@ -2648,25 +2650,47 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (resolved.mode === "auto") {
         const facts = reviewGitFacts(ctx.cwd);
         const ownerMessage = (gateOwnerMessages.get(gs.id) ?? [])[0];
+        // the id of the log row of this question: the read question's row `follows` it
+        let firstRow = "";
+        const classifierCtx = {
+          prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
+          recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
+          trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
+          notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
+          stamp: () => {
+            try {
+              return String(fs.statSync(rt.store.filePath("user")).mtimeMs);
+            } catch {
+              return "none";
+            }
+          },
+        };
         const v = await rt.classifier.classify(
           { tool: event.toolName, payload, reason: cause, kind, role, cwd: ctx.cwd, worktree: workspaceOf(ctx.cwd).root, branch: facts.branch, remotes: facts.remotes, ...(ownerMessage ? { ownerMessage } : {}) },
-          {
-            prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
-            recordUsage: (m) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
-            trace: (t) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
-            notify: (text) => notifyOnce(gs, ctx, "no-classifier-model", text),
-            stamp: () => {
-              try {
-                return String(fs.statSync(rt.store.filePath("user")).mtimeMs);
-              } catch {
-                return "none";
-              }
-            },
-          },
+          { ...classifierCtx, log: { file: rt.log.file, record: (rec) => (firstRow = rt.log.record(rec)) } },
         );
         if (v.verdict === "allow") return allowed(`prose:${v.entry}`, v.cached ? "cache" : "classifier", `classifier:${v.entry}`);
         if (v.verdict === "deny") return denied(`prose:${v.entry}`, "classifier", v.text);
         classifierReason = v.reason || v.detail;
+        // the read question: only after a well-formed escalate or an empty whitelist; every non-clear takes the route below unchanged
+        if ((v.cause === "model" || v.cause === "no_entries") && [true, undefined].includes(get(gs.config.config, "gate.readClear") as boolean | undefined) && cmdText !== null && out.segments && out.dangers) {
+          try {
+            const entryOk = readClearEntry(
+              { tool: event.toolName, text: cmdText, segments: out.segments, dangers: out.dangers, shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
+              floorEnvOf(gs, ctx.cwd, roots?.sessionDir),
+            );
+            if (entryOk && roots) {
+              const rc = await rt.classifier.readClear({ tool: event.toolName, payload, kind, role, cwd: ctx.cwd, inside: insideDirs(roots), notes: readNotes(out.segments), ...(firstRow ? { follows: firstRow } : {}) }, classifierCtx);
+              if (rc.cleared) {
+                const judge = classifierTarget(gs.config.config, ctx.model?.provider, ctx.modelRegistry as never);
+                notifyOnce(gs, ctx, "read-clear", `pi-foreman: a shell line the gate could not read ran without asking: the judge, a small model${judge ? ` (${judge.provider}/${judge.modelId})` : ""} asked with reasoning, took it for only reading, and it can be wrong (trial of 2026-11-13, 72 lines: no line that must not clear was cleared with reasoning, about 1 in 100 without; see docs/permissions.md). Each clear is a row in the decision log (${rt.log.file}); set gate.readClear to false in foreman.json to switch it off.`, "info");
+                return allowed("read-clear", rc.cached ? "cache" : "classifier", "classifier:read-clear");
+              }
+            }
+          } catch {
+            // the read question is best effort: any failure takes today's route (the dialog, the child's ask or the deny)
+          }
+        }
       }
       return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, ...(classifierReason ? { classifierReason } : {}), dangerName: danger.name });
     } catch (e) {
@@ -5260,6 +5284,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const r = await runScript(s, "foreman_retro.py", argv);
       const suggestLine = suggestHint(s.agentDir);
       if (suggestLine && r.ok) r.text = `${r.text}\n${suggestLine}`;
+      const clearLine = readClearHint(s.agentDir);
+      if (clearLine && r.ok) r.text = `${r.text}\n${clearLine}`;
       ctx.ui.notify(r.text, r.ok ? "info" : "error");
       let file: string | null = null;
       try {
