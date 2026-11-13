@@ -53,7 +53,7 @@ after(() => {
 });
 
 /** The gate's outcome without the segments: `result` (undefined: nothing decided, the mode step follows) and `danger`. */
-function gate(command: string, child: boolean): { result: { block?: boolean; allow?: boolean; rule?: string } | undefined; danger: unknown } {
+function gate(command: string, child: boolean, withRoots = true): { result: { block?: boolean; allow?: boolean; rule?: string } | undefined; danger: unknown } {
   const cwd = path.join(root, "cwd");
   const scratch = path.join(root, "scratch", "pi-foreman-scratch", "mine");
   const roots: GateRoots = {
@@ -65,22 +65,25 @@ function gate(command: string, child: boolean): { result: { block?: boolean; all
     install: [],
     roundFlow: [],
     handoffs: [],
-    child: true,
-    role: "builder",
+    child,
+    role: child ? "builder" : "main",
     tmpAccess: false,
   };
   const out = gateEvaluate("bash", { command }, cwd, {
     env: (c) => baseFloorEnv(c, { child, home: path.join(root, "home"), platform: "linux", writeRoots: [c, root], scratch: [scratch] }),
-    ...(child ? { roots: () => roots } : {}),
+    ...(withRoots ? { roots: () => roots } : {}),
   });
   return { result: out.result as { block?: boolean; allow?: boolean; rule?: string } | undefined, danger: out.danger };
 }
 
-for (const child of [false, true]) {
-  test(`gateEvaluate (${child ? "child" : "main"}): a too-deep line is decided like an unreadable line`, () => {
-    const want = gate(UNPARSABLE, child);
+for (const [label, child, withRoots] of [["main, no session roots", false, false], ["main, with roots", false, true], ["child", true, true]] as const) {
+  test(`gateEvaluate (${label}): a too-deep line is decided like an unreadable line`, () => {
+    const want = gate(UNPARSABLE, child, withRoots);
+    // the unreadable line: nothing decided here (the mode step follows); with session roots it carries `danger` (measured: `danger-opaque`)
+    assert.equal(want.result, undefined);
+    if (withRoots) assert.ok(want.danger, "unreadable line carries danger");
     for (const [name, line] of Object.entries(DEEP)) {
-      const got = gate(line, child);
+      const got = gate(line, child, withRoots);
       assert.notEqual(got.result?.rule, "gate-error", name);
       assert.ok(!got.result?.allow, `${name}: not an allow`);
       assert.deepEqual(got, want, name);

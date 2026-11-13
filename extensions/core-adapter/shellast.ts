@@ -784,8 +784,8 @@ function walkScript(script: Script, src: string, sc: Scope): void {
 
 /**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
- * A stack overflow (RangeError) while parsing or walking a line too deep for the stack is the same: one `parse_error` segment,
- * none of the partial ones. Any other error propagates.
+ * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
+ * one `parse_error` segment, none of the partial ones. Any other error propagates.
  */
 export function parseShell(command: string, opts: ShellParseOptions = {}): ShellSegment[] {
   const start = (): Scope => {
