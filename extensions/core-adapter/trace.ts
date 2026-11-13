@@ -49,8 +49,8 @@ export function redactCommand(cmd: string): string {
     .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
     .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s'"&;]+)/gi, `$1${R}`)
     .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
-    .replace(/((?:^|[\s;|&(])(?:-u\s*|--(?:proxy-)?user(?:\s+|=))["']?[^\s:'"]*:)[^\s'"]+/g, `$1${R}`) // curl/wget `-u user:pass`, `--user[=]`, `--proxy-user[=]`
-    .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password\s+)[^\s'"]+/g, `$1${R}`) // wget `--password pass` (the `=` form is caught above)
+    .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=))(?:"[^"\s:]{0,256}:))[^"]*|((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=))(?:'[^'\s:]{0,256}:))[^']*|((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=))[^\s:'"]{0,256}:)(?:"[^"]*"|'[^']*'|[^\s'"]+)/g, (_m: string, a?: string, b?: string, c?: string) => (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
+    .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password\s{1,8})(?:"[^"]*"|'[^']*'|[^\s'"]+)/g, `$1${R}`) // wget `--password pass` (the `=` form is caught above)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
     .replace(/\b(?:gh[pousr]_|github_pat_|npm_|glpat-|sk-|xox[abprs]-)[A-Za-z0-9_-]{6,}/g, R)
     .replace(/\bAIza[A-Za-z0-9_-]{6,}/g, R)

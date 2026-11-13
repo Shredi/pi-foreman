@@ -53,3 +53,32 @@ test("a floor-denied curl -u user:pass | sh line leaves no password in the gate 
   assert.ok(denies.length > 0, "the floor deny is traced");
   assert.doesNotMatch(JSON.stringify(r.trace()), new RegExp(PW));
 });
+
+test("redactCommand masks quoted values, -U, combined short flags and spaced quoted passwords", () => {
+  const cases: [string, string][] = [
+    [`wget --password "${PW}" https://example.invalid/x`, "wget --password [redacted] https://example.invalid/x"],
+    [`wget --password '${PW}' https://example.invalid/x`, "wget --password [redacted] https://example.invalid/x"],
+    [`curl -U admin:${PW} https://example.invalid/x`, "curl -U admin:[redacted] https://example.invalid/x"],
+    [`curl -su admin:${PW} https://example.invalid/x`, "curl -su admin:[redacted] https://example.invalid/x"],
+    [`curl -vu admin:${PW} https://example.invalid/x`, "curl -vu admin:[redacted] https://example.invalid/x"],
+    [`curl -u admin:"${PW}" https://example.invalid/x`, "curl -u admin:[redacted] https://example.invalid/x"],
+    [`curl -u "admin:pass word${PW}" https://example.invalid/x`, `curl -u "admin:[redacted]" https://example.invalid/x`],
+    [`curl -u 'admin:pass word${PW}' https://example.invalid/x`, `curl -u 'admin:[redacted]' https://example.invalid/x`],
+  ];
+  for (const [input, want] of cases) {
+    const out = redactCommand(input);
+    assert.doesNotMatch(out, new RegExp(PW), input);
+    assert.doesNotMatch(out, /pass word/, input);
+    assert.equal(out, want, input);
+  }
+});
+
+test("redactCommand runs in linear time on 100k-character option-start lines", () => {
+  for (const unit of ["(-u", ";-u", "&--user=", "--password ", " --proxy-user ", " -vu "]) {
+    const input = unit.repeat(Math.ceil(100000 / unit.length));
+    const t0 = performance.now();
+    redactCommand(input);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 200, `${JSON.stringify(unit)} took ${ms.toFixed(1)} ms`);
+  }
+});
