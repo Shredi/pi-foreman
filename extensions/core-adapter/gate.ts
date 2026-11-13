@@ -67,14 +67,19 @@ const SHELL_TOOLS = new Set(["bash", "foreman_bg", "bg_run"]);
 const PATH_TOOLS = PATH_TOOL_NAMES;
 
 const fragments = new WeakMap<object, string>();
+const sentences = new WeakMap<object, string>();
 
 /** The matched fragment of a floor denial (the `matched:` part of its reason), for the gate log; the result object keeps its shape. */
 export const denialFragment = (r: GateResult): string | undefined => (r ? fragments.get(r) : undefined);
+
+/** The floor's own sentence of a floor denial (without the appended tool and fragment), else the reason: what the child repeat stop counts. */
+export const denialSentence = (r: { reason: string }): string => sentences.get(r) ?? r.reason;
 
 /** A floor denial: the floor's sentence unchanged, then the tool and the matched fragment (the agent's own text, cut to 80 characters). */
 const blocked = (h: FloorHit, tool: string): GateResult => {
   const r: GateResult = { block: true, reason: `${h.reason} (tool: ${cutFragment(tool)}${h.fragment ? `; matched: ${h.fragment}` : ""})`, rule: h.rule, layer: "floor" };
   if (h.fragment) fragments.set(r, h.fragment);
+  sentences.set(r, h.reason);
   return r;
 };
 const askFromFloor = (h: FloorHit): GateResult => ({ ask: true, rule: h.rule, reason: h.reason, cause: "floor" });
@@ -157,7 +162,7 @@ function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth
 
 /**
  * Floors for a tool that is neither shell nor path: structured path fields for prose tools, raw-text floors on the payload for the rest.
- * `codemode`: its source is not word-matched, only its structured path fields are floored; the script's tool calls are decided by the gate one by one (they
+ * `codemode`: its `code` field is not word-matched (its other fields are); the script's tool calls are decided by the gate one by one (they
  * pass `tool_call` as nested calls of the pinned Pi range). `proseExempt`: leaves under a prose field are left out of the raw scan.
  */
 function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv, proseExempt = false): FloorHit | null {
@@ -173,8 +178,9 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
   // segment floors (secret paths) stay with the inner calls of codemode, which the gate decides one by one.
   const pathHit = fieldFloors(inp, "", env, false);
   if (pathHit) return pathHit;
-  if (tool === "codemode") return null;
-  const leaves = stringLeaves(inp, [], 0, proseExempt);
+  // codemode: the `code` field is not word-matched; every other field keeps the raw floors
+  const scanned = tool === "codemode" ? Object.fromEntries(Object.entries(inp).filter(([k]) => k !== "code")) : inp;
+  const leaves = stringLeaves(scanned, [], 0, proseExempt);
   const text = leaves.join("\n");
   if (!text) return null;
   let found: FloorHit | null = null;

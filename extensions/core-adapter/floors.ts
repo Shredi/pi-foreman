@@ -65,7 +65,7 @@ export interface FloorHit {
 }
 
 /** A fragment of the matched text for a denial: control characters removed, cut to 80 characters. */
-export const cutFragment = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 80);
+export const cutFragment = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f\p{Zl}\p{Zp}\p{Cf}]/gu, "").slice(0, 80);
 
 const hit = (name: string, reason: string, fragment?: string): FloorHit => ({ rule: `floor-${name}`, kind: "deny", reason: `pi-foreman: denied by the permission floor (${name}). ${reason} No review, policy entry or dialog lifts this floor.`, ...(fragment ? { fragment: cutFragment(fragment) } : {}) });
 const askHit = (name: string, reason: string, fragment?: string): FloorHit => ({ rule: `floor-${name}`, kind: "ask", reason: `${reason} (the line is not plain enough for the parser, so the owner decides)`, ...(fragment ? { fragment: cutFragment(fragment) } : {}) });
@@ -876,15 +876,20 @@ function maskHeredocs(text: string): string {
   return out.join("\n");
 }
 
+/** The line has a here-document or here-string and every one feeds `cat`/`tee` or a bare redirect: `maskLine` blanks the bodies. */
+function dataBodies(segments: ShellSegment[]): boolean {
+  const bodies = segments.filter((s) => s.heredoc);
+  const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
+  return bodies.length > 0 && data && !segments.some((s) => s.opaque === "stdin_fed");
+}
+
 /**
  * The text the raw and opaque-text floors scan (A1): quoted strings and the bodies of `cat`/`tee`/redirect-only heredocs are blanked.
  * A `cat`/`tee` data heredoc body is masked even when a later segment runs the written file (that segment is judged by the runner rules);
  * a body fed to a shell or interpreter stays visible. Quoted strings stay visible when a segment runs text.
  */
 export function maskLine(text: string, segments: ShellSegment[]): string {
-  const bodies = segments.filter((s) => s.heredoc);
-  const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
-  const t = bodies.length > 0 && data && !segments.some((s) => s.opaque === "stdin_fed") ? maskHeredocs(text) : text;
+  const t = dataBodies(segments) ? maskHeredocs(text) : text;
   return segments.some(runsText) ? t : maskQuoted(t);
 }
 
@@ -911,11 +916,11 @@ const opaqueDeny = (name: string, reason: string, fragment?: string): FloorHit =
 
 /**
  * The line is clean: the parse succeeded, no segment is opaque and no segment feeds text to an interpreter (a runner, a shell or interpreter given code,
- * `-exec`, a here-document or here-string into a shell). The restart, privilege and disk floors judge a clean line by the program of each segment
- * only; every other line keeps their word match (G8, one rule).
+ * `-exec`) and no here-document or here-string body is left visible by `maskLine` (any program but `cat`/`tee` may run it as code). The restart,
+ * privilege and disk floors judge a clean line by the program of each segment only; every other line keeps their word match (G8, one rule).
  */
 export function cleanLine(segments: ShellSegment[]): boolean {
-  return segments.length > 0 && segments.every((s) => s.opaque === null && !runsText(s));
+  return segments.length > 0 && segments.every((s) => s.opaque === null && !runsText(s)) && (!segments.some((s) => s.heredoc) || dataBodies(segments));
 }
 
 /**

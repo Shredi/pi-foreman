@@ -37,6 +37,12 @@ test("the nested calls of a script are refused one by one: a release, a disk for
   assert.ok(call("codemode", { code: "1", path: KEY })?.block, "a structured path field of codemode keeps the secret-path floor");
 });
 
+test("only the code field of codemode is exempt from the raw-text scan: any other string field keeps the floors", () => {
+  assert.ok(call("codemode", { code: "1", extra: "sudo ls" })?.block, "another string field");
+  assert.ok(call("codemode", { code: "1", options: { args: ["npm publish"] } })?.block, "a nested field");
+  assert.equal(call("codemode", { code: "await sh('sudo ls')" }), undefined);
+});
+
 // ------------------------------------------------------------------ section 3: notes
 
 test("foreman_show with example commands in its markdown passes; its command and path fields do not", () => {

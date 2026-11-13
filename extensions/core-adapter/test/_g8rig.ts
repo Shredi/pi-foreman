@@ -11,7 +11,7 @@ import { r11Rig } from "./_r11rig.ts";
 const spawner: Spawner = async (_command, args) =>
   args.includes(PROBE_CODE) ? { code: 0, stdout: "3.13\n/usr/bin/python3\n/usr/bin/python3\n/usr\n", stderr: "", timedOut: false } : { code: 1, stdout: "", stderr: "", timedOut: false };
 
-export async function r11RigNoSpawn(t: Parameters<typeof r11Rig>[0]) {
+export async function r11RigNoSpawn(t: Parameters<typeof r11Rig>[0], opts: { child?: boolean } = {}) {
   const origSync = cp.spawnSync;
   const origFile = cp.execFile;
   const fakeSync = ((file: string, ...rest: unknown[]) => (file === "git" ? { status: 1, stdout: "", stderr: "" } : (origSync as (...a: unknown[]) => unknown)(file, ...rest))) as typeof cp.spawnSync;
@@ -24,7 +24,7 @@ export async function r11RigNoSpawn(t: Parameters<typeof r11Rig>[0]) {
   cp.spawnSync = fakeSync;
   cp.execFile = fakeFile;
   syncBuiltinESMExports();
-  const r = await r11Rig(t, {}, { deps: { spawner } });
+  const r = await r11Rig(t, {}, { ...opts, deps: { spawner } });
   t.after(() => {
     cp.spawnSync = origSync;
     cp.execFile = origFile;

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { baseFloorEnv, denialFragment, gateDecide } from "../gate.ts";
 import type { GateResult } from "../gate.ts";
-import { lineFloors } from "../floors.ts";
+import { cutFragment, lineFloors } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { gateLogFile } from "../gatelog.ts";
 import { r11RigNoSpawn } from "./_g8rig.ts";
@@ -72,4 +72,9 @@ test("the gate log carries the tool and the redacted fragment", async (t) => {
   assert.equal(row.tool, "bash");
   assert.equal(row.fragment, "API_TOKEN=[redacted] sudo");
   assert.doesNotMatch(JSON.stringify(row), /abcDEF1234567890xyz/);
+});
+
+test("a fragment loses control, format (bidi override, zero width) and line-separator characters", () => {
+  assert.equal(cutFragment(String.fromCodePoint(0x61, 0x202e, 0x62, 0x200b, 0x63, 0x2028, 0x64, 0x2029, 0x65, 0x07, 0x66, 0x85, 0x67, 0xfeff, 0x68)), "abcdefgh");
+  assert.equal(cutFragment("x".repeat(100)).length, 80);
 });

@@ -17,7 +17,7 @@ import { childHandoffDirs, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandof
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
-import { baseFloorEnv, denialFragment, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
+import { baseFloorEnv, denialFragment, denialSentence, gateEvaluate, gitFacts, reviewGitFacts } from "./gate.ts";
 import { lineFloors } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
@@ -2372,11 +2372,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
    * R12 item 4: the second identical stop-eligible deny reason (exact string, matching REPEAT_STOP_REASONS) within one child run stops
    * that run (repeatRefusalStop); other deny reasons (cd outside the workspace, worktree paths, temp-dir writes ...) never stop it.
    */
-  function repeatedDeny(s: Session, ctx: ExtensionContext, reason: string): { block: true; reason: string } | undefined {
-    if (!s.isChild || !REPEAT_STOP_REASONS.some((re) => re.test(reason))) return undefined;
+  function repeatedDeny(s: Session, ctx: ExtensionContext, reason: string, sentence: string = reason): { block: true; reason: string } | undefined {
+    // `sentence` is the floor's own text: the tool and fragment a floor denial appends (gate.ts blocked) are neither matched nor counted
+    if (!s.isChild || !REPEAT_STOP_REASONS.some((re) => re.test(sentence))) return undefined;
     // a path rule of a custom worktree root (s.owned.worktreeGlobs) is a worktree path like `*.worktrees/*`: never stop-eligible
-    if ((s.owned.worktreeGlobs ?? []).some((g) => reason.includes(`path rule '${g}'`))) return undefined;
-    const key = `${s.id}\0${reason}`;
+    if ((s.owned.worktreeGlobs ?? []).some((g) => sentence.includes(`path rule '${g}'`))) return undefined;
+    const key = `${s.id}\0${sentence}`;
     const n = (childDenyCounts.get(key) ?? 0) + 1;
     childDenyCounts.set(key, n);
     return n >= 2 ? repeatRefusalStop(s, ctx, reason) : undefined;
@@ -2540,7 +2541,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (r && "block" in r) {
       gs?.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "blocked", rule: r.rule, ...denyFields(r.reason, event.toolName, event.input, role, [PKG_ROOT, ctx.cwd]) });
       note(r.layer ?? "floor", "deny", r.rule, r.reason, denialFragment(r));
-      return (gs && (repeatedDeny(gs, ctx, r.reason) ?? undefined)) || { block: true as const, reason: r.reason };
+      return (gs && (repeatedDeny(gs, ctx, r.reason, denialSentence(r)) ?? undefined)) || { block: true as const, reason: r.reason };
     }
     // no session: no dialog, classifier or log to decide with, and the overlay below is no replacement for the gate; floors and rules ran above
     if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };

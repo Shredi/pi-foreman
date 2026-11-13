@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { gateDecide, baseFloorEnv } from "../gate.ts";
 import { cleanLine, rawFloors } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
-import { GAPS, GROUPS, HARMLESS, OPAQUE, POSITIONS, judge, label } from "./_g8matrix.ts";
+import { GAPS, GROUPS, HARMLESS, HEREDOC_ROWS, OPAQUE, POSITIONS, judge, label } from "./_g8matrix.ts";
 
 const NOT = "not refused";
 
@@ -36,6 +36,19 @@ test("every dangerous position of a restart, privilege and disk program is refus
       assert.equal(judge(line, g).refused, true, `${g.name} / ${row.form}: ${JSON.stringify(line)}`);
     }
   }
+});
+
+test("a here-document body that maskLine does not blank keeps the word match: refused as before the change, and the line is not clean", () => {
+  for (const row of HEREDOC_ROWS) {
+    for (const g of GROUPS) {
+      const line = row.line(g);
+      assert.equal(judge(line, g).refused, true, `${g.name} / ${row.form}: ${JSON.stringify(line)}`);
+      assert.equal(cleanLine(parseShell(line, { cwd: process.cwd() })), false, `${g.name} / ${row.form}`);
+    }
+  }
+  // a data heredoc that maskLine blanks stays clean
+  assert.equal(cleanLine(parseShell("cat <<EOF\nhello\nEOF", { cwd: process.cwd() })), true);
+  assert.equal(cleanLine(parseShell("cat > f <<'EOF'\nhello\nEOF", { cwd: process.cwd() })), true);
 });
 
 test("the opaque and runner forms keep the verdict they had before the change", () => {

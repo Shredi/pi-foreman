@@ -63,6 +63,18 @@ export const POSITIONS: Row[] = [
   { form: "here-string into sh", line: (g) => `sh <<< '${w(g)}'` },
 ];
 
+/**
+ * A here-document whose body `maskLine` does not blank (any program but `cat`/`tee`): refused on the code before the change by the word match, whatever
+ * the program does with the body (an interpreter behind a wrapper, or a data sink such as `grep`).
+ * The here-string variants of these shapes were not refused before and are not rows (see GAPS).
+ */
+const HEREDOC_PROGRAMS = [
+  "at now", "batch", "nsenter -t 1 -m sh", "docker exec -i c sh", "docker run -i alpine sh", "kubectl exec -i p -- sh", "podman exec -i c sh",
+  "lxc exec c -- sh", "systemd-nspawn -D /x sh", "make -f -", "vagrant ssh", "gcloud compute ssh vm",
+  "git commit -F -", "grep x", "wc -l", "gh pr create --body-file -",
+];
+export const HEREDOC_ROWS: Row[] = HEREDOC_PROGRAMS.map((p) => ({ form: `here-document into ${p}`, line: (g: Group) => `${p} <<EOF\n${w(g)}\nEOF` }));
+
 /** Forms the parser marks opaque (or reads as a runner): the word match stays on these lines; pinned so a parser change cannot drop them silently. */
 export const OPAQUE: Row[] = [
   { form: "function body", line: (g) => `f() { ${w(g)}; }; f` },
