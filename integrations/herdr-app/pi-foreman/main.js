@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -766,7 +766,7 @@ export default class ForemanAgents extends View {
         return { node, recs, own, attach: this.recs.get(term.address)?.attach ?? "", status: guard(() => agentStatus(own, node, recs), own) };
       };
       const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets, remoteNodes, endedNodes, recsOf: recsOfNode, remoteOf }), []);
-      const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys, recsOfNode, remoteOf), { root: null, items: [] });
+      const { root, items } = guard(() => dropDrawnEndedMirrors(this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys, recsOfNode, remoteOf)), { root: null, items: [] });
       drawnItems.push(...(root ? [root] : []), ...items);
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);
       return f ? [block, div().h(4).flex_none()] : [block];

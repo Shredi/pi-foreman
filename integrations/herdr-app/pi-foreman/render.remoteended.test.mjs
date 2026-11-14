@@ -104,3 +104,13 @@ test("(f) an ended remote node with a live session below it and a live mirror is
   assert.equal(count(root, "alpha-inventory@box1"), 1);
   assert.equal(texts(root).filter((x) => x.startsWith("fm-")).length, 0);
 });
+
+// (g) An ended remote node whose only child is done (not drawn): its registry row is empty and goes, so the live mirror is the one row.
+test("(g) an ended remote node with only a done child and a live mirror is one row, the mirror's, with its address", () => {
+  const doneKid = sess(KB, "bravo-prechecks", { state: "done", parent: KA });
+  const ended = sess(KA, "alpha-inventory@box1", { machine: "box1", hcTerminal: "box1/t1k", state: "closed", parent: "p" }, [doneKid]);
+  const { root } = render({ kids: [ended], mirrors: [mirror("t3", KA, "box1/t1k")] });
+  assert.equal(count(root, "alpha-inventory@box1"), 1);
+  assert.equal(byId(root, "row:hc:t3").length, 1, "the mirror's row");
+  assert.equal(texts(root).filter((x) => x.startsWith("fm-")).length, 0);
+});

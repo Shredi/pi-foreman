@@ -938,7 +938,7 @@ function recItems(n, recs, skip, id) {
  *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
  *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
  *  `program` for the click and the logo. `endedNodes` (`endedRemoteNodesOf`) are the ended remote sessions: the live mirror of one
- *  is a dimmed row named as the session, with its machine chip. */
+ *  is a dimmed row named as the session, with its machine chip, carrying its target as `ended` (see `dropDrawnEndedMirrors`). */
 export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set(), remoteNodes = [], endedNodes = [], recsOf = null, remoteOf = null } = {}) {
   if (!Array.isArray(all)) return [];
   const seen = new Set([address]);
@@ -972,10 +972,9 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       // The mirror of a remote session that has ended (closed, finished, lost) while its terminal lives: one dimmed row named as the
       // session, with its machine chip, clicking it focuses the mirror; its children stay beneath it. The row goes with the terminal.
       const ended = typeof term.name === "string" && term.name && !isObj(r.node) ? matchOf(endedNodes, term, r.attach) : null;
-      if (ended?.kept) return below; // its registry row stays (a live session below it): the mirror draws none, its children stay
       if (ended) {
         const children = sortItems([...recItems(null, r.recs ?? [], skip, id), ...below]);
-        return [{ id, type: "session", node: null, label: ended.label, dim: true, elsewhere: ended.machine, tier: "", costText: "", top: false, sessions: 0, status: "idle", urgent: urgentStatus(["idle", ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]), address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) }];
+        return [{ id, type: "session", node: null, ended: ended.target, label: ended.label, dim: true, elsewhere: ended.machine, tier: "", costText: "", top: false, sessions: 0, status: "idle", urgent: urgentStatus(["idle", ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]), address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) }];
       }
       if (attach && (!attachLabel(attach) || drawnTargets.has(attach))) return below; // an attach of nothing we know, or of a session already drawn: no row, its children stay
       const label = (attach && `${attachLabel(attach)}`) || (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
@@ -1009,12 +1008,33 @@ export function remoteNodesOf(tree) {
     .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name) }));
 }
 
-/** The ended remote sessions a local registry tree has (`machine` set, an hc terminal, `isEnded`), as `{target, name, label, machine}` (`kept: true` when a live session is below it, so its registry row stays):
+/** The ended remote sessions a local registry tree has (`machine` set, an hc terminal, `isEnded`), as `{target, name, label, machine}`:
  *  `name` is the attach name of `remoteNodesOf`, `label` the row name `<label>@<machine>`. Not polled, unlike `remoteNodesOf`. */
 export function endedRemoteNodesOf(tree) {
   return allSessions(tree)
     .filter((n) => n.machine && n.hcTerminal && isEnded(n))
-    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine, ...(allSessions([n]).some((s) => s !== n && !isEnded(s)) ? { kept: true } : {}) }));
+    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine }));
+}
+
+/** `{root, items}` of an agent's tree (`items` are the children of `root`, or the bare items without one) without the ended mirror
+ *  items (`ended` = target) whose target a registry node drawn in the same tree has: that node's dimmed row is the one row, the
+ *  mirror's children take its place among its siblings. A mirror whose node is not drawn stays. */
+export function dropDrawnEndedMirrors({ root, items }) {
+  const drawn = drawnRemoteTargets([...(root ? [root] : []), ...listOf(items)]);
+  const rewrite = (list) => {
+    let changed = false;
+    const out = listOf(list).flatMap((it) => {
+      const children = rewrite(it.children);
+      if (it.ended && drawn.has(it.ended)) { changed = true; return children; }
+      if (children === it.children) return [it];
+      changed = true;
+      return [{ ...it, children }];
+    });
+    return changed ? sortItems(out) : list;
+  };
+  const kids = rewrite(root ? root.children : items);
+  if (kids === (root ? root.children : items)) return { root, items };
+  return root ? { root: { ...root, children: kids }, items: kids } : { root, items: kids };
 }
 
 /** The `<machine>/<t>` a registry node with a remote terminal follows ("" for a node without one). */

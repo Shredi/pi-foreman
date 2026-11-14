@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hcChildItems, endedRemoteNodesOf, attachName, parseRecords, sessionTree } from "./model.js";
+import { hcChildItems, endedRemoteNodesOf, dropDrawnEndedMirrors, attachName, parseRecords, sessionTree } from "./model.js";
 import { sess, treeOf } from "./fixtures.mjs";
 
 // Remote registry children `label@box1` of the local session p; each follows the remote terminal box1/<t>.
@@ -51,14 +51,43 @@ test("the ended mirror's item carries the pane of its resolved terminal", () => 
   assert.equal("pane" in hcChildItems([...base, mirrorTerm()], "t1", resolve, { endedNodes: [ended()] })[0], false);
 });
 
-test("an ended node that keeps a live session below it is marked kept, and its mirror draws no row, its children stay", () => {
-  const live = sess(KB, "bravo-prechecks", { state: "working", parent: KA });
-  const kept = sess(KA, "alpha-inventory@box1", { machine: "box1", hcTerminal: "box1/t1k", state: "closed", parent: "p" }, [live]);
-  const nodes = endedRemoteNodesOf([tree([kept])]);
-  assert.equal(nodes.length, 1);
-  assert.equal(nodes[0].kept, true);
-  const all = [...base, mirrorTerm(), { address: "t4", state: "live", name: "shell", parent: "t3" }];
-  assert.deepEqual(addrs(hcChildItems(all, "t1", resolve, { endedNodes: nodes })), ["t4"]);
+test("the ended mirror's item carries its target", () => {
+  assert.equal(hcChildItems([...base, mirrorTerm()], "t1", resolve, { endedNodes: [ended()] })[0].ended, "box1/t1k");
+});
+
+// dropDrawnEndedMirrors: an ended mirror item whose target a registry node drawn in the same tree has goes, its children take its place.
+const item = (id, urgent, over = {}) => ({ id, type: "session", node: null, status: urgent, urgent, children: [], ...over });
+const drawnNode = item("reg", "idle", { node: { machine: "box1", hcTerminal: "box1/t1k" } });
+
+test("dropDrawnEndedMirrors drops the mirror of a drawn target and hoists its children, sorted among the siblings", () => {
+  const kid = item("kid", "working");
+  const mirror = item("m", "working", { ended: "box1/t1k", children: [kid] });
+  const root = item("root", "working", { children: [item("a", "idle"), mirror, drawnNode] });
+  const out = dropDrawnEndedMirrors({ root, items: root.children });
+  assert.deepEqual(out.items.map((i) => i.id), ["kid", "a", "reg"]);
+  assert.equal(out.root.children, out.items);
+  assert.equal(out.root.urgent, "working");
+  assert.equal(root.children.length, 3, "the input stays as it was");
+});
+
+test("dropDrawnEndedMirrors keeps the mirror item when its target is not drawn", () => {
+  const mirror = item("m", "idle", { ended: "box1/t99", children: [item("kid", "idle")] });
+  const input = { root: item("root", "idle", { children: [mirror, drawnNode] }), items: [] };
+  input.items = input.root.children;
+  const out = dropDrawnEndedMirrors(input);
+  assert.equal(out.root, input.root);
+  assert.equal(out.items, input.items);
+  const bare = { root: null, items: [mirror] };
+  assert.deepEqual(dropDrawnEndedMirrors(bare).items.map((i) => i.id), ["m"]);
+});
+
+test("dropDrawnEndedMirrors handles a mirror nested below another item, and bare items without a root", () => {
+  const mirror = item("m", "idle", { ended: "box1/t1k", children: [item("kid", "idle")] });
+  const mid = item("mid", "idle", { children: [mirror] });
+  const out = dropDrawnEndedMirrors({ root: null, items: [mid, drawnNode] });
+  assert.deepEqual(out.items.map((i) => i.id), ["mid", "reg"]);
+  assert.deepEqual(out.items[0].children.map((i) => i.id), ["kid"]);
+  assert.equal(out.root, null);
 });
 
 test("the ended mirror's own children stay beneath its row", () => {
