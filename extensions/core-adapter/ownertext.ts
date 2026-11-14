@@ -1,6 +1,7 @@
 // Owner-readable text (docs/ceremony.md "Owner summary"): the `## For the owner` section every plan opens with, the
 // deterministic jargon rule shared by the plan-review facts, the question hint and the foreman_show hint, the
-// context prefix of ask_user_question questions, and the foreman_show opening check. Advice only: nothing here refuses.
+// context prefix of ask_user_question questions, and the foreman_show opening check. Jargon is advice only; the plan form
+// (planFormIssues: presence, position, length, required headings) is what a `[plan-review]` launch is refused for (index.ts).
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -85,18 +86,40 @@ export function jargonHits(text: string, max = 3): string[] {
   return hits;
 }
 
+/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. */
+const measure = (sec: OwnerSection): { wrapped: number; chars: number } => ({
+  wrapped: sec.lines.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0),
+  chars: sec.lines.join("\n").length,
+});
+
 /** The rule violations of a plan's owner section; empty when it is fine. */
 export function ownerSectionIssues(text: string): string[] {
   const sec = ownerSection(text);
   if (!sec) return ["missing"];
   const issues: string[] = [];
   if (!sec.first) issues.push("not the first ## section");
-  const wrapped = sec.lines.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0);
-  const chars = sec.lines.join("\n").length;
+  const { wrapped, chars } = measure(sec);
   if (wrapped > OWNER_LINES || chars > OWNER_CHARS) issues.push(`too long (${wrapped} lines wrapped at ${OWNER_COLS} columns, ${chars} characters; at most ${OWNER_LINES} lines and ${OWNER_CHARS} characters)`);
   if (!sec.lines.some((l) => l.trim())) issues.push("empty");
   const jargon = jargonHits(sec.lines.join("\n"));
   if (jargon.length) issues.push(`jargon: ${jargon.join(" ")}`);
+  return issues;
+}
+
+/** The headings a plan-first session's brief asks for (scripts/foreman_session.py), checked only in a session opened plan-first by a parent. */
+export const PLAN_FIRST_HEADINGS = ["Decisions and assumptions", "Open questions"] as const;
+
+/** The form faults a `[plan-review]` launch is refused for: the owner section's presence, position and length (not jargon), and each missing `opts.requiredHeadings` heading. */
+export function planFormIssues(text: string, opts: { requiredHeadings?: readonly string[] }): string[] {
+  const issues = ownerSectionIssues(text).filter((i) => !i.startsWith("jargon:"));
+  let fenced = false;
+  const headings = new Set(
+    planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/).flatMap((l) => {
+      if (FENCE.test(l)) fenced = !fenced;
+      return fenced ? [] : ((/^##[ \t]+(\S.*?)[ \t]*$/.exec(l) ?? [])[1]?.toLowerCase() ?? []);
+    }),
+  );
+  for (const h of opts.requiredHeadings ?? []) if (!headings.has(h.toLowerCase())) issues.push(`missing heading: ${h}`);
   return issues;
 }
 
@@ -111,7 +134,7 @@ export function ownerFactsLines(planPaths: readonly string[], cwd: string): stri
     }
     const sec = ownerSection(text);
     const issues = ownerSectionIssues(text);
-    return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : `present (${sec.lines.filter((l) => l.trim()).length} lines)`}`;
+    return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : `present (${measure(sec).wrapped} lines, ${measure(sec).chars} characters; checked by the harness)`}`;
   });
 }
 

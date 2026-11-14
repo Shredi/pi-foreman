@@ -47,7 +47,7 @@ test("local child: nothing below the delay, one notice at it, nothing more an ho
   r.owner("approval");
   cb.tick();
   assert.equal(r.sent.length, 1);
-  assert.equal(r.sent[0].wake, true);
+  assert.equal(r.sent[0].wake, false, "information only: no turn");
   assert.match(r.sent[0].text, /^Child session job has waited on its owner since 2026-11-13 08:00 UTC \(approval\)\. Information only/);
   for (let i = 0; i < 60; i++) {
     r.advance(MIN);
