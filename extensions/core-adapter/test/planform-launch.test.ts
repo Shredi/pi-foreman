@@ -125,11 +125,14 @@ test("a [plan-review] launch naming the faulty plan by an @-prefixed path is ref
 test("a [plan-review] launch naming the faulty plan by a ~/ path is refused", async (t) => {
   const w = world(t);
   fs.writeFileSync(w.planFile, `# W\n\n${REST}`);
-  const home = process.env.HOME;
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }; // os.homedir() reads USERPROFILE on Windows
   process.env.HOME = w.project;
+  process.env.USERPROFILE = w.project;
   t.after(() => {
-    if (home === undefined) delete process.env.HOME;
-    else process.env.HOME = home;
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   });
   const a = await w.adapter("startup");
   const r = await a.reviewLaunch("[plan-review] review ~/.workflow/scratch/plan-widget.md");
