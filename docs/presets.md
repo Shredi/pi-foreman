@@ -6,6 +6,8 @@
 
 ## apply-preset
 
+`foreman config …` here means `/foreman config …` in Pi (the form a package install has) or `bin/foreman config …` in a checkout. After a real apply, run `/foreman setup` to apply the models.
+
 ```
 foreman config apply-preset <name> [--foreman <provider>/<model id>] [--dry-run]
 ```
@@ -26,7 +28,7 @@ result is validated against the schema and nothing is written when it fails. `--
 | `providers.claude-bridge.roles.foreman.idle` | Sonnet 5.5, thinking `medium` | The foreman's idle rung ([ladder](ladder.md#idle-rung-foreman-downshift)). |
 
 Earlier versions of the `claude-bridge` presets wrote `ttlSeconds: 300` and a `claude-*` 3600 s `byModel` row. Applying a preset again does not remove them from your user config; delete both ([migration](cache.md#migration-from-the-old-preset)).
-Pi needs the matching `promptCache` tier for the model (`long: 3600`, with `PI_CACHE_RETENTION=long`); `foreman doctor`
+Pi needs the matching `promptCache` tier for the model (`long: 3600`, with `PI_CACHE_RETENTION=long`); `/foreman doctor`
 warns when they differ. Pi's own warmer is always told `stop`, so its `cacheWarming` setting (including the `idle`
 default of Pi 1.5.2) is not read and adds no warms.
 
@@ -50,7 +52,7 @@ The tier template lives in the preset's `rankTiers` key (preset files only; `app
 writes it, the runtime does not read it).
 
 Static keys: `childMaxThinking: medium`, `retro.enabled: false`, `ladder.rolePolicy` (reviewers `at-or-below`,
-builders `below`), and `compaction.maxTokens` 100000 (the compaction cap `foreman setup` turns into Pi's per-model compaction point;
+builders `below`), and `compaction.maxTokens` 100000 (the compaction cap `/foreman setup` turns into Pi's per-model compaction point;
 see [cache](cache.md#where-compaction-fires)).
 
 `--dry-run` prints the resolved role map and writes nothing:
@@ -111,7 +113,7 @@ After the switch the idle model's provider supplies TTL and warms, so `<provider
 (a cache is warmed by pi-foreman itself, [cache](cache.md#keep-alive)), plus a
 `promptCache` entry for the idle model in Pi's `models.json`. Child roles,
 `foreman_session_open` and the rank checks keep using `<provider-a>`'s map ([ladder](ladder.md#idle-rung-foreman-downshift)).
-`foreman doctor` lists the rung with the other mapped models and warns when `<provider-b>` has no cache entry.
+`/foreman doctor` lists the rung with the other mapped models and warns when `<provider-b>` has no cache entry.
 
 While the foreman is downshifted the different-model rule compares reviewers against the idle model (the live model),
 so a reviewer on `<provider-b>` would be moved off it. Pair each foreman model with the reviewer you want in

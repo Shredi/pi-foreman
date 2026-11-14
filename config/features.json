@@ -16,7 +16,7 @@
       "purpose": "`foreman setup` migrates the keys of the removed permission package to `gate.*`, writes the generated `subagents` block and a starter `foreman.json`; `/foreman doctor` checks the result and `update-check` lists newer pinned packages.",
       "doc": "docs/install.md#install",
       "keys": ["version"],
-      "commands": ["/foreman", "/foreman setup", "foreman setup", "/foreman doctor", "/foreman update-check", "foreman update-check", "foreman config", "foreman config validate"],
+      "commands": ["/foreman", "/foreman setup", "foreman setup", "/foreman doctor", "/foreman update-check", "foreman update-check", "foreman config", "foreman config validate", "/foreman config validate"],
       "switch": null,
       "state": "on",
       "enable": ""
@@ -64,10 +64,10 @@
       "purpose": "Opt-in model maps under `config/presets/` (role models, ranks, strong rungs, reviewer climb) merged into your `foreman.json` on request, never by default. The `inexpensive` preset names roles by rank tier and resolves them from your `providers.<x>.ranks` at apply time (docs/presets.md).",
       "doc": "docs/presets.md",
       "keys": ["rankTiers"],
-      "commands": ["foreman config apply-preset <name> [--foreman <model id>] [--dry-run]"],
+      "commands": ["/foreman config", "/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]", "foreman config apply-preset <name> [--foreman <model id>] [--dry-run]"],
       "switch": null,
       "state": "opt-in",
-      "enable": "foreman config apply-preset claude-bridge --dry-run"
+      "enable": "/foreman config apply-preset claude-bridge --dry-run"
     },
     {
       "id": "roles",
@@ -638,7 +638,7 @@
     {
       "id": "remote-sessions",
       "area": "sessions",
-      "title": "Remote child sessions over herdr-core",
+      "title": "Remote child sessions over herdr-core (experimental)",
       "purpose": "`foreman session open --machine <name>` opens a child session on a machine of `hc machine ls` that is listed in `sessions.machines`: the parent runs the remote foreman with `hc exec --on` and the remote starts the child under its own herdr-core (`hc run`), shown in the machine's herdr-app space. `foreman session close-remote` (and `/foreman close`) closes such a child over the same `hc exec`. The child reports with `foreman session remote notice`, which sets the `fm.notice` label on its own hc terminal; the parent watches the hc events stream, fetches the named file with `hc file read` (`sessions.remote.fetchTimeoutSeconds`), checks it and mirrors it. A Windows machine works as a remote (`pi.cmd`, the full `hc.exe` path, a PowerShell `foremanArgv`; see Windows remotes). User or overlay config only.",
       "doc": "docs/sessions.md#remote-child-sessions",
       "keys": ["sessions.machines", "sessions.remote.fetchTimeoutSeconds"],
@@ -915,7 +915,7 @@
       "commands": ["/foreman doctor warm"],
       "switch": {"key": "providers.*.cache.keepalive.enabled", "on": "true"},
       "state": "off",
-      "enable": "set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or foreman config apply-preset claude-bridge --dry-run   # or: {\"providers\": {\"<provider>\": {\"cache\": {\"ttlSeconds\": 300, \"keepalive\": {\"enabled\": true}}}}}"
+      "enable": "set providers.claude-bridge.cache.keepalive.enabled to false (off) or true (on) in user or overlay config, or /foreman config apply-preset claude-bridge --dry-run   # or: {\"providers\": {\"<provider>\": {\"cache\": {\"ttlSeconds\": 300, \"keepalive\": {\"enabled\": true}}}}}"
     }
   ],
   "overlayQuickStart": [
