@@ -461,6 +461,19 @@ test("claude-bridge preset, Opus foreman, after a reviewer FAIL: a bare relaunch
   assert.equal(a.events("rung_top").length, 1); // only the plain relaunch's
 });
 
+test("claude-bridge preset, Opus foreman, after a reviewer FAIL: an explicit model the policy rejects is replaced, and the result line and rung_top name the launched model", async (t) => {
+  const a = await bridgeRig(t, "claude-bridge");
+  await built(a);
+  const input = builder({ task: "fix", model: "claude-bridge/claude-opus-4-1", reason: "hard" });
+  const { id, res } = await a.launch(input);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(input.model, `${SONNET}:medium`);
+  assert.deepEqual(a.events("rung_top").map((r) => [r.model, r.reason]), [[SONNET, RANK_CAPPED_REASON]]);
+  const text = texts(await a.started(id, input, "run-b2"));
+  assert.match(text, /was skipped: the rank policy \(below\).*it launches on claude-bridge\/claude-sonnet-5-5\./);
+  assert.doesNotMatch(text, /claude-opus-4-1/);
+});
+
 test("claude-bridge preset, Opus foreman: a revision after a risk-tagged Opus run falls back to Sonnet, not [rank_policy:below]", async (t) => {
   const a = await bridgeRig(t, "claude-bridge");
   const first = builder({ risk: ["security"] });
@@ -487,7 +500,7 @@ test("claude-bridge preset, Opus foreman: a revision after a risk-tagged Opus ru
   assert.equal(String(again.model).split(":")[0], SONNET);
 });
 
-test("ladder.plan: a live rung that is the refused strong rung falls back to the bottom rung with its own level; model strong stays refused", () => {
+test("ladder.plan: a live rung that is the refused strong rung falls back to the bottom rung", () => {
   const preset = PRESET("claude-bridge");
   const roles = preset.providers["claude-bridge"].roles;
   const mk = (): LadderState => { const l = new LadderState(); l.live.set("builder", `${OPUS}:medium`); return l; };
