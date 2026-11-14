@@ -12,7 +12,17 @@ import { PLAN, tick, world } from "./_r46world.ts";
 
 const tmpDiffDirs = (): string[] => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("pf-plandiff-"));
 
-test("planDiffLines: no difference, a diff with the plan path in the header, and no temp dir left", () => {
+test("planDiffLines: no difference, a diff with the plan path in the header, and no temp dir left", (t) => {
+  // os.tmpdir() follows TMPDIR (POSIX) / TEMP (Windows) at call time: a private temp root keeps other processes out of the comparison.
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), "pf-plandiff-root-"));
+  const saved = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+  process.env.TMPDIR = process.env.TEMP = process.env.TMP = own;
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+    fs.rmSync(own, { recursive: true, force: true });
+  });
+  assert.equal(fs.realpathSync(os.tmpdir()), fs.realpathSync(own), "the code under test sees the private temp root");
   const before = tmpDiffDirs();
   assert.deepEqual(planDiffLines(".workflow/scratch/plan-x.md", "a\nb\n", "a\nb\n"), ["no difference to the last reviewed version"]);
   const d = planDiffLines(".workflow/scratch/plan-x.md", "a\nb\nc\n", "a\nB\nc\n");

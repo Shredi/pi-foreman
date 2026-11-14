@@ -112,3 +112,26 @@ test("the write result of a plan carries the form faults; a clean plan adds noth
   const ok = await a.call("write", { path: w.planFile, content: "x" });
   assert.equal(ok.note, "", "the result is left as it was");
 });
+
+test("a [plan-review] launch naming the faulty plan by an @-prefixed path is refused", async (t) => {
+  const w = world(t);
+  fs.writeFileSync(w.planFile, `# W\n\n${REST}`);
+  const a = await w.adapter("startup");
+  const r = await a.reviewLaunch("[plan-review] review @.workflow/scratch/plan-widget.md");
+  assert.ok(refused(r), String(r.blocked));
+  assert.match(r.blocked ?? "", /missing/);
+});
+
+test("a [plan-review] launch naming the faulty plan by a ~/ path is refused", async (t) => {
+  const w = world(t);
+  fs.writeFileSync(w.planFile, `# W\n\n${REST}`);
+  const home = process.env.HOME;
+  process.env.HOME = w.project;
+  t.after(() => {
+    if (home === undefined) delete process.env.HOME;
+    else process.env.HOME = home;
+  });
+  const a = await w.adapter("startup");
+  const r = await a.reviewLaunch("[plan-review] review ~/.workflow/scratch/plan-widget.md");
+  assert.ok(refused(r), String(r.blocked));
+});

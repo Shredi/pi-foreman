@@ -3352,13 +3352,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           for (const [e, occ] of occasions) {
             if (occ !== "plan-review" || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
             for (const p of planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir)) {
-              let text: string;
-              try {
-                text = fs.readFileSync(path.resolve(ctx.cwd, p), "utf8");
-              } catch {
-                continue;
-              }
-              const issues = planFormOf(text);
+              const rp = readPlan(p, planOpts(s, ctx));
+              if (!("plan" in rp)) continue;
+              const issues = planFormOf(rp.plan.bytes.toString("utf8"));
               if (issues.length > 0) faults.push(`${p}: ${issues.join("; ")}`);
             }
           }
