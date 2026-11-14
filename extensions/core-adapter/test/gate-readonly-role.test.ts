@@ -94,6 +94,11 @@ test("open, verdict of today: a write the gate has no target for is not child-re
   for (const l of ["find . -delete", "chmod +x a", 'cd "$X" && touch f']) assert.ok(!refused(bash(l)), `${l} -> ${JSON.stringify(bash(l))}`);
 });
 
+test("the directory forms the docs name (unzip -d, patch -d, dd of=, perl -i) are refused in the worktree and allowed in the scratch dir", () => {
+  for (const l of ["unzip a.zip -d sub", "patch -d sub -i p.diff", "dd if=a of=f", "perl -pi -e s/a/b/ f"]) assert.ok(refused(bash(l)), `${l} -> ${JSON.stringify(bash(l))}`);
+  for (const l of [`patch -d ${S} -i p.diff`, `dd if=a of=${S}/f`, `perl -pi -e s/a/b/ ${S}/f`]) assert.ok(!refused(bash(l)), `${l} -> ${JSON.stringify(bash(l))}`);
+});
+
 test("a builder is unchanged: no row is child-readonly-write, and a write in its worktree stays what it was", () => {
   for (const l of REFUSED) assert.ok(!refused(bash(l, "builder", false)), l);
   for (const [tool, input] of [["write", { path: `${W}/a.ts`, content: "x" }], ["foreman_move", { src: `${W}/a`, dst: `${W}/b` }]] as const) assert.ok(!refused(verdict(tool, { ...input }, "builder", false)), tool);

@@ -127,6 +127,15 @@ test("dev checkout: a session whose worktree is the package root is not asked fo
   assert.equal(sh(`echo x > ${P}/extensions/a.ts`), IR);
 });
 
+test("a worktree that lies inside the package root: its own files are not asked, the package root outside the worktree is", () => {
+  const inner = path.join(pkg, "wts", "r2");
+  fs.mkdirSync(path.join(inner, "src"), { recursive: true });
+  assert.notEqual(sh(`echo x > ${fwd(inner)}/src/a.ts`, { worktree: inner }), IR);
+  assert.notEqual(gate("write", { path: `${fwd(inner)}/src/a.ts`, content: "x" }, { worktree: inner }), IR);
+  assert.equal(sh(`echo x > ${P}/extensions/a.ts`, { worktree: inner }), IR);
+  assert.equal(gate("write", { path: `${P}/extensions/a.ts`, content: "x" }, { worktree: inner }), IR);
+});
+
 test("open, verdict of today: a change that names no path is not install-root-write", () => {
   // `npm install -g` names no folder: it stays the install danger class (a judge or the owner decides it); a write after `cd "$X"` has no target the gate can read
   for (const l of ["npm install -g left-pad", 'cd "$X" && touch f', "pip install requests"]) assert.notEqual(sh(l), IR, l);
