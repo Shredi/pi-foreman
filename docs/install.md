@@ -20,7 +20,7 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 `npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-intercom` and
 `@juicesharp/rpiv-ask-user-question` (the `ask_user_question` tool with notes), pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
 meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
-`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
+`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. pi-foreman has no lifecycle scripts, and the `.npmrc` in the clone turns off those of its dependencies (see [What an install runs on your machine](#what-an-install-runs-on-your-machine)). Project packages
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
 
 **`pi-intercom` is a fork pin.** `package.json` and `packages.lock.json` pin it as
@@ -446,3 +446,16 @@ claude setup-token                                                 # then export
 - `/foreman doctor` warns `WARN herdr-app mod <mod> differs from the package: <files> — fix: foreman setup --mods` when an installed herdr-app mod under the app home (`HERDR_APP_HOME`, default `~/.config/herdr-app`) differs from the package; it says nothing when the mod is not installed or the app home does not exist (see [herdr](herdr.md#herdr-app-and-herdr-core)).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
   Outside Pi: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).
+
+## What an install runs on your machine
+
+This is what `foreman setup` and Pi run when you install pi-foreman, and where the code comes from.
+
+- **The clone.** Pi clones this repository from GitHub into your agent directory. Install without `@<ref>` follows the default branch. To pin a version, add a tag or commit: `pi install git:github.com/Shredi/pi-foreman@<ref>`.
+- **The npm install.** Pi runs `npm install` in the clone. The `.npmrc` there turns install scripts off (`ignore-scripts=true`), so no dependency runs code while it installs. The versions come from the committed `package-lock.json`.
+- **The two fork packages.** `pi-intercom` and `@juicesharp/rpiv-ask-user-question` come from GitHub by commit, not from the npm registry. The `.npmrc` line `allow-git=root` lets npm 12 install them, because they are direct dependencies of this package. npm 11 versions older than 11.10 print a warning about that line and carry on. npm 10 and current npm 11 print nothing.
+- **Add-ons.** Setup installs the add-ons you accept at exact versions. It switches install scripts off for these installs. The add-ons bring their own dependencies, and those are not locked: a new release of a dependency can be picked up at install time. If Pi installs a missing add-on by itself at start, or you run `pi install` yourself, scripts run unless you turn them off. To do that, set `ignore-scripts=true` in your user-level npm config (`npm config set ignore-scripts true`).
+- **Your own overlay.** Setup installs an overlay package you name with its install scripts on, because you vouch for it. An overlay is usually your own scripts and tools and needs no install script. Setting `ignore-scripts=true` in your user-level npm config covers the overlay and every install Pi starts, and is the recommended setting. Overlay authors should not rely on install scripts.
+- **Pi's tool download.** Pi downloads the search tools `fd` and `rg` from GitHub releases the first time it starts. pi-foreman does not control that download.
+- **No updates by themselves.** Nothing updates until you run `pi update` or `foreman update-check` and act on it.
+- **Other package managers.** If you set Pi to use pnpm or bun, neither the lockfile nor the `.npmrc` settings apply to the clone.
