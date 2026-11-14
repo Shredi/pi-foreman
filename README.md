@@ -36,12 +36,17 @@ sudo npm install -g @earendil-works/pi-coding-agent@1.5
 
 On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the last line.
 
-Windows (PowerShell; open a new terminal afterwards):
+Windows (PowerShell):
 
 ```powershell
 winget install Git.Git
 winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.13
+```
+
+Open a new terminal, then:
+
+```powershell
 npm install -g @earendil-works/pi-coding-agent@1.5
 ```
 
@@ -94,8 +99,8 @@ names the model that reviews instead. Check the file with:
 ```
 
 Or start from a preset instead of the file: `/foreman config apply-preset <name>` with `claude-bridge`,
-`claude-bridge-sonnet-reviewer`, `google` or `openai` (add `--dry-run` to see the result first;
-[docs/presets.md](docs/presets.md)).
+`claude-bridge-sonnet-reviewer`, `google` or `openai` (the provider presets; add `--dry-run` to see the result first;
+[docs/presets.md](docs/presets.md) has the rest, and `inexpensive` needs ranks).
 
 **5. Run setup again.** Setup is what writes the mapped models and Pi's compaction points into Pi's settings.
 
@@ -170,7 +175,7 @@ A tool call that no rule decides simply runs. Deploys, publishing, installs, net
 | [docs/safety.md](docs/safety.md) | Shell-write guard, what the gate floors cover for git, the PR gate, the tool gate, known limits |
 | [docs/sessions.md](docs/sessions.md) | `/sync`, `/retro`, `/foreman close`, `/foreman session`, intercom, Herdr |
 | [docs/herdr.md](docs/herdr.md) | The Herdr sidebar and herdr-app |
-| [docs/bench.md](docs/bench.md) | Measuring the harness with `foreman bench` |
+| [docs/bench.md](docs/bench.md) | Measuring the harness (bench) |
 | [docs/overlays.md](docs/overlays.md) | Private and organisation overlays |
 | [docs/development.md](docs/development.md) | Layout, tests, CI, working on pi-foreman |
 | [design/architecture.md](design/architecture.md) | The design record and rationale |

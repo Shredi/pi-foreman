@@ -24,10 +24,15 @@ sudo npm install -g @earendil-works/pi-coding-agent@1.5
 ```
 
 ```powershell
-# Windows (PowerShell); open a new terminal afterwards
+# Windows (PowerShell)
 winget install Git.Git
 winget install OpenJS.NodeJS.LTS
 winget install Python.Python.3.13
+```
+
+Open a new terminal, then:
+
+```powershell
 npm install -g @earendil-works/pi-coding-agent@1.5
 ```
 
@@ -133,7 +138,7 @@ written" and exits 0.
 
 ### GitHub hosts for PR tracking
 
-The PR tracker (`pr_follow`, `pr_watch`, `foreman prs poll`, the open-PR search) covers the hosts of `tools.prGithubHosts` and has no built-in default; unset, those tools do nothing and say `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`, while `pr_create`, `pr_status`, `pr_checks` and `pr_comments` keep working. Setup asks for the list after the picker's "Apply?" yes. It is prefilled with the merged list when that is valid, else `github.com`. The arrow-key picker shows a checkbox of the prefill (uncheck removes an entry) and an "add host (empty to finish)" input that repeats until you stop; it will not finish with no host. The readline menu asks one line, `GitHub hosts (comma-separated) [<prefill>]`: Enter or end of input keeps the prefill, an invalid answer asks again, Ctrl-C writes nothing. A host is a name with an optional `:port`; at most 20.
+The PR tracker (`pr_follow`, `pr_watch`, `foreman prs poll` (checkout: `bin/foreman prs poll`), the open-PR search) covers the hosts of `tools.prGithubHosts` and has no built-in default; unset, those tools do nothing and say `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`, while `pr_create`, `pr_status`, `pr_checks` and `pr_comments` keep working. Setup asks for the list after the picker's "Apply?" yes. It is prefilled with the merged list when that is valid, else `github.com`. The arrow-key picker shows a checkbox of the prefill (uncheck removes an entry) and an "add host (empty to finish)" input that repeats until you stop; it will not finish with no host. The readline menu asks one line, `GitHub hosts (comma-separated) [<prefill>]`: Enter or end of input keeps the prefill, an invalid answer asks again, Ctrl-C writes nothing. A host is a name with an optional `:port`; at most 20.
 
 Without a terminal use `--github-hosts a,b` (an invalid value exits 2). What gets written to the user `foreman.json`: your answer when it differs from the merged value; `["github.com"]` on a fresh install (no `foreman.json`) when no layer sets the key; otherwise nothing. A list an overlay sets is never copied into your file, and a value you already have (any letter case) is not rewritten. A run without flags on an existing file leaves it alone and prints a hint naming `--github-hosts` or `--pick` when the key is unset or invalid. When the written list differs from what the summary showed, setup prints `GitHub hosts: <list> (equivalent: foreman setup ... --github-hosts <list>)`.
 
@@ -473,4 +478,4 @@ claude setup-token                                                 # then export
   `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).
 - `/foreman doctor` warns `WARN herdr-app mod <mod> differs from the package: <files> — fix: foreman setup --mods` when an installed herdr-app mod under the app home (`HERDR_APP_HOME`, default `~/.config/herdr-app`) differs from the package; it says nothing when the mod is not installed or the app home does not exist (see [herdr](herdr.md#herdr-app-and-herdr-core)).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
-  Outside Pi, in a checkout: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).
+  Outside Pi, in a checkout: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` (the launcher path form of [foreman features](#foreman-features), or `bin/foreman` in a checkout) has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).

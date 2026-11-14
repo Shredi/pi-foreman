@@ -63,7 +63,7 @@ const USAGE = [
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
-const NO_PROFILE_HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node ${path.join(ROOT, "setup.mjs")} --pick in a terminal`;
+const NO_PROFILE_HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node "${path.join(ROOT, "setup.mjs")}" --pick in a terminal`;
 export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain } = {}) {
   return !loginSigns(isolationDir(agentDir), { env, platform, keychain }).next().done;
 }

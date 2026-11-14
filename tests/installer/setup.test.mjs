@@ -1188,7 +1188,7 @@ const foremanJson = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, 
 const foremanBackups = (env) => fs.readdirSync(env.agentDir).filter((f) => f.startsWith("foreman.json.bak-"));
 const writeUser = (env, cfg) => fs.writeFileSync(path.join(env.agentDir, "foreman.json"), `${JSON.stringify({ version: 1, providers: {}, ...cfg }, null, 2)}\n`);
 const NO_PICKER = { PI_FOREMAN_PICKER: undefined };
-const HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node ${path.join(ROOT, "setup.mjs")} --pick in a terminal`;
+const HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node "${path.join(ROOT, "setup.mjs")}" --pick in a terminal`;
 
 test("profile flags: every exit-2 combination names the rule and writes nothing", () => {
   const env = fresh();
