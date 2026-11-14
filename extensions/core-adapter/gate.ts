@@ -118,7 +118,7 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
   const ec = effectCtxOf(dctx);
   for (const t of shellWriteTargets(segments, platform)) {
     const git = baseProg(t.seg.program) === "git";
-    if (!(t.named || git) || !inside(t.path)) continue;
+    if (!(t.named || git) || t.list || !inside(t.path)) continue;
     const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
     const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
     if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;

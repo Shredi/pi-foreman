@@ -192,3 +192,19 @@ test("the flag: a child in its own isolation worktree has none, a write into the
   const out = await r.c.call("write", { path: path.join(round, "a.txt"), content: "x" });
   assert.match(String(out?.reason), /child-write-outside/);
 });
+
+// list-mode `git branch` forms are reads: the fence does not count the catch-all, so a read-only role gets the verdict it gets without the flag
+const BRANCH_READS = [
+  "git branch --contains HEAD", "git branch --merged", "git branch --no-merged main", "git branch -r --contains HEAD", "git branch --sort=-committerdate", "git branch -l", "git branch --points-at HEAD",
+  "git branch --format=%(refname)", "git branch --sort -committerdate", "git branch -l 'feat*'", "git branch --no-contains HEAD", "git -C sub branch --merged",
+];
+const BRANCH_WRITES = ["git branch new", "git branch -d x", "git branch -m a b", "git branch --contains HEAD -d x", "git branch -f main HEAD", "git branch --merged > f", "git branch --contains HEAD new", "git branch -c a b", "git branch -u origin/main"];
+for (const role of ["reviewer", "explorer"]) {
+  test(`${role}: list-mode git branch forms keep the verdict they have without the flag, branch writes stay refused`, () => {
+    for (const l of BRANCH_READS) {
+      assert.ok(!refused(bash(l, role)), `${l} -> ${JSON.stringify(bash(l, role))}`);
+      assert.deepEqual(bash(l, role, true), bash(l, role, false), l);
+    }
+    for (const l of BRANCH_WRITES) assert.ok(refused(bash(l, role)), `${l} -> ${JSON.stringify(bash(l, role))}`);
+  });
+}

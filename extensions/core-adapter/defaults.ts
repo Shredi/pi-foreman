@@ -744,6 +744,31 @@ function gitTagListRead(rest: string[]): boolean {
   return pos === 0 || list;
 }
 
+const BRANCH_LIST_FLAGS = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l", "--show-current", "-i", "--ignore-case", "--column", "--no-column", "--omit-empty"]);
+const BRANCH_VALUE_OPTS = new Set(["--contains", "--no-contains", "--points-at", "--merged", "--no-merged", "--sort", "--format"]);
+
+/**
+ * `git branch` in list mode: a list-mode option (`--contains`, `--no-contains`, `--merged`, `--no-merged`, `--points-at`, `--sort`, `--format`, `-l`/`--list`) with its
+ * value, display flags, and positionals only as patterns of `-l`/`--list`; any other option (`-d`, `-m`, `-c`, `-f`, `-u`, ...) or a branch name without `-l` is not list mode.
+ */
+function gitBranchListMode(rest: string[]): boolean {
+  let mode = false;
+  let list = false;
+  let pos = 0;
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    if (w === "-l" || w === "--list") list = mode = true;
+    else if (BRANCH_LIST_FLAGS.has(w) || /^--(column|abbrev|color)=\S+$/.test(w)) continue;
+    else if (/^--(contains|no-contains|points-at|merged|no-merged|sort|format)=/.test(w)) mode = true;
+    else if (BRANCH_VALUE_OPTS.has(w)) {
+      mode = true;
+      if (i + 1 < rest.length && (w === "--sort" || !rest[i + 1].startsWith("-"))) i++; // a sort key may start with `-` (descending)
+    } else if (w.startsWith("-")) return false;
+    else pos++;
+  }
+  return mode && (pos === 0 || list);
+}
+
 const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
 const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
@@ -966,6 +991,8 @@ function writeTargets(s: ShellSegment): string[] {
 interface WriteTarget {
   w: string;
   any: boolean;
+  /** the catch-all of a `git branch` in list mode (`--contains HEAD`, `--merged`, `-l pat`): a read the read-only fence does not count */
+  list?: true;
 }
 const named = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: false }));
 const anywhere = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: true }));
@@ -1044,7 +1071,9 @@ function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
       const head = a.slice(0, a.indexOf(sub));
       const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
       if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);
-      return [...anywhere(["."]), ...named(extra)];
+      const any = anywhere(["."]);
+      if (sub === "branch" && gitBranchListMode(rest)) for (const t of any) t.list = true;
+      return [...any, ...named(extra)];
     }
     case "npm":
     case "pnpm":
@@ -1075,6 +1104,8 @@ const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
 export interface ShellWriteTarget {
   path: string;
   named: boolean;
+  /** the catch-all of a `git branch` in list mode: the read-only role fence does not count it (`install-root-write` still does) */
+  list?: true;
   seg: ShellSegment;
 }
 
@@ -1093,7 +1124,7 @@ export function shellWriteTargets(segments: ShellSegment[], platform: string): S
       if (/[$`]/.test(t.w) || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
       if (seg.cwd === null && !path.isAbsolute(t.w) && !path.win32.isAbsolute(t.w)) continue;
       const abs = resolveWord(platform, seg.cwd ?? "/", t.w);
-      if (abs) out.push({ path: abs, named: !t.any, seg });
+      if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), seg });
     }
   }
   return out;

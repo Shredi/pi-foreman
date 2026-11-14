@@ -200,3 +200,8 @@ test("a shell line that changes the harness checkout asks the owner in every mod
   }
   assert.equal(calls, 0);
 });
+
+// list-mode `git branch` is no write for a read-only role (the read-only fence skips its catch-all), but install-root-write still counts it, as at head
+test("git branch in list mode inside an install root still asks", () => {
+  for (const l of [`git -C ${I} branch --contains HEAD`, `git -C ${I} branch --merged`, `cd ${I} && git branch -l`]) assert.equal(sh(l), IR, l);
+});
