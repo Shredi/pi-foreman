@@ -15,6 +15,8 @@ result is validated against the schema and nothing is written when it fails. `--
 `--foreman` sets the foreman model of the preset's provider. Shipped presets: `claude-bridge`,
 `claude-bridge-sonnet-reviewer`, `google`, `openai` (fixed model maps) and `inexpensive` (rank tiers, below).
 
+`claude-bridge` and `claude-bridge-sonnet-reviewer` set `ladder.equalOnStrongRisk: true`: for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial, so only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung ([roles](roles.md#role-ladder-rank-policy-and-presets)). Under an Opus foreman a builder launch without a risk tag at tier heavy is refused by the rank policy.
+
 ## claude-bridge cache values
 
 `claude-bridge` and `claude-bridge-sonnet-reviewer` carry the values for a Claude subscription through the bridge:

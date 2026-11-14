@@ -224,6 +224,8 @@ export interface Climb {
   top?: boolean;
   /** RANK_CAPPED_REASON: the strong rung model the climb would have gone to. */
   skipped?: string;
+  /** The strong rung model the rank policy refuses: the pending handoff went to this default-rung launch instead of a strong one. */
+  handoffFor?: string;
 }
 
 export interface LadderOptions {
@@ -315,6 +317,7 @@ export class LadderState {
       visit(input.tasks);
       visit(input.chain);
     } else if (typeof input.agent === "string") entries.push({ e: input, passed: input.model, reason: topReason });
+    const refused: { e: Json; role: string; model: string; strong: string; h: Handoff }[] = [];
     for (const { e, passed, reason } of entries) {
       const role = e.agent as string;
       const r = roles[role];
@@ -327,6 +330,9 @@ export class LadderState {
       const to = splitLevel(strong).base;
       const top = from === to || undefined;
       if (keyword !== "strong") {
+        // the strong rung is refused by the rank policy: the pending handoff goes to this launch (a strong launch never happens)
+        const pending = this.eligible.get(role);
+        if (role === "builder" && pending && opts.strongAllowed && !opts.strongAllowed(e, strong)) refused.push({ e, role, model: keyword.includes("/") ? keyword : from, strong, h: pending });
         // review_fail: the target is max(current, strong) by provider rank; current = the explicit launch model, else the live rung.
         const explicitModel = keyword.includes("/") ? keyword : null;
         if (role === "builder" && opts.preferStrong && opts.revisionReason === "review_fail" && (keyword === "" || explicitModel)) {
@@ -359,6 +365,11 @@ export class LadderState {
       const why = h ? h.cause : opts.sizing?.has(e) ? "sizing" : typeof reason === "string" && reason.trim() ? "foreman" : role === "builder" && opts.tier === "heavy" ? "heavy" : role === "builder" && opts.preferStrong ? (opts.revisionReason ?? "revision") : null;
       if (!why) return { block: `pi-foreman: strong launch of ${role} refused [strong_no_reason]: pass \`reason\` as an extra top-level field of the subagent call (the tool schema does not list it) with model "strong", saying why the bottom rung ${bottom} cannot do it, or launch on the default model; a climb-eligible run of ${role} (context, STATUS: stuck, own checks failed) also allows it.`, climbs: [] };
       climbs.push({ entry: e, role, from, to, reason: why, handoff: h, top });
+    }
+    for (const { e, role, model, strong, h } of refused) {
+      const c = climbs.find((x) => x.entry === e);
+      if (c) Object.assign(c, { handoff: h, handoffFor: strong });
+      else climbs.push({ entry: e, role, from: model, to: model, reason: RANK_CAPPED_REASON, top: true, handoff: h, handoffFor: strong });
     }
     return { climbs };
   }

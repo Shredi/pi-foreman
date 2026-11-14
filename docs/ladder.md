@@ -22,7 +22,7 @@ brief, is a fixed baseline a stronger model pays too; the first call is never st
 to stop and return a handoff report starting `RUNG_UP: context` (also `RUNG_UP: turns` past `childMaxTurns`, and a
 `STATUS: stuck` or "own checks failed" report). The run is climb-eligible: the foreman's next `model: "strong"`
 launch of that role needs no reason, gets the prior report prepended to its task, and the trace records
-`rung_up {reason: "context"}` (or `turns`, `stuck`, `checks_failed`).
+`rung_up {reason: "context"}` (or `turns`, `stuck`, `checks_failed`). When the rank policy refuses the builder's strong rung for the launch, no strong launch will happen: the next builder launch on any other rung gets the prior report instead, the report is used up, and the launch result says the report was prepended because the strong rung is not allowed by the rank policy (trace `rung_top` with reason `strong rung refused by rank policy`). With the strong rung allowed, a default-rung launch gets nothing and the report waits for the strong launch.
 
 The foreman's own strong launch passes `reason` as an extra top-level field of the `subagent` call (the published
 schema stays unchanged; the adapter removes the field before the tool sees it). Without a reason, and without a

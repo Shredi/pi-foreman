@@ -3511,7 +3511,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const no = rankRefusalFor(s.config.config, foremanAt0, c.skipped!, [c.role]);
           return `pi-foreman: the climb of ${c.role} to its strong rung ${c.skipped} was skipped: the rank policy (${no?.policy ?? "below"}) does not allow that model for the ${c.role} under the foreman ${foremanAt0 ?? "unknown"}; it launches on ${c.to}.`;
         });
-        notices = [...launched.notices.map((n) => n.text), ...equalLines, ...cappedLines];
+        const handoffLines = climbs.filter((c) => c.handoffFor).map((c) => `pi-foreman: the earlier report of the ${c.role} run ${c.handoff!.runId} (${c.handoff!.cause}) was prepended to this launch because the strong rung ${c.handoffFor} is not allowed by the rank policy.`);
+        notices = [...launched.notices.map((n) => n.text), ...equalLines, ...cappedLines, ...handoffLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
@@ -3642,7 +3643,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
-        if (climbs.some((c) => c.handoff) && !kind) kind = "strong-relaunch";
+        if (climbs.some((c) => c.handoff && !c.handoffFor) && !kind) kind = "strong-relaunch";
         for (const r of s.ladder.apply(climbs, (task) => ledgerLines(ledger, task))) s.trace?.emit(r);
         const was = s.ceremony.tier;
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));

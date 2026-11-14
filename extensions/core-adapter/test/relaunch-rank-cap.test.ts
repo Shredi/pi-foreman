@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { LadderState, RANK_CAPPED_REASON } from "../ladder.ts";
 import { applyLaunchModels } from "../launchmodel.ts";
 import { planSizing, takeSizing } from "../sizing.ts";
-import { ranksOf } from "../ranks.ts";
+import { ranksOf, rankRefusalFor } from "../ranks.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
@@ -211,20 +211,25 @@ test("explicit forbidden model refused, below: the refusal does not name the nex
   assert.ok(!res?.reason?.includes(NEXT), res?.reason);
 });
 
-// Code path: ladder.ts plan() gives no climb for a keyword-less launch without preferStrong (the context climb sets none), so apply() never
-// prepends the pending handoff (ladder.ts apply, index.ts `climbs.length > 0`); the handoff stays in LadderState.eligible for a later strong launch.
-test("RUNG_UP: context, relaunch with model default and a reason, map A + below: launched on the default bottom rung, not refused, the handoff is NOT prepended", async (t) => {
+// The strong rung is refused by the rank policy, so ladder.ts plan() gives the pending handoff to the default-rung launch (handoffFor); apply() uses it up.
+test("RUNG_UP: context, relaunch with model default and a reason, map A + below: launched on the default bottom rung, not refused, the handoff IS prepended once", async (t) => {
   const a = await rig(t, "A", "below");
   await built(a, CONTEXT_REPORT, false);
   const rel = builder({ task: "go on", model: "default", reason: "small rest" });
-  const { res } = await a.launch(rel);
+  const { id, res } = await a.launch(rel);
   assert.equal(res, undefined, res?.reason);
   assert.equal(rel.model, "fake/builder");
   assert.deepEqual(refusals(a), []);
   assert.deepEqual(a.events("rung_up"), []);
-  assert.deepEqual(a.events("rung_top"), []);
-  assert.match(rel.task as string, /\ngo on\n/); // the task text is there (the adapter's own roots and scratch blocks wrap it)
-  assert.doesNotMatch(rel.task as string, /rung-up handoff|Previous report/);
+  assert.deepEqual(a.events("rung_top").map((r) => [r.role, r.model, r.reason]), [["builder", "fake/builder", RANK_CAPPED_REASON]]);
+  assert.match(rel.task as string, /\[end of handoff\]\ngo on\n/);
+  assert.ok((rel.task as string).includes(HANDOFF_START), rel.task as string);
+  assert.match(texts(await a.started(id, rel, "run-b2")), /the earlier report of the builder run run-b \(context\) was prepended to this launch because the strong rung fake\/foreman is not allowed by the rank policy/);
+  // used up: the next relaunch gets none
+  const again = builder({ task: "more", model: "default", reason: "small rest" });
+  assert.equal((await a.launch(again)).res, undefined);
+  assert.doesNotMatch(again.task as string, /rung-up handoff/);
+  assert.equal(a.events("rung_top").length, 1);
 });
 
 test("RUNG_UP: context, relaunch with model strong, map A + at-or-below: launched on the strong rung with the handoff prepended", async (t) => {
@@ -278,6 +283,61 @@ test("plan: the strong keyword and strong_no_reason ignore strongAllowed", () =>
   assert.equal(kw.model, "strong");
   assert.equal(p.climbs[0].reason, "review_fail");
   assert.match(new LadderState().plan({ agent: "builder", task: "t", model: "strong" }, ROLES, { strongAllowed: () => false }).block ?? "", /strong_no_reason/);
+});
+
+// plan units (no spawn): the pending handoff and a refused strong rung
+const pendingRoles = (): LadderState => {
+  const l = new LadderState();
+  l.noteLaunched({ agent: "builder", model: "fake/builder" });
+  l.eligible.set("builder", { role: "builder", runId: "run-b", cause: "context", summary: "Done: x", resultPath: null } as never);
+  return l;
+};
+
+test("plan: strong rung refused, a default-rung launch gets the handoff once, a refused launch keeps it", () => {
+  const l = pendingRoles();
+  const e: Record<string, unknown> = { agent: "builder", task: "go on" };
+  const p = l.plan(e, ROLES, { strongAllowed: () => false });
+  assert.equal(p.climbs.length, 1);
+  assert.equal(p.climbs[0].handoffFor, "fake/foreman");
+  assert.ok(l.eligible.has("builder")); // nothing used up before apply: a launch refused by a later check keeps it
+  assert.deepEqual(l.apply(p.climbs, () => []), [{ event: "rung_top", role: "builder", model: "fake/builder", reason: RANK_CAPPED_REASON }]);
+  assert.match(e.task as string, /^\[pi-foreman rung-up handoff\]/);
+  assert.match(e.task as string, /\ngo on$/);
+  assert.ok(!l.eligible.has("builder"));
+  const next: Record<string, unknown> = { agent: "builder", task: "again" };
+  assert.deepEqual(l.plan(next, ROLES, { strongAllowed: () => false }).climbs, []);
+  assert.equal(next.task, "again");
+});
+
+test("plan: strong rung allowed, a default-rung launch gets no handoff and it stays pending; so with no strong rung mapped", () => {
+  const l = pendingRoles();
+  const e: Record<string, unknown> = { agent: "builder", task: "go on", model: "default", reason: "small" };
+  assert.deepEqual(l.plan(e, ROLES, { strongAllowed: () => true }).climbs, []);
+  assert.equal(e.task, "go on");
+  assert.ok(l.eligible.has("builder"));
+  const none = pendingRoles();
+  assert.deepEqual(none.plan({ agent: "builder", task: "t" }, { builder: { model: "fake/builder" } }, { strongAllowed: () => false }).climbs, []);
+  assert.ok(none.eligible.has("builder"));
+  // the strong launch still takes it
+  const s: Record<string, unknown> = { agent: "builder", task: "go on", model: "strong" };
+  const p = l.plan(s, ROLES, { strongAllowed: () => true });
+  l.apply(p.climbs, () => []);
+  assert.match(s.task as string, /^\[pi-foreman rung-up handoff\]/);
+});
+
+test("plan: a capped FAIL climb carries the handoff in its own climb, one trace event; several builder entries all get it", () => {
+  const l = pendingRoles();
+  const e: Record<string, unknown> = { agent: "builder", task: "fix" };
+  const p = l.plan(e, ROLES, { ...OPTS, strongAllowed: () => false });
+  assert.equal(p.climbs.length, 1);
+  assert.equal(p.climbs[0].skipped, "fake/foreman");
+  assert.equal(p.climbs[0].handoffFor, "fake/foreman");
+  assert.equal(l.apply(p.climbs, () => []).length, 1);
+  assert.match(e.task as string, /^\[pi-foreman rung-up handoff\]/);
+  const m = pendingRoles();
+  const list = [{ agent: "builder", task: "a" }, { agent: "builder", task: "b" }] as Record<string, unknown>[];
+  m.apply(m.plan({ tasks: list }, ROLES, { strongAllowed: () => false }).climbs, () => []);
+  assert.deepEqual(list.map((x) => (x.task as string).startsWith("[pi-foreman rung-up handoff]")), [true, true]); // as a strong launch does today
 });
 
 // plan + applyLaunchModels: a capped entry never gets the strong rung or its thinking level (no spawn)
@@ -351,4 +411,58 @@ test("sizing target strong, model default with a reason: not refused, no climb, 
   assert.deepEqual(p.plans[0].combo.note, ["explicit", "override"]);
   assert.equal(p.climbs.size, 0);
   assert.equal(e.model, "default");
+});
+
+// The shipped claude-bridge presets under an Opus foreman: what a builder launch does with ladder.equalOnStrongRisk on
+const PRESET = (name: string): Record<string, any> => JSON.parse(fs.readFileSync(new URL(`../../../config/presets/${name}.json`, import.meta.url), "utf8"));
+const OPUS = "claude-bridge/claude-opus-5-5";
+const SONNET = "claude-bridge/claude-sonnet-5-5";
+const bridgeRig = (t: Parameters<typeof r11Rig>[0], name: string): Promise<Rig> =>
+  r11Rig(t, { default: "standard", revisionRounds: { standard: 1 } }, { ctx: { ...reviewAllowOpts().ctx, model: { provider: "claude-bridge", id: "claude-opus-5-5" } }, config: PRESET(name) });
+
+for (const name of ["claude-bridge", "claude-bridge-sonnet-reviewer"]) {
+  test(`${name}: sets ladder.equalOnStrongRisk true`, () => {
+    assert.equal(PRESET(name).ladder.equalOnStrongRisk, true);
+  });
+}
+
+test("claude-bridge preset, Opus foreman: a launch without a model and with a strong-risk tag runs on Opus (rank_equal_model)", async (t) => {
+  const a = await bridgeRig(t, "claude-bridge");
+  const input = builder({ risk: ["security"] });
+  const { id, res } = await a.launch(input);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(String(input.model).split(":")[0], OPUS);
+  assert.equal(a.events("rank_equal_model").length, 1);
+  assert.match(texts(await a.started(id, input, "run-1")), /builder runs on the foreman's own model claude-bridge\/claude-opus-5-5 \(ladder\.equalOnStrongRisk, risk: security\)\./);
+});
+
+test("claude-bridge preset, Opus foreman, tier heavy, no model and no risk tag: the bare launch picks Opus and the rank policy refuses it", () => {
+  const preset = PRESET("claude-bridge");
+  const roles = preset.providers["claude-bridge"].roles;
+  const input: Record<string, unknown> = builder();
+  applyLaunchModels(input, roles, undefined, { tier: "heavy", provider: "claude-bridge", explicit: () => false });
+  assert.equal(String(input.model).split(":")[0], OPUS);
+  const no = rankRefusalFor(preset, OPUS, String(input.model).split(":")[0], ["builder"]);
+  // pinned, not changed: no risk tag means the equalOnStrongRisk tie does not apply, so the heavy-tier default (the strong rung) is refused
+  assert.equal(no?.message, 'pi-foreman: launch refused [rank_policy:below]: child model claude-bridge/claude-opus-5-5 (tier 1) is not below the foreman model claude-bridge/claude-opus-5-5 (tier 1). Add a ranks entry for it, map the role to a lower-ranked model, or set ladder.childPolicy to "any" in the user or overlay config.');
+});
+
+test("claude-bridge preset, Opus foreman, after a reviewer FAIL: a bare relaunch is capped on Sonnet, one with a strong-risk tag climbs to Opus", async (t) => {
+  const a = await bridgeRig(t, "claude-bridge");
+  await built(a);
+  const plain = builder({ task: "fix it" });
+  const { id, res } = await a.launch(plain);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(plain.model, `${SONNET}:medium`);
+  assert.deepEqual(a.events("rung_top").map((r) => [r.model, r.reason]), [[SONNET, RANK_CAPPED_REASON]]);
+  assert.match(texts(await a.started(id, plain, "run-b2")), /the climb of builder to its strong rung claude-bridge\/claude-opus-5-5 was skipped: the rank policy \(below\)/);
+  // pinned, not changed: the risk tag lets the climb run on the foreman's own model
+  assert.deepEqual(refusals(a), []);
+  const risky = builder({ task: "fix it", risk: ["security"] });
+  const r4 = await a.launch(risky);
+  assert.equal(r4.res, undefined, r4.res?.reason);
+  assert.equal(risky.model, `${OPUS}:medium`);
+  assert.equal(a.events("rank_equal_model").length, 1);
+  assert.deepEqual(a.events("rung_up").map((r) => [r.from, r.to, r.reason]), [[SONNET, OPUS, "review_fail"]]);
+  assert.equal(a.events("rung_top").length, 1); // only the plain relaunch's
 });
