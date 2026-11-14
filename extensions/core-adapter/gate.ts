@@ -16,6 +16,7 @@ import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { toolPath } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
@@ -304,18 +305,20 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
     /** deny rules and ask rules, then a pending floor ask, then allow rules and the built-in allow `builtin`. */
-    const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[]): GateResult => {
-      const denied = matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, call, rules.env);
-      if (denied.verdict === "deny") return ruleResult(denied);
+    // `raw`: the call as spelled (a path tool): deny, ask and protected rules match it too, allow rules only `call`
+    const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[], raw?: RuleCall): GateResult => {
+      const calls = raw ? [call, raw] : [call];
+      const denied = calls.map((c) => matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, c, rules.env)).find((v) => v.verdict === "deny");
+      if (denied) return ruleResult(denied);
       if (!pending && deps.protected?.length) {
-        const m = matchProtected(call, segments, deps.protected, { ...rules.env, ec: effectCtx0 });
+        const m = calls.map((c) => matchProtected(c, segments, deps.protected ?? [], { ...rules.env, ec: effectCtx0 })).find((x) => x);
         if (m) {
           const ids = m.entries.map((e) => e.id).join(",");
           return { ask: true, rule: `protected:${ids}`, reason: `the call touches protected target ${m.entries.map((e) => `${e.id} (${e.kind} ${e.glob})`).join(", ")}`, cause: "protected", match: m };
         }
       }
-      const first = matchRules({ deny: [], ask: rules.sets.ask, allow: [] }, call, rules.env);
-      if (first.verdict === "ask") return ruleResult(first);
+      const first = calls.map((c) => matchRules({ deny: [], ask: rules.sets.ask, allow: [] }, c, rules.env)).find((v) => v.verdict === "ask");
+      if (first) return ruleResult(first);
       if (pending) return askFromFloor(pending);
       return ruleResult(matchRules(rules.sets, call, rules.env, builtin));
     };
@@ -362,23 +365,26 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     }
     const readField = readFieldOf(readTools, toolName);
     if (PATH_TOOLS.has(toolName) || readField !== undefined) {
+      // the path fields as Pi's file tools read them (`@`, `~`, `file://`), from here on; the rules also see the spelling as written
+      const nin = PI_FILE_TOOLS.has(toolName) ? toolPathInput(inp, cwd, home, platform) : inp;
+      if (nin === null) return decided({ block: true, rule: "tool-path-unreadable", layer: "floor", reason: `pi-foreman: the path of this ${toolName} call cannot be read the way the tool reads it (a malformed file:// link), so the call is denied.` });
       // a mapped tool keeps the payload floors on every other path field (arrays included); `pattern`/`patterns` stay search patterns
       const readOnly = readField !== undefined || READ_PATH_TOOLS.has(toolName);
-      const ph0 = pathFloors(inp, env, toolName, readField, readOnly);
-      const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(inp, "", env, false, 0, true) : null;
+      const ph0 = pathFloors(nin, env, toolName, readField, readOnly);
+      const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(nin, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
-      const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, roots, platform), roots.child);
+      const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
       if (roots.child) {
-        const cd = childDenied(toolName, inp, undefined, null, { roots, facts, platform, cwd });
+        const cd = childDenied(toolName, nin, undefined, null, { roots, facts, platform, cwd });
         if (cd) return decided(cd);
       }
-      const pv = pathDecide(toolName, inp, cwd, roots, platform);
-      const result = ruled(ruleCallOf(toolName, inp, callCtx()), h, () => (pv ? pv.rule : readOnly && !pathWords(inp).some((w) => !sshPublicKey(w, env)) && pathWords(inp).length > 0 ? PUBKEY_READ_RULE : null));
+      const pv = pathDecide(toolName, nin, cwd, roots, platform);
+      const result = ruled(ruleCallOf(toolName, nin, callCtx()), h, () => (pv ? pv.rule : readOnly && !pathWords(nin).some((w) => !sshPublicKey(w, env)) && pathWords(nin).length > 0 ? PUBKEY_READ_RULE : null), undefined, nin === inp ? undefined : ruleCallOf(toolName, inp, callCtx()));
       if (result) return decided(result);
-      return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp }, { roots, platform, cwd, facts }) };
+      return { result: undefined, danger: dangerMatch({ tool: toolName, input: nin }, { roots, platform, cwd, facts }) };
     }
     // own tools carry free text (ledger notes, plans) that may quote a floor pattern: only their prose fields skip the floors
     const proseExempt = PROSE_FIELD_TOOLS.has(toolName) || NOTE_TOOLS.has(toolName) || (deps.noteTools?.includes(toolName) ?? false);
@@ -397,6 +403,21 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
   } catch (e) {
     return { result: { block: true, rule: "gate-error", layer: "floor", reason: `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.` }, danger: null };
   }
+}
+
+/** The tools Pi resolves the path of with `resolveToCwd` (`@`, `~`, `file://`, unicode spaces): the gate reads their path fields as the tool does (pathnorm.ts toolPath). */
+const PI_FILE_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
+
+/** `inp` with each path field replaced by the absolute path the tool acts on; null when one cannot be read the way Pi reads it (a malformed `file://`). */
+function toolPathInput(inp: Record<string, unknown>, cwd: string, home: string, platform: string): Record<string, unknown> | null {
+  const out = { ...inp };
+  for (const k of PATH_KEYS) {
+    if (typeof inp[k] !== "string") continue;
+    const p = toolPath(inp[k] as string, cwd, home, platform);
+    if (p === null) return null;
+    out[k] = p;
+  }
+  return out;
 }
 
 /** The path words of a path-tool input: the keys `pathFloors` reads for a path (PATH_KEYS). */

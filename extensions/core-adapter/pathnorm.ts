@@ -4,6 +4,7 @@
 // nearest-existing-parent realpath, case-sensitive and without separator rewriting.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** realpath of an existing path, null when it does not exist. */
 export type Resolver = (p: string) => string | null;
@@ -93,6 +94,46 @@ export function lexUnder(platform: string, root: string, p: string): boolean {
  */
 export function tildeWord(w: string): boolean {
   return /^~|[=:]~/.test(w);
+}
+
+// ------------------------------------------------------------------ the path of a Pi file tool
+
+// Pi's UNICODE_SPACES: U+00A0, U+2000 to U+200A, U+202F, U+205F, U+3000 (built from the code points, so the source holds no invisible character)
+const cp = (n: number): string => String.fromCodePoint(n);
+const UNICODE_SPACES = new RegExp(`[${cp(0xa0)}${cp(0x2000)}-${cp(0x200a)}${cp(0x202f)}${cp(0x205f)}${cp(0x3000)}]`, "g");
+
+/** Pi's `normalizeWindowsShellPath` (dist/utils/paths.js): a Git Bash, MSYS, Cygwin or WSL drive path as a Windows path. */
+function winShellPath(p: string): string {
+  if (!p.startsWith("/") || p.startsWith("//") || p.includes("\\")) return p;
+  const m = p.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+  return m ? `${m[1].toUpperCase()}:\\${m[2]?.replaceAll("/", "\\") ?? ""}` : p;
+}
+
+/** The steps of Pi's `normalizePath` in its order: unicode spaces, one leading `@`, win32 drive spellings, `~` and `~/`, `file://`. Throws where Pi's function throws. */
+function piNormalize(input: string, home: string, platform: string, spacesAndAt: boolean): string {
+  let n = input;
+  if (spacesAndAt) n = n.replace(UNICODE_SPACES, " ");
+  if (spacesAndAt && n.startsWith("@")) n = n.slice(1);
+  if (platform === "win32") n = winShellPath(n);
+  if (n === "~") return home;
+  if (n.startsWith("~/") || (platform === "win32" && n.startsWith("~\\"))) return px(platform).join(home, n.slice(2));
+  if (/^file:\/\//.test(n)) return fileURLToPath(n);
+  return n;
+}
+
+/**
+ * The absolute path Pi's write, edit, read, ls, grep and find tools act on for `raw` run in `cwd`: `resolveToCwd` of dist/core/tools/path-utils.js, that is
+ * `resolvePath(raw, cwd, { normalizeUnicodeSpaces: true, stripAtPrefix: true })` of dist/utils/paths.js (the cwd goes through `normalizePath` with its defaults).
+ * null where Pi's function throws (a malformed `file://`): the caller denies the call.
+ */
+export function toolPath(raw: string, cwd: string, home: string, platform: string): string | null {
+  try {
+    const n = piNormalize(raw, home, platform, true);
+    const x = px(platform);
+    return x.isAbsolute(n) ? x.resolve(n) : x.resolve(piNormalize(cwd, home, platform, false), n);
+  } catch {
+    return null;
+  }
 }
 
 /** `p` is `root` or below it, both normalised with `normPath`. */

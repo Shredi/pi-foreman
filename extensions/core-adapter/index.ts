@@ -42,6 +42,7 @@ import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { childAskOffText, NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
+import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
@@ -3079,7 +3080,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let rulingAsk: Decision | undefined;
     {
       const rs = sessionFor(ctx);
-      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
+      // the path of write and edit as the tool reads it (`@`, `~`, `file://`)
+      const rin = event.input as Record<string, unknown>;
+      const rpath = (event.toolName === "write" || event.toolName === "edit") && typeof rin?.path === "string" ? toolPath(rin.path, ctx.cwd, os.homedir(), platform) : null;
+      const why = rs && selfRulingRefusal(event.toolName, rpath !== null ? { ...rin, path: rpath } : rin, ctx.cwd, childDirsOf(rs));
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
