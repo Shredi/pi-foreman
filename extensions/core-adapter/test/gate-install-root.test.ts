@@ -21,15 +21,17 @@ const base = fs.realpathSync(mkTestTmp("pf-instroot-"));
 const wt = path.join(base, "pkg.worktrees", "r1");
 const inst = path.join(base, "lib", "pi-coding-agent");
 const pkg = path.join(base, "pkg");
+const gnpm = path.join(base, "lib", "node_modules");
+const bundled = path.join(base, "bundles", "pi-subagents");
 const scr = path.join(base, "tmp", "pi-foreman-scratch", "mine");
-for (const d of [path.join(wt, "src"), path.join(inst, "dist"), path.join(pkg, "extensions"), scr]) fs.mkdirSync(d, { recursive: true });
+for (const d of [path.join(wt, "src"), path.join(inst, "dist"), path.join(pkg, "extensions"), gnpm, bundled, scr]) fs.mkdirSync(d, { recursive: true });
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const I = fwd(inst);
 const P = fwd(pkg);
 const W = fwd(wt);
 
 const roots = (o: { child?: boolean; worktree?: string } = {}): GateRoots => ({
-  worktree: o.worktree ?? wt, scratch: [scr], tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [inst], roundFlow: [], handoffs: [],
+  worktree: o.worktree ?? wt, scratch: [scr], tmp: [], scratchBase: path.join(base, "tmp", "pi-foreman-scratch"), owned: [], install: [inst, gnpm, bundled], roundFlow: [], handoffs: [],
   child: o.child ?? false, role: o.child ? "builder" : "foreman", tmpAccess: false, pkgRoot: pkg,
 });
 const verdictOf = (r: GateResult): string => (r === undefined ? "none" : "block" in r ? `block:${r.rule}` : "allow" in r ? `allow:${r.rule}` : `ask:${r.rule}`);
@@ -57,11 +59,28 @@ const ASKED = [
 ];
 const UNASKED = [
   `cat ${I}/dist/a.js`, `ls ${I}`, `grep x ${I}/a`, `cp ${I}/a ${W}/a`, `cp ${P}/a ${W}/a`, `echo x > ${W}/a`, `echo x > ${W}/src/a.ts`, `touch ${W}/src/b`, `node ${I}/dist/cli.js`,
-  `git -C ${I} status`, `git -C ${P} log`, `cd ${I} && npm test`, `cd ${I} && git diff`, `cd ${I} && ls`, `cat a > /dev/null`, `echo x > ${fwd(scr)}/a`, "git status", "npm test",
+  `git -C ${I} status`, `git -C ${P} log`, `cd ${I} && git diff`, `cd ${I} && ls`, `cat a > /dev/null`, `echo x > ${fwd(scr)}/a`, "git status", "npm test",
 ];
 
 test("main: a shell write into an install or package root is install-root-write", () => {
   for (const l of ASKED) assert.equal(sh(l), IR, l);
+});
+
+// a run that changes "somewhere under" a root asks, whatever the program: the catch-all target counts here (step 3), into each of the four roots
+const ROOTS = [inst, gnpm, bundled, pkg].map(fwd);
+const CATCH_ALL = (r: string): string[] => [
+  `cd ${r} && make`, `cd ${r} && npm test`, `git -C ${r} pull`, `git -C ${r} fetch`, `npm --prefix ${r} test`, `npm --prefix ${r} install x`, `rsync -a x/ ${r}/x`,
+  `perl -pi -e s/a/b/ ${r}/f`, `echo x > ${r}/f`, `cp a ${r}/f`, `rm ${r}/f`, `cat a | tee ${r}/f`, `sed -i s/a/b/ ${r}/f`, `cd ${r} && npm run test:node`, `make -C ${r} test`, `cd ${r} && git pull`,
+];
+const NOT_HIT = (r: string): string[] => [`cd ${r} && git fetch origin`, `cd ${r} && git status`, `cd ${r} && ls`, `git -C ${r} status`, `git -C ${r} log`, `cat ${r}/f`];
+
+test("main: every program's catch-all target into any of the four roots asks; a read, a plain fetch and a status do not", () => {
+  for (const r of ROOTS) {
+    for (const l of CATCH_ALL(r)) assert.equal(sh(l), IR, l);
+    for (const l of NOT_HIT(r)) assert.notEqual(sh(l), IR, `${l} -> ${sh(l)}`);
+  }
+  // beside it: the same programs in the session's own worktree ask nothing
+  for (const l of ["make", "npm test", "git pull", "git fetch", `npm --prefix ${W} test`, `git -C ${W} pull`, `cd ${W} && make`]) assert.notEqual(sh(l), IR, l);
 });
 
 test("main: reads, test runs, writes in its own worktree and its scratch dir are not install-root-write", () => {
@@ -155,4 +174,20 @@ test("mode deny refuses it without a dialog, mode allow and auto still ask; head
   const head = await rig(t, { headless: true });
   assert.ok((await head.call("write", { path: target(), content: "x" }))?.block);
   assert.equal(head.titles.length, 0);
+});
+
+test("a shell line that changes the harness checkout asks the owner in every mode, with an allow-everything classifier that is never called", async (t) => {
+  let calls = 0;
+  const verdict = JSON.stringify({ verdict: "allow", entry: "A1", reason: "stub" });
+  const registry = { find: () => ({ id: "m" }), getProviderAuthStatus: () => ({ configured: false }), complete: async () => (calls++, { content: [{ type: "text", text: verdict }], stopReason: "stop", usage: { input: 1, output: 1 } }) };
+  for (const mode of ["auto", "allow", "ask"]) {
+    for (const command of [`git -C ${fwd(PKG)} pull`, `cd ${fwd(PKG)} && make`]) {
+      const titles: string[] = [];
+      const ui = { notify: () => undefined, confirm: async () => false, select: async (title: string) => (titles.push(title), "deny with comment"), input: async () => undefined, setStatus: () => undefined, setWidget: () => undefined };
+      const c = await r11Rig(t, {}, { ctx: { ui, modelRegistry: registry, [RIG_PERMISSIONS]: { mode, allow: ["Write", "Edit", "Bash(*)"], classifier: { allow: ["Anything at all."] } } }, config });
+      assert.ok((await c.call("bash", { command }))?.block, `${mode} ${command}`);
+      assert.match(titles[0] ?? "", /install-root-write/, `${mode} ${command}`);
+    }
+  }
+  assert.equal(calls, 0);
 });
