@@ -36,7 +36,7 @@ const phrases = [
   "your own doubt whether it is a fix at all",
   "Put several follow-ups into one question to the owner",
   "tier, ledger, review before a PR, the checkpoint at heavy, the confirm for a new session, owner scripts and guard approvals all hold",
-  "children never push or merge",
+  "children never push and no session merges a PR",
   "Keep to a budget or limit the owner stated",
   "the host's resources are tight",
   "In a session a parent opened",
@@ -95,6 +95,6 @@ test("docs/ceremony.md carries the Working ahead section with both ruling additi
   assert.match(body, /propose/i);
   assert.match(body, /every foreman request/, "the cost sentence");
   assert.match(body, /plan-first|plan first/i, "a session for a new topic opens plan-first");
-  assert.match(body, /never push or merge/);
+  assert.match(body, /never push and no session merges a PR/);
   assert.ok(doc.indexOf("\n## Round flow") < at && at < doc.indexOf("\n## Further ceremony keys"), "between Round flow and Further ceremony keys");
 });

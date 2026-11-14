@@ -96,6 +96,7 @@ sets, and a templates object brings any other CLI. Nothing here merges a PR, fix
 | `tools.pr` | `true` | tighten-only (only `false` is accepted) |
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prGithubHosts` | unset (no built-in default) | not in project/session (user or overlay config only; 1 to 20 host names, each with an optional `:port`, lowercased and deduplicated) |
+| `tools.prReadyLabel` | `""` (off) | not in project/session (user or overlay config only; a label name of 1 to 50 characters, no control character, no comma, no leading `-`; see [Ready label](#ready-label)) |
 | `tools.prSettleSeconds` | `90` | any layer (integer 0..3600, seconds a passing check set must stand unchanged on a head before `pr_watch` reports it, where the base branch has no readable required checks; `0` = off) |
 | `tools.prReturnToBase` | `true` | any layer (boolean; when a watched PR is merged, return the session's own checkout to the updated base branch and delete the local PR branch, see [Watch](#watch)) |
 | `tools.prWatchSeconds` | `60` | any layer (integer 5..3600, seconds between two `pr_watch` store reads; floored to 30 at runtime; a watch gets news at the `foreman prs poll` cycle plus up to one such tick) |
@@ -212,18 +213,20 @@ id and link) and fetches comments only when `updatedAt` moved, for the PR's own 
 The tracker also sets `unsettled: true` on a state entry while a pass is not settled, with the watch's own rule (the gating runs are done, none failed, every required check present); without a readable required set a pass is held for `tools.prSettleSeconds` (default 90) by the watch's own hold (a new head or a changed check set restarts it), whose start the entry keeps as `passSince` (`head`, `sig`, `at`, the watch's shape). The herdr-app mod shows an unsettled PR as pending, never as passing; a failure is never held. Both fields are optional; the state file stays version 1.
 
 In a child session (`PI_FOREMAN_HANDOFF_DIR` set) the message also carries the instruction lines: `report to the parent: PR #n
-green on <sha>, mergeable, ready to merge` once per head when CI passed and the PR is mergeable and not a draft (a draft says `checks finished: <result>, draft`; one that passed CI with a mergeable PR gets, once per head, `report to the parent: PR #n green on <sha>, mergeable, still a draft` instead, and never the ready line (a PR under [draft handling](#draft) gets no `still a draft` line); marked ready on the same head, the ready line comes once; with merge state `BLOCKED` or `BEHIND` the line is `report to the parent: PR #n checks passed, merge state blocked (a review or a branch rule is still open)` or `... merge state behind the base`, once per head and state); on a mergeable conflict `merge
+green on <sha>, mergeable, ready to merge` once per head when CI passed and the PR is mergeable and not a draft (a draft says `checks finished: <result>, draft`, except a PR the watch takes out of draft on that very tick, which says `checks finished: pass, leaving draft` (see [Draft](#draft)); one that passed CI with a mergeable PR gets, once per head, `report to the parent: PR #n green on <sha>, mergeable, still a draft` instead, and never the ready line (a PR under [draft handling](#draft) gets no `still a draft` line); marked ready on the same head, the ready line comes once; with merge state `BLOCKED` or `BEHIND` the line is `report to the parent: PR #n checks passed, merge state blocked (a review or a branch rule is still open)` or `... merge state behind the base`, once per head and state); on a mergeable conflict `merge
 <base> into the branch, then push via the parent`; on a PR closed unmerged `report to the parent: PR #n closed unmerged`.
 
 With `ceremony.reviewBeforePr` on, the ready line also needs the [readiness rule](#draft): it is withheld while the rule does not hold and sent once it does, on the same head. This holds for a PR adopted with `pr_watch` too. With no checks confirmed on the non-draft PR the watch sends its own line, `report to the parent: PR #n no checks on <sha>, mergeable, ready to merge`, once per head. With the review gate off, the lines are as described above.
 
-A session cannot close while it holds a watch on an open PR: the close is refused with `PR #n open and watched (merge it, or
+A session cannot close while it holds a watch on an open PR: the close is refused with `PR #n open and watched (wait for the merge, or
 pr_unwatch)` after one fresh `pr_status` per watched PR (a PR merged since the last tick does not block). In a child session the
 watch's `merged` message starts the child's own close and cleanup (see [close](close.md#self-finish-on-merge)).
 
+A session's work on a PR ends at ready: checks green, mergeable, a reviewer PASS on the head, out of draft. It reports that once (a child with the watch's `ready to merge` line to its parent; a session without a parent to the owner, judged from the watch's check result, the mergeable state and its own PASS) and waits. No session merges a PR; the host decides how it lands, and the watch reports the merge. A review or comment the watch reports while the PR waits is feedback: rework, a reviewer PASS on the new head, ready again. A moved base is no reason to merge it into the PR or to rerun CI.
+
 **Return to the base branch.** When the watched PR is merged and the session is not one that closes itself on merge, the harness returns the session's own checkout to the updated base branch, so the owner types no shell line (`tools.prReturnToBase`, default on; off: nothing runs and the message has no extra line). The step runs before the `merged` message is built, and the message always ends with one line: what was done (switched to `<base>` at `<sha>`, fast-forwarded to the remote base, local branch deleted) or why nothing was done and what to do. Every check runs before any change to the checkout; a failed check leaves the checkout, the tree and every local branch as they are. The one thing a refusal after the fetch can leave behind is an updated remote-tracking ref of the base (the fetch moved it): that applies to a base that cannot fast-forward, a file clash and a base checked out in another worktree. The conditions are: no builder, reviewer or explorer of the session is still running anywhere (the step waits out any running child of the session, not only one in that checkout, does nothing and says so while one runs); the host reports the PR merged, and the checkout is the one the PR was opened from (the watch's directory and the session's own checkout have the same git toplevel); the checkout is on the PR's head branch, which is not the default branch of the base's remote or of `origin` (when it is, nothing at all is changed and the line says to switch to the base by hand), and the local tip equals the PR's last head commit; there is no tracked change, staged or not (untracked files stay as they are); the local base branch exists, has an upstream remote, is not checked out in another worktree and fast-forwards to the base fetched from that remote; and no untracked or ignored file would be overwritten by the move. Then the checkout switches to the base, fast-forwards it and deletes the local head branch with a forced delete, which the two merged checks justify (a squash or rebase merge leaves the tip outside the base). The base, a PR head branch that is a remote default branch (`refs/remotes/<remote>/HEAD` of the base's remote, or of `origin`; an unset ref names none) and any branch other than the PR's head branch are never deleted, and a name that starts with `-` is refused. If a step fails after the switch (a race), the line names the state it left; nothing is rolled back with a forced move. An error in the step is reported in the line and never stops the message. A PR opened with `pr_create` from another checkout (`cwd`) changes neither checkout, and the line says so. The silent pre-close path (a close runs one fresh `pr_status` and ends the watch of a merged PR without a message) runs the same step and shows the line as a UI notice. Trace: `pr_watch` with `outcome` `return_returned`, `return_kept` or `return_error`.
 
-Active watches are stored in the session file (the `pi-foreman-prwatch` entry, version 2: key host/repo/number, working directory, last seen state with the optional `reviewedHead` and `unreviewedHead`; a record without them restores) and survive a restart of the same Pi session (`pi --continue`, `--session <id>`, `/reload`). At session start each watch resumes and reads the store once (no poll), so a change the tracker stored while the session was down sends its message right away. A version 1 entry converts to a number-only key; because the tracker serves the hosts of `tools.prGithubHosts` only, a restored watch with a number-only key or a host outside the list ends once with `watch lost on restart: the PR tracker covers <the hosts> only; this watch from an earlier version ended. Re-arm it with pr_watch.` (with the key unset or invalid a watch is not ended: it stays armed and its status shows the notice) A stored record that is unreadable sends one `pi-foreman-pr` message `watch lost on restart: <reason>` (trace outcome `lost`); check the PR with `pr_checks`. A fork or a copied session file has another session id and starts with no watches.
+Active watches are stored in the session file (the `pi-foreman-prwatch` entry, version 2: key host/repo/number, working directory, last seen state with the optional `reviewedHead`, `unreviewedHead` and the [ready label](#ready-label) record; a record without them restores) and survive a restart of the same Pi session (`pi --continue`, `--session <id>`, `/reload`). At session start each watch resumes and reads the store once (no poll), so a change the tracker stored while the session was down sends its message right away. A version 1 entry converts to a number-only key; because the tracker serves the hosts of `tools.prGithubHosts` only, a restored watch with a number-only key or a host outside the list ends once with `watch lost on restart: the PR tracker covers <the hosts> only; this watch from an earlier version ended. Re-arm it with pr_watch.` (with the key unset or invalid a watch is not ended: it stays armed and its status shows the notice) A stored record that is unreadable sends one `pi-foreman-pr` message `watch lost on restart: <reason>` (trace outcome `lost`); check the PR with `pr_checks`. A fork or a copied session file has another session id and starts with no watches.
 
 ### Draft
 
@@ -231,9 +234,8 @@ A session opens its own PR as a draft and takes it out of draft when it is ready
 
 **The readiness rule.** A PR is ready when all of these hold:
 
-- a `[pre-pr]` review PASS is the session's newest code review, and it passed the head that is pushed (an `item` review PASS is not enough; see [review](review.md#readiness-of-a-pr));
-- no builder was launched and no project file was edited since that review;
-- the work was not sent back (see [sessions](sessions.md#send-work-back));
+- a `[pre-pr]` review PASS is the newest code review recorded for the head that is pushed (an `item` review PASS is not enough, and a later FAIL on that head takes the PR out of ready; see [review](review.md#readiness-of-a-pr));
+- that head was not sent back since (see [sessions](sessions.md#send-work-back)); only a new `[pre-pr]` PASS on the same head clears the mark, a PASS on another head does not;
 - the checks have settled green, or no checks are confirmed on the head (see below);
 - the host says the PR is mergeable, and its merge state is not blocked, behind, in conflict or unknown.
 
@@ -247,8 +249,8 @@ The rule needs `ceremony.reviewBeforePr`. With it off there is no draft handling
 
 - `pr_create` asks for a draft. The PR gate is unchanged: no PR opens earlier than before, and any code review PASS still opens it.
 - The PR leaves draft when the rule holds, apart from the draft state itself. Checks that are still running or red do not put it back into draft; it stays as it is.
-- It goes back into draft when work follows the review (a builder launch, a project edit, a newer unreviewed head, a FAIL verdict) or when the parent sends the work back. Only a new `[pre-pr]` review PASS on the pushed head takes it out again.
-- The watch compares the target with the host at each tick, and at once when a builder starts or a project file changes. It does not call the host again while the tracker store still shows the old state.
+- It goes back into draft when the pushed head has no `[pre-pr]` PASS (a newer head, a FAIL verdict on that head) or when the parent sends the work back. Other work in the session (a builder launch, a project edit, a review of another PR) does not. Only a new `[pre-pr]` review PASS on the pushed head takes it out again.
+- The watch compares the target with the host at each tick, and at once when the work is sent back. It does not call the host again while the tracker store still shows the old state.
 - Each change also refreshes the live file, so the pill does not lag.
 
 **When the host says no.**
@@ -260,7 +262,43 @@ The rule needs `ceremony.reviewBeforePr`. With it off there is no draft handling
 
 **No checks.** A repository with no checks may become ready. The no-checks count restarts when the draft state changes, so no checks must be confirmed once on the draft and once on the non-draft PR before the no-checks ready line goes out. A repository that runs CI only outside draft therefore shows CI running after the PR leaves draft, not ready.
 
+**The message when a PR is about to leave draft.** The checks message of a draft PR says `checks finished: pass, draft` while it stays a draft. When the watch makes the leave-draft call on that same tick, it says `checks finished: pass, leaving draft` instead, so the session does not read a PR that is on its way out as one that stays. One check decides both the call and the wording: the PR is under draft handling, the target is out of draft, no call is in flight or memoised for this head, and the failure pause or cap does not hold. Otherwise (rule not held, an unmanaged PR, a call in flight, a paused or capped step) the message says `, draft` as before. After `leaving draft`:
+
+- a child session is told to hold its report; the `ready to merge` line (and its report line to the parent) follows once the tracker shows the PR out of draft with the host's real merge state, once per head;
+- a session without a parent is told that the watch is taking the PR out of draft now and to confirm with `pr_status` before it tells the owner it is ready (a session without a parent gets no ready line).
+
+A PASS recorded after the checks message changes nothing in that message: it said `, draft` truthfully, the next tick takes the PR out of draft and the ready line follows the tracker's next poll. The no-checks path is unchanged.
+
 **A hand-set draft state is overruled.** A draft state you set by hand on the host (in the web page or with `gh pr ready`) for a managed PR is overruled at the next watch tick, once the tracker store shows it. The harness does not know holds such as "merge only after I have looked".
+
+### Ready label
+
+A session's PR watch can mark a ready PR with a label for the owner, who then looks at it (the harness never merges; the host decides how a PR lands). **Setting:** `tools.prReadyLabel`, a label name (user or overlay config only: a project file must not make the harness write to the host). Empty, the default, is off: the watch makes no label call at all. There is no setup-screen entry.
+
+**When the label is on.** The watch puts the label on when all of this holds, and takes it off when the PR stops being ready:
+
+- the newest code review recorded for the pushed head is a `[pre-pr]` PASS and the head was not sent back (see [Draft](#draft)); the PASS is always required, whatever `ceremony.reviewBeforePr` says, and without a review-facts source nothing is labelled;
+- the checks settled green, or no checks are confirmed;
+- the host says mergeable, the PR is not a draft, and the merge state is not behind, conflicting or unknown (`blocked` still counts: where a required review releases the merge, the PR waiting for that review is the one to look at);
+- the host's review decision is not "changes requested". A decision the host does not give has no effect.
+
+It comes off when the head has no PASS (a new head, a FAIL on it, work sent back), the PR is a draft, checks fail, the PR conflicts or changes are requested. While checks run, mergeable or the merge state is unknown, or the PR is behind, nothing changes (they pass by themselves or have their own line; flipping the label would only flicker). When a review that requested changes is withdrawn or replaced on the same head, the label goes on again.
+
+**Humans are never overruled.** The watch removes only a label its own add put on, and it adds the label once per head:
+
+- a label a human removed is not put back on the same head, also after a failed check and a green rerun;
+- after the watch's own removal the same head is labelled again when it is ready again;
+- a label a human had already put on (the add found it there) is never removed by the watch;
+- the label the watch put on stays its own across heads, so it is removed when a later head fails;
+- a changed `tools.prReadyLabel` drops the record; the old label is left alone.
+
+The record (the label name, whether the label is the watch's own, the head last asked for, the head of the watch's own removal) is part of the stored watch state and survives a reload. Two limits: the watch does not read the PR's labels between its calls, so if a human removes the watch's label and puts it back, the watch still treats it as its own and removes it when the PR stops being ready; and a human change in the seconds between the op's read and its write is not seen.
+
+**Which PRs.** Every open watch: a PR the session opened and one it adopted with `pr_watch`, whatever `tools.prDraft` says (the draft handling stays limited to PRs the session opened). The label step runs on every watch tick and when the session's facts move (a project edit, a builder launch, a send-back), after the draft step. It sets the label after the PR left draft, with the same refresh as the ready line. A merged, closed or un-watched PR is not touched; a label left on a PR that is no longer watched is visible and harmless. Without the key no host call is made.
+
+**Hosts.** GitHub CLI only (`gh`). The internal op `pr_label` (not a model tool; arguments `number`, `label`, `on`, `repo`, `host`) reads the PR's labels first and answers `changed: false` without writing when the label is already in the wanted state (names compare without regard to case, as the host does). Otherwise it runs `gh pr edit --add-label` or `--remove-label`. A label the repository lacks is created once (`gh label create` with no `--force`, so an existing label is never altered) and the add is repeated; the op looks for the label by name before it creates it. GitLab and template hosts answer `pr_unsupported`: the watch gives one notice and stops label handling for that watch.
+
+**Failures.** A failed call is traced (`label_failed`) and tried again at later ticks with a growing pause; after a cap per head the session gets one notice and label handling for that head stops (`label_failed_capped`). Trace outcomes of the step: `label_on`, `label_off`, `label_failed`, `label_failed_capped`, `label_unsupported`.
 
 ### Sources
 

@@ -93,8 +93,8 @@ machine, and an order nobody answered expires at the next `foreman session list`
 ## Close refused while a PR is open
 
 A session that holds a [PR watch](tools.md#watch) on a PR that is not merged or closed refuses every close (`/foreman close`,
-an intercom `foreman:close`, a remote parent's close order): `pi-foreman: close refused: PR #n open and watched (merge it,
-or pr_unwatch)`. Merge or close the PR, or end the watch with `pr_unwatch`, then close again. The check is part of the same
+an intercom `foreman:close`, a remote parent's close order): `pi-foreman: close refused: PR #n open and watched (wait for the
+merge, or pr_unwatch)`. A session waits for the watch to report the merge or the close of the PR, or ends the watch with `pr_unwatch`, then closes again; no session merges a PR. The check is part of the same
 refusals as a running child run or a pending `foreman_wait`, so a parent's close of a child gets the refusal as a reply.
 
 A PR merged after the last poll does not block: before refusing, a close runs one fresh `pr_status` per watched PR and ends

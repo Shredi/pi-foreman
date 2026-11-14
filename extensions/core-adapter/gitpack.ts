@@ -25,7 +25,7 @@ const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 export const GIT_PACK = "git";
 export const PACK_ENV = "PI_FOREMAN_TOOL_PACKS";
 export const PR_PACK = "pr";
-export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch" | "pr_draft";
+export type PrOp = "pr_create" | "pr_status" | "pr_checks" | "pr_comments" | "pr_repo" | "pr_find" | "pr_batch" | "pr_draft" | "pr_label";
 export type GitReadOp = "status" | "log" | "diff_stat" | "branch_state";
 
 const str = (max: number, description: string) => ({ type: "string", minLength: 1, maxLength: max, description });

@@ -1348,5 +1348,56 @@ def op_pr_draft(req):
     return {"action": "pr_draft", "number": number, "draft": draft}
 
 
+def _label_arg(args):
+    v = args.get("label")
+    if not isinstance(v, str) or not 1 <= len(v) <= 50 or v.startswith("-") or "," in v \
+            or any(unicodedata.category(c) == "Cc" for c in v):
+        raise _bad("label must be 1 to 50 characters, no control character or comma, no leading -")
+    return v
+
+
+def op_pr_label(req):
+    """Put a label on a pull request (`on` true) or take it off (`on` false). GitHub only (gh); a GitLab or template host answers pr_unsupported.
+    The PR's labels are read first: a label already in the wanted state answers `changed: false` and nothing is written. An add that fails
+    while the repository has no label of that name creates it (never with --force, so an existing label is not altered) and adds again once.
+    Not a model-facing tool: the session's PR watch calls it with the watch's repository and host."""
+    args, cfg, pr_host = _setup(req, ("number", "repo", "host", "label", "on"))
+    number = arg_number(args)
+    if number is None:
+        raise _bad("number is required")
+    label = _label_arg(args)
+    on = args.get("on")
+    if not isinstance(on, bool):
+        raise _bad("on must be a boolean")
+    repo, hostname = arg_repo(args), arg_host(args)
+    root = workspace_root(req.get("cwd"))
+    host = _gh_only(pr_host, root, "pr_label")
+    rflag = repo_flag(host, repo, hostname)
+    subst = [repo or "", label]
+    view = host_json(host, *run_host([host.program, "pr", "view", str(number)] + rflag + ["--json", "labels"], root, subst), "label")
+    names = view.get("labels") if isinstance(view, dict) else None
+    if not isinstance(names, list):
+        raise ActionError("pr_host_failed", "gh: printed no labels")
+    present = any(isinstance(x, dict) and str(x.get("name", "")).casefold() == label.casefold() for x in names)
+    answer = {"action": "pr_label", "number": number, "label": label, "on": on}
+    if present == on:
+        return {**answer, "changed": False}
+    edit = [host.program, "pr", "edit", str(number)] + rflag + ["--add-label" if on else "--remove-label", label]
+    code, out, err = run_host(edit, root, subst)
+    if code != 0 and on:
+        listed = host_json(host, *run_host([host.program, "label", "list"] + rflag + ["--search", label, "--json", "name", "--limit", "100"], root, subst), "label")
+        if not isinstance(listed, list):
+            raise ActionError("pr_host_failed", "gh: printed no label list")
+        if any(isinstance(x, dict) and str(x.get("name", "")).casefold() == label.casefold() for x in listed):
+            host_error(host, "label", code, err)
+        code, out, err = run_host([host.program, "label", "create", label] + rflag, root, subst)
+        if code != 0:
+            host_error(host, "label", code, err)
+        code, out, err = run_host(edit, root, subst)
+    if code != 0:
+        host_error(host, "label", code, err)
+    return {**answer, "changed": True}
+
+
 OPS = {"pr_create": op_pr_create, "pr_status": op_pr_status, "pr_checks": op_pr_checks, "pr_comments": op_pr_comments,
-       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft}
+       "pr_repo": op_pr_repo, "pr_find": op_pr_find, "pr_batch": op_pr_batch, "pr_draft": op_pr_draft, "pr_label": op_pr_label}

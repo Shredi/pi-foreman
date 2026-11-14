@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { CloseFlow } from "../close.ts";
 import type { CloseDeps } from "../close.ts";
 
-const REFUSED = "pi-foreman: close refused: PR #7 open and watched (merge it, or pr_unwatch)";
+const REFUSED = "pi-foreman: close refused: PR #7 open and watched (wait for the merge, or pr_unwatch)";
 const req = { source: "intercom-parent" as const, file: "/x/.workflow/r.md", replyTo: "parent-1" };
 
 function rig(state: "open" | "merged") {

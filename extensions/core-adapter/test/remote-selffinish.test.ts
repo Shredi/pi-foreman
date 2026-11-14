@@ -67,7 +67,7 @@ test("refuseSlug: the PR-watch and close-start refusals map to fixed non-generic
   const flow = new CloseFlow({ trace: () => undefined, notify: (t: string) => void seen.push(t), reply: () => undefined, activeRuns: () => 0, activeWaits: () => [], watchedPrs: () => [7, 9], remoteReply: (_k: string, a?: string) => void seen.push(`slug:${refuseSlug(a ?? "")}`) } as unknown as CloseDeps);
   flow.request({ source: "remote-parent", file: FILE, shown: FILE }, { isIdle: () => true, shutdown: () => undefined } as never);
   assert.ok(seen.includes("slug:pr-watched"), seen.join("|"));
-  assert.equal(refuseSlug("PR #7 open and watched (merge it, or pr_unwatch)"), "pr-watched");
+  assert.equal(refuseSlug("PR #7 open and watched (wait for the merge, or pr_unwatch)"), "pr-watched");
   assert.equal(refuseSlug("the close turn failed to start: boom"), "not-started");
   assert.equal(refuseSlug("something else"), "refused");
 });
