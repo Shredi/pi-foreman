@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets,
 } from "./model.js";
 
 const LOCAL_MS = 3000;
@@ -700,6 +700,8 @@ export default class ForemanAgents extends View {
     const localTree = this.radar.get("local")?.ok ? this.radar.get("local").tree : [];
     const remoteNodes = guard(() => remoteNodesOf(localTree), []);
     this.remoteTargets = new Set(remoteNodes.map((x) => x.target));
+    // The ended ones: their live mirror is a dimmed row (hcChildItems); they are not polled.
+    const endedNodes = guard(() => endedRemoteNodesOf(localTree), []);
     const recsOfNode = (n) => (remoteTarget(n) ? this.recs.get(remoteTarget(n))?.recs ?? [] : []);
     // The remote node joined to a registry node's remote terminal: its agents, runs and child sessions show under that node's row.
     const remoteOf = (n) => joined.get(remoteTarget(n)) ?? null;
@@ -763,7 +765,7 @@ export default class ForemanAgents extends View {
         const own = workerStatus(term.status, listedStatus.get(term.address));
         return { node, recs, own, attach: this.recs.get(term.address)?.attach ?? "", status: guard(() => agentStatus(own, node, recs), own) };
       };
-      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets, remoteNodes, recsOf: recsOfNode, remoteOf }), []);
+      const live = guard(() => hcChildItems(all, a.address, resolve, { skip, skipKeys, drawnTargets, remoteNodes, endedNodes, recsOf: recsOfNode, remoteOf }), []);
       const { root, items } = guard(() => this.agentItems(f ?? null, listedStatus.get(a.address) ?? null, recsOf(a), skip, live, skipKeys, recsOfNode, remoteOf), { root: null, items: [] });
       drawnItems.push(...(root ? [root] : []), ...items);
       const block = this.agentBlock(t, a, now, statusOf(a), items, root);
