@@ -5,10 +5,10 @@ import { prDotState, prCard, enrichPrs, parseRadarDoc } from "./model.js";
 const pr = (checks, over = {}) => ({ number: 7, checks, ...over });
 const dot = (checks, over) => prDotState(pr(checks, over));
 
-test("ring while any job runs; no ring otherwise", () => {
-  assert.equal(dot(["pending", "ok"]).ring, true);
-  assert.equal(dot(["ok", "ok"]).ring, false);
-  assert.equal(dot(["fail"]).ring, false);
+test("pulse while any job runs; no pulse otherwise", () => {
+  assert.equal(dot(["pending", "ok"]).pulse, true);
+  assert.equal(dot(["ok", "ok"]).pulse, false);
+  assert.equal(dot(["fail"]).pulse, false);
 });
 
 test("fill: amber while none finished", () => {
@@ -17,12 +17,12 @@ test("fill: amber while none finished", () => {
 
 test("fill: red once a finished job failed, even while others run", () => {
   assert.equal(dot(["fail"]).fill, "red");
-  assert.deepEqual(dot(["pending", "fail", "ok"]), { ring: true, fill: "red", conflict: false });
+  assert.deepEqual(dot(["pending", "fail", "ok"]), { pulse: false, fill: "red", conflict: false });
 });
 
 test("fill: green when every finished job passed (jobs may still run)", () => {
   assert.equal(dot(["ok", "ok"]).fill, "green");
-  assert.deepEqual(dot(["ok", "pending"]), { ring: true, fill: "green", conflict: false });
+  assert.deepEqual(dot(["ok", "pending"]), { pulse: true, fill: "green", conflict: false });
 });
 
 test("fill: dim when unknown (no jobs, or only unknown ones)", () => {

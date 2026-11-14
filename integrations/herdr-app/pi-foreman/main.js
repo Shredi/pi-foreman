@@ -11,6 +11,7 @@ import {
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
   slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors,
 } from "./model.js";
+import { SAMPLE } from "./sample.mjs";
 
 const LOCAL_MS = 3000;
 const REMOTE_MS = 15000;
@@ -30,7 +31,6 @@ const T_HC_REMOTE = 15000;
 const T_ATTACH = 15000;
 const T_OPEN = 10000;
 const SPINNER = "mods/workspace-chrome/spinner.svg";
-const RING = "mods/pi-foreman/ring.svg";
 const CHEVRON = { open: "mods/workspace-chrome/chevron-down.svg", closed: "mods/workspace-chrome/chevron-right.svg" };
 const AGENT_GLYPH = "🤖"; // the mark of an agent row, an emoji like the ⏳ / ⚙ of the status lines
 const CARD = 5; // inset of a session card: 4px margin and its 1px border
@@ -64,12 +64,12 @@ const statusGlyph = (t, status) => glyph(t, glyphSpec(status));
 
 const tones = prTones;
 
-// One dot per PR: the outer ring spins while a job runs, the inner fill says how the finished jobs went.
+// One dot per PR: its colour is the PR's state, and it pulses (opacity, native loop) while a job runs or the checks are not settled.
 function prDot(t, st) {
   const color = tones(t)[st.fill];
   return div().relative().flex_none().size(14).mx(1)
-    .when(st.ring, (el) => el.child(svg(RING).absolute().top(0).left(0).size(14).text_color(color).spin(1100)))
-    .child(div().absolute().top(4).left(4).size(6).rounded(3).bg(color));
+    .child(div().absolute().top(4).left(4).size(6).rounded(3).bg(color)
+      .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));
 }
 
 // Conflict marker, independent of the dot: a small red disc with a bang.
@@ -110,6 +110,12 @@ export default class ForemanAgents extends View {
     const given = guard(() => props() ?? p ?? {}, {});
     this.foremanProp = given.foreman;
     this.hcProp = given.hc;
+    // The sample view (docs/development.md): the radar comes from sample.mjs once; nothing is polled and nothing is started.
+    this.sample = given.sample === true;
+    if (this.sample) {
+      const doc = parseRadarDoc(JSON.stringify(SAMPLE.radar));
+      this.radar.set("local", { ok: true, tree: buildTree(doc.nodes), nodes: doc.nodes, openPrs: doc.openPrs, openPrsAt: null, tried: Date.now() });
+    }
     this.recs = new Map(); // agent address -> {recs, tried}
     this.childPi = new Set(); // pane-less pi child terminals (set by render), polled for records too
     this.remoteTargets = new Set(); // `<machine>/<t>` of the remote sessions drawn as registry rows (set by render), polled for records too
@@ -150,6 +156,7 @@ export default class ForemanAgents extends View {
   // exec with a `timeout`. If the call throws or rejects because of the option itself (an app that predates it), it runs once more
   // without it and this copy stops passing it; every other rejection (no binary, a run stopped by the timeout) goes to the caller.
   async execT(command, args, options, timeout) {
+    if (this.sample) return { code: 1, stdout: "" };
     if (this.noTimeout) return exec(command, args, options);
     try {
       return await exec(command, args, { ...options, timeout });
@@ -169,6 +176,7 @@ export default class ForemanAgents extends View {
   }
 
   poll(cx) {
+    if (this.sample) return;
     const now = Date.now();
     for (const machine of this.machines()) {
       const key = machine ?? "local";
@@ -300,6 +308,7 @@ export default class ForemanAgents extends View {
   // `foreman prs poll --json` per machine, 30 s after its previous run ended: it polls the tracked PRs and the PR search and writes
   // the store files the radar reads. The mod only runs it; a failure raises one error notice and the next round tries again.
   pollPrs(cx, now) {
+    if (this.sample) return;
     for (const machine of this.machines()) {
       const key = `prs:${machine ?? "local"}`;
       if (this.busy.has(key) && now - this.busy.get(key) > PRS_STUCK_MS) this.busy.delete(key);
@@ -391,7 +400,7 @@ export default class ForemanAgents extends View {
     });
   }
 
-  // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one two-part dot; a click opens its
+  // A PR is a chip: pill with the number, a conflict marker when it conflicts, and its one dot; a click opens its
   // page when radar gave a URL (or a repository URL to derive it from). Resting on the chip opens the hover card.
   prChip(t, pr, href, key, more = []) {
     return guard(() => this.prChipRaw(t, pr, href, key, more), h_flex().flex_none().px(6).text_size(10.5).text_color(t.muted).child(`⎇ #${pr?.number ?? "?"}`));
@@ -653,20 +662,20 @@ export default class ForemanAgents extends View {
   render(cx) {
     const t = theme();
     this.feed = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
-    const list = guard(() => agents().filter((a) => typeof a?.address === "string"), []);
+    const list = guard(() => (this.sample ? SAMPLE.agents : agents()).filter((a) => typeof a?.address === "string"), []);
     const listedStatus = new Map(list.map((a) => [a.address, a.status]));
-    const all = guard(() => terminals().filter((x) => x && typeof x === "object"), []);
+    const all = guard(() => (this.sample ? SAMPLE.terminals : terminals()).filter((x) => x && typeof x === "object"), []);
     this.terms = all;
     const shown = guard(() => focused()?.agent, null);
     this.shown = shown;
-    const spaceList = guard(() => spaces(), []);
+    const spaceList = guard(() => (this.sample ? SAMPLE.spaces : spaces()), []);
     // The window's measurements are legal from render by contract (typings.rs), so the hover-card placement reads the size here.
     this.vp = guard(() => globalThis.window?.viewport_size?.(), null) ?? this.vp;
     const now = Date.now();
     guard(() => this.track(list, now));
     this.clashes = guard(() => clashingTabs(list), new Set());
     // Deliberately app-global: the one order of the Agents list, the same from every copy.
-    guard(() => setAgentOrder(list.map((a) => a.address)));
+    if (!this.sample) guard(() => setAgentOrder(list.map((a) => a.address)));
 
     // Join each machine's radar to its agents; the pid comes from the terminal record when it has one.
     const withPid = list.map((a) => ({ ...a, pid: all.find((x) => x.address === a.address)?.foreground?.pid ?? null }));
@@ -780,7 +789,8 @@ export default class ForemanAgents extends View {
     for (const a of kept) if (!blocks.has(a.address)) blocks.set(a.address, withRows(a));
     const rows = groupsOf(kept).flatMap((g) => [...header(g), ...g.members.flatMap((a) => blocks.get(a.address))]);
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
-    const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values(), ...childJoined.values()], drawnItems))
+    // A child node counts as shown only where it is drawn (drawnItems): an ended one with nothing live below leaves the tree, and its PRs stay in Open PRs.
+    const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values()], drawnItems))
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));

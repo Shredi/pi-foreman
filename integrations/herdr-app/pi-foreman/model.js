@@ -455,7 +455,7 @@ export function sessionCount(node) {
  *  failed), "ok" (green) or "none" (no checks known). */
 export function prState(pr) {
   const d = prDotState(pr);
-  return d.fill === "red" ? "fail" : d.ring || d.fill === "amber" ? "pending" : d.fill === "violet" ? "wip" : d.fill === "blue" ? "unreviewed" : d.fill === "green" ? "ok" : "none";
+  return d.fill === "red" ? "fail" : d.fill === "violet" ? "wip" : d.pulse || d.fill === "amber" ? "pending" : d.fill === "blue" ? "unreviewed" : d.fill === "green" ? "ok" : "none";
 }
 
 const urgency = (pr) => ({ fail: 0, pending: 1, unreviewed: 2, wip: 4 })[prState(pr)] ?? 3;
@@ -510,10 +510,10 @@ export function chipPrs(prs) {
 export function prStateText(pr) {
   const d = prDotState(pr);
   const p = pillOf(pr, baseDot(pr));
-  if (p.state === "wip") return "work in progress";
+  if (p.state === "wip") return d.pulse ? "work in progress, CI running" : "work in progress";
   if (p.state === "unreviewed") return "CI passing, not reviewed";
   if (p.state === "ready") return p.reviewed ? "ready to merge" : "ready to merge (CI passing, no review claim)";
-  return d.fill === "red" ? "CI failing" : d.ring ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
+  return d.fill === "red" ? "CI failing" : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
 
 /** The page of a PR: its own URL, else `<https repository URL>/pull/<number>`; "" when radar gives neither (not clickable). */
@@ -1092,16 +1092,18 @@ export function displayStatus(item, folded) {
 
 // ---- PR dot and hover card (items 17 d, 19) ------------------------------------------------------------------
 
-/** The two-part dot of a PR: `ring` (outer, animated) while any job runs; `fill` (inner) "amber" while no job finished, "red"
- *  once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
+/** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, unless a finished job failed (red never
+ *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" while no job finished, "red" once a finished job
+ *  failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
 export function prDotState(pr) {
   const d = baseDot(pr);
   const p = pillOf(pr, d);
-  if (p.state === "wip") return { ring: false, fill: "violet", conflict: d.conflict };
-  if (p.state === "unreviewed") return { ring: false, fill: "blue", conflict: d.conflict };
-  if (p.state === "running" && !d.ring && d.fill === "green") return { ring: true, fill: "amber", conflict: d.conflict };
-  if (p.state === "ready" && d.fill === "dim") return { ring: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
-  return d;
+  const pulse = d.ring && d.fill !== "red";
+  if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
+  if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
+  if (p.state === "running" && !d.ring && d.fill === "green") return { pulse: true, fill: "amber", conflict: d.conflict };
+  if (p.state === "ready" && d.fill === "dim") return { pulse: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
+  return { pulse, fill: d.fill, conflict: d.conflict };
 }
 
 /**
@@ -1173,7 +1175,7 @@ export function prCard(pr) {
   // A PR known only from its session dot (jobs without names, no feed twin) has no job list to show: no invented "job N".
   const dotOnly = jobs.length > 0 && listOf(pr?.jobs).length > 0 && !str(pr?.title) && jobs.every((j) => !j.name);
   const dot = prDotState(pr);
-  const status = !dotOnly ? "" : dot.fill === "red" ? "checks failed" : dot.ring ? "checks running" : dot.fill === "green" ? "checks passed" : "";
+  const status = !dotOnly ? "" : dot.fill === "red" ? "checks failed" : dot.pulse ? "checks running" : dot.fill === "green" ? "checks passed" : "";
   const named = jobs.map((j, i) => ({ name: j.name || `job ${i + 1}`, state: j.state }));
   const group = (key, label, state) => {
     const names = named.filter((j) => j.state === state).map((j) => j.name);

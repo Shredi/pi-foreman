@@ -595,7 +595,7 @@ terminal the open prints `attach: hc attach <machine>/<t>` to run by hand. See
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
 it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
 gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
-waits; one two-part dot per PR (see Open PRs below) in a chip on the right of the title row, the same place for the top-level row and every child row: up to two chips, with more PRs one chip of the most urgent PR reading "#n +k" (there is no separate PR line or "N PRs" summary). Resting on a chip shows a tooltip naming the state and the PR ("#16 · CI failing", "CI running", "CI passing", "no CI checks"; `.tooltip(text)`, Herdr 0.1.14) and opens its hover card (0.3 s delay), which adds the details and lists the other PRs of a "+k" chip. The host has no flip or offset for a HoverCard and only clamps it into the window, so the mod picks the card's `anchor` from the chip's window position (`on_mouse_move` bounds, the drawable size from the global `window.viewport_size()`, read as `globalThis.window` because main.js imports herdr's `window` under the same name, and read during `render` (where the host guarantees window measurements) and kept on the instance for the handler; `placeCard` in model.js). The card opens below the chip when it fits there, otherwise on the side with more room, otherwise beside the chip. It is never taller than the room on its side; long text is cut off. The card never covers the chip, which stays clickable. A chip click opens the PR without also focusing the pane (`cx.stop_propagation()`), and a chip with no known page shows a notice instead. Known limit: the mod sees only the Herdr window's size, not the screen's (the mod API has no display size). With the window dragged partly below the screen edge, the card can open below the chip off screen. Dot colours (the check part of the PR pill, see Open PRs): green every finished job passed (while the poll has not settled a pass, the dot shows the pending state, ring and amber, and the card says "CI running", never "CI passing"; see Open PRs), red a job failed (at once, settled or not), amber jobs running with none finished (the outer ring turns while any job runs), grey no CI data; merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
+waits; one dot per PR (see Open PRs below) in a chip on the right of the title row, the same place for the top-level row and every child row: up to two chips, with more PRs one chip of the most urgent PR reading "#n +k" (there is no separate PR line or "N PRs" summary). Resting on a chip shows a tooltip naming the state and the PR ("#16 · CI failing", "CI running", "CI passing", "no CI checks"; `.tooltip(text)`, Herdr 0.1.14) and opens its hover card (0.3 s delay), which adds the details and lists the other PRs of a "+k" chip. The host has no flip or offset for a HoverCard and only clamps it into the window, so the mod picks the card's `anchor` from the chip's window position (`on_mouse_move` bounds, the drawable size from the global `window.viewport_size()`, read as `globalThis.window` because main.js imports herdr's `window` under the same name, and read during `render` (where the host guarantees window measurements) and kept on the instance for the handler; `placeCard` in model.js). The card opens below the chip when it fits there, otherwise on the side with more room, otherwise beside the chip. It is never taller than the room on its side; long text is cut off. The card never covers the chip, which stays clickable. A chip click opens the PR without also focusing the pane (`cx.stop_propagation()`), and a chip with no known page shows a notice instead. Known limit: the mod sees only the Herdr window's size, not the screen's (the mod API has no display size). With the window dragged partly below the screen edge, the card can open below the chip off screen. Dot colours (the check part of the PR pill, see Open PRs): green every finished job passed (while the poll has not settled a pass, the dot shows the pending state, pulsing amber, and the card says "CI running", never "CI passing"; see Open PRs), red a job failed (at once, settled or not), amber jobs running with none finished (the dot pulses while any job runs or the checks are not settled; a draft pulses in violet), grey no CI data; merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
 tree row "🤖 role model" (no status circle inside a card). An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
 session shows. The mod is the only PR and run display: Pi itself draws no PR or run widget and no PR or run parts in its footer,
 and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
@@ -659,20 +659,49 @@ What outlives a closed tab, and what does not:
 - The sidebar daemon is started in its own session; `stop` sends SIGTERM and it exits itself when its socket is lost.
 - Gap: `worktree sweep` protects a tree only while a live session file uses it, so a `foreman_bg` run inside a removed tree is not protected.
 
+### Legend of the sidebar markers
+
+Every marker the herdr-app sidebar draws, with the one thing it means. The first column is the stable key: the sample view
+(`docs/development.md`, "Sample view") has one row per key, and a test fails when a key has no row or a row has no key.
+
+| Key | Shape | Motion | Colour | Meaning |
+|---|---|---|---|---|
+| `agent-working` | spinner (turning arc, 13 px) | turns | working | the agent's turn runs |
+| `agent-needs-you` | pill "Needs you" | still | red | an ask or dialog waits for you |
+| `agent-own-agents` | spinner (turning arc, 13 px) | turns | working | the turn ended but the agent's own agents still run |
+| `agent-done` | filled dot (8 px) | still | blue | the turn ended and has not been seen yet |
+| `agent-background` | small filled square (7 px) | still | working | a background task runs (the `⚙` line names it) |
+| `agent-waiting` | hollow ring (8 px) | still | muted | a wait is armed (the `⏳` line names it) |
+| `agent-idle` | hollow ring (8 px) | still | dim | nothing runs |
+| `session-ended` | dimmed name, hollow ring, machine tag | still | dim | a remote session that ended; its terminal still lives |
+| `session-remote` | name with the machine tag, the status mark of the remote session | as the status mark | as the status mark | a session on another machine |
+| `pr-draft` | disc (6 px) in a chip `⎇ #n` | still | violet | draft or work in progress, checks settled or failed |
+| `pr-draft-running` | disc (6 px) | pulses | violet | draft or work in progress, checks run |
+| `pr-running` | disc (6 px) | pulses | amber | checks run, are not settled, or the merge is blocked or behind |
+| `pr-failed` | disc (6 px), chip text and border | still | red | a check failed |
+| `pr-not-reviewed` | disc (6 px) and the token "unreviewed head" | still | blue | checks green, the head is not reviewed |
+| `pr-ready` | disc (6 px) | still | green | checks settled green, mergeable (and reviewed when a session reviews) |
+| `pr-conflict` | small disc with "!" beside the dot | still | red | the PR conflicts with its base; the dot keeps the check colour |
+| `pr-no-checks` | disc (6 px) | still | grey | no check data |
+
+A pulse is a native opacity loop of the disc (0.35 to 1, 1.2 s), drawn only while the PR is in a pulsing state; it adds no
+timer and no redraw. The turning circle belongs to agents alone.
+
 ### Open PRs
 
 The `openPrs` field of `foreman radar --json` is the shared open-PRs feed and the only source of PR data for the mod. It is on
 by default (`radar.openPrs.enabled: false` turns it off). It lists your open PRs (author), the open PRs with your review
-requested (`mine`), and the open PRs of configured bot authors inside a configured scope. The mod draws one dot per PR: an
-outer ring that animates while any job runs, and an inner fill that is amber while no job has finished, red once one has
-failed, green when every job finished and passed, and dim when unknown. For a PR with host facts these colours are the check part of the pill (below). Hovering the dot shows a card (title, the first
+requested (`mine`), and the open PRs of configured bot authors inside a configured scope. The mod draws one dot per PR: a disc that is amber while no job has finished, red once one has
+failed, green when every job finished and passed, and dim when unknown. The disc pulses (its opacity rises and falls, about once
+in 1.2 s) while any job runs or the checks are not settled, unless a finished job failed; red never pulses. The turning circle is
+never used for a PR: it is the mark of an agent that works. For a PR with host facts these colours are the check part of the pill (below). Hovering the dot shows a card (title, the first
 ~200 characters of the description, the jobs grouped failed, running and passed, capped, and a CONFLICTING mark when the PR has
-a merge conflict); a click opens the PR. Runs of a [PR source](tools.md#sources) appear as `<source>/<name>` in the chip and the dots; a counting source that has not answered for the current commit shows `<source>/(no answer)` with a running ring. The cut to 20 names keeps GitHub's names first. A PR whose repository and head branch equal the `repo` and `branch` of a live session
+a merge conflict); a click opens the PR. Runs of a [PR source](tools.md#sources) appear as `<source>/<name>` in the chip and the dots; a counting source that has not answered for the current commit shows `<source>/(no answer)` with a pulsing dot. The cut to 20 names keeps GitHub's names first. A PR whose repository and head branch equal the `repo` and `branch` of a live session
 is shown under that session; fork PRs match through `headRepo` (the head repository), so a fork PR gets a chip only on the session whose repo is the fork. An open PR whose number is in a live session's `pr_watch` `prs` (`pr_create` arms such a watch) also gets its chip there when its repo or head repo is the session's, whatever branch the session is on now, so a renamed or switched branch keeps the chip; a PR matching both ways shows one chip. A PR the session watches through a `prRefs` entry (number and repository, case-insensitive; the host too when both sides name one) gets its chip on that session in any repository, also when the session's working directory is no repository; a number-only watch (an older live file) keeps the rule above. A PR nobody owns or shows (for example one only tracked with `pr_follow`) is listed under **Open PRs**; merged and closed PRs drop.
 
 **The pill.** The dot of a PR with the host's head and merge state in the feed (a tracked PR) is one of five states, not a function of the checks alone:
 
-- work in progress: a draft on the host, or the session's review fact for the host's head says work is under way;
+- work in progress: a draft on the host, or the session's review fact for the host's head says work is under way (violet; the dot pulses while its checks run, and the tooltip then reads "work in progress, CI running"; a draft whose check failed stays violet and still);
 - CI running: checks run, or all else holds but the merge state is blocked or behind;
 - CI red: a check failed;
 - green but not reviewed: the checks are green and the session's fact is missing for the host's head or says not reviewed;

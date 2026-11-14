@@ -7,7 +7,7 @@ const one = [{ n: "ci", state: "ok" }];
 
 test("an unsettled PR with one passed check shows the pending dot, not green", () => {
   const pr = feed(one, { unsettled: true });
-  assert.deepEqual(prDotState(pr), { ring: true, fill: "amber", conflict: false });
+  assert.deepEqual(prDotState(pr), { pulse: true, fill: "amber", conflict: false });
   assert.equal(prState(pr), "pending");
 });
 
@@ -27,12 +27,12 @@ test("an unsettled PR with a failed check shows fail at once", () => {
 
 test("a PR without the flag behaves as before", () => {
   const pr = feed(one);
-  assert.deepEqual(prDotState(pr), { ring: false, fill: "green", conflict: false });
+  assert.deepEqual(prDotState(pr), { pulse: false, fill: "green", conflict: false });
   assert.equal(prStateText(pr), "CI passing");
 });
 
 test("enrichPrs carries the flag with the twin's checks", () => {
   const session = { number: 7, repo: "https://github.com/acme/app", checks: ["ok"], jobs: [{ name: "", state: "ok" }], url: "https://github.com/acme/app/pull/7" };
   const [pr] = enrichPrs([session], [feed(one, { unsettled: true })]);
-  assert.equal(prDotState(pr).ring, true);
+  assert.equal(prDotState(pr).pulse, true);
 });

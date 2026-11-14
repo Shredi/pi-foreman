@@ -72,7 +72,7 @@ test("jobOf reads strings and {n|name,state,label} objects, nothing else", () =>
 
 test("dot state and card accept object checks and strings alike", () => {
   const objs = { number: 1, checks: [{ n: "a", state: "ok" }, { n: "b", state: "run" }] };
-  assert.deepEqual(prDotState(objs), { ring: true, fill: "green", conflict: false });
+  assert.deepEqual(prDotState(objs), { pulse: true, fill: "green", conflict: false });
   assert.deepEqual(prCard(objs).groups.map((g) => g.names), [["b"], ["a"]]);
   assert.deepEqual(prCard({ number: 2, checks: ["fail", "ok"] }).counts, { failed: 1, running: 0, passed: 1 });
 });
