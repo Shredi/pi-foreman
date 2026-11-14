@@ -65,7 +65,7 @@ export interface ChildBlockedDeps {
   seconds: () => number;
   /** The remote watcher's last contact with a child (ms), undefined when none since this process started. */
   contact?: (child: string) => number | undefined;
-  /** `wake`: the notice starts a turn on an idle parent (queued as a follow-up during a run); the quiet note never does. */
+  /** `wake`: a turn is started on an idle parent (queued as a follow-up during a run). The notice and the quiet note both send false: shown, appended, read at the next turn. */
   send: (text: string, wake: boolean) => void;
   trace?: (rec: Record<string, unknown>) => void;
   now?: () => number;
@@ -124,7 +124,7 @@ export class ChildBlocked {
         this.sent.set(key, { child: e.child, label, since: obs.since });
         dirty = true;
         this.d.trace?.({ event: "child_blocked_notice", label, waitedMs: now - obs.since });
-        this.d.send(noticeText(label, obs.since, obs.kind), true);
+        this.d.send(noticeText(label, obs.since, obs.kind), false);
       }
       const open = new Set(mine.map((e) => e.child));
       for (const [key, rec] of [...this.sent]) {

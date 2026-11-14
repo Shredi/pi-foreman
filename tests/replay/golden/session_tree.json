@@ -11,13 +11,12 @@
   },
   {
    "event": "wait",
-   "decision": "resolved",
+   "decision": "taken",
    "toolFamily": "child"
   },
   {
-   "event": "wait",
-   "decision": "wake",
-   "wakeKinds": "child"
+   "event": "turn",
+   "cause": "intercom"
   },
   {
    "event": "wait",
@@ -26,23 +25,16 @@
   },
   {
    "event": "turn",
-   "wakeKinds": "child",
-   "cause": "wake"
+   "cause": "user"
   },
   {
    "event": "wait",
-   "decision": "resolved",
+   "decision": "taken",
    "toolFamily": "child"
   },
   {
-   "event": "wait",
-   "decision": "wake",
-   "wakeKinds": "child"
-  },
-  {
    "event": "turn",
-   "wakeKinds": "child",
-   "cause": "wake"
+   "cause": "intercom"
   }
  ]
 }

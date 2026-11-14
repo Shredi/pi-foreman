@@ -150,7 +150,7 @@ import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { reviewFactsForHead } from "./prready.ts";
 import { highestRework } from "./rework.ts";
 import { LiveState, intercomIdOf, labelOfHandoff, prWatchWait } from "./livestate.ts";
-import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
+import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -229,7 +229,7 @@ import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunch
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
-import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
+import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
 import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
@@ -258,6 +258,11 @@ function sessionDirOf(ctx: ExtensionContext): string | undefined {
 function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
+}
+/** The form faults of a plan text: the headings of a plan-first brief count only in a session opened plan-first by a parent. */
+function planFormOf(text: string): string[] {
+  const parented = process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim();
+  return planFormIssues(text, { requiredHeadings: parented ? PLAN_FIRST_HEADINGS : [] });
 }
 const ADAPTER_ID = "pi-foreman-core-adapter";
 /** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
@@ -392,6 +397,8 @@ interface Session {
   waitingForParent: boolean;
   /** Foreman only: ids of the active waits that set waitingForParent (cleared with it). */
   handoffWaits: Set<string>;
+  /** Foreman only: a run is in progress (agent_start .. agent_end); a child notice that came as an intercom message is then already in it (wait.ts). */
+  inRun: boolean;
   /** Foreman only: custom messages handled so far, so an idle-appended one is handled once at the next input (idlecustom.ts, ledger 11). */
   customSeen: CustomSeen;
   /** Needs-attention notices: ended runs (RUN_END_EVENTS) and what was shown (notices.ts, R12 item 9). */
@@ -971,6 +978,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       finishRefusals: 0,
       waitingForParent: false,
       handoffWaits: new Set(),
+      inRun: false,
       customSeen: new CustomSeen(),
       attention: new AttentionNotices(),
       climbRefusals: 0,
@@ -2412,6 +2420,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const rp = readPlan(p, opts);
         if ("plan" in rp) {
           s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
+          s.planReviews.keepReviewed(rp.plan.path, planVersionHash(rp.plan.bytes));
           const state = planVersionHash(rp.plan.bytes);
           s.reviewSync = s.reviewSync.then(async () => {
             const prev = s.reviews.findLast((x) => x.kind === "plan");
@@ -3350,6 +3359,23 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             }
           }
         }
+        // Plan form by code (ownertext.ts planFormIssues): a `[plan-review]` reviewer is not started on a plan with form faults; an unreadable plan is left to the reviewer.
+        if (!s.isChild && actionOf(input) === null) {
+          const faults: string[] = [];
+          for (const [e, occ] of occasions) {
+            if (occ !== "plan-review" || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent)) continue;
+            for (const p of planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir)) {
+              const rp = readPlan(p, planOpts(s, ctx));
+              if (!("plan" in rp)) continue;
+              const issues = planFormOf(rp.plan.bytes.toString("utf8"));
+              if (issues.length > 0) faults.push(`${p}: ${issues.join("; ")}`);
+            }
+          }
+          if (faults.length > 0) {
+            s.trace?.emit({ event: "launch_refused", reason: "plan_form", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: reviewer launch refused [plan_form]: the plan form is wrong (${faults.join(" | ")}). Fix the plan and launch again; no reviewer was started.` };
+          }
+        }
         // Lane 3c: budget guard on the summed estimate (foreman + all runs); 3e: review cap and item-only re-review.
         if (!s.isChild && actionOf(input) === null && shadow.kind !== "launch") {
           const cost = summedCost(s);
@@ -3597,7 +3623,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (occasionOf(task) !== "plan-review") return null;
           const lg = (() => { try { return planLedger ? fs.readFileSync(planLedger, "utf8") : null; } catch { return null; } })();
           const planPaths = planPathsOf(planReviewFiles(task, null), editModeOfSession(s).scratchDir);
-          return [planFactsBlock(planPaths, planLedger, lg), ...ownerFactsLines(planPaths, ctx.cwd)].join("\n");
+          const rereview: string[] = [];
+          for (const p of planPaths) {
+            // The key is the real path and the text is what the reviewer reads now; the last reviewed text is in memory only.
+            const rp = readPlan(p, planOpts(s, ctx));
+            if (!("plan" in rp)) continue;
+            const text = rp.plan.bytes.toString("utf8");
+            const before = s.planReviews.reviewedText(rp.plan.path);
+            if (s.planReviews.lineage(rp.plan.path)) {
+              rereview.push(`Re-review of ${p}: verify that the findings of the earlier review are fixed, and review the changed text in full against the first-review list.`);
+              rereview.push(...(before === null ? ["no diff (the last reviewed version is not in memory)"] : planDiffLines(p, before, text)));
+            }
+            s.planReviews.noteLaunch(rp.plan.path, rp.plan.hash, text);
+          }
+          return [planFactsBlock(planPaths, planLedger, lg), ...ownerFactsLines(planPaths, ctx.cwd), ...rereview].join("\n");
         });
         if (factCount > 0) s.trace?.emit({ event: "review_facts", count: factCount });
         // PR gate (B-M4): HEAD at a reviewer's launch; the verdict keeps a head only if it is unchanged at run end.
@@ -3848,6 +3887,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Intercom turns get a notice only; every gate applies unchanged (ledger item 4).
   pi.on("agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
+    if (s) s.inRun = true;
     if (!s || s.isChild || s.turn.cause !== "intercom" || !s.turn.intercomFrom) return;
     if (ctx.mode === "tui" || ctx.mode === "rpc") ctx.ui.notify(`pi-foreman: this turn was started by an intercom message from ${s.turn.intercomFrom}`, "info");
   });
@@ -3855,6 +3895,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   pi.on("agent_end", async (_event, ctx) => {
     const s = sessionFor(ctx);
     if (!s || s.isChild) return;
+    s.inRun = false;
     s.trace?.emit({ event: "turn", cause: s.turn.cause, cacheRead: s.turn.cacheRead, cacheWrite: s.turn.cacheWrite, wakeKinds: s.turn.cause === "wake" ? s.turn.wakeKinds : undefined, pollBash: s.pollBash || undefined, codemode: s.turn.codemode || undefined, chars: (gateOwnerMessages.get(s.id)?.[0] ?? "").length }); // chars: latest owner message length (a wake run must not reset it)
     s.pollBash = 0;
     s.turnSeq += 1;
@@ -4349,8 +4390,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
     if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
     const pending = owner?.pendingChanges.get(event.toolCallId);
+    let planFormNote = "";
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
+      const written = readPlan((event.input as Record<string, unknown>).path, planOpts(owner, ctx));
+      const issues = "plan" in written ? planFormOf(written.plan.bytes.toString("utf8")) : [];
+      if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
     }
     // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) owner.show?.planWritten((event.input as Record<string, unknown>).path);
@@ -4363,7 +4408,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.readNotices.delete(event.toolCallId);
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
-    const withNote = () => (readNote || qHint ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : [])] } : undefined);
+    const withNote = () => (readNote || qHint || planFormNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : [])] } : undefined);
     // Only a project-file change invalidates a PASS; ledger, notes and scratch writes do not.
     // It is also a revision that re-opens the reviewer step (ceremony.reviewGate).
     if (owner && !owner.isChild && !event.isError && (owner.reviewGate.last !== null && !owner.reviewGate.revised) && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
@@ -4809,7 +4854,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", onStart: (spec, id) => {
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", inRun: () => s.inRun, onStart: (spec, id) => {
         markHandoffWait(s, spec, id);
         if (spec.kind === "pid" && spec.bg) bgRecords.post(`fb-${id}`, "working", spec.note, "Running");
       }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), steer: (text) => steerFor(s).append(text) };
@@ -4864,7 +4909,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const sessionCmd = registerSession(pi, {
     spawner,
     pkgRoot: PKG_ROOT,
-    onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath),
+    onChildNotice: (sessionId, label, kind, notePath) => void waits.childNotice(sessionId, label, kind, notePath, true),
     session: sessionHost,
   });
 
