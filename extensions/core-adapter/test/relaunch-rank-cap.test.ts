@@ -2,9 +2,13 @@
 // model, the trace is rung_top with RANK_CAPPED_REASON and the launch result says so. An explicit `strong` keyword is still refused.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { LadderState, RANK_CAPPED_REASON } from "../ladder.ts";
 import { applyLaunchModels } from "../launchmodel.ts";
+import { planSizing, takeSizing } from "../sizing.ts";
 import { ranksOf } from "../ranks.ts";
+import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const FAIL = "Overall verdict: FAIL\n1. the parser drops the last line\n";
@@ -178,7 +182,7 @@ test("equalOnStrongRisk on, map A + below, no risk tag: capped like with the key
 });
 
 // a refused `strong` keyword names the next step; a refused explicit model does not
-const NEXT = "Relaunch without a model to run on the default rung.";
+const NEXT = "Relaunch with model \"default\" and a reason to run on the default rung.";
 // the context climb: a builder run ends with `RUNG_UP: context`; the relaunch asks for the strong rung, or asks for nothing (the default rung)
 const CONTEXT_REPORT = "RUNG_UP: context\nDone: x";
 const HANDOFF_START = "[pi-foreman rung-up handoff] The previous builder run run-b stopped (context).";
@@ -209,10 +213,10 @@ test("explicit forbidden model refused, below: the refusal does not name the nex
 
 // Code path: ladder.ts plan() gives no climb for a keyword-less launch without preferStrong (the context climb sets none), so apply() never
 // prepends the pending handoff (ladder.ts apply, index.ts `climbs.length > 0`); the handoff stays in LadderState.eligible for a later strong launch.
-test("RUNG_UP: context, relaunch without a model, map A + below: launched on the default bottom rung, not refused, the handoff is NOT prepended", async (t) => {
+test("RUNG_UP: context, relaunch with model default and a reason, map A + below: launched on the default bottom rung, not refused, the handoff is NOT prepended", async (t) => {
   const a = await rig(t, "A", "below");
   await built(a, CONTEXT_REPORT, false);
-  const rel = builder({ task: "go on" });
+  const rel = builder({ task: "go on", model: "default", reason: "small rest" });
   const { res } = await a.launch(rel);
   assert.equal(res, undefined, res?.reason);
   assert.equal(rel.model, "fake/builder");
@@ -318,4 +322,33 @@ test("tasks and chain: only the capped entries stay below the strong rung", () =
   const par = entries();
   launchPlanned({ chain: [{ parallel: par }] }, null, (e) => e.task === "b");
   assert.deepEqual(par.map((e) => e.model), ["fake/builder", "fake/foreman:high", "fake/foreman:high"]);
+});
+
+// model "default" on a heavy tier after a FAIL: the keyword keeps the bottom rung (heavy would otherwise pick strong); no spawn
+test("heavy tier, FAIL revision, model default with a reason: plan and applyLaunchModels keep the bottom rung", () => {
+  const l = new LadderState();
+  l.noteLaunched({ agent: "builder", model: "fake/builder" });
+  const e: Record<string, unknown> = { agent: "builder", task: "t", model: "default", reason: "small rest" };
+  const p = l.plan(e, TROLES, { ...OPTS, tier: "heavy", strongAllowed: () => true });
+  assert.equal(p.block, undefined);
+  applyLaunchModels(e, TROLES, undefined, { ...OPTS, tier: "heavy", capped: new Set(), explicit: () => true });
+  assert.equal(e.model, "fake/builder");
+  assert.deepEqual(p.climbs, []);
+});
+
+// sizing: model "default" with a reason is an override, not refused, even when the sizing target is the strong rung; the rung stays the bottom one
+test("sizing target strong, model default with a reason: not refused, no climb, the bottom rung kept", (t) => {
+  const root = fs.realpathSync(mkTestTmp("pf-relaunch-rank-"));
+  t.after(() => rmTestTmp(root));
+  fs.mkdirSync(path.join(root, ".git"));
+  fs.writeFileSync(path.join(root, "big.py"), "x\n".repeat(1700));
+  const roles = { builder: { model: "fake/builder", strong: { model: "fake/foreman" } } };
+  const e: Record<string, unknown> = { agent: "builder", task: "t", model: "default", reason: "tiny edit", size: { files: ["big.py"] } };
+  const t1 = takeSizing(e);
+  const p = planSizing(e, t1.entries, t1.carried, { config: undefined, roles, ranks: OPTS.ranks, cwd: root, tier: "standard", revisionClimb: true, top: null });
+  assert.equal(p.block, undefined);
+  assert.equal(p.plans[0].target, "strong");
+  assert.deepEqual(p.plans[0].combo.note, ["explicit", "override"]);
+  assert.equal(p.climbs.size, 0);
+  assert.equal(e.model, "default");
 });
