@@ -8,7 +8,7 @@ import * as path from "node:path";
 
 const args = process.argv.slice(2);
 if (process.env.FAKE_PI_LOG) {
-  fs.appendFileSync(process.env.FAKE_PI_LOG, `${JSON.stringify({ args, agentDir: process.env.PI_CODING_AGENT_DIR })}\n`);
+  fs.appendFileSync(process.env.FAKE_PI_LOG, `${JSON.stringify({ args, agentDir: process.env.PI_CODING_AGENT_DIR, ignoreScripts: process.env.npm_config_ignore_scripts })}\n`);
 }
 if (args[0] === "--version") {
   console.log(process.env.FAKE_PI_VERSION || "1.5.0");

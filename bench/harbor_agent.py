@@ -561,7 +561,7 @@ class _BenchPi(BaseInstalledAgent):
         npm = ([SUBAGENTS] if self.KIND == "foreman" else []) + ([] if self.fake else [BRIDGE, AGENT_SDK])
         if npm:
             await self.exec_as_root(environment, command="set -e; " + NVM + "mkdir -p %s; " % R_NPM + retry_sh(
-                "npm install --no-audit --no-fund --prefix %s %s" % (R_NPM, " ".join(npm))))
+                "npm install --ignore-scripts --no-audit --no-fund --prefix %s %s" % (R_NPM, " ".join(npm))))
         if not self.fake:  # fail the install, not the cell, when the native binary is missing
             await self.exec_as_root(environment, command="set -e; b=$(ls %s 2>/dev/null | head -n 1); test -x \"$b\"; "
                                     "\"$b\" --version" % CLAUDE_BIN_GLOB)
