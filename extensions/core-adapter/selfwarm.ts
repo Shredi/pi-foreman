@@ -49,6 +49,10 @@ export interface WarmSignals {
   dialog: boolean;
   /** The session waits on a command it called directly (bash, powershell). */
   command: boolean;
+  /** `strongA` without the subagent launches that wait on an open permission ask; read for the tier only while the owner is away (`strongA` keeps the final compaction off). Absent = `strongA`. */
+  strongWorking?: StrongReason | null;
+  /** A child only: when its turn began to wait on its parent's ruling (ms); null or absent = not waiting. */
+  parentWaitSince?: number | null;
 }
 
 export interface TierView {
@@ -239,7 +243,10 @@ export class SelfWarm {
       sig = { strongA: null, turn: false, question: false, dialog: false, command: false };
     }
     const presence = this.presenceAt(t);
-    if (sig.strongA) return { tier: "half", reason: sig.strongA, presence };
+    // a child cannot see presence: its own wait on the parent's ruling is the signal, once it has lasted the grace
+    if (this.deps.isChild && sig.parentWaitSince != null && t >= sig.parentWaitSince + AWAY_GRACE_MS) return { tier: "quarter", reason: "idle", presence };
+    const strong = presence === "away" && sig.strongWorking !== undefined ? sig.strongWorking : sig.strongA;
+    if (strong) return { tier: "half", reason: strong, presence };
     if (presence !== "away") {
       const b = sig.question ? "question" : sig.dialog ? "dialog" : sig.command ? "command" : sig.turn ? "turn" : null;
       if (b) return { tier: "half", reason: b, presence };

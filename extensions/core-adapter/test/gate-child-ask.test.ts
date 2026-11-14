@@ -232,7 +232,7 @@ test("child ask: ask.md carries role and run; an ALLOW ruling lets the call run 
   assert.match(text, /cause: danger-install/);
   assert.match(text, /role: builder/);
   assert.match(text, /run: L9/);
-  assert.match(text, /deadline: \d+/);
+  assert.doesNotMatch(text, /^deadline:/m, "the gate writes no deadline");
   fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
   assert.equal(await p, undefined);
   const d = r.events("dialog").at(-1)!;
@@ -257,13 +257,17 @@ test("child ask: DENY blocks with the parent's reason (parent-deny); a foreign f
   assert.match(String((await p2)?.reason), /not ALLOW or DENY/);
 });
 
-test("child ask: no ruling within gate.askTimeoutMs denies with parent-timeout", async (t) => {
+test("child ask: gate.askTimeoutMs has no effect; the wait goes on past it and a later ruling applies", async (t) => {
   const dir = tmpAskDir(t);
   const r = await childRig(t, dir, ASK, { askTimeoutMs: 80 });
-  const res = await r.call("bash", CMD);
-  assert.ok(res?.block);
-  assert.match(String(res.reason), /the parent did not answer within \d+s \(gate\.askTimeoutMs\)/);
-  assert.equal(r.events("dialog").at(-1)!.decision, "parent-timeout");
+  let settled = false;
+  const p = r.call("bash", CMD).finally(() => (settled = true));
+  await until(() => fs.existsSync(path.join(dir, "ask.md")));
+  await sleep(400);
+  assert.equal(settled, false, "no denial after the old timeout");
+  fs.writeFileSync(path.join(dir, "ruling-1.md"), "ALLOW\n");
+  assert.equal(await p, undefined);
+  assert.equal(r.events("dialog").at(-1)!.decision, "parent-allow");
 });
 
 test("child ask: an unusable classifier reply escalates, so the ask is written for the parent", async (t) => {

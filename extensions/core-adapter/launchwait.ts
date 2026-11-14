@@ -175,6 +175,13 @@ export class LaunchWaits {
     return n;
   }
 
+  /** Held launches whose run id passes `count`. */
+  holdingWhere(count: (runId: string) => boolean): number {
+    let n = 0;
+    for (const [runId, set] of this.waiters) if (count(runId)) n += set.size;
+    return n;
+  }
+
   /** Wait for the first of: run end, supervisor request, abort, `maxMs`. */
   wait(runId: string, maxMs: number, signal?: AbortSignal): Promise<WaitResult> {
     const end = this.ended.get(runId);
