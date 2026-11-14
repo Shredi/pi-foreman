@@ -222,7 +222,8 @@ test("known limit: a .. spelling of the handoff dir resolves lexically, a link t
 
 test("a parent-ruling path spelled with ~, @ or file:// is refused like the plain one; a non-ruling file in those spellings is not", async (t) => {
   const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  const c = await r11Rig(t);
+  // inTmp: the gate (which runs before this refusal) asks for a write outside the worktree under the home directory, where Linux CI keeps the default base
+  const c = await r11Rig(t, {}, { inTmp: true });
   // `~` is the rig's temp root for this test, so the spelling reaches the handoff dir
   const rigHome = path.dirname(c.agentDir);
   process.env.HOME = rigHome;
