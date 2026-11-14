@@ -114,9 +114,9 @@ trace never names a rung the launch does not use). It never overrides three pins
 - `security_rung`: the model of a security climb (`ladder.reviewerClimb`);
 - `occasion`: a model set by `ceremony.reviewByOccasion` (or by `ceremony.highStakes.model`).
 
-An occasion model that equals the live foreman's base is the exception: that foreman's pair replaces it (`reason:
+An occasion model with the same id as the live foreman's base (provider and level ignored) is the exception: that foreman's pair replaces it (`reason:
 paired`), else today's rule moves it to the next differing rung of `roles.reviewer` / `.strong`, else to the string
-`reviewModel`, else `no_alternative`. An occasion model with a differing base stays (`paired_skipped`, pin `occasion`).
+`reviewModel`, else `no_alternative`. An occasion model with a differing id stays (`paired_skipped`, pin `occasion`).
 An occasion's thinking override still replaces the level of a pair, and applies to the model moved to. Invalid map entries (a value that is not a
 string, a key without a `/`) are dropped with a config warning; `foreman doctor` checks the pair values against the model
 registry. Two neutral examples:

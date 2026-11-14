@@ -83,7 +83,7 @@ function parseOne(sizeRaw: unknown, riskRaw: unknown): { declared: Declared; err
 }
 
 /** The sentence the model sees (tool description, error hint): where `size`, `risk` and `reason` go. */
-export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}`, `risk: [...]` and `reason` (the text a lower or default `model` needs) are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
+export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}`, `risk: [...]` and `reason` (the text `model: \"strong\"` without a fired trigger and a `model` below the measured rung need) are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
 
 /** The sentence the model sees (tool description): a child gets MCP tools only when its launch names them. */
 export const MCP_LAUNCH_NOTE = "A child gets no MCP tools unless the launch names them: `mcp: [\"server\", \"server/tool\"]`. `mcp` is a top-level key of this call, beside `agent` and `task`, never inside `options` or `args`, and stays inside the role's ceiling (`roles.<role>.mcp`); no `mcp` or `[]` means none. Name the tools the task probably needs as `server/tool` (up front from the first request); the bare `server` lets the child search the rest.";
