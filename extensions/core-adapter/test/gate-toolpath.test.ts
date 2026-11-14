@@ -239,3 +239,13 @@ test("a parent-ruling path spelled with ~, @ or file:// is refused like the plai
   const other = path.join(dir, "notes.md");
   for (const spelled of [other, rel("notes.md"), `@${other}`, url(other)]) assert.ok(!(await refusedBySelfRuling(spelled)), spelled);
 });
+
+test("a secret path is a floor deny in every spelling, and the denial names the path as it was written (the repeat stop counts equal sentences)", () => {
+  const deny = (p: string): { block?: boolean; reason?: string } | undefined => gateEvaluate("read", { path: p }, wt, { env: () => env(true), roots: () => childRoots }).result as { block?: boolean; reason?: string } | undefined;
+  const key = "~/.ssh/id_rsa";
+  assert.ok(deny(key)?.block);
+  assert.ok(String(deny(key)?.reason).includes(`'${key}'`), String(deny(key)?.reason));
+  for (const spelled of [`@${key}`, url(path.join(HOME, ".ssh", "id_rsa"))]) assert.ok(deny(spelled)?.block, spelled);
+  // beside it: a plain file in the same spellings is no floor deny
+  for (const spelled of ["~/notes.txt", "@~/notes.txt", url(path.join(HOME, "notes.txt"))]) assert.ok(!deny(spelled)?.block || !/permission floor/.test(String(deny(spelled)?.reason)), spelled);
+});

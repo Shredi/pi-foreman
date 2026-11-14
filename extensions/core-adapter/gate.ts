@@ -413,7 +413,10 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       if (nin === null) return decided({ block: true, rule: "tool-path-unreadable", layer: "floor", reason: `pi-foreman: the path of this ${toolName} call cannot be read the way the tool reads it (a malformed file:// link), so the call is denied.` });
       // a mapped tool keeps the payload floors on every other path field (arrays included); `pattern`/`patterns` stay search patterns
       const readOnly = readField !== undefined || READ_PATH_TOOLS.has(toolName);
-      const ph0 = pathFloors(nin, env, toolName, readField, readOnly);
+      // a floor deny names the path as the caller wrote it when that spelling is denied too (the repeat stop counts equal sentences across tools)
+      const ph0n = pathFloors(nin, env, toolName, readField, readOnly);
+      const ph0r = nin === inp ? ph0n : pathFloors(inp, env, toolName, readField, readOnly);
+      const ph0 = ph0r?.kind === "deny" ? ph0r : ph0n;
       const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(nin, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
