@@ -37,12 +37,13 @@ which relaunches it with `model: "strong"`:
   strong rung without a keyword or reason (`rung_up` reason `review_fail`) when `strongOnRevision` resolves true:
   `roles.<id>.strongOnRevision`, else `providers.<p>.strongOnRevision`, else `ladder.strongOnRevision` (default
   true). A revision without a FAIL climbs only with `providers.<p>.strongOnRevision: true` (reason `revision`);
-  `false` there switches the FAIL climb off for that provider. No strong rung: no climb. While the climb is open
-  the finish gate refuses once more without counting the refusal (see [ceremony](ceremony.md)).
+  `false` there switches the FAIL climb off for that provider. No strong rung: no climb. A strong rung the rank policy refuses for the builder under this
+  foreman: no climb either; the launch keeps its model and the result says so (see [ladder](ladder.md#failure-climb)).
+  While the climb is open the finish gate refuses once more without counting the refusal (see [ceremony](ceremony.md)).
 
 After a context, turns or stuck report the launch result says the run is climb-eligible; the next strong launch
 of that role gets the prior report (at most 8000 characters), its result path and the ledger items prepended to
-its task, and the trace records `rung_up {role, from, to, reason}`. Knobs: `ladder.strongAbove`,
+its task, and the trace records `rung_up {role, from, to, reason}`. A builder whose strong rung the rank policy refuses under this foreman has no strong launch: the next builder launch on any rung gets the report instead and uses it up (the result says so; trace `rung_top`). Knobs: `ladder.strongAbove`,
 `ladder.childMaxTurns`, per provider `providers.<p>.strongAbove|childMaxTurns`, per role
 `roles.<id>.strongAbove|childMaxTurns` (the most specific wins; user or overlay config only), and
 `strongOnRevision` with the same lookup (a project or session can only set it false). A rung's own
@@ -59,7 +60,7 @@ configured, model ranked); otherwise the role map decides. Tiers are compared ac
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
 no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. There is no automatic climb.
 
-`ladder.equalOnStrongRisk` (user or overlay config; default `false`; a project or session can only set `false`) lets a builder whose risk tag (`ladder.sizing.strongRisks`) sent it to the strong rung run on the foreman's own model, although `below` refuses the tie. It applies only when both models are ranked, the foreman's model is exactly the builder's strong model, and every entry of the launch on that model is such a builder. "Own model" means exactly the same model, not another model of the same tier, and the launch must be made without an explicit `model`. The launch result then says `pi-foreman: builder runs on the foreman's own model <model> (ladder.equalOnStrongRisk, risk: <tags>).` and the trace records `rank_equal_model`. While the key is off, the refusal of such a launch names the key; every other refusal keeps its text.
+`ladder.equalOnStrongRisk` (user or overlay config; default `false`; a project or session can only set `false`) lets a builder whose risk tag (`ladder.sizing.strongRisks`) sent it to the strong rung run on the foreman's own model, although `below` refuses the tie. It applies only when both models are ranked, the foreman's model is exactly the builder's strong model, and every entry of the launch on that model is such a builder. "Own model" means exactly the same model, not another model of the same tier, and the launch must be made without an explicit `model`. The launch result then says `pi-foreman: builder runs on the foreman's own model <model> (ladder.equalOnStrongRisk, risk: <tags>).` and the trace records `rank_equal_model`. While the key is off, the refusal of such a launch names the key; every other refusal keeps its text, except that a refused `model: "strong"` keyword also says to relaunch with `model: "default"` and a `reason`, on the default rung.
 
 **Session model.** A session opened from Pi needs the owner's confirmation, whatever model it runs on (see [sessions](sessions.md)); there is no rank rule for sessions. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
 
@@ -71,7 +72,7 @@ keeps your other keys, backs up the old file; see [install](install.md)), or cop
   reviewer Sonnet 5.5 (medium) on the bottom rung with a strong Opus 5.5 rung; the permission classifier on Haiku 5.5 (Haiku is an explicit opt-in: map a role to it yourself);
   `childPolicy: below` with `rolePolicy` reviewer `at-or-below`, builder `below`, so an Opus
   foreman launches Opus reviewers but an Opus builder or explorer strong rung needs a Fable foreman or
-  `rolePolicy.<role>: at-or-below`; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
+  `rolePolicy.<role>: at-or-below` (under an Opus foreman the builder's FAIL climb is skipped unless its risk tag calls for the strong rung); `ladder.equalOnStrongRisk: true`, because for coding the two lower models are mostly enough and the foreman's model is for work where security or safety is crucial: only a builder launch whose risk tag calls for the strong rung runs on the foreman's own model, while a failed review, context and stuck stay on the lower rung; `childMaxThinking: high`; the foreman idle rung on Sonnet 5.5 (medium) and the
   1-hour cache values ([presets](presets.md#claude-bridge-cache-values)).
 - `claude-bridge-sonnet-reviewer.json`: the same with the reviewer on Sonnet 5.5 (medium) and no strong rung;
   explorer, builder and auto-review unchanged. Opt-in, not the default: the bench rows decide whether it pays.

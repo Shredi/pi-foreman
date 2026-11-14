@@ -222,7 +222,7 @@ import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, tri
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
-import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
+import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
@@ -3419,6 +3419,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
+        // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.
+        // (the keyword, or the role's strong model itself)
+        const strongKeyed = new Set(launchEntries(input).filter((e) => {
+          const m = e.model ?? input.model;
+          const rung = (resolution.roles[String(e.agent)]?.strong as Json | undefined)?.model;
+          const base = typeof m === "string" ? splitLevel(m.trim()).base : "";
+          return base === "strong" || (base !== "" && typeof rung === "string" && base === splitLevel(rung).base);
+        }));
         shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
@@ -3528,7 +3536,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             sizedPlans = sp.plans;
             sizingClimbs = sp.climbs;
           }
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs });
+          // The rank loop's decision for the strong rung (below: the equalOnStrongRisk tie of a strong-risk sized entry), so an automatic climb never ends in a refusal.
+          const strongAllowed = (e: Json, strongModel: string): boolean => {
+            if (rankRefusalFor(s.config.config, foremanAt, strongModel, ["builder"]) === null) return true;
+            const plan = sizedPlans.find((p) => p.entry === e);
+            return foremanAt !== null && splitLevel(strongModel).base === foremanAt && rankTie(s.config.config, foremanAt, strongModel, "builder") && equalOnStrongRisk(s.config.config) && plan?.role === "builder" && plan.target === "strong" && plan.probe.length > 0;
+          };
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs, strongAllowed, explicitAllowed: (m) => explicitModelAllowed(s.config.config, foremanAt, m, "builder") });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
@@ -3543,7 +3557,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         const foremanAt0 = foremanBaseModel(ctx);
         const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
-        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
+        const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
+        // A capped climb (RANK_CAPPED_REASON: skipped, or only carrying the pending handoff) names the model the launch runs on: the entry as applyLaunchModels wrote it (an explicit model the policy rejects was replaced by the mapped rung). A real rung_up or an above-strong climb that carries a handoff keeps its own from/to.
+        for (const c of climbs) if (c.reason === RANK_CAPPED_REASON && typeof c.entry.model === "string") c.from = c.to = splitLevel(c.entry.model).base;
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
         if (bottomWhy.size > 0) pendingBottom = bottomWhy;
         if (sizedPlans.length > 0) {
@@ -3602,7 +3618,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             }
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
-            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (tie ? ` ${equalKeySentence()}` : "") };
+            const strongAsked = carrying.some((e) => strongKeyed.has(e));
+            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (strongAsked ? ` Relaunch with model "default" and a reason to run on the default rung.` : "") + (tie ? ` ${equalKeySentence()}` : "") };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null);
@@ -3621,7 +3638,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
-        notices = [...launched.notices.map((n) => n.text), ...equalLines];
+        const cappedLines = climbs.filter((c) => c.skipped).map((c) => {
+          const no = rankRefusalFor(s.config.config, foremanAt0, c.skipped!, [c.role]);
+          return `pi-foreman: the climb of ${c.role} to its strong rung ${c.skipped} was skipped: the rank policy (${no?.policy ?? "below"}) does not allow that model for the ${c.role} under the foreman ${foremanAt0 ?? "unknown"}; it launches on ${c.to}.`;
+        });
+        const handoffLines = climbs.filter((c) => c.handoffFor).map((c) => `pi-foreman: the earlier report of the ${c.role} run ${c.handoff!.runId} (${c.handoff!.cause}) was prepended to this launch because the strong rung ${c.handoffFor} is not allowed by the rank policy.`);
+        notices = [...launched.notices.map((n) => n.text), ...equalLines, ...cappedLines, ...handoffLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
@@ -3765,7 +3787,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
-        if (climbs.some((c) => c.handoff) && !kind) kind = "strong-relaunch";
+        if (climbs.some((c) => c.handoff && !c.handoffFor) && !kind) kind = "strong-relaunch";
+        if (kind === "strong-relaunch" && climbs.every((c) => c.skipped)) kind = "revision"; // every climb was capped by the rank policy: no strong launch
         for (const r of s.ladder.apply(climbs, (task) => ledgerLines(ledger, task))) s.trace?.emit(r);
         const was = s.ceremony.tier;
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));
@@ -4843,7 +4866,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const live = s.ladder.live.get("builder");
     if (!live) return false;
     const r = await currentRoles(s, ctx);
-    return strongOnRevision(s.config.config, r.provider, "builder") && onBottomRung(r.roles, "builder", live);
+    if (!strongOnRevision(s.config.config, r.provider, "builder") || !onBottomRung(r.roles, "builder", live)) return false;
+    const strong = get(r.roles, "builder.strong.model");
+    return typeof strong !== "string" || rankRefusalFor(s.config.config, foremanBaseModel(ctx), strong, ["builder"]) === null; // a strong rung the rank policy refuses is no climb
   }
 
   /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */
