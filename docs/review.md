@@ -1,6 +1,6 @@
 # Review: occasions, model rule, panel and findings
 
-> Covers the four review occasions, the different-model rule, plan review, per-occasion overrides
+> Covers the review occasions (four config-facing ones and the `[high-stakes]` pass), the different-model rule, plan review, per-occasion overrides
 > (`ceremony.reviewByOccasion`), the shadow-model panel, the findings store with `foreman findings` and
 > `foreman retro models`. Read it when you tune reviewer cost against catch rate (base triggers: [ladder](ladder.md)).
 
@@ -24,11 +24,12 @@ is read from a marker in the reviewer's task text.
 | `item` | none | Built ledger items | yes |
 | `plan-review` | `[plan-review]` | The plan, before the checkpoint | no |
 | `pre-pr` | `[pre-pr]` | The whole branch diff before a PR | yes |
+| `high-stakes` | `[high-stakes]` | The whole change, one extra pass on a large change (see [High stakes](#high-stakes)) | no: marks no items, writes no normal review record |
 | `second-opinion` | `[second-opinion]` | Advice on unchanged work (also exempt from `ceremony.reviewPerRevision`) | no |
 
 "Counts" means the verdict marks items, satisfies the review gate and PR gate, feeds the repeated-FAIL rule. A plan review, a second opinion and every panel shadow are recorded as findings only and never block.
 The PR gate checks the head only when the PR is created. After that the session's [PR watch](tools.md#watch) reports drift: when the PR head moves to a commit with no counting PASS (`head <sha> not reviewed (last PASS on <sha>)`, once per head), the tracker row shows `unreviewed head` and `pr_status` carries a `review` line; a PASS on the new head clears all three.
-`[second-opinion]` wins over `[plan-review]`, which wins over `[pre-pr]`.
+`[second-opinion]` wins over `[plan-review]`, which wins over `[high-stakes]`, which wins over `[pre-pr]`. `high-stakes` is not a config-facing occasion: it is no `ceremony.reviewByOccasion` key and no `ladder.reviewPanel.gates` entry, so no panel shadow attaches to it.
 A marker counts only as a standalone token: preceded by the start of the text, whitespace or an opening bracket, and outside backtick spans, fenced blocks and `[pi-foreman ...]` harness lines. A mention in backticks is not an occasion. The `role_launch` trace of a reviewer carries `occasion`, and the launch result adds `occasion: second-opinion (advisory: marks no items, does not open the review gate)` (or the plan-review/pre-pr equivalent) when the occasion is not `item`, so a misclassified review is visible before it runs.
 
 The reviewer diff-scan base is set at the first builder launch and resets on an owner prompt and when the session writes a new `.workflow/LEDGER-*.md` (the round boundary), so the next builder launch records the round's base.
@@ -41,7 +42,7 @@ The ledger is the scope source. The adapter prepends the ledger text to every `r
 
 The review record in the session keeps the occasion of the review (`item`, `pre-pr` and so on). A record from an older session entry has none and never counts as a `[pre-pr]` PASS.
 
-A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)).
+A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), except that a large change also needs its [high-stakes review](#high-stakes) first, and an open PR is held while that pass is due.
 
 ## Verdict file
 
@@ -83,14 +84,14 @@ same_as_foreman}` (+ `policy_override` when the rank policy would refuse the pic
 not the repeat-fail climb is enabled. The automatic rule compares ids without the provider name (`provA/model-x` and
 `provB/model-x` are one model), for the entry, for the rung or `reviewModel` it may move to and for the occasion
 exception below. A configured pair is used as set, also a pair onto the foreman's own model or onto the same id under
-another provider, without a warning. At high stakes a differing `ceremony.highStakes.model` applies and wins over a pair
-on the foreman's model (`paired_skipped`).
+another provider, without a warning. `ceremony.highStakes.model` plays no part in this rule: it belongs to the
+`[high-stakes]` review only (see [High stakes](#high-stakes)).
 
 The rule judges the foreman's **live** model (the model running the turn, which is the idle rung's model while the
 foreman is downshifted, see [ladder](ladder.md#idle-rung-foreman-downshift)), not the base model the rank checks keep.
 
 Roles (`roles.reviewer`, `.strong`), explicit launch models and the security rung keep the rank check and this rule.
-A model written by `ceremony.reviewByOccasion` or `ceremony.highStakes.model` is used as set: see below.
+A model written by `ceremony.reviewByOccasion` is used as set: see below. The `[high-stakes]` review is used as set too.
 
 **Missing pair.** When no `ceremony.reviewModel` pair covers the live foreman model and the reviewer would be swapped
 (`same_as_foreman`) or stay on the foreman's model (`no_alternative`, which includes an unmapped reviewer that inherits
@@ -112,7 +113,9 @@ trace never names a rung the launch does not use). It never overrides three pins
 
 - `explicit`: a model the launch call set and the child rank policy allowed (`explicitModelAllowed`);
 - `security_rung`: the model of a security climb (`ladder.reviewerClimb`);
-- `occasion`: a model set by `ceremony.reviewByOccasion` (or by `ceremony.highStakes.model`).
+- `occasion`: a model set by `ceremony.reviewByOccasion`.
+
+The `[high-stakes]` entry has a pin of its own, `high_stakes`, and takes no part in the pair or the rule at all.
 
 An occasion model with the same id as the live foreman's base (provider and level ignored) is the exception: that foreman's pair replaces it (`reason:
 paired`), else today's rule moves it to the next differing rung of `roles.reviewer` / `.strong`, else to the string
@@ -182,21 +185,116 @@ through the role map is still checked. Trace `review_occasion {occasion, thinkin
 
 ### High stakes
 
-A reviewer launch is high stakes when any rule fires: `occasion` (`plan-review` or `second-opinion`), `heavy_pre_pr`
-(`pre-pr` on the heavy tier), `risk_tag` (a builder launch of this session since the last counted review carried a
-risk tag `security`, `guard` or `permission`) or `sensitive_path` (the work diff the reviewer sees touches a path
-matching `ceremony.highStakes.paths`). Every high-stakes launch writes `review_stakes {role, occasion, level: high,
-reasons, tags?, paths?, model_applied}` (`reasons` and `tags` are comma-joined, `paths` is the number of matching
-paths). Low and medium launches write nothing.
+The high-stakes review is one extra reviewer pass on a large change. It never replaces the model of a normal review:
+item, `[pre-pr]`, `[plan-review]` and `[second-opinion]` reviews take the pair, the different-model rule and
+`ceremony.reviewByOccasion` as if `ceremony.highStakes` did not exist. With no `ceremony.highStakes.model` nothing runs:
+no measurement, no state, no trace, no requirement.
 
 | Key | Values | Meaning |
 |---|---|---|
-| `ceremony.highStakes.model` | `<provider>/<model>[:<level>]`, default `null` | Model of a high-stakes reviewer launch whose occasion has no model of its own. |
-| `ceremony.highStakes.paths` | glob list, default `[".github/workflows/**"]` | Diff paths that make a launch high stakes; a list replaces the default. |
+| `ceremony.highStakes.model` | `<provider>/<model>[:<level>]`, default `null` | Model of the `[high-stakes]` review; `null` = no high-stakes review. |
+| `ceremony.highStakes.modules` | integer >= 0, default `5` | The change is large at this many modules; `0` = off. |
+| `ceremony.highStakes.lines` | integer >= 0, default `700` | The change is large at this many added plus removed lines; `0` = off. |
+| `ceremony.highStakes.paths` | glob list | Retired: accepted and ignored. The sensitive-path rule no longer selects a model. |
 
-Precedence: the occasion's own `reviewByOccasion.<occasion>.model`, then `ceremony.highStakes.model`, then the pair or
-the different-model rule; the security climb wins over both. `highStakes.model` is used as set, like an occasion
-model. Unset, the model never changes. User or overlay config only; the PR gate and merge flow are unchanged.
+User or overlay config only.
+
+**The pass.** The foreman launches one `reviewer` alone with `[high-stakes]` in its task (see [occasions](#review-occasions)).
+The launch runs on `ceremony.highStakes.model` exactly as set: no pair, no different-model move, no rank refusal (trace
+`policy_override` when the policy would have refused), no climb, and no exception when the id equals the foreman's or the
+normal reviewer's. An explicit `model` in the call is replaced (trace `model_override`); thinking is capped by `maxThinking`
+and `childMaxThinking`. A `[research]` or `[fact-critical]` marker does not change its model. The adapter prepends the
+ledger items like a `[pre-pr]` review and adds the line `occasion: high-stakes (the whole change against <base>: ...)`.
+The reviewer reviews the whole change, not the last revision, and the diff-scan facts are collected against the same
+base. It marks no ledger item, never closes V (the ledger tool refuses the mark for its child), is never refused as a
+repeat and writes no normal review record, so PR readiness, the PR gate heads and the repeated-FAIL rule never see it.
+Its findings go to the findings store with `--gate high-stakes`.
+
+**When it is asked.** The adapter measures each checkout (the real path of the checkout root; the session's own and every
+one a builder or a normal review ran in) against the merge-base of its HEAD with the PR base branch: `safety.ops.baseBranch`,
+else the remote's default branch, against `<remote>/<base>` when that ref exists, else the local branch. Committed and
+uncommitted tracked changes and untracked, not ignored files count, because normal reviews pass before the commit. Only
+files that belong to a component count (no root files, `docs/`, `*.md`, test directories); `modules` is the number of
+distinct components, `lines` the added plus removed lines. The trigger fires at `modules` or `lines` (the bound is
+reached, not exceeded; `0` switches that measure off), and when a builder launch carried the risk tag `design` (it fires the
+checkout that launch ran in; risk tags are read only with `ladder.sizing` on, so with sizing off only the measures
+fire). The merge-base does not move on owner prompts or ledger writes; it moves when the base branch is merged into the
+branch, and the merged commits stop counting. When no merge-base resolves (no remote, detached history) the base is the
+HEAD the session first saw in that checkout, kept in the session state; with a model set only later in the session it is
+the HEAD at the first measurement. Measurement runs at each normal PASS and when the PR gate or the finish gate asks. A
+measurement that fails (git error, no base) fires nothing and is traced once per checkout as `review_stakes_unmeasured`.
+
+The trigger is sticky: once fired for a checkout it stays fired for the session, whatever a later measurement says, and
+raised thresholds apply only to checkouts that have not fired. The foreman can raise but not lower it: a `[high-stakes]`
+launch with no fired trigger is allowed when a normal PASS stands, and the accepted launch fires the checkout with reason
+`foreman`. Only the owner lowers it, by unsetting the model, which ends every high-stakes check at once (stored state is
+kept and not read). A large test or docs change alone does not fire, and the heavy tier alone is no trigger.
+
+**Order and refusals.** A `[high-stakes]` launch is refused, first match wins, each traced as
+`review_high_stakes_refused {reason}`:
+
+| Reason | When |
+|---|---|
+| `high_stakes_unset` | No model is set. |
+| `high_stakes_single` | The launch is inside a `tasks` or `chain` launch. |
+| `high_stakes_resume` | The call resumes a run. A run that ended without a verdict is launched fresh. |
+| `high_stakes_done` | The passes of the checkout are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
+| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the checkout's last high-stakes pass is a FAIL that no normal PASS has cleared. |
+
+After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.
+
+**After a FAIL.** The FAIL is recorded with its head and findings, and the review gate is set to a failed verdict. It is
+cleared by a normal PASS (item or `[pre-pr]`) after a revision in the same checkout; a revision or PASS in another checkout
+clears nothing. Meanwhile:
+
+- A normal reviewer launch for the checkout is refused (`high_stakes_unrevised`) until a revision happened (a builder run, a
+  project edit or a send-back marker; a launch with a builder before the reviewer counts). `[second-opinion]` and
+  `[plan-review]` launches stay allowed. Any reviewer `resume` is refused until the FAIL is cleared, since a resume gets no
+  findings block.
+- The next normal reviewer task of that checkout gets the findings prepended once, fenced and marked as data from an
+  earlier review, with review tags defused.
+- The finish gate carries its own entry "revise after the high-stakes FAIL, then pass the normal reviewer", whatever
+  `ceremony.reviewGate` says.
+- The head of a high-stakes FAIL never opens the PR gate (`pr_refused:high_stakes_failed`), nor does any head while the
+  FAIL is uncleared.
+
+Once the normal PASS cleared the FAIL, a second and last high-stakes pass is required like the first and reviews the whole
+revised change. If the second pass fails too, the same steps follow, but no third pass: the normal PASS after the revision
+opens the gate, and the foreman tells the owner in one line that the second high-stakes review failed and on what.
+
+**Gates.** Once the normal head test passed, `pr_create` is refused with `pr_refused:high_stakes_required` while a pass is
+due (trigger fired and no pass yet, or one cleared FAIL), through the pack's `pr_create` and foreign PR tools alike. With
+`pr_create {cwd}` for a sibling checkout the state of that checkout applies; in the main path every checkout of the
+session applies, since the head may come from any of them. The refusal names the checkout and the `cwd` to launch with when
+it is not the session's own. With `ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish
+gate adds "a high-stakes review must run" for standard and heavy sessions, for the first and the second pass, but asks only
+once every ledger item except V is marked (no bound ledger, or an unreadable one, counts as marked); the FAIL entry does
+not depend on the ledger. A session that changed nothing is not asked. A PR that is already open is held session-wide:
+its readiness answers `unreviewed` while any checkout has a pass due and `wip` while any checkout has an uncleared FAIL or
+when the PR head is the head of a high-stakes FAIL. Under the draft flow the PR then goes back to draft until the pass ran
+and passed, or the FAIL was cleared and the head moved; a PR from one checkout is held by the state of another checkout of
+the same session. A PR opened from the shell is not refused; the rules text carries the duty.
+
+**Traces and the PR body.** `review_stakes {level: high, reasons, files, lines, modules, base}` is written once per checkout
+when the trigger first fires (reasons `modules`, `lines`, `design`, `foreman`): the pass is then required. `role_launch` and
+`review_done` of the run carry `occasion: high-stakes`, and each verdict writes `review_high_stakes {verdict, head, count}`
+(`count` is 1 or 2, the number of the pass). A `review_high_stakes` record shows that the pass ran. The rules text also tells the
+foreman to add one line per pass to the PR body, `High-stakes review: <verdict> on <sha>`; no code checks the body.
+
+**Known limits.**
+
+- `high_stakes_early` reads the session's review gate, shared over its checkouts: a PASS in one checkout lets the first
+  high-stakes launch go ahead in another.
+- After a high-stakes FAIL and a revision in one checkout, a normal PASS in another checkout resets the shared review gate;
+  the next normal review in the first checkout is then refused as a repeat until one more revision there.
+- A pass that ran is the one pass. Work built after it reaches the pull request with the normal review only; the finish
+  gate asks for the pass only once every ledger item except V is marked, and the rules text says to launch it when the
+  change is complete.
+- A run lost in a reload is not counted as run and can be launched again; a run that ends after a reload is recognised by its
+  persisted run id and marks no item.
+- The findings count as handed over once the adapter accepted the launch; a launch that fails afterwards does not get them
+  again.
+- `[second-opinion]` never satisfies the requirement; `[plan-review]` never triggers it.
 
 ## Review panel
 

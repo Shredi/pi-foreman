@@ -42,40 +42,13 @@ test("item 1: another entry that carries the same model is still rank-checked", 
   assert.equal(res.res?.block, true);
 });
 
-test("item 8: highStakes.model on a high-stakes launch is used as set and traced review_stakes", async (t) => {
-  const r = await rig(t, { highStakes: { model: "pa/top" } });
-  const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "[second-opinion] x" }] };
-  const res = await r.launch(input);
-  assert.equal(res.res?.block, undefined, String(res.res?.reason));
-  assert.deepEqual(r.events("review_stakes").map((e) => [e.reasons, e.model_applied, e.policy_override]), [["occasion", true, true]]);
-});
-
-async function reviewEnd(r: Awaited<ReturnType<typeof rig>>, task: string, runId: string): Promise<void> {
-  const rev = { agent: "reviewer", task };
-  const l = await r.launch(rev);
-  await r.started(l.id, rev, runId);
-  r.end({ runId, agent: "reviewer", status: "completed", success: true, summary: "1. PASS a.ts:1 fine\nverdict: PASS" });
-}
-
-test("risk tags survive a plan-review result and are cleared by an item review", async (t) => {
-  const r = await rig(t, { highStakes: { model: "pa/top" } });
-  await r.launch({ agent: "builder", task: "build it", risk: ["security"] });
-  await reviewEnd(r, "[plan-review] x", "run-p");
-  const before = r.events("review_stakes").length;
-  await r.launch({ agent: "reviewer", task: "items 1" });
-  assert.deepEqual(r.events("review_stakes").slice(before).map((e) => e.tags), ["security"]);
-  await reviewEnd(r, "items 1", "run-i");
-  const mid = r.events("review_stakes").length;
-  await r.launch({ agent: "reviewer", task: "items 1" });
-  assert.equal(r.events("review_stakes").length, mid, "the item review cleared the tags");
-});
-
-test("a plan-review launches with or without highStakes.model and is traced high stakes by occasion", async (t) => {
-  for (const configured of [false, true]) {
-    const r = await rig(t, configured ? { highStakes: { model: "pa/top" } } : {});
-    const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task: "[plan-review] x" }] };
+test("a plan-review or second-opinion keeps its mapped model with highStakes.model set (the key replaces no other review's model)", async (t) => {
+  for (const task of ["[plan-review] x", "[second-opinion] x"]) {
+    const r = await rig(t, { highStakes: { model: "pa/top" } });
+    const input: Record<string, unknown> = { tasks: [{ agent: "reviewer", task }] };
     const res = await r.launch(input);
     assert.equal(res.res?.block, undefined, String(res.res?.reason));
-    assert.deepEqual(r.events("review_stakes").map((e) => [e.reasons, e.model_applied]), [["occasion", configured]]);
+    assert.equal(String((input.tasks as Record<string, unknown>[])[0].model).split(":")[0], "pa/reviewer-m");
+    assert.deepEqual(r.events("review_stakes"), []);
   }
 });

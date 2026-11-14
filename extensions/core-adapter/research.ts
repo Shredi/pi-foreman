@@ -31,12 +31,12 @@ export interface MarkedEntry {
   composite: boolean;
 }
 
-/** The launch entries (single, tasks, chain, parallel) that name an agent and carry a marker. */
-export function markedEntries(input: Json): MarkedEntry[] {
+/** The launch entries (single, tasks, chain, parallel) that name an agent and carry a marker; `skip` entries (the `[high-stakes]` entry keeps its configured model) never do. */
+export function markedEntries(input: Json, skip?: ReadonlySet<Json>): MarkedEntry[] {
   const out: MarkedEntry[] = [];
   const composite = Array.isArray(input.tasks) || Array.isArray(input.chain);
   for (const e of launchEntries(input)) {
-    if (typeof e.agent !== "string" || e.agent === "") continue;
+    if (typeof e.agent !== "string" || e.agent === "" || skip?.has(e)) continue;
     const marker = researchMarkerOf(e.task);
     if (marker) out.push({ entry: e, role: e.agent, marker, composite });
   }

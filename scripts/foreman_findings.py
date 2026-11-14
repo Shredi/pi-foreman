@@ -6,7 +6,7 @@ line spans, class words. `located_findings` needs no ground truth: it lists the 
 files. The scorer (judge, score) stays in foreman_review_bench.py.
 
     python scripts/foreman_findings.py extract (--files-from FILE | --diff PATCH) < report.txt
-    python scripts/foreman_findings.py record --session S --gate item|plan-review|pre-pr|second-opinion --model M --rung N
+    python scripts/foreman_findings.py record --session S --gate item|plan-review|pre-pr|second-opinion|high-stakes --model M --rung N
         --primary 0|1 --role R --run-id ID --source live|panel|bench [--head SHA] [--base SHA] [--item N ...]
         [--verdict PASS|FAIL] [--secs F] [--started-ts ISO] [--cwd REPO] [--agent-dir D] (--files-from F | --diff P) < report
     python scripts/foreman_findings.py list [--since 7d|ISO] [--only-model SUBSTR] [--unique] [--session S] [--json]
@@ -865,7 +865,7 @@ def build_parser():
     g.add_argument("--diff", help="unified diff whose files are the diff's files")
     rc = sub.add_parser("record", help="extract (report on stdin) and append review + finding records")
     rc.add_argument("--session", required=True)
-    rc.add_argument("--gate", required=True, choices=("item", "plan-review", "pre-pr", "second-opinion"))
+    rc.add_argument("--gate", required=True, choices=("item", "plan-review", "pre-pr", "second-opinion", "high-stakes"))
     rc.add_argument("--model", required=True)
     rc.add_argument("--rung", required=True, type=int)
     rc.add_argument("--primary", required=True, type=int, choices=(0, 1))

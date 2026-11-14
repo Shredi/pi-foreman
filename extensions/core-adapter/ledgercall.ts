@@ -117,6 +117,26 @@ export function isLedgerOnlyCommand(cmd: unknown): boolean {
   return stmts > 0;
 }
 
+/**
+ * True when the shell command runs the ledger helper (`ledger`, a path ending in `/ledger`, or `python[3] <path>/ledger.py`, with or without `-f`
+ * or a `cd … &&` prefix, alone or in a chain) with `--verifier` or a `mark` that names item V (any case, alone or among others, a loop variable
+ * included when a V is listed). Loose on purpose: it only refuses, for the child of a high-stakes review, which marks nothing.
+ */
+export function marksVerifierCommand(cmd: unknown): boolean {
+  if (typeof cmd !== "string") return false;
+  const words = (seg: string): string[] => seg.split(/\s+/).map((w) => w.replace(/^["']+|["']+$/g, "")).filter(Boolean);
+  const hasV = words(cmd.replace(/[;&|()`]/g, " ")).some((w) => w.split(",").some((p) => /^v$/i.test(p)));
+  for (const seg of cmd.split(/&&|\|\||[;&|\n\r()`]/)) {
+    const w = words(seg);
+    const at = w.findIndex((x) => /^ledger(?:\.py)?$/i.test(x.split(/[\\/]/).pop() ?? ""));
+    if (at < 0) continue;
+    const args = w.slice(at + 1);
+    if (args.includes("--verifier")) return true;
+    if (args.includes("mark") && hasV) return true;
+  }
+  return false;
+}
+
 /** A shell command that runs `ledger` as a command word anywhere (trace only, not a permission). */
 export function mentionsLedger(cmd: unknown): boolean {
   return typeof cmd === "string" && /(?:^|[\s;&|(])ledger(?:\s|$)/.test(cmd);

@@ -366,6 +366,14 @@ export class ReviewFacts {
   private readonly bases = new Map<string, string>();
   /** Diffs taken early for a reviewer step (before its model is picked); augment reuses them. */
   private readonly early = new WeakMap<Json, Promise<{ diff: string | null; facts: DiffFact[]; base: string; untracked: string }>>();
+  /** Reviewer steps that review against a base of their own (the `[high-stakes]` entry: the merge-base of the whole change). */
+  private readonly stepBases = new WeakMap<Json, string>();
+  /** Pin `step`'s diff and facts to `base`; a diff already taken for it is dropped. Call before the first diffOf of the step. */
+  setStepBase(step: Json, base: string): void {
+    this.stepBases.set(step, base);
+    this.early.delete(step);
+  }
+
   /** A new user prompt starts a new piece of work: the next builder launch records a new base. */
   reset(): void {
     this.bases.clear();
@@ -397,7 +405,7 @@ export class ReviewFacts {
     let p = this.early.get(step);
     if (!p) {
       const dir = this.cwdOf(step, input, cwd);
-      p = diffWithFacts(dir, this.bases.get(dir) ?? null).then(async (r) => ({ ...r, untracked: await untrackedDiff(dir) }));
+      p = diffWithFacts(dir, this.stepBases.get(step) ?? this.bases.get(dir) ?? null).then(async (r) => ({ ...r, untracked: await untrackedDiff(dir) }));
       this.early.set(step, p);
     }
     return p;
@@ -419,7 +427,7 @@ export class ReviewFacts {
         s.task = `${s.task}\n${plan}\n`;
         continue;
       }
-      const { block, count } = early ? factsSummary(await early) : await collectFacts(dir, this.bases.get(dir) ?? null);
+      const { block, count } = early ? factsSummary(await early) : await collectFacts(dir, this.stepBases.get(s) ?? this.bases.get(dir) ?? null);
       if (!block) continue;
       s.task = `${s.task}\n${block}\n`;
       n += count;

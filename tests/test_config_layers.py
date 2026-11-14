@@ -406,10 +406,10 @@ class LayerRulesTest(unittest.TestCase):
         self.assertEqual((res["config"]["ceremony"]["reviewModel"], res["config"]["ceremony"]["planReview"]["heavy"], res["config"]["retro"]["panelThreshold"]), ("p/x", False, 5))
 
     def test_high_stakes_user_only(self):
-        hs = {"model": "p/x", "paths": ["infra/**"]}
+        hs = {"model": "p/x", "modules": 9, "lines": 50}
         res = self.load(proj={"ceremony": {"highStakes": hs}}, session={})
         merged = res["config"]["ceremony"].get("highStakes")
-        self.assertTrue(merged is None or (merged.get("model") is None and merged.get("paths") != hs["paths"]), merged)
+        self.assertTrue(merged is None or (merged.get("model") is None and merged.get("modules") != hs["modules"]), merged)
         self.assertIn("project ceremony.highStakes ignored", "\n".join(res["warnings"]))
         res = self.load(l2={"ceremony": {"highStakes": hs}}, proj={}, session={})
         self.assertEqual(res["config"]["ceremony"]["highStakes"], hs)

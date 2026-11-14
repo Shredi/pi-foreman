@@ -77,7 +77,7 @@ class SizingPromptTest(unittest.TestCase):
             old_reason = "needs a `reason` (why the default model cannot do it), and at trivial"
             new_reason = "needs a `reason` (why the default model cannot do it; a top-level key of the `subagent` call, never inside `options` or `args`), and at trivial"
             old_own = "A review never runs on your own model; the adapter swaps it."
-            new_own = "A configured reviewer pair is used as set; at high stakes the high-stakes model applies when one is set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped."
+            new_own = "A configured reviewer pair is used as set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped. A large change can get one more review. When the adapter asks for a high-stakes review, launch one `reviewer` with `[high-stakes]` in its task, alone, on the whole change, after the last PASS (before a PR, after the `[pre-pr]` PASS), once the change is complete. If it reports FAIL, revise and pass the normal reviewer again (before a PR, `[pre-pr]`); the adapter then asks for a second and last high-stakes review. If that fails too, revise, pass the normal reviewer again and tell the owner in one line that the second high-stakes review failed and on what. Name each high-stakes review in the PR body, one line each: `High-stakes review: <verdict> on <sha>`."
             want = render_prompt(old.stdout.decode("utf-8"), k).replace(old_launch, new_launch)
             for old_text, new_text in ((old_reason, new_reason), (old_own, new_own)):
                 self.assertIn(old_text, want)

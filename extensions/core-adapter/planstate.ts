@@ -16,6 +16,7 @@ import type { Tier, TierSource } from "./ceremony.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
+import { checkoutsOfEntry, type HsCheckout } from "./highstakes.ts";
 import { reviewsOfEntry } from "./reviews.ts";
 import type { ReviewRecord } from "./reviews.ts";
 import type { LoopStop } from "./reviewloop.ts";
@@ -73,6 +74,8 @@ export interface CeremonyStateEntry {
   sentBackHeads?: string[];
   /** The highest handled `rework-<k>` number (its own watermark); absent: none handled. */
   reworkSeen?: number;
+  /** The high-stakes state per checkout (highstakes.ts); absent in an older entry (loads as empty). */
+  highStakes?: HsCheckout[];
 }
 
 /** Heads whose newest code verdict is a `[pre-pr]` PASS. */
@@ -102,7 +105,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: readonly HsCheckout[] }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -118,6 +121,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.sentBack ? { sentBack: true } : {}),
     ...(o.sentBackHeads && (o.sentBackHeads.length > 0 || o.sentBack) ? { sentBackHeads: [...o.sentBackHeads] } : {}),
     ...(o.reworkSeen ? { reworkSeen: o.reworkSeen } : {}),
+    ...(o.highStakes && o.highStakes.length > 0 ? { highStakes: o.highStakes.map((c) => ({ ...c })) } : {}),
   };
 }
 
@@ -160,6 +164,8 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     if (Array.isArray(d.sentBackHeads)) out.sentBackHeads = (d.sentBackHeads as unknown[]).filter((h): h is string => typeof h === "string" && h !== "");
     const rw = count(d.reworkSeen);
     if (rw) out.reworkSeen = rw;
+    const hs = checkoutsOfEntry(d.highStakes);
+    if (hs.length > 0) out.highStakes = hs;
     return out;
   }
   return null;
