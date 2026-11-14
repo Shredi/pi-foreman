@@ -49,7 +49,7 @@ async function rig(t: T) {
   const blocked = () => live({ blockedOn: "owner", blockedKind: "approval", ownerBlockedSince: new Date(Date.now() - 20 * MIN).toISOString() });
   const tick = () => mock.timers.tick(MIN);
   const wait = (params: Record<string, unknown>) => tools.get("foreman_wait")!.execute("w", params, undefined, undefined, r.ctx);
-  /** The adapter's side of a message the harness appended: message_end, then the turn it started (before_agent_start, agent_start, agent_end). */
+  /** The adapter's side of a message the harness appended, read as if a run took it: message_end, then before_agent_start and agent_start (no agent_end: the run is still in progress). The notices themselves start no turn. */
   const deliver = async (customType: string, content: string, details?: unknown) => {
     await r.fire("message_end", { message: { role: "custom", customType, content, ...(details ? { details } : {}) } });
     const turn = await r.noticeTurn(customType);
@@ -61,7 +61,7 @@ async function rig(t: T) {
 }
 const notices = (x: Awaited<ReturnType<typeof rig>>) => x.sent.filter((s) => s.m.customType === CHILD_BLOCKED_TYPE);
 
-test("delivery: one custom message of its own type with a turn for the notice, none for the quiet note, never foreman_wake, never system text", async (t) => {
+test("delivery: one custom message of its own type with no turn for the notice or for the quiet note, never foreman_wake, never system text", async (t) => {
   const x = await rig(t as T);
   x.blocked();
   x.tick();
@@ -69,7 +69,7 @@ test("delivery: one custom message of its own type with a turn for the notice, n
   assert.equal(x.sent.length, 1, "one notice, no repeat");
   assert.equal(x.sent[0].m.customType, CHILD_BLOCKED_TYPE);
   assert.notEqual(x.sent[0].m.customType, WAKE_MESSAGE_TYPE);
-  assert.deepEqual(x.sent[0].opts, { triggerTurn: true });
+  assert.deepEqual(x.sent[0].opts, { triggerTurn: false }, "the notice starts no turn");
   assert.match(x.sent[0].m.content, /^Child session job has waited on its owner since .* \(approval\)\. Information only/);
   const turn = (await x.deliver(CHILD_BLOCKED_TYPE, x.sent[0].m.content)) as { systemPrompt?: string; message?: unknown } | undefined;
   assert.equal(JSON.stringify(turn ?? {}).includes("Child session job"), false, "nothing of it reaches the system prompt or a hook message");
@@ -99,8 +99,10 @@ test("delivery: an armed child wait for the same label stays armed through the n
   // the child's result arrives later as an intercom message: the wait resolves with it
   const msg = { role: "custom", customType: "intercom_message", details: { from: { id: "fm-job-1" }, message: { id: "m1", content: { text: "foreman:result /h/result.md" } } } };
   await r11Fire(x, msg);
-  await until(() => x.sent.some((s) => s.m.customType === WAKE_MESSAGE_TYPE));
-  assert.match(x.sent.find((s) => s.m.customType === WAKE_MESSAGE_TYPE)!.m.content, /child job: result \/h\/result\.md/);
+  await until(() => x.sent.some((s) => s.m.customType === "foreman_wait_note"));
+  // the run the delivered notice was read in is still in progress (no agent_end), so the result is taken by the intercom message: one quiet line, no wake
+  assert.match(x.sent.find((s) => s.m.customType === "foreman_wait_note")!.m.content, /child job: result \/h\/result\.md/);
+  assert.equal(x.sent.filter((s) => s.m.customType === WAKE_MESSAGE_TYPE).length, 0);
 });
 const r11Fire = (x: Awaited<ReturnType<typeof rig>>, message: unknown) => x.fire("message_end", { message });
 async function until(f: () => boolean, ms = 4000): Promise<void> {

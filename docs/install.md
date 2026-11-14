@@ -2,11 +2,41 @@
 
 > Covers installing pi-foreman as a Pi package, `foreman setup`, what setup writes, the `foreman.json` provider map, config layers, updating and removing, developing from a checkout, Windows notes (a fresh Windows machine, step by step) and the Claude bridge login.
 > Read it when you set up pi-foreman, change models, or after pulling a pin change.
-> Run `foreman setup --dry-run` first; a second run changes nothing and says "up to date". `foreman setup` here means `/foreman setup` in Pi, or `bin/foreman setup` in a checkout.
+> Run `/foreman setup --dry-run` first; a second run changes nothing and says "up to date". In this page `foreman setup` and `foreman config …` mean `/foreman setup` and `/foreman config …` in Pi, or `bin/foreman setup` and `bin/foreman config …` in a checkout; other commands name the form to type.
 
 ## Install
 
 Setting up with an agent: point it at [features.md](features.md).
+
+Install the prerequisites first, then Pi (the version range is the one setup checks):
+
+```sh
+# macOS
+brew install node python@3.13 git
+npm install -g @earendil-works/pi-coding-agent@1.5
+```
+
+```sh
+# Linux: Debian 13 or Ubuntu 25.04 and later (their python3 is 3.13)
+sudo apt-get update && sudo apt-get install -y curl git python3
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs
+sudo npm install -g @earendil-works/pi-coding-agent@1.5
+```
+
+```powershell
+# Windows (PowerShell)
+winget install Git.Git
+winget install OpenJS.NodeJS.LTS
+winget install Python.Python.3.13
+```
+
+Open a new terminal, then:
+
+```powershell
+npm install -g @earendil-works/pi-coding-agent@1.5
+```
+
+On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the Pi line.
 
 Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
@@ -20,13 +50,13 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 `npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-intercom` and
 `@juicesharp/rpiv-ask-user-question` (the `ask_user_question` tool with notes), pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
 meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
-`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
+`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. pi-foreman has no lifecycle scripts, and the `.npmrc` in the clone turns off those of its dependencies (see [What an install runs on your machine](safety.md#what-an-install-runs-on-your-machine)). Project packages
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
 
 **`pi-intercom` is a fork pin.** `package.json` and `packages.lock.json` pin it as
 `git+https://github.com/Shredi/pi-intercom.git#<sha>` (the explicit https form, so `npm ci` needs no SSH key), the `hc-transport-2` branch, which is upstream `pi-intercom` main at 4b387e8 (unreleased, not a tag) plus one commit: a
 `crossMachine.transport: "hc"` option that sends `name@machine` messages through `hc exec` instead of SSH. Upstream has
-no such transport yet. `foreman update-check` prints `pi-intercom: fork pin, see docs/install.md` for it and Renovate is
+no such transport yet. `/foreman update-check` prints `pi-intercom: fork pin, see docs/install.md` for it and Renovate is
 switched off for it. To take an upstream update: watch upstream, rebase or port the commit onto the new upstream main or tag in a new
 branch, push it to the fork and run the fork's tests, then set the new commit in both files together (the two specs must be identical) and run `npm install`. pi-foreman
 returns to the upstream `pi-intercom` at the first release that contains the transport: pin that version again in both
@@ -35,7 +65,7 @@ files and delete the `pi-intercom` rule in `renovate.json`.
 **`@juicesharp/rpiv-ask-user-question` is a temporary fork pin.** It is the published 2.15.0 plus one commit that
 passes `blocked: { kind: "question", message }` to both dialog calls (inline and overlay), so Pi reports the session as
 blocked while a question is open (upstream request: https://github.com/juicesharp/rpiv-mono/issues/345).
-`foreman update-check` prints the fork-pin line for it and Renovate is off for it. At the first upstream release with
+`/foreman update-check` prints the fork-pin line for it and Renovate is off for it. At the first upstream release with
 the fix, pin that version again in `package.json`, `package-lock.json` and `packages.lock.json`, restore the NOTICE
 line and delete its rule in `renovate.json`.
 
@@ -108,7 +138,7 @@ written" and exits 0.
 
 ### GitHub hosts for PR tracking
 
-The PR tracker (`pr_follow`, `pr_watch`, `foreman prs poll`, the open-PR search) covers the hosts of `tools.prGithubHosts` and has no built-in default; unset, those tools do nothing and say `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`, while `pr_create`, `pr_status`, `pr_checks` and `pr_comments` keep working. Setup asks for the list after the picker's "Apply?" yes. It is prefilled with the merged list when that is valid, else `github.com`. The arrow-key picker shows a checkbox of the prefill (uncheck removes an entry) and an "add host (empty to finish)" input that repeats until you stop; it will not finish with no host. The readline menu asks one line, `GitHub hosts (comma-separated) [<prefill>]`: Enter or end of input keeps the prefill, an invalid answer asks again, Ctrl-C writes nothing. A host is a name with an optional `:port`; at most 20.
+The PR tracker (`pr_follow`, `pr_watch`, `foreman prs poll` (checkout: `bin/foreman prs poll`), the open-PR search) covers the hosts of `tools.prGithubHosts` and has no built-in default; unset, those tools do nothing and say `no GitHub hosts configured: run \`foreman setup\` (tools.prGithubHosts)`, while `pr_create`, `pr_status`, `pr_checks` and `pr_comments` keep working. Setup asks for the list after the picker's "Apply?" yes. It is prefilled with the merged list when that is valid, else `github.com`. The arrow-key picker shows a checkbox of the prefill (uncheck removes an entry) and an "add host (empty to finish)" input that repeats until you stop; it will not finish with no host. The readline menu asks one line, `GitHub hosts (comma-separated) [<prefill>]`: Enter or end of input keeps the prefill, an invalid answer asks again, Ctrl-C writes nothing. A host is a name with an optional `:port`; at most 20.
 
 Without a terminal use `--github-hosts a,b` (an invalid value exits 2). What gets written to the user `foreman.json`: your answer when it differs from the merged value; `["github.com"]` on a fresh install (no `foreman.json`) when no layer sets the key; otherwise nothing. A list an overlay sets is never copied into your file, and a value you already have (any letter case) is not rewritten. A run without flags on an existing file leaves it alone and prints a hint naming `--github-hosts` or `--pick` when the key is unset or invalid. When the written list differs from what the summary showed, setup prints `GitHub hosts: <list> (equivalent: foreman setup ... --github-hosts <list>)`.
 
@@ -142,7 +172,7 @@ explicit `true` matches the policy for a built-in provider and turns the keep-al
 
 ### Add-ons
 
-`config/addons.json` lists exact-pinned Pi packages, all marked `default`. A plain `foreman setup` installs every default add-on
+`config/addons.json` lists exact-pinned Pi packages, all marked `default`. A plain `/foreman setup` installs every default add-on
 that is not installed yet: `pi install npm:<package>@<version>` (`-l` with `--project`), recorded under `managed.addons`.
 Interactively the picker asks per add-on with yes preselected; non-interactive runs install and say so. Opt out with
 `--no-addons`, `--skip-addon <id>` or by answering no. If the package is already installed in either settings file at any
@@ -172,6 +202,8 @@ alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 nothing for them.
 
 ### foreman features
+
+These run in a terminal. `foreman` is not on `PATH` after a package install: use `<agentDir>/git/github.com/Shredi/pi-foreman/bin/foreman` (`bin\foreman.cmd` on Windows) for `foreman` below, or `bin/foreman` in a checkout. `--pick` and `--mods` need a terminal too: `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs --pick` (Pi always runs setup with the picker off).
 
 - `foreman features list [--json]`: id, area, state (`on`, `off`, `auto`, `configured`, `n/a`), the recorded profile's
   expectation and a `*` on a deviation. It reads the user-plus-overlay merge, without the project layer.
@@ -223,24 +255,24 @@ lines from `settings.json` to undo). When the Claude bridge is in use, setup pri
 }
 ```
 
-Or apply a shipped preset: `foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` merges
+Or apply a shipped preset: `/foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` merges
 `config/presets/<name>.json` into that file (preset values win, every other key is kept), validates the result
 before writing, backs the old file up as `foreman.json.bak-YYYYMMDD` (`-HHMMSS` appended when that name exists)
 and prints the merged JSON with `--dry-run` instead of writing. `--foreman` sets the foreman's model for the
-preset's providers. An unknown name lists the presets and exits 2. `foreman config validate` checks the result.
+preset's providers. An unknown name lists the presets and exits 2. `/foreman config validate` checks the result. Inside Pi these two forms take only those arguments (the agent dir is the session's); after a real apply they print "run /foreman setup to apply the models". In a checkout `bin/foreman config …` takes every flag of `scripts/foreman_config.py`.
 
 While no `providers.<p>.roles.<id>.model` and no `providers.<p>.review.model` is set, children run on Pi's
 default model, and each interactive top-level session start shows one notice naming the presets and this
 command. It never appears in rpc, print or child sessions. The top-level key `quiet` (boolean, default `false`)
 set to `true` hides it.
 
-Then re-run `foreman setup` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
+Then re-run `/foreman setup` to regenerate the block, and run `/foreman doctor` in Pi. Tests:
 `node --test "tests/installer/*.test.mjs"`.
 
 ### Pi's built-in `tool-search`
 
 pi-foreman registers its own `tool_search` (deferred tools and skills), which replaces Pi's built-in `tool-search` extension. Without
-help Pi prints `built-in extension tool-search was not loaded` at every start. `foreman setup` adds `-builtin:tool-search` to the
+help Pi prints `built-in extension tool-search was not loaded` at every start. `/foreman setup` adds `-builtin:tool-search` to the
 `extensions` list of the target `settings.json` (what `pi config` writes when you disable it under Built-in extensions) so the
 replacement is silent. An existing `builtin:tool-search` entry of any kind (`+`, `-`, `!`) is left alone, and `--remove` keeps the entry.
 
@@ -285,7 +317,7 @@ Haiku: `anthropic/claude-haiku-5-5` (window 1M, first tier above 100000) gets po
 
 Ownership: the values written are recorded per settings file in `<agent dir>/pi-foreman/managed.json`
 (`compactionDerived`). A `reserveTokens` equal to the recorded value is ours and is updated or removed when the model
-is no longer covered; any other value is yours and stays (`kept: user value`). `foreman setup --remove` deletes only the
+is no longer covered; any other value is yours and stays (`kept: user value`). `/foreman setup --remove` deletes only the
 entries still equal to their recorded value, then the record. `/foreman doctor` reports a derived entry that drifted, in the global and the project settings file.
 
 The model registry is read from the npm-global Pi package, found by path (no network): `PI_FOREMAN_PI_AI_DATA` (the
@@ -302,7 +334,7 @@ Roles, ladders and the opt-in presets for the model map are in [roles](roles.md)
 Config merges plain last-wins in the order: package defaults (`config/foreman.defaults.json`) -> organisation
 overlay (`pi.foreman.config` of the overlay package) -> your user file (`<agent dir>/foreman.json`, honours
 `PI_CODING_AGENT_DIR`) -> the repository's `.pi/foreman.json` (read only after Pi project trust is resolved) ->
-session (launch flags, or `foreman config ... --session-json '<json>'`; not persisted). Maps deep-merge, leaves are last-wins.
+session (launch flags, or `bin/foreman config ... --session-json '<json>'` in a checkout; not persisted). Maps deep-merge, leaves are last-wins.
 
 **Tighten-only rule.** A project file (and the session) may only make `safety.*` and several ceremony keys
 stricter: permissive booleans can only become stricter, lists can only gain entries, nothing is removed. A cloned
@@ -329,14 +361,14 @@ Details: [close](close.md#the-worktree-root).
 
 ```sh
 pi update git:github.com/Shredi/pi-foreman    # or: pi update --extensions
-foreman setup                                 # regenerate the managed block after an update
+/foreman setup                                # inside Pi: regenerate the managed block after an update
 ```
 
 After an update, reload or restart running sessions: a running session keeps the code it loaded and can call a file
 the update removed.
 
 Pi runs `git clean -fdx` in the clone on update, so never edit files under `<agentDir>/git/...`; edit a checkout
-(see [Developing](#developing)). To remove: `foreman setup --remove` (or `/foreman setup --remove`) drops the managed
+(see [Developing](#developing)). To remove: `/foreman setup --remove` drops the managed
 `settings.json` keys and the permission config it wrote, then `pi remove git:github.com/Shredi/pi-foreman` (add `-l`
 for project scope; use the same source string, `@<ref>` included, that `pi list` shows) removes the package.
 `foreman.json`, `pi-foreman/managed.json`, the `.bak-<ts>` backups, the intercom config and any overlay stay. The
@@ -350,17 +382,18 @@ outside the range. After a pin change, update the global Pi and re-run setup:
 
 ```sh
 npm i -g @earendil-works/pi-coding-agent@1.5.2
-foreman setup --dry-run && foreman setup
+/foreman setup --dry-run   # inside Pi
+/foreman setup             # inside Pi
 ```
 
 Children load MCP through Pi's own loader, `dist/extensions/mcp/config.js` relative to the Pi package root (core-adapter
 reads it, so a Pi update that moves or renames it refuses MCP in children with `mcp_child_unsupported`; a compiled Pi
 binary has no such file). Check it after each Pi update. MCP changes (`mcp.json`, `roles.<id>.mcp`) need no setup re-run;
-the one exception is the upgrade from the older `mcp:` grant, where one `foreman setup` rewrites the generated agent files.
+the one exception is the upgrade from the older `mcp:` grant, where one `/foreman setup` rewrites the generated agent files.
 
 If you use the Claude bridge, also install pi-claude-bridge 0.11.0 or later (`pi install npm:pi-claude-bridge@0.11.0`):
 earlier versions drop Pi's custom prompt sections, which carry the foreman's rules.
-pi-claude-bridge registers `claude-fable-5-2` with a 200K context window until its upstream fix (pi-claude-bridge PR #256) is released; `claude-fable-5-2[1m]` serves 1M, but `foreman setup` writes no compaction override for a `[1m]` id.
+pi-claude-bridge registers `claude-fable-5-2` with a 200K context window until its upstream fix (pi-claude-bridge PR #256) is released; `claude-fable-5-2[1m]` serves 1M, but `/foreman setup` writes no compaction override for a `[1m]` id.
 
 ## Developing
 
@@ -369,11 +402,11 @@ To work on pi-foreman itself, run it from a checkout instead of the installed co
 ```sh
 git clone https://github.com/Shredi/pi-foreman.git && cd pi-foreman
 npm ci
-bin/foreman setup --develop
+bin/foreman setup --develop   # checkout only
 ```
 
 After pulling a checkout that changed `package.json`, run `npm ci` again (setup keeps top-level bundled copies when a
-manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry). `foreman setup` in a checkout also runs `npm ci` itself when `package-lock.json` is newer than `node_modules/.package-lock.json` (or `node_modules` is missing); after a merge that changes `package-lock.json`, run `npm ci` (or `foreman setup`) in the main checkout.
+manifest entry is missing and prints the same hint; `/foreman doctor` FAILs on a missing bundled entry). `bin/foreman setup` in a checkout also runs `npm ci` itself when `package-lock.json` is newer than `node_modules/.package-lock.json` (or `node_modules` is missing); after a merge that changes `package-lock.json`, run `npm ci` (or `bin/foreman setup`) in the main checkout.
 
 `--develop` writes `.pi/settings.json` inside the checkout with `".."` as a package plus an empty-filter override of
 the installed pi-foreman source. Project packages load before global ones and only after project trust (`pi -a` when
@@ -410,13 +443,13 @@ Pi's `bash` tool and `foreman_bg` run commands in Git Bash, so Git for Windows i
 3. **Python 3.13 or newer** with the py launcher: `winget install Python.Python.3.13`. Check with `py -3 --version`.
 4. **Open a new terminal**, so `PATH` has all three, then **Pi**: `npm i -g @earendil-works/pi-coding-agent@1.5.2` (the pinned version is in `packages.lock.json`). Check with `pi --version`.
 5. **The package**: `pi install git:github.com/Shredi/pi-foreman`.
-6. **Setup**: `foreman setup --dry-run`, read it, then `foreman setup` (inside Pi `/foreman setup`, or `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs` before Pi has loaded the package; `<agentDir>` is `%USERPROFILE%\.pi\agent` unless `PI_CODING_AGENT_DIR` is set).
+6. **Setup**: `/foreman setup --dry-run` in Pi, read it, then `/foreman setup` (or `node <agentDir>/git/github.com/Shredi/pi-foreman/setup.mjs` before Pi has loaded the package; `<agentDir>` is `%USERPROFILE%\.pi\agent` unless `PI_CODING_AGENT_DIR` is set).
 
 On Windows setup also finds Git Bash (`%ProgramFiles%\Git\bin\bash.exe`, then `%ProgramFiles(x86)%\Git\bin\bash.exe`, then `bash.exe` on `PATH`) and handles Pi's `shellPath` setting in `<agentDir>\settings.json`:
 
 - `shellPath` unset: setup writes it and prints `shell: wrote shellPath <path> to <settings file>`. It changes no other key, and never writes `shellPath` to a project settings file.
 - `shellPath` set (in the user or the project settings): left as it is; setup prints `shell: shellPath already set in <file> (<value>); kept`.
-- Git Bash not found and `shellPath` unset: setup finishes every other step, then prints `missing step: Git Bash not found. Install Git for Windows ...` and exits non-zero. Install Git for Windows (step 1), or set `"shellPath"` in `<agentDir>\settings.json` to your `bash.exe`, and run `foreman setup` again. A rerun is safe: it changes only what is still missing.
+- Git Bash not found and `shellPath` unset: setup finishes every other step, then prints `missing step: Git Bash not found. Install Git for Windows ...` and exits non-zero. Install Git for Windows (step 1), or set `"shellPath"` in `<agentDir>\settings.json` to your `bash.exe`, and run `/foreman setup` again. A rerun is safe: it changes only what is still missing.
 
 `--dry-run` prints `shell: would write shellPath ...` and writes nothing; `--remove` and `--preview` do not touch the setting. Off Windows setup prints nothing about the shell.
 
@@ -445,4 +478,4 @@ claude setup-token                                                 # then export
   `INFO dormant: <ids>`, the features whose switch is off in the merged config (see [features](features.md)).
 - `/foreman doctor` warns `WARN herdr-app mod <mod> differs from the package: <files> — fix: foreman setup --mods` when an installed herdr-app mod under the app home (`HERDR_APP_HOME`, default `~/.config/herdr-app`) differs from the package; it says nothing when the mod is not installed or the app home does not exist (see [herdr](herdr.md#herdr-app-and-herdr-core)).
 - `/foreman update-check` lists newer versions of the pinned packages with release-note links. It changes nothing.
-  Outside Pi: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).
+  Outside Pi, in a checkout: `bin/foreman update-check` (see [sessions](sessions.md)). It and `/sync` also remind you when `foreman knowledge check` (the launcher path form of [foreman features](#foreman-features), or `bin/foreman` in a checkout) has not run for `knowledge.nudgeDays` days ([sessions](sessions.md#knowledge-sources)).

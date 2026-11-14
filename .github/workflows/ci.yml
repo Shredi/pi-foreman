@@ -26,22 +26,22 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Set-MpPreference -DisableRealtimeMonitoring $true
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
       - name: install bundled packages (pi-subagents, intercom)
-        run: npm install --no-package-lock --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: python unit tests
         run: python -m unittest discover -s tests -v
       - name: core pin check
         run: python scripts/pull_core.py --check
       - name: core conformance (upstream tests at the pinned sha, summary only)
         run: |
-          python -m pip install -q pytest
+          python -m pip install -q -r .github/test-requirements.txt
           python scripts/pull_core.py --conformance
       - name: adapter tests
         run: node --test "extensions/core-adapter/test/*.test.ts"
@@ -49,13 +49,9 @@ jobs:
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
       - name: installer tests (dry-run, idempotent second run, remove)
         run: node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"
-      - name: install Pi (pinned)
-        run: npm install -g @earendil-works/pi-coding-agent@1.5.2
       - name: typescript type check (extensions, Pi 1.5.2 types)
         if: runner.os == 'Linux'
-        run: |
-          npm install --no-package-lock
-          npx tsc --noEmit -p tsconfig.json
+        run: npx tsc --noEmit -p tsconfig.json
       - name: ledger shims on Windows (cmd and PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -98,19 +94,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Set-MpPreference -DisableRealtimeMonitoring $true
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-      - name: install bundled packages (pi-subagents, intercom)
-        run: npm install --no-package-lock --no-audit --no-fund
-      - name: install Pi (pinned)
-        run: npm install -g @earendil-works/pi-coding-agent@1.5.2
+      - name: install bundled packages (pi-subagents, intercom, Pi 1.5.2 from the lockfile)
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: replay scenarios (fake provider only, no secrets), one shard
         env:
+          FOREMAN_PI_CLI: ${{ github.workspace }}/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js
           FOREMAN_REPLAY_REQUIRED: "1"
           FOREMAN_REPLAY_JOBS: ${{ runner.os == 'Windows' && '2' || '' }}
         run: node scripts/replay_run.mjs --shard ${{ matrix.shard }}/${{ matrix.shards }}
@@ -121,13 +116,13 @@ jobs:
     env:
       HARBOR_TELEMETRY: "off"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: install Harbor (uv tool, Python 3.12)
         run: |
-          python -m pip install -q uv
+          python -m pip install -q -r .github/bench-requirements.txt
           uv tool install --python 3.12 "harbor==0.23.0"
           echo "$(uv tool dir --bin)" >> "$GITHUB_PATH"
           "$(uv tool dir --bin)/harbor" --version
@@ -180,7 +175,7 @@ jobs:
           python -c "import json,sys; c={(r['row'],r['task']):r for r in json.load(open(sys.argv[1]))['cells']}; g=c[('m1-fake-good','m1-recheck')]; b=c[('m1-fake-bad','m1-recheck')]; assert (g['counted'],g['success'],b['counted'],b['success'])==(1,1,1,0), (g,b); print('m1 re-check check ok: good 1, bad 0')" "$RUNNER_TEMP/m1.json"
       - name: upload bench-smoke outputs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bench-smoke-jobs
           path: ${{ runner.temp }}/bench-jobs

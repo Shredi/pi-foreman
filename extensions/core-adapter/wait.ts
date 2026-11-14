@@ -32,6 +32,8 @@ import { WAKE_MESSAGE_TYPE } from "./usage.ts";
 import { WAITS_ENTRY, latestWaits, lostWaitsMessage, waitsEntry } from "./waitstate.ts";
 
 export const WAIT_TOOL = "foreman_wait";
+/** The custom message type of the quiet line that ends a child wait taken by a notice inside a run (no turn cause: usage.ts causeOfCustom knows none). */
+export const WAIT_NOTE_TYPE = "foreman_wait_note";
 export const WAIT_KINDS = ["timer", "file", "pid", "ci", "child", "pressure"] as const;
 /** The kinds `foreman_wait start` accepts; `pressure` waits are started by the adapter (pressure.ts). */
 export const TOOL_WAIT_KINDS = WAIT_KINDS.filter((k) => k !== "pressure");
@@ -283,6 +285,10 @@ export interface RuntimeDeps {
   onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
   /** child waits: an open ask of the child `label` (or of any child for `any`) that nobody was told about yet; the lookup counts it as reported. Absent = no replay. */
   unreportedAsk?: (label: string) => { label: string; path: string } | null;
+  /** True while a run is in progress (the adapter's own record, agent_start .. agent_end). Absent = never. */
+  inRun?: () => boolean;
+  /** A carried child notice ended a wait inside a run: the wait ends with this one quiet line, not a wake. */
+  taken?: (outcome: Outcome) => void;
 }
 
 interface Entry {
@@ -339,6 +345,10 @@ export class WaitRuntime {
   start(spec: ValidSpec): { id: string; deduped?: true } | { error: string } {
     if (spec.kind === "pid") {
       const same = [...this.waits.values()].find((w) => w.kind === "pid" && w.pid === spec.pid);
+      if (same) return { id: same.id, deduped: true };
+    }
+    if (spec.kind === "child") {
+      const same = [...this.waits.values()].find((w) => w.kind === "child" && w.label === spec.label);
       if (same) return { id: same.id, deduped: true };
     }
     const limits = this.d.limits();
@@ -479,13 +489,22 @@ export class WaitRuntime {
 
   /**
    * A plan, result, update, ask or closed notice of the registry child `label` (a remote child passes its mirror path): resolves the first child wait
-   * naming that label (else the first naming `any`). A notice before the wait starts is not replayed, except an unreported open ask (`unreportedAsk`).
+   * naming that label (else the first naming `any`). A notice before the wait starts is not replayed, except an unreported open ask (`unreportedAsk`). `carried`: the notice came as an intercom message;
+   * with a run in progress that message is already in the run, so the wait ends through `taken` (one quiet line) and nothing is woken.
    */
-  childNotice(label: string, kind: string, notePath: string): boolean {
+  childNotice(label: string, kind: string, notePath: string, carried = false): boolean {
     const waits = [...this.waits.values()].filter((e) => e.kind === "child");
     const hit = waits.find((e) => e.label === label) ?? waits.find((e) => e.label === "any");
     if (!hit) return false;
-    this.resolve(hit.id, `child ${label}: ${kind}${notePath ? ` ${oneLine(notePath, 300)}` : ""}`);
+    const outcome = `child ${label}: ${kind}${notePath ? ` ${oneLine(notePath, 300)}` : ""}`;
+    if (!carried || !this.d.inRun?.() || this.disposed) {
+      this.resolve(hit.id, outcome);
+      return true;
+    }
+    this.drop(hit.id);
+    this.d.trace({ event: "wait", decision: "taken", toolFamily: hit.kind });
+    this.d.taken?.({ id: hit.id, kind: hit.kind, note: hit.note, outcome });
+    this.governor.check();
     return true;
   }
 
@@ -656,6 +675,8 @@ export interface WaitSession {
   idle?: () => boolean;
   /** True while the active run was started by an intercom message (turn cause intercom): a wake then merges into it as a follow-up. */
   intercomRun?: () => boolean;
+  /** True while a run is in progress (agent_start .. agent_end): a child notice that came as an intercom message is then already in that run. */
+  inRun: () => boolean;
 }
 
 const PARAMS = {
@@ -677,7 +698,7 @@ const PARAMS = {
 };
 
 /** Register `foreman_wait` (foreman sessions only) and its shutdown cleanup. */
-export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; restore: (ctx: ExtensionContext) => Promise<void>; settled: (sessionId: string) => void } {
+export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionContext) => Promise<WaitSession>; home: string; platform: string }): { active: (sessionId: string) => ReturnType<WaitRuntime["list"]>; childNotice: (sessionId: string, label: string, kind: string, notePath: string, carried?: boolean) => boolean; cancelAll: (sessionId: string) => string[]; onChange: (sessionId: string, cb: () => void) => () => void; startPressure: (ctx: ExtensionContext, spec: Extract<ValidSpec, { kind: "pressure" }>) => Promise<{ id: string } | { error: string }>; restore: (ctx: ExtensionContext) => Promise<void>; settled: (sessionId: string) => void } {
   /** `held`: outcomes that resolved while a run was active; `settled` sends them as one wake that starts a run of its own. */
   const runtimes = new Map<string, { rt: WaitRuntime; ctx: ExtensionContext; held: Outcome[]; send: (outcomes: Outcome[], followUp?: boolean) => void }>();
   const listeners = new Map<string, Set<() => void>>();
@@ -689,7 +710,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       return () => void set.delete(cb);
     },
     active: (sessionId: string) => runtimes.get(sessionId)?.rt.list() ?? [],
-    childNotice: (sessionId: string, label: string, kind: string, notePath: string) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath) ?? false,
+    childNotice: (sessionId: string, label: string, kind: string, notePath: string, carried?: boolean) => runtimes.get(sessionId)?.rt.childNotice(label, kind, notePath, carried) ?? false,
     // Called by the close sequence only (session_shutdown and a reload just dispose the runtime): a closed foreman takes its still-running
     // foreman_bg runs with it; they would otherwise outlive the tab, detached.
     cancelAll: (sessionId: string) => {
@@ -749,6 +770,10 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if (s.steer) msg.content = s.steer(msg.content);
       pi.sendMessage(msg, followUp ? { deliverAs: "followUp" } : { triggerTurn: true });
     };
+    const quiet = (o: Outcome): void => {
+      const line = wakeMessage([{ ...o, outcome: `ended by the notice above: ${o.outcome}` }]);
+      pi.sendMessage({ customType: WAIT_NOTE_TYPE, content: s.steer ? s.steer(line.content) : line.content, display: true }, { triggerTurn: false });
+    };
     holder.rt = new WaitRuntime({
       timers: realTimers,
       now: () => Date.now(),
@@ -763,6 +788,8 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),
       ghRefusal: () => (resolveGh(workspaceOf(s.cwd).root) ? null : `ci waits are refused: ${GH_MISSING}`),
       trace: s.trace,
+      inRun: s.inRun,
+      taken: quiet,
       pressure: s.pressure,
       idle: s.idle,
       changed: () => {
@@ -807,7 +834,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
     name: WAIT_TOOL,
     label: "Long wait",
     description:
-      "Wait without model turns for a timer, a file to appear, a process to exit, a GitHub Actions run to complete or a child session to report (kind child + label). Returns at once with a wait id; you are woken later by ONE message listing every outcome (triggers that resolve close together are batched). action start (kind + its argument, optional note), list, or cancel {id}.",
+      "Wait without model turns for a timer, a file to appear, a process to exit, a GitHub Actions run to complete or a child session to report (kind child + label; one wait per label). Returns at once with a wait id; you are woken later by ONE message listing every outcome (triggers that resolve close together are batched). action start (kind + its argument, optional note), list, or cancel {id}.",
     parameters: PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);
@@ -842,7 +869,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       if ("error" in spec) return refuse(spec.error, params.kind);
       const r = ensure().start(spec);
       if ("error" in r) return text(r.error, { decision: "refused" }, true);
-      if ("deduped" in r) return text(`Wait ${r.id} (${spec.kind}) already watches this pid; no second wait started. End your turn: you will be woken by one message.`, { decision: "start", id: r.id, kind: spec.kind, deduped: true });
+      if ("deduped" in r) return text(spec.kind === "child" ? `Wait ${r.id} (child) already waits on child ${spec.label}; no second wait started, and the first wait's note stays. End your turn: you will be woken by one message.` : `Wait ${r.id} (${spec.kind}) already watches this pid; no second wait started. End your turn: you will be woken by one message.`, { decision: "start", id: r.id, kind: spec.kind, deduped: true });
       s.onStart?.(spec, r.id);
       const win = l.batchWindowSeconds;
       return text(`Wait ${r.id} (${spec.kind}) started; times out after ${l.maxSeconds}s. End your turn: you will be woken by one message${win > 0 ? ` (outcomes within ${win}s are batched)` : ""}.`, { decision: "start", id: r.id, kind: spec.kind });
