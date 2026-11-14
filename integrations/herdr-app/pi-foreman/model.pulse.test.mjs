@@ -27,12 +27,12 @@ test("draft + unsettled: the same violet pulse", () => {
   assert.equal(prStateText(p), "work in progress, CI running");
 });
 
-test("draft + failed: violet and still, never red; the state stays wip", () => {
+test("draft + failed: red and still like any failed PR", () => {
   const p = pr({ state: "draft", checks: failed });
-  assert.deepEqual(prDotState(p), { pulse: false, fill: "violet", conflict: false });
-  assert.equal(prState(p), "wip");
-  assert.equal(prStateText(p), "work in progress");
-  assert.equal(prCard(dotOnly(failed, { state: "draft", head: H1 })).status, "");
+  assert.deepEqual(prDotState(p), { pulse: false, fill: "red", conflict: false });
+  assert.equal(prState(p), "fail");
+  assert.equal(prStateText(p), "CI failing");
+  assert.equal(prCard(dotOnly(failed, { state: "draft", head: H1 })).status, "checks failed");
 });
 
 test("draft settled: violet and still", () => {
@@ -72,11 +72,11 @@ test("passed: green and still, ready to merge", () => {
   assert.equal(prCard(dotOnly(passed)).status, "checks passed");
 });
 
-test("merge blocked with every check passed: amber pulse as the ring was, the state pending", () => {
+test("merge blocked with every check passed: a still amber dot, the state pending", () => {
   const p = pr({ checks: passed, mergeState: "blocked" });
-  assert.deepEqual(prDotState(p), { pulse: true, fill: "amber", conflict: false });
+  assert.deepEqual(prDotState(p), { pulse: false, fill: "amber", conflict: false });
   assert.equal(prState(p), "pending");
-  assert.equal(prStateText(p), "CI running");
+  assert.equal(prStateText(p), "CI passing, merge blocked");
 });
 
 const partly = [{ n: "lint", state: "ok" }, { n: "ci", state: "pending" }];

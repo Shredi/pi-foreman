@@ -33,6 +33,8 @@ export const ROWS = [
   { key: "pr-ready", pr: 106 },
   { key: "pr-conflict", pr: 107 },
   { key: "pr-no-checks", pr: 108 },
+  { key: "pr-draft-failed", pr: 109 },
+  { key: "pr-merge-blocked", pr: 110 },
 ];
 
 export const SAMPLE = {
@@ -80,6 +82,8 @@ export const SAMPLE = {
       pr(106),
       pr(107, { mergeable: "CONFLICTING", mergeState: "dirty" }),
       pr(108, { checks: [] }),
+      pr(109, { state: "draft", checks: [{ n: "ci", state: "fail" }] }),
+      pr(110, { mergeState: "blocked" }),
     ],
   },
 };

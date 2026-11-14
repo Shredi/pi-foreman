@@ -20,6 +20,7 @@ const cx = { timer: { every() {} }, spawn() { spawned++; }, notify() {} };
 function view(sample) {
   world.props = sample ? { sample: true } : undefined;
   world.execCalls = [];
+  world.agentOrder = [];
   spawned = 0;
   const mod = Object.create(Mod.prototype);
   mod.init({}, cx);
@@ -102,6 +103,9 @@ test("the sample draws the marker of every PR key; only the two pulsing discs lo
   assert.deepEqual(look("pr-ready"), ["#ansi2", false]);
   assert.deepEqual(look("pr-conflict")[1], false);
   assert.deepEqual(look("pr-no-checks"), ["#dim", false]);
+  assert.deepEqual(look("pr-draft-failed"), ["#blocked", false]);
+  assert.deepEqual(look("pr-merge-blocked"), ["#ansi3", false]);
+  assert.equal(pr["pr-draft-failed"].parts[0].props.border_color, "#blocked");
   assert.ok(pr["pr-not-reviewed"].parts.some((e) => hasText(e, "unreviewed head")));
   assert.ok(pr["pr-conflict"].parts.some((e) => hasText(e, "!")));
   assert.equal(pr["pr-failed"].parts[0].props.border_color, "#blocked");
@@ -117,6 +121,7 @@ test("the sample starts no exec and no task, and leaves the Agents order alone",
   assert.deepEqual(await mod.execT("foreman", ["radar", "--json"], {}, 1000), { code: 1, stdout: "" });
   assert.equal(world.execCalls.length, 0);
   assert.equal(spawned, 0);
+  assert.deepEqual(world.agentOrder, [], "no order call");
 });
 
 test("without the prop the host lists are drawn as before", () => {
@@ -128,6 +133,7 @@ test("without the prop the host lists are drawn as before", () => {
   assert.equal(mod.sample, false);
   assert.equal(mod.radar.size, 0, "the radar starts empty");
   const root = mod.render({});
+  assert.deepEqual(world.agentOrder, [["t1"]], "the Agents order is set to the listed agents");
   assert.ok(els(root).some((e) => hasText(e, "my agent")));
   assert.ok(!els(root).some((e) => hasText(e, "sample working")));
 });

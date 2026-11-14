@@ -43,7 +43,7 @@ export const watchFolder = () => new Promise(() => {});
 export const spaces = () => world.spaces;
 export const run = (...call) => { world.runCalls.push(call); return null; };
 export const theme = () => palette;
-export const setAgentOrder = () => {};
+export const setAgentOrder = (order) => { (world.agentOrder ??= []).push([...order]); };
 // `world.execFn`, when set, answers an exec call (it may throw or return a rejecting promise); default: exit code 1.
 export const exec = async (...call) => { world.execCalls.push(call); return world.execFn ? world.execFn(...call) : { code: 1, stdout: "" }; };
 export const props = () => world.props ?? ({});

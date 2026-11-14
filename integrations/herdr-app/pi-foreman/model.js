@@ -451,8 +451,8 @@ export function sessionCount(node) {
   return allSessions([node]).filter((s) => !isEnded(s)).length;
 }
 
-/** The one state of a PR that the chip colour, the sort and the summary share: "fail" (red chip), "pending" (a job runs and none
- *  failed), "ok" (green) or "none" (no checks known). */
+/** The one state of a PR that the chip colour, the sort and the summary share: "fail" (red chip), "pending" (a job runs or the merge
+ *  is blocked or behind, and none failed), "ok" (green) or "none" (no checks known). */
 export function prState(pr) {
   const d = prDotState(pr);
   return d.fill === "red" ? "fail" : d.fill === "violet" ? "wip" : d.pulse || d.fill === "amber" ? "pending" : d.fill === "blue" ? "unreviewed" : d.fill === "green" ? "ok" : "none";
@@ -509,10 +509,12 @@ export function chipPrs(prs) {
 /** The state a PR's dot shows, in words (the chip's hover card names it): the colours are not explained anywhere else. */
 export function prStateText(pr) {
   const d = prDotState(pr);
-  const p = pillOf(pr, baseDot(pr));
+  const base = baseDot(pr);
+  const p = pillOf(pr, base);
   if (p.state === "wip") return d.pulse ? "work in progress, CI running" : "work in progress";
   if (p.state === "unreviewed") return "CI passing, not reviewed";
   if (p.state === "ready") return p.reviewed ? "ready to merge" : "ready to merge (CI passing, no review claim)";
+  if (p.state === "waiting") return `${base.fill === "green" ? "CI passing" : "no CI checks"}, ${p.merge === "behind" ? "branch behind" : "merge blocked"}`;
   return d.fill === "red" ? "CI failing" : d.pulse ? "CI running" : d.fill === "green" ? "CI passing" : "no CI checks";
 }
 
@@ -1093,25 +1095,26 @@ export function displayStatus(item, folded) {
 // ---- PR dot and hover card (items 17 d, 19) ------------------------------------------------------------------
 
 /** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, unless a finished job failed (red never
- *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses, "red" once a finished job
- *  failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
+ *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses or the merge is blocked or
+ *  behind (still), "red" once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
 export function prDotState(pr) {
   const d = baseDot(pr);
   const p = pillOf(pr, d);
   const pulse = d.ring && d.fill !== "red";
   if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
-  if (p.state === "running" && !d.ring && d.fill === "green") return { pulse: true, fill: "amber", conflict: d.conflict };
+  if (p.state === "waiting" && d.fill === "green") return { pulse: false, fill: "amber", conflict: d.conflict };
   if (p.state === "ready" && d.fill === "dim") return { pulse: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
   return { pulse, fill: pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
 }
 
 /**
  * The pill state from the host's current head, draft flag, checks and merge state plus the session's review fact (`pr.review`, set from the live file's
- * `review` list), `d` being the checks' dot. `state` is wip | running | red | unreviewed | ready, or null for a PR the pill has nothing to add to (today's dot):
+ * `review` list), `d` being the checks' dot. `state` is red | wip | running | waiting | unreviewed | ready, or null for a PR the pill has nothing to add to (today's dot):
  * an older feed without head and merge state and without a session fact, a PR without checks, a green PR that is not mergeable.
- *  - wip: a draft on the host, or the session fact for the host's head is `wip`; red: a failed check; running: checks running or unsettled, or all else holds
- *    but the merge state is blocked or behind;
+ *  - red: a failed check, on a draft or work-in-progress PR too; wip: a draft on the host, or the session fact for the host's head is `wip`;
+ *    running: checks running or unsettled;
+ *  - waiting: settled (green, or no checks confirmed for the head) and the merge state is blocked or behind: amber and still;
  *  - unreviewed: settled green (or no checks confirmed for the head) and the fact is `unreviewed` or about another head than the host's;
  *  - ready: settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
  *    facts alone (`reviewed` false: no review claim).
@@ -1122,13 +1125,13 @@ function pillOf(pr, d) {
   const ms = str(pr?.mergeState).toLowerCase();
   if (!head && !ms && !rev) return { state: null };
   const mine = rev && head && rev.head === head ? rev : null;
-  if (pr?.state === "draft" || mine?.state === "wip") return { state: "wip" };
   if (d.fill === "red") return { state: "red" };
+  if (pr?.state === "draft" || mine?.state === "wip") return { state: "wip" };
   if (d.ring || d.fill === "amber") return { state: "running" };
   const settled = d.fill === "green" || (d.fill === "dim" && mine?.noChecks === true);
   if (!settled) return { state: null };
   if (rev && (!mine || mine.state === "unreviewed")) return { state: "unreviewed" };
-  if (ms === "blocked" || ms === "behind") return { state: "running" };
+  if (ms === "blocked" || ms === "behind") return { state: "waiting", merge: ms };
   if (pr?.mergeable === "MERGEABLE" && !["dirty", "unknown", "draft"].includes(ms)) return { state: "ready", reviewed: Boolean(mine) };
   return { state: null };
 }
