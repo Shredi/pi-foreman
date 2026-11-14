@@ -13,7 +13,10 @@
 // lineage; a FAIL before the cap goes back for a revision, a FAIL at the cap opens the checkpoint
 // with `capped: true` so the dialog lists the open findings.
 // Plan reviews never mark items or feed gates (occasion.ts countsForItems).
+import { spawnSync } from "node:child_process";
 import * as crypto from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { CHECKPOINT_TOOL, PLAN_NAME } from "./checkpoint.ts";
 import { ledgerLines } from "./ladder.ts";
@@ -63,6 +66,26 @@ export function planPathsOf(files: readonly string[], scratchDir: string): strin
 /** Plan-review verdicts per plan lineage (real plan path). */
 export class PlanReviews {
   private readonly byPath = new Map<string, { latest: PlanVerdict; rounds: number; reviews: number }>();
+  /** The plan text a launched reviewer reads, and the text the last verdict is for (in memory only; keyed by the real plan path). */
+  private readonly launched = new Map<string, { hash: string; text: string }>();
+  private readonly reviewed = new Map<string, { hash: string; text: string }>();
+
+  /** A `[plan-review]` launch: the text the reviewer will read. */
+  noteLaunch(planPath: string, hash: string, text: string): void {
+    this.launched.set(planPath, { hash, text });
+  }
+
+  /** The verdict is recorded for the plan version `hash`: the text noted at launch becomes the reviewed text when its hash is the same, else the reviewed text is cleared (the plan changed while the reviewer ran). */
+  keepReviewed(planPath: string, hash: string): void {
+    const l = this.launched.get(planPath);
+    if (l && l.hash === hash) this.reviewed.set(planPath, l);
+    else this.reviewed.delete(planPath);
+  }
+
+  /** The text of the last reviewed version, or null (never reviewed, cleared, or not in memory after a reload). */
+  reviewedText(planPath: string): string | null {
+    return this.reviewed.get(planPath)?.text ?? null;
+  }
 
   /** Each recorded verdict of a new plan VERSION is one round of the plan's lineage (a revision keeps the count; a repeat review of the same version does not add one). */
   record(planPath: string, v: PlanVerdict): void {
@@ -119,6 +142,32 @@ export function planReviewSection(v: PlanVerdict, findings: readonly PanelFindin
   if (findings.length > PLAN_REVIEW_FINDINGS_MAX) out.push(`  (+${findings.length - PLAN_REVIEW_FINDINGS_MAX} more findings)`);
   if (findings.length === 0) out.push(capped ? "  (no located findings) The review cap is reached: the owner may override this FAIL at the checkpoint (approve the plan)." : "  (no located findings)");
   return out.join("\n");
+}
+
+/** At most this many diff lines go into the facts of a re-review. */
+export const PLAN_DIFF_LINES = 200;
+
+/** The unified diff of a plan against the last reviewed text for the facts of a re-review (header lines name `planPath`; at most PLAN_DIFF_LINES lines, then a count); a line saying why there is none when git gives none. */
+export function planDiffLines(planPath: string, before: string, after: string): string[] {
+  let dir: string | null = null;
+  try {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-plandiff-"));
+    fs.writeFileSync(path.join(dir, "reviewed"), before);
+    fs.writeFileSync(path.join(dir, "current"), after);
+    const r = spawnSync("git", ["diff", "--no-index", "--no-ext-diff", "--no-color", "reviewed", "current"], { cwd: dir, encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024 * 1024 });
+    if (r.error) return [`no diff (git did not run: ${r.error.message})`];
+    if (r.status === 0) return ["no difference to the last reviewed version"];
+    if (r.status !== 1) return [`no diff (git diff ended with ${r.status === null ? `signal ${r.signal}` : `status ${r.status}`})`];
+    const body = r.stdout.split("\n");
+    const at = body.findIndex((l) => l.startsWith("@@"));
+    const lines = [`--- ${planPath} (last reviewed)`, `+++ ${planPath} (now)`, ...(at < 0 ? [] : body.slice(at))];
+    while (lines.length && lines[lines.length - 1] === "") lines.pop();
+    return lines.length > PLAN_DIFF_LINES ? [...lines.slice(0, PLAN_DIFF_LINES), `(+${lines.length - PLAN_DIFF_LINES} more diff lines; read the plan)`] : lines;
+  } catch (e) {
+    return [`no diff (${e instanceof Error ? e.message : String(e)})`];
+  } finally {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** The facts block of a `[plan-review]` launch: the plan path and the bound ledger's open items, instead of a diff. */

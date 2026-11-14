@@ -744,6 +744,31 @@ function gitTagListRead(rest: string[]): boolean {
   return pos === 0 || list;
 }
 
+const BRANCH_LIST_FLAGS = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l", "--show-current", "-i", "--ignore-case", "--column", "--no-column", "--omit-empty"]);
+const BRANCH_VALUE_OPTS = new Set(["--contains", "--no-contains", "--points-at", "--merged", "--no-merged", "--sort", "--format"]);
+
+/**
+ * `git branch` in list mode: a list-mode option (`--contains`, `--no-contains`, `--merged`, `--no-merged`, `--points-at`, `--sort`, `--format`, `-l`/`--list`) with its
+ * value, display flags, and positionals only as patterns of `-l`/`--list`; any other option (`-d`, `-m`, `-c`, `-f`, `-u`, ...) or a branch name without `-l` is not list mode.
+ */
+function gitBranchListMode(rest: string[]): boolean {
+  let mode = false;
+  let list = false;
+  let pos = 0;
+  for (let i = 0; i < rest.length; i++) {
+    const w = rest[i];
+    if (w === "-l" || w === "--list") list = mode = true;
+    else if (BRANCH_LIST_FLAGS.has(w) || /^--(column|abbrev|color)=\S+$/.test(w)) continue;
+    else if (/^--(contains|no-contains|points-at|merged|no-merged|sort|format)=/.test(w)) mode = true;
+    else if (BRANCH_VALUE_OPTS.has(w)) {
+      mode = true;
+      if (i + 1 < rest.length && (w === "--sort" || !rest[i + 1].startsWith("-"))) i++; // a sort key may start with `-` (descending)
+    } else if (w.startsWith("-")) return false;
+    else pos++;
+  }
+  return mode && (pos === 0 || list);
+}
+
 const URLISH = /:\/\/|^[^@\s/]+@[^:\s]+:|^file:|^[./~]|^[A-Za-z]:[\\/]/;
 const PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec", "--signed"]);
 
@@ -959,6 +984,21 @@ function inlineCode(s: ShellSegment): boolean {
 
 /** The path words one segment writes (resolved against its cwd by the caller); `.` stands for the cwd itself. In-place and output-flag forms included. */
 function writeTargets(s: ShellSegment): string[] {
+  return taggedWriteTargets(s).map((t) => t.w);
+}
+
+/** A write target word of a segment; `any` marks the catch-all "somewhere under this folder" (a build tool, package manager or git write run, the implicit `.` of tar, unzip, patch) against a path the line names. */
+interface WriteTarget {
+  w: string;
+  any: boolean;
+  /** the catch-all of a `git branch` in list mode (`--contains HEAD`, `--merged`, `-l pat`): a read the read-only fence does not count */
+  list?: true;
+}
+const named = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: false }));
+const anywhere = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: true }));
+
+/** `writeTargets` with the tag: set here, where the list is built, never read back from the word. */
+function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
   const p = progOf(s);
   const a = s.argv;
   switch (p) {
@@ -969,27 +1009,27 @@ function writeTargets(s: ShellSegment): string[] {
       const inPlace = a.some((w) => w === "--in-place" || w.startsWith("--in-place=") || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
       const wfiles: string[] = [];
       for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
-      return [...(inPlace ? files : []), ...wfiles];
+      return named([...(inPlace ? files : []), ...wfiles]);
     }
     case "truncate":
-      return operands(a, new Set(["-s", "--size", "-r", "--reference"]));
+      return named(operands(a, new Set(["-s", "--size", "-r", "--reference"])));
     case "perl":
-      return a.some((w) => /^-[pnla]*i/.test(w)) ? operands(a, new Set(["-e", "-E", "-I"])) : [];
+      return named(a.some((w) => /^-[pnla]*i/.test(w)) ? operands(a, new Set(["-e", "-E", "-I"])) : []);
     case "dd":
-      return a.filter((w) => w.startsWith("of=")).map((w) => w.slice(3));
+      return named(a.filter((w) => w.startsWith("of=")).map((w) => w.slice(3)));
     case "sort":
-      return optValues(a, ["-o"], ["--output"]);
+      return named(optValues(a, ["-o"], ["--output"]));
     case "cp":
     case "mv":
     case "install":
     case "ln": {
       const t = optValues(a, ["-t"], ["--target-directory"]);
       const ops = operands(a, new Set(["-S", "--suffix", "-m", "--mode", "-o", "--owner", "-g", "--group", "-t", "--target-directory"]));
-      if (p === "mv") return [...t, ...ops];
-      if (t.length) return t;
-      if (p === "install" && a.includes("-d")) return ops;
-      if (p === "ln" && ops.length === 1) return ["."];
-      return ops.length >= 2 ? [ops[ops.length - 1]] : [];
+      if (p === "mv") return named([...t, ...ops]);
+      if (t.length) return named(t);
+      if (p === "install" && a.includes("-d")) return named(ops);
+      if (p === "ln" && ops.length === 1) return named(["."]);
+      return named(ops.length >= 2 ? [ops[ops.length - 1]] : []);
     }
     case "rm":
     case "rmdir":
@@ -997,28 +1037,28 @@ function writeTargets(s: ShellSegment): string[] {
     case "shred":
     case "mkdir":
     case "touch":
-      return operands(a);
+      return named(operands(a));
     case "awk":
     case "gawk": {
       const inplace = a.some((w, i) => w === "-iinplace" || w === "--include=inplace" || ((w === "-i" || w === "--include") && a[i + 1] === "inplace"));
       if (!inplace) return [];
       const ops = operands(a, new Set(["-f", "-v", "-F", "-i", "--include", "-e"]));
-      return optValues(a, ["-f"], ["--file"]).length ? ops : ops.slice(1);
+      return named(optValues(a, ["-f"], ["--file"]).length ? ops : ops.slice(1));
     }
     case "patch": {
       const dir = optValues(a, ["-d"], ["--directory"]);
       const out = optValues(a, ["-o"], ["--output"]);
       const files = operands(a, new Set(["-d", "--directory", "-o", "--output", "-i", "--input", "-r", "--reject-file", "-p", "--strip", "-B", "-V", "-Y", "-z", "-F"]));
-      return [...(dir.length ? dir : ["."]), ...out, ...files];
+      return [...(dir.length ? named(dir) : anywhere(["."])), ...named([...out, ...files])];
     }
     case "rsync": {
       const ops = operands(a, new Set(["-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--files-from", "--filter", "-f"]));
-      return ops.length >= 2 ? [ops[ops.length - 1]] : [];
+      return named(ops.length >= 2 ? [ops[ops.length - 1]] : []);
     }
     case "tar":
-      return a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? "") ? [...optValues(a, ["-C"], ["--directory"]), "."] : [];
+      return a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? "") ? [...named(optValues(a, ["-C"], ["--directory"])), ...anywhere(["."])] : [];
     case "unzip":
-      return [...optValues(a, ["-d"], []), "."];
+      return [...named(optValues(a, ["-d"], [])), ...anywhere(["."])];
     case "git": {
       const { sub, rest } = gitParts(a);
       if (sub === undefined || !GIT_WRITE_SUBS.has(sub)) return [];
@@ -1031,25 +1071,27 @@ function writeTargets(s: ShellSegment): string[] {
       const head = a.slice(0, a.indexOf(sub));
       const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
       if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);
-      return [".", ...extra];
+      const any = anywhere(["."]);
+      if (sub === "branch" && gitBranchListMode(rest)) for (const t of any) t.list = true;
+      return [...any, ...named(extra)];
     }
     case "npm":
     case "pnpm":
     case "yarn":
     case "bun": {
       const prefix = optValues(a, p === "pnpm" ? ["-C"] : [], ["--prefix", "--dir", "--cwd", "--workspace-root"]);
-      if (prefix.length) return prefix;
+      if (prefix.length) return anywhere(prefix);
       const verb = operands(a, new Set(["--prefix", "--dir", "--cwd", "-w", "--workspace"]))[0];
-      return verb !== undefined && PKG_READ_VERBS.has(verb) ? [] : a.some((w) => PKG_READ_VERBS.has(w) && w.startsWith("-")) ? [] : ["."];
+      return verb !== undefined && PKG_READ_VERBS.has(verb) ? [] : a.some((w) => PKG_READ_VERBS.has(w) && w.startsWith("-")) ? [] : anywhere(["."]);
     }
     case "make":
-      return [...optValues(a, ["-C"], ["--directory"]), "."];
+      return anywhere([...optValues(a, ["-C"], ["--directory"]), "."]);
     case "cargo":
     case "go": {
       const verb = operands(a)[0];
       const write = p === "cargo" ? ["build", "test", "run", "clean", "install", "add", "remove", "update", "fmt", "fix", "init", "new", "bench", "doc"] : ["build", "test", "run", "install", "get", "mod", "generate", "clean", "fmt"];
       if (verb === undefined || !write.includes(verb)) return [];
-      return [".", ...optValues(a, p === "go" ? ["-C"] : [], ["--manifest-path", "--target-dir"]).map((w) => (w.endsWith("Cargo.toml") ? w.slice(0, -10) || "." : w))];
+      return anywhere([".", ...optValues(a, p === "go" ? ["-C"] : [], ["--manifest-path", "--target-dir"]).map((w) => (w.endsWith("Cargo.toml") ? w.slice(0, -10) || "." : w))]);
     }
     default:
       return [];
@@ -1057,6 +1099,36 @@ function writeTargets(s: ShellSegment): string[] {
 }
 
 const SINK = new Set(["-", "/dev/null", "/dev/stdout", "/dev/stderr", ""]);
+
+/** A literal write target of a shell segment as an absolute path; `named` is false for the catch-all "somewhere under this folder" (see `WriteTarget`). */
+export interface ShellWriteTarget {
+  path: string;
+  named: boolean;
+  /** the catch-all of a `git branch` in list mode: the read-only role fence does not count it (`install-root-write` still does) */
+  list?: true;
+  seg: ShellSegment;
+}
+
+/**
+ * The literal write targets of every segment, opaque ones included (`echo "$X" > f`, `env A=1 touch f`, `nohup touch f`, `xargs touch f`): `writeTargets` with its
+ * tag, the segment's redirects, and a `tee`'s operands. A word that cannot be resolved (a `$` or backtick, `~`, a relative word under an unknown cwd, a standard
+ * sink) is skipped, as `teeOutsideTarget` skips it.
+ */
+export function shellWriteTargets(segments: ShellSegment[], platform: string): ShellWriteTarget[] {
+  const out: ShellWriteTarget[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    const words: WriteTarget[] = [...taggedWriteTargets(seg), ...named(seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup").map((r) => r.target))];
+    if (progOf(seg) === "tee") words.push(...named(operands(seg.argv)));
+    for (const t of words) {
+      if (/[$`]/.test(t.w) || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
+      if (seg.cwd === null && !path.isAbsolute(t.w) && !path.win32.isAbsolute(t.w)) continue;
+      const abs = resolveWord(platform, seg.cwd ?? "/", t.w);
+      if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), seg });
+    }
+  }
+  return out;
+}
 
 /** The operand `w` of `s` is judged on the link itself: a plain `rm` / `unlink` / `rmdir` (no `-r`/`-R`/`--recursive`) of a name without a trailing slash. */
 function linkOperand(s: ShellSegment, w: string): boolean {

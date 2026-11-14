@@ -50,7 +50,7 @@ pi install -l git:github.com/Shredi/pi-foreman         # project scope (.pi/sett
 `npm install --omit=dev --legacy-peer-deps` there. That brings the bundled `pi-subagents`, `pi-intercom` and
 `@juicesharp/rpiv-ask-user-question` (the `ask_user_question` tool with notes), pinned in `package.json` and `package-lock.json` and loaded through `node_modules` resource paths (the
 meta-package pattern Pi's docs prescribe). The manifest is the `pi` key of `package.json`: Pi reads `extensions`,
-`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. Pi runs lifecycle scripts; pi-foreman has none on purpose. Project packages
+`skills`, `prompts` and `themes`; `pi.subagents.agents` (the `agents/` folder) is read by pi-subagents. pi-foreman has no lifecycle scripts, and the `.npmrc` in the clone turns off those of its dependencies (see [What an install runs on your machine](safety.md#what-an-install-runs-on-your-machine)). Project packages
 load only after the project is trusted; headless runs need `pi --approve` (`-a`).
 
 **`pi-intercom` is a fork pin.** `package.json` and `packages.lock.json` pin it as
