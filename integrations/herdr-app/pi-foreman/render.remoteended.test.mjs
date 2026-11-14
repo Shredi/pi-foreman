@@ -45,11 +45,11 @@ function render({ kids, mirrors = [] }) {
   return { mod, root: mod.render({}) };
 }
 
-// (a) The screenshot shape: two remote children, `idle` and `result delivered, idle` (the radar's idle state with that status line),
+// (a) The screenshot shape: two remote children, `idle` and `result delivered, idle` (the radar's state after a delivered result),
 // each with its mirror terminal (agent pi, done). One row each, no fm- row, the header counts the parent and both children.
 for (const argv of [true, false]) test(`(a) two remote children with mirrors (argv: ${argv}) are two rows, no fm- row, 3 sessions`, () => {
   const { root } = render({
-    kids: [child(KA, "alpha-inventory", "idle", "box1/t1k"), child(KB, "bravo-prechecks", "idle", "box1/t1m")],
+    kids: [child(KA, "alpha-inventory", "idle", "box1/t1k"), child(KB, "bravo-prechecks", "result delivered, idle", "box1/t1m")],
     mirrors: [mirror("t3", KA, "box1/t1k", { argv }), mirror("t4", KB, "box1/t1m", { argv })],
   });
   assert.equal(count(root, "alpha-inventory@box1"), 1);
@@ -92,5 +92,15 @@ test("(d) a local child session is one row, joined to its terminal", () => {
   const local = sess("fm-loc-a1b2c3", "local-child", { hcTerminal: "t9", state: "working", sym: "working", parent: "p" });
   const { root } = render({ kids: [local], mirrors: [{ address: "t9", state: "live", parent: "t5" }] });
   assert.equal(count(root, "local-child"), 1);
-  assert.equal(byId(root, "hc:t9").length, 0, "no bare row of its terminal");
+  assert.equal(byId(root, "row:hc:t9").length, 1, "its one row is joined to the terminal");
+  assert.equal(byId(root, "name:hc:t9").length, 1, "one name, no second row of its terminal");
+});
+
+// (f) An ended remote node that keeps a live session below it keeps its dimmed registry row; the live mirror draws no second one.
+test("(f) an ended remote node with a live session below it and a live mirror is one row, no fm- text", () => {
+  const live = sess(KB, "bravo-prechecks", { state: "working", sym: "working", parent: KA });
+  const kept = sess(KA, "alpha-inventory@box1", { machine: "box1", hcTerminal: "box1/t1k", state: "closed", parent: "p" }, [live]);
+  const { root } = render({ kids: [kept], mirrors: [mirror("t3", KA, "box1/t1k")] });
+  assert.equal(count(root, "alpha-inventory@box1"), 1);
+  assert.equal(texts(root).filter((x) => x.startsWith("fm-")).length, 0);
 });

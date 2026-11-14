@@ -972,9 +972,10 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       // The mirror of a remote session that has ended (closed, finished, lost) while its terminal lives: one dimmed row named as the
       // session, with its machine chip, clicking it focuses the mirror; its children stay beneath it. The row goes with the terminal.
       const ended = typeof term.name === "string" && term.name && !isObj(r.node) ? matchOf(endedNodes, term, r.attach) : null;
+      if (ended?.kept) return below; // its registry row stays (a live session below it): the mirror draws none, its children stay
       if (ended) {
         const children = sortItems([...recItems(null, r.recs ?? [], skip, id), ...below]);
-        return [{ id, type: "session", node: null, label: ended.label, dim: true, elsewhere: ended.machine, tier: "", costText: "", top: false, sessions: 0, status: "idle", urgent: urgentStatus(["idle", ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]), address: term.address, program: term.program ?? null }];
+        return [{ id, type: "session", node: null, label: ended.label, dim: true, elsewhere: ended.machine, tier: "", costText: "", top: false, sessions: 0, status: "idle", urgent: urgentStatus(["idle", ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]), address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) }];
       }
       if (attach && (!attachLabel(attach) || drawnTargets.has(attach))) return below; // an attach of nothing we know, or of a session already drawn: no row, its children stay
       const label = (attach && `${attachLabel(attach)}`) || (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
@@ -1008,12 +1009,12 @@ export function remoteNodesOf(tree) {
     .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name) }));
 }
 
-/** The ended remote sessions a local registry tree has (`machine` set, an hc terminal, `isEnded`), as `{target, name, label, machine}`:
+/** The ended remote sessions a local registry tree has (`machine` set, an hc terminal, `isEnded`), as `{target, name, label, machine}` (`kept: true` when a live session is below it, so its registry row stays):
  *  `name` is the attach name of `remoteNodesOf`, `label` the row name `<label>@<machine>`. Not polled, unlike `remoteNodesOf`. */
 export function endedRemoteNodesOf(tree) {
   return allSessions(tree)
     .filter((n) => n.machine && n.hcTerminal && isEnded(n))
-    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine }));
+    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine, ...(allSessions([n]).some((s) => s !== n && !isEnded(s)) ? { kept: true } : {}) }));
 }
 
 /** The `<machine>/<t>` a registry node with a remote terminal follows ("" for a node without one). */

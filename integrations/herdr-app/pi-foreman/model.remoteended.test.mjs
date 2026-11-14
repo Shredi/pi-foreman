@@ -45,6 +45,22 @@ test("the live mirror of an ended node is one dimmed row named as the session, w
   assert.equal(it.costText, "");
 });
 
+test("the ended mirror's item carries the pane of its resolved terminal", () => {
+  const withPane = hcChildItems([...base, mirrorTerm()], "t1", () => ({ ...resolve(), pane: "p7" }), { endedNodes: [ended()] });
+  assert.equal(withPane[0].pane, "p7");
+  assert.equal("pane" in hcChildItems([...base, mirrorTerm()], "t1", resolve, { endedNodes: [ended()] })[0], false);
+});
+
+test("an ended node that keeps a live session below it is marked kept, and its mirror draws no row, its children stay", () => {
+  const live = sess(KB, "bravo-prechecks", { state: "working", parent: KA });
+  const kept = sess(KA, "alpha-inventory@box1", { machine: "box1", hcTerminal: "box1/t1k", state: "closed", parent: "p" }, [live]);
+  const nodes = endedRemoteNodesOf([tree([kept])]);
+  assert.equal(nodes.length, 1);
+  assert.equal(nodes[0].kept, true);
+  const all = [...base, mirrorTerm(), { address: "t4", state: "live", name: "shell", parent: "t3" }];
+  assert.deepEqual(addrs(hcChildItems(all, "t1", resolve, { endedNodes: nodes })), ["t4"]);
+});
+
 test("the ended mirror's own children stay beneath its row", () => {
   const all = [...base, mirrorTerm(), { address: "t4", state: "live", name: "shell", parent: "t3" }];
   const items = hcChildItems(all, "t1", resolve, { endedNodes: [ended()] });
