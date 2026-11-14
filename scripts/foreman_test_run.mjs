@@ -14,8 +14,8 @@ import { fileURLToPath } from "node:url";
 // Spawn guard (node mode only): the run names a temp dir in FOREMAN_SPAWN_COUNT_DIR; the test preload
 // (extensions/core-adapter/test/_spawn-count.mjs) writes one file of child-process counts per test process. A run that passed
 // but started any npm, or more child processes than the budget, fails. FOREMAN_TEST_SPAWN_BUDGET overrides the budget.
-// Last measured: 11642 child processes in a full `npm run test:node` (git 8244, python 3227, node 58, npm 0, other 113).
-// The limit 13000 is the owner's decision of 2026-11-13, pending a new measurement; growth beyond it should be a decision.
+// Last measured: 12200 to 12252 child processes over five full `npm run test:node` runs (git about 8700, python about 3350, node 58, npm 0, other 113).
+// The limit 13000 is the owner's decision of 2026-11-13; the measurement leaves about 750 headroom, and growth beyond it should be a decision.
 export const DEFAULT_SPAWN_BUDGET = 13000;
 
 const OPTIONS_WITH_VALUE = new Set(["--import", "--require", "-r", "--loader", "--env-file"]);
