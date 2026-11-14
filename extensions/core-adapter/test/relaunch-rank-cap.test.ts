@@ -474,6 +474,18 @@ test("claude-bridge preset, Opus foreman, after a reviewer FAIL: an explicit mod
   assert.doesNotMatch(text, /claude-opus-4-1/);
 });
 
+test("claude-bridge preset, Opus foreman, RUNG_UP: context, no FAIL: an explicit model the policy rejects is replaced, rung_top names the launched model and the handoff is prepended", async (t) => {
+  const a = await bridgeRig(t, "claude-bridge");
+  await built(a, CONTEXT_REPORT, false);
+  const input = builder({ task: "go on", model: "claude-bridge/claude-opus-4-1", reason: "hard" });
+  const { id, res } = await a.launch(input);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(input.model, `${SONNET}:medium`);
+  assert.deepEqual(a.events("rung_top").map((r) => [r.model, r.reason]), [[SONNET, RANK_CAPPED_REASON]]);
+  assert.ok((input.task as string).includes(HANDOFF_START), input.task as string);
+  assert.doesNotMatch(texts(await a.started(id, input, "run-b2")), /claude-opus-4-1/);
+});
+
 test("claude-bridge preset, Opus foreman: a revision after a risk-tagged Opus run falls back to Sonnet, not [rank_policy:below]", async (t) => {
   const a = await bridgeRig(t, "claude-bridge");
   const first = builder({ risk: ["security"] });
