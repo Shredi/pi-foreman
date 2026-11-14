@@ -41,17 +41,23 @@ const rows: Row[] = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, ".
 const expand = (l: string): string => l.replaceAll("<scratch>", shPath(scr)).replaceAll("<worktree>", shPath(wt));
 const decide = (row: Row): GateResult => g("bash", { command: expand(row.line) }, row.child ? CHILD : {});
 
-for (const row of rows) {
-  const name = `${row.expect} ${row.child ? "[child] " : ""}${row.line} (${row.note})`;
+const rowName = (row: Row, i: number): string => `row ${i + 1}: ${row.expect} ${row.child ? "[child] " : ""}${row.line} (${row.note})`;
+
+rows.forEach((row, i) => {
   const opts = row.today ? {} : { todo: "r79: gh read set (search, graphql query, GET with fields)" };
-  test(name, opts, () => {
+  test(rowName(row, i), opts, () => {
     const r = decide(row);
     if (row.expect === "allow") {
       assert.equal(kind(r), "allow", row.line);
       assert.match(rule(r) ?? "", /default-gh-read/, row.line);
     } else assert.notEqual(kind(r), "allow", row.line);
   });
-}
+});
+
+test("meta: every row test name is distinct", () => {
+  const names = rows.map(rowName);
+  assert.equal(new Set(names).size, names.length);
+});
 
 test("meta: every not-allow row is already refused today (writes must never be a todo)", () => {
   const bad = rows.filter((r) => r.expect === "not-allow" && !r.today);
