@@ -64,7 +64,7 @@ no ranks anywhere the policy does nothing. A refused launch is traced `launch_re
 **Session model.** A session opened from Pi needs the owner's confirmation, whatever model it runs on (see [sessions](sessions.md)); there is no rank rule for sessions. The `claude-bridge` presets map `session-foreman` to Opus 5.5; the `openai` and `google` presets map it to their foreman model.
 
 **Presets** under `config/presets/` are opt-in overlay files, never merged by default. Apply one with
-`foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (merges into `<agent dir>/foreman.json`,
+`foreman config apply-preset <name> [--foreman <model id>] [--dry-run]` (`foreman config …` means `/foreman config …` in Pi or `bin/foreman config …` in a checkout; merges into `<agent dir>/foreman.json`,
 keeps your other keys, backs up the old file; see [install](install.md)), or copy the parts you want by hand. The rank-tier `inexpensive` preset is in [presets](presets.md):
 
 - `claude-bridge.json`: ranks fable > opus > sonnet > haiku; foreman Opus 5.5 (high); explorer, builder and

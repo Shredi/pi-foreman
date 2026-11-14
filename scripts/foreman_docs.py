@@ -355,7 +355,7 @@ def render(features=None, defaults=None, leaves=None, profiles=None):
             "Verbatim from [install](install.md#install):", "", "```text"]
     out += features["install"]
     out += ["```", "",
-            "Then map your models ([model-map](#model-map)), run `/foreman doctor` in Pi and check this inventory.",
+            "Then map your models ([model-map](#model-map)), run `/foreman setup` again, run `/foreman doctor` in Pi and check this inventory.",
             "Enable snippets below go into `<agent dir>/foreman.json` or an overlay's `pi.foreman.config`.", ""]
 
     out += ["## Layers", "",

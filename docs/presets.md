@@ -6,6 +6,8 @@
 
 ## apply-preset
 
+`foreman config …` here means `/foreman config …` in Pi (the form a package install has) or `bin/foreman config …` in a checkout. After a real apply, run `/foreman setup` to apply the models.
+
 ```
 foreman config apply-preset <name> [--foreman <provider>/<model id>] [--dry-run]
 ```

@@ -47,7 +47,7 @@ const USAGE = [
   "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
   "  --develop      run from a checkout: write <checkout>/.pi/settings.json so the checkout replaces the installed",
   "                 package in that directory (project packages load only after Pi's trust prompt, or `pi -a`)",
-  "  --intercom-hc  write crossMachine.transport \"hc\" (and, with --machine-name, crossMachine.machineName) into the pi-intercom config, so `name@machine` sends go over hc instead of SSH; off by default, intercom.allowRemote stays as is",
+  "  --intercom-hc  (remote, experimental) write crossMachine.transport \"hc\" (and, with --machine-name, crossMachine.machineName) into the pi-intercom config, so `name@machine` sends go over hc instead of SSH; off by default, intercom.allowRemote stays as is",
   "  --machine-name the name this machine goes by for pi-intercom (crossMachine.machineName); needs --intercom-hc",
   "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
   "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
@@ -63,7 +63,7 @@ const USAGE = [
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
-const NO_PROFILE_HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
+const NO_PROFILE_HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node ${path.join(ROOT, "setup.mjs")} --pick in a terminal`;
 export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain } = {}) {
   return !loginSigns(isolationDir(agentDir), { env, platform, keychain }).next().done;
 }

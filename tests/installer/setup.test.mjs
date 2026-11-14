@@ -1188,7 +1188,7 @@ const foremanJson = (env) => JSON.parse(fs.readFileSync(path.join(env.agentDir, 
 const foremanBackups = (env) => fs.readdirSync(env.agentDir).filter((f) => f.startsWith("foreman.json.bak-"));
 const writeUser = (env, cfg) => fs.writeFileSync(path.join(env.agentDir, "foreman.json"), `${JSON.stringify({ version: 1, providers: {}, ...cfg }, null, 2)}\n`);
 const NO_PICKER = { PI_FOREMAN_PICKER: undefined };
-const HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
+const HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node ${path.join(ROOT, "setup.mjs")} --pick in a terminal`;
 
 test("profile flags: every exit-2 combination names the rule and writes nothing", () => {
   const env = fresh();
@@ -1251,7 +1251,7 @@ test("--profile orchestration writes toggles, profile key, backup and diff; the 
   assert.match(r.out, /^\+\+\+ b\/foreman\.json/m);
   assert.match(r.out, /feature pr-ops -> off \(tools\.pr=false\)/);
   assert.doesNotMatch(r.out, /WARN safety relaxations/);
-  assert.doesNotMatch(r.out, new RegExp(HINT.replace(/[[\]<>/]/g, ".")));
+  assert.ok(!r.out.includes(HINT));
   // same run: the pr tools are gone from the generated block
   const reviewer = (e) => readSettings(e).subagents.agentOverrides.reviewer.tools;
   assert.ok(reviewer(plain).includes("pr_status"));
