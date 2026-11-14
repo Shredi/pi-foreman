@@ -9,14 +9,14 @@ import { OWNER_AWAY_TEXT } from "../presencewait.ts";
 import { r11Rig } from "./_r11rig.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
-async function awayRig(t: { after(fn: () => void | Promise<void>): void }, child: boolean) {
+async function awayRig(t: { after(fn: () => void | Promise<void>): void }, child: boolean, ctx?: Record<string, unknown>) {
   const dir = fs.realpathSync(mkTestTmp("pf-away-"));
   t.after(() => rmTestTmp(dir));
   const log = path.join(dir, "probes.log");
   const script = path.join(dir, "probe.cjs"); // node, not sh: the probe also has to run under cmd.exe
   fs.writeFileSync(script, `require("node:fs").appendFileSync(${JSON.stringify(log)}, "probe\\n");\nconsole.log(99999);\n`);
   const command = `"${process.execPath}" "${script}"`;
-  const r = await r11Rig(t, {}, { child, config: { presence: { enabled: true, awayAfterMinutes: 1, command } } });
+  const r = await r11Rig(t, {}, { child, ...(ctx ? { ctx } : {}), config: { presence: { enabled: true, awayAfterMinutes: 1, command } } });
   const probes = (): number => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0);
   return { r, probes };
 }
@@ -45,12 +45,20 @@ for (const child of [false, true]) {
   });
 }
 
-test("away (owner): a real ask probes, and the away text is its deny", async (t) => {
-  const { r, probes } = await awayRig(t, false);
-  const before = probes();
-  const keepAlive = setInterval(() => undefined, 50); // the probe child is detached on posix, attached on win32, and unref'd: hold the loop while the dialog awaits it
-  const res = await r.call("bash", { command: "npm install left-pad" }).finally(() => clearInterval(keepAlive));
-  assert.equal(res?.block, true);
-  assert.equal(res?.reason, OWNER_AWAY_TEXT);
-  assert.ok(probes() > before, "the dialog refreshed the sample first");
+test("away (owner): a real ask opens the dialog and the owner's answer applies; the away text is never the deny", async (t) => {
+  const opened: string[] = [];
+  const answers = ["allow once", undefined];
+  const ui = { notify: () => undefined, confirm: async () => false, setStatus: () => undefined, setWidget: () => undefined, select: async (title: string) => (opened.push(title), answers.shift()), input: async () => undefined };
+  const { r } = await awayRig(t, false, { ui });
+  const keepAlive = setInterval(() => undefined, 50); // the probe child is detached on posix, attached on win32, and unref'd: hold the loop while the gate awaits it
+  try {
+    assert.equal(await r.call("bash", { command: "npm install left-pad" }), undefined);
+    assert.equal(opened.length, 1, "the dialog opened although the sample says away");
+    const res = await r.call("bash", { command: "npm install right-pad" });
+    assert.equal(res?.block, true, "a dismissed dialog still denies");
+    assert.match(res?.reason ?? "", /denied by the user/);
+    assert.ok(!(res?.reason ?? "").includes(OWNER_AWAY_TEXT));
+  } finally {
+    clearInterval(keepAlive);
+  }
 });

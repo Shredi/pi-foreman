@@ -116,10 +116,14 @@ pi-foreman sends every idle warm itself (`extensions/core-adapter/selfwarm.ts`);
 
 The spend of a stretch is capped by a tier, chosen at each warm by what the session is doing:
 
-- **Half tier** (`budgetShare`, default 0.5 of one cold re-cache): a running subagent (sync or async), a background task (`foreman_bg`, `bg_run`) or a `foreman_wait` raise it whatever the presence of the owner. A running turn, an open `ask_user_question` or `plan_mode_question`, a waiting permission or approval dialog and a command the session itself waits on (`bash`, `powershell`) raise it while the owner is not away.
+- **Half tier** (`budgetShare`, default 0.5 of one cold re-cache): a running subagent (sync or async), a background task (`foreman_bg`, `bg_run`) or a `foreman_wait` raise it whatever the presence of the owner (one exception, below: subagents that only wait on a permission question). A running turn, an open `ask_user_question` or `plan_mode_question`, a waiting permission or approval dialog and a command the session itself waits on (`bash`, `powershell`) raise it while the owner is not away.
 - **Quarter tier** (half of `budgetShare`): everything else, and an away owner without a subagent, background task or wait.
 
-An owner counts as away `presence.awayAfterMinutes` (11) after the last input, plus a grace of 15 minutes: a turn, question, dialog or command keeps the half tier until 15 minutes after the owner turned away, judged at the due time of the warm (from the presence sample's own idle time). An unknown presence counts as present. The tier is read at each warm and for the refusal check after it, so activity that ends lowers the cap at once.
+An owner counts as away `presence.awayAfterMinutes` (11) after the last input, plus a grace of 15 minutes: a turn, question, dialog or command keeps the half tier until 15 minutes after the owner turned away, judged at the due time of the warm (from the presence sample's own idle time). An unknown presence counts as present.
+
+Waiting permission questions do not keep the cache half-warm for ever. While the owner is away, after the 15-minute grace, a session whose only running subagents wait on a permission question (the parent holds the dialog) gets the quarter tier. With another subagent working, or with the owner present, half stays. The guard of the final compaction still counts every run, waiting or not. A child session whose turn is blocked on its parent's ruling gets the quarter tier once that wait has lasted the same grace (a child cannot see presence, so the wait is the signal). A session idle in `foreman_wait` on a ruling file keeps the half tier.
+
+The tier is read at each warm and for the refusal check after it, so activity that ends lowers the cap at once.
 
 ## Warm budget (cost rule)
 

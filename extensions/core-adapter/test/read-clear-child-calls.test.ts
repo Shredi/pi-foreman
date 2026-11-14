@@ -92,7 +92,7 @@ test("a child with gate.childAsk deny: a non-clear reads the child-asks-off text
   assert.doesNotMatch(c.prompts[0], /^You are the read judge/);
 });
 
-test("a child with gate.childAsk parent: a clear runs with no ask file; a non-clear writes ask.md for the parent's pane and is denied when none answers", async (t) => {
+test("a child with gate.childAsk parent: a clear runs with no ask file; a non-clear writes ask.md for the parent's pane and waits for its ruling, past gate.askTimeoutMs", async (t) => {
   const askDir = fs.mkdtempSync(path.join(os.tmpdir(), "rc-ask-"));
   t.after(() => fs.rmSync(askDir, { recursive: true, force: true }));
   const c = await childRig(t, { childAsk: "parent", askTimeoutMs: 300 }, { binding: { askDir } });
@@ -100,10 +100,16 @@ test("a child with gate.childAsk parent: a clear runs with no ask file; a non-cl
   assert.equal(await c.call("bash", { command: PROBE }), undefined);
   assert.equal(fs.existsSync(path.join(askDir, "ask.md")), false, "a clear opens no ask");
   c.reply.read = ESCALATE;
-  const r = await c.call("bash", { command: "ls ~/.local/share | head -3" });
-  assert.equal(r?.block, true);
-  assert.match(r?.reason ?? "", /the parent did not answer within/);
+  let settled = false;
+  const p = c.call("bash", { command: "ls ~/.local/share | head -3" }).finally(() => (settled = true));
+  for (let i = 0; i < 400 && !fs.existsSync(path.join(askDir, "ask.md")); i++) await new Promise((res) => setTimeout(res, 10));
+  await new Promise((res) => setTimeout(res, 600));
+  assert.equal(settled, false, "no denial after the old timeout");
   assert.match(fs.readFileSync(path.join(askDir, "ask.md"), "utf8"), /ls ~\/\.local\/share \| head -3/);
+  fs.writeFileSync(path.join(askDir, "ruling-1.md"), "DENY\nno\n");
+  const r = await p;
+  assert.equal(r?.block, true);
+  assert.match(r?.reason ?? "", /denied by the parent: no/);
 });
 
 test("the same scenario with gate.readClear false: exactly one call and the same deny text", async (t) => {

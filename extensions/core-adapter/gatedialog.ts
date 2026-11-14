@@ -2,12 +2,11 @@
 //
 // askOwner(): four options (allow once, allow and remember, deny with comment, deny and stop), the full command in the title (Pi's selector title
 // is a wrapping text without scrolling, so a command above SHOW_ALL_LINES lines shows its first HEAD_LINES and last TAIL_LINES and names a trace
-// file `<state>/gate-ask-<n>.txt` that holds all of it), every dialog opened with the presence abort signal (presencewait.ts), a dismissed
-// dialog denies. "allow and remember" writes through permconfig.ts (`PermStore.writeRemember`), which refuses unless the project file's trust
+// file `<state>/gate-ask-<n>.txt` that holds all of it), every dialog opened whatever the presence state with a signal of its own that follows only
+// the call's abort signal and the session shutdown (a dialog closed that way is `aborted`, never an answer), a dismissed dialog denies. "allow and remember" writes through permconfig.ts (`PermStore.writeRemember`), which refuses unless the project file's trust
 // check passes; the refusal is shown to the owner and the call runs once.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { OWNER_AWAY_TEXT, withPresence } from "./presencewait.ts";
 import type { PresenceLike, WaitTimers } from "./presencewait.ts";
 
 export const DIALOG_OPTIONS = ["allow once", "allow and remember", "deny with comment", "deny and stop"] as const;
@@ -72,6 +71,8 @@ export interface OwnerDeps {
   presenceEnabled?: boolean;
   presenceTimers?: WaitTimers;
   presenceIntervalMs?: number;
+  /** The call's abort signal and the session shutdown: the dialog closes without an answer (`aborted`). Presence never closes a dialog. */
+  signal?: AbortSignal;
   /** `<agentDir>/pi-foreman/state`: where the full text of a long command is kept. */
   stateDir?: string;
   remember?: { store: RememberStore; /** reload the permission files, clear the classifier cache */ afterWrite(): void };
@@ -79,7 +80,7 @@ export interface OwnerDeps {
 
 export type OwnerAnswer =
   | { allow: true; how: "once" | "remember"; notes: string[]; /** how is "once" because the remember write was refused */ refused?: true }
-  | { allow: false; how: "comment" | "stop" | "dismissed" | "cancelled" | "away"; reason: string };
+  | { allow: false; how: "comment" | "stop" | "dismissed" | "cancelled" | "away" | "aborted"; reason: string };
 
 /** Control characters other than newline and tab are shown as `?` (nothing a command carries may drive the terminal). */
 const printable = (s: string): string => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, "?");
@@ -137,12 +138,23 @@ function rememberedNotice(file: string, sentences: string[], rules: string[], ba
   ].join("\n"));
 }
 
-/** Ask the owner. Never throws for a dismissed dialog; an away owner denies without or during the dialog. */
+export const DIALOG_ABORTED_TEXT = "pi-foreman: the permission dialog was closed without an answer (the call was aborted or the session ended).";
+
+/** Ask the owner. Never throws for a dismissed dialog. The dialog opens whatever the presence state and stays open until the owner answers, the call is aborted or the session shuts down. */
 export async function askOwner(a: OwnerAsk, d: OwnerDeps): Promise<OwnerAnswer> {
+  const aborted: OwnerAnswer = { allow: false, how: "aborted", reason: DIALOG_ABORTED_TEXT };
+  if (d.signal?.aborted) return aborted;
   const shown = commandDisplay(a.payload, d.stateDir);
   const title = ownerTitle(a, shown.text);
-  const r = await withPresence(d.presence, (signal) => dialog(a, d, title, signal), { enabled: d.presenceEnabled, timers: d.presenceTimers, intervalMs: d.presenceIntervalMs });
-  return r.away === true ? { allow: false, how: "away", reason: OWNER_AWAY_TEXT } : r.value;
+  const own = new AbortController();
+  const follow = (): void => own.abort();
+  d.signal?.addEventListener("abort", follow, { once: true });
+  try {
+    const value = await dialog(a, d, title, own.signal);
+    return own.signal.aborted ? aborted : value;
+  } finally {
+    d.signal?.removeEventListener("abort", follow);
+  }
 }
 
 async function dialog(a: OwnerAsk, d: OwnerDeps, title: string, signal: AbortSignal): Promise<OwnerAnswer> {

@@ -80,13 +80,25 @@ test("a present owner: the write verdict is allowed, with a gate-log record nami
   assert.deepEqual([rec.verdict, rec.rule, rec.reason], ["allow", "protected:P1", "restarts the service"]);
 });
 
-test("away fails closed: probe says away, probe fails, presence off, headless and child all ask for a write verdict", async (t) => {
+test("the owner's own session ignores presence: a write verdict is allowed with an away, failed, missing or stale sample and with presence off", async (t) => {
   const cases: [string, RigOpts][] = [
     ["probe away", { sample: "away" }],
     ["probe failed", { sample: "fail" }],
     ["no sample", { sample: "none" }],
     ["stale sample", { sample: "stale" }],
     ["presence disabled", {}],
+  ];
+  for (const [name, o] of cases) {
+    const r = await rig(t, o);
+    assert.equal(await r.call("bash", SSH), undefined, name);
+    const pc = r.events("protected_check");
+    assert.equal(pc.length, 1, name);
+    assert.deepEqual([pc[0].away, pc[0].accepted], [false, "allow"], name);
+  }
+});
+
+test("a child and a headless session fail closed: they ask for a write verdict", async (t) => {
+  const cases: [string, RigOpts][] = [
     ["headless", { hasUI: false, sample: "present" }],
     ["child", { child: true, hasUI: false, sample: "present" }],
   ];
@@ -101,10 +113,25 @@ test("away fails closed: probe says away, probe fails, presence off, headless an
   }
 });
 
-test("a read verdict on a read call is allowed even while away (the read allow needs no presence)", async (t) => {
-  const r = await rig(t, { replies: [READ_ALLOW] });
+test("a read verdict on a read call is allowed for a child too (the read allow needs no presence)", async (t) => {
+  const r = await rig(t, { replies: [READ_ALLOW], child: true, hasUI: false });
   assert.equal(await r.call("bash", SSH), undefined);
   assert.deepEqual([r.events("protected_check")[0].accepted, r.events("protected_check")[0].away], ["allow", true]);
+});
+
+test("a deploy or network allow: allowed in the owner's session with an away sample, asked for a child and a headless session", async (t) => {
+  for (const effect of ["deploy", "network"]) {
+    const reply = JSON.stringify({ verdict: "allow", effect, confidence: "high", entry: null, reason: "scoped" });
+    const ui = await rig(t, { sample: "away", replies: [reply] });
+    assert.equal(await ui.call("bash", SSH), undefined, effect);
+    assert.deepEqual([ui.events("protected_check")[0].away, ui.events("protected_check")[0].accepted], [false, "allow"], effect);
+    for (const o of [{ child: true, hasUI: false }, { hasUI: false }] as RigOpts[]) {
+      const r = await rig(t, { ...o, sample: "present", replies: [reply] });
+      const res = await r.call("bash", SSH);
+      assert.deepEqual([r.events("protected_check")[0].away, r.events("protected_check")[0].accepted], [true, "ask"], effect);
+      assert.ok(res && res.block, effect);
+    }
+  }
 });
 
 test("the foreman's shell-write refusal comes before the check", async (t) => {
