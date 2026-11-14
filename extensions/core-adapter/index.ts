@@ -3336,7 +3336,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
         // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.
-        const strongKeyed = new Set(launchEntries(input).filter((e) => typeof (e.model ?? input.model) === "string" && splitLevel(String(e.model ?? input.model).trim()).base === "strong"));
+        // (the keyword, or the role's strong model itself)
+        const strongKeyed = new Set(launchEntries(input).filter((e) => {
+          const m = e.model ?? input.model;
+          const rung = (resolution.roles[String(e.agent)]?.strong as Json | undefined)?.model;
+          const base = typeof m === "string" ? splitLevel(m.trim()).base : "";
+          return base === "strong" || (base !== "" && typeof rung === "string" && base === splitLevel(rung).base);
+        }));
         shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
@@ -3452,7 +3458,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const plan = sizedPlans.find((p) => p.entry === e);
             return foremanAt !== null && splitLevel(strongModel).base === foremanAt && rankTie(s.config.config, foremanAt, strongModel, "builder") && equalOnStrongRisk(s.config.config) && plan?.role === "builder" && plan.target === "strong" && plan.probe.length > 0;
           };
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs, strongAllowed });
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs, strongAllowed, explicitAllowed: (m) => explicitModelAllowed(s.config.config, foremanAt, m, "builder") });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };

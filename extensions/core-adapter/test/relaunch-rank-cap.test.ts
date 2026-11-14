@@ -7,7 +7,7 @@ import * as path from "node:path";
 import { LadderState, RANK_CAPPED_REASON } from "../ladder.ts";
 import { applyLaunchModels } from "../launchmodel.ts";
 import { planSizing, takeSizing } from "../sizing.ts";
-import { ranksOf, rankRefusalFor } from "../ranks.ts";
+import { ranksOf, rankRefusalFor, explicitModelAllowed } from "../ranks.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
@@ -530,4 +530,48 @@ test("ladder.plan: a live rung that is the refused strong rung falls back to the
   const ok: Record<string, unknown> = builder({ task: "fix it" });
   const p2 = mk().plan(ok, roles, { preferStrong: true, revisionReason: "review_fail", strongAllowed: () => true });
   assert.equal(p2.climbs.filter((c) => c.skipped).length, 0);
+});
+
+// Any model value but `strong` of an automatic climb whose strong rung the rank policy refuses: plan + applyLaunchModels + the rank check, as index.ts runs them
+const FABLE = "claude-bridge/claude-fable-5-1";
+const FAIL_VALUES: [string, string | null][] = [ // value -> the model it runs on (null: refused like the strong keyword)
+  ["claude-sonnet-5-5", SONNET], ["openai/gpt-5.1", SONNET], ["sonnet", SONNET], ["Strong", SONNET], ["STRONG", SONNET], ["claude-bridge/Claude-Opus-5-5", SONNET],
+  [FABLE, SONNET], [SONNET, SONNET], ["claude-bridge/claude-opus-4-1", SONNET],
+  [OPUS, null], [` ${OPUS}:high `, null], ["strong", null], ["strong:high", null],
+];
+
+function failLaunch(foreman: string, value: string, config: Record<string, any> = PRESET("claude-bridge")): { model: string; capped: boolean; refused: boolean; trace: unknown } {
+  const roles = config.providers["claude-bridge"].roles;
+  const l = new LadderState();
+  const input: Record<string, unknown> = builder({ task: "fix it", model: value, reason: "retry" });
+  const allowed = (_e: unknown, m: string): boolean => rankRefusalFor(config, foreman, m, ["builder"]) === null;
+  const p = l.plan(input, roles, { preferStrong: true, revisionReason: "review_fail", ranks: ranksOf(config), strongAllowed: allowed, explicitAllowed: (m) => explicitModelAllowed(config, foreman, m, "builder") });
+  assert.equal(p.block, undefined);
+  const capped = p.climbs.some((c) => c.skipped);
+  applyLaunchModels(input, roles, undefined, { preferStrong: true, provider: "claude-bridge", capped: new Set(p.climbs.filter((c) => c.skipped).map((c) => c.entry)), explicit: (role, m) => explicitModelAllowed(config, foreman, m, role) });
+  const model = String(input.model).split(":")[0];
+  return { model, capped, refused: rankRefusalFor(config, foreman, model, ["builder"]) !== null, trace: l.apply(p.climbs, () => [])[0] };
+}
+
+for (const [value, expected] of FAIL_VALUES) {
+  test(`plan + applyLaunchModels, Opus foreman, strong rung refused, after a FAIL, model ${JSON.stringify(value)}: ${expected ? `runs on ${expected}` : "refused"}`, () => {
+    const r = failLaunch(OPUS, value);
+    if (expected === null) {
+      assert.equal(r.refused, true);
+      assert.equal(r.capped, false);
+      return;
+    }
+    assert.equal(r.refused, false);
+    assert.equal(r.model, expected);
+    assert.deepEqual(r.trace, { event: "rung_top", role: "builder", model: expected, reason: RANK_CAPPED_REASON });
+  });
+}
+
+test("plan + applyLaunchModels, strong rung allowed (Fable foreman), after a FAIL: no value is capped, none is refused", () => {
+  for (const [value] of FAIL_VALUES) {
+    const r = failLaunch(FABLE, value);
+    assert.equal(r.capped, false, value);
+    assert.equal(r.refused, false, value);
+    assert.equal(r.model, OPUS, value); // as on main: the strong rung
+  }
 });

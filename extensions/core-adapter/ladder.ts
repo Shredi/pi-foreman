@@ -240,6 +240,8 @@ export interface LadderOptions {
   sizing?: ReadonlySet<Json>;
   /** Whether the rank loop lets this builder entry run on the strong rung model; false skips an automatic climb (RANK_CAPPED_REASON). */
   strongAllowed?: (entry: Json, strongModel: string) => boolean;
+  /** Whether applyLaunchModels passes this explicit builder model through (ranks.ts explicitModelAllowed); any other value of a capped entry (with no callback: a `/` model passes) runs on the live or bottom rung. */
+  explicitAllowed?: (model: string) => boolean;
 }
 
 /** Whether model `a` ranks strictly above `b` (lower tier number); null when either is unranked. */
@@ -333,6 +335,14 @@ export class LadderState {
         // the strong rung is refused by the rank policy: the pending handoff goes to this launch (a strong launch never happens)
         const pending = this.eligible.get(role);
         if (role === "builder" && pending && opts.strongAllowed && !opts.strongAllowed(e, strong)) refused.push({ e, role, model: keyword.includes("/") ? keyword : from, strong, h: pending });
+        // an automatic climb whose strong rung the rank policy refuses: no model value but `strong` (or the refused strong rung itself) gets it; an accepted explicit model stays, else the live rung (not the strong one), else the bottom rung
+        if (role === "builder" && opts.preferStrong && keyword !== "default" && keyword !== to && (from !== to || (lv && bottom !== to)) && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
+          const kept = keyword.includes("/") && (opts.explicitAllowed?.(keyword) ?? true) ? keyword : null;
+          if (!kept && lv && from !== to) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
+          const stays = kept ?? (from === to ? bottom : from);
+          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
+          continue;
+        }
         // review_fail: the target is max(current, strong) by provider rank; current = the explicit launch model, else the live rung.
         const explicitModel = keyword.includes("/") ? keyword : null;
         if (role === "builder" && opts.preferStrong && opts.revisionReason === "review_fail" && (keyword === "" || explicitModel)) {
@@ -344,21 +354,10 @@ export class LadderState {
             continue;
           }
           if (explicitModel && above === false) {
-            if (current !== to && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
-              climbs.push({ entry: e, role, from: current, to: current, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
-              continue;
-            }
             if (current !== to) e.model = "strong"; // below the strong rung: rises to it
             climbs.push({ entry: e, role, from: current, to, reason: "review_fail", top: current === to || undefined });
             continue;
           }
-        }
-        if (keyword === "" && role === "builder" && opts.preferStrong && (from !== to || (lv && bottom !== to)) && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
-          // a live rung that is the refused strong rung falls back to the bottom rung (applyLaunchModels, capped: its own level)
-          if (lv && from !== to) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
-          const stays = from === to ? bottom : from;
-          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
-          continue;
         }
         if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision", top });
         continue;
