@@ -576,6 +576,7 @@ Switch: `tools.pr` is true.
 | `tools.prHost` | `"auto"` | not in project/session (the PR host program comes from the user or overlay config) |
 | `tools.prGithubHosts` | unset | not in project/session (the GitHub hosts of the PR tracker come from the user or overlay config) |
 | `tools.prWatchSeconds` | `60` | any layer |
+| `tools.prReadyLabel` | `""` | not in project/session (the label the harness writes to the PR host comes from the user or overlay config) |
 | `tools.prDraft` | `true` | any layer |
 | `tools.prSettleSeconds` | `90` | any layer |
 | `tools.prReturnToBase` | `true` | any layer |
@@ -1029,6 +1030,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `providers.*.roles.*.strong` | the strong model is picked in the user or overlay config |
 | `tools.prHost` | the PR host program comes from the user or overlay config |
 | `tools.prGithubHosts` | the GitHub hosts of the PR tracker come from the user or overlay config |
+| `tools.prReadyLabel` | the label the harness writes to the PR host comes from the user or overlay config |
 | `tools.prSources` | PR sources run programs: user or overlay config only |
 | `tools.prWake` | the wake rules for PR watches come from the user or overlay config |
 | `skills.visible` | it hides every other skill: user or overlay config only |

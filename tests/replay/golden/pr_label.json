@@ -1,0 +1,44 @@
+{
+ "calls": [
+  [
+   "gh",
+   "pr",
+   "view",
+   "7",
+   "-R",
+   "ghe.example.com/own/repo",
+   "--json",
+   "labels"
+  ],
+  [
+   "gh",
+   "pr",
+   "edit",
+   "7",
+   "-R",
+   "ghe.example.com/own/repo",
+   "--add-label",
+   "ready"
+  ],
+  [
+   "gh",
+   "pr",
+   "view",
+   "7",
+   "-R",
+   "ghe.example.com/own/repo",
+   "--json",
+   "labels"
+  ],
+  [
+   "gh",
+   "pr",
+   "edit",
+   "7",
+   "-R",
+   "ghe.example.com/own/repo",
+   "--remove-label",
+   "ready"
+  ]
+ ]
+}

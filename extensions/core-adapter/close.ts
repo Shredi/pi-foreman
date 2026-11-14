@@ -127,7 +127,7 @@ export function intercomClose(details: unknown, parentId: string | undefined, fr
 export const REMOTE_PARENT_ENV = "PI_FOREMAN_REMOTE_PARENT";
 export const CLOSE_ORDER_FILE = "close.json";
 /** The fixed parts of two refusal reasons; `refuseSlug` (session.ts) maps them to `pr-watched` and `not-started`. */
-export const PR_WATCHED_REASON = "open and watched (merge it, or pr_unwatch)";
+export const PR_WATCHED_REASON = "open and watched (wait for the merge, or pr_unwatch)";
 export const CLOSE_START_FAILED_REASON = "the close turn failed to start:";
 /** A close order older than this is stale and refused. */
 export const CLOSE_ORDER_MAX_AGE_MS = 15 * 60_000;

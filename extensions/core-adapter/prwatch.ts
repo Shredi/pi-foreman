@@ -10,7 +10,7 @@ import { isTrackedKey, keyString } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { DEFAULT_RULES, wakes } from "./prwake.ts";
 import type { WakeEvent, WakeKind, WakeRule } from "./prwake.ts";
-import { readiness } from "./prready.ts";
+import { labelTarget, readiness } from "./prready.ts";
 import type { ReviewFacts } from "./prready.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
@@ -79,6 +79,8 @@ export interface SourceStatus {
   at: number;
 }
 export type Mergeable = "mergeable" | "conflicting" | "unknown";
+/** The host's review decision of a PR; only the ready label's target reads it. */
+export type ReviewDecision = "approved" | "changes_requested" | "review_required";
 export interface WatchSnapshot {
   state: "open" | "merged" | "closed";
   mergeable: Mergeable;
@@ -95,6 +97,8 @@ export interface WatchSnapshot {
   required?: string[] | null;
   /** The forge's merge state (`blocked`, `behind`, `dirty`, `draft`, `unknown`, `clean`, ...), lowercase; absent: not reported. */
   mergeState?: string;
+  /** The host's review decision; absent: the host gave none (or an older stored entry). */
+  reviewDecision?: ReviewDecision;
   /** Fetched this poll (the PR's updatedAt moved, or the first poll); undefined = not fetched. */
   comments?: CommentEntry[];
 }
@@ -113,6 +117,7 @@ export type StoreRead =
   | { kind: "down" };
 
 const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+export const reviewDecisionOf = (v: unknown): ReviewDecision | undefined => (v === "approved" || v === "changes_requested" || v === "review_required" ? v : undefined);
 const text = (v: unknown): string => (typeof v === "string" ? v : "");
 const rid = (r: Run): string => r.id || r.name;
 
@@ -160,8 +165,17 @@ export interface WatchState {
   draftAsk?: { head: string; draft: boolean; okAt: number };
   /** Managed watch: the draft state seen at the last settle (a change restarts the no-checks count). */
   draftSeen?: boolean;
+  /** The ready label's record (labelStep): the label name it was made for; `own` the label on the PR is the watch's own (kept across heads); `onHead` the head it last asked an add for; `selfOff` the head on which its own remove changed the PR ("" when none). */
+  label?: LabelRecord;
   /** The last event text (the pr_watch wait entry of the live file). */
   last: string;
+}
+
+export interface LabelRecord {
+  name: string;
+  own: boolean;
+  onHead: string;
+  selfOff: string;
 }
 
 /** The readiness rule's part of a delta (prready.ts): `ok` the review facts hold for the host's head; `managed` the watch is under draft handling (an owned PR). */
@@ -294,6 +308,8 @@ export interface Delta {
   final?: "merged" | "closed" | "gone";
   /** The line of the return to the base branch (merged only; appended last). */
   returned?: string;
+  /** The watch takes the draft PR out of draft on this tick (the checks header says `leaving draft`): the line for a child or for a session without a parent. */
+  leavingDraft?: "child" | "alone";
 }
 
 const isReview = (e: CommentEntry): boolean => e.kind === "review" || e.kind === "review_summary";
@@ -459,6 +475,8 @@ export function prMessage(number: number, d: Delta): { customType: string; conte
   if (d.draftReady) content += `\nreport to the parent: PR #${number} green on ${d.head.slice(0, 7)}, mergeable, still a draft`;
   if (d.conflict) content += `\nmerge ${oneLine(d.base, 100) || "the base"} into the branch, then push via the parent`;
   if (d.closedUnmerged) content += `\nreport to the parent: PR #${number} closed unmerged`;
+  if (d.leavingDraft === "child") content += `\nthe watch is taking PR #${number} out of draft now; hold your report until the ready line follows`;
+  if (d.leavingDraft === "alone") content += `\nthe watch is taking PR #${number} out of draft now; confirm with pr_status before you tell the owner it is ready`;
   if (d.returned) content += `\n${oneLine(d.returned, 600)}`;
   return { customType: PR_MESSAGE_TYPE, content, display: true, details: { number, outcome: d.final ?? "event", delta: d } };
 }
@@ -487,7 +505,8 @@ function fromBatch(p: Record<string, unknown>): Omit<WatchSnapshot, "comments"> 
   const state = p.state === "merged" || p.state === "closed" ? p.state : "open";
   const required = Array.isArray(p.required) ? (p.required as unknown[]).filter((n): n is string => typeof n === "string") : p.required === null ? null : undefined;
   const mergeState = text(p.mergeState);
-  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(mergeState ? { mergeState } : {}) };
+  const reviewDecision = reviewDecisionOf(p.reviewDecision);
+  return { state, mergeable: mergeableOf(p.mergeable), head: text(p.headSha), base: text(p.baseRef), updatedAt: text(p.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(mergeState ? { mergeState } : {}), ...(reviewDecision ? { reviewDecision } : {}) };
 }
 
 /**
@@ -558,7 +577,8 @@ async function pollOne(run: RunOp, key: PrKey, seen: { updatedAt: string }): Pro
     // a failed run keeps its place; a repeated name with the same startedAt is one run
     runs = runs.filter((r, i) => runs.findIndex((x) => x.id === r.id) === i);
   }
-  const base: Omit<WatchSnapshot, "comments"> = { state, mergeable: mergeableOf(st.result.mergeable), head: text(st.result.headSha), base: text(st.result.baseRef), updatedAt: text(st.result.updatedAt), runs };
+  const reviewDecision = reviewDecisionOf(st.result.reviewDecision);
+  const base: Omit<WatchSnapshot, "comments"> = { state, mergeable: mergeableOf(st.result.mergeable), head: text(st.result.headSha), base: text(st.result.baseRef), updatedAt: text(st.result.updatedAt), runs, ...(reviewDecision ? { reviewDecision } : {}) };
   return withComments(run, key, base, seen);
 }
 
@@ -631,7 +651,9 @@ function parseState(v: unknown): WatchState | null {
     ...(da && typeof da === "object" && typeof da.head === "string" && typeof da.draft === "boolean" && finite(da.okAt) ? { draftAsk: { head: da.head, draft: da.draft, okAt: da.okAt } } : {}),
     ...(typeof s.draftSeen === "boolean" ? { draftSeen: s.draftSeen } : {}),
   };
-  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, last: s.last };
+  const lb = s.label as Record<string, unknown> | null | undefined;
+  const label = lb && typeof lb === "object" && typeof lb.name === "string" && lb.name && typeof lb.own === "boolean" && typeof lb.onHead === "string" && typeof lb.selfOff === "string" ? { label: { name: lb.name, own: lb.own, onHead: lb.onHead, selfOff: lb.selfOff } } : {};
+  return { head: s.head, failedIds: s.failedIds, ci: s.ci, mergeable: s.mergeable, commentIds: s.commentIds, updatedAt: s.updatedAt, noCi: s.noCi, noCiHead: s.noCiHead, readyHead: s.readyHead, ...draft, ...label, ...(typeof s.draftHead === "string" && s.draftHead ? { draftHead: s.draftHead } : {}), ...(typeof s.notReadyKey === "string" && s.notReadyKey ? { notReadyKey: s.notReadyKey } : {}), ...passSince, ...review, last: s.last };
 }
 
 /** One stored record (v2, or a v1 one converted: its seen comment ids kept, an empty check baseline), or null when it is unreadable. */
@@ -697,6 +719,10 @@ export interface PrWatchesDeps {
   tick?(): void;
   /** The host op `pr_draft` for an owned watch's PR (not a model-facing tool): the repository and host of the watch's key, `cwd` the watch's directory. */
   draft?(key: PrKey, cwd: string, draft: boolean): Promise<SafeOpOutcome>;
+  /** The host op `pr_label` (not a model-facing tool) for any open watch: put the label on (`on`) or take it off; the repository and host of the watch's key. */
+  label?(key: PrKey, cwd: string, label: string, on: boolean): Promise<SafeOpOutcome>;
+  /** tools.prReadyLabel ("" = off: no label call at all). Read on every use, so a config reload applies; absent: off. */
+  readyLabel?(): string;
   /** The working directory a new watch polls in (stored so a restored watch polls there). */
   cwd?(): string;
   /** The watch set, a watch's state or the merged PRs changed: write the session entry. */
@@ -747,6 +773,12 @@ interface Watch {
   owned: boolean;
   /** A draft call is on its way. */
   drafting: boolean;
+  /** A label call is on its way. */
+  labeling: boolean;
+  /** Label handling ended for this watch (the host has no `pr_label`). */
+  labelStopped?: boolean;
+  /** Failed label calls of the current head (not persisted), like `draftFail`. */
+  labelFail?: { head: string; n: number; nextAt: number; capped: boolean };
   /** Failed draft calls of the current head (not persisted): count, the earliest next try (ms) and whether the cap was reached. */
   draftFail?: { head: string; n: number; nextAt: number; capped: boolean };
 }
@@ -874,7 +906,7 @@ export class PrWatches {
   }
 
   private register(r: WatchRecord): Watch {
-    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, drafting: false };
+    const w: Watch = { key: r.key, state: r.state, started: r.startedAt, cwd: r.cwd, poller: null, busy: false, ended: false, seenAt: null, retrackedAt: null, status: "", owned: r.owned === true, drafting: false, labeling: false };
     this.reserved = this.reserved.filter((k) => !samePr(k, r.key));
     this.merged = this.merged.filter((k) => !samePr(k, r.key));
     this.watches.set(keyString(r.key), w);
@@ -1116,6 +1148,7 @@ export class PrWatches {
       this.setStatus(w, "");
       // the draft target follows the session's facts, which can move while the store does not
       void this.reconcile(w, r.snap, r.okAt);
+      void this.labelStep(w, r.snap);
       return this.arm(w);
     }
     this.setStatus(w, "");
@@ -1134,9 +1167,12 @@ export class PrWatches {
     const changed = JSON.stringify(state) !== JSON.stringify(w.state);
     w.state = state;
     if (changed) this.persist();
+    // asked before reconcile starts its call (which sets the memo): the message and the call rest on the same decision
+    const leaving = !!delta && this.draftCall(w, snap, r.okAt) === false;
     void this.reconcile(w, snap, r.okAt);
+    void this.labelStep(w, snap);
     if (delta) {
-      this.deps.send(prMessage(w.key.n, delta), this.idle());
+      this.deps.send(prMessage(w.key.n, leaving ? this.leavingDelta(delta, child) : delta), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "event" });
     }
     if (changed || delta) this.deps.changed?.();
@@ -1170,6 +1206,32 @@ export class PrWatches {
   }
 
   /**
+   * The draft target the watch asks of the host now, null when it makes no call now: the one predicate of `reconcile` and of the tick's message (settle). Holds every
+   * condition of the call: the PR is open, the watch is under draft handling, a target exists and differs from the stored state, no call is in flight or memoised
+   * for this head and store entry, and the failure pause or cap does not hold. Synchronous; false when the facts source throws.
+   */
+  private draftCall(w: Watch, snap: WatchSnapshot, okAt: number): boolean | null {
+    try {
+      if (w.ended || w.drafting || snap.state !== "open" || !snap.head || !this.managed(w)) return null;
+      const target = this.draftTarget(w, snap);
+      if (target === null || target === !!snap.draft) return null;
+      const ask = w.state.draftAsk;
+      if (ask && ask.head === snap.head && ask.draft === target && okAt <= ask.okAt) return null;
+      const f = w.draftFail;
+      if (f && f.head === snap.head && (f.capped || this.deps.now() < f.nextAt)) return null;
+      return target;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The checks-passed message of a draft PR the watch takes out of draft on this tick: `leaving draft` for `draft`, and the line for a child or a session without a parent. */
+  private leavingDelta(d: Delta, child: boolean): Delta {
+    if (!d.events.includes("checks finished: pass, draft")) return d;
+    return { ...d, events: d.events.map((e) => (e === "checks finished: pass, draft" ? "checks finished: pass, leaving draft" : e)), leavingDraft: child ? "child" : "alone" };
+  }
+
+  /**
    * Bring the PR's draft state to the target: a tick (before the early return for an unchanged store) and the revision hooks come here. Only an owned watch of
    * this session under the flow; the host op carries the key's repository and host. The memo (target per head and the store entry's `okAt`) stops a second call while
    * the store still shows the old state; a failure is traced and retried with a growing pause, at the cap one notice and no more calls for that head.
@@ -1177,13 +1239,9 @@ export class PrWatches {
    */
   private async reconcile(w: Watch, snap: WatchSnapshot, okAt: number): Promise<void> {
     try {
-      if (w.ended || w.drafting || snap.state !== "open" || !snap.head || !this.managed(w)) return;
-      const target = this.draftTarget(w, snap);
-      if (target === null || target === !!snap.draft) return;
-      const ask = w.state.draftAsk;
-      if (ask && ask.head === snap.head && ask.draft === target && okAt <= ask.okAt) return;
+      const target = this.draftCall(w, snap, okAt);
+      if (target === null) return;
       const f = w.draftFail;
-      if (f && f.head === snap.head && (f.capped || this.deps.now() < f.nextAt)) return;
       w.drafting = true;
       w.state = { ...w.state, draftAsk: { head: snap.head, draft: target, okAt } };
       let o: SafeOpOutcome;
@@ -1221,13 +1279,94 @@ export class PrWatches {
     }
   }
 
-  /** The session's facts moved (a project edit, a builder launch): reconcile every owned open PR from the store now. Never throws. */
+  /** tools.prReadyLabel now ("" = off). */
+  private labelName(): string {
+    try {
+      const v = this.deps.readyLabel?.();
+      return typeof v === "string" ? v : "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** The ready label's target of the watch now (prready.ts labelTarget over the watch state and the snapshot); null: no change, or no review-facts source. */
+  private labelTargetOf(w: Watch, snap: WatchSnapshot): boolean | null {
+    const facts = this.deps.reviewFacts?.(snap.head);
+    if (!facts) return null;
+    return labelTarget({ facts, checks: checksOf(w.state, snap, this.deps.now(), this.deps.settleMs?.() ?? 0), mergeable: snap.mergeable, mergeState: snap.mergeState ?? "", draft: !!snap.draft, ...(snap.reviewDecision ? { reviewDecision: snap.reviewDecision } : {}) });
+  }
+
+  /**
+   * The ready label (tools.prReadyLabel) of an open watch, a step of its own beside the draft step: on a tick (both branches of settle) and from the facts hook, for any watch,
+   * whoever opened the PR. It never fights a human: the record `w.state.label` says whether the label on the PR is the watch's own. An add is asked when the target is on and the
+   * watch has not asked for this head yet (or its own removal changed this head); a remove only when the label is the watch's own. Every answered call updates the record, one that
+   * changed nothing too, so no call is repeated; a record of another label name is dropped (that label is left alone). The busy flag is set before the call, so a tick and the
+   * hook that overlap send one call. A failure pauses like the draft step (growing pause, at the cap one notice and no more calls for the head); `pr_unsupported` gives one
+   * notice and ends label handling for the watch. Never throws; never blocks the watch.
+   */
+  private async labelStep(w: Watch, snap: WatchSnapshot): Promise<void> {
+    try {
+      if (w.ended || !this.deps.label || w.key.repo === "") return;
+      const name = this.labelName();
+      const old = w.state.label;
+      if (old && old.name.toLowerCase() !== name.toLowerCase()) {
+        const { label: _dropped, ...rest } = w.state;
+        w.state = rest;
+        this.persist();
+      }
+      if (!name || w.labeling || w.labelStopped || snap.state !== "open" || !snap.head) return;
+      const target = this.labelTargetOf(w, snap);
+      if (target === null) return;
+      const head = snap.head;
+      const rec: LabelRecord = w.state.label ?? { name, own: false, onHead: "", selfOff: "" };
+      if (!(target ? rec.onHead !== head || rec.selfOff === head : rec.own)) return;
+      const f = w.labelFail;
+      if (f && f.head === head && (f.capped || this.deps.now() < f.nextAt)) return;
+      w.labeling = true;
+      let o: SafeOpOutcome;
+      try {
+        o = await this.deps.label(w.key, w.cwd || this.deps.cwd?.() || "", name, target);
+      } catch (err) {
+        o = { kind: "error", message: String((err as Error)?.message ?? err) };
+      }
+      w.labeling = false;
+      if (w.ended) return;
+      if (o.kind === "ran") {
+        w.labelFail = undefined;
+        const changed = o.result.changed === true;
+        const next: LabelRecord = target ? { name: rec.name, own: rec.own || changed, onHead: head, selfOff: "" } : { name: rec.name, own: false, onHead: rec.onHead, selfOff: changed ? head : rec.selfOff };
+        w.state = { ...w.state, label: next };
+        this.persist();
+        this.deps.trace({ event: "pr_watch", outcome: target ? "label_on" : "label_off" });
+        this.deps.changed?.();
+        return;
+      }
+      if (o.kind === "precondition" && o.precondition === "pr_unsupported") {
+        w.labelStopped = true;
+        this.deps.trace({ event: "pr_watch", outcome: "label_unsupported" });
+        this.deps.send(noticeMessage(w.key.n, "ready label not set: the host has no label support (GitHub CLI only); label handling stops for this watch", "label_unsupported"), this.idle());
+        return;
+      }
+      const n = (f && f.head === head ? f.n : 0) + 1;
+      const capped = n >= DRAFT_FAIL_CAP;
+      w.labelFail = { head, n, nextAt: this.deps.now() + Math.min(DRAFT_PAUSE_MS * 2 ** (n - 1), DRAFT_PAUSE_MAX_MS), capped };
+      this.deps.trace({ event: "pr_watch", outcome: capped ? "label_failed_capped" : "label_failed" });
+      if (capped) this.deps.send(noticeMessage(w.key.n, `ready label not changed after ${n} tries (${oneLine(o.message, 160)}); label handling stops for this head`, "label_failed"), this.idle());
+      this.deps.changed?.();
+    } catch {
+      w.labeling = false;
+    }
+  }
+
+  /** The session's facts moved (a project edit, a builder launch): reconcile every owned open PR from the store now, then the label of every open watch. Never throws. */
   async reconcileOwned(): Promise<void> {
     for (const w of [...this.watches.values()]) {
-      if (!w.owned || w.ended) continue;
+      if (w.ended || (!w.owned && !this.labelName())) continue;
       try {
         const r = await this.stored(w.key);
-        if (r.kind === "entry") await this.reconcile(w, r.snap, r.okAt);
+        if (r.kind !== "entry") continue;
+        if (w.owned) await this.reconcile(w, r.snap, r.okAt);
+        await this.labelStep(w, r.snap);
       } catch {
         // the store is unreadable now: the tick tries again
       }

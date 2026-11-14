@@ -69,15 +69,40 @@ export interface CeremonyStateEntry {
   gate?: PersistedGate;
   /** A parent sent the work back (a `rework-<k>` marker, index.ts reworkScan) and no `[pre-pr]` PASS followed; absent: false. */
   sentBack?: boolean;
+  /** The heads a send-back covered and no later `[pre-pr]` PASS on that head has cleared (sentBackMark); absent: none (an entry with the flag and no set is converted, sentBackRestore). */
+  sentBackHeads?: string[];
   /** The highest handled `rework-<k>` number (its own watermark); absent: none handled. */
   reworkSeen?: number;
+}
+
+/** Heads whose newest code verdict is a `[pre-pr]` PASS. */
+function prePassHeads(reviews: readonly ReviewRecord[]): string[] {
+  const last = new Map<string, ReviewRecord>();
+  for (const r of reviews) if (r.head && r.kind !== "plan") last.set(r.head, r);
+  return [...last].filter(([, r]) => r.verdict === "pass" && r.occasion === "pre-pr").map(([h]) => h);
+}
+
+/** A send-back: every head whose newest verdict is a `[pre-pr]` PASS joins the sent-back heads. */
+export function sentBackMark(heads: readonly string[], reviews: readonly ReviewRecord[]): string[] {
+  return [...new Set([...heads, ...prePassHeads(reviews)])];
+}
+
+/** A `[pre-pr]` PASS recorded for a head takes that head, and only that head, out of the sent-back heads. */
+export function sentBackUnmark(heads: readonly string[], rec: ReviewRecord): string[] {
+  return rec.verdict === "pass" && rec.occasion === "pre-pr" && rec.head ? heads.filter((h) => h !== rec.head) : [...heads];
+}
+
+/** The sent-back heads an entry brings back; an entry with the flag and no set (older) sends back every head whose newest verdict is a `[pre-pr]` PASS. */
+export function sentBackRestore(e: Pick<CeremonyStateEntry, "sentBack" | "sentBackHeads" | "reviews">): string[] {
+  if (e.sentBackHeads) return [...e.sentBackHeads];
+  return e.sentBack === true ? prePassHeads(e.reviews) : [];
 }
 
 export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; reworkSeen?: number }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -91,6 +116,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
     ...(o.gate ? { gate: o.gate } : {}),
     ...(o.sentBack ? { sentBack: true } : {}),
+    ...(o.sentBackHeads && (o.sentBackHeads.length > 0 || o.sentBack) ? { sentBackHeads: [...o.sentBackHeads] } : {}),
     ...(o.reworkSeen ? { reworkSeen: o.reworkSeen } : {}),
   };
 }
@@ -131,6 +157,7 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     const g = gateOfEntry(d.gate);
     if (g) out.gate = g;
     if (d.sentBack === true) out.sentBack = true;
+    if (Array.isArray(d.sentBackHeads)) out.sentBackHeads = (d.sentBackHeads as unknown[]).filter((h): h is string => typeof h === "string" && h !== "");
     const rw = count(d.reworkSeen);
     if (rw) out.reworkSeen = rw;
     return out;

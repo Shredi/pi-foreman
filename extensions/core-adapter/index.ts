@@ -145,7 +145,7 @@ import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
-import { reviewFactsOf } from "./prready.ts";
+import { reviewFactsForHead } from "./prready.ts";
 import { highestRework } from "./rework.ts";
 import { LiveState, intercomIdOf, labelOfHandoff, prWatchWait } from "./livestate.ts";
 import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
@@ -226,7 +226,7 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval, type CeremonyStateEntry } from "./planstate.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -381,6 +381,8 @@ interface Session {
   reviewGate: ReviewGate;
   /** A parent sent the work back (rework marker, reworkScan) and no `[pre-pr]` PASS followed; the highest handled marker number (its own watermark). Both persisted in the ceremony entry. */
   sentBack: boolean;
+  /** The heads a send-back covered that no `[pre-pr]` PASS on the head has cleared (planstate.ts sentBackMark); persisted beside the flag. */
+  sentBackHeads: string[];
   reworkSeen: number;
   /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
   finishRefusals: number;
@@ -862,10 +864,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         reviewedHeads: () => passHeads(s.reviews),
         reviewGate: () => get(s.config.config, "ceremony.reviewBeforePr") !== false,
         // the readiness rule (prready.ts)
-        reviewFacts: (head) => reviewFactsOf(s.reviews, head, s.reviewGate.revised, s.sentBack),
+        reviewFacts: (head) => reviewFactsForHead(s.reviews, head, s.sentBackHeads),
         tick: () => reworkScan(s),
         draftFlow: () => draftFlowOn(s),
         draft: (key, cwd, draft) => prRun(s, cwd, "pr_draft", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), draft }, 30_000),
+        label: (key, cwd, label, on) => prRun(s, cwd, "pr_label", { number: key.n, repo: key.repo, ...(key.host ? { host: key.host } : {}), label, on }, 30_000),
+        readyLabel: () => {
+          const v = get(s.config.config, "tools.prReadyLabel");
+          return typeof v === "string" ? v : "";
+        },
         cwd: () => s.prCtx?.cwd ?? s.cwd,
         child: () => !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim(),
         fresh: async (key, cwd) => {
@@ -957,6 +964,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       steps: emptySteps(),
       reviewGate: initialReviewGate(),
       sentBack: false,
+      sentBackHeads: [],
       reworkSeen: 0,
       finishRefusals: 0,
       waitingForParent: false,
@@ -1149,6 +1157,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       loopStop: s.loopStop,
       gate: { steps: { ...s.steps }, reviewGate: s.reviewGate, passMark: s.passMark },
       sentBack: s.sentBack,
+      sentBackHeads: s.sentBackHeads,
       reworkSeen: s.reworkSeen,
     });
     const json = JSON.stringify(data);
@@ -1194,7 +1203,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
-    if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.reworkSeen = e.reworkSeen ?? 0);
+    if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -2312,6 +2321,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
+              s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
               s.live?.flush(); // the pill's review facts
               if (first) loopCheck(s, runId, prev, rec);
               // pi-subagents wrote the run's output file before this run-end event; the last line names the head the verdict covers
@@ -4127,6 +4137,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (k <= s.reworkSeen) return;
     s.reworkSeen = k;
     s.sentBack = true;
+    s.sentBackHeads = sentBackMark(s.sentBackHeads, s.reviews);
     s.reviewGate = onRevision(s.reviewGate);
     persistCeremonyState(s);
     void s.prWatches.reconcileOwned().finally(() => s.live?.flush());
