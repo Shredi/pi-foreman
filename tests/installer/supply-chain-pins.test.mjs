@@ -30,11 +30,12 @@ test("no workflow installs from outside the lockfile", () => {
   for (const f of workflows) {
     const text = fs.readFileSync(path.join(WORKFLOWS, f), "utf8");
     assert.doesNotMatch(text, /--no-package-lock/, f);
-    assert.doesNotMatch(text, /npm\s+(install|i)\s+(-\S+\s+)*-g\b|npm\s+(install|i)\s+(-\S+\s+)*--global\b/, f);
+    for (const line of text.split(/\r?\n/)) {
+      if (/\bnpm\s+(?:install|i)\b/.test(line)) assert.doesNotMatch(line, /(?:^|\s)(?:-g|--global)(?=\s|$)/, `${f}: ${line.trim()}`);
+    }
   }
 });
 
-// Red until the owner script has written the two lines into .npmrc.
 test(".npmrc turns install scripts off and allows root git dependencies", () => {
   const lines = fs.readFileSync(path.join(ROOT, ".npmrc"), "utf8").split(/\r?\n/).map((l) => l.trim());
   assert.ok(lines.includes("ignore-scripts=true"), "ignore-scripts=true missing");
