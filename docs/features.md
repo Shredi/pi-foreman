@@ -72,11 +72,10 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [child-scratch](#child-scratch) | ceremony |  | on | Gives every single-child launch its own temp dir (`$FOREMAN_SCRATCH`) that the guards allow writes in and the harness removes when the run ends. | on by default | [safety](safety.md#child-scratch) |
 | [permissions](#permissions) | safety |  | on | Your `permissions.json` (user, project and session layers) holds the permissions mode, allow, deny and ask rules, the classifier whitelist and extra directories; the gate checks the floors and your rules first, and the classifier judges the dangerous class under mode auto. A project file can only add deny and ask rules. The user file can also name work folders: reads there are allowed and an auto folder lets writes no other root covers run as under mode auto, except in protected places (`/foreman perms list` shows them). | on by default | [permissions](permissions.md) |
 | [owned-install-reads](#owned-install-reads) | safety |  | on | Shell reads (`ls`, `cat`) of Pi's own install releases and the pi-subagents run root need no dialog; the gate's path rules compute them at runtime from the session's roots. | on by default | [permissions](permissions.md#owned-paths) |
-| [own-cli-allow](#own-cli-allow) | safety |  | on | The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open\|brief\|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path. | on by default | [permissions](permissions.md) |
 | [auto-review](#auto-review) | safety |  | on | The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you. | on by default | [roles](roles.md#auto-review-model) |
-| [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
+| [headless-review](#headless-review) | review |  | on | A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit (`gate.askTimeoutMs` has no effect). A headless session always denies an ask. | on by default | [permissions](permissions.md#child-asks) |
 | [read-clear](#read-clear) | review |  | on | Under mode auto a shell line the gate cannot read fully (a file glob, a loop, an inline program) no longer asks when the classifier model, by a fixed rulebook and a fixed answer shape, rates it as only reading files inside the session's directories. The model is the only guard for these lines and can be wrong; every clear is logged. Set `gate.readClear` to false to ask as before. | on by default | [permissions](permissions.md#the-read-question) |
-| [protected-targets](#protected-targets) | safety |  | on | `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog. | on by default | [permissions](permissions.md#protected-targets) |
+| [protected-targets](#protected-targets) | safety |  | on | `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run in a session with UI that is not a child (whatever the owner's presence), everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog. | on by default | [permissions](permissions.md#protected-targets) |
 | [review-critic](#review-critic) | review |  | on | Every reviewer task carries the `review.critic` questions (default: four lean/friction/dispensable/direction questions) and the instruction to answer each once per ledger item as a `CRITIC: <item> Q<k>: <answer>` line; the harness does not parse the lines. | on by default | [roles](roles.md#review-critic) |
 | [git-tools](#git-tools) | tools | toggle, relaxes safety | off | Structured, capped git read tools (git_status, git_log, git_diff_stat, git_branch_state) for the foreman and for children with bash; the checked move, copy and worktree-remove tools count as pack members in the trace. | `{"tools": {"git": true}}` | [tools](tools.md#git-tool-pack) |
 | [pr-ops](#pr-ops) | tools | toggle | on | Host-neutral pull request tools (pr_create, pr_status, pr_checks, pr_comments, pr_watch, pr_unwatch, plus the GitHub-only pr_follow, which needs radar.openPrs): the foreman opens a PR after a reviewer PASS and a persistent watch wakes it on each failed check, CI result, comment, review, conflict and merge until the PR is merged or closed. A watch gets its news from the PR tracker (herdr-app, or `foreman prs poll`), never from its own GitHub calls. Pi shows no PR list; the herdr-app mod is the only PR display. | `{"tools": {"pr": true}}` | [tools](tools.md#pr-tools) |
@@ -503,12 +502,6 @@ Switch: `ceremony.orientation.enabled` is true.
 
 No config key.
 
-### own-cli-allow
-
-**Own CLI allow.** The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open|brief|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path.
-
-No config key.
-
 ### auto-review
 
 **Permission auto-review.** The gate's review model judges every call no floor or default decides, against the merged policy; unset, it picks the inexpensive rung of the role map, and with none the call asks you.
@@ -520,7 +513,7 @@ No config key.
 
 ### headless-review
 
-**Child asks to the parent.** A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask.
+**Child asks to the parent.** A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit (`gate.askTimeoutMs` has no effect). A headless session always denies an ask.
 
 | Key | Default | Layer |
 |---|---|---|
@@ -539,7 +532,7 @@ Switch: `gate.readClear` is true.
 
 ### protected-targets
 
-**Protected targets with a context check.** `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.
+**Protected targets with a context check.** `protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run in a session with UI that is not a child (whatever the owner's presence), everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.
 
 | Key | Default | Layer |
 |---|---|---|

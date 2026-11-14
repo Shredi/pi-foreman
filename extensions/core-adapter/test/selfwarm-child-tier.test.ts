@@ -4,7 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { r11Rig } from "./_r11rig.ts";
-import { settleGraceMs } from "../selfwarm.ts";
+import { settleGraceMs, AWAY_GRACE_MS, SelfWarm, type WarmSignals } from "../selfwarm.ts";
+import type { Presence } from "../presence.ts";
 
 const ROLES = Object.fromEntries(["explorer", "planner", "builder", "reviewer", "senior-reviewer", "finalizer"].map((r) => [r, { model: `pa/${r}-m` }]));
 const config = { providers: { pa: { roles: { ...ROLES, foreman: { model: "pa/big" } }, cache: { ttlSeconds: 11, billing: "token", keepalive: { enabled: true, budgetShare: 0.01, compactMinTokens: 0 }, warmCompact: false } } } };
@@ -49,4 +50,32 @@ test("an idle child holds the quarter tier, reason idle, presence present", asyn
   assert.equal(hit.tier, "quarter");
   assert.equal(hit.activity, "idle");
   assert.equal(hit.presence, "present");
+});
+
+// plan asks-wait-for-owner D5: the wait on the parent's ruling is the signal (a child cannot see presence); decided at a given time, no clock
+function childWarm(sig: () => WarmSignals): SelfWarm {
+  const never = (): never => {
+    throw new Error("not used");
+  };
+  return new SelfWarm({
+    now: () => 0, isChild: true, policy: () => null, presence: {} as Presence, signals: sig, queued: () => false, rates: () => null, compact: () => null,
+    trace: () => undefined, replayable: () => true, replay: never, record: () => null,
+  });
+}
+const RUNNING: WarmSignals = { strongA: null, turn: true, question: false, dialog: false, command: false };
+
+test("a child blocked on its parent's ruling: half before the wait has lasted the grace, quarter from then on", () => {
+  const since = 5_000_000;
+  const sw = childWarm(() => ({ ...RUNNING, parentWaitSince: since }));
+  const before = sw.tierAt(since + AWAY_GRACE_MS - 1);
+  assert.deepEqual([before.tier, before.reason, before.presence], ["half", "turn", "present"]);
+  const after = sw.tierAt(since + AWAY_GRACE_MS);
+  assert.deepEqual([after.tier, after.reason, after.presence], ["quarter", "idle", "present"]);
+});
+
+test("a child whose turn runs without a wait on its parent stays at half however late", () => {
+  const sw = childWarm(() => ({ ...RUNNING, parentWaitSince: null }));
+  assert.equal(sw.tierAt(10 * AWAY_GRACE_MS).tier, "half");
+  const none = childWarm(() => RUNNING);
+  assert.equal(none.tierAt(10 * AWAY_GRACE_MS).tier, "half");
 });

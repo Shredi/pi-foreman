@@ -399,18 +399,6 @@
       "enable": ""
     },
     {
-      "id": "own-cli-allow",
-      "area": "safety",
-      "title": "Own CLI allow",
-      "purpose": "The foreman session's own `bin/foreman` (explicit path, realpath inside its root) with `session open|brief|list`, `dialogs` or `findings list` is allowed before the review model (trace `overlay_allow{rule: own_cli}`); children and forwarded asks, shell control, `VAR=`, `..` or a symlink out, and user ask/deny rules keep the normal path.",
-      "doc": "docs/permissions.md",
-      "keys": [],
-      "commands": [],
-      "switch": null,
-      "state": "on",
-      "enable": ""
-    },
-    {
       "id": "auto-review",
       "area": "safety",
       "title": "Permission auto-review",
@@ -426,7 +414,7 @@
       "id": "headless-review",
       "area": "review",
       "title": "Child asks to the parent",
-      "purpose": "A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report, and a timeout (`gate.askTimeoutMs`) denies too. A headless session always denies an ask.",
+      "purpose": "A subagent child's plain policy ask goes to its parent's pane (`gate.childAsk`, `parent` by default); `deny` denies it with a text naming what to report; the child waits for the parent's ruling without a time limit (`gate.askTimeoutMs` has no effect). A headless session always denies an ask.",
       "doc": "docs/permissions.md#child-asks",
       "keys": ["gate.childAsk", "gate.askTimeoutMs"],
       "commands": [],
@@ -450,7 +438,7 @@
       "id": "protected-targets",
       "area": "safety",
       "title": "Protected targets with a context check",
-      "purpose": "`protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run only while the owner is present, everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.",
+      "purpose": "`protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run in a session with UI that is not a child (whatever the owner's presence), everything else asks with the reasoning (`gate.protected.check`). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.",
       "doc": "docs/permissions.md#protected-targets",
       "keys": [
         "gate.protected.check"

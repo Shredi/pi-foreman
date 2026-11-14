@@ -9,7 +9,6 @@ import * as path from "node:path";
 import { askOwner, commandDisplay, DIALOG_OPTIONS, HEAD_LINES, STOP_TEXT, TAIL_LINES } from "../gatedialog.ts";
 import type { OwnerAsk, OwnerDeps } from "../gatedialog.ts";
 import { PermStore } from "../permconfig.ts";
-import { OWNER_AWAY_TEXT } from "../presencewait.ts";
 
 function world(t: { after(f: () => void): void }, trusted = true) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-owner-dialog-")));
@@ -177,12 +176,13 @@ test("a sentence the writer refuses (over 300 characters) is shown and the call 
   assert.equal(fs.existsSync(projectFile(w)), false);
 });
 
-test("an away owner: denied with the absent text, the dialog is never opened", async (t) => {
+test("an away owner: the dialog is opened and the absent text is never the answer", async (t) => {
   const w = world(t);
   const u = ui({ select: ["allow once"] });
   const r = await askOwner(ASK, deps(u, w, { presence: { refresh: async () => undefined, away: () => true } }).d);
-  assert.deepEqual(r, { allow: false, how: "away", reason: OWNER_AWAY_TEXT });
-  assert.equal(u.selects.length, 0);
+  assert.equal(r.allow, true);
+  assert.notEqual((r as { how?: string }).how, "away");
+  assert.equal(u.selects.length, 1);
 });
 
 test("presence disabled: an away-reporting presence is never probed and the dialog opens", async (t) => {
@@ -225,4 +225,77 @@ test("the dialog title for a long command carries the omission line; no 4000-cha
 test("control characters of a command do not reach the terminal", (t) => {
   const w = world(t);
   assert.equal(commandDisplay("echo \u001b[2Jx\ry", w.state).text, "echo ?[2Jx?y");
+});
+
+// ------------------------------------------------------------------ plan asks-wait-for-owner D1: presence never closes or denies a dialog
+
+/** A ui whose select stays open until the owner answers (`answer`) or its signal aborts (which resolves undefined, as Pi's selector does). */
+function holdingUi() {
+  const selects: { signal?: AbortSignal }[] = [];
+  let answer: (v: string | undefined) => void = () => undefined;
+  const u = {
+    select: (_title: string, _options: string[], opts?: { signal?: AbortSignal }) =>
+      new Promise<string | undefined>((res) => {
+        selects.push({ signal: opts?.signal });
+        answer = res;
+        opts?.signal?.addEventListener("abort", () => res(undefined), { once: true });
+      }),
+    input: async () => undefined,
+    editor: async () => undefined,
+    notify: () => undefined,
+  };
+  return { selects, u, answer: (v: string | undefined) => answer(v) };
+}
+
+test("an away owner: the dialog opens with a signal of its own and its answer applies", async (t) => {
+  const w = world(t);
+  const u = ui({ select: ["allow once"] });
+  const r = await askOwner(ASK, deps(u, w, { presence: { refresh: async () => undefined, away: () => true } }).d);
+  assert.equal(r.allow && r.how, "once");
+  assert.equal(u.selects.length, 1);
+  assert.ok(u.selects[0].signal instanceof AbortSignal);
+});
+
+test("an owner who turns away while the dialog is open: no probe, no watchdog, the signal is not aborted", async (t) => {
+  const w = world(t);
+  const h = holdingUi();
+  let away = false;
+  let refreshed = 0;
+  let timersSet = 0;
+  const timers = { set: () => (timersSet++, 1), clear: () => undefined };
+  const p = askOwner(ASK, deps({ ui: h.u } as never, w, { ui: h.u, presence: { refresh: async () => void refreshed++, away: () => away }, presenceTimers: timers, presenceIntervalMs: 5 }).d);
+  await new Promise((r) => setTimeout(r, 30));
+  away = true;
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(h.selects.length, 1);
+  assert.equal(h.selects[0].signal?.aborted, false);
+  assert.equal(timersSet, 0, "no presence timer runs during a dialog");
+  assert.equal(refreshed, 0);
+  h.answer("allow once");
+  const r = await p;
+  assert.equal(r.allow && r.how, "once");
+});
+
+test("the call's abort signal closes the dialog without an answer: aborted, not dismissed, not away; an aborted signal opens nothing", async (t) => {
+  const w = world(t);
+  const h = holdingUi();
+  const ac = new AbortController();
+  const p = askOwner(ASK, deps({ ui: h.u } as never, w, { ui: h.u, signal: ac.signal }).d);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(h.selects[0].signal?.aborted, false);
+  ac.abort();
+  const r = await p;
+  assert.equal(r.allow, false);
+  assert.equal((r as { how?: string }).how, "aborted");
+  const h2 = holdingUi();
+  const r2 = await askOwner(ASK, deps({ ui: h2.u } as never, w, { ui: h2.u, signal: ac.signal }).d);
+  assert.equal((r2 as { how?: string }).how, "aborted");
+  assert.equal(h2.selects.length, 0);
+});
+
+test("the owner's own dismissal still denies", async (t) => {
+  const w = world(t);
+  const u = ui({ select: [undefined] });
+  const r = await askOwner(ASK, deps(u, w).d);
+  assert.equal((r as { how?: string }).how, "dismissed");
 });

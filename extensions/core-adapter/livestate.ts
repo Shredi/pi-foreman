@@ -14,6 +14,8 @@ import { UNCLASSED, uiKeyAction } from "./herdr.ts";
 import type { BlockClass, BlockKind, BlockOn } from "./herdr.ts";
 
 export const HEARTBEAT_MS = 30_000;
+/** A live file whose heartbeat is older than this is a dead or frozen session (three heartbeats). */
+export const LIVE_DEAD_MS = 3 * HEARTBEAT_MS;
 const WRITE_GAP_MS = 1000;
 const MAX_RUNS = 20;
 const MAX_WAITS = 20;

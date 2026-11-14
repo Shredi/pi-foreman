@@ -571,3 +571,51 @@ test("isReplayable mirror: budget-thinking anthropic-messages without forceAdapt
   assert.equal(replayable({ api: "openai-responses" }, "high"), true);
   assert.equal(replayable(null, "off"), false);
 });
+
+// ---- a waiting subagent (plan asks-wait-for-owner D5) --------------------------------------------------------
+
+/** Only subagents that wait on a dialog: strongA counts them (the final compaction stays off), strongWorking does not. */
+const WAITING: WarmSignals = { ...NONE, strongA: "subagent", strongWorking: null };
+
+async function awayHarness() {
+  const h = make({ idle: 20 * MIN / 1000 });
+  h.open();
+  await h.sw["deps"].presence.refresh();
+  const since = h.sw["deps"].presence.awaySince()!;
+  return { h, since };
+}
+
+test("away: a session that only waits on a subagent's dialog gets the quarter tier after the grace, half inside it; finalBusy stays true", async () => {
+  const { h, since } = await awayHarness();
+  h.f.sig = { ...WAITING };
+  const inside = h.sw.tierAt(since + AWAY_GRACE_MS - 1);
+  assert.deepEqual([inside.tier, inside.reason, inside.presence], ["half", "subagent", "grace"]);
+  const after = h.sw.tierAt(since + AWAY_GRACE_MS);
+  assert.deepEqual([after.tier, after.reason, after.presence], ["quarter", "idle", "away"]);
+  assert.equal(h.sw["finalBusy"](), true);
+});
+
+test("away: a subagent that works beside the waiting one keeps the half tier", async () => {
+  const { h, since } = await awayHarness();
+  h.f.sig = { ...NONE, strongA: "subagent", strongWorking: "subagent" };
+  const v = h.sw.tierAt(since + AWAY_GRACE_MS);
+  assert.deepEqual([v.tier, v.reason, v.presence], ["half", "subagent", "away"]);
+  assert.equal(h.sw["finalBusy"](), true);
+});
+
+test("away: a background task beside only waiting subagents still holds the half tier", async () => {
+  const { h, since } = await awayHarness();
+  h.f.sig = { ...NONE, strongA: "subagent", strongWorking: "bg_task" };
+  const v = h.sw.tierAt(since + AWAY_GRACE_MS);
+  assert.deepEqual([v.tier, v.reason], ["half", "bg_task"]);
+});
+
+test("an owner who is present keeps the half tier for a subagent that only waits", async () => {
+  const h = make({ idle: 0 });
+  h.f.sig = { ...WAITING };
+  h.open();
+  await h.sw["deps"].presence.refresh();
+  const v = h.sw.tierAt(h.clock.t + 60 * MIN);
+  assert.deepEqual([v.tier, v.reason, v.presence], ["half", "subagent", "present"]);
+  assert.equal(h.sw["finalBusy"](), true);
+});

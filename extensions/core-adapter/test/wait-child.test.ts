@@ -1,6 +1,14 @@
+import "./_hermetic-env.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { ChildBlocked } from "../childblocked.ts";
+import { liveDir } from "../livestate.ts";
+import { writeRegistry } from "../session.ts";
 import { parseStart, WaitRuntime, wakeMessage } from "../wait.ts";
+import type { RuntimeDeps } from "../wait.ts";
 import { applyInbound, parseInbound } from "../session.ts";
 import type { Registry } from "../session.ts";
 import type { Outcome, Timers, WaitLimits } from "../wait.ts";
@@ -57,4 +65,80 @@ test("wait child: a refused close notice from the child wakes the wait with the 
   assert.equal(rt.active, 0);
   assert.equal(wakes[0][0].outcome, "child phase1: refused 1 child run(s) still active");
   assert.match(wakeMessage(wakes[0]).content, /\(child\) "p1": child phase1: refused 1 child run\(s\) still active$/);
+});
+
+// D6: an open ask of a child is replayed once at registration; other notice kinds are not.
+function askRuntime(unreportedAsk?: RuntimeDeps["unreportedAsk"]) {
+  const wakes: Outcome[][] = [];
+  const timers: Timers = { set: () => 1, clear: () => undefined };
+  const rt = new WaitRuntime({ timers, now: () => 0, limits: () => LIMITS, stat: () => null, alive: () => true, gh: () => Promise.reject(new Error("unused")), wake: (o) => wakes.push(o), trace: () => undefined, ...(unreportedAsk ? { unreportedAsk } : {}) });
+  return { rt, wakes };
+}
+
+test("wait child: a running wait resolves on the ask notice", () => {
+  const { rt, wakes } = askRuntime();
+  rt.start({ kind: "child", label: "job", note: "n" });
+  assert.equal(rt.childNotice("job", "ask", "/h/ask.md"), true);
+  assert.equal(rt.active, 0);
+  assert.equal(wakes[0][0].outcome, "child job: ask /h/ask.md");
+});
+
+test("wait child: a wait registered after an unreported ask resolves at once; a second wait on the same ask does not", () => {
+  let pending: { label: string; path: string } | null = { label: "job", path: "/h/ask.md" };
+  const asked: string[] = [];
+  const { rt, wakes } = askRuntime((label) => {
+    asked.push(label);
+    const hit = pending && (label === "any" || label === pending.label) ? pending : null;
+    if (hit) pending = null; // reported: the lookup counts it
+    return hit;
+  });
+  assert.ok("id" in rt.start({ kind: "child", label: "job", note: "n" }));
+  assert.equal(rt.active, 0);
+  assert.equal(wakes[0][0].outcome, "child job: ask /h/ask.md");
+  assert.ok("id" in rt.start({ kind: "child", label: "job", note: "n" }));
+  assert.equal(rt.active, 1, "an ask already reported never resolves a later wait");
+  assert.deepEqual(asked, ["job", "job"]);
+});
+
+test("wait child: with the lookup absent a wait registered after an ask keeps waiting", () => {
+  const { rt } = askRuntime();
+  rt.start({ kind: "child", label: "job", note: "" });
+  assert.equal(rt.active, 1);
+});
+
+test("wait child: wired to the child-blocked tick, a wait gets an ask once; with no wait the parent gets the message once", (t) => {
+  const agentDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "wait-child-ask-")));
+  t.after(() => fs.rmSync(agentDir, { recursive: true, force: true }));
+  const handoff = path.join(agentDir, "pi-foreman", "handoffs", "20261113-080000-job");
+  fs.mkdirSync(handoff, { recursive: true });
+  fs.writeFileSync(path.join(handoff, "live.json"), JSON.stringify({ intercomId: "fm-job-1", piSessionId: "child-sess" }));
+  writeRegistry(agentDir, { version: 1, sessions: [{ label: "job", child: "fm-job-1", parent: "fm-parent", handoff, status: "open" }] });
+  const ask = (n: number): void => {
+    fs.writeFileSync(path.join(handoff, "ask.md"), `# Ask ${n}: t\n`);
+    fs.writeFileSync(path.join(handoff, ".ask"), `ask-${n}\n`);
+    fs.mkdirSync(liveDir(agentDir), { recursive: true });
+    fs.writeFileSync(path.join(liveDir(agentDir), "child-sess.json"), JSON.stringify({ heartbeatAt: new Date().toISOString(), asks: [{ n, topic: "t" }] }));
+  };
+  const sent: string[] = [];
+  const holder: { rt?: WaitRuntime } = {};
+  const cb = new ChildBlocked({ agentDir, sessionId: "p", opener: () => "fm-parent", seconds: () => 600, send: (text) => sent.push(text), ask: (label, p) => holder.rt?.childNotice(label, "ask", p) ?? false });
+  const { rt, wakes } = askRuntime((label) => cb.takeAsk(label));
+  holder.rt = rt;
+  ask(1);
+  rt.start({ kind: "child", label: "any", note: "" });
+  assert.equal(rt.active, 0, "replayed at registration");
+  cb.tick();
+  assert.equal(sent.length, 0, "already reported");
+  assert.equal(wakes.length, 1);
+  ask(2);
+  rt.start({ kind: "child", label: "job", note: "" });
+  cb.tick();
+  assert.equal(rt.active, 0, "the second ask resolved the running wait once");
+  assert.equal(wakes.length, 2);
+  assert.equal(sent.length, 0);
+  ask(3);
+  cb.tick();
+  cb.tick();
+  assert.equal(sent.length, 1, "no wait: one message");
+  assert.equal(wakes.length, 2);
 });

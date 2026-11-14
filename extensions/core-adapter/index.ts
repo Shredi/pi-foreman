@@ -34,13 +34,14 @@ import { insideDirs, readClearEntry, readNotes, shellIsBash } from "./readclear.
 import type { AdoptPick } from "./permssuggest.ts";
 import { gateLogFile, openGateLog } from "./gatelog.ts";
 import type { GateKind, GateLog, GateLayer } from "./gatelog.ts";
-import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, writeChildAsk } from "./childask.ts";
+import { ChildAskWatch, childAskDir, childAskParentDir, awaitChildRuling, inputHash, writeChildAsk } from "./childask.ts";
+import { ChildAskPark, parkKey } from "./childaskpark.ts";
 import type { ChildAnswer, ChildAsk, ChildAskEvent } from "./childask.ts";
-import { askOwner, DEFAULT_ASK_TIMEOUT_MS, STOP_TEXT } from "./gatedialog.ts";
+import { askOwner, STOP_TEXT } from "./gatedialog.ts";
 import { childNpmNote } from "./childnpm.ts";
 import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
-import { childAskOffText, NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
+import { CHILD_GONE_TEXT, childAskOffText, NO_PANE_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
@@ -129,7 +130,6 @@ import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppr
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
-import { sampleAway } from "./protected.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
 import { loadPrices } from "./cost.ts";
@@ -147,7 +147,7 @@ import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
 import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { reviewFactsForHead } from "./prready.ts";
 import { highestRework } from "./rework.ts";
-import { LiveState, intercomIdOf, labelOfHandoff, prWatchWait } from "./livestate.ts";
+import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { ownerFactsLines, ownerSummary, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
@@ -672,11 +672,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // The hook also records blocked_open / blocked_closed (trace) for every own source: who it waits on, its kind word, its short label, and how long it waited.
   /** Per session, the owner-class own sources open now: the one event per dialog comes from the classed source, so Pi's prompt events add one only for a dialog nobody classed (a wait on the parent does not mute them). */
   const classedOpen = new Map<string, number>();
+  /** Per session, the parent-class own sources open now and when the first opened: a child's wait on its parent's ruling, read by the warm tier. */
+  const parentOpen = new Map<string, { n: number; since: number }>();
   blockedShim.onOwnOn((label, cls) => {
     const held = [...sessions.values()].map((s) => ({ s, release: s.live?.holdOn(cls) }));
     const rec = { on: cls?.on ?? "owner", kind: cls?.kind ?? "dialog", label: cleanLabel(label) };
     const opened = Date.now();
     for (const h of held) {
+      if (rec.on === "parent") {
+        const p = parentOpen.get(h.s.id);
+        parentOpen.set(h.s.id, { n: (p?.n ?? 0) + 1, since: p?.since ?? opened });
+      }
       if (rec.on === "owner") classedOpen.set(h.s.id, (classedOpen.get(h.s.id) ?? 0) + 1);
       h.s.trace?.emit({ event: "blocked_open", ...rec });
     }
@@ -685,6 +691,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (closed) return;
       closed = true;
       for (const h of held) {
+        if (rec.on === "parent") {
+          const p = parentOpen.get(h.s.id);
+          if (p && p.n > 1) parentOpen.set(h.s.id, { n: p.n - 1, since: p.since });
+          else parentOpen.delete(h.s.id);
+        }
         if (rec.on === "owner") {
           const n = (classedOpen.get(h.s.id) ?? 1) - 1;
           if (n > 0) classedOpen.set(h.s.id, n);
@@ -1494,6 +1505,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
     recordIdentity(s, ctx, event.reason, restored);
+    readoptChildAsks(s, ctx);
     await initSkills(s);
     await mcpChild?.start(get(s.config.config, "roles"), (r) => s.trace?.emit(r), get(s.config.config, "mcp.directProviders"), get(s.config.config, "mcp.directMaxTools"));
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
@@ -1549,6 +1561,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         opener: () => openerIntercomId(process.env, s.agentDir, s.id),
         seconds: () => noticeSeconds(get(s.config.config, "sessions.blockedNoticeSeconds")),
         contact: (child) => (watch as RemoteWatcher | null)?.lastContact(child),
+        ask: (label, file) => waits.childNotice(s.id, label, "ask", file),
         send: (text, wake) => {
           let idle = true;
           try {
@@ -1663,9 +1676,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
   }
 
-  pi.on("session_shutdown", async (_event, ctx) => {
+  pi.on("session_shutdown", async (event, ctx) => {
     const s = sessionFor(ctx);
     if (!s) return;
+    shutdownAborts.get(s.id)?.abort(); // closes every open permission dialog of this session without an answer
+    shutdownAborts.delete(s.id);
     asks.get(s.id)?.releaseAll();
     asks.delete(s.id);
     for (const [id, h] of [...ledgerHolds]) if (h.sid === s.id) releaseLedgerHold(id);
@@ -1687,7 +1702,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idleModel.stop();
     }
     sweepScratch(s);
-    closeChildAsks(s);
+    closeChildAsks(s, event?.reason === "reload");
     await s.show?.idle();
     s.live?.stop();
     s.openPrs?.stop();
@@ -2073,8 +2088,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       idle = false; // a stale context counts as a running turn
     }
     const w = waits.active(s.id);
-    const strongA = s.activeRuns.size > 0 || s.pendingLaunches.size > 0 || launchWaits.holding > 0 ? "subagent" : w.some((x) => x.bg) || addonTasksRunning(s) ? "bg_task" : w.length > 0 ? "wait" : null;
-    return { strongA, turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0 };
+    const other = w.some((x) => x.bg) || addonTasksRunning(s) ? "bg_task" : w.length > 0 ? "wait" : null;
+    const strongA = s.activeRuns.size > 0 || s.pendingLaunches.size > 0 || launchWaits.holding > 0 ? "subagent" : other;
+    // for the tier only: a launch with an open permission ask is not working (active run, pending launch or held launch alike)
+    const open = new Set(childAskWatches.get(s.id)?.openDirs() ?? []);
+    const park = childAskParks.get(s.id);
+    const waiting = (launch: string | undefined): boolean => !!launch && open.has(childAskDir(s.agentDir, s.id, launch));
+    const working = open.size === 0 ? strongA === "subagent" : [...s.activeRuns].some((r) => !waiting(park?.launchFor(r))) || [...s.pendingLaunches].some((c) => !waiting(park?.launchOfCall(c))) || launchWaits.holdingWhere((r) => !waiting(park?.launchFor(r))) > 0;
+    const strongWorking = working ? "subagent" : other;
+    const parentWaitSince = s.isChild ? parentOpen.get(s.id)?.since ?? null : undefined;
+    return { strongA, strongWorking, ...(parentWaitSince !== undefined ? { parentWaitSince } : {}), turn: s.running || !idle, question: s.questionCalls.size > 0, dialog: s.live?.isBlocked() === true, command: s.commandCalls.size > 0 };
   }
   /** A message is queued in the session (a stale context counts as queued: no warm). */
   function warmQueued(s: Session): boolean {
@@ -2205,33 +2228,99 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const childAskWatches = new Map<string, ChildAskWatch>();
   const childAskWatchFor = (s: Session, ctx: ExtensionContext): ChildAskWatch => {
     let w = childAskWatches.get(s.id);
-    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a) => answerChildAsk(s, ctx, a), (e) => reportChildAsk(s, e))));
+    if (!w) childAskWatches.set(s.id, (w = new ChildAskWatch((a) => answerChildAsk(s, ctx, a), (e) => reportChildAsk(s, e, ctx))));
     return w;
   };
-  const closeChildAsk = (s: Session, launchId: string | null): void => {
-    if (!launchId) return;
+  // D3: answers of asks whose run ended while the child waited, and the run -> launch map of resumes (childaskpark.ts); memory only, per session
+  const childAskParks = new Map<string, ChildAskPark>();
+  const parkFor = (s: Session): ChildAskPark => {
+    let p = childAskParks.get(s.id);
+    if (!p) childAskParks.set(s.id, (p = new ChildAskPark()));
+    return p;
+  };
+  /**
+   * A run of `launchId` ended. With no open ask of that launch (queued or shown) the dir and watch go; with one they stay, the dialog stays open and the
+   * line to add to the run's result is returned (the owner's answer is parked in reportChildAsk).
+   */
+  const closeChildAsk = (s: Session, launchId: string | null): string | null => {
+    if (!launchId) return null;
     const dir = childAskDir(s.agentDir, s.id, launchId);
+    const open = childAskWatches.get(s.id)?.openAsk(dir);
+    if (open) {
+      parkFor(s).markEnded(dir);
+      return `pi-foreman: the run ended while waiting for the owner on ${open.tool}: ${open.payload.replace(/\s+/g, " ").trim().slice(0, 100)}; the question is still open, do not work around it.`;
+    }
     childAskWatches.get(s.id)?.remove(dir);
     fs.rmSync(dir, { recursive: true, force: true });
+    return null;
   };
-  const closeChildAsks = (s: Session): void => {
+  /** `closeChildAsk` for a run end event: the added line goes out as its own message beside the run's completion notice. */
+  const closeChildAskAtRunEnd = (s: Session, launchId: string | null): void => {
+    const line = closeChildAsk(s, launchId);
+    if (line) pi.sendMessage({ customType: "pi-foreman-ask-open", content: line, display: true }, { triggerTurn: false });
+  };
+  /** Stop the watch; the dirs go too, except at a reload (children keep running and the new session re-adds them at its start). */
+  const closeChildAsks = (s: Session, keepDirs = false): void => {
     childAskWatches.get(s.id)?.stop();
     childAskWatches.delete(s.id);
-    fs.rmSync(childAskParentDir(s.agentDir, s.id), { recursive: true, force: true });
+    childAskParks.delete(s.id);
+    if (!keepDirs) fs.rmSync(childAskParentDir(s.agentDir, s.id), { recursive: true, force: true });
   };
-  const reportChildAsk = (s: Session, e: ChildAskEvent): void => {
+  /** session_start: every ask dir under this session's own child-asks folder is watched again (a ruling that exists is skipped by `add`). */
+  const readoptChildAsks = (s: Session, ctx: ExtensionContext): void => {
+    if (!ctx.hasUI) return;
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(childAskParentDir(s.agentDir, s.id), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+    } catch {
+      return; // no folder: nothing to re-add
+    }
+    for (const name of names) childAskWatchFor(s, ctx).add(path.join(childAskParentDir(s.agentDir, s.id), name));
+  };
+  /** Aborts at the session's shutdown (any reason): the signal of every owner dialog of the session. */
+  const shutdownAborts = new Map<string, AbortController>();
+  const shutdownSignal = (s: Session): AbortSignal => {
+    let c = shutdownAborts.get(s.id);
+    if (!c) shutdownAborts.set(s.id, (c = new AbortController()));
+    return c.signal;
+  };
+  const reportChildAsk = (s: Session, e: ChildAskEvent, ctx?: ExtensionContext): void => {
     const verdict = e.kind === "answered" ? (e.allow ? "allow" : "deny") : "deny";
     gateRuntimeOf(s).log.record({ tool: e.ask.tool, layer: "child-ask", verdict, rule: e.ask.entry || "ask", reason: `child run ${e.ask.run} (${e.ask.role}): ${e.kind}${e.detail ? ` ${e.detail}` : ""}`, input: e.ask.payload, role: e.ask.role, kind: "owner" });
+    if (e.kind !== "answered" || !childAskParks.get(s.id)?.isEnded(e.ask.dir)) return;
+    // the run ended while this ask was open (D3): the answer is parked for exactly this call, once, and the parent is told (data, not an instruction)
+    const w = childAskWatches.get(s.id);
+    if (!w?.openAsk(e.ask.dir)) {
+      // the dir goes too: a recognised resume re-creates and watches it (resumeAskDir), an unrecognised one finds no dir and gets the gone denial
+      w?.remove(e.ask.dir);
+      fs.rmSync(e.ask.dir, { recursive: true, force: true });
+    }
+    if (!e.ask.inputHash) return; // no hash, no parking: the resumed run's ask gets a dialog
+    parkFor(s).park(parkKey(e.ask.dir, e.ask.tool, e.ask.cwd, e.ask.inputHash), e.allow === true);
+    let idle = true;
+    try {
+      idle = ctx?.isIdle() ?? true;
+    } catch {
+      // a stale context: treat as idle
+    }
+    pi.sendMessage({ customType: "pi-foreman-ask-answered", content: `pi-foreman notice: the owner answered the question the ended run (${e.ask.role}, launch ${e.ask.run}) left open on ${e.ask.tool}: ${e.allow ? "allowed" : "denied"}. The run can be resumed; its identical call is answered once without asking again.`, display: true }, idle ? { triggerTurn: true } : { deliverAs: "followUp" });
   };
   /** The parent's answer to one child ask (r79 item 5): the owner dialog in the parent's own pane with the child's role, run and the full command; never a model. */
   async function answerChildAsk(s: Session, ctx: ExtensionContext, a: ChildAsk): Promise<ChildAnswer> {
     if (!ctx.hasUI) return { allow: false, reason: NO_PANE_TEXT };
     const rt = gateRuntimeOf(s);
+    // D3: the owner already answered this exact call of a run that ended while it waited: used once, no dialog
+    const parked = a.inputHash ? parkFor(s).take(parkKey(a.dir, a.tool, a.cwd, a.inputHash)) : undefined;
+    if (parked !== undefined) {
+      s.trace?.emit({ event: "ask_parked_used", role: a.role, toolFamily: a.tool, decision: parked ? "allow" : "deny" });
+      return parked ? { allow: true, how: "allow-parked" } : { allow: false, reason: "pi-foreman: the owner denied this call while the run had ended; it is not run again. Report this line to the foreman and continue with what you can.", how: "deny-parked" };
+    }
     const dangerName = /^danger-[a-z-]+$/.test(a.cause) ? a.cause : null;
     const proposed = dangerName ? rememberOf(dangerName, a.tool, a.payload, undefined, undefined, s.cwd) : undefined;
     // under the parent's own mode allow a sentence would never be used: only the exact-command rule is offered
     const remember = proposed && rt.store.resolve().mode === "allow" ? { ...proposed, noSentence: true } : proposed;
     const ans = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `ask ${a.n}: child ${a.role} ${a.tool}`, () => askOwner({ tool: a.tool, payload: a.payload, cwd: a.cwd, cause: a.cause, ...(a.reason ? { classifierReason: a.reason } : {}), child: { role: a.role, run: a.run }, ...(remember ? { remember } : {}) }, ownerDeps(s, ctx, rt)));
+    if (ans.allow === false && ans.how === "aborted") return { allow: false, reason: ans.reason, how: ans.how, noRuling: true };
     return ans.allow === true ? { allow: true, how: ans.how === "remember" ? "allow-remember" : ans.refused ? "allow-remember-refused" : "allow-once" } : { allow: false, reason: ans.reason, how: ans.how };
   }
   let childAskChain: Promise<void> = Promise.resolve();
@@ -2249,7 +2338,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (typeof runId === "string") {
           const ended = s.scratch.onRunEnd(runId);
           finishScratch(s, ended);
-          closeChildAsk(s, ended);
+          const resumedLaunch = s.isChild ? null : parkFor(s).resumedRunEnd(runId);
+          closeChildAskAtRunEnd(s, ended ?? resumedLaunch);
         }
         if (typeof runId === "string" && !s.isChild) {
           s.childRuns.onRunEnd(runId);
@@ -2688,15 +2778,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const rule = `protected:${ids}`;
         const lead = m.entries[0];
         const named = `${lead.id}${lead.note ? ` (${lead.note})` : ""}`;
-        const readOnly = !m.opaque && !m.remoteOpaque && m.classes.length > 0 && [...m.classes, ...m.remoteClasses].every((c) => c === "read" || c === "net-read");
-        let away = true;
+        // a child or a session without UI fails closed; the owner's own session ignores presence
+        const away = gs.isChild || !ctx.hasUI;
         let askCause = `${named} is protected.`;
         try {
-          // away fails closed: a child or headless session, presence off or unknown, an away or stale sample
-          if (!gs.isChild && ctx.hasUI && get(gs.config.config, "presence.enabled") !== false) {
-            if (!readOnly) await gs.presence.refresh().catch(() => undefined);
-            away = sampleAway(gs.presence.sample(), gs.presence.away(), Number(get(gs.config.config, "presence.awayAfterMinutes")) || 11, Date.now());
-          }
           const checkRaw = get(gs.config.config, "gate.protected.check");
           const checkMode: "model" | "read-only" | "ask" = checkRaw === "ask" || checkRaw === "read-only" ? checkRaw : "model";
           const ledgerFile = boundLedger(gs.markerDir, gs.id);
@@ -2838,11 +2923,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return { sentence: describeCall({ name, tool, ...(segs ? { segments: segs } : {}), ...(inp ? { input: inp } : {}) }), rules: shell && segs ? proposeRule(segs) : null, exact: shell && segs ? exactRules(segs) : null };
   }
   /** The slice of the session the owner dialog needs: the pane, the presence, the remember store (a write reloads the files and clears the classifier cache). */
-  function ownerDeps(s: Session, ctx: ExtensionContext, rt: GateRuntime): OwnerDeps {
+  function ownerDeps(s: Session, ctx: ExtensionContext, rt: GateRuntime, callSignal?: AbortSignal): OwnerDeps {
     return {
       ui: ctx.ui as unknown as OwnerDeps["ui"],
-      presence: s.presence,
-      presenceEnabled: get(s.config.config, "presence.enabled") !== false,
+      signal: callSignal ? AbortSignal.any([shutdownSignal(s), callSignal]) : shutdownSignal(s),
       stateDir: path.join(s.agentDir, "pi-foreman", "state"),
       remember: { store: rt.store, afterWrite: () => { rt.store.reload(); rt.classifier.clearCache(); } },
     };
@@ -2871,20 +2955,20 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const off = launchBinding?.noAsk !== "no-pane" && (cfgOff || launchBinding?.noAsk === "deny");
         return done("no-parent", false, off ? childAskOffText(cause) : `${NO_PANE_TEXT} The call was: ${cause}.`);
       }
-      const t = get(gs.config.config, "gate.askTimeoutMs");
-      const timeoutMs = typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : DEFAULT_ASK_TIMEOUT_MS;
       const turn = childAskChain; // one ask.md at a time: parallel tool calls of the child queue here
       let free: () => void = () => {};
       childAskChain = new Promise<void>((r) => (free = r));
       await turn;
       try {
+        // the child never creates the ask dir: a missing one means the starting session ended or no longer watches this helper
+        if (!fs.existsSync(askDir)) return done("parent-gone", false, CHILD_GONE_TEXT);
         const askCause = a.dangerName ?? (cause === "no rule matches" || cause.startsWith("rule ") ? cause : cause.startsWith("self-modification") ? "selfmod" : cause);
-        const n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, deadline: Date.now() + timeoutMs });
+        const n = writeChildAsk(askDir, { tool, payload, cwd: ctx.cwd, session: gs.id, cause: askCause, reason: a.classifierReason ?? cause, role, run: launchBinding?.launchId, inputHash: inputHash(input) });
         const notBefore = fs.statSync(path.join(askDir, "ask.md")).mtimeMs;
-        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, timeoutMs, 250, notBefore, () => gs.presence.away()));
+        const w = await withBlockedOn(herdrEvents, BLOCK_PARENT, `ask ${n}: gate ${tool}`, () => awaitChildRuling(askDir, n, Infinity, 250, notBefore, undefined, undefined, { signal: ctx.signal, gone: { liveFile: launchBinding?.foremanSession ? path.join(liveDir(gs.agentDir), `${launchBinding.foremanSession}.json`) : undefined, staleMs: LIVE_DEAD_MS } }));
         if (w.answer === "allow") return done("parent-allow", true);
-        if (w.answer === "away") return done("parent-away", false, OWNER_AWAY_TEXT);
-        if (w.answer === "timeout") return done("parent-timeout", false, `pi-foreman: denied: the parent did not answer within ${Math.round(timeoutMs / 1000)}s (gate.askTimeoutMs); the call is denied. Report this line to the foreman and continue with what you can.`);
+        if (w.answer === "gone") return done("parent-gone", false, CHILD_GONE_TEXT);
+        if (w.answer === "aborted") return done("parent-aborted", false, "pi-foreman: the call was aborted while it waited for the parent's ruling; the question stays open in ask.md.");
         return done("parent-deny", false, w.answer === "deny" ? `pi-foreman: denied by the parent${w.reason ? `: ${w.reason}` : "."} Report this line to the foreman and continue with what you can. The ask was ${cause}${tool === "bash" ? (n2 => (n2 ? ` ${n2}` : ""))(childNpmNote(String((input as Record<string, unknown> | undefined)?.command ?? ""), launchBinding?.install === true)) : ""}` : `pi-foreman: denied: the parent's ruling-${n}.md starts with "${(w.first ?? "").slice(0, 40)}", not ALLOW or DENY.`);
       } catch (e) {
         return done("parent-deny", false, `pi-foreman: the ask for the parent could not be written (${e instanceof Error ? e.message : String(e)}); the call is denied. Report this line to the foreman.`);
@@ -2894,7 +2978,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (kind !== "owner") return done("no-ui", false, NO_PANE_TEXT); // no UI: an immediate deny
     const remember = a.noRemember ? undefined : rememberOf(a.dangerName ?? "unmatched", tool, payload, input, a.segments, ctx.cwd);
-    const ans: OwnerAnswer = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `pi-foreman: ${tool} asks`, () => askOwner({ tool, payload, cwd: ctx.cwd, cause, ...(a.classifierReason ? { classifierReason: a.classifierReason } : {}), ...(remember ? { remember } : {}) }, ownerDeps(gs, ctx, rt)));
+    const ans: OwnerAnswer = await withBlockedOn(herdrEvents, BLOCK_APPROVAL, `pi-foreman: ${tool} asks`, () => askOwner({ tool, payload, cwd: ctx.cwd, cause, ...(a.classifierReason ? { classifierReason: a.classifierReason } : {}), ...(remember ? { remember } : {}) }, ownerDeps(gs, ctx, rt, ctx.signal)));
     if (ans.allow === true) return done(ans.how === "remember" ? "allow-remember" : ans.refused ? "allow-remember-refused" : "allow-once", true);
     if (ans.how === "stop") gateStopped.add(gs.id);
     return done(ans.how, false, ans.reason);
@@ -2958,7 +3042,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (a.action === "remove" && !existing) return no(`${clean.kind} ${clean.glob} is not protected`);
     if (a.action === "add" && existing) return no(`${clean.kind} ${clean.glob} is already protected (${existing.id})`);
     const text = a.action === "add"
-      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; reads are allowed when the check rates them read-only, writes and deploys only while you are present. Floors and deny rules still apply.`
+      ? `Protect ${clean.kind} ${clean.glob}${clean.note ? ` (${clean.note})` : ""} in ${where}? For this target an accepted check allow replaces your ask rules, the dangerous-class whitelist and the ask/deny mode; in a session with UI that is not a child, confident reads, writes and deploys can be allowed whatever the presence; a child or a session without UI asks for writes and deploys. Floors and deny rules still apply.`
       : `Remove ${existing?.id} ${clean.kind} ${clean.glob}? Its calls go back to your ask rules and the dangerous class.`;
     let yes = false;
     try {
@@ -3660,7 +3744,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent") {
-        const b = recordLaunchUsage(s, ctx, input, kind, limits, launchMcp, launchFlags);
+        const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, launchFlags);
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
@@ -4220,11 +4304,33 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** D8: give a single-child launch its usage binding (role, launch id, kind) through extensionBindings. */
-  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean }): LaunchBinding | null {
+  /**
+   * D3: a resume of a run this session launched keeps the first launch's binding (same ask dir) but gets a new run id. Before the child starts the dir is
+   * made again if the run's end removed it, and watched (`add` skips an ask that has a ruling); the tool result maps the new run to the launch.
+   */
+  function resumeAskDir(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, callId: string): void {
+    const target = s.isChild ? null : resumeTarget(input);
+    const launch = target ? parkFor(s).launchFor(target) : undefined;
+    if (!launch || get(s.config.config, "gate.childAsk") !== "parent" || !ctx.hasUI) return;
+    const askDir = childAskDir(s.agentDir, s.id, launch);
+    try {
+      fs.mkdirSync(askDir, { recursive: true, mode: 0o700 });
+    } catch {
+      return;
+    }
+    parkFor(s).clearEnded(askDir);
+    parkFor(s).resumeCall(callId, launch);
+    parkFor(s).noteCall(callId, launch);
+    childAskWatchFor(s, ctx).add(askDir);
+  }
+
+  function recordLaunchUsage(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, toolCallId: string, kind?: LaunchKind, ladder?: LadderLimits, mcp?: string[], flags?: { reads?: number; install?: boolean }): LaunchBinding | null {
+    if (actionOf(input) === "resume") resumeAskDir(s, ctx, input, toolCallId);
     const role = singleLaunchRole(input);
     if (!role) return null;
     const model = typeof input.model === "string" && input.model ? input.model : null;
     const b = recordUsageLaunch(s.launches, { foremanSession: s.usage.line.foremanSession, workspace: s.usage.line.workspace, role, model, kind, activeProvider: ctx.model?.provider, ladder });
+    if (!s.isChild && actionOf(input) !== "resume") parkFor(s).noteCall(toolCallId, b.launchId);
     launchScratch(s, input, b);
     const ownHandoff = ownChildHandoff(s);
     if (!s.isChild && ownHandoff) b.handoffDir = ownHandoff;
@@ -4375,8 +4481,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.toolName === "subagent") {
       const s = sessionFor(ctx);
+      let askLine: string | null = null;
       if (s) {
         s.pendingLaunches.delete(event.toolCallId);
+        parkFor(s).dropCall(event.toolCallId);
         recordLaunch(s.runs, event.input, event.details, event.isError);
         recordLaunchRoles(s.launchedRoles, event.input, event.details, event.isError);
         const heads = s.launchHeadsByCall.get(event.toolCallId);
@@ -4384,9 +4492,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const trees = s.launchTreesByCall.get(event.toolCallId);
         s.launchTreesByCall.delete(event.toolCallId);
         const runId = launchId(event.input, event.details, event.isError);
-        const launched = s.scratch.onLaunched(boundLaunchId(event.input), runId);
+        const boundId = boundLaunchId(event.input);
+        if (boundId && runId && !s.isChild) parkFor(s).noteRun(runId, boundId); // a later resume of this run finds its launch
+        const launched = s.scratch.onLaunched(boundId, runId);
         finishScratch(s, launched);
-        closeChildAsk(s, launched);
+        const resumedLaunch = s.isChild ? null : parkFor(s).resumeLaunched(event.toolCallId, runId);
+        askLine = closeChildAsk(s, launched ?? resumedLaunch);
         s.ladder.onLaunched(event.toolCallId, runId);
         if (runId && !s.isChild) {
           const rowRoles = s.launchedRoles.get(runId) ?? [];
@@ -4448,7 +4559,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const misplacedHere = misplacedSizing.delete(event.toolCallId);
       const sizingHint = misplacedHere && event.isError ? misplacedHint(event.content.map((c) => (c.type === "text" ? c.text : "")).join("\n")) : null;
       if (sizingHint) s?.trace?.emit({ event: "sizing_hint" });
-      if (notices || tail !== null || sizingHint) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(tail !== null ? [{ type: "text" as const, text: tail }] : []), ...(sizingHint ? [{ type: "text" as const, text: sizingHint }] : [])] };
+      if (notices || tail !== null || sizingHint || askLine) return { content: [...(notices ?? []).map((text) => ({ type: "text" as const, text })), ...(trim ? trim.content : event.content), ...(tail !== null ? [{ type: "text" as const, text: tail }] : []), ...(sizingHint ? [{ type: "text" as const, text: sizingHint }] : []), ...(askLine ? [{ type: "text" as const, text: askLine }] : [])] };
     }
     const mapping = mapTool(event.toolName);
     const changed = event.isError ? undefined : changedFileOf(event.toolName, event.input as Record<string, unknown>);
@@ -4799,7 +4910,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", onStart: (spec, id) => {
         markHandoffWait(s, spec, id);
         if (spec.kind === "pid" && spec.bg) bgRecords.post(`fb-${id}`, "working", spec.note, "Running");
-      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), steer: (text) => steerFor(s).append(text) };
+      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), unreportedAsk: (label) => childBlocked?.takeAsk(label) ?? null, steer: (text) => steerFor(s).append(text) };
     },
   });
 
