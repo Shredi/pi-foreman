@@ -3,6 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LadderState, RANK_CAPPED_REASON } from "../ladder.ts";
+import { applyLaunchModels } from "../launchmodel.ts";
+import { ranksOf } from "../ranks.ts";
 import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const FAIL = "Overall verdict: FAIL\n1. the parser drops the last line\n";
@@ -16,13 +18,13 @@ type Rig = Awaited<ReturnType<typeof r11Rig>>;
 
 const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
 
-async function rig(t: Parameters<typeof r11Rig>[0], map: Map_, policy: Policy, key?: boolean): Promise<Rig> {
+async function rig(t: Parameters<typeof r11Rig>[0], map: Map_, policy: Policy, key?: boolean, providerRevision?: boolean): Promise<Rig> {
   const roles = { explorer: { model: "fake/explorer" }, reviewer: { model: "fake/reviewer" }, builder: { model: "fake/builder", strong: { model: MAPS[map] } } };
   const base = reviewAllowOpts();
   return r11Rig(t, { default: "standard", revisionRounds: { standard: 1 } }, {
     piExtra: { registerCommand: (name: string, def: { handler: (args: string, ctx: unknown) => Promise<void> }) => void commands.set(name, def) },
     ctx: { ...base.ctx, model: { provider: "fake", id: "foreman" } },
-    config: { providers: { fake: { review: { model: "m" }, roles, ranks: RANKS } }, ladder: { childPolicy: policy, strongOnRevision: true, ...(key === undefined ? {} : { equalOnStrongRisk: key }) } },
+    config: { providers: { fake: { review: { model: "m" }, roles, ranks: RANKS, ...(providerRevision ? { strongOnRevision: true } : {}) } }, ladder: { childPolicy: policy, strongOnRevision: true, ...(key === undefined ? {} : { equalOnStrongRisk: key }) } },
   });
 }
 
@@ -69,64 +71,61 @@ for (const [map, policy] of CAPPED) {
     assert.deepEqual(a.events("rung_up"), []);
     assert.match(texts(await a.started(id, rev, "run-b2")), SKIP);
   });
-
-  test(`FAIL revision, explicit lower model + reason, map ${map} + ${policy}: launched on that model, not refused`, async (t) => {
-    const a = await rig(t, map, policy);
-    await built(a);
-    const rev = builder({ task: "fix it", model: "fake/lower", reason: "a one-line fix" });
-    const { id, res } = await a.launch(rev);
-    assert.equal(res, undefined, res?.reason);
-    assert.equal(rev.model, "fake/lower");
-    assert.deepEqual(refusals(a), []);
-    assert.deepEqual(a.events("rung_top").map((r) => [r.model, r.reason]), [["fake/lower", RANK_CAPPED_REASON]]);
-    assert.match(texts(await a.started(id, rev, "run-b2")), SKIP);
-  });
-
-  test(`FAIL revision, explicit lower model without reason, map ${map} + ${policy}: kept as well`, async (t) => {
-    const a = await rig(t, map, policy);
-    await built(a);
-    const rev = builder({ task: "fix it", model: "fake/lower" });
-    assert.equal((await a.launch(rev)).res, undefined);
-    assert.equal(rev.model, "fake/lower");
-    assert.deepEqual(refusals(a), []);
-  });
-
-  test(`finish gate after FAIL, map ${map} + ${policy}: no climb_available refusal`, async (t) => {
-    const a = await rig(t, map, policy);
-    await built(a);
-    await settle(a, 3);
-    const refused = a.events("finish_refused");
-    assert.ok(refused.length > 0);
-    assert.deepEqual(refused.filter((r) => r.climb_available === true), []);
-  });
-
-  test(`RUNG_UP report, explicit lower model + reason, map ${map} + ${policy}: honoured`, async (t) => {
-    const a = await rig(t, map, policy);
-    await built(a, "RUNG_UP: context\nDone: x", false);
-    const next = builder({ task: "go on", model: "fake/lower", reason: "small rest" });
-    const { res } = await a.launch(next);
-    assert.equal(res, undefined, res?.reason);
-    assert.equal(next.model, "fake/lower");
-    assert.deepEqual(refusals(a), []);
-  });
-
-  test(`RUNG_UP report, model "strong", map ${map} + ${policy}: still refused [rank_policy]`, async (t) => {
-    const a = await rig(t, map, policy);
-    await built(a, "RUNG_UP: context\nDone: x", false);
-    const { res } = await a.launch(builder({ task: "go on", model: "strong" }));
-    assert.equal(res?.block, true);
-    assert.match(res?.reason ?? "", new RegExp(`rank_policy:${policy}`));
-    assert.equal(refusals(a).length, 1);
-  });
-
-  test(`FAIL revision with model "strong", map ${map} + ${policy}: still refused [rank_policy]`, async (t) => {
-    const a = await rig(t, map, policy);
-    await built(a);
-    const { res } = await a.launch(builder({ task: "fix it", model: "strong" }));
-    assert.equal(res?.block, true);
-    assert.match(res?.reason ?? "", new RegExp(`rank_policy:${policy}`));
-  });
 }
+
+// one config for the cases the plan unit tests below decide per entry (a lower model, the gate, a RUNG_UP report)
+test("FAIL revision, explicit lower model + reason, map A + below: launched on that model, not refused", async (t) => {
+  const a = await rig(t, "A", "below");
+  await built(a);
+  const rev = builder({ task: "fix it", model: "fake/lower", reason: "a one-line fix" });
+  const { id, res } = await a.launch(rev);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(rev.model, "fake/lower");
+  assert.deepEqual(refusals(a), []);
+  assert.deepEqual(a.events("rung_top").map((r) => [r.model, r.reason]), [["fake/lower", RANK_CAPPED_REASON]]);
+  assert.match(texts(await a.started(id, rev, "run-b2")), SKIP);
+});
+
+test("finish gate after FAIL, map A + below: no climb_available refusal", async (t) => {
+  const a = await rig(t, "A", "below");
+  await built(a);
+  await settle(a, 3);
+  const refused = a.events("finish_refused");
+  assert.ok(refused.length > 0);
+  assert.deepEqual(refused.filter((r) => r.climb_available === true), []);
+});
+
+test("RUNG_UP report, explicit lower model + reason, map B + below: honoured", async (t) => {
+  const a = await rig(t, "B", "below");
+  await built(a, "RUNG_UP: context\nDone: x", false);
+  const next = builder({ task: "go on", model: "fake/lower", reason: "small rest" });
+  const { res } = await a.launch(next);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(next.model, "fake/lower");
+  assert.deepEqual(refusals(a), []);
+});
+
+test("FAIL revision with model strong, map B + below: still refused [rank_policy] with the next step", async (t) => {
+  const a = await rig(t, "B", "below");
+  await built(a);
+  const { res } = await a.launch(builder({ task: "fix it", model: "strong" }));
+  assert.equal(res?.block, true);
+  assert.match(res?.reason ?? "", /rank_policy:below/);
+  assert.ok(res?.reason?.includes(NEXT), res?.reason);
+});
+
+// no live rung (the first builder launch of a session, or after a reload): the bare FAIL case is the launchPlanned unit below; a chain has no live rung either
+test("chain builder -> reviewer -> builder as the first launch of the session, map A + below: both builders on the bottom rung, not refused", async (t) => {
+  const a = await rig(t, "A", "below", undefined, true);
+  const chain = { chain: [builder(), { agent: "reviewer", task: "review items 1" }, builder({ task: "fix it" })] };
+  const { id, res } = await a.launch(chain);
+  assert.equal(res, undefined, res?.reason);
+  const ch = chain.chain as Record<string, unknown>[];
+  assert.deepEqual([ch[0].model, ch[2].model], ["fake/builder", "fake/builder"]);
+  assert.deepEqual(refusals(a), []);
+  assert.ok(a.events("rung_top").some((r) => r.reason === RANK_CAPPED_REASON));
+  assert.match(texts(await a.started(id, chain, "run-c")), SKIP);
+});
 
 // map A + at-or-below: the strong rung is allowed, the climb happens
 test("FAIL revision, bare launch, map A + at-or-below: climbs to the foreman's own model", async (t) => {
@@ -180,14 +179,18 @@ test("equalOnStrongRisk on, map A + below, no risk tag: capped like with the key
 
 // a refused `strong` keyword names the next step; a refused explicit model does not
 const NEXT = "Relaunch without a model to run on the default rung.";
+// the context climb: a builder run ends with `RUNG_UP: context`; the relaunch asks for the strong rung, or asks for nothing (the default rung)
+const CONTEXT_REPORT = "RUNG_UP: context\nDone: x";
+const HANDOFF_START = "[pi-foreman rung-up handoff] The previous builder run run-b stopped (context).";
 
-for (const [map, policy] of [["A", "below"], ["B", "below"], ["B", "at-or-below"]] as [Map_, Policy][]) {
-  test(`model "strong" refused, map ${map} + ${policy}: the refusal names the next step in one clause`, async (t) => {
+for (const [map, policy] of CAPPED) {
+  test(`RUNG_UP: context, relaunch with model strong, map ${map} + ${policy}: refused [rank_policy:${policy}] and the refusal names the default rung`, async (t) => {
     const a = await rig(t, map, policy);
-    await built(a, "RUNG_UP: context\nDone: x", false);
+    await built(a, CONTEXT_REPORT, false);
     const { res } = await a.launch(builder({ task: "go on", model: "strong" }));
     assert.equal(res?.block, true);
     assert.match(res?.reason ?? "", new RegExp(`rank_policy:${policy}`));
+    assert.equal(refusals(a).length, 1);
     assert.ok(res?.reason?.includes(NEXT), res?.reason);
   });
 }
@@ -204,20 +207,9 @@ test("explicit forbidden model refused, below: the refusal does not name the nex
   assert.ok(!res?.reason?.includes(NEXT), res?.reason);
 });
 
-// the context climb: a builder run ends with `RUNG_UP: context`; the relaunch asks for the strong rung, or asks for nothing (the default rung)
-const CONTEXT_REPORT = "RUNG_UP: context\nDone: x";
-const HANDOFF_START = "[pi-foreman rung-up handoff] The previous builder run run-b stopped (context).";
-
-test("RUNG_UP: context, relaunch with model strong, map A + below: refused [rank_policy:below] and the refusal names the default rung", async (t) => {
-  const a = await rig(t, "A", "below");
-  await built(a, CONTEXT_REPORT, false);
-  const { res } = await a.launch(builder({ task: "go on", model: "strong" }));
-  assert.equal(res?.block, true);
-  assert.match(res?.reason ?? "", /rank_policy:below/);
-  assert.ok(res?.reason?.includes(NEXT), res?.reason);
-});
-
-test("RUNG_UP: context, relaunch without a model, map A + below: launched on the builder's default bottom rung, not refused", async (t) => {
+// Code path: ladder.ts plan() gives no climb for a keyword-less launch without preferStrong (the context climb sets none), so apply() never
+// prepends the pending handoff (ladder.ts apply, index.ts `climbs.length > 0`); the handoff stays in LadderState.eligible for a later strong launch.
+test("RUNG_UP: context, relaunch without a model, map A + below: launched on the default bottom rung, not refused, the handoff is NOT prepended", async (t) => {
   const a = await rig(t, "A", "below");
   await built(a, CONTEXT_REPORT, false);
   const rel = builder({ task: "go on" });
@@ -227,15 +219,6 @@ test("RUNG_UP: context, relaunch without a model, map A + below: launched on the
   assert.deepEqual(refusals(a), []);
   assert.deepEqual(a.events("rung_up"), []);
   assert.deepEqual(a.events("rung_top"), []);
-});
-
-// Code path: ladder.ts plan() gives no climb for a keyword-less launch without preferStrong (the context climb sets none), so apply() never
-// prepends the pending handoff (ladder.ts apply, index.ts `climbs.length > 0`); the handoff stays in LadderState.eligible for a later strong launch.
-test("RUNG_UP: context, relaunch without a model on the default rung: the ended run's handoff is NOT prepended to the task", async (t) => {
-  const a = await rig(t, "A", "below");
-  await built(a, CONTEXT_REPORT, false);
-  const rel = builder({ task: "go on" });
-  assert.equal((await a.launch(rel)).res, undefined);
   assert.match(rel.task as string, /\ngo on\n/); // the task text is there (the adapter's own roots and scratch blocks wrap it)
   assert.doesNotMatch(rel.task as string, /rung-up handoff|Previous report/);
 });
@@ -254,7 +237,7 @@ test("RUNG_UP: context, relaunch with model strong, map A + at-or-below: launche
 
 // LadderState.plan units
 const ROLES = { builder: { model: "fake/builder", strong: { model: "fake/foreman" } } };
-const OPTS = { preferStrong: true, revisionReason: "review_fail" as const };
+const OPTS = { preferStrong: true, revisionReason: "review_fail" as const, ranks: ranksOf({ providers: { fake: { ranks: RANKS } } }) };
 
 test("plan: strongAllowed false caps a bare launch; true or absent keeps the climb", () => {
   for (const reason of ["review_fail", "revision"] as const) {
@@ -272,6 +255,17 @@ test("plan: strongAllowed false caps a bare launch; true or absent keeps the cli
   assert.equal(l.apply(l.plan({ agent: "builder", task: "t" }, ROLES, OPTS).climbs, () => [])[0].event, "rung_up");
 });
 
+test("plan: an explicit lower model is capped too when the strong rung is forbidden, and rises when it is allowed", () => {
+  for (const [allowed, event] of [[false, "rung_top"], [true, "rung_up"]] as const) {
+    const l = new LadderState();
+    const e: Record<string, unknown> = { agent: "builder", task: "t", model: "fake/lower", reason: "small" };
+    const p = l.plan(e, ROLES, { ...OPTS, strongAllowed: () => allowed });
+    assert.equal(p.block, undefined);
+    assert.equal(l.apply(p.climbs, () => [])[0].event, event);
+    assert.equal(e.model, allowed ? "strong" : "fake/lower");
+  }
+});
+
 test("plan: the strong keyword and strong_no_reason ignore strongAllowed", () => {
   const l = new LadderState();
   const kw: Record<string, unknown> = { agent: "builder", task: "t", model: "strong" };
@@ -280,4 +274,48 @@ test("plan: the strong keyword and strong_no_reason ignore strongAllowed", () =>
   assert.equal(kw.model, "strong");
   assert.equal(p.climbs[0].reason, "review_fail");
   assert.match(new LadderState().plan({ agent: "builder", task: "t", model: "strong" }, ROLES, { strongAllowed: () => false }).block ?? "", /strong_no_reason/);
+});
+
+// plan + applyLaunchModels: a capped entry never gets the strong rung or its thinking level (no spawn)
+const TROLES = { builder: { model: "fake/builder", strong: { model: "fake/foreman", thinking: "high" } } };
+
+/** plan() then applyLaunchModels() the way index.ts runs them; `live` is the builder's live model, `allowed` the rank decision per entry. */
+function launchPlanned(input: Record<string, unknown>, live: string | null, allowed: (e: Record<string, unknown>) => boolean): void {
+  const l = new LadderState();
+  if (live) l.noteLaunched({ agent: "builder", model: live });
+  const p = l.plan(input, TROLES, { ...OPTS, strongAllowed: allowed });
+  applyLaunchModels(input, TROLES, undefined, { ...OPTS, capped: new Set(p.climbs.filter((c) => c.skipped).map((c) => c.entry)), explicit: () => true });
+}
+
+test("capped bare launch with no live rung: the bottom rung, not the strong one", () => {
+  const capped: Record<string, unknown> = { agent: "builder", task: "t" };
+  launchPlanned(capped, null, () => false);
+  assert.equal(capped.model, "fake/builder");
+  const open: Record<string, unknown> = { agent: "builder", task: "t" };
+  launchPlanned(open, null, () => true);
+  assert.equal(open.model, "fake/foreman:high");
+});
+
+test("capped bare launch keeps the live rung's thinking level, not the strong rung's", () => {
+  const capped: Record<string, unknown> = { agent: "builder", task: "t" };
+  launchPlanned(capped, "fake/builder:low", () => false);
+  assert.equal(capped.model, "fake/builder:low");
+});
+
+test("capped explicit model keeps the level it would get without a climb", () => {
+  const capped: Record<string, unknown> = { agent: "builder", task: "t", model: "fake/lower:medium", reason: "small" };
+  launchPlanned(capped, "fake/builder", () => false);
+  assert.equal(capped.model, "fake/lower:medium");
+});
+
+test("tasks and chain: only the capped entries stay below the strong rung", () => {
+  const entries = (): Record<string, unknown>[] => [{ agent: "builder", task: "a" }, { agent: "builder", task: "b" }, { agent: "builder", task: "c", model: "strong", reason: "hard" }];
+  for (const key of ["tasks", "chain"] as const) {
+    const list = entries();
+    launchPlanned({ [key]: list }, null, (e) => e.task !== "a");
+    assert.deepEqual(list.map((e) => e.model), ["fake/builder", "fake/foreman:high", "fake/foreman:high"]);
+  }
+  const par = entries();
+  launchPlanned({ chain: [{ parallel: par }] }, null, (e) => e.task === "b");
+  assert.deepEqual(par.map((e) => e.model), ["fake/builder", "fake/foreman:high", "fake/foreman:high"]);
 });

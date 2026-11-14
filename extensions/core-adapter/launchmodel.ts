@@ -63,6 +63,8 @@ export interface LaunchOptions {
    * passed through instead of being replaced by the role map (the rank policy decides, ranks.ts explicitModelAllowed).
    */
   explicit?: (role: string, model: string) => boolean;
+  /** Entries whose automatic climb the rank policy capped (ladder.ts Climb.skipped): they never get the strong rung, so they keep the rung and level they would have without a climb. */
+  capped?: ReadonlySet<object>;
 }
 
 export interface LaunchResult {
@@ -126,7 +128,7 @@ export function applyLaunchModels(input: Json, roles: Record<string, Json>, maxT
   if (isActionCall(input)) return out;
   const set = (o: Json, passed: unknown): void => {
     if (typeof o.agent !== "string" || o.agent === "") return;
-    const res = launchModel(o.agent, roles, passed, maxThinking, opts);
+    const res = launchModel(o.agent, roles, passed, maxThinking, opts.capped?.has(o) ? { ...opts, preferStrong: false, tier: undefined } : opts);
     if (!res) return;
     o.model = res.model;
     if (res.override) out.overrides.push(res.override);
