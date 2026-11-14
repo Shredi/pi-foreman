@@ -2735,6 +2735,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // an ask-kind floor, a self-modification rule and an ask rule go to the owner before the mode step (never to the classifier, never run under mode allow; only a protected match above runs a check first)
       if (r && "ask" in r) {
+        // a write into an install or package root: mode deny refuses it without a dialog; every other mode asks the owner (the gate's step, gate.ts installRootWrite)
+        if (r.rule === "install-root-write" && resolved.mode === "deny") return denied(r.rule, "mode", `${MODE_DENY_TEXT}; ${r.reason}`);
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule: r.rule, role });
         const cause = r.cause === "selfmod" ? `self-modification ${r.rule}: ${r.reason}` : r.cause === "rule" ? r.rule : `${r.rule}: ${r.reason}`;
         return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, noRemember: true });

@@ -10,7 +10,7 @@ import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, 
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
-import { PATH_TOOL_NAMES, opsOf, pathDecide, resolveWord, under } from "./pathrules.ts";
+import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, resolveWord, under } from "./pathrules.ts";
 import { boundNames, relaxPatternWords } from "./permoverlay.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
@@ -125,6 +125,44 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
     return t.path;
   }
   return null;
+}
+
+/**
+ * `install-root-write`: a write the gate can name into the Pi install root, the global npm root, a bundled package root or the harness package root, from outside
+ * the session's own worktree (compared by spelling: a link inside the worktree that points into a root is not followed). A path tool's write operations, and the
+ * step 0 helper's targets of a shell line, the catch-all ones too. A segment a read, test-run or fetch rule accepts, with no redirect of its own into a root, is
+ * no write. Returns the ask, or undefined. Forms that name no path (`npm install -g`) are not seen.
+ */
+function installRootWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): GateResult {
+  const { roots, platform, cwd } = env;
+  const real = (p: string): string | null => (platform === process.platform ? realDefault(p) : null);
+  const held = [...roots.install, ...(roots.pkgRoot ? [roots.pkgRoot] : [])].flatMap((r) => [r, real(r)].filter((x, i, a): x is string => !!x && a.indexOf(x) === i));
+  if (held.length === 0) return undefined;
+  const rootOf = (abs: string): string | undefined => (under(platform, roots.worktree, abs) ? undefined : held.find((r) => under(platform, r, abs)));
+  const ask = (target: string, root: string): GateResult => {
+    const what = root === roots.pkgRoot ? "the pi-foreman package folder" : "an install folder of Pi or of a bundled package";
+    return { ask: true, rule: "install-root-write", reason: `this call changes ${target}, which lies in ${what} (${root}); the harness's own files change only with your yes, and no allow rule, allow sentence, judge verdict or permissions mode other than deny answers this question` };
+  };
+  if (!segments) {
+    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
+      const abs = dir === "write" ? resolveWord(platform, cwd, w) : null;
+      const root = abs ? rootOf(abs) : undefined;
+      if (abs && root) return ask(abs, root);
+    }
+    return undefined;
+  }
+  const dctx = { roots, facts: env.facts, platform, cwd };
+  const ec = effectCtxOf(dctx);
+  for (const t of shellWriteTargets(segments, platform)) {
+    const root = rootOf(t.path);
+    if (!root || !(t.named || baseProg(t.seg.program) === "git")) continue;
+    const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
+    const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
+    if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
+    return ask(t.path, root);
+  }
+  return undefined;
 }
 
 /**
@@ -305,11 +343,15 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
     /** deny rules and ask rules, then a pending floor ask, then allow rules and the built-in allow `builtin`. */
+    // set by the path and shell branches below before `ruled` runs: the ask of a write into an install or package root
+    let installAsk: GateResult;
     // `raw`: the call as spelled (a path tool): deny, ask and protected rules match it too, allow rules only `call`
     const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[], raw?: RuleCall): GateResult => {
       const calls = raw ? [call, raw] : [call];
       const denied = calls.map((c) => matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, c, rules.env)).find((v) => v.verdict === "deny");
       if (denied) return ruleResult(denied);
+      // after the owner's deny rules, before the protected check, ask rules, allow rules, built-in allows, the danger class and the mode step: nothing there clears it
+      if (installAsk) return installAsk;
       if (!pending && deps.protected?.length) {
         const m = calls.map((c) => matchProtected(c, segments, deps.protected ?? [], { ...rules.env, ec: effectCtx0 })).find((x) => x);
         if (m) {
@@ -343,6 +385,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         if (cd) return decided(cd);
       }
       const ec = effectCtxOf(dctx);
+      if (toolName !== "powershell") installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
@@ -381,6 +424,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         const cd = childDenied(toolName, nin, undefined, null, { roots, facts, platform, cwd });
         if (cd) return decided(cd);
       }
+      installAsk = installRootWrite(toolName, nin, undefined, null, { roots, facts, platform, cwd });
       const pv = pathDecide(toolName, nin, cwd, roots, platform);
       const result = ruled(ruleCallOf(toolName, nin, callCtx()), h, () => (pv ? pv.rule : readOnly && !pathWords(nin).some((w) => !sshPublicKey(w, env)) && pathWords(nin).length > 0 ? PUBKEY_READ_RULE : null), undefined, nin === inp ? undefined : ruleCallOf(toolName, inp, callCtx()));
       if (result) return decided(result);
