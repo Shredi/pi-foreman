@@ -73,7 +73,15 @@ class SizingPromptTest(unittest.TestCase):
             # token-diet item 9: the ask_user_question rule
             old_ask = "- Plan mode is not part of the ceremony; the checkpoint is.\n"
             new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).\n"
+            # review-own-model: `reason` placement (rendered with the ladder rule) and the real different-model rule
+            old_reason = "needs a `reason` (why the default model cannot do it), and at trivial"
+            new_reason = "needs a `reason` (why the default model cannot do it; a top-level key of the `subagent` call, never inside `options` or `args`), and at trivial"
+            old_own = "A review never runs on your own model; the adapter swaps it."
+            new_own = "A configured reviewer pair is used as set; at high stakes the high-stakes model applies when one is set; otherwise the adapter moves a review off your model (the same model id under another provider counts as your model) when another model is mapped."
             want = render_prompt(old.stdout.decode("utf-8"), k).replace(old_launch, new_launch)
+            for old_text, new_text in ((old_reason, new_reason), (old_own, new_own)):
+                self.assertIn(old_text, want)
+                want = want.replace(old_text, new_text)
             # roles-slim: the planner, finalizer and senior-reviewer roles are gone (one old/new pair per changed rendered line)
             for old_text, new_text in ROLE_PAIRS:
                 self.assertIn(old_text, want)

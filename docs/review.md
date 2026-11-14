@@ -76,11 +76,15 @@ it raised and how many `now` lines a builder revision took, with the diff size: 
 ## Different-model rule
 
 A review by the model that built the work is weak evidence. On every `reviewer` launch, when the resolved model is the
-foreman's own (base ids, the thinking level ignored), the harness moves it to the next rung that differs, else
+foreman's own (model ids, the thinking level ignored; the same model id under another provider counts as the same model), the harness moves it to the next rung that differs, else
 to `ceremony.reviewModel` (default `null`, user or overlay config only). Trace `review_model {role, from, to, reason:
 same_as_foreman}` (+ `policy_override` when the rank policy would refuse the pick). With no differing rung and no
 `reviewModel` the launch proceeds unchanged and the trace says `reason: no_alternative`. The rule applies whether or
-not the repeat-fail climb is enabled.
+not the repeat-fail climb is enabled. The automatic rule compares ids without the provider name (`provA/model-x` and
+`provB/model-x` are one model), for the entry, for the rung or `reviewModel` it may move to and for the occasion
+exception below. A configured pair is used as set, also a pair onto the foreman's own model or onto the same id under
+another provider, without a warning. At high stakes a differing `ceremony.highStakes.model` applies and wins over a pair
+on the foreman's model (`paired_skipped`).
 
 The rule judges the foreman's **live** model (the model running the turn, which is the idle rung's model while the
 foreman is downshifted, see [ladder](ladder.md#idle-rung-foreman-downshift)), not the base model the rank checks keep.
@@ -110,9 +114,9 @@ trace never names a rung the launch does not use). It never overrides three pins
 - `security_rung`: the model of a security climb (`ladder.reviewerClimb`);
 - `occasion`: a model set by `ceremony.reviewByOccasion` (or by `ceremony.highStakes.model`).
 
-An occasion model that equals the live foreman's base is the exception: that foreman's pair replaces it (`reason:
+An occasion model with the same id as the live foreman's base (provider and level ignored) is the exception: that foreman's pair replaces it (`reason:
 paired`), else today's rule moves it to the next differing rung of `roles.reviewer` / `.strong`, else to the string
-`reviewModel`, else `no_alternative`. An occasion model with a differing base stays (`paired_skipped`, pin `occasion`).
+`reviewModel`, else `no_alternative`. An occasion model with a differing id stays (`paired_skipped`, pin `occasion`).
 An occasion's thinking override still replaces the level of a pair, and applies to the model moved to. Invalid map entries (a value that is not a
 string, a key without a `/`) are dropped with a config warning; `foreman doctor` checks the pair values against the model
 registry. Two neutral examples:
