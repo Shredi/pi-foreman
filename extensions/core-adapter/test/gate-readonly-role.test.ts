@@ -199,6 +199,15 @@ const BRANCH_READS = [
   "git branch --format=%(refname)", "git branch --sort -committerdate", "git branch -l 'feat*'", "git branch --no-contains HEAD", "git -C sub branch --merged",
 ];
 const BRANCH_WRITES = ["git branch new", "git branch -d x", "git branch -m a b", "git branch --contains HEAD -d x", "git branch -f main HEAD", "git branch --merged > f", "git branch --contains HEAD new", "git branch -c a b", "git branch -u origin/main"];
+test("a git catch-all refusal says the git command changes the round worktree's repository and names the scratch clone; a named target keeps its path text", () => {
+  const v = bash("git commit -m x") as { reason?: string };
+  assert.ok(refused(v), JSON.stringify(v));
+  assert.match(String(v.reason), /a git command changes the repository of the round worktree .*, which is read-only for your role/);
+  assert.doesNotMatch(String(v.reason), /is inside/);
+  assert.match(String(v.reason), /git clone/);
+  assert.match(String((bash("echo x > f") as { reason?: string }).reason), /is inside/);
+});
+
 for (const role of ["reviewer", "explorer"]) {
   test(`${role}: list-mode git branch forms keep the verdict they have without the flag, branch writes stay refused`, () => {
     for (const l of BRANCH_READS) {

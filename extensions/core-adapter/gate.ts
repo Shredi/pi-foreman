@@ -101,7 +101,7 @@ const READONLY_ROLE_RUNS = new Set(["default-read", "default-git-read", "default
  * files are no worktree writes. A segment a read, test-run or fetch rule accepts, with no redirect of its own into the worktree, is no write. The catch-all of
  * any other program (`make`, `npm run <script>`, `tar -x` without a directory) is not counted.
  */
-function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): string | null {
+function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): { path: string; gitAny: boolean } | null {
   const { roots, platform, cwd } = env;
   // the targets the child may write: its scratch dir and handoff files (the worktree term left out of the path rules)
   const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
@@ -110,7 +110,7 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
       const abs = dir === "write" ? resolveWord(platform, cwd, w) : null;
-      if (abs && inside(abs)) return abs;
+      if (abs && inside(abs)) return { path: abs, gitAny: false };
     }
     return null;
   }
@@ -122,7 +122,7 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
     const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
     const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
     if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
-    return t.path;
+    return { path: t.path, gitAny: !t.named };
   }
   return null;
 }
@@ -188,7 +188,8 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
     if (target !== null) {
       const r = env.roots;
       const scratch = r.scratch.length ? r.scratch[0] : "your scratch dir";
-      return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${target} is inside ${r.worktree}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
+      const what = target.gitAny ? `a git command changes the repository of the round worktree ${r.worktree}, which is read-only for your role` : `${target.path} is inside ${r.worktree}`;
+      return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${what}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
     }
   }
   return undefined;
