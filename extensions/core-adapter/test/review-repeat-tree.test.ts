@@ -55,7 +55,8 @@ test("a tracked edit is a tree change", async () => {
   const dir = repo();
   try {
     const tree = await snap(dir);
-    fs.writeFileSync(path.join(dir, "a.txt"), "two\n");
+    // Size differs from "one\n" so git's stat check sees the edit even under load.
+    fs.writeFileSync(path.join(dir, "a.txt"), "two more\n");
     assert.equal(await treeChangedSince(dir, tree), true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

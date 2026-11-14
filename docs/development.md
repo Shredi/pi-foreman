@@ -33,7 +33,7 @@ node setup.mjs --dry-run                          # installer preview, writes no
 
 The installer suite preloads `tests/installer/_hermetic-env.mjs`, which points `HERDR_APP_HOME` at an empty temp dir so no installer test reads the real app home.
 
-A fresh worktree needs `npm ci --legacy-peer-deps` before `npm run test:node`.
+A fresh worktree needs `npm ci` before `npm run test:node`.
 
 A new `context` or `before_agent_start` hook must keep the messages already sent byte-identical (the rules are in [cache](cache.md#stable-prefix)). `extensions/core-adapter/test/prefix-stable-catchall.test.ts` collects every such handler the adapter registers and fails when one rewrites a sent message or the system prompt, so a new hook needs no entry there.
 
