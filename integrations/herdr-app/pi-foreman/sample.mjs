@@ -74,7 +74,7 @@ export const SAMPLE = {
     openPrs: [
       pr(101, { state: "draft" }),
       pr(102, { state: "draft", checks: [{ n: "ci", state: "pending" }] }),
-      pr(103, { checks: [{ n: "ci", state: "pending" }] }),
+      pr(103, { checks: [{ n: "lint", state: "ok" }, { n: "ci", state: "pending" }] }),
       pr(104, { checks: [{ n: "ci", state: "fail" }] }),
       pr(105, { repo: "acme/gadgets" }),
       pr(106),

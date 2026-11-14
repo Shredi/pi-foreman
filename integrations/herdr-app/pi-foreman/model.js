@@ -1093,7 +1093,7 @@ export function displayStatus(item, folded) {
 // ---- PR dot and hover card (items 17 d, 19) ------------------------------------------------------------------
 
 /** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, unless a finished job failed (red never
- *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" while no job finished, "red" once a finished job
+ *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses, "red" once a finished job
  *  failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
 export function prDotState(pr) {
   const d = baseDot(pr);
@@ -1103,7 +1103,7 @@ export function prDotState(pr) {
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
   if (p.state === "running" && !d.ring && d.fill === "green") return { pulse: true, fill: "amber", conflict: d.conflict };
   if (p.state === "ready" && d.fill === "dim") return { pulse: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
-  return { pulse, fill: d.fill, conflict: d.conflict };
+  return { pulse, fill: pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
 }
 
 /**

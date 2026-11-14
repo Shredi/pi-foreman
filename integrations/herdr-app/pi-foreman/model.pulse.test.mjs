@@ -79,6 +79,23 @@ test("merge blocked with every check passed: amber pulse as the ring was, the st
   assert.equal(prStateText(p), "CI running");
 });
 
+const partly = [{ n: "lint", state: "ok" }, { n: "ci", state: "pending" }];
+
+test("partly passed, partly running: amber pulse, never green (clean, blocked, untracked)", () => {
+  for (const over of [{ mergeState: "clean" }, { mergeState: "blocked" }, { head: undefined, mergeState: undefined }]) {
+    const p = pr({ checks: partly, ...over });
+    assert.deepEqual(prDotState(p), { pulse: true, fill: "amber", conflict: false });
+    assert.equal(prState(p), "pending");
+    assert.equal(prStateText(p), "CI running");
+  }
+});
+
+test("draft partly passed, partly running: violet pulse; with a failure: red and still", () => {
+  assert.deepEqual(prDotState(pr({ state: "draft", checks: partly })), { pulse: true, fill: "violet", conflict: false });
+  const failing = pr({ checks: [...partly, { n: "lint2", state: "fail" }] });
+  assert.deepEqual(prDotState(failing), { pulse: false, fill: "red", conflict: false });
+});
+
 test("a running draft counts, sorts and summarises as a draft", () => {
   const running = pr({ state: "draft", checks: pending });
   const settled = pr({ state: "draft", checks: passed });

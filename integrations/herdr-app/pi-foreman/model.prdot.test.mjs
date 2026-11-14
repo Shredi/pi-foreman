@@ -20,9 +20,9 @@ test("fill: red once a finished job failed, even while others run", () => {
   assert.deepEqual(dot(["pending", "fail", "ok"]), { pulse: false, fill: "red", conflict: false });
 });
 
-test("fill: green when every finished job passed (jobs may still run)", () => {
+test("fill: green when every job passed; amber and pulsing while one still runs", () => {
   assert.equal(dot(["ok", "ok"]).fill, "green");
-  assert.deepEqual(dot(["ok", "pending"]), { pulse: true, fill: "green", conflict: false });
+  assert.deepEqual(dot(["ok", "pending"]), { pulse: true, fill: "amber", conflict: false });
 });
 
 test("fill: dim when unknown (no jobs, or only unknown ones)", () => {
