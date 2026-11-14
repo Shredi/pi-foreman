@@ -13,7 +13,7 @@ import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
 import { resolveGithubHosts } from "./prhost.ts";
 import type { GithubHosts } from "./prhost.ts";
-import { holdPass, pollWatchBatch, settleMsOf, settledOf } from "./prwatch.ts";
+import { expectStep, holdPass, pollWatchBatch, settleMsOf, settledOf } from "./prwatch.ts";
 import type { CommentEntry, RunOp, SourceStatus, WatchPoll } from "./prwatch.ts";
 import { inScope, noAnswerRun, parsePrSources, runSource, sourceComments, sourceRuns } from "./prsources.ts";
 import type { PrContext, SourceCfg, SourceResult } from "./prsources.ts";
@@ -22,7 +22,7 @@ import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import { defaultSpawner } from "./spawn.ts";
 import { ENDED_KEEP_MS, STATE_LOCK_STALE_MS, readTracked, storeKey, trackedCommentsFile, trackedStateFile, usableLine, withTrackedLock, writeTracked } from "./prstore.ts";
-import type { CommentsDoc, StateDoc, StateEntry, StateMeta, TrackedPr } from "./prstore.ts";
+import type { BaselineEntry, CommentsDoc, StateDoc, StateEntry, StateMeta, TrackedPr } from "./prstore.ts";
 import { dropLock, ownsLock, takeLock, writeAtomic } from "./statefile.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
@@ -37,6 +37,10 @@ const BATCH_PICK = 50;
 const RUN_DEADLINE_MS = 4 * 60_000;
 const OP_TIMEOUT_MS = 120_000;
 const MAX_COMMENTS = 100;
+/** A stored baseline of the expected checks is asked again when it is older than this; one older than a day is dropped. */
+const BASELINE_TTL_MS = 10 * 60_000;
+const BASELINE_KEEP_MS = 24 * 3_600_000;
+const MAX_BASELINE = 100;
 export const DEADLINE = "deadline";
 
 export const USAGE = "usage: foreman prs poll [--json]";
@@ -93,11 +97,22 @@ function readState(agentDir: string): StateDoc | null {
   const j = readJson(trackedStateFile(agentDir));
   if (!isObj(j) || j.v !== 1 || !isObj(j.prs)) return null;
   const prs: Record<string, StateEntry> = {};
-  for (const [k, e] of Object.entries(j.prs)) if (isObj(e) && validEntry(e)) prs[k] = e as unknown as StateEntry;
-  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs };
+  for (const [k, e] of Object.entries(j.prs)) {
+    if (!isObj(e) || !validEntry(e)) continue;
+    // a malformed `exp` would make every poll of the head throw: drop it, the entry is then treated like one from before the facts
+    if (e.exp !== undefined && !validExp(e.exp)) delete e.exp;
+    prs[k] = e as unknown as StateEntry;
+  }
+  const baselines: Record<string, BaselineEntry> = {};
+  if (isObj(j.baselines))
+    for (const [k, b] of Object.entries(j.baselines)) if (isObj(b) && finite(b.at) && Array.isArray(b.names)) baselines[k] = { names: b.names.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE), at: b.at };
+  return { v: 1, trackedAt: finite(j.trackedAt) ? j.trackedAt : 0, ...(j.off === true ? { off: true as const } : {}), prs, ...(Object.keys(baselines).length ? { baselines } : {}) };
 }
 
 const validEntry = (e: Record<string, unknown>): boolean => typeof e.repo === "string" && finite(e.number) && finite(e.at);
+
+const strings = (v: unknown): v is string[] => Array.isArray(v) && v.length <= MAX_BASELINE && v.every((n) => typeof n === "string");
+const validExp = (x: unknown): boolean => isObj(x) && typeof x.head === "string" && strings(x.prev) && (x.names === undefined || strings(x.names)) && finite(x.since) && typeof x.sig === "string" && typeof x.draft === "boolean";
 
 function readComments(agentDir: string): CommentsDoc {
   const j = readJson(trackedCommentsFile(agentDir));
@@ -123,7 +138,7 @@ function setOff(agentDir: string, now: number, off: boolean): void {
     withStateLock(agentDir, now, () => {
       const st = readState(agentDir) ?? { v: 1 as const, trackedAt: 0, prs: {} };
       if ((st.off === true) === off) return;
-      const next: StateDoc = { v: 1, trackedAt: st.trackedAt, prs: st.prs, ...(off ? { off: true as const } : {}) };
+      const next: StateDoc = { v: 1, trackedAt: st.trackedAt, prs: st.prs, ...(st.baselines ? { baselines: st.baselines } : {}), ...(off ? { off: true as const } : {}) };
       writeAtomic(trackedStateFile(agentDir), next);
     });
   } catch {
@@ -210,7 +225,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const listed = readTracked(agentDir);
   if (listed.kind === "bad") {
     res.skipped = "list_unreadable";
-    if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs });
+    if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs, ...(state.baselines ? { baselines: state.baselines } : {}) });
     return;
   }
   const lines = listed.kind === "ok" ? listed.lines : [];
@@ -252,10 +267,16 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const rows = new Map<string, { row: Record<string, unknown>; startedAt: number }>();
   const deadline = t0 + (deps.deadlineMs ?? RUN_DEADLINE_MS);
   const inner = deps.runOp(python);
+  // the baseline of the expected checks (design/pr-ops.md): one flagged entry per repository and base, only when the stored one is missing or old
+  const baselines: Record<string, BaselineEntry> = {};
+  for (const [bk, b] of Object.entries(state.baselines ?? {})) if (t0 - b.at < BASELINE_KEEP_MS) baselines[bk] = b;
+  const flagged = flagBaselines(pick, prs, baselines, t0);
   const run: RunOp = async (op, args) => {
     if (deps.now() > deadline) return { kind: "error", message: DEADLINE } as SafeOpOutcome;
     const startedAt = deps.now();
-    const out = await inner(op, args);
+    const host = typeof args.host === "string" ? args.host.toLowerCase() : "github.com";
+    const sent = op === "pr_batch" && Array.isArray(args.prs) ? { ...args, prs: (args.prs as { repo: string; n: number }[]).map((e) => (flagged.has(rowKey(host, e.repo, String(e.n))) ? { ...e, baseline: true } : e)) } : args;
+    const out = await inner(op, sent);
     if (op === "pr_batch" && out.kind === "ran" && Array.isArray(out.result.prs)) {
       const host = typeof args.host === "string" ? args.host.toLowerCase() : "github.com";
       for (const r of out.result.prs) if (isObj(r)) rows.set(rowKey(host, String(r.repo), String(r.number)), { row: r, startedAt });
@@ -300,10 +321,11 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   res.tracked = items.length;
   const commentsBefore = JSON.stringify(comments.prs); // sourceStep edits shared comment objects in place
   await sourceStep(deps, sx, pick, polls, state.prs, prs, newComments, deadline);
+  expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now());
 
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
   if (JSON.stringify(newComments) !== commentsBefore) writeAtomic(trackedCommentsFile(agentDir), { v: 1, prs: newComments });
-  writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs });
+  writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs, ...(Object.keys(baselines).length ? { baselines } : {}) });
   if (drop.size) {
     const done = await withTrackedLock(agentDir, () => {
       const cur = readTracked(agentDir);
@@ -414,6 +436,86 @@ async function sourceStep(deps: PollDeps, sx: SourceEnv, pick: TrackedPr[], poll
 
 /** Key of a pr_batch row: the same `o/r#n` on two hosts keeps its own row. */
 const rowKey = (host: string, repo: string, n: string): string => `${host}|${repo.toLowerCase()}#${n}`;
+
+const baseKey = (host: string, repo: string, base: string): string => `${host}|${repo.toLowerCase()}|${base}`;
+
+/**
+ * The entries (row keys) whose pr_batch asks for the baseline: one per host, repository and base whose stored baseline is missing or older than 10 minutes. An entry whose
+ * base is not known yet (no stored snap) is asked only when no other entry of its repository is, so a base never asked before is unknown on that poll and flagged on the next.
+ */
+function flagBaselines(pick: TrackedPr[], prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number): Set<string> {
+  const flagged = new Set<string>();
+  const pairs = new Set<string>();
+  const repos = new Set<string>();
+  const unknown: TrackedPr[] = [];
+  for (const p of pick) {
+    const host = p.host ?? "github.com";
+    const base = prs[storeKey(p.repo, p.number, p.host)]?.snap?.base;
+    if (!base) {
+      unknown.push(p);
+      continue;
+    }
+    const b = baselines[baseKey(host, p.repo, base)];
+    const pk = baseKey(host, p.repo, base);
+    if ((b && now - b.at < BASELINE_TTL_MS) || pairs.has(pk)) continue;
+    pairs.add(pk);
+    repos.add(`${host}|${p.repo.toLowerCase()}`);
+    flagged.add(rowKey(host, p.repo, String(p.number)));
+  }
+  for (const p of unknown) {
+    const rk = `${p.host ?? "github.com"}|${p.repo.toLowerCase()}`;
+    if (repos.has(rk)) continue;
+    repos.add(rk);
+    flagged.add(rowKey(p.host ?? "github.com", p.repo, String(p.number)));
+  }
+  return flagged;
+}
+
+/**
+ * The expected-set step of every open PR polled this run (after the source merge): store the answered baselines, freeze each head's expected set, keep the facts in the snap
+ * (only while they veto) and the state in the entry's `exp`, and mark the entry unsettled while expected checks are still to come and nothing failed.
+ * A row without a `baseline` field is "not asked or not available" (an older answer, a host without the field, the fallback path): a known empty baseline.
+ * An asked answer that failed carries `{error}`: unknown, asked again on the next poll, and the age of the stored one is not refreshed.
+ */
+function expectSteps(pick: TrackedPr[], polls: WatchPoll[], rows: Map<string, { row: Record<string, unknown>; startedAt: number }>, flagged: Set<string>, before: Record<string, StateEntry>, prs: Record<string, StateEntry>, baselines: Record<string, BaselineEntry>, now: number): void {
+  // hosts whose flagged row came back without the field: the host does not have it (or the batch took the fallback path), so every other entry of that host with no stored
+  // baseline counts as a known empty baseline in this poll too, not as unknown; a host that has the field answers every flagged row with it
+  const none = new Set<string>();
+  const names = (v: unknown): string[] => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string").slice(0, MAX_BASELINE) : []);
+  for (const p of pick) {
+    const host = p.host ?? "github.com";
+    const rk = rowKey(host, p.repo, String(p.number));
+    const hit = rows.get(rk);
+    if (!hit || !flagged.has(rk)) continue;
+    const b = hit.row.baseline;
+    if (!isObj(b)) none.add(host);
+    else if (Array.isArray(b.names) && typeof hit.row.baseRef === "string") baselines[baseKey(host, p.repo, hit.row.baseRef)] = { names: names(b.names), at: hit.startedAt };
+  }
+  pick.forEach((p, i) => {
+    const r = polls[i];
+    if (!r || !("snap" in r) || r.snap.state !== "open") return;
+    const k = storeKey(p.repo, p.number, p.host);
+    const e = prs[k];
+    if (!e?.snap) return;
+    const host = p.host ?? "github.com";
+    const rk = rowKey(host, p.repo, String(p.number));
+    const row = rows.get(rk)?.row;
+    const stored = row && typeof row.baseRef === "string" ? baselines[baseKey(host, p.repo, row.baseRef)] : undefined;
+    let baseline: { names: string[] } | null;
+    if (!row) baseline = { names: [] };
+    else if (isObj(row.baseline) && !Array.isArray(row.baseline.names)) baseline = stored ? { names: stored.names } : null;
+    else if (stored) baseline = { names: stored.names };
+    else baseline = flagged.has(rk) || none.has(host) ? { names: [] } : null;
+    const old = before[k];
+    const head = e.snap.head;
+    const upgrade = !old?.exp && !!old?.snap && head !== "" && old.snap.head === head && settledOf(old.snap.runs, old.snap.required).result === "pass" && !old.unsettled;
+    const { state, facts } = expectStep(old?.exp, { head, runs: e.snap.runs, required: e.snap.required, cut: e.snap.cut === true, draft: e.meta?.draft === true, ...(old?.snap && old.snap.head !== head ? { prevRuns: old.snap.runs } : {}), upgrade, baseline }, now);
+    e.exp = state;
+    const { expect: _drop, ...rest } = e.snap;
+    e.snap = facts ? { ...rest, expect: facts } : rest;
+    if (facts && settledOf(e.snap.runs, e.snap.required).result !== "fail" && e.snap.runs.some((x) => x.bucket === "passed")) e.unsettled = true;
+  });
+}
 
 function metaOf(row: Record<string, unknown>): StateMeta {
   const s = (v: unknown, n: number): string => (typeof v === "string" ? v.slice(0, n) : "");
