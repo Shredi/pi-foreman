@@ -7,6 +7,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
+import { shellWriteTargets } from "../defaults.ts";
+import { parseShell } from "../shellast.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { isolationDir } from "../roundsurface.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
@@ -63,6 +65,25 @@ for (const role of ["reviewer", "explorer"]) {
     for (const [tool, input] of [["read", { path: `${W}/a.ts` }], ["foreman_copy", { src: `${W}/a`, dst: `${S}/b` }], ["write", { path: `${S}/a.md`, content: "x" }], ["write", { path: `${fwd(handoff)}/result.md`, content: "x" }], ["ls", { path: W }]] as const) assert.ok(!refused(verdict(tool, { ...input }, role)), `${tool} ${JSON.stringify(input)}`);
   });
 }
+
+// the step 0 helper: a target is named (an operand, a redirect, the directory of `tar -C`) or the catch-all "somewhere under this folder" (the tag is never read from the word `.`)
+test("shellWriteTargets tags a named target and the catch-all of build tools, package managers, git and tar without a directory", () => {
+  const norm = (p: string): string => (process.platform === "win32" ? fwd(p).toLowerCase() : fwd(p));
+  const targets = (line: string): string[] => shellWriteTargets(parseShell(line, { cwd: wt, platform: process.platform, env: {} }), process.platform).map((x) => `${norm(x.path)} ${x.named ? "named" : "any"}`);
+  const at = (rel: string, tag: string): string => `${norm(path.join(wt, rel))} ${tag}`;
+  assert.deepEqual(targets("rm -rf ."), [at("", "named")]);
+  assert.deepEqual(targets("cp a ."), [at("", "named")]);
+  assert.deepEqual(targets("echo x > f"), [at("f", "named")]);
+  assert.deepEqual(targets('echo "$X" > f'), [at("f", "named")]);
+  assert.deepEqual(targets("npm test"), [at("", "any")]);
+  assert.deepEqual(targets("git commit -m x"), [at("", "any")]);
+  assert.deepEqual(targets("tar -xf a.tar"), [at("", "any")]);
+  assert.deepEqual(targets("tar -xf a.tar -C sub"), [at("sub", "named"), at("", "any")]);
+  for (const l of ["npm --prefix sub test", "pnpm -C sub test", "git -C sub commit -m x"]) assert.deepEqual(targets(l), [at("sub", "any")], l);
+  for (const l of ["make -C sub test", "make --directory sub test"]) assert.deepEqual(targets(l), [at("sub", "any"), at("", "any")], l);
+  // a target the gate cannot resolve is skipped
+  assert.deepEqual(targets('cd "$X" && touch f'), []);
+});
 
 test("open, verdict of today: a write the gate has no target for is not child-readonly-write", () => {
   // `find -delete`, `chmod` and a write after `cd "$X"` name no target the write-target code reads: the old line refused them, this fence does not (docs/safety.md)
