@@ -49,6 +49,12 @@ function reviewerRungs(roles: Record<string, Json>): string[] {
 
 const baseOf = (m: string): string => splitLevel(m).base;
 
+/** A model reduced to its id: the level stripped as `baseOf` does, then everything up to the first `/` (the provider) dropped; a bare id stays. */
+export const modelIdOf = (m: string): string => {
+  const b = baseOf(m);
+  return b.slice(b.indexOf("/") + 1);
+};
+
 /**
  * Item numbers of the review's per-item `N. FAIL` lines, in order, without repeats. Accepts a list
  * marker (`-`, `*`), backticks or `**` around the number or the line, `N.` or `N)`, and the doubled
@@ -382,24 +388,27 @@ export type ReviewerReason = "paired" | "distinct" | "same_as_foreman" | "no_alt
 /**
  * The reviewer model for one entry given the foreman's live model (`<provider>/<id>[:<level>]`), the single code path of
  * the different-model rule. A pair in the ceremony.reviewModel map keyed by the foreman's base id wins (`paired`; a
- * `pinned` entry keeps its model, `paired_skipped`; the pair replaces the entry model with its level, even on the same base). Else an
- * entry whose base differs from the foreman's stays (`distinct`); else the next differing rung of
- * [roles.reviewer, roles.reviewer.strong], else the string ceremony.reviewModel (`same_as_foreman`), else
- * `no_alternative` (model unchanged). The model is returned as configured, levels not capped.
+ * `pinned` entry keeps its model, `paired_skipped`; the pair replaces the entry model with its level, even on the same base,
+ * a self-pair or the same id on another provider included). Else an entry whose model id differs from the foreman's
+ * stays (`distinct`); else the next rung of [roles.reviewer, roles.reviewer.strong], else the string ceremony.reviewModel,
+ * whose id differs from the foreman's (`same_as_foreman`), else `no_alternative` (model unchanged). "The foreman's
+ * model" compares ids without provider (`modelIdOf`): the same id under another provider is the same model. The pair
+ * lookup stays by full `<provider>/<id>`. The model is returned as configured, levels not capped.
  */
 export function effectiveReviewer(entryModel: string, roles: Record<string, Json>, config: Json | undefined, foremanModel: string, pinned?: boolean, occasion?: boolean): { model: string; reason: ReviewerReason } {
   const foreman = baseOf(foremanModel);
   const from = baseOf(entryModel);
+  const foremanId = modelIdOf(foremanModel);
   const pair = reviewPairs(config).get(foreman);
-  // an occasion model is used as set, except when it is the foreman's own model: then the pair, else the next differing rung
-  if (occasion && from === foreman) pinned = false;
+  // an occasion model is used as set, except when it is the foreman's own model (same id, any provider): then the pair, else the next differing rung
+  if (occasion && modelIdOf(entryModel) === foremanId) pinned = false;
   if (pair) return pinned ? { model: entryModel, reason: "paired_skipped" } : { model: pair, reason: "paired" };
-  if (from !== foreman) return { model: entryModel, reason: "distinct" };
+  if (modelIdOf(entryModel) !== foremanId) return { model: entryModel, reason: "distinct" };
   const rungs = reviewerRungs(roles);
   const own = rungs.findIndex((m) => baseOf(m) === from);
   const set = get(config, "ceremony.reviewModel");
-  const fallback = typeof set === "string" && set.trim() && baseOf(set.trim()) !== foreman ? set.trim() : null;
-  const pick = rungs.slice(own + 1).find((m) => baseOf(m) !== foreman) ?? fallback;
+  const fallback = typeof set === "string" && set.trim() && modelIdOf(set.trim()) !== foremanId ? set.trim() : null;
+  const pick = rungs.slice(own + 1).find((m) => modelIdOf(m) !== foremanId) ?? fallback;
   return pick ? { model: pick, reason: "same_as_foreman" } : { model: entryModel, reason: "no_alternative" };
 }
 
@@ -422,7 +431,7 @@ export function missingPairWarning(config: Json | undefined, roles: Record<strin
  * The different-model rule, after every model is written (climbs and security rungs included), through
  * effectiveReviewer with `o.foreman`, the foreman's LIVE model: a pair map entry for it (ceremony.reviewModel as an
  * object) replaces a `reviewer` entry's model, `review_model {from, to, reason: paired}`, except for a pinned entry
- * (`paired_skipped`, `pin`); else an entry whose model is the foreman's (base ids, the level ignored) moves to the next
+ * (`paired_skipped`, `pin`); else an entry whose model is the foreman's (ids without provider and level) moves to the next
  * rung of [roles.reviewer, roles.reviewer.strong] after its own that differs, else to the string
  * ceremony.reviewModel (an occasion's thinking override, `thinking`, replaces its level); traced `review_model
  * {from, to, reason: same_as_foreman}` (policy_override when the rank policy would refuse it). With

@@ -82,8 +82,8 @@ function parseOne(sizeRaw: unknown, riskRaw: unknown): { declared: Declared; err
   return { declared };
 }
 
-/** The sentence the model sees (tool description, error hint): where `size` and `risk` go. */
-export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}` and `risk: [...]` are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
+/** The sentence the model sees (tool description, error hint): where `size`, `risk` and `reason` go. */
+export const TOP_LEVEL_NOTE = "`size: {files, largestFileLines?, modules?}`, `risk: [...]` and `reason` (the text a lower or default `model` needs) are top-level keys of this call, beside `agent` and `task`, never inside `options` or `args`.";
 
 /** The sentence the model sees (tool description): a child gets MCP tools only when its launch names them. */
 export const MCP_LAUNCH_NOTE = "A child gets no MCP tools unless the launch names them: `mcp: [\"server\", \"server/tool\"]`. `mcp` is a top-level key of this call, beside `agent` and `task`, never inside `options` or `args`, and stays inside the role's ceiling (`roles.<role>.mcp`); no `mcp` or `[]` means none. Name the tools the task probably needs as `server/tool` (up front from the first request); the bare `server` lets the child search the rest.";
@@ -103,14 +103,15 @@ export function mcpDescription(declared: readonly { name: string; description?: 
   return `${sub.description}\n\n${MCP_LAUNCH_NOTE}`;
 }
 
-/** The text appended to a pi-subagents refusal caused by a misplaced `size`/`risk`; null for any other error text. */
+/** The text appended to a pi-subagents refusal caused by a misplaced `size`/`risk`/`reason`; null for any other error text. */
 export function misplacedHint(errorText: string): string | null {
-  if (!/unknown options key '(?:size|risk)'|args requires workflow/.test(errorText)) return null;
+  if (!/unknown options key '(?:size|risk|reason)'|args requires workflow/.test(errorText)) return null;
+  if (/unknown options key 'reason'/.test(errorText)) return "pi-foreman: reason is a top-level key of the subagent call, beside agent and task, not a key of options or args.";
   return `pi-foreman: size and risk are top-level keys of the subagent call, not options or args. ${FIX}`;
 }
 
 /**
- * Move a misplaced `size`/`risk` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
+ * Move a misplaced `size`/`risk`/`reason` (a launch's `options`, or its `args` when the launch names no `workflow`) to the launch's top level;
  * a value already at the top level wins and the misplaced one is dropped. Covers the call and every tasks/chain/parallel entry.
  * `from` lists where values were found and moved; `left` is true when one stays where pi-subagents reads it (args with a workflow).
  */
@@ -122,11 +123,11 @@ export function liftSizing(input: Json): { from: ("options" | "args")[]; left: b
       const box = e[key];
       if (!isObj(box)) continue;
       if (key === "args" && e.workflow !== undefined) {
-        if (box.size !== undefined || box.risk !== undefined) left = true;
+        if (box.size !== undefined || box.risk !== undefined || box.reason !== undefined) left = true;
         continue;
       }
       let moved = false;
-      for (const f of ["size", "risk"] as const) {
+      for (const f of ["size", "risk", "reason"] as const) {
         if (box[f] === undefined) continue;
         if (e[f] === undefined) e[f] = box[f];
         delete box[f];
