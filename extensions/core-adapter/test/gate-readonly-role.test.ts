@@ -15,6 +15,10 @@ import { mkTestTmp } from "./_tmpbase.ts";
 import { r11Rig, RIG_PERMISSIONS } from "./_r11rig.ts";
 import { BINDINGS_ENV, BINDING_NS } from "../usage.ts";
 
+// pi-subagents resolves the global npm root with `npm root -g` on the first skill lookup, cached per module with no seam; PI_OFFLINE makes
+// that lookup return early, so the spawn guard of the test run sees no npm
+process.env.PI_OFFLINE = "1";
+
 type T = Parameters<typeof r11Rig>[0];
 const fwd = (p: string): string => p.replace(/\\/g, "/");
 const base = fs.realpathSync(mkTestTmp("pf-ro-"));
