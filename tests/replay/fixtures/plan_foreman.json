@@ -3,7 +3,7 @@
   "s1": [
    {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ps.md", "content": "# Requirements Ledger: ps\nTier: heavy\n\n- [ ] 1. synthetic item\n"}}]},
-   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ps.md", "content": "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ps.md", "content": "# Widget\n\n## For the owner\nShip one widget with one builder.\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
    {"tools": [{"name": "foreman_checkpoint", "arguments": {"path": ".workflow/scratch/plan-ps.md"}}]},
    {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-s2]] [plan-review] review .workflow/scratch/plan-ps.md against the ledger"}}]},
    {"text": "Plan reviewer launched."}
@@ -20,7 +20,7 @@
   "k1": [
    {"tools": [{"name": "foreman_triage", "arguments": {"tier": "heavy", "reason": "a large change"}}]},
    {"tools": [{"name": "write", "arguments": {"path": ".workflow/LEDGER-ps.md", "content": "# Requirements Ledger: ps\nTier: heavy\n\n- [ ] 1. synthetic item\n"}}]},
-   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ps.md", "content": "# Widget\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
+   {"tools": [{"name": "write", "arguments": {"path": ".workflow/scratch/plan-ps.md", "content": "# Widget\n\n## For the owner\nShip one widget with one builder.\n\n## Goal\nShip the widget.\n\n## Approach\nOne builder.\n\n## Verification\nTests.\n"}}]},
    {"tools": [{"name": "subagent", "arguments": {"agent": "reviewer", "task": "[[replay:r-k2]] [plan-review] review .workflow/scratch/plan-ps.md against the ledger"}}]},
    {"text": "Plan reviewer launched."}
   ],

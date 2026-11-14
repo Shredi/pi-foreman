@@ -1109,9 +1109,47 @@ def _rollup_nodes(roll):
     return [nd for nd in nodes if isinstance(nd, dict)] if isinstance(nodes, list) else []
 
 
+EXPECT_EVENTS = ("pull_request", "pull_request_target", "push")
+OWN_RUNNER = "github-actions"
+MAX_BASELINE = 100
+BASELINE_MERGED = 3
+
+
+def _stamp(v):
+    """Epoch seconds of an ISO time, None when it does not parse."""
+    try:
+        t = datetime.datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    return (t if t.tzinfo else t.replace(tzinfo=UTC)).timestamp()
+
+
+def _counts_expected(nd, merged_at=None):
+    """Whether one check of a head is one the next head of a pull request is expected to carry: a check run started by the pull_request,
+    pull_request_target or push event, a check run of a CI app other than the host's own runner, or a status context. A check run of the
+    host's own runner whose workflow run is hidden has an unknown event and does not count. `merged_at` (epoch seconds, a merged head):
+    only what started before the merge counts (a status context by its creation time)."""
+    if nd.get("__typename") == "StatusContext":
+        ok, stamp = True, nd.get("createdAt")
+    else:
+        suite = nd.get("checkSuite")
+        app = suite.get("app") if isinstance(suite, dict) else None
+        slug = app.get("slug") if isinstance(app, dict) else None
+        wf = suite.get("workflowRun") if isinstance(suite, dict) else None
+        event = wf.get("event") if isinstance(wf, dict) else None
+        ok = event in EXPECT_EVENTS if slug == OWN_RUNNER else isinstance(slug, str) and bool(slug)
+        stamp = nd.get("startedAt")
+    if not ok:
+        return False
+    if merged_at is None:
+        return True
+    t = _stamp(stamp)
+    return t is not None and t < merged_at
+
+
 def watch_runs(roll, required=None):
-    """One entry {id, name, bucket, url} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
-    or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run."""
+    """One entry {id, name, bucket, url[, expected]} per check of the head. The id is the CheckRun databaseId (a rerun has a new one)
+    or `context@createdAt` of a StatusContext, so a repeated failure of the same job is a new run. `expected`: see _counts_expected."""
     out = []
     for nd in _rollup_nodes(roll):
         name, group = _node_group(nd)
@@ -1119,8 +1157,11 @@ def watch_runs(roll, required=None):
             rid, url = "%s@%s" % (nd.get("context"), nd.get("createdAt")), nd.get("targetUrl")
         else:
             rid, url = nd.get("databaseId"), nd.get("detailsUrl")
-        out.append({"id": s_or_none(str(rid), 200) if rid is not None else "", "name": title_or_none(name) or "?",
-                    "bucket": group, "url": s_or_none(url, 300)})
+        entry = {"id": s_or_none(str(rid), 200) if rid is not None else "", "name": title_or_none(name) or "?",
+                 "bucket": group, "url": s_or_none(url, 300)}
+        if _counts_expected(nd):
+            entry["expected"] = True
+        out.append(entry)
     order = ("failed", "missing", "pending", "passed")
     out.sort(key=lambda r: order.index(r["bucket"]))
     keep = set(required or ())
@@ -1163,6 +1204,47 @@ def map_rollup(roll):
     return out
 
 
+def run_list_cut(roll, runs):
+    """True when the run list does not hold every check of the head: cut for size, or more checks than the 100 read."""
+    ctx = roll.get("contexts") if isinstance(roll, dict) else None
+    total = ctx.get("totalCount") if isinstance(ctx, dict) else 0
+    nodes = _rollup_nodes(roll)
+    return len(runs) < len(nodes) or (isinstance(total, int) and not isinstance(total, bool) and total > len(nodes))
+
+
+def _is_run_error(x):
+    path = x.get("path")
+    return isinstance(path, list) and ("checkSuite" in path or "workflowRun" in path)
+
+
+def baseline_names(node, alias, base, errs):
+    """The check names the newest merged pull requests into `base` ran, from the `merged` field of one repository answer: {"names": [...]}
+    (at most 100; the union over the newest three by merge time; empty when none has that base) or {"error": True} when the list or a merged
+    head's commit or check list could not be read. An error under one check's check suite or workflow run only drops that run."""
+    mine = [x for x in errs if isinstance(x.get("path"), list) and x["path"][:2] == [alias, "merged"] and not _is_run_error(x)]
+    merged = node.get("merged") if isinstance(node, dict) else None
+    nodes = merged.get("nodes") if isinstance(merged, dict) else None
+    if mine or not isinstance(nodes, list):
+        return {"error": True}
+    cand = []
+    for nd in nodes:
+        at = _stamp(nd.get("mergedAt")) if isinstance(nd, dict) else None
+        if at is not None and nd.get("baseRefName") == base:
+            cand.append((at, nd))
+    cand.sort(key=lambda c: -c[0])
+    names = []
+    for at, nd in cand[:BASELINE_MERGED]:
+        commits = nd.get("commits")
+        cn = commits.get("nodes") if isinstance(commits, dict) else None
+        commit = cn[0].get("commit") if isinstance(cn, list) and cn and isinstance(cn[0], dict) else None
+        roll = commit.get("statusCheckRollup") if isinstance(commit, dict) else None
+        for c in _rollup_nodes(roll):
+            name = title_or_none(_node_group(c)[0])
+            if name and name not in names and _counts_expected(c, at):
+                names.append(name)
+    return {"names": names[:MAX_BASELINE]}
+
+
 def required_checks(pr, errs):
     """The check names the base branch requires: classic branch protection plus rulesets. None when unreadable
     (the fields were not asked for, the host hid them, or the request reported an error under baseRef)."""
@@ -1189,14 +1271,25 @@ def required_checks(pr, errs):
     return out[:50]
 
 
-def _pr_query(count, watch=False, policy=True):
+def _merged_query():
+    # the newest merged pull requests of the repository by update time (the host cannot order by merge time): base, merge time and the head's checks
+    nodes = ("__typename ... on CheckRun { name status conclusion startedAt checkSuite { app { slug } workflowRun { event } } } "
+             "... on StatusContext { context state createdAt }")
+    return (" merged: pullRequests(states: MERGED, first: 10, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { baseRefName mergedAt "
+            "commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { totalCount nodes { %s } } } } } } } }" % nodes)
+
+
+def _pr_query(count, watch=False, policy=True, runs=False, merged=()):
     # watch: the extra fields pr_watch reads (head, base, head repository, updatedAt, run identity and link);
-    # policy: with them, the merge state and the base branch's required checks (a host without these fields is asked again without)
+    # policy: with them, the merge state and the base branch's required checks (a host without these fields is asked again without);
+    # runs: each check's check suite app and workflow run event; merged: the entry indexes that also ask the merged pull requests
     pr_extra = "headRefOid baseRefName headRepository { nameWithOwner } updatedAt " if watch else ""
     if watch and policy:
         pr_extra += ("mergeStateStatus baseRef { branchProtectionRule { requiredStatusCheckContexts } rules(first: 30) { nodes { "
                      "parameters { ... on RequiredStatusChecksParameters { requiredStatusChecks { context } } } } } } ")
     run_extra = "databaseId detailsUrl " if watch else ""
+    if watch and runs:
+        run_extra += "checkSuite { app { slug } workflowRun { event } } "
     ctx_extra = "createdAt targetUrl " if watch else ""
     decl = ", ".join("$owner%d: String!, $name%d: String!, $n%d: Int!" % (i, i, i) for i in range(count))
     parts = []
@@ -1206,7 +1299,7 @@ def _pr_query(count, watch=False, policy=True):
             "isDraft mergeable reviewDecision headRefName %s commits(last: 1) { nodes { commit { statusCheckRollup { state "
             "contexts(first: 100) { totalCount nodes { __typename ... on CheckRun { name status conclusion startedAt %s"
             "isRequired(pullRequestNumber: $n%d) } ... on StatusContext { context state %s"
-            "isRequired(pullRequestNumber: $n%d) } } } } } } } } }" % (i, i, i, i, pr_extra, run_extra, i, ctx_extra, i))
+            "isRequired(pullRequestNumber: $n%d) } } } } } } } }%s }" % (i, i, i, i, pr_extra, run_extra, i, ctx_extra, i, _merged_query() if i in merged else ""))
     return "query(%s) { %s }" % (decl, " ".join(parts))
 
 
@@ -1216,8 +1309,8 @@ def _batch_args(args):
         raise _bad("prs must be a list of 1 to %d entries" % MAX_BATCH)
     out = []
     for e in prs:
-        if not isinstance(e, dict) or set(e) != {"repo", "n"}:
-            raise _bad("each pr is {repo, n}")
+        if not isinstance(e, dict) or not {"repo", "n"} <= set(e) <= {"repo", "n", "baseline"} or not isinstance(e.get("baseline", False), bool):
+            raise _bad("each pr is {repo, n[, baseline]}")
         repo, n = e["repo"], e["n"]
         if not isinstance(repo, str) or len(repo) > 200 or not REPO_PATH_RE.match(repo) \
                 or any(s in (".", "..") for s in repo.split("/")) or two_part(repo) is None:
@@ -1226,6 +1319,11 @@ def _batch_args(args):
             raise _bad("n must be an integer from 1 to 1000000000")
         out.append((repo, n))
     return out
+
+
+def _batch_flags(args):
+    """Per entry of `prs`: the optional `baseline` flag (this entry also asks for the check names of the newest merged pull requests into its base)."""
+    return [e.get("baseline") is True for e in args["prs"]]
 
 
 MERGE_STATES = ("behind", "blocked", "clean", "dirty", "draft", "has_hooks", "unknown", "unstable")
@@ -1238,19 +1336,26 @@ def _enum(v, allowed):
 
 POLICY_FIELDS = ("mergeStateStatus", "baseRef", "branchProtectionRule", "requiredStatusCheckContexts", "RequiredStatusChecksParameters",
                  "requiredStatusChecks", "rules", "parameters")
+# the fields of the expected-checks facts: the merged pull requests and each check's check suite app and workflow run event
+EXPECT_FIELDS = ("pullRequests", "mergedAt", "checkSuite", "workflowRun", "app", "event")
+
+
+def _rejects_fields(e, fields):
+    """An undefined-field style GraphQL error that names one of `fields`."""
+    msg = str(e.get("message") or "")
+    undefined = e.get("type") in ("undefinedField", "UNDEFINED_FIELD") or re.search(r"doesn't exist on type|unknown field|undefined field|no such field", msg, re.I)
+    return bool(undefined) and re.search(r"\b(%s)\b" % "|".join(fields), msg) is not None
 
 
 def _rejects_policy_fields(e):
-    """An undefined-field style GraphQL error that names one of the merge state / required check fields."""
-    msg = str(e.get("message") or "")
-    undefined = e.get("type") in ("undefinedField", "UNDEFINED_FIELD") or re.search(r"doesn't exist on type|unknown field|undefined field|no such field", msg, re.I)
-    return bool(undefined) and re.search(r"\b(%s)\b" % "|".join(POLICY_FIELDS), msg) is not None
+    return _rejects_fields(e, POLICY_FIELDS)
 
 
 def op_pr_batch(req):
     args, cfg, pr_host = _setup(req, ("host", "prs", "watch"))
     hostname = arg_host(args)
     entries = _batch_args(args)
+    flags = _batch_flags(args)
     watch = args.get("watch", False)
     if not isinstance(watch, bool):
         raise _bad("watch must be true or false")
@@ -1260,8 +1365,8 @@ def op_pr_batch(req):
     for i, (repo, n) in enumerate(entries):
         owner, name = two_part(repo)
         variables.update({"owner%d" % i: owner, "name%d" % i: name, "n%d" % i: n})
-    def ask(policy):
-        path = _body_file(json.dumps({"query": _pr_query(len(entries), watch, policy), "variables": variables}))
+    def ask(policy, runs, merged):
+        path = _body_file(json.dumps({"query": _pr_query(len(entries), watch, policy, runs, [i for i, f in enumerate(flags) if f] if merged else []), "variables": variables}))
         try:   # the body goes through a file: 50 queries overflow the Windows command line
             argv = [host.program, "api", "graphql"] + (["--hostname", hostname] if hostname else []) + \
                 ["--input", _argpath(path)]
@@ -1275,13 +1380,33 @@ def op_pr_batch(req):
         errs = [x for x in d.get("errors") if isinstance(x, dict)] if isinstance(d, dict) and isinstance(d.get("errors"), list) else []
         return code, err, d, errs
 
-    code, err, d, errs = ask(True)
-    if watch and not (isinstance(d, dict) and isinstance(d.get("data"), dict)) and any(_rejects_policy_fields(x) for x in errs):
-        # a host that does not know the merge state and required check fields: without them, required unreadable;
-        # any other failure (auth, network, rate limit) is not retried, and a retry that fails too leaves the first error
-        again = ask(False)
-        if isinstance(again[2], dict) and isinstance(again[2].get("data"), dict):
-            code, err, d, errs = again
+    def has_data(a):
+        return isinstance(a[2], dict) and isinstance(a[2].get("data"), dict)
+
+    def rate_limited(a):
+        return any(x.get("type") == "RATE_LIMITED" for x in a[3])
+
+    cfg = {"policy": True, "runs": watch, "merged": watch and any(flags)}
+    dropped = None   # why the merged field was left out: "rejected" (the host does not know it) or "failed" (any other failure)
+    first = ask(**cfg)
+    last, tried = first, 0
+    while watch and not has_data(last) and not rate_limited(last) and tried < 3:
+        # a host that does not know the merge state and required check fields: without them, required unreadable; one that does not know the
+        # run or merged fields: without them, no check counts as expected and no baseline comes back; any other failure with the merged
+        # field asked: once without it (that poll's baseline stays unknown); any other failure (auth, network, rate limit) is not retried,
+        # and a retry that fails too leaves the first error
+        if cfg["policy"] and any(_rejects_policy_fields(x) for x in last[3]):
+            cfg = dict(cfg, policy=False)
+        elif (cfg["runs"] or cfg["merged"]) and any(_rejects_fields(x, EXPECT_FIELDS) for x in last[3]):
+            dropped = "rejected" if cfg["merged"] else dropped
+            cfg = dict(cfg, runs=False, merged=False)
+        elif cfg["merged"]:
+            dropped = "failed"
+            cfg = dict(cfg, merged=False)
+        else:
+            break
+        last, tried = ask(**cfg), tried + 1
+    code, err, d, errs = last if has_data(last) else first
     if not isinstance(d, dict):
         if code != 0:
             host_error(host, "batch", code, err)
@@ -1324,6 +1449,12 @@ def op_pr_batch(req):
                          "updatedAt": s_or_none(pr.get("updatedAt"), 40), "runs": runs,
                          "required": readable_required(required, roll, runs),
                          "mergeState": _enum(pr.get("mergeStateStatus"), MERGE_STATES)})
+            if run_list_cut(roll, runs):
+                item["cut"] = True
+            if flags[i] and cfg["merged"]:
+                item["baseline"] = baseline_names(node, alias, pr.get("baseRefName"), errs)
+            elif flags[i] and dropped == "failed":
+                item["baseline"] = {"error": True}
         prs.append(item)
     return {"action": "pr_batch", "prs": prs, "errors": errors}
 

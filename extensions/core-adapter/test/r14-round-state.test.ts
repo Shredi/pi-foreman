@@ -16,7 +16,7 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Fn = (...a: unknown[]) => Promise<unknown>;
 type Block = { block?: boolean; reason?: string } | undefined;
 
-const PLAN = "# Widget\n\n## Goal\nShip it.\n";
+const PLAN = "# Widget\n\n## For the owner\n\nGoal: ship the widget.\n\n## Goal\nShip it.\n";
 const tick = () => new Promise((r) => setTimeout(r, 25)); // ctime steps apart
 let n = 0;
 

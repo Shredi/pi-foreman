@@ -10,7 +10,7 @@ import path from "node:path";
 import { isTrackedKey, resolveGithubHosts, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
-import type { Bucket, CommentEntry, Mergeable, Run, SourceStatus, StoreRead, WatchSnapshot } from "./prwatch.ts";
+import type { Bucket, CommentEntry, ExpectFacts, ExpectState, Mergeable, Run, SourceStatus, StoreRead, WatchSnapshot } from "./prwatch.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
@@ -62,8 +62,10 @@ export interface StateEntry {
   okAt?: number;
   /** The settle hold of a would-be pass, in the watch's shape (`WatchState.passSince`): head, gating run set signature, when that set was first seen. */
   passSince?: { head: string; sig: string; at: number };
-  /** Set only while a pass is not settled (the watch's settle rule): the checks seen may be a partial set. */
+  /** Set only while a pass is not settled (the watch's settle rule), or while expected checks are still to come: the checks seen may be a partial set. */
   unsettled?: true;
+  /** The expected-set state of the current head (prwatch.ts expectStep); its presence marks an entry written with these facts. */
+  exp?: ExpectState;
   error?: string;
   errorAt?: number;
   /** The last poll found the PR not found. */
@@ -72,11 +74,18 @@ export interface StateEntry {
   endedAt?: number;
   at: number;
 }
+/** The check names of the newest merged pull requests into one base, and when the host answered (epoch ms). */
+export interface BaselineEntry {
+  names: string[];
+  at: number;
+}
 export interface StateDoc {
   v: 1;
   trackedAt: number;
   off?: true;
   prs: Record<string, StateEntry>;
+  /** Per `<host>|<repo>|<base>` (repository lowercased): the baseline of the expected checks, asked again when older than 10 minutes. */
+  baselines?: Record<string, BaselineEntry>;
 }
 /** A PR source's comments for one PR, kept only for the head they were taken on. */
 export interface SourceComments {
@@ -198,12 +207,15 @@ function parseSnap(v: unknown): StoredSnap | null {
     if (typeof r.source === "string" && r.source) run.source = r.source;
     if (typeof r.gates === "boolean") run.gates = r.gates;
     if (r.noAnswer === true) run.noAnswer = true;
+    if (r.expected === true) run.expected = true;
     runs.push(run);
   }
+  const ex = isObj(v.expect) && Array.isArray(v.expect.missing) ? v.expect : null;
+  const expect: ExpectFacts | null = ex ? { missing: (ex.missing as unknown[]).filter((n): n is string => typeof n === "string"), ...(ex.unknown === true ? { unknown: true as const } : {}), ...(ex.overdue === true ? { overdue: true as const } : {}) } : null;
   const mergeable: Mergeable = v.mergeable === "mergeable" || v.mergeable === "conflicting" ? v.mergeable : "unknown";
   const str = (x: unknown): string => (typeof x === "string" ? x : "");
   const required = Array.isArray(v.required) ? v.required.filter((n): n is string => typeof n === "string") : v.required === null ? null : undefined;
-  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
+  return { state: v.state, mergeable, head: str(v.head), base: str(v.base), updatedAt: str(v.updatedAt), runs, ...(required !== undefined ? { required } : {}), ...(v.cut === true ? { cut: true as const } : {}), ...(expect ? { expect } : {}), ...(typeof v.mergeState === "string" && v.mergeState ? { mergeState: v.mergeState } : {}), ...(v.reviewDecision === "approved" || v.reviewDecision === "changes_requested" || v.reviewDecision === "review_required" ? { reviewDecision: v.reviewDecision } : {}) };
 }
 
 /** The per-source state of a state entry (`sources.<name>`), invalid entries dropped; undefined when none is left. */

@@ -47,7 +47,7 @@ const USAGE = [
   "                 (adds the filter only; delete the \"!node_modules/pi-intercom/**\" lines from settings.json to undo)",
   "  --develop      run from a checkout: write <checkout>/.pi/settings.json so the checkout replaces the installed",
   "                 package in that directory (project packages load only after Pi's trust prompt, or `pi -a`)",
-  "  --intercom-hc  write crossMachine.transport \"hc\" (and, with --machine-name, crossMachine.machineName) into the pi-intercom config, so `name@machine` sends go over hc instead of SSH; off by default, intercom.allowRemote stays as is",
+  "  --intercom-hc  (remote, experimental) write crossMachine.transport \"hc\" (and, with --machine-name, crossMachine.machineName) into the pi-intercom config, so `name@machine` sends go over hc instead of SSH; off by default, intercom.allowRemote stays as is",
   "  --machine-name the name this machine goes by for pi-intercom (crossMachine.machineName); needs --intercom-hc",
   "  --remove       drop the managed settings keys and config; then run `pi remove <pi-foreman source>` yourself",
   "  --profile      apply a feature profile (orchestration, standard, full) to the user foreman.json and record it",
@@ -63,7 +63,7 @@ const USAGE = [
 const NO_INTERCOM_GLOB = "!node_modules/pi-intercom/**";
 const BUNDLED_RE = /^npm:(pi-subagents|pi-intercom|@juicesharp\/rpiv-ask-user-question)(@.*)?$/;
 const REMOTE_FOREMAN_RE = /^(npm:pi-foreman(@[^/]+)?|(github\.com\/[^/\s]+\/pi-foreman(\.git)?(@[^/]+)?\/?)|git:[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?|git:https?:\/\/[^/\s]+\/([^/\s]+\/)*pi-foreman(\.git)?(@[^/]+)?\/?)$/;
-const NO_PROFILE_HINT = "features: no profile chosen yet; run foreman setup --pick in a terminal, or pass --profile <name> [--enable/--disable <id>]";
+const NO_PROFILE_HINT = `features: no profile chosen yet; pass --profile <name> [--enable/--disable <id>] (/foreman setup --profile <name> in Pi), or run node "${path.join(ROOT, "setup.mjs")}" --pick in a terminal`;
 export function bridgeLoginPresent(agentDir, { env = process.env, platform = process.platform, keychain } = {}) {
   return !loginSigns(isolationDir(agentDir), { env, platform, keychain }).next().done;
 }
@@ -502,8 +502,8 @@ function dropOverride(obj, key) {
 
 const reserveOf = (obj, key) => (isObj(obj?.compaction?.modelOverrides?.[key]) ? obj.compaction.modelOverrides[key].reserveTokens : undefined);
 
-function runPi(pi, args, { agentDir, cwd, timeoutMs = 10 * 60_000 }) {
-  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir };
+function runPi(pi, args, { agentDir, cwd, timeoutMs = 10 * 60_000, extraEnv = {} }) {
+  const env = { ...process.env, PI_CODING_AGENT_DIR: agentDir, ...extraEnv };
   const r = spawnSync(pi.command, [...pi.prefix, ...args], { encoding: "utf8", timeout: timeoutMs, env, cwd, windowsHide: true });
   return { code: r.status, stdout: r.stdout || "", stderr: r.stderr || "", error: r.error };
 }
@@ -1095,9 +1095,9 @@ async function main(argv) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, text);
   };
-  const runOrDie = (args) => {
+  const runOrDie = (args, extraEnv) => {
     say(`  run: pi ${args.join(" ")}`);
-    const r = runPi(pi, args, { agentDir, cwd: projectDir });
+    const r = runPi(pi, args, { agentDir, cwd: projectDir, extraEnv });
     if (r.code !== 0) {
       const tail = (r.stderr || r.stdout).trim().split(/\r?\n/).slice(0, 8).map((l) => l.slice(0, 200)).join("\n");
       throw new Fatal(`pi ${args.join(" ")} failed (exit ${r.code}):\n${tail}`);
@@ -1379,6 +1379,7 @@ async function main(argv) {
     // add-ons: only on consent, queued before the fresh settings re-read so setup never overwrites the packages entry the install adds
     const already = addonsInstalled();
     const addonNew = [];
+    const addonInstallArgs = new Set(); // add-on installs run with npm install scripts off; the overlay is the user's own package and keeps them
     for (const id of addonIds) {
       const a = addonRegistry.find((x) => x.id === id);
       const have = already.find((i) => i.id === id);
@@ -1386,7 +1387,9 @@ async function main(argv) {
       else {
         const spec = `npm:${a.package}@${a.version}`;
         say(`  add-on ${id}: to install (${spec})`);
-        installArgs.push(["install", spec, ...(opts.project ? ["-l"] : [])]);
+        const args = ["install", spec, ...(opts.project ? ["-l"] : [])];
+        installArgs.push(args);
+        addonInstallArgs.add(args);
         addonNew.push({ id, spec });
       }
     }
@@ -1764,7 +1767,7 @@ async function main(argv) {
       if (comp.recordChanged) say(`would update the compactionDerived record in ${managedFile}`);
     } else if (anyChange) {
       if (removeArgs.length || installArgs.length || !same || filtered || reordered || comp.changed || searchOff) backup();
-      for (const a of [...removeArgs, ...installArgs]) runOrDie(a);
+      for (const a of [...removeArgs, ...installArgs]) runOrDie(a, addonInstallArgs.has(a) ? { npm_config_ignore_scripts: "true" } : undefined);
       for (const a of addonNew) {
         if (!isObj(managed.addons)) managed.addons = {};
         managed.addons[a.id] = { spec: a.spec, installedAt: new Date().toISOString() };

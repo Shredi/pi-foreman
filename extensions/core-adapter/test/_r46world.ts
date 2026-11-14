@@ -13,7 +13,7 @@ type Fn = (...a: unknown[]) => Promise<unknown>;
 export type Block = { block?: boolean; reason?: string } | undefined;
 type Entry = { type: "custom"; customType: string; data: unknown };
 
-export const PLAN = "# Widget\n\n## Goal\nShip it.\n";
+export const PLAN = "# Widget\n\n## For the owner\n\nGoal: ship the widget.\n\n## Goal\nShip it.\n";
 // The session variables are the shared list (session-env.json); PI_FOREMAN_PYTHON is added here, the preload keeps it.
 const SESSION = JSON.parse(fs.readFileSync(new URL("./session-env.json", import.meta.url), "utf8")) as { keys: string[] };
 export const KEYS = [...SESSION.keys, "PI_FOREMAN_PYTHON"];
