@@ -3313,6 +3313,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
+        // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.
+        const strongKeyed = new Set(launchEntries(input).filter((e) => typeof (e.model ?? input.model) === "string" && splitLevel(String(e.model ?? input.model).trim()).base === "strong"));
         shadow = shadowLaunch(input, s.panels.views(), { config: s.config.config, isChild: s.isChild, maxThinking: get(s.config.config, "maxThinking"), childMaxThinking: get(s.config.config, "childMaxThinking"), refused: (m) => rankRefusalFor(s.config.config, foremanAt, m, ["reviewer"])?.message ?? null });
         if (shadow.kind === "refused") {
           s.trace?.emit(shadow.trace);
@@ -3405,7 +3407,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             sizedPlans = sp.plans;
             sizingClimbs = sp.climbs;
           }
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs });
+          // The rank loop's decision for the strong rung (below: the equalOnStrongRisk tie of a strong-risk sized entry), so an automatic climb never ends in a refusal.
+          const strongAllowed = (e: Json, strongModel: string): boolean => {
+            if (rankRefusalFor(s.config.config, foremanAt, strongModel, ["builder"]) === null) return true;
+            const plan = sizedPlans.find((p) => p.entry === e);
+            return foremanAt !== null && splitLevel(strongModel).base === foremanAt && rankTie(s.config.config, foremanAt, strongModel, "builder") && equalOnStrongRisk(s.config.config) && plan?.role === "builder" && plan.target === "strong" && plan.probe.length > 0;
+          };
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs, strongAllowed });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
@@ -3479,7 +3487,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             }
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
-            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (tie ? ` ${equalKeySentence()}` : "") };
+            const strongAsked = carrying.some((e) => strongKeyed.has(e));
+            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (strongAsked ? " Relaunch without a model to run on the default rung." : "") + (tie ? ` ${equalKeySentence()}` : "") };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null);
@@ -3498,7 +3507,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         for (const o of launched.overrides) s.trace?.emit({ event: "model_override", role: o.role, model: o.model, requested: o.requested });
         for (const n of launched.notices) s.trace?.emit({ event: "strong_unmapped", role: n.role, model: n.model, tier: s.ceremony.tier });
-        notices = [...launched.notices.map((n) => n.text), ...equalLines];
+        const cappedLines = climbs.filter((c) => c.skipped).map((c) => {
+          const no = rankRefusalFor(s.config.config, foremanAt0, c.skipped!, [c.role]);
+          return `pi-foreman: the climb of ${c.role} to its strong rung ${c.skipped} was skipped: the rank policy (${no?.policy ?? "below"}) does not allow that model for the ${c.role} under the foreman ${foremanAt0 ?? "unknown"}; it launches on ${c.to}.`;
+        });
+        notices = [...launched.notices.map((n) => n.text), ...equalLines, ...cappedLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }
@@ -4674,7 +4687,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const live = s.ladder.live.get("builder");
     if (!live) return false;
     const r = await currentRoles(s, ctx);
-    return strongOnRevision(s.config.config, r.provider, "builder") && onBottomRung(r.roles, "builder", live);
+    if (!strongOnRevision(s.config.config, r.provider, "builder") || !onBottomRung(r.roles, "builder", live)) return false;
+    const strong = get(r.roles, "builder.strong.model");
+    return typeof strong !== "string" || rankRefusalFor(s.config.config, foremanBaseModel(ctx), strong, ["builder"]) === null; // a strong rung the rank policy refuses is no climb
   }
 
   /** ceremony.required.<tier> as it applies to this session (trivial.ts effectiveRequired). */

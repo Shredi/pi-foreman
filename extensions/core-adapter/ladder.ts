@@ -41,6 +41,9 @@ import { tierOf, type Rank } from "./ranks.ts";
 /** Trace reason of a review_fail climb whose launch model already ranks above the strong rung (it stays). */
 export const ABOVE_STRONG_REASON = "already above strong rung";
 
+/** Trace reason of an automatic climb that is skipped because the rank policy refuses the strong rung (the launch keeps its model). */
+export const RANK_CAPPED_REASON = "strong rung refused by rank policy";
+
 export const DEFAULT_STRONG_ABOVE = 100_000;
 export const RUNG_UP_MARKER = "RUNG_UP:";
 export const DEFAULT_CHILD_MAX_TURNS = 60;
@@ -219,6 +222,8 @@ export interface Climb {
   handoff?: Handoff;
   /** The live model already is the strong rung: traced as rung_top, not rung_up. */
   top?: boolean;
+  /** RANK_CAPPED_REASON: the strong rung model the climb would have gone to. */
+  skipped?: string;
 }
 
 export interface LadderOptions {
@@ -231,6 +236,8 @@ export interface LadderOptions {
   ranks?: Map<string, Rank[]>;
   /** Builder entries whose launch sizing (sizing.ts) asks for the strong rung: reason `sizing`, no `reason` field needed. */
   sizing?: ReadonlySet<Json>;
+  /** Whether the rank loop lets this builder entry run on the strong rung model; false skips an automatic climb (RANK_CAPPED_REASON). */
+  strongAllowed?: (entry: Json, strongModel: string) => boolean;
 }
 
 /** Whether model `a` ranks strictly above `b` (lower tier number); null when either is unranked. */
@@ -331,10 +338,19 @@ export class LadderState {
             continue;
           }
           if (explicitModel && above === false) {
+            if (current !== to && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
+              climbs.push({ entry: e, role, from: current, to: current, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
+              continue;
+            }
             if (current !== to) e.model = "strong"; // below the strong rung: rises to it
             climbs.push({ entry: e, role, from: current, to, reason: "review_fail", top: current === to || undefined });
             continue;
           }
+        }
+        if (keyword === "" && role === "builder" && opts.preferStrong && from !== to && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
+          if (lv) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
+          climbs.push({ entry: e, role, from, to: from, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
+          continue;
         }
         if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision", top });
         continue;
