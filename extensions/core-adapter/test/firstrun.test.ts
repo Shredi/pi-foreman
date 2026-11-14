@@ -10,7 +10,7 @@ test("unconfigured interactive top-level session gets the notice with presets an
   assert.ok(n);
   assert.match(n, /google, openai/);
   assert.match(n, /foreman config apply-preset <name> \[--foreman <model id>\]/);
-  assert.match(n, /run \/foreman setup first/);
+  assert.match(n, /run \/foreman setup to apply the models/);
 });
 
 test("a role model or a review model counts as configured", () => {
@@ -32,7 +32,7 @@ test("provider without a role map names the fitting presets", () => {
   const n = providerGapNotice(gapBase);
   assert.ok(n);
   assert.match(n, /no role map for provider claude-bridge/);
-  assert.match(n, /Fitting presets: claude-bridge, claude-bridge-sonnet-reviewer \(foreman config apply-preset <name>\)/);
+  assert.match(n, /Fitting presets: claude-bridge, claude-bridge-sonnet-reviewer \(\/foreman config apply-preset <name>\)/);
   assert.ok(providerGapNotice({ ...gapBase, mode: "rpc" }));
 });
 
