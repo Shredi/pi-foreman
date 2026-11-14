@@ -57,6 +57,19 @@ class EqualOnStrongRiskTest(unittest.TestCase):
         res = self.load(l2={"ladder": {"equalOnStrongRisk": "yes"}})
         self.assertTrue(any("equalOnStrongRisk" in m for m in res["errors"] + res["warnings"]), res)
 
+    def test_claude_bridge_presets_set_true_and_apply_preset_lands_it_in_the_user_layer(self):
+        import contextlib
+        import io
+        for name in ("claude-bridge", "claude-bridge-sonnet-reviewer"):
+            (self.agent / "foreman.json").unlink(missing_ok=True)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                rc = fc.main(["apply-preset", name, "--agent-dir", str(self.agent)])
+            self.assertEqual(rc, 0)
+            self.assertIs(json.loads((self.agent / "foreman.json").read_text(encoding="utf-8"))["ladder"]["equalOnStrongRisk"], True)
+            res = self.load()
+            self.assertEqual(res["errors"], [])
+            self.assertIs(res["config"]["ladder"]["equalOnStrongRisk"], True, name)
+
 
 if __name__ == "__main__":
     unittest.main()

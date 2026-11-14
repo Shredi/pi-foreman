@@ -22,7 +22,7 @@ brief, is a fixed baseline a stronger model pays too; the first call is never st
 to stop and return a handoff report starting `RUNG_UP: context` (also `RUNG_UP: turns` past `childMaxTurns`, and a
 `STATUS: stuck` or "own checks failed" report). The run is climb-eligible: the foreman's next `model: "strong"`
 launch of that role needs no reason, gets the prior report prepended to its task, and the trace records
-`rung_up {reason: "context"}` (or `turns`, `stuck`, `checks_failed`).
+`rung_up {reason: "context"}` (or `turns`, `stuck`, `checks_failed`). When the rank policy refuses the builder's strong rung for the launch, no strong launch will happen: the next builder launch on any other rung gets the prior report instead, the report is used up, and the launch result says the report was prepended because the strong rung is not allowed by the rank policy (trace `rung_top` with reason `strong rung refused by rank policy`). With the strong rung allowed, a default-rung launch gets nothing and the report waits for the strong launch.
 
 The foreman's own strong launch passes `reason` as an extra top-level field of the `subagent` call (the published
 schema stays unchanged; the adapter removes the field before the tool sees it). Without a reason, and without a
@@ -43,10 +43,12 @@ stronger model would start from the same context. Raise or lower it per role, pr
 
 A builder revision launched while the latest reviewer verdict is FAIL goes to the builder's strong rung when
 `strongOnRevision` resolves true (`rung_up {reason: "review_fail"}`; lookup in [roles](roles.md)). While the
-builder's live rung is the bottom one, the finish gate refuses once more without counting the refusal
-(`finish_refused {climb_available: true}`).
+builder's live rung is the bottom one and the rank policy allows its strong rung, the finish gate refuses once more without
+counting the refusal (`finish_refused {climb_available: true}`).
 
 The `review_fail` target is the higher of the launch model and the strong rung by provider rank (`providers.<p>.ranks`). A model that ranks above the strong rung stays: the trace is `rung_top` with reason `already above strong rung`. A model below it rises to the strong rung.
+
+The automatic climb (`review_fail`, and `revision` with `providers.<p>.strongOnRevision: true`) never ends in a rank refusal. When the rank policy would refuse the strong rung for the builder under this foreman (the same decision the launch check makes, `ladder.equalOnStrongRisk` included), the climb is skipped: the launch keeps its model (the one it names, else the live rung; with no live rung, the bottom rung), the trace is `rung_top` with reason `strong rung refused by rank policy`, and the launch result says the climb was skipped and names the model and the policy. A live rung that is itself the refused strong rung (an earlier launch ran on it through the risk tag) falls back to the bottom rung, with that rung's own thinking level. A lower model named with a `reason` is thus honoured, and any other model value except `strong` and the refused strong rung itself (unranked, misspelt, no provider prefix, above the strong rung) runs on the live rung, else the bottom rung, with the same trace and launch line. The kept model is still checked by the rank policy, and the finish gate offers no climb. An explicit `model: "strong"` (or the refused strong model by its id) is not capped: the rank policy still refuses it.
 
 `strongOnRevision` (default true) also covers a revision that answers a FAIL with a `SECURITY:` finding: it launches
 on the strong rung; with `strongOnRevision` false it stays on the bottom rung. On the top rung the revision is a `rung_top`, the finish gate offers no
@@ -187,7 +189,7 @@ A child's records carry `role` and `runId` (the launch id) in its own `trace-<la
 | `rung_up` reason `sizing` | `role, from, to, reason` | A builder launch climbed because its `size`/`risk` asked for a higher rung (see Launch sizing). |
 | `launch_sizing` | `role, rule, rung, base` (+ `files, lines, declaredLines, modules, declaredModules, outside, risk, note`) | Once per builder entry that carried `size` or `risk` or none (`undeclared`), and for another role that carried them (`not_builder`). `rung` is the final rung (`default`, `strong`, `top`), `base` the rung before sizing; `note` holds `capped`, `override`, `explicit`. |
 | `rank_equal_model` | `role, model, foreman, policy, risk` | `ladder.equalOnStrongRisk` let a risk-tagged builder run on the foreman's own model; `risk` lists the tags. |
-| `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one. |
+| `rung_top` | `role, model, reason` (+ `item` or `hits`, `policy_override`) | A climb was due but the live rung already is the top one, or the rank policy refuses the strong rung (reason `strong rung refused by rank policy`). |
 | `child_policy_block` | `role, runId, kind, outcome, exit, decision` | A child stopped on a permission-policy block: `kind` is `policy_block`, `decision` is `stopped`. It is never climb-eligible and the harness does not relaunch it; the report says so. |
 | `child_repeat_refusal` | child: `runId, role, reason, decision`; foreman: `role, runId, kind, outcome, exit, decision` | The child got the same overlay deny reason twice in one run and stopped it (`run failed: repeated guarded-token probe`, `decision` `stopped`); every later tool call of the run is blocked. The foreman's record (`kind` `repeat_refusal`) treats it like `child_policy_block`: failed, never climb-eligible, not relaunched. |
 | `REPEAT_STOP_REASONS` (`launchwait.ts`, a constant, not a trace event) | — | The deny reasons a repeat may stop a child on (`child_repeat_refusal`): split or concatenated guarded literals, `HOME`/`FOREMAN_SCRATCH`/`$S` rebinding, a self-ruling write, and protected-config or credential path reads and writes. A repeated `cd` outside the workspace, worktree paths, npm/install asks, temp-dir writes, and read-budget or review-cap refusals never stop a run. |
