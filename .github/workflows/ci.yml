@@ -44,7 +44,7 @@ jobs:
           python -m pip install -q -r .github/test-requirements.txt
           python scripts/pull_core.py --conformance
       - name: adapter tests
-        run: node --test "extensions/core-adapter/test/*.test.ts"
+        run: node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test "extensions/core-adapter/test/*.test.ts"
       - name: herdr-app mod model tests
         run: node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"
       - name: installer tests (dry-run, idempotent second run, remove)

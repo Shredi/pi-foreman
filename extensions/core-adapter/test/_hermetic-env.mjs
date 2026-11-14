@@ -10,6 +10,19 @@ for (const k of keys) delete process.env[k];
 // A runner inside a Herdr pane must not hand its pane to the adapters under test: their presence files would name it.
 for (const k of Object.keys(process.env)) if (prefixes.some((p) => k.startsWith(p))) delete process.env[k];
 
+// No git child of a test may start background housekeeping: after a commit git runs `git maintenance run --auto --detach`, which takes
+// and removes `objects/maintenance.lock` while a rig copies the repository (fs.cpSync: ENOENT on `.git/objects`). Appended to any GIT_CONFIG_COUNT.
+{
+  const n = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10);
+  let at = Number.isInteger(n) && n >= 0 ? n : 0;
+  for (const [k, v] of [["maintenance.auto", "false"], ["gc.auto", "0"]]) {
+    process.env[`GIT_CONFIG_KEY_${at}`] = k;
+    process.env[`GIT_CONFIG_VALUE_${at}`] = v;
+    at++;
+  }
+  process.env.GIT_CONFIG_COUNT = String(at);
+}
+
 // No test may reach the real `gh` (the open-PRs refresher of an adapter session runs it): a fake `gh` first on PATH records each
 // call's arguments in FOREMAN_FAKE_GH_LOG and fails. r78-fake-gh.test.ts proves the interception. POSIX only: Node cannot exec a
 // .cmd stub without a shell, so on Windows the variable stays unset and that test skips.

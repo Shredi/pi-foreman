@@ -74,13 +74,23 @@ test("redactCommand masks quoted values, -U, combined short flags and spaced quo
   }
 });
 
-test("redactCommand runs in linear time on 100k-character option-start lines", () => {
-  for (const unit of ["(-u", ";-u", "&--user=", "--password ", " --proxy-user ", " -vu "]) {
-    const input = unit.repeat(Math.ceil(100000 / unit.length));
+// Linear time is a ratio, not a wall-time bound (which a loaded runner breaks): 4x the input costs about 4x (3.7-4.4 seen), a quadratic rule about 16x.
+const bestMs = (input: string): number => {
+  let best = Infinity;
+  for (let i = 0; i < 10; i++) {
     const t0 = performance.now();
     redactCommand(input);
-    const ms = performance.now() - t0;
-    assert.ok(ms < 200, `${JSON.stringify(unit)} took ${ms.toFixed(1)} ms`);
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
+};
+
+test("redactCommand runs in linear time on 100k-character option-start lines", () => {
+  for (const unit of ["(-u", ";-u", "&--user=", "--password ", " --proxy-user ", " -vu "]) {
+    const small = bestMs(unit.repeat(Math.ceil(25000 / unit.length)));
+    const large = bestMs(unit.repeat(Math.ceil(100000 / unit.length)));
+    const ratio = large / Math.max(small, 0.001);
+    assert.ok(ratio < 8, `${JSON.stringify(unit)}: 25k ${small.toFixed(2)} ms, 100k ${large.toFixed(2)} ms, ratio ${ratio.toFixed(1)}`);
   }
 });
 

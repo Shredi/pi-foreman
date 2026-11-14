@@ -134,7 +134,9 @@ class CloseRemoteReapTest(ReapBase):
     def test_a_running_terminal_is_reported_after_the_bounded_poll(self):
         address = self.opened_address()
         self.set_terminal(address, "live")
-        with mock.patch.object(fsn.time, "sleep") as sleep:
+        # Only fsn's `time` name is swapped: `fsn.time.sleep` is the global time.sleep, which subprocess._wait also polls with.
+        fake_time = mock.Mock(wraps=fsn.time)
+        with mock.patch.object(fsn, "time", fake_time), mock.patch.object(fake_time, "sleep") as sleep:
             code, out, err = self.run_main("close-remote", "demo")
         self.assertEqual(code, 0, err)
         self.assertEqual(sleep.call_count, fsn.REAP_POLLS)
