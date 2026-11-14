@@ -705,7 +705,7 @@ is shown under that session; fork PRs match through `headRepo` (the head reposit
 
 - work in progress: a draft on the host, or the session's review fact for the host's head says work is under way (violet; the dot pulses while its checks run, and the tooltip then reads "work in progress, CI running"; a draft whose check failed is red, see below);
 - CI running: checks run or are not settled (amber, pulsing);
-- merge blocked or behind: the checks are settled and passed, but the merge state is blocked or behind (amber and still; the tooltip reads "CI passing, merge blocked" or "CI passing, branch behind"; the summary and the sort count it as pending);
+- merge blocked or behind: the checks are settled and passed, but the merge state is blocked or behind (amber and still; the tooltip reads "CI passing, merge blocked" or "CI passing, branch behind"; the summary and the sort count it as pending; a PR with no checks confirmed for the head and a blocked or behind merge gets the same still amber dot, and its tooltip reads "no CI checks, merge blocked" or "no CI checks, branch behind");
 - CI red: a check failed, on a draft or work-in-progress PR too (red and still, "CI failing", counted as failing);
 - green but not reviewed: the checks are green and the session's fact is missing for the host's head or says not reviewed;
 - ready: checks settled green (or no checks confirmed for a PR the session opened), mergeable, merge state not blocked, behind, in conflict or unknown, and the session's fact is `ok` on the host's head.

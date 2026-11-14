@@ -105,3 +105,41 @@ test("a blocked PR with passed checks counts as pending and sorts with the pendi
   assert.equal(prSummary([waiting]), "1 PR · 1 pending");
   assert.equal(prSummary([waiting, ok]), "2 PRs · 1 pending");
 });
+
+// A PR the session opened with no checks confirmed for the head, and the session's review fact for that head.
+const noChecksPr = (over) => ({ ...pr({ checks: [], ...over }), review: { state: "ok", head: H1, noChecks: true } });
+
+test("no checks confirmed, blocked: a still amber dot, the words say no CI checks, merge blocked", () => {
+  const p = noChecksPr({ mergeState: "blocked" });
+  assert.deepEqual(prDotState(p), { pulse: false, fill: "amber", conflict: false });
+  assert.equal(prState(p), "pending");
+  assert.equal(prStateText(p), "no CI checks, merge blocked");
+  assert.equal(prCard(p).state, "#7 · no CI checks, merge blocked");
+  assert.equal(prSummary([p]), "1 PR · 1 pending");
+});
+
+test("no checks confirmed, behind: a still amber dot, the words say no CI checks, branch behind", () => {
+  const p = noChecksPr({ mergeState: "behind" });
+  assert.deepEqual(prDotState(p), { pulse: false, fill: "amber", conflict: false });
+  assert.equal(prState(p), "pending");
+  assert.equal(prStateText(p), "no CI checks, branch behind");
+  assert.equal(prCard(p).state, "#7 · no CI checks, branch behind");
+  assert.equal(prSummary([p]), "1 PR · 1 pending");
+});
+
+// Work in progress by the session's review fact, not a host draft.
+const wipFact = (checks) => ({ ...pr({ checks }), review: { state: "wip", head: H1 } });
+
+test("work in progress by the review fact with a failed check: red and still, CI failing", () => {
+  const p = wipFact([{ n: "ci", state: "fail" }]);
+  assert.deepEqual(prDotState(p), { pulse: false, fill: "red", conflict: false });
+  assert.equal(prState(p), "fail");
+  assert.equal(prStateText(p), "CI failing");
+});
+
+test("work in progress by the review fact with running checks: violet pulse", () => {
+  const p = wipFact(pending);
+  assert.deepEqual(prDotState(p), { pulse: true, fill: "violet", conflict: false });
+  assert.equal(prState(p), "wip");
+  assert.equal(prStateText(p), "work in progress, CI running");
+});

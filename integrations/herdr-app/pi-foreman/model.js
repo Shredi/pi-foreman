@@ -1103,7 +1103,7 @@ export function prDotState(pr) {
   const pulse = d.ring && d.fill !== "red";
   if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
-  if (p.state === "waiting" && d.fill === "green") return { pulse: false, fill: "amber", conflict: d.conflict };
+  if (p.state === "waiting") return { pulse: false, fill: "amber", conflict: d.conflict };
   if (p.state === "ready" && d.fill === "dim") return { pulse: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
   return { pulse, fill: pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
 }
