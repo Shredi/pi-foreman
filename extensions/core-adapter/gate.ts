@@ -4,18 +4,19 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
-import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
+import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, resolveWord, under } from "./pathrules.ts";
 import { boundNames, relaxPatternWords } from "./permoverlay.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { toolPath } from "./pathnorm.ts";
 import { parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
@@ -91,6 +92,79 @@ function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
   return { ask: true, rule: h.rule, reason: h.reason, cause: "selfmod" };
 }
 
+/** The built-in rules that accept a run without it writing anything the gate counts (a test run, a read, a fetch). */
+const READONLY_ROLE_RUNS = new Set(["default-read", "default-git-read", "default-build-test", "default-git-fetch"]);
+
+/**
+ * A read-only role (`roots.roundReadOnly`: a reviewer or explorer in a round): the first write the gate can name into the worktree, or null. A path tool's write
+ * operations; a shell segment's named targets (step 0 helper), and a git segment's catch-all target (every git write subcommand). The scratch dir and the handoff
+ * files are no worktree writes. A segment a read, test-run or fetch rule accepts, with no redirect of its own into the worktree, is no write. The catch-all of
+ * any other program (`make`, `npm run <script>`, `tar -x` without a directory) is not counted.
+ */
+function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): { path: string; gitAny: boolean } | null {
+  const { roots, platform, cwd } = env;
+  // the targets the child may write: its scratch dir and handoff files (the worktree term left out of the path rules)
+  const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
+  const inside = (abs: string): boolean => under(platform, roots.worktree, abs) && !sanctioned(abs);
+  if (!segments) {
+    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
+      const abs = dir === "write" ? resolveWord(platform, cwd, w) : null;
+      if (abs && inside(abs)) return { path: abs, gitAny: false };
+    }
+    return null;
+  }
+  const dctx = { roots, facts: env.facts, platform, cwd };
+  const ec = effectCtxOf(dctx);
+  for (const t of shellWriteTargets(segments, platform)) {
+    const git = baseProg(t.seg.program) === "git";
+    if (!(t.named || git) || t.list || !inside(t.path)) continue;
+    const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
+    const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
+    if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
+    return { path: t.path, gitAny: !t.named };
+  }
+  return null;
+}
+
+/**
+ * `install-root-write`: a write the gate can name into the Pi install root, the global npm root, a bundled package root or the harness package root, from outside
+ * the session's own worktree (compared by spelling: a link inside the worktree that points into a root is not followed). A path tool's write operations, and the
+ * step 0 helper's targets of a shell line, the catch-all ones too. A segment a read, test-run or fetch rule accepts, with no redirect of its own into a root, is
+ * no write. Returns the ask, or undefined. Forms that name no path (`npm install -g`) are not seen.
+ */
+function installRootWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): GateResult {
+  const { roots, platform, cwd } = env;
+  const real = (p: string): string | null => (platform === process.platform ? realDefault(p) : null);
+  const held = [...roots.install, ...(roots.pkgRoot ? [roots.pkgRoot] : [])].flatMap((r) => [r, real(r)].filter((x, i, a): x is string => !!x && a.indexOf(x) === i));
+  if (held.length === 0) return undefined;
+  const rootOf = (abs: string): string | undefined => (under(platform, roots.worktree, abs) ? undefined : held.find((r) => under(platform, r, abs)));
+  const ask = (target: string, root: string): GateResult => {
+    const what = root === roots.pkgRoot ? "the pi-foreman package folder" : "an install folder of Pi or of a bundled package";
+    return { ask: true, rule: "install-root-write", reason: `this call changes ${target}, which lies in ${what} (${root}); the harness's own files change only with your yes, and no allow rule, allow sentence, judge verdict or permissions mode other than deny answers this question` };
+  };
+  if (!segments) {
+    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
+      const abs = dir === "write" ? resolveWord(platform, cwd, w) : null;
+      const root = abs ? rootOf(abs) : undefined;
+      if (abs && root) return ask(abs, root);
+    }
+    return undefined;
+  }
+  const dctx = { roots, facts: env.facts, platform, cwd };
+  const ec = effectCtxOf(dctx);
+  for (const t of shellWriteTargets(segments, platform)) {
+    const root = rootOf(t.path);
+    if (!root) continue;
+    const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
+    const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
+    if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
+    return ask(t.path, root);
+  }
+  return undefined;
+}
+
 /**
  * The child deny set (r79 item 2; marked `childDeny` in the launch binding): a child never writes outside its worktree and its own scratch dir, and never
  * opens a pull or merge request (the foreman does). It runs before the deny rules, allow rules, built-in allows, classifier and mode step, so no allow rule,
@@ -108,6 +182,15 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
     const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md, ask-<n>.md, .seen and anything below work/)` : "no handoff dir is set";
     return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.`);
+  }
+  if (env.roots.roundReadOnly) {
+    const target = readonlyWrite(tool, input, segments, cmd, env);
+    if (target !== null) {
+      const r = env.roots;
+      const scratch = r.scratch.length ? r.scratch[0] : "your scratch dir";
+      const what = target.gitAny ? `a git command changes the repository of the round worktree ${r.worktree}, which is read-only for your role` : `${target.path} is inside ${r.worktree}`;
+      return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${what}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
+    }
   }
   return undefined;
 }
@@ -261,18 +344,24 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     const callCtx = (segments?: ShellSegment[]) => ({ cwd, home, platform, ...(segments ? { segments } : {}), ...(readTools ? { readTools } : {}) });
     const decided = (result: GateResult): GateOutcome => ({ result, danger: null });
     /** deny rules and ask rules, then a pending floor ask, then allow rules and the built-in allow `builtin`. */
-    const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[]): GateResult => {
-      const denied = matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, call, rules.env);
-      if (denied.verdict === "deny") return ruleResult(denied);
+    // set by the path and shell branches below before `ruled` runs: the ask of a write into an install or package root
+    let installAsk: GateResult;
+    // `raw`: the call as spelled (a path tool): deny, ask and protected rules match it too, allow rules only `call`
+    const ruled = (call: RuleCall, pending: FloorHit | null, builtin: (unit: number) => string | null, segments?: ShellSegment[], raw?: RuleCall): GateResult => {
+      const calls = raw ? [call, raw] : [call];
+      const denied = calls.map((c) => matchRules({ deny: rules.sets.deny, ask: [], allow: [] }, c, rules.env)).find((v) => v.verdict === "deny");
+      if (denied) return ruleResult(denied);
+      // after the owner's deny rules, before the protected check, ask rules, allow rules, built-in allows, the danger class and the mode step: nothing there clears it
+      if (installAsk) return installAsk;
       if (!pending && deps.protected?.length) {
-        const m = matchProtected(call, segments, deps.protected, { ...rules.env, ec: effectCtx0 });
+        const m = calls.map((c) => matchProtected(c, segments, deps.protected ?? [], { ...rules.env, ec: effectCtx0 })).find((x) => x);
         if (m) {
           const ids = m.entries.map((e) => e.id).join(",");
           return { ask: true, rule: `protected:${ids}`, reason: `the call touches protected target ${m.entries.map((e) => `${e.id} (${e.kind} ${e.glob})`).join(", ")}`, cause: "protected", match: m };
         }
       }
-      const first = matchRules({ deny: [], ask: rules.sets.ask, allow: [] }, call, rules.env);
-      if (first.verdict === "ask") return ruleResult(first);
+      const first = calls.map((c) => matchRules({ deny: [], ask: rules.sets.ask, allow: [] }, c, rules.env)).find((v) => v.verdict === "ask");
+      if (first) return ruleResult(first);
       if (pending) return askFromFloor(pending);
       return ruleResult(matchRules(rules.sets, call, rules.env, builtin));
     };
@@ -297,6 +386,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         if (cd) return decided(cd);
       }
       const ec = effectCtxOf(dctx);
+      if (toolName !== "powershell") installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
@@ -319,23 +409,30 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
     }
     const readField = readFieldOf(readTools, toolName);
     if (PATH_TOOLS.has(toolName) || readField !== undefined) {
+      // the path fields as Pi's file tools read them (`@`, `~`, `file://`), from here on; the rules also see the spelling as written
+      const nin = PI_FILE_TOOLS.has(toolName) ? toolPathInput(inp, cwd, home, platform) : inp;
+      if (nin === null) return decided({ block: true, rule: "tool-path-unreadable", layer: "floor", reason: `pi-foreman: the path of this ${toolName} call cannot be read the way the tool reads it (a malformed file:// link), so the call is denied.` });
       // a mapped tool keeps the payload floors on every other path field (arrays included); `pattern`/`patterns` stay search patterns
       const readOnly = readField !== undefined || READ_PATH_TOOLS.has(toolName);
-      const ph0 = pathFloors(inp, env, toolName, readField, readOnly);
-      const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(inp, "", env, false, 0, true) : null;
+      // a floor deny names the path as the caller wrote it when that spelling is denied too (the repeat stop counts equal sentences across tools)
+      const ph0n = pathFloors(nin, env, toolName, readField, readOnly);
+      const ph0r = nin === inp ? ph0n : pathFloors(inp, env, toolName, readField, readOnly);
+      const ph0 = ph0r?.kind === "deny" ? ph0r : ph0n;
+      const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(nin, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
-      const sm = selfmodResult(pathSelfmod(toolName, inp, cwd, roots, platform), roots.child);
+      const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
       if (sm) return decided(sm);
       if (roots.child) {
-        const cd = childDenied(toolName, inp, undefined, null, { roots, facts, platform, cwd });
+        const cd = childDenied(toolName, nin, undefined, null, { roots, facts, platform, cwd });
         if (cd) return decided(cd);
       }
-      const pv = pathDecide(toolName, inp, cwd, roots, platform);
-      const result = ruled(ruleCallOf(toolName, inp, callCtx()), h, () => (pv ? pv.rule : readOnly && !pathWords(inp).some((w) => !sshPublicKey(w, env)) && pathWords(inp).length > 0 ? PUBKEY_READ_RULE : null));
+      installAsk = installRootWrite(toolName, nin, undefined, null, { roots, facts, platform, cwd });
+      const pv = pathDecide(toolName, nin, cwd, roots, platform);
+      const result = ruled(ruleCallOf(toolName, nin, callCtx()), h, () => (pv ? pv.rule : readOnly && !pathWords(nin).some((w) => !sshPublicKey(w, env)) && pathWords(nin).length > 0 ? PUBKEY_READ_RULE : null), undefined, nin === inp ? undefined : ruleCallOf(toolName, inp, callCtx()));
       if (result) return decided(result);
-      return { result: undefined, danger: dangerMatch({ tool: toolName, input: inp }, { roots, platform, cwd, facts }) };
+      return { result: undefined, danger: dangerMatch({ tool: toolName, input: nin }, { roots, platform, cwd, facts }) };
     }
     // own tools carry free text (ledger notes, plans) that may quote a floor pattern: only their prose fields skip the floors
     const proseExempt = PROSE_FIELD_TOOLS.has(toolName) || NOTE_TOOLS.has(toolName) || (deps.noteTools?.includes(toolName) ?? false);
@@ -354,6 +451,21 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
   } catch (e) {
     return { result: { block: true, rule: "gate-error", layer: "floor", reason: `pi-foreman: the permission gate failed (${e instanceof Error ? e.message : String(e)}), so the call is denied. Report this to the user.` }, danger: null };
   }
+}
+
+/** The tools Pi resolves the path of with `resolveToCwd` (`@`, `~`, `file://`, unicode spaces): the gate reads their path fields as the tool does (pathnorm.ts toolPath). */
+const PI_FILE_TOOLS = new Set(["read", "write", "edit", "ls", "grep", "find"]);
+
+/** `inp` with each path field replaced by the absolute path the tool acts on; null when one cannot be read the way Pi reads it (a malformed `file://`). */
+function toolPathInput(inp: Record<string, unknown>, cwd: string, home: string, platform: string): Record<string, unknown> | null {
+  const out = { ...inp };
+  for (const k of PATH_KEYS) {
+    if (typeof inp[k] !== "string") continue;
+    const p = toolPath(inp[k] as string, cwd, home, platform);
+    if (p === null) return null;
+    out[k] = p;
+  }
+  return out;
 }
 
 /** The path words of a path-tool input: the keys `pathFloors` reads for a path (PATH_KEYS). */

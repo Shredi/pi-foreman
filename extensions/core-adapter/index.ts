@@ -42,6 +42,7 @@ import type { OwnerAnswer, OwnerDeps } from "./gatedialog.ts";
 import { parseShell } from "./shellast.ts";
 import { childAskOffText, NO_PANE_TEXT, OWNER_AWAY_TEXT } from "./presencewait.ts";
 import { PATH_TOOL_NAMES, tmpRoots } from "./pathrules.ts";
+import { toolPath } from "./pathnorm.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
@@ -2538,8 +2539,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const workFolders = s.isChild ? [] : folders.flatMap((f) => (real(f.path) !== f.path ? [f, { path: real(f.path), mode: f.mode }] : [f]));
     // a child in a nested submodule checkout works on the whole tree it belongs to, bounded by its round or workspace (worktreeroot.ts treeRootOf)
     const tree = s.isChild ? treeRootOf(cwd, treeCeilingOf({ cwd, agentDir: s.agentDir, foremanSession: s.usage.line.foremanSession, binding: launchBinding })) : null;
+    const worktree = tree ?? workspaceOf(cwd).root;
+    // a child that reads its round worktree and has no write root on it (reviewer, explorer): the same line as the old overlay's (childSurface)
+    const surface = s.isChild ? childSurface(rounds, cwd, launchBinding?.role, platform) : null;
+    const norm = (p: string): string => (platform === "win32" ? path.win32.resolve(p).toLowerCase() : path.posix.resolve(p));
+    const roundReadOnly = !!surface && surface.read.some((r) => norm(r) === norm(worktree)) && !surface.write.some((r) => norm(r) === norm(worktree));
     return {
-      worktree: tree ?? workspaceOf(cwd).root,
+      worktree,
+      ...(roundReadOnly ? { roundReadOnly } : {}),
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,
@@ -2739,6 +2746,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // an ask-kind floor, a self-modification rule and an ask rule go to the owner before the mode step (never to the classifier, never run under mode allow; only a protected match above runs a check first)
       if (r && "ask" in r) {
+        // a write into an install or package root: mode deny refuses it without a dialog; every other mode asks the owner (the gate's step, gate.ts installRootWrite)
+        if (r.rule === "install-root-write" && resolved.mode === "deny") return denied(r.rule, "mode", `${MODE_DENY_TEXT}; ${r.reason}`);
         gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "ask", rule: r.rule, role });
         const cause = r.cause === "selfmod" ? `self-modification ${r.rule}: ${r.reason}` : r.cause === "rule" ? r.rule : `${r.rule}: ${r.reason}`;
         return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, noRemember: true });
@@ -3084,7 +3093,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     let rulingAsk: Decision | undefined;
     {
       const rs = sessionFor(ctx);
-      const why = rs && selfRulingRefusal(event.toolName, event.input as Record<string, unknown>, ctx.cwd, childDirsOf(rs));
+      // the path of write and edit as the tool reads it (`@`, `~`, `file://`)
+      const rin = event.input as Record<string, unknown>;
+      const rpath = (event.toolName === "write" || event.toolName === "edit") && typeof rin?.path === "string" ? toolPath(rin.path, ctx.cwd, os.homedir(), platform) : null;
+      const why = rs && selfRulingRefusal(event.toolName, rpath !== null ? { ...rin, path: rpath } : rin, ctx.cwd, childDirsOf(rs));
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
