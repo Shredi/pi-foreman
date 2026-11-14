@@ -83,7 +83,9 @@ class ExpiredAttemptTest(PassBase):
         before = self.registry_text()
         code, out, err = self.run_main("prune", FAKE_HC_FAIL="1")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.registry_text(), before)
+        row = self.row()
+        self.assertIsInstance(row.pop("passRetryAt"), float)  # the failed read is recorded: the list pass pauses the entry
+        self.assertEqual(json.dumps({"version": 1, "sessions": [row]}), before)
         self.assertEqual(err.count("could not be removed"), 1)
         self.assertIn("demo", err)
 
@@ -101,9 +103,9 @@ class ExpiredAttemptTest(PassBase):
                         self.assertEqual(row["status"], "open")
                         self.assertIsNone(row["closeTriedAt"])
                         self.assertNotIn("closedSeenAt", [k for k, v in row.items() if v is not None])
-                        self.assertEqual(row.get("closeExpiredAt") is not None, status == "closing")
+                        self.assertIsNotNone(row.get("closeExpiredAt"))  # an open entry gets the mark too (variant K)
 
-    def test_expiry_line_and_mark_only_for_a_reopened_closing_entry(self):
+    def test_expiry_line_and_mark_for_a_reopened_closing_or_an_open_entry_not_for_pending(self):
         self.seed("closing", closeTriedAt=old())
         self.set_live()
         code, out, err = self.run_main("prune")
@@ -114,9 +116,9 @@ class ExpiredAttemptTest(PassBase):
         for status in ("open", "pending"):
             self.seed(status, closeTriedAt=old(), lastError="a reason")
             code, out, err = self.run_main("prune")
-            self.assertNotIn("expired", out)
+            self.assertEqual("expired" in out, status == "open")  # variant K: an open entry gets the line and the mark
             self.assertEqual((self.row()["status"], self.row()["lastError"]), (status, "a reason"))
-            self.assertNotIn("closeExpiredAt", self.row())
+            self.assertEqual("closeExpiredAt" in self.row(), status == "open")
 
     def test_after_a_reopen_the_entry_is_not_read_again_until_a_new_attempt(self):
         self.seed("closing", closeTriedAt=old())
@@ -222,7 +224,7 @@ class ClosedLabelTest(PassBase):
             self.assertEqual(self.hc_calls("kill", "rm"), [])
 
     def test_seen_on_an_earlier_run_a_shell_is_ended_and_the_entry_closed(self):
-        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 30, attach={"address": "t3"})
+        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 200, closedSeenSeq=4, attach={"address": "t3"})
         self.set_live(labels={"fm.notice": CLOSED}, foreground="Bash.EXE")
         code, out, err = self.run_main("prune")
         self.assertEqual(code, 0, err)
@@ -235,29 +237,31 @@ class ClosedLabelTest(PassBase):
         self.assertEqual(self.hc_calls("rm"), [["rm", "alpha/t9"]])
         self.assertNotIn("alpha/t9", self.terminals())
 
-    def test_seen_on_an_earlier_run_another_program_is_not_ended(self):
-        self.seed("open", closeTriedAt=old(), closedSeenAt=time.time() - 30, attach={"address": "t3"})
+    def test_seen_on_an_earlier_run_another_program_is_ended_too(self):
+        self.seed("open", closeTriedAt=old(), closedSeenAt=time.time() - 200, closedSeenSeq=4, attach={"address": "t3"})
         self.set_live(labels={"fm.notice": CLOSED}, foreground="pi")
         self.assertEqual(self.run_main("prune")[0], 0)
         row = self.row()
         self.assertEqual(row["status"], "closed")
-        self.assertFalse(row.get("reaped"))
-        self.assertEqual(self.hc_calls("rm"), [])
-        self.assertNotIn(["kill", "alpha/t9"], self.hc_calls("kill"))
-        self.assertIn("alpha/t9", self.terminals())
+        self.assertTrue(row.get("reaped"))
+        self.assertEqual(self.hc_calls("rm"), [["rm", "alpha/t9"]])
+        self.assertIn(["kill", "alpha/t9"], self.hc_calls("kill"))
+        self.assertNotIn("alpha/t9", self.terminals())
 
     def test_a_shell_that_cannot_be_ended_leaves_the_entry_for_the_next_run(self):
-        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 30)
+        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 200, closedSeenSeq=4)
         self.set_live(labels={"fm.notice": CLOSED}, foreground="bash")
         before = self.registry_text()
         with self.wrap_run(fail_verbs=("kill",)):
             code, out, err = self.run_main("prune")
         self.assertEqual(code, 0, err)
-        self.assertEqual(self.registry_text(), before)
+        row = self.row()
+        self.assertIsInstance(row.pop("passRetryAt"), float)  # the failed kill is recorded
+        self.assertEqual(json.dumps({"version": 1, "sessions": [row]}), before)
         self.assertIn("demo", err)
 
     def test_a_terminal_that_cannot_be_removed_is_retried_and_then_closed_by_its_finish(self):
-        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 30)
+        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 200, closedSeenSeq=4)
         self.set_live(labels={"fm.notice": CLOSED}, foreground="zsh")
         with self.wrap_run(fail_verbs=("rm",)), mock.patch.object(fsn.time, "sleep"):
             self.assertEqual(self.run_main("prune")[0], 0)
@@ -269,7 +273,7 @@ class ClosedLabelTest(PassBase):
 
     def test_the_label_and_the_address_never_reach_a_command_line_beyond_the_recorded_address(self):
         value = "4:closed:-:0"
-        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 30)
+        self.seed("closing", closeTriedAt=old(), closedSeenAt=time.time() - 200, closedSeenSeq=4)
         self.set_live(labels={"fm.notice": value}, foreground="sh")
         self.set_live(address="alpha/t8", labels={"fm.notice": "9:closed:-:0"}, foreground="sh")
         self.assertEqual(self.run_main("prune")[0], 0)
@@ -281,11 +285,11 @@ class ClosedLabelTest(PassBase):
     def test_the_helper_ends_a_shell_after_an_old_closed_notice_only(self):
         now = time.time()
         for age, want in ((fsn.WATCHER_REAP_WAIT + 5, True), (fsn.WATCHER_REAP_WAIT - 5, False)):
-            entry = {"last": {"kind": "closed", "at": iso(now - age)}}
-            self.assertEqual(fsn.shell_may_end(entry, now), want, age)
-        self.assertFalse(fsn.shell_may_end({"last": {"kind": "result", "at": iso(now - 3600)}}, now))
-        self.assertFalse(fsn.shell_may_end({}, now))
-        self.assertTrue(fsn.shell_may_end({"closedSeenAt": now - 1}, now))
+            entry = {"last": {"kind": "closed", "at": iso(now - age)}, "noticeSeq": 4}
+            self.assertEqual(fsn.shell_may_end(entry, now, 4), want, age)
+        self.assertFalse(fsn.shell_may_end({"last": {"kind": "result", "at": iso(now - 3600)}, "noticeSeq": 4}, now, 4))
+        self.assertFalse(fsn.shell_may_end({}, now, 4))
+        self.assertFalse(fsn.shell_may_end({"closedSeenAt": now - 1, "closedSeenSeq": 4}, now, 4))  # younger than the wait
 
     def test_the_watcher_wait_equals_the_typescript_one(self):
         polls = int(re.search(r"export const REAP_POLLS = (\d+);", WATCH_TS).group(1))
@@ -483,10 +487,10 @@ class ForceOnAGoneChildTest(PassBase):
         self.seed("open", closeTriedAt=old())
         self.set_live()
         self.run_main("prune")
-        self.assertNotIn("closeExpiredAt", self.row())
+        self.assertIsNotNone(self.row()["closeExpiredAt"])  # variant K: the open entry gets the mark, so --force works
         self.assertIsNone(self.row()["closeTriedAt"])
         code, out, err = self.force()
-        self.assertEqual((code, self.row()["status"]), (1, "open"))
+        self.assertEqual((code, self.row()["status"]), (0, "closed"))
 
     def test_a_reopened_entry_can_be_forced_and_the_hint_is_in_its_expiry_line(self):
         self.seed("closing", closeTriedAt=old())

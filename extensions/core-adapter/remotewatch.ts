@@ -133,6 +133,16 @@ export type Action =
 
 const OPEN = new Set(["open", "pending", "closing"]);
 
+/** The id part of a terminal address `<machine>/<id>`; as TERMINAL_ID_RE in foreman_session.py (tests/fixtures/remote-address-cases.json runs against both). */
+const TERMINAL_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** True when a recorded terminal address lies on the entry's own machine and its id has the strict shape. */
+export function usableAddress(machine: unknown, address: unknown): boolean {
+  if (typeof machine !== "string" || !machine || typeof address !== "string") return false;
+  const slash = address.indexOf("/");
+  return slash > 0 && address.slice(0, slash) === machine && TERMINAL_ID_RE.test(address.slice(slash + 1));
+}
+
 /** The remote hc entries to watch: `backend: "hc"`, a machine, an address and a remote handoff, status open, pending or closing. */
 export function watchState(reg: { sessions: SessionEntry[] }, prev?: WatchState, opener?: string): WatchState {
   const out: WatchState = new Map();
@@ -141,6 +151,7 @@ export function watchState(reg: { sessions: SessionEntry[] }, prev?: WatchState,
     const hc = e.hc as { address?: unknown } | undefined;
     if (e.backend !== "hc" || typeof e.machine !== "string" || !hc || typeof hc.address !== "string" || typeof e.remoteHandoff !== "string") continue;
     if (!OPEN.has(String(e.status))) continue;
+    if (!usableAddress(e.machine, hc.address)) continue; // an address on another machine (or not an id) is never read, ended or removed
     const old = prev?.get(e.child);
     const persisted = typeof e.noticeSeq === "number" ? e.noticeSeq : 0;
     out.set(e.child, {
@@ -166,6 +177,7 @@ export interface ParsedEvent {
   state: LiveState | null;
 }
 
+const CLOSE_LINE = (w: Watched): string => `; close with: foreman session close-remote ${w.label}@${w.machine}`;
 const strOf = (v: unknown): v is string => typeof v === "string" && v !== "";
 const objOf = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 
@@ -441,6 +453,7 @@ export class RemoteWatcher {
   /** Per child, the time (ms) of the last stream line of its machine or successful `hc get` of its terminal; in memory only (childblocked.ts reads it). */
   private readonly contacts = new Map<string, number>();
   private machines = new Map<string, MachineRun>();
+  private readonly named = new Set<string>();
   private chain: Promise<void> = Promise.resolve();
   private cancelRefresh: Cancel | null = null;
   private stopped = true;
@@ -497,6 +510,7 @@ export class RemoteWatcher {
     }
     if (dirty) writeRegistry(this.d.agentDir, reg);
     this.state = watchState(reg, prev, this.d.opener());
+    this.nameRefused(reg);
     for (const w of this.state.values()) {
       if (!this.machines.has(w.machine)) this.startMachine(w.machine);
       if (!prev.has(w.child)) {
@@ -514,6 +528,18 @@ export class RemoteWatcher {
       }
     }
     for (const m of [...this.machines.keys()]) if (![...this.state.values()].some((w) => w.machine === m)) this.stopMachine(m);
+  }
+
+  /** One notice per open entry of this session whose recorded address `watchState` refused. */
+  private nameRefused(reg: { sessions: SessionEntry[] }): void {
+    const opener = this.d.opener();
+    for (const e of reg.sessions) {
+      const hc = e.hc as { address?: unknown } | undefined;
+      if (!opener || e.parent !== opener || e.backend !== "hc" || typeof e.machine !== "string" || !hc || typeof hc.address !== "string" || typeof e.remoteHandoff !== "string") continue;
+      if (!OPEN.has(String(e.status)) || usableAddress(e.machine, hc.address) || this.named.has(e.child)) continue;
+      this.named.add(e.child);
+      this.d.notify?.(`pi-foreman session ${strip(e.label)}@${strip(e.machine)}: its recorded terminal address is not on ${strip(e.machine)}; not watched`, "warning");
+    }
   }
 
   /** Resolves when the queued work is done (tests). */
@@ -620,14 +646,14 @@ export class RemoteWatcher {
   }
 
   /** One `hc get` of the remote terminal: finished, gone (not_found), live with its foreground name, or unknown (error). */
-  private async peek(address: string): Promise<{ s: "finished" | "gone" | "live" | "unknown"; fg?: unknown }> {
+  private async peek(address: string): Promise<{ s: "finished" | "gone" | "live" | "unknown"; fg?: unknown; notice?: unknown }> {
     const r = await this.hc(["get", address, "--json"], GET_TIMEOUT_MS, this.abort.signal);
     if (r.code === 3 && notFound(r.stderr)) return { s: "gone" };
     if (r.code !== 0) return { s: "unknown" };
     try {
       const o = objOf(JSON.parse(r.stdout.toString("utf8")));
       if (o?.state === "finished") return { s: "finished" };
-      if (o?.state === "live") return { s: "live", fg: objOf(o.foreground)?.name };
+      if (o?.state === "live") return { s: "live", fg: objOf(o.foreground)?.name, notice: objOf(o.labels)?.["fm.notice"] };
     } catch {
       // unreadable reply: keep polling
     }
@@ -638,35 +664,49 @@ export class RemoteWatcher {
     return new Promise((res) => void this.timer(res, ms));
   }
 
-  /** After `closed`: poll until the terminal is finished, then `hc rm`. At the bound a shell in the foreground is killed first; anything else is reported. */
-  private async reap(address: string): Promise<void> {
+  /**
+   * After `closed` (the notice with number `seq` was applied): poll until the terminal is finished, then `hc rm`. At the bound a shell in
+   * the foreground is killed first; any other program only when the read at the bound still carries the closed label with `seq` (so it
+   * is the session that reported itself closed); without it the terminal is reported and left. Returns true when the terminal is gone
+   * or was removed. Residual risk: where a terminal tool reports the child's detached cleanup as the foreground program and the cleanup
+   * takes longer than the wait, a worktree and a branch stay behind, and `foreman worktree sweep` removes them (checked on one
+   * platform by experiment: the tool reported the foreground job, not the detached process).
+   */
+  private async reap(w: Watched, seq: number): Promise<boolean> {
+    const address = w.address;
     // `hc rm` is checked: one retry after a poll interval, then the leftover is reported (prune removes it later)
-    const rm = async (): Promise<void> => {
+    const rm = async (): Promise<boolean> => {
       for (let i = 0; i < 2 && !this.stopped; i++) {
         const r = await this.hc(["rm", address], 10_000, this.abort.signal);
-        if (r.code === 0 || (r.code === 3 && notFound(r.stderr))) return;
+        if (r.code === 0 || (r.code === 3 && notFound(r.stderr))) return true;
         if (i === 0) await this.sleep(REAP_POLL_MS);
       }
       if (!this.stopped) this.d.notify?.(`remote terminal ${address} is finished but \`hc rm\` failed; left alone (\`foreman session prune\` or \`hc rm ${address}\` removes it)`, "warning");
+      return false;
     };
-    let last: { s: string; fg?: unknown } = { s: "unknown" };
+    let last: { s: string; fg?: unknown; notice?: unknown } = { s: "unknown" };
     for (let i = 0; i <= REAP_POLLS && !this.stopped; i++) {
       last = await this.peek(address);
-      if (last.s === "gone") return;
+      if (last.s === "gone") return true;
       if (last.s === "finished") return rm();
       if (i < REAP_POLLS) await this.sleep(REAP_POLL_MS);
     }
-    if (this.stopped) return;
-    if (last.s === "live" && isShellName(last.fg)) {
+    if (this.stopped) return false;
+    const shell = isShellName(last.fg);
+    const parsed = parseNoticeLabel(last.notice);
+    const labelled = parsed?.kind === "closed" && parsed.seq === seq;
+    if (last.s === "live" && (shell || labelled)) {
       await this.hc(["kill", address], 10_000, this.abort.signal);
+      if (!shell) this.d.notify?.(`ended ${typeof last.fg === "string" ? strip(last.fg).slice(0, 64) : "the foreground program"} in ${address} after the session closed`, "warning");
       for (let i = 0; i < REAP_KILL_POLLS && !this.stopped; i++) {
         await this.sleep(REAP_POLL_MS);
         const k = await this.peek(address);
-        if (k.s === "gone") return;
+        if (k.s === "gone") return true;
         if (k.s === "finished") return rm();
       }
     }
     this.d.notify?.(`remote terminal ${address} is still ${last.s} after the session closed; left alone (remove it with \`hc rm ${address}\` once pi has exited)`, "warning");
+    return false;
   }
 
   private async pollOne(child: string): Promise<void> {
@@ -818,9 +858,17 @@ export class RemoteWatcher {
     // the local `hc attach` terminal of the session ends with it (best effort; `--rm` removes it once it exits)
     if (typeof attach === "string" && attach) void this.hc(["kill", attach], 10_000, this.abort.signal).catch(() => undefined);
     // the remote terminal (`--keep`) outlives pi: remove it once pi has exited (never killed while pi is still closing)
-    if (a.kind === "closed") void this.reap(w.address).catch(() => undefined);
+    if (a.kind === "closed") {
+      void this.reap(w, a.seq)
+        .then((removed) => {
+          if (removed) this.update(w.child, (e) => ((e.reaped = true), true));
+        })
+        .catch(() => undefined);
+    }
     const done = wake as { kind: string; path: string };
-    this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${done.path ? ` ${done.path}` : ""}`, "info");
-    this.d.wake(w.label, done.kind, done.path);
+    // a result names the close command (the address form); the path part is cut first so the line survives the 300-character cut of `foreman_wait`
+    const text = done.kind === "result" ? `${done.path.slice(0, Math.max(0, 300 - CLOSE_LINE(w).length)).trimEnd()}${CLOSE_LINE(w)}` : done.path;
+    this.d.notify?.(`pi-foreman session ${w.label}@${w.machine}: ${done.kind}${text ? ` ${text}` : ""}`, "info");
+    this.d.wake(w.label, done.kind, text);
   }
 }
