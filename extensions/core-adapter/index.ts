@@ -2527,8 +2527,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const workFolders = s.isChild ? [] : folders.flatMap((f) => (real(f.path) !== f.path ? [f, { path: real(f.path), mode: f.mode }] : [f]));
     // a child in a nested submodule checkout works on the whole tree it belongs to, bounded by its round or workspace (worktreeroot.ts treeRootOf)
     const tree = s.isChild ? treeRootOf(cwd, treeCeilingOf({ cwd, agentDir: s.agentDir, foremanSession: s.usage.line.foremanSession, binding: launchBinding })) : null;
+    const worktree = tree ?? workspaceOf(cwd).root;
+    // a child that reads its round worktree and has no write root on it (reviewer, explorer): the same line as the old overlay's (childSurface)
+    const surface = s.isChild ? childSurface(rounds, cwd, launchBinding?.role, platform) : null;
+    const norm = (p: string): string => (platform === "win32" ? path.win32.resolve(p).toLowerCase() : path.posix.resolve(p));
+    const roundReadOnly = !!surface && surface.read.some((r) => norm(r) === norm(worktree)) && !surface.write.some((r) => norm(r) === norm(worktree));
     return {
-      worktree: tree ?? workspaceOf(cwd).root,
+      worktree,
+      ...(roundReadOnly ? { roundReadOnly } : {}),
       scratch: s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null),
       tmp: tmpRoots(os.tmpdir(), platform, real),
       scratchBase: s.owned.childScratchRoot,

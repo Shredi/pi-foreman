@@ -4,13 +4,13 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
-import { PATH_TOOL_NAMES, pathDecide } from "./pathrules.ts";
+import { PATH_TOOL_NAMES, opsOf, pathDecide, resolveWord, under } from "./pathrules.ts";
 import { boundNames, relaxPatternWords } from "./permoverlay.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
@@ -91,6 +91,41 @@ function selfmodResult(h: SelfmodHit | undefined, child: boolean): GateResult {
   return { ask: true, rule: h.rule, reason: h.reason, cause: "selfmod" };
 }
 
+/** The built-in rules that accept a run without it writing anything the gate counts (a test run, a read, a fetch). */
+const READONLY_ROLE_RUNS = new Set(["default-read", "default-git-read", "default-build-test", "default-git-fetch"]);
+
+/**
+ * A read-only role (`roots.roundReadOnly`: a reviewer or explorer in a round): the first write the gate can name into the worktree, or null. A path tool's write
+ * operations; a shell segment's named targets (step 0 helper), and a git segment's catch-all target (every git write subcommand). The scratch dir and the handoff
+ * files are no worktree writes. A segment a read, test-run or fetch rule accepts, with no redirect of its own into the worktree, is no write. The catch-all of
+ * any other program (`make`, `npm run <script>`, `tar -x` without a directory) is not counted.
+ */
+function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): string | null {
+  const { roots, platform, cwd } = env;
+  // the targets the child may write: its scratch dir and handoff files (the worktree term left out of the path rules)
+  const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
+  const inside = (abs: string): boolean => under(platform, roots.worktree, abs) && !sanctioned(abs);
+  if (!segments) {
+    const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
+      const abs = dir === "write" ? resolveWord(platform, cwd, w) : null;
+      if (abs && inside(abs)) return abs;
+    }
+    return null;
+  }
+  const dctx = { roots, facts: env.facts, platform, cwd };
+  const ec = effectCtxOf(dctx);
+  for (const t of shellWriteTargets(segments, platform)) {
+    const git = baseProg(t.seg.program) === "git";
+    if (!(t.named || git) || !inside(t.path)) continue;
+    const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
+    const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
+    if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
+    return t.path;
+  }
+  return null;
+}
+
 /**
  * The child deny set (r79 item 2; marked `childDeny` in the launch binding): a child never writes outside its worktree and its own scratch dir, and never
  * opens a pull or merge request (the foreman does). It runs before the deny rules, allow rules, built-in allows, classifier and mode step, so no allow rule,
@@ -108,6 +143,14 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
     const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md, ask-<n>.md, .seen and anything below work/)` : "no handoff dir is set";
     return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.`);
+  }
+  if (env.roots.roundReadOnly) {
+    const target = readonlyWrite(tool, input, segments, cmd, env);
+    if (target !== null) {
+      const r = env.roots;
+      const scratch = r.scratch.length ? r.scratch[0] : "your scratch dir";
+      return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${target} is inside ${r.worktree}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
+    }
   }
   return undefined;
 }
