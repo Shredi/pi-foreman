@@ -1,0 +1,41 @@
+{
+  "comment": "One table for the terminal address of a remote child, run against scripts/foreman_session.py (entry_terminal_address, reply_address) and the watcher. use: the address stored on an entry of `machine` is usable only as <machine>/<id>, an id being 1-64 of A-Z a-z 0-9 . _ -. reply: the address the remote reports at open, stored as `stored` (null: refused).",
+  "use": [
+    {"machine": "alpha", "address": "alpha/t1", "ok": true},
+    {"machine": "alpha", "address": "alpha/T.1_a-B", "ok": true},
+    {"machine": "alpha", "address": "alpha/1234567890123456789012345678901234567890123456789012345678901234", "ok": true},
+    {"machine": "alpha", "address": "alpha/12345678901234567890123456789012345678901234567890123456789012345", "ok": false},
+    {"machine": "alpha", "address": "beta/t1", "ok": false},
+    {"machine": "alpha", "address": "Alpha/t1", "ok": false},
+    {"machine": "alpha", "address": "alpha/", "ok": false},
+    {"machine": "alpha", "address": "/t1", "ok": false},
+    {"machine": "alpha", "address": "t1", "ok": false},
+    {"machine": "alpha", "address": "alpha//t1", "ok": false},
+    {"machine": "alpha", "address": "alpha/a/b", "ok": false},
+    {"machine": "alpha", "address": "alpha/t1@x", "ok": false},
+    {"machine": "alpha", "address": "alpha/t:1", "ok": false},
+    {"machine": "alpha", "address": "alpha/t 1", "ok": false},
+    {"machine": "alpha", "address": "alpha/t1\n", "ok": false},
+    {"machine": "alpha", "address": "", "ok": false},
+    {"machine": "alpha", "address": null, "ok": false},
+    {"machine": "alpha", "address": 5, "ok": false},
+    {"machine": "alpha.b-c", "address": "alpha.b-c/t1", "ok": true},
+    {"machine": "alpha", "address": "alpha.b-c/t1", "ok": false}
+  ],
+  "reply": [
+    {"machine": "alpha", "address": "t1", "stored": "alpha/t1"},
+    {"machine": "alpha", "address": "alpha/t1", "stored": "alpha/t1"},
+    {"machine": "alpha", "address": "1234567890123456789012345678901234567890123456789012345678901234", "stored": "alpha/1234567890123456789012345678901234567890123456789012345678901234"},
+    {"machine": "alpha", "address": "12345678901234567890123456789012345678901234567890123456789012345", "stored": null},
+    {"machine": "alpha", "address": "other/t1", "stored": null},
+    {"machine": "alpha", "address": "a/b/c", "stored": null},
+    {"machine": "alpha", "address": "t1@x", "stored": null},
+    {"machine": "alpha", "address": "alpha/", "stored": null},
+    {"machine": "alpha", "address": "/t1", "stored": null},
+    {"machine": "alpha", "address": "t 1", "stored": null},
+    {"machine": "alpha", "address": "t1\n", "stored": null},
+    {"machine": "alpha", "address": "", "stored": null},
+    {"machine": "alpha", "address": null, "stored": null},
+    {"machine": "alpha", "address": 7, "stored": null}
+  ]
+}

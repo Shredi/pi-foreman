@@ -87,7 +87,7 @@ A removed entry is marked `removed: <ts>` in the manifest, so a second run of th
 
 For a child on another machine the order is sent with `foreman session close-remote`. It is confirmed (the entry is
 `closing`) or reported as `not sent` and the entry stays as it was; a refused or failed close removes nothing on either
-machine, and an order nobody answered expires at the next `foreman session list` or `prune`. The rules are in
+machine, and an order nobody answered expires at the next `foreman session list` or `prune`. The target may be the address `<label>@<machine>`, which the result wake of a remote child names. Leftover terminals of `closed` children are removed at the next list, and a program still running there is ended only after the closed notice and a two-minute wait; the local copy of the child's files is kept. The rules are in
 [sessions](sessions.md#remote-child-sessions).
 
 ## Close refused while a PR is open

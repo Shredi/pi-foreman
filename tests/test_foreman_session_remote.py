@@ -1560,11 +1560,23 @@ class ControlTextOfOpenTest(RemoteBase):
         with mock.patch.object(fsn, "hc_exec_verb", side_effect=dirty):
             return self.run_main(*self.open_args())
 
-    def test_handoff_is_stripped(self):
+    def test_a_handoff_with_control_characters_fails_the_open(self):
+        # a stripped path is not the path the other machine reported
         rc, out, err = self.open_with(handoff="/h\x1b[2Jx\x07/y")
-        self.assertEqual(rc, 0, err)
-        self.assertIn("handoff on alpha: /h[2Jx/y\n", out)
-        self.assertNotIn("\x1b", out)
+        self.assertNotEqual(rc, 0)
+        for ch in ("\x1b", "\x07"):
+            self.assertNotIn(ch, out)
+            self.assertNotIn(ch, err)
+        self.assertEqual(self.parent_registry(), [])  # the existing invalid-reply path stores nothing for the entry
+
+    def test_a_handoff_with_a_bell_or_a_leading_dash_fails_the_open_without_output_of_it(self):
+        for bad in ("/h/a\x07b", "-x/y"):
+            with self.subTest(bad=bad):
+                rc, out, err = self.open_with(handoff=bad)
+                self.assertNotEqual(rc, 0)
+                self.assertNotIn("\x07", out + err)
+                self.assertNotIn("handoff on alpha", out)
+                self.assertEqual(self.parent_registry(), [])
 
     def test_launch_is_stripped(self):
         rc, out, err = self.open_with(status="pending", launch="pi \x1b]0;t\x07go\x9b")

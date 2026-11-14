@@ -508,7 +508,7 @@ test("foreman_wait kind child: the watcher wake resolves a child wait with `chil
   w.start();
   await w.idle();
   w.stop();
-  assert.match(outcomes[0][0].outcome, /^child demo: result \S+result\.md$/);
+  assert.match(outcomes[0][0].outcome, /^child demo: result \S+result\.md; close with: foreman session close-remote demo@alpha$/);
   assert.equal(rt.active, 0);
 });
 

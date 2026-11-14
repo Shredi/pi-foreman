@@ -85,6 +85,7 @@ import argparse
 import base64
 import datetime
 import json
+import math
 import os
 import re
 import hashlib
@@ -142,6 +143,10 @@ CLOSE_ORDER_LIFETIME = 15 * 60  # as CLOSE_ORDER_MAX_AGE_MS in close.ts
 CLOSE_ATTEMPT_LIFETIME = CLOSE_ORDER_LIFETIME + 5 * 60  # plus the child's close turn and the travel of its notice
 WATCHER_REAP_WAIT = 40 * 3  # seconds: REAP_POLLS times REAP_POLL_MS in remotewatch.ts
 PASS_TOTAL_LIMIT, PASS_READ_TIMEOUT = 60, 10  # seconds: all reads of the expiry pass together, one read
+PASS_RETRY_PAUSE = 10 * 60  # seconds the list pass leaves an entry alone after a failed read, removal or kill (`passRetryAt`)
+TIME_MAX = 253402300799  # the last second of year 9999: a time field beyond it is damaged
+REMOTE_HANDOFF_MAX = 1024  # characters of the handoff path a remote reports
+TERMINAL_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}\Z")  # the id part of a terminal address `<machine>/<id>`; as TERMINAL_ID_RE in remotewatch.ts
 SHELL_NAMES = {"sh", "bash", "zsh", "fish", "dash", "ash", "ksh", "tcsh", "csh", "cmd", "powershell", "pwsh"}  # as remotewatch.ts
 NOTICE_LABEL_RE = re.compile(r"^([0-9]+):(plan|result|update|ask|closed):([0-9a-f]{64}|-):([0-9]+)\Z")  # as NOTICE_RE there
 REFUSED_LABEL_RE = re.compile(r"^([0-9]+):refused:([a-z0-9-]{1,40})\Z")
@@ -494,10 +499,56 @@ def is_shell_name(name):
     return re.sub(r"\.exe$", "", re.sub(r"^.*[\\/]", "", name.strip().lower())) in SHELL_NAMES
 
 
+def notice_seq(value):
+    """The sequence number (the first number) of an `fm.notice` label value in the grammar, else None. At most 15 digits: a
+    longer number is no usable sequence number."""
+    if notice_kind(value) is None:
+        return None
+    digits = value.split(":", 1)[0]
+    return int(digits) if len(digits) <= 15 else None
+
+
+def whole_number(value):
+    """`value` when it is an int that is not a bool, else None."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def entry_terminal_address(entry):
+    """The recorded remote terminal address of a registry entry, or None. An entry with a `machine` yields it only as
+    `<machine>/<id>`, the machine part equal to the entry's machine and the id of the strict shape (a stored address that
+    lies on another machine is no terminal of this entry); an entry without one keeps the plain `VALUE_RE` check."""
+    at = entry.get("hc") if isinstance(entry, dict) else None
+    address = at.get("address") if isinstance(at, dict) else None
+    if not isinstance(address, str):
+        return None
+    machine = entry.get("machine")
+    if machine:
+        head, slash, tail = address.partition("/")
+        return address if isinstance(machine, str) and slash and head == machine and TERMINAL_ID_RE.match(tail) else None
+    return address if VALUE_RE.match(address) else None
+
+
+def reply_address(value, machine):
+    """The address to store for the terminal a remote reports at open: a bare id or `<machine>/<id>` of this machine, stored as
+    `<machine>/<id>`; anything else is None."""
+    if not isinstance(value, str):
+        return None
+    head, slash, tail = value.rpartition("/")
+    if not slash:
+        tail = value
+    elif head != machine:
+        return None
+    return "%s/%s" % (machine, tail) if TERMINAL_ID_RE.match(tail) else None
+
+
 def hc_terminal_info(binary, address, timeout=HC_TIMEOUT):
     """`hc get <address> --json`: {"state": "finished", "gone" (not_found), "live" or "unknown" (hc could not tell), "foreground":
-    the foreground program's name or None, "notice": the terminal's `fm.notice` label or None} (the last two for a live
-    terminal; the reply carries them as `foreground.name` and `labels`, see remotewatch.ts)."""
+    the foreground program's name or None, "notice": the terminal's `fm.notice` label or None} (the last two for a live or
+    finished terminal; the reply carries them as `foreground.name` and `labels`, see remotewatch.ts).
+    A finished terminal's labels are read because a terminal id may be reused after a removal (the fake reuses them; the
+    repo does not show whether the real hc does, and not whether it returns labels for a finished terminal): the list
+    pass removes a finished leftover of a `closed` entry only with the closed label and the entry's number, so an hc
+    that shows no labels there leaves it to `prune`."""
     info = {"state": "unknown", "foreground": None, "notice": None}
     try:
         r = subprocess.run([binary, "get", address, "--json"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -513,12 +564,10 @@ def hc_terminal_info(binary, address, timeout=HC_TIMEOUT):
         state = data.get("state")
     except (ValueError, AttributeError):
         return info
-    if state == "finished":
-        return dict(info, state="finished")
-    if state != "live":
+    if state not in ("finished", "live"):
         return info
     fg, labels = data.get("foreground"), data.get("labels")
-    return {"state": "live", "foreground": fg.get("name") if isinstance(fg, dict) else None,
+    return {"state": state, "foreground": fg.get("name") if isinstance(fg, dict) else None,
             "notice": labels.get("fm.notice") if isinstance(labels, dict) else None}
 
 
@@ -544,10 +593,9 @@ def reap_remote_terminal(entry, polls=0, deadline=None):
     (`not_found` is done). Polls `polls` more times, REAP_POLL_SECONDS apart, while it is live. Returns "removed", "gone",
     "live" or "unknown"; an `hc rm` that fails is "unknown" (never silent: the caller reports it). With a `deadline`
     every call gets at most what is left, and no time left reads as "live"."""
-    at = entry.get("hc") if isinstance(entry, dict) else None
-    address = at.get("address") if isinstance(at, dict) else None
+    address = entry_terminal_address(entry)
     binary = hc_bin()
-    if not binary or not isinstance(address, str) or not VALUE_RE.match(address):
+    if not binary or address is None:
         return "unknown"
     state = "unknown"
     for i in range(polls + 1):
@@ -569,12 +617,11 @@ def force_close_remote(adir, entry, deadline):
     removed, or that the `deadline` left no time for, is reported on stderr and dropped (the entry is closed and reaped
     regardless). Returns 0."""
     label = entry.get("label")
-    at = entry.get("hc") if isinstance(entry.get("hc"), dict) else {}
-    address = at.get("address")
+    address = entry_terminal_address(entry)
     binary = hc_bin()
     skipped = None
     no_time = "no time left in the %d s limit; the remote terminal may still exist" % CLOSE_DEADLINE
-    if not (isinstance(address, str) and VALUE_RE.match(address)):
+    if address is None:
         skipped = "the entry has no usable remote terminal address"
     elif not binary:
         skipped = "hc is not available"
@@ -592,7 +639,7 @@ def force_close_remote(adir, entry, deadline):
             skipped = no_time if deadline.left() < 1 else "it is still %s (machine unreachable or hc rm failed)" % result
     if skipped:
         sys.stderr.write("pi-foreman session: remote terminal %s of %s was not removed: %s; %s is marked closed anyway\n"
-                         % (address, label, skipped, label))
+                         % (address or "(none usable)", label, skipped, label))
     kill_attach(entry, FORCE_ATTACH_SLICE)
     mark_entry(adir, entry, status="closed", reaped=True, note="closed by --force")
     print_json({"ok": True, "forced": True, "label": label})
@@ -1895,6 +1942,31 @@ def close_space(sid):
     return why
 
 
+def close_created_spaces(created, text):
+    """Close the herdr-app spaces this open created; `text` with a note for each one that stays open."""
+    for sid in created:
+        why = close_space(sid)
+        if why:
+            text = ("%s; the herdr-app space %s it created is still open (%s): close it with "
+                    "`herdr-app do space.close '{\"id\":\"%s\",\"confirmed\":true}'`" % (text, sid, why, sid))
+    return text
+
+
+def valid_remote_handoff(value):
+    """The handoff path a remote reports: a string of at most REMOTE_HANDOFF_MAX characters, no control character, no leading
+    `-`. It is printed quoted and the watcher passes it as one separate argument of a file read on that machine."""
+    return (isinstance(value, str) and len(value) <= REMOTE_HANDOFF_MAX and strip_control(value) == value
+            and not value.startswith("-"))
+
+
+def display_value(value):
+    """A value of the remote's version block, for display only: a string control-stripped and cut to 64 characters, a number
+    or bool as it is, anything else None."""
+    if isinstance(value, str):
+        return strip_control(value)[:64]
+    return value if isinstance(value, (bool, int, float)) else None
+
+
 def cmd_open_remote(a):
     adir = agent_dir(a.agent_dir)
     name = a.machine
@@ -1969,16 +2041,11 @@ def cmd_open_remote(a):
         reply = hc_exec_verb(binary, name, argv, "open", payload, OPEN_TIMEOUT)
         handoff_name, child, status = reply.get("handoffName"), reply.get("child"), reply.get("status")
         if (not isinstance(handoff_name, str) or not HANDOFF_NAME_RE.match(handoff_name) or ".." in handoff_name
-                or not isinstance(child, str) or not VALUE_RE.match(child) or not isinstance(reply.get("handoff"), str)
+                or not isinstance(child, str) or not VALUE_RE.match(child) or not valid_remote_handoff(reply.get("handoff"))
                 or status not in ("open", "pending", "failed", "dryRun")):
             raise Unreachable("remote %s unreachable: its open reply is malformed" % name)
     except Refused as e:
-        # the space was made for this open: close it, or say which one stays
-        for sid in created:
-            why = close_space(sid)
-            if why:
-                e.args = ("%s; the herdr-app space %s it created is still open (%s): close it with "
-                          "`herdr-app do space.close '{\"id\":\"%s\",\"confirmed\":true}'`" % (e, sid, why, sid),)
+        e.args = (close_created_spaces(created, str(e)),)
         raise
     print("remote: %s" % name)
     print("handoff on %s: %s" % (name, strip_control(reply["handoff"])))
@@ -1986,6 +2053,7 @@ def cmd_open_remote(a):
     print("fetch remote files: %s file read --on %s %s" % (shlex.quote(binary), name, shlex.quote(join_remote_path(strip_control(reply["handoff"]), "result.md"))))
     seen_name = strip_control(probe.get("intercomMachineName")) if isinstance(probe.get("intercomMachineName"), str) else ""
     print("child address: child@%s" % (seen_name if MACHINE_RE.match(seen_name) else name))
+    print("address: %s@%s" % (a.label, name))
     for note in notes:
         print("warning: %s" % note)
     for info in infos:
@@ -1997,7 +2065,7 @@ def cmd_open_remote(a):
         return 0
     mirror = adir / "pi-foreman" / "remote" / name / handoff_name
     mirror.mkdir(parents=True, exist_ok=True)
-    info = {k: probe.get(k) for k in ("protocol", "foremanVersion", "piVersion", "platform")}
+    info = {k: display_value(probe.get(k)) for k in ("protocol", "foremanVersion", "piVersion", "platform")}
     made = reply.get("hc") if isinstance(reply.get("hc"), dict) else None
     seen = probe.get("intercomMachineName")
     origin_machine = (strip_control(seen) or None) if isinstance(seen, str) else None
@@ -2005,13 +2073,24 @@ def cmd_open_remote(a):
            "cwd": a.cwd, "model": a.model or None, "opened": time.strftime("%Y-%m-%dT%H:%M:%S"), "status": status,
            "last": None, "machine": name, "originMachine": origin_machine, "remoteHandoff": reply["handoff"],
            "handoffName": handoff_name, "mirror": str(mirror), "remote": info, "lastError": None, "briefs": 0}
-    if made and isinstance(made.get("address"), str) and VALUE_RE.match(made["address"]):
-        row.update(backend="hc", hc={"address": "%s/%s" % (name, made["address"]) if "/" not in made["address"] else made["address"],
-                                     "space": space, "tab": None})
+    stored = reply_address(made.get("address"), name) if made else None
+    if made and stored is None:
+        # without a trusted address no notice can arrive and nothing can be closed: the entry is `failed`, the session that
+        # may run there is named for cleanup by hand
+        why = "remote reported no usable terminal address"
+        row.update(status="failed", lastError=why)
+        reg = read_registry(adir)
+        reg["sessions"] = [s for s in reg["sessions"] if not (isinstance(s, dict) and s.get("child") == child)] + [row]
+        write_registry(adir, reg)
+        raise Refused(close_created_spaces(created, "%s (%s); a session may still be running on %s: if so, end it on %s by hand"
+                                           % (why, strip_control(made.get("address"))[:80], name, name)))
+    if made:
+        row.update(backend="hc", hc={"address": stored, "space": space, "tab": None})
     attach_line = None
     if status == "open" and row.get("hc"):
-        attach_line = "hc attach %s" % row["hc"]["address"]
-        local = open_attach(adir, binary, name, child, row["hc"]["address"])
+        terminal = entry_terminal_address(row)
+        attach_line = "hc attach %s" % terminal
+        local = open_attach(adir, binary, name, child, terminal)
         if local:
             row["attach"] = {"address": local}
             attach_line = local
@@ -2085,11 +2164,41 @@ def cmd_machine_setup(a):
     return 0
 
 
+def split_address(target):
+    """(label, machine) of a `<label>@<machine>` target (split at the last `@`; the label by the label rule, the machine by
+    MACHINE_RE), else None."""
+    label, at, machine = target.rpartition("@") if isinstance(target, str) else ("", "", "")
+    return (label, machine) if at and LABEL_RE.match(label) and MACHINE_RE.match(machine) else None
+
+
 def find_entry(adir, target):
-    for s in reversed(read_registry(adir)["sessions"]):
-        if isinstance(s, dict) and target in (s.get("label"), s.get("child")):
+    """The newest registry entry whose label or child id is `target`; only when there is none, and `target` is
+    `<label>@<machine>`, the newest entry of that label on that machine."""
+    sessions = [s for s in read_registry(adir)["sessions"] if isinstance(s, dict)]
+    for s in reversed(sessions):
+        if target in (s.get("label"), s.get("child")):
+            return s
+    address = split_address(target)
+    for s in reversed(sessions) if address else ():
+        if (s.get("label"), s.get("machine")) == address:
             return s
     return None
+
+
+def address_candidates(adir, target):
+    """For an unknown `<label>@<machine>` target: the known addresses with that label or on that machine, as a suffix for the
+    refusal (empty when `target` has no address form or nothing is known)."""
+    address = split_address(target)
+    if not address:
+        return ""
+    known = []
+    for s in read_registry(adir)["sessions"]:
+        machine = s.get("machine") if isinstance(s, dict) else None
+        if isinstance(machine, str) and machine and (s.get("label") == address[0] or machine == address[1]):
+            text = "%s@%s" % (strip_control(s.get("label")), strip_control(machine))
+            if text not in known:
+                known.append(text)
+    return "; known addresses with that label or on that machine: %s" % ", ".join(known[:10]) if known else ""
 
 
 def brief_name(a_text, entry):
@@ -2155,7 +2264,23 @@ def remote_brief(a, adir, entry):
 
 
 def number_of(value):
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    """`value` as a float when it is an int or float (not a bool) that is finite and between 0 and TIME_MAX, else None. Never raises."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) and 0 <= number <= TIME_MAX else None
+
+
+def iso_seconds(value):
+    """The epoch seconds of an ISO time, else None (also for a time beyond the platform's range)."""
+    at = parse_iso(value)
+    try:
+        return at.timestamp() if at else None
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def attempt_without_notice(entry):
@@ -2167,8 +2292,8 @@ def attempt_without_notice(entry):
     last = entry.get("last")
     if not isinstance(last, dict) or "at" not in last:
         return True
-    at = parse_iso(last["at"])
-    return at is not None and at.timestamp() < max(marks)
+    at = iso_seconds(last["at"])
+    return at is not None and at < max(marks)
 
 
 def cmd_close_remote(a):
@@ -2178,7 +2303,8 @@ def cmd_close_remote(a):
     adir = agent_dir(a.agent_dir)
     entry = find_entry(adir, a.target)
     if not entry:
-        raise Refused("no session with label or child id %r (see: foreman session list)" % a.target)
+        raise Refused("no session with label or child id %r (see: foreman session list)%s"
+                      % (a.target, address_candidates(adir, a.target)))
     if not isinstance(entry.get("machine"), str) or not entry["machine"]:
         raise Refused("%s is not a session on a remote machine" % a.target, "not_remote")
     status = entry.get("status")
@@ -2211,17 +2337,20 @@ def cmd_close_remote(a):
     except Refused as e:
         why = str(e) if isinstance(e, Unreachable) or not e.code else "[%s] %s" % (e.code, e)
         started = isinstance(e, Unreachable)
+    seen_cleared = {k: None for k in ("closedSeenAt", "closedSeenSeq") if k in entry}  # a new attempt drops an old sighting
     if why is not None:
         fields = {"lastError": why}
         if started:
-            fields.update(closeTriedAt=tried, closeExpiredAt=None)
+            fields.update(closeTriedAt=tried, closeExpiredAt=None, **seen_cleared)
         mark_entry(adir, entry, **fields)
         hint = FORCE_HINT % entry.get("label") if started and status == "open" else ""
         sys.stderr.write("pi-foreman session: close for %s@%s not sent (%s)%s.\n" % (entry.get("label"), name, why, hint))
         return 1
     mark_entry(adir, entry, status="closing", closeSentAt=time.strftime("%Y-%m-%dT%H:%M:%S"), closeTriedAt=tried,
-               closeExpiredAt=None, lastError=None)
+               closeExpiredAt=None, lastError=None, **seen_cleared)
     result = reap_remote_terminal(entry, polls=REAP_POLLS, deadline=deadline)
+    if result in ("removed", "gone"):
+        mark_entry(adir, entry, reaped=True)
     if result == "live":
         sys.stderr.write("pi-foreman session: remote terminal still running; prune will remove it\n")
     elif result == "unknown":
@@ -2378,14 +2507,46 @@ def expired_attempt(entry, now):
     return tried is not None and now - tried > CLOSE_ATTEMPT_LIFETIME
 
 
-def shell_may_end(entry, now):
-    """A shell left in a remote terminal may be ended when the closed label was seen on an earlier run (`closedSeenAt`), or
-    when the entry's last notice is a `closed` one older than the watcher's wait."""
-    if number_of(entry.get("closedSeenAt")) is not None:
-        return True
+def paused(entry, now):
+    """True while the list pass leaves the entry alone after a failed read, removal or kill (`passRetryAt`; an invalid or
+    future time is no pause)."""
+    at = number_of(entry.get("passRetryAt"))
+    return at is not None and 0 <= now - at < PASS_RETRY_PAUSE
+
+
+def usable_sighting(entry, now, seq):
+    """The time of the entry's sighting of the closed label, when it is usable for the label read now (number `seq`): a valid
+    time not later than `now`, with a recorded sighting number that equals `seq`; else None."""
+    seen, recorded, seq = number_of(entry.get("closedSeenAt")), whole_number(entry.get("closedSeenSeq")), whole_number(seq)
+    return seen if seen is not None and seen <= now and recorded is not None and recorded == seq else None
+
+
+def shell_may_end(entry, now, seq):
+    """A program left in a remote terminal that carries the closed label with sequence number `seq` may be ended when (a) the
+    entry's sighting of that label (`closedSeenAt` and `closedSeenSeq`, see `usable_sighting`) is at least the watcher's wait
+    old and, for a `closed` entry that records a `noticeSeq`, `seq` equals it; or (b) the entry's last notice is a `closed`
+    one older than the wait whose `noticeSeq` equals `seq`. Asked with the values read before this run writes a sighting."""
+    seq = whole_number(seq)
+    seen = usable_sighting(entry, now, seq)
+    if seen is not None and now - seen >= WATCHER_REAP_WAIT:
+        recorded = entry.get("noticeSeq")
+        if entry.get("status") != "closed" or recorded is None or whole_number(recorded) == seq:
+            return True
     last = entry.get("last") if isinstance(entry.get("last"), dict) else {}
-    at = parse_iso(last.get("at"))
-    return last.get("kind") == "closed" and at is not None and now - at.timestamp() > WATCHER_REAP_WAIT
+    at = iso_seconds(last.get("at"))
+    return (last.get("kind") == "closed" and at is not None and now - at > WATCHER_REAP_WAIT and seq is not None
+            and whole_number(entry.get("noticeSeq")) == seq)
+
+
+def leftover_proof(entry, notice):
+    """True when the closed label read from the terminal of a `closed` entry carries the number this entry recorded: its
+    `noticeSeq`, else (an entry the old pass closed from a sighting) its `closedSeenSeq`. A recorded value that is no int,
+    or none recorded, proves nothing."""
+    recorded = entry.get("noticeSeq")
+    if recorded is None:
+        recorded = entry.get("closedSeenSeq")
+    seq = notice_seq(notice)
+    return notice_kind(notice) == "closed" and seq is not None and whole_number(recorded) == seq
 
 
 def settle_entry(adir, entry, **fields):
@@ -2402,74 +2563,146 @@ def settle_entry(adir, entry, **fields):
     return False
 
 
-def end_shell(binary, address, deadline):
-    """End the shell left in a remote terminal and remove the terminal: True when it is removed or gone."""
+def end_shell(binary, entry, deadline):
+    """End the program (a shell or any other) in the foreground of the remote terminal of a machine entry and remove the
+    terminal: True when it is removed or gone (False without a usable address on the entry's machine)."""
+    address = entry_terminal_address(entry)
+    if address is None:
+        return False
     try:
         subprocess.run([binary, "kill", address], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        stdin=subprocess.DEVNULL, timeout=deadline.slice(PASS_READ_TIMEOUT))
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return reap_remote_terminal({"hc": {"address": address}}, polls=2, deadline=deadline) in ("removed", "gone")
+    return reap_remote_terminal(entry, polls=2, deadline=deadline) in ("removed", "gone")
 
 
-def settle_close_attempts(adir, out):
-    """The pass: every machine entry in `closing`, `open` or `pending` whose close attempt has expired gets one read of its
-    recorded remote terminal. Finished or gone: `closed`, the terminal removed, the attach terminal ended. Live with the
-    child's `closed` label: the first sighting is only recorded; a later run closes the entry and ends a shell left in the
-    foreground. Live without it: nothing is ended or removed, the tried time is cleared and a `closing` entry is `open`
-    again. Unreadable: unchanged. One total limit; after a failed read the rest of that machine waits. Lines go to `out`.
+def pause_entry(adir, entry, now):
+    """Record that the list pass could not read, remove or end the entry's terminal: it leaves the entry alone for a while."""
+    settle_entry(adir, entry, passRetryAt=now)
+
+
+def leave_alone(adir, entry, now, out, why):
+    """A `closed` entry whose terminal the pass may not touch: named once, and not read again by the list pass (`leftAloneAt`)."""
+    if settle_entry(adir, entry, leftAloneAt=now):
+        print("left alone %s  %s  %s" % (strip_control(entry.get("label")), strip_control(entry.get("child")), why), file=out)
+
+
+def shares_address(entry, sessions):
+    """True when another entry that is not `closed` records the same terminal address (a reused id)."""
+    mine = entry["hc"].get("address")
+    return any(o is not entry and o.get("status") != "closed" and isinstance(o.get("hc"), dict) and o["hc"].get("address") == mine
+               for o in sessions)
+
+
+def settle_close_attempts(adir, out, explicit=False):
+    """The pass: every machine entry in `closing`, `open` or `pending` whose close attempt has expired, and (not for an
+    `explicit` run, `prune`, which has its own loop for them) every `closed` entry whose terminal is not yet `reaped` or left
+    alone, gets one read of its recorded remote terminal, within one total limit. Finished or gone: an expired attempt is
+    `closed`, the terminal removed, the attach terminal ended; a leftover is removed (a finished one only with the closed
+    label carrying the entry's number, else it is left alone) and marked `reaped`. Live with the child's `closed` label: a
+    sighting is recorded (time and the label's number); a run at least the watcher's wait later (`shell_may_end`) ends the
+    foreground program, whatever it is, removes the terminal and closes an entry not yet `closed`. Live without the label, or a
+    leftover whose label has another number: nothing on the other machine is touched; an expired attempt clears its tried
+    time (a `closing` entry is `open` again, an `open` one gets the expiry mark), a leftover gets `leftAloneAt`. A failed
+    read, removal or kill records `passRetryAt` on the entry, and on the entries of that machine skipped after a failed read;
+    the list pass (not an `explicit` run) skips an entry while it is paused. Lines go to `out`.
     Returns (the children it took, the labels it could not handle)."""
     now = time.time()
-    todo = [s for s in read_registry(adir)["sessions"] if isinstance(s, dict) and s.get("machine")
-            and s.get("status") in ("closing", "open", "pending") and expired_attempt(s, now)]
+    everything = [s for s in read_registry(adir)["sessions"] if isinstance(s, dict)]
+    machine_entries = [s for s in everything if isinstance(s.get("machine"), str) and s["machine"] and isinstance(s.get("child"), str)]
+    todo = [s for s in machine_entries if s.get("status") in ("closing", "open", "pending") and expired_attempt(s, now)]
+    if not explicit:
+        todo += [s for s in machine_entries if s.get("status") == "closed" and not s.get("reaped") and isinstance(s.get("hc"), dict)
+                 and entry_terminal_address(s) is not None and number_of(s.get("leftAloneAt")) is None]
     taken, failed, down = set(), [], set()
     if not todo:
         return taken, failed
     binary, deadline = hc_bin(), Deadline(PASS_TOTAL_LIMIT)
     for s in todo:
         taken.add(s.get("child"))
-        at = s.get("hc") if isinstance(s.get("hc"), dict) else {}
-        address = at.get("address")
-        if s["machine"] in down or deadline.left() < 1 or not binary or not (isinstance(address, str) and VALUE_RE.match(address)):
-            failed.append(str(s.get("label")))
+        label, leftover = str(s.get("label")), s.get("status") == "closed"
+        address = entry_terminal_address(s)
+        if leftover and shares_address(s, everything):
+            continue
+        if not explicit and paused(s, now):
+            failed.append(label)
+            continue
+        if s["machine"] in down:
+            failed.append(label)
+            pause_entry(adir, s, now)
+            continue
+        if deadline.left() < 1 or not binary or address is None:
+            failed.append(label)
             continue
         info = hc_terminal_info(binary, address, deadline.slice(PASS_READ_TIMEOUT))
         if info["state"] == "unknown":
             down.add(s["machine"])
-            failed.append(str(s.get("label")))
+            failed.append(label)
+            pause_entry(adir, s, now)
+        elif info["state"] == "finished" and leftover and not leftover_proof(s, info["notice"]):
+            leave_alone(adir, s, now, out, "its finished terminal does not carry this entry's closed label")
         elif info["state"] != "live":
             result = "gone" if info["state"] == "gone" else rm_remote_terminal(binary, address, deadline.slice(PASS_READ_TIMEOUT))
+            fields = {"reaped": True} if leftover else {"status": "closed", "reaped": True, "note": "pruned: remote terminal finished"}
             if result not in ("removed", "gone"):
-                failed.append(str(s.get("label")))
-            elif settle_entry(adir, s, status="closed", reaped=True, note="pruned: remote terminal finished"):
+                failed.append(label)
+                pause_entry(adir, s, now)
+            elif settle_entry(adir, s, **fields):
                 kill_attach(s, deadline.slice(HC_TIMEOUT))
                 print("reaped %s  %s  %s" % (s.get("label"), s.get("child"), result), file=out)
-        elif notice_kind(info["notice"]) == "closed":
-            seen = number_of(s.get("closedSeenAt"))
-            if seen is None:  # the child may still be shutting down: a first sighting ends nothing
-                settle_entry(adir, s, closedSeenAt=now)
-                continue
-            shell = is_shell_name(info["foreground"]) and shell_may_end(s, now)
-            if shell and not end_shell(binary, address, deadline):
-                failed.append(str(s.get("label")))
-                continue
-            first = datetime.datetime.fromtimestamp(seen, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-            fields = {"status": "closed", "note": "closed: notice read from the terminal (a result the watcher never fetched stays on the other machine)",
-                      "last": {"kind": "closed", "at": first}}
-            if shell:
-                fields["reaped"] = True
-            if settle_entry(adir, s, **fields):
-                kill_attach(s, deadline.slice(HC_TIMEOUT))
-                print("closed %s  %s  notice read from the terminal" % (s.get("label"), s.get("child")), file=out)
-        else:  # alive and no closed label: nothing on the other machine is touched
-            fields = {"closeTriedAt": None, "closedSeenAt": None}
-            reopen = s.get("status") == "closing"
-            if reopen:
-                fields.update(status="open", lastError=EXPIRED_NOTE, closeExpiredAt=now)
-            if settle_entry(adir, s, **fields) and reopen:
-                print("pi-foreman session: close for %s@%s expired without an answer; it is open again%s"
-                      % (s.get("label"), s.get("machine"), FORCE_HINT % s.get("label")), file=out)
+        else:
+            settle_live(adir, s, info, now, (binary, address, deadline), leftover, failed, out)
     return taken, failed
+
+
+def settle_live(adir, s, info, now, hc, leftover, failed, out):
+    """The pass for an entry whose terminal is live (see `settle_close_attempts`). `hc` is (binary, address, deadline)."""
+    binary, address, deadline = hc
+    label = str(s.get("label"))
+    seq = notice_seq(info["notice"]) if notice_kind(info["notice"]) == "closed" else None
+    if seq is None:  # alive and no (usable) closed label: nothing on the other machine is touched
+        if leftover:
+            leave_alone(adir, s, now, out, "its terminal is live without a closed label")
+            return
+        fields = {"closeTriedAt": None, "closedSeenAt": None, "closedSeenSeq": None}
+        status = s.get("status")
+        if status == "closing":
+            fields.update(status="open", lastError=EXPIRED_NOTE, closeExpiredAt=now)
+        elif status == "open":
+            fields.update(closeExpiredAt=now)
+        if settle_entry(adir, s, **fields) and status in ("closing", "open"):
+            print("pi-foreman session: close for %s@%s expired without an answer; it is %s%s"
+                  % (s.get("label"), s.get("machine"), "open again" if status == "closing" else "still open",
+                     FORCE_HINT % s.get("label")), file=out)
+        return
+    if leftover and not leftover_proof(s, info["notice"]):
+        leave_alone(adir, s, now, out, "its terminal's closed label has another number than this entry's")
+        return
+    seen = usable_sighting(s, now, seq)
+    ready = shell_may_end(s, now, seq)  # asked with the values read before the write below
+    if seen is None:  # the child may still be shutting down: a sighting younger than the wait ends nothing
+        settle_entry(adir, s, closedSeenAt=now, closedSeenSeq=seq)
+    if not ready:
+        return
+    # The label and the wait passed: the foreground program is ended whatever it is. Residual risk: where a terminal tool reports
+    # the child's detached cleanup as the foreground program and that cleanup takes longer than the wait, a worktree and a
+    # branch stay behind, and `foreman worktree sweep` removes them.
+    if not end_shell(binary, s, deadline):
+        failed.append(label)
+        pause_entry(adir, s, now)
+        return
+    fields = {"reaped": True}
+    if not leftover:
+        stamp = datetime.datetime.fromtimestamp(seen if seen is not None else now, datetime.timezone.utc)
+        last = s.get("last") if isinstance(s.get("last"), dict) else {}
+        fields.update(status="closed", noticeSeq=max(whole_number(s.get("noticeSeq")) or 0, seq),
+                      note="closed: notice read from the terminal (a result the watcher never fetched stays on the other machine)")
+        if last.get("kind") != "closed":
+            fields["last"] = {"kind": "closed", "at": stamp.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"}
+    if settle_entry(adir, s, **fields):
+        kill_attach(s, deadline.slice(HC_TIMEOUT))
+        print(("reaped %s  %s  ended" if leftover else "closed %s  %s  notice read from the terminal") % (s.get("label"), s.get("child")), file=out)
 
 
 def warn_unremoved(failed):
@@ -2483,7 +2716,7 @@ def prune_remote_terminals(adir, out=None):
     (`not_found` counts) and mark a `closing` entry `closed`. A terminal that still runs is left alone. The pass for
     expired close attempts runs first; the entries it took are not read again."""
     out = out or sys.stdout
-    taken, failed = settle_close_attempts(adir, out)
+    taken, failed = settle_close_attempts(adir, out, explicit=True)  # closed leftovers stay with the loop below: no pause, no `leftAloneAt`
     for s in read_registry(adir)["sessions"]:
         if not isinstance(s, dict) or not s.get("machine") or s.get("reaped") or s.get("child") in taken:
             continue
@@ -2518,8 +2751,10 @@ def cmd_list(a):
         tail = " last: %s %s" % (last.get("kind"), last.get("path") or "") if last else ""
         hc_at = s.get("hc") if isinstance(s.get("hc"), dict) else None
         where = " hc:%s" % hc_at.get("address") if hc_at and hc_at.get("address") else ""
-        print("  %s  %s  %s  %s  %s%s%s" % (s.get("label"), s.get("model") or "-", s.get("status"), s.get("handoff"),
-                                         s.get("child"), where, tail))
+        machine = s.get("machine")
+        address = " %s@%s" % (strip_control(s.get("label")), strip_control(machine)) if isinstance(machine, str) and machine else ""
+        print("  %s  %s  %s  %s  %s%s%s%s" % (s.get("label"), s.get("model") or "-", s.get("status"), s.get("handoff"),
+                                            s.get("child"), address, where, tail))
     return 0
 
 
@@ -2536,7 +2771,8 @@ def resolve_child(adir, target):
         if VALUE_RE.match(child):
             return child, p
         raise Refused("%s has no usable child id" % (p / "child"))
-    raise Refused("no session with handoff dir, label or child id %r (see: foreman session list)" % target)
+    raise Refused("no session with handoff dir, label or child id %r (see: foreman session list)%s"
+                  % (target, address_candidates(adir, target)))
 
 
 def intercom_cli():

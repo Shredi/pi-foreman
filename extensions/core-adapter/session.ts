@@ -174,13 +174,26 @@ function entryByPiSession(reg: Registry, piSessionId: string): SessionEntry | un
   return [...reg.sessions].reverse().find((s) => s.machine === undefined && !!s.handoff && readLive(s.handoff)?.piSessionId === piSessionId);
 }
 
-/** A registry label (newest entry wins), child id or Pi session id (via the handoff's live.json) → the child's intercom id; anything else passes through. */
+const ADDRESS_LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/; // LABEL_RE of foreman_session.py
+const ADDRESS_MACHINE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/; // MACHINE_RE there
+
+/** The newest machine entry of a `<label>@<machine>` target (split at the last `@`); undefined for any other text. A pi-foreman address, not an intercom one. */
+export function entryByAddress(reg: Registry, target: string): SessionEntry | undefined {
+  const at = target.lastIndexOf("@");
+  if (at < 0) return undefined;
+  const label = target.slice(0, at);
+  const machine = target.slice(at + 1);
+  if (!ADDRESS_LABEL_RE.test(label) || !ADDRESS_MACHINE_RE.test(machine)) return undefined;
+  return [...reg.sessions].reverse().find((s) => s.label === label && s.machine === machine);
+}
+
+/** A registry label (newest entry wins), child id or `<label>@<machine>` address (only when the exact match fails) or Pi session id (via the handoff's live.json) → the child's intercom id; anything else passes through. */
 export function resolveTarget(reg: Registry, target: string): string {
   for (let i = reg.sessions.length - 1; i >= 0; i--) {
     const s = reg.sessions[i];
     if (s.label === target || s.child === target) return s.child;
   }
-  return entryByPiSession(reg, target)?.child ?? target;
+  return entryByAddress(reg, target)?.child ?? entryByPiSession(reg, target)?.child ?? target;
 }
 
 /** The handoff dir of the newest registry entry for a label, child id or Pi session id; undefined when none is recorded. */
@@ -356,7 +369,8 @@ export function formatList(reg: Registry): string {
   if (!reg.sessions.length) return "pi-foreman sessions: none opened yet.";
   const rows = reg.sessions.map((s) => {
     const last = s.last ? ` · last: ${s.last.kind}${s.last.path ? ` ${s.last.path}` : ""} (${s.last.at})` : "";
-    return `${s.label}  ${typeof s.model === "string" && s.model ? s.model : "-"}  ${s.status ?? "?"}  ${s.handoff ?? ""}  ${s.child}${last}`;
+    const address = typeof s.machine === "string" && s.machine ? `  address: ${s.label}@${s.machine}` : "";
+    return `${s.label}  ${typeof s.model === "string" && s.model ? s.model : "-"}  ${s.status ?? "?"}  ${s.handoff ?? ""}  ${s.child}${address}${last}`;
   });
   return ["pi-foreman sessions (label, model, status, handoff dir, child id):", ...rows].join("\n");
 }
@@ -744,7 +758,7 @@ function briefTarget(reg: Registry, dir: string, target: string): { to: string; 
 
 export async function sessionBrief(d: SessionDeps, target: string, body: string, rework = false): Promise<SessionResult> {
   const reg = readRegistry(d.agentDir);
-  const newest = [...reg.sessions].reverse().find((s) => s.label === target || s.child === target); // as find_entry in the script
+  const newest = [...reg.sessions].reverse().find((s) => s.label === target || s.child === target) ?? entryByAddress(reg, target); // as find_entry in the script
   if (newest && typeof newest.machine === "string") {
     // a remote child is briefed over hc exec by the script (`remote deliver`), not over the local intercom
     if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };

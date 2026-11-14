@@ -17,5 +17,5 @@ test("session command parsing: pull is gone, the other subcommands parse as befo
 test("session list rows carry no pull summary", () => {
   const text = formatList({ version: 1, sessions: [{ label: "demo", child: "c1", status: "open", handoff: "/h", machine: "alpha", pulledAt: "2026-01-01T00:00:00Z", returnPath: "pull" }] });
   assert.doesNotMatch(text, /pull/);
-  assert.match(text, /^demo {2}- {2}open {2}\/h {2}c1$/m);
+  assert.match(text, /^demo {2}- {2}open {2}\/h {2}c1 {2}address: demo@alpha$/m);
 });
