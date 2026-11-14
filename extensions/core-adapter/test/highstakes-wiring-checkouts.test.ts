@@ -80,7 +80,7 @@ const normalPass = async (a: Rig, cwd?: string) => end(a, await launch(a, "revie
 
 test("item 4/6: a second checkout: pr_create {head} for its branch is refused from the session's checkout while it has the pass due, naming it; a pass the foreman launches fires its checkout with reason foreman; a second pass is refused while another checkout's PASS set the session gate", async (t) => {
   const { w, a } = await setup(t);
-  const wt2Real = path.join(fs.realpathSync(path.join(w.project, "..")), "wt2");
+  const wt2Real = path.join(fs.realpathSync.native(path.join(w.project, "..")), "wt2");
   git(w.project, "worktree", "add", "-q", "-b", "other", wt2Real);
   w.state.answer = "allow once"; // a launch in the second checkout asks the gate
 
