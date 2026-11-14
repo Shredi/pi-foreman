@@ -3696,6 +3696,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
         if (climbs.some((c) => c.handoff && !c.handoffFor) && !kind) kind = "strong-relaunch";
+        if (kind === "strong-relaunch" && climbs.every((c) => c.skipped)) kind = "revision"; // every climb was capped by the rank policy: no strong launch
         for (const r of s.ladder.apply(climbs, (task) => ledgerLines(ledger, task))) s.trace?.emit(r);
         const was = s.ceremony.tier;
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));

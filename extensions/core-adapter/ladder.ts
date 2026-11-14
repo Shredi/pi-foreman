@@ -353,9 +353,11 @@ export class LadderState {
             continue;
           }
         }
-        if (keyword === "" && role === "builder" && opts.preferStrong && from !== to && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
-          if (lv) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
-          climbs.push({ entry: e, role, from, to: from, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
+        if (keyword === "" && role === "builder" && opts.preferStrong && (from !== to || (lv && bottom !== to)) && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
+          // a live rung that is the refused strong rung falls back to the bottom rung (applyLaunchModels, capped: its own level)
+          if (lv && from !== to) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
+          const stays = from === to ? bottom : from;
+          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
           continue;
         }
         if (keyword === "" && role === "builder" && opts.preferStrong) climbs.push({ entry: e, role, from, to, reason: opts.revisionReason ?? "revision", top });

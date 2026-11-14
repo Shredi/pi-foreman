@@ -420,12 +420,6 @@ const SONNET = "claude-bridge/claude-sonnet-5-5";
 const bridgeRig = (t: Parameters<typeof r11Rig>[0], name: string): Promise<Rig> =>
   r11Rig(t, { default: "standard", revisionRounds: { standard: 1 } }, { ctx: { ...reviewAllowOpts().ctx, model: { provider: "claude-bridge", id: "claude-opus-5-5" } }, config: PRESET(name) });
 
-for (const name of ["claude-bridge", "claude-bridge-sonnet-reviewer"]) {
-  test(`${name}: sets ladder.equalOnStrongRisk true`, () => {
-    assert.equal(PRESET(name).ladder.equalOnStrongRisk, true);
-  });
-}
-
 test("claude-bridge preset, Opus foreman: a launch without a model and with a strong-risk tag runs on Opus (rank_equal_model)", async (t) => {
   const a = await bridgeRig(t, "claude-bridge");
   const input = builder({ risk: ["security"] });
@@ -465,4 +459,50 @@ test("claude-bridge preset, Opus foreman, after a reviewer FAIL: a bare relaunch
   assert.equal(a.events("rank_equal_model").length, 1);
   assert.deepEqual(a.events("rung_up").map((r) => [r.from, r.to, r.reason]), [[SONNET, OPUS, "review_fail"]]);
   assert.equal(a.events("rung_top").length, 1); // only the plain relaunch's
+});
+
+test("claude-bridge preset, Opus foreman: a revision after a risk-tagged Opus run falls back to Sonnet, not [rank_policy:below]", async (t) => {
+  const a = await bridgeRig(t, "claude-bridge");
+  const first = builder({ risk: ["security"] });
+  const l = await a.launch(first);
+  assert.equal(l.res, undefined, l.res?.reason);
+  assert.equal(String(first.model).split(":")[0], OPUS);
+  await a.started(l.id, first, "run-b");
+  a.end({ runId: "run-b", agent: "builder", status: "completed", success: true, summary: "built" });
+  const r = { agent: "reviewer", task: "review items 1" };
+  const rl = await a.launch(r);
+  await a.started(rl.id, r, "run-r1");
+  a.end({ runId: "run-r1", agent: "reviewer", status: "completed", success: true, output: FAIL });
+  const plain = builder({ task: "fix it" });
+  const { id, res } = await a.launch(plain);
+  assert.equal(res, undefined, res?.reason);
+  assert.equal(plain.model, `${SONNET}:medium`);
+  assert.deepEqual(refusals(a), []);
+  assert.deepEqual(a.events("rung_top").map((x) => [x.model, x.reason]), [[SONNET, RANK_CAPPED_REASON]]);
+  assert.match(texts(await a.started(id, plain, "run-b2")), /the climb of builder to its strong rung claude-bridge\/claude-opus-5-5 was skipped: the rank policy \(below\).*launches on claude-bridge\/claude-sonnet-5-5/);
+  // the live rung is the rung it ran on: a plain relaunch stays on Sonnet
+  const again = builder({ task: "again" });
+  const l3 = await a.launch(again);
+  assert.equal(l3.res, undefined, l3.res?.reason);
+  assert.equal(String(again.model).split(":")[0], SONNET);
+});
+
+test("ladder.plan: a live rung that is the refused strong rung falls back to the bottom rung with its own level; model strong stays refused", () => {
+  const preset = PRESET("claude-bridge");
+  const roles = preset.providers["claude-bridge"].roles;
+  const mk = (): LadderState => { const l = new LadderState(); l.live.set("builder", `${OPUS}:medium`); return l; };
+  const allowed = (): boolean => false;
+  const input: Record<string, unknown> = builder({ task: "fix it" });
+  const { climbs, block } = mk().plan(input, roles, { preferStrong: true, revisionReason: "review_fail", strongAllowed: allowed });
+  assert.equal(block, undefined);
+  assert.equal(climbs.length, 1);
+  assert.equal(climbs[0].reason, RANK_CAPPED_REASON);
+  assert.equal(climbs[0].to, SONNET);
+  applyLaunchModels(input, roles, undefined, { preferStrong: true, provider: "claude-bridge", capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), explicit: () => false });
+  assert.equal(String(input.model).split(":")[0], SONNET);
+  assert.equal(rankRefusalFor(preset, OPUS, String(input.model).split(":")[0], ["builder"]), null);
+  // an allowed strong rung: unchanged, no cap
+  const ok: Record<string, unknown> = builder({ task: "fix it" });
+  const p2 = mk().plan(ok, roles, { preferStrong: true, revisionReason: "review_fail", strongAllowed: () => true });
+  assert.equal(p2.climbs.filter((c) => c.skipped).length, 0);
 });
