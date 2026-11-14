@@ -105,6 +105,7 @@ import type { PythonResolution } from "./python.ts";
 import { beginRun, beginUndo, cleanText, decideScript, newScriptState, proposeScript, recordRealRun, recordRun, recordUndo, SCRIPT_CHOICES, SCRIPT_FIX_LINES_DEFAULT, SCRIPT_MAX_ATTEMPTS, SCRIPT_TOOL, scriptNoticeLines, scriptSelectTitle, scriptUndoLine, scriptStatus, shortHash } from "./scriptapproval.ts";
 import type { ScriptRefusalCode, ScriptState } from "./scriptapproval.ts";
 import { runScript as runOwnerScript } from "./scriptrun.ts";
+import { configResultText, parseConfigArgs } from "./configcmd.ts";
 import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
@@ -5530,7 +5531,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.registerCommand("foreman", {
-    description: "pi-foreman commands: /foreman doctor [warm] | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms mode|reload|list",
+    description: "pi-foreman commands: /foreman doctor [warm] | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off] | /foreman trust bridge | /foreman perms mode|reload|list",
     handler: async (args, ctx) => {
       const [sub = "", ...rest] = args.trim().split(/\s+/);
       if (sub === "close") return close.command(args.trim().slice(sub.length), ctx);
@@ -5650,8 +5651,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         ctx.ui.notify([r.stdout.trim(), r.stderr.trim(), ...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }), ...(classifierTarget(s.config.config, ctx.model?.provider, ctx.modelRegistry as never) ? [] : [`WARN ${noClassifierModelText(ctx.model?.provider)}`])].filter(Boolean).join("\n") || (r.error ? `setup.mjs: ${r.error.message}` : r.timedOut ? "setup.mjs timed out." : "setup.mjs produced no output."), ok ? "info" : "error");
         return;
       }
+      if (sub === "config") {
+        const s = await ensureSession(ctx);
+        const cmd = parseConfigArgs(rest, s.agentDir);
+        if ("usage" in cmd) {
+          ctx.ui.notify(cmd.usage, "warning");
+          return;
+        }
+        const r = await runScript(s, "foreman_config.py", cmd.argv);
+        ctx.ui.notify(configResultText(r.text, cmd.applies, r.ok), r.ok ? "info" : "error");
+        return;
+      }
       if (sub !== "doctor") {
-        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
+        ctx.ui.notify("Usage: /foreman doctor | /foreman status | /foreman waits | /foreman cost [workspace] | /foreman budget lift | /foreman flag-ask [note] | /foreman update-check | /foreman setup [args] | /foreman config apply-preset <name> [--foreman <model id>] [--dry-run] | /foreman config validate | /foreman close [result-path] | /foreman session open|brief|close|list | /foreman plan [off]", "warning");
         return;
       }
       if (rest.length === 1 && rest[0] === "warm") {

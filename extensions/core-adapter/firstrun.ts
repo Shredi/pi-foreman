@@ -32,7 +32,7 @@ export function firstRunNotice(opts: { mode: string | undefined; isChild: boolea
   if (isObj(opts.config) && opts.config.quiet === true) return null;
   if (hasModelConfig(opts.config)) return null;
   const list = opts.presets.length ? opts.presets.join(", ") : "none found";
-  return `pi-foreman: no role models are configured, so children run on Pi's default model. Available presets: ${list}. Apply one with: foreman config apply-preset <name> [--foreman <model id>] (installed with pi install? run /foreman setup first). Set "quiet": true in foreman.json to hide this notice.`;
+  return `pi-foreman: no role models are configured, so children run on Pi's default model. Available presets: ${list}. Apply one with: /foreman config apply-preset <name> [--foreman <model id>], then run /foreman setup to apply the models. Set "quiet": true in foreman.json to hide this notice.`;
 }
 
 /** Each preset's name and the provider prefix of its foreman model (null when it has none). */
@@ -63,6 +63,6 @@ export function providerGapNotice(opts: { provider: string | undefined; config: 
   const fit = opts.presets.filter((p) => p.provider === opts.provider).map((p) => p.name);
   const head = `pi-foreman: no role map for provider ${opts.provider}; role launches will fail.`;
   return fit.length
-    ? `${head} Fitting presets: ${fit.join(", ")} (foreman config apply-preset <name>)`
+    ? `${head} Fitting presets: ${fit.join(", ")} (/foreman config apply-preset <name>)`
     : `${head} Add providers.${opts.provider} to foreman.json (see docs/roles.md).`;
 }

@@ -1,6 +1,6 @@
 # Safety and permissions
 
-> Covers the shell-write guard, what the gate floors cover for git and forge commands, the PR gate, the tool gate with its rules and classifier, child environment stripping, bridge isolation and the known `/sync` limit.
+> Covers the shell-write guard, what the gate floors cover for git and forge commands, the PR gate, the tool gate with its rules and classifier, child environment stripping, bridge isolation, the known `/sync` limit and what an install runs on your machine.
 > Read it when a command is refused or asked about, or before you loosen a rule.
 > A project file can only tighten these rules; the scanners work on command strings and are not a sandbox.
 
@@ -305,3 +305,16 @@ Key-by-key layer rules for `safety.*`: `design/architecture.md`
 | `shell.msysNoPathconv` | Default `true`. On Windows it sets `MSYS_NO_PATHCONV=1` and `MSYS2_ARG_CONV_EXCL=*` for the bash tool and `foreman_bg`, so Git Bash passes native paths and `/switch` arguments unchanged; `false` turns both off (a `/reload` removes them). No effect elsewhere. |
 | `python.path` | Python 3.13+ interpreter; `null` auto-detects. It runs every guard, so a project or session value is ignored. |
 | `trace.enabled`, `trace.dir` | The allowlisted trace and its directory. `trace.enabled` defaults to `null`, which follows the effective `retro.enabled` (on in tui and rpc, off in json and print); an explicit `true` or `false` wins, so `false` always turns it off. The directory (`null` = the state dir; a project or session value must resolve inside the workspace). |
+
+## What an install runs on your machine
+
+This is what `foreman setup` and Pi run when you install pi-foreman, and where the code comes from.
+
+- **The clone.** Pi clones this repository from GitHub into your agent directory. Install without `@<ref>` follows the default branch. To pin a version, add a tag or commit: `pi install git:github.com/Shredi/pi-foreman@<ref>`.
+- **The npm install.** Pi runs `npm install` in the clone. The `.npmrc` there turns install scripts off (`ignore-scripts=true`), so no dependency runs code while it installs. The versions come from the committed `package-lock.json`.
+- **The two fork packages.** `pi-intercom` and `@juicesharp/rpiv-ask-user-question` come from GitHub by commit, not from the npm registry. The `.npmrc` line `allow-git=root` lets npm 12 install them, because they are direct dependencies of this package. Some npm 11 versions before 11.9 (seen on 11.5 to 11.8) print a warning about that line and carry on. npm 10, npm 11.9 and later and npm 12 print nothing. npm 12 needs the line: without it the install fails.
+- **Add-ons.** Setup installs the add-ons you accept at exact versions. It switches install scripts off for these installs. The add-ons bring their own dependencies, and those are not locked: a new release of a dependency can be picked up at install time. If Pi installs a missing add-on by itself at start, or you run `pi install` yourself, scripts run unless you turn them off. To do that, set `ignore-scripts=true` in your user-level npm config (`npm config set ignore-scripts true`).
+- **Your own overlay.** Setup installs an overlay package you name with its install scripts on, because you vouch for it. An overlay is usually your own scripts and tools and needs no install script. Setting `ignore-scripts=true` in your user-level npm config covers the overlay and every install Pi starts, and is the recommended setting. Overlay authors should not rely on install scripts.
+- **Pi's tool download.** Pi downloads the search tools `fd` and `rg` from GitHub releases the first time it starts. pi-foreman does not control that download.
+- **No updates by themselves.** Nothing updates until you run `pi update` or `foreman update-check` and act on it.
+- **Other package managers.** If you set Pi to use pnpm or bun, neither the lockfile nor the `.npmrc` settings apply to the clone.

@@ -937,19 +937,20 @@ function recItems(n, recs, skip, id) {
  *  agent's own agents. `resolve(term)` gives `{node, recs, own, status}`: the joined radar node (or null), its hc records, the
  *  listed status of the terminal and the status to show. A joined child is a full session tree (its agents and children
  *  beneath it); one without a radar node is a bare session item with the agents of its records. Items carry `address` and
- *  `program` for the click and the logo. */
-export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set(), remoteNodes = [], recsOf = null, remoteOf = null } = {}) {
+ *  `program` for the click and the logo. `endedNodes` (`endedRemoteNodesOf`) are the ended remote sessions: the live mirror of one
+ *  is a dimmed row named as the session, with its machine chip, carrying its target as `ended` (see `dropDrawnEndedMirrors`). */
+export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys = new Set(), drawnTargets = new Set(), remoteNodes = [], endedNodes = [], recsOf = null, remoteOf = null } = {}) {
   if (!Array.isArray(all)) return [];
   const seen = new Set([address]);
-  // A named terminal (`hc run --name`) that follows the attach of a remote session a registry node draws: the target from its
-  // record (argv), else the polled one, else its `fm-<machine>-<slug>-<hex4>` name when exactly one node has that name; "" otherwise.
-  const mirrorOf = (term, polled) => {
-    const known = new Set(listOf(remoteNodes).map((x) => x.target));
+  // A named terminal (`hc run --name`) that follows the attach of a remote session in `list` (`remoteNodesOf` or `endedRemoteNodesOf`):
+  // the entry of its target from its record (argv), else the polled one, else its `fm-<machine>-<slug>-<hex4>` name when exactly one
+  // entry has that name; null otherwise.
+  const matchOf = (list, term, polled) => {
     const target = parseAttachTarget(term) || (typeof polled === "string" ? polled : "");
-    if (target) return known.has(target) ? target : "";
-    const byName = new Set(listOf(remoteNodes).filter((x) => x.name === term.name).map((x) => x.target));
-    return byName.size === 1 ? [...byName][0] : "";
+    const hits = listOf(list).filter((x) => (target ? x.target === target : x.name === term.name));
+    return new Set(hits.map((x) => x.target)).size === 1 ? hits[0] : null;
   };
+  const mirrorOf = (term, polled) => Boolean(matchOf(remoteNodes, term, polled));
   // A nameless terminal that follows `hc attach <machine>/<t>`: the attach of that remote session (named in `all`), else hidden.
   const attachLabel = (target) => {
     const m = /^fm-(.+)-[0-9a-f]{4,6}$/.exec(all.find((k) => isObj(k) && k.address === target)?.name ?? "");
@@ -968,6 +969,13 @@ export function hcChildItems(all, address, resolve, { skip = new Set(), skipKeys
       const own = !(typeof term.name === "string" && term.name) && !isObj(r.node) ? parseAttachTarget(term) : "";
       const attach = own || (nameless && !isObj(r.node) && typeof r.attach === "string" ? r.attach : "");
       if (typeof term.name === "string" && term.name && !isObj(r.node) && mirrorOf(term, r.attach)) return below; // the mirror of a drawn remote session: its row is the registry node's, its children stay
+      // The mirror of a remote session that has ended (closed, finished, lost) while its terminal lives: one dimmed row named as the
+      // session, with its machine chip, clicking it focuses the mirror; its children stay beneath it. The row goes with the terminal.
+      const ended = typeof term.name === "string" && term.name && !isObj(r.node) ? matchOf(endedNodes, term, r.attach) : null;
+      if (ended) {
+        const children = sortItems([...recItems(null, r.recs ?? [], skip, id), ...below]);
+        return [{ id, type: "session", node: null, ended: ended.target, label: ended.label, dim: true, elsewhere: ended.machine, tier: "", costText: "", top: false, sessions: 0, status: "idle", urgent: urgentStatus(["idle", ...children.map((c) => c.urgent)]), children, prs: [], summary: "", ...splitPrs([]), address: term.address, program: term.program ?? null, ...(r.pane === undefined ? {} : { pane: r.pane }) }];
+      }
       if (attach && (!attachLabel(attach) || drawnTargets.has(attach))) return below; // an attach of nothing we know, or of a session already drawn: no row, its children stay
       const label = (attach && `${attachLabel(attach)}`) || (typeof r.label === "string" && r.label) || (typeof term.name === "string" && term.name) || term.program?.name || term.template || term.address;
       const status = r.status ?? "idle";
@@ -998,6 +1006,35 @@ export function remoteNodesOf(tree) {
   return allSessions(tree)
     .filter((n) => n.machine && n.hcTerminal && n.state !== "done" && !isEnded(n))
     .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name) }));
+}
+
+/** The ended remote sessions a local registry tree has (`machine` set, an hc terminal, `isEnded`), as `{target, name, label, machine}`:
+ *  `name` is the attach name of `remoteNodesOf`, `label` the row name `<label>@<machine>`. Not polled, unlike `remoteNodesOf`. */
+export function endedRemoteNodesOf(tree) {
+  return allSessions(tree)
+    .filter((n) => n.machine && n.hcTerminal && isEnded(n))
+    .map((n) => ({ target: remoteTarget(n), name: attachName(n.machine, n.key || n.name), label: str(n.name), machine: n.machine }));
+}
+
+/** `{root, items}` of an agent's tree (`items` are the children of `root`, or the bare items without one) without the ended mirror
+ *  items (`ended` = target) whose target a registry node drawn in the same tree has: that node's dimmed row is the one row, the
+ *  mirror's children take its place among its siblings. A mirror whose node is not drawn stays. */
+export function dropDrawnEndedMirrors({ root, items }) {
+  const drawn = drawnRemoteTargets([...(root ? [root] : []), ...listOf(items)]);
+  const rewrite = (list) => {
+    let changed = false;
+    const out = listOf(list).flatMap((it) => {
+      const children = rewrite(it.children);
+      if (it.ended && drawn.has(it.ended)) { changed = true; return children; }
+      if (children === it.children) return [it];
+      changed = true;
+      return [{ ...it, children }];
+    });
+    return changed ? sortItems(out) : list;
+  };
+  const kids = rewrite(root ? root.children : items);
+  if (kids === (root ? root.children : items)) return { root, items };
+  return root ? { root: { ...root, children: kids }, items: kids } : { root, items: kids };
 }
 
 /** The `<machine>/<t>` a registry node with a remote terminal follows ("" for a node without one). */
