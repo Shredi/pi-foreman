@@ -35,17 +35,18 @@ const roots = (o: { child?: boolean; worktree?: string } = {}): GateRoots => ({
   child: o.child ?? false, role: o.child ? "builder" : "foreman", tmpAccess: false, pkgRoot: pkg,
 });
 const verdictOf = (r: GateResult): string => (r === undefined ? "none" : "block" in r ? `block:${r.rule}` : "allow" in r ? `allow:${r.rule}` : `ask:${r.rule}`);
-function gate(tool: string, input: Record<string, unknown>, o: { child?: boolean; worktree?: string; sets?: RuleSets } = {}): string {
+// `floors: true` leaves the fixture base out of the floor's write roots, as a root under the home directory is: the delete and overwrite floors answer first there
+function gate(tool: string, input: Record<string, unknown>, o: { child?: boolean; worktree?: string; sets?: RuleSets; floors?: boolean } = {}): string {
   const r = roots(o);
   return verdictOf(
     gateEvaluate(tool, input, o.worktree ?? wt, {
-      env: (c) => baseFloorEnv(c, { ...(o.child ? { child: true } : {}), pkgRoot: pkg }),
+      env: (c) => baseFloorEnv(c, { ...(o.child ? { child: true } : {}), pkgRoot: pkg, writeRoots: o.floors ? [c] : [c, base] }),
       roots: () => r,
       ...(o.sets ? { rules: { sets: o.sets, env: { cwd: wt, home: base, platform, checkout: wt } } } : {}),
     }).result,
   );
 }
-const sh = (command: string, o?: { child?: boolean; worktree?: string; sets?: RuleSets }): string => gate("bash", { command }, o);
+const sh = (command: string, o?: { child?: boolean; worktree?: string; sets?: RuleSets; floors?: boolean }): string => gate("bash", { command }, o);
 const IR = "ask:install-root-write";
 const rl = (t: string): ParsedRule => {
   const r = parseRule(t);
@@ -81,6 +82,16 @@ test("main: every program's catch-all target into any of the four roots asks; a 
   }
   // beside it: the same programs in the session's own worktree ask nothing
   for (const l of ["make", "npm test", "git pull", "git fetch", `npm --prefix ${W} test`, `git -C ${W} pull`, `cd ${W} && make`]) assert.notEqual(sh(l), IR, l);
+});
+
+test("a delete or recursive copy into a root that lies outside the floor's write roots (a root under the home directory) is a floor block, before install-root-write and for a child too", () => {
+  for (const o of [{ floors: true }, { floors: true, child: true }]) {
+    assert.equal(sh(`rm ${I}/dist/a.js`, o), "block:floor-delete-outside");
+    assert.equal(sh(`rsync -a x/ ${I}/x`, o), "block:floor-overwrite-outside");
+  }
+  // beside it: a plain write is no floor, so install-root-write (main) or the child fence answers
+  assert.equal(sh(`echo x > ${I}/a`, { floors: true }), IR);
+  assert.equal(sh(`echo x > ${I}/a`, { floors: true, child: true }), "block:child-write-outside");
 });
 
 test("main: reads, test runs, writes in its own worktree and its scratch dir are not install-root-write", () => {
