@@ -84,7 +84,8 @@ test("script run: the caller-named path is never executed; the run file and its 
 test("script run: the time limit kills the run; file and dir are removed", async (t) => {
   const d = dirs(t);
   const started = Date.now();
-  const r = ran(await runScript({ bytes: Buffer.from("echo started\nsleep 30\necho never\n"), kind: "run", cwd: d.ws, logPath: d.log("limit.log"), timeoutSeconds: 0.5, tmpDir: d.tmp }));
+  // 3 s: on Windows CI, Git Bash did not always write `started` within 0.5 s (one run was killed with an empty tail).
+  const r = ran(await runScript({ bytes: Buffer.from("echo started\nsleep 30\necho never\n"), kind: "run", cwd: d.ws, logPath: d.log("limit.log"), timeoutSeconds: 3, tmpDir: d.tmp }));
   assert.equal(r.timedOut, true);
   assert.notEqual(r.exitCode, 0);
   assert.ok(Date.now() - started < 20_000);
