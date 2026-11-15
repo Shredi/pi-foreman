@@ -32,9 +32,9 @@ class ForemanTextTest(unittest.TestCase):
         out = self.rendered()
         self.assertIn("After every fifth failed review of the same plan in a row, say so in one line with the count (to the parent by a normal update when you have one, otherwise in your chat reply) and go on.", out)
 
-    def test_plan_phase_asks_the_parent_first(self):
+    def test_plan_phase_asks_once_never_both(self):
         out = self.rendered()
-        self.assertIn("real decisions only: in a session a parent opened ask the parent first, by file (`ask.md`), and the owner with `ask_user_question` when the decision is the owner's.", out)
+        self.assertIn("real decisions only: in a session a parent opened ask the parent by file (`ask.md`), or the owner with `ask_user_question` when the decision is the owner's and a human is at the pane, never both for one question.", out)
         self.assertIn("At a `[review_loop]` stop in such a session, report the open findings to the parent by file instead and wait for its ruling.", out)
 
     def test_no_rendering_gains_a_line(self):

@@ -622,7 +622,7 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_launch, expected)
         # token-diet item 9: the ask_user_question rule (schema, notes, ask by file when the tool is absent)
         old_ask = "- Plan mode is not part of the ceremony; the checkpoint is.\n"
-        new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).\n"
+        new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`). Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both.\n"
         self.assertIn(old_ask, expected)
         want = expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch).replace(old_ask, new_ask)
         for old_text, new_text in role_pairs:

@@ -143,7 +143,7 @@ import type { LadderLimits, LaunchBinding, LaunchKind, LineContext, TurnCause } 
 import { workspaceOf } from "./python.ts";
 import { dialogFamily, dialogFields, dialogsJson } from "./dialogs.ts";
 import { AskFlag } from "./askflag.ts";
-import { ASK_USER_TOOL, askAnsweredSome, writeAskRuling } from "./askhooks.ts";
+import { ASK_USER_TOOL, askAnsweredSome } from "./askhooks.ts";
 
 const DIALOGS_TOOL = "foreman_dialogs";
 import { ChildRuns, UsageTail, rungOf } from "./runs.ts";
@@ -4716,8 +4716,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
       await recordEntries(created, { ...o, stateDir: manifestCtx(owner, ctx.cwd).stateDir }, (args) => runScript(owner, "foreman_close.py", args, 15_000), (e, why) => owner.trace?.emit({ event: "manifest_record_failed", kind: e.kind, error: why }));
     }
-    // an answer to an open ask.md is also written to ruling-<n>.md; details stay the package's (ownerAnswered reads them)
-    if (owner && !owner.isChild && event.toolName === ASK_USER_TOOL) writeAskRuling(childDirsOf(owner), event.content, event.details, event.isError);
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
@@ -4736,7 +4734,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
     }
-    // R6 4a: a ruling-<n>.md / ruling.md read through the read tool writes `.seen` and ends the blocked state now.
+    // R6 4a: a ruling-<n>.md / ruling.md read through the read tool writes `.seen` and the blocked state is recomputed now; only the ask's own ruling-<n>.md closes an open ask, a read of ruling.md (a plan ruling) never does by itself (ruling.ts askOpen).
     if (owner && !owner.isChild && !event.isError && event.toolName === "read") {
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string" && isRulingName(path.basename(given))) askContractFor(owner).onRulingWake(path.resolve(ctx.cwd, given));

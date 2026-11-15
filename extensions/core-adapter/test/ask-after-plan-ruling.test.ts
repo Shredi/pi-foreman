@@ -7,7 +7,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { AskContract } from "../askcontract.ts";
-import { writeAskRuling } from "../askhooks.ts";
 import { ChildBlocked } from "../childblocked.ts";
 import { BlockedTracker } from "../herdr.ts";
 import { LiveState, liveDir } from "../livestate.ts";
@@ -152,14 +151,4 @@ test("ruling.md seen, no number in .ask: any .seen still ends it; needs_ruling: 
   r.ask(1);
   r.w("ask.md", "# Ask 1: q\nneeds_ruling: no\n");
   assert.equal(askOpen(r.handoff), false);
-});
-
-test("the unchanged dialog hook files an answer for an ask open after a plan ruling", (t) => {
-  const r = rig(t);
-  r.w(".seen", "ruling.md\n");
-  r.ask(1);
-  const content = [{ type: "text", text: '"Which?"="pg"' }];
-  const file = writeAskRuling([r.handoff], content, { cancelled: false, answers: [{}] }, false);
-  assert.equal(file, path.join(r.handoff, "ruling-1.md"));
-  assert.match(fs.readFileSync(file!, "utf8"), /"Which\?"="pg"/);
 });
