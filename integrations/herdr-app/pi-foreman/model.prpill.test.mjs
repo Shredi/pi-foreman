@@ -31,7 +31,7 @@ test("owned PR: the five states", () => {
   const ready = chip([entry()], w);
   assert.equal(prState(ready), "ok");
   assert.equal(prStateText(ready), "ready to merge");
-  assert.deepEqual(prDotState(ready), { ring: false, fill: "green", conflict: false });
+  assert.deepEqual(prDotState(ready), { pulse: false, fill: "green", conflict: false });
 });
 
 test("a session fact about an older head never shows ready on a newer host head", () => {
@@ -55,12 +55,12 @@ test("an unreviewed fact (draft flow off: the PR is open) shows not reviewed, ne
   assert.match(prCard(pr).state, /not reviewed/);
 });
 
-test("blocked or behind shows running, not ready", () => {
+test("blocked or behind shows a still amber dot and says so, not ready", () => {
   for (const mergeState of ["blocked", "behind"]) {
     const pr = chip([entry({ mergeState })], [wait([review()])]);
     assert.equal(prState(pr), "pending", mergeState);
-    assert.equal(prStateText(pr), "CI running");
-    assert.deepEqual(prDotState(pr), { ring: true, fill: "amber", conflict: false });
+    assert.equal(prStateText(pr), mergeState === "blocked" ? "CI passing, merge blocked" : "CI passing, branch behind");
+    assert.deepEqual(prDotState(pr), { pulse: false, fill: "amber", conflict: false });
   }
   assert.equal(prState(feedOnly({ mergeState: "behind" })), "pending");
 });

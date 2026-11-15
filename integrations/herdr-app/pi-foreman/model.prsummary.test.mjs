@@ -41,7 +41,7 @@ test("the agents spinner is the working spinner: same fill, no slower speed", ()
 test("the summary state is the chip's: prState follows prDotState", () => {
   for (const checks of [["fail"], ["ok", "run"], ["run"], ["ok"], []]) {
     const d = prDotState(pr(1, checks));
-    const want = d.fill === "red" ? "fail" : d.ring || d.fill === "amber" ? "pending" : d.fill === "green" ? "ok" : "none";
+    const want = d.fill === "red" ? "fail" : d.pulse || d.fill === "amber" ? "pending" : d.fill === "green" ? "ok" : "none";
     assert.equal(prState(pr(1, checks)), want);
   }
 });
