@@ -1,7 +1,7 @@
 /**
  * A bash command line as a list of segments (round 41, A1), on top of the `unbash` parser. One segment is one simple
  * command that would run: chains, pipelines, `$(...)`, backticks, subshells, `bash -c` / `sh -c` / `eval` with a
- * literal string and the wrappers env, timeout, nice, nohup, xargs, time, command, stdbuf, setsid, watch, flock -c are
+ * literal string and the wrappers env, timeout, nice, nohup, xargs, time, command, exec, stdbuf, setsid, watch, flock -c are
  * unwrapped (the wrapper names land in `wrappers`). shellchain.ts refuses all of these (null); here they parse.
  *
  * Anything the walker cannot state exactly is an OPAQUE segment: `opaque` holds a reason code and the consumer treats the
@@ -619,6 +619,11 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
       const o = opts({ flags: "pvV" });
       if (typeof o === "string" || has(o.opts, "-v", "-V")) return plain(prog, name, rest, c, cwd);
       return wrap(o.rest, "command");
+    }
+    case "exec": {
+      // `exec [-cl] [-a name] cmd args`: the command is the segment; the redirect-only form (no command) stays the opaque builtin
+      const o = opts({ flags: "cl", arg: "a" });
+      return typeof o === "string" || !o.rest.length ? bad("shell_builtin") : wrap(o.rest, "exec");
     }
     case "stdbuf": {
       const o = opts({ arg: "ioe", longArg: ["--input", "--output", "--error"] });

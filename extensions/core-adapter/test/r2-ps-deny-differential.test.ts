@@ -57,6 +57,7 @@ const REFUSED = [
   // a posix script inside the line gets the posix rules, a PowerShell script inside that its own again
   `bash -c 'echo ${bt}${T}${bt}'`, `bash -c 'echo ${bt}${SEC}${bt}'`, `sh -c 'gh auth tok\en'`, `eval 'gh auth tok\en'`, "bash -c 'gh auth to\\\nken'",
   `bash -c 'gh auth $'"'"'token'"'"`, `pwsh -c "bash -c 'gh auth tok\en'"`, `bash -c "pwsh -c '${T}'"`, `bash -c "pwsh -c 'gh auth status ––show-token'"`,
+  `bash -c 'echo $(gh auth tok\en)'`,
   // the dashes psDashes handles (en dash, em dash, horizontal bar), so a drift between its two copies is caught
   "gh auth status ––show-token", "gh auth status —-show-token", "gh auth status ――show-token", "pwsh -c \"gh auth status ––show-token\"", "echo 1; gh auth status ——show-token",
 ];
