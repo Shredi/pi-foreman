@@ -516,12 +516,13 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
   if (FOREIGN.has(name) || FOREIGN_FILE.test(prog)) return plain(prog, name, rest, c, cwd);
 
   switch (name) {
-    case "cd": {
+    case "cd":
+    case "pushd": {
       plain(prog, name, rest, c, cwd);
-      const one = rest.length === 1 && rest[0].value !== null ? rest[0].value : null;
+      // `pushd` with an option moves nothing we track; `popd` is not tracked at all
+      const one = rest.length === 1 && rest[0].value !== null && !(name === "pushd" && /^[-+]/.test(rest[0].value)) ? rest[0].value : null;
       return one === null ? null : (cdTarget(["cd", one], cwd ?? undefined, win32(sc.run)) ?? null);
     }
-    case "pushd":
     case "popd":
       plain(prog, name, rest, c, cwd);
       return null;
@@ -623,7 +624,10 @@ function run(words: W[], c: Cmd, cwd: string | null): string | null {
     case "exec": {
       // `exec [-cl] [-a name] cmd args`: the command is the segment; the redirect-only form (no command) stays the opaque builtin
       const o = opts({ flags: "cl", arg: "a" });
-      return typeof o === "string" || !o.rest.length ? bad("shell_builtin") : wrap(o.rest, "exec");
+      if (typeof o === "string" || !o.rest.length) return bad("shell_builtin");
+      // a failed `exec cd` (execfail) leaves the shell where it was: the inner command's cwd is not taken over, as for `env`
+      wrap(o.rest, "exec");
+      return cwd;
     }
     case "stdbuf": {
       const o = opts({ arg: "ioe", longArg: ["--input", "--output", "--error"] });

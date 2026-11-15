@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { opsOf, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import type { ShellSegment } from "./shellast.ts";
+import { shellWriteTargets } from "./defaults.ts";
 
 export interface SelfmodHit {
   rule: string;
@@ -123,11 +124,18 @@ function writtenWords(s: ShellSegment): string[] {
 
 /** The self-modification hit of a shell line, or undefined. A child also hits on any word that names another session's state. */
 export function shellSelfmod(segs: ShellSegment[], cwd: string, roots: GateRoots, platform: string): SelfmodHit | undefined {
+  // the named targets of the write-target code (in-place `sed -i`, `perl -i`, `dd of=` ...) join the fixed word list
+  const targets = shellWriteTargets(segs, platform).filter((t) => t.named);
   for (const s of segs) {
     const at = s.cwd ?? cwd;
     for (const w of writtenWords(s)) {
       const abs = resolveWord(platform, at, w);
       const h = abs ? classify(abs, "write", cwd, roots, platform) : undefined;
+      if (h) return h;
+    }
+    for (const t of targets) {
+      if (t.seg !== s) continue;
+      const h = classify(t.path, "write", cwd, roots, platform);
       if (h) return h;
     }
     if (roots.child) {
