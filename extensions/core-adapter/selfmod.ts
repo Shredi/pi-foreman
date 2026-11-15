@@ -17,6 +17,7 @@ export interface SelfmodHit {
 const HITS = {
   "selfmod-project-settings": "this writes the project's .pi/settings.json, which changes how Pi and its extensions run",
   "selfmod-project-pi": "this writes the project's .pi/ directory outside .pi/scratch and .pi/tasks, which holds Pi's project configuration",
+  "selfmod-project-claude": "this writes the project's .claude/settings*.json or .mcp.json (or the .claude folder itself), which run commands as the owner",
   "selfmod-agent-settings": "this writes the Pi agent settings.json, which changes how Pi and its extensions run",
   "selfmod-state": "this writes pi-foreman session state, which other sessions and the foreman read as live data",
   "selfmod-session-dir": "this moves or removes the Pi session dir or one of its ancestors up to the agent sessions dir, which breaks the running session's file",
@@ -44,6 +45,22 @@ function sameFile(a: string, b: string): boolean {
   }
 }
 
+/** A file name as the name tests compare it: lowercased on win32 and darwin (`under()` itself lowercases only on win32); on win32 also without an `::$DATA` suffix and trailing dots and spaces. */
+function leaf(platform: string, name: string): string {
+  if (platform === "win32") return name.replace(/:.*$/, "").replace(/[. ]+$/, "").toLowerCase();
+  return platform === "darwin" ? name.toLowerCase() : name;
+}
+
+/** `a` is an existing regular file with more than one hard link. */
+function linked(a: string): boolean {
+  try {
+    const s = fs.statSync(a);
+    return s.isFile() && s.nlink > 1;
+  } catch {
+    return false;
+  }
+}
+
 /** The session dir and each ancestor up to a sessions dir (inclusive); only the dir itself when it lies elsewhere. */
 function sessionDirChain(platform: string, dirs: string[], stops: string[]): string[] {
   const x = platform === "win32" ? path.win32 : path.posix;
@@ -61,6 +78,9 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
   const real = r.realpath ?? (platform === process.platform ? realDefault : () => null);
   const x = platform === "win32" ? path.win32 : path.posix;
   const pis = [...new Set([r.worktree, cwd].flatMap((b) => spellings(platform, b, real)).map((b) => x.join(b, ".pi")).flatMap((p) => spellings(platform, p, real)))];
+  const bases = [...new Set([r.worktree, cwd].flatMap((b) => spellings(platform, b, real)))];
+  const claudes = [...new Set(bases.map((b) => x.join(b, ".claude")).flatMap((p) => spellings(platform, p, real)))];
+  const mcps = [...new Set(bases.map((b) => x.join(b, ".mcp.json")).flatMap((p) => spellings(platform, p, real)))];
   const settings = [...new Set(pis.map((p) => x.join(p, "settings.json")))];
   const agent = r.agentDir ? spellings(platform, r.agentDir, real) : [];
   const agentSettings = agent.map((a) => x.join(a, "settings.json"));
@@ -85,10 +105,25 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
       if (under(platform, x.join(pi, "scratch"), c) || under(platform, x.join(pi, "tasks"), c)) continue;
       return hit("selfmod-project-pi");
     }
+    if (mcps.some((m) => under(platform, m, c) && under(platform, c, m)) || (leaf(platform, x.basename(c)) === ".mcp.json" && bases.some((b) => under(platform, b, x.dirname(c)) && under(platform, x.dirname(c), b)))) return hit("selfmod-project-claude");
+    for (const cl of claudes) {
+      if (!under(platform, cl, c)) continue;
+      const rel = x.relative(cl, c).split(/[\\/]/);
+      if (rel[0] === "" || (rel.length === 1 && /^settings.*\.json$/.test(leaf(platform, rel[0])))) return hit("selfmod-project-claude");
+    }
     if (states.some((s) => under(platform, s, c)) && !own.some((d) => under(platform, d, c))) return hit("selfmod-state");
   }
-  if (dir === "write" && [...settings, ...agentSettings].some((s) => sameFile(abs, s))) {
-    return hit(agentSettings.some((s) => sameFile(abs, s)) ? "selfmod-agent-settings" : "selfmod-project-settings");
+  if (dir === "write" && linked(abs)) {
+    if ([...settings, ...agentSettings].some((s) => sameFile(abs, s))) return hit(agentSettings.some((s) => sameFile(abs, s)) ? "selfmod-agent-settings" : "selfmod-project-settings");
+    // the 5g files: `.mcp.json` and the existing `.claude/settings*.json` of each base (one listing of `.claude` per base)
+    const claudeFiles = bases.flatMap((b) => {
+      try {
+        return fs.readdirSync(x.join(b, ".claude")).filter((n) => /^settings.*\.json$/.test(leaf(platform, n))).map((n) => x.join(b, ".claude", n));
+      } catch {
+        return [];
+      }
+    });
+    if ([...mcps, ...claudeFiles].some((f) => sameFile(abs, f))) return hit("selfmod-project-claude");
   }
   return undefined;
 }
