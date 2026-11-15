@@ -34,8 +34,8 @@ class ForemanTextTest(unittest.TestCase):
 
     def test_plan_phase_asks_once_never_both(self):
         out = self.rendered()
-        self.assertIn("real decisions only: in a session a parent opened ask the parent by file (`ask.md`), or the owner with `ask_user_question` when the decision is the owner's and a human is at the pane, never both for one question.", out)
-        self.assertIn("At a `[review_loop]` stop in such a session, report the open findings to the parent by file instead and wait for its ruling.", out)
+        self.assertIn("real decisions only: in a session a parent opened ask the parent with one plain intercom `send` whose first line starts with `Question` (long detail in a file in the handoff dir that the message names), then end your turn: the answer arrives as a message and starts your next turn; no blocking ask, no `foreman_wait`. Only when intercom cannot reach the parent ask by file (`ask.md`). Ask the owner with `ask_user_question` instead when the decision is the owner's and a human is at the pane, never both for one question.", out)
+        self.assertIn("At a `[review_loop]` stop in such a session, report the open findings to the parent the same way and end your turn; the parent lifts the stop with a brief, a message does not.", out)
 
     def test_no_rendering_gains_a_line(self):
         # pinned line counts of the current instructions/foreman.md per (planreview, multisession, ledgerhelper)
@@ -61,15 +61,15 @@ class ReviewerTextTest(unittest.TestCase):
 
 
 class FooterTextTest(unittest.TestCase):
-    def check(self, text):
+    def check(self, text, to_parent="by file (`ask.md`)"):
         self.assertIn("Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes.", text)
         self.assertIn("goes to the owner with `ask_user_question`", text)
-        self.assertIn("everything else you cannot settle goes to the parent by file (`ask.md`)", text)
+        self.assertIn("everything else you cannot settle goes to the parent " + to_parent, text)
         self.assertIn("When unsure whether it is a decision, ask the parent.", text)
         self.assertNotIn("Ask the parent questions with", text)
 
     def test_local_footer(self):
-        self.check(fsn.footer("demo", True))
+        self.check(fsn.footer("demo", True), "in a message whose first line starts with `Question`")
         self.assertNotIn("Findings of your plan review", fsn.footer("demo", False))
 
     def test_remote_footer(self):

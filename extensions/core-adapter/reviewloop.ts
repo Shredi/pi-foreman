@@ -63,9 +63,13 @@ export function loopVerdictOf(kind: ReviewKind, prev: LoopRound | null, cur: Loo
   return rule;
 }
 
-/** The `[review_loop]` refusal text in a session a parent opened: the open findings go to the parent by file; the owner is asked only for a decision of theirs. */
-export function loopRefusalParented(stop: LoopStop): string {
+/**
+ * The `[review_loop]` refusal text in a session a parent opened: the open findings go to the parent in a message, and a brief lifts the stop; the owner is asked
+ * only for a decision of theirs. `byFile`: intercom cannot reach the parent (a remote parent, `PI_FOREMAN_REMOTE_PARENT=1`): the findings go in `ask.md`, as before.
+ */
+export function loopRefusalParented(stop: LoopStop, byFile = false): string {
   const what = stop.kind === "plan" ? "plan" : "work";
   const why = stop.rule === "repeat" ? `the last two ${stop.kind} review rounds failed with the same findings` : `the last ${stop.kind} review failed again with no new finding and no change to the ${what} since the round before`;
-  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings to the parent by file (ask.md in the handoff dir) and wait for its ruling, which lifts this stop. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A parent brief, a new owner prompt, or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.`;
+  if (byFile) return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings to the parent by file (ask.md in the handoff dir) and wait for its ruling, which lifts this stop. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A parent brief, a new owner prompt, or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.`;
+  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop, report the open findings to the parent in an intercom message whose first line starts with Question, and end your turn: the parent lifts this stop with a brief; a message does not, and a ruling-<n>.md from a parent still does. If intercom cannot reach the parent (it is not a Pi session, or the send says Session not found), report by file (ask.md in the handoff dir) and wait for its ruling instead. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A new owner prompt or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.`;
 }

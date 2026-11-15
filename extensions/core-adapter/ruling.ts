@@ -49,6 +49,41 @@ export function rulingFresh(file: string, mtime: (p: string) => number | null = 
   return ask === null || ruling === null || ruling >= ask;
 }
 
+/**
+ * A file in a handoff dir that answers a question: `brief-<x>.md`, or `ruling-<n>.md` from a parent on the old footer. Never `ruling.md`,
+ * `ruling-plan.md` or `steer-<n>.md`, and not a `brief-<x>.md` whose bytes equal the `ruling.md` or `ruling-plan.md` beside it (locally a plan
+ * ruling travels as such a copy).
+ */
+export function isAnswerFile(dir: string, name: string): boolean {
+  const n = RULING_RE.exec(name)?.[1];
+  if (n !== undefined) return Number(n) >= 1;
+  if (!isBriefName(name)) return false;
+  const bytes = (p: string): Buffer | null => {
+    try {
+      return fs.readFileSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const brief = bytes(path.join(dir, name));
+  if (!brief) return false;
+  return !PLAN_RULING_NAMES.some((r) => bytes(path.join(dir, r))?.equals(brief));
+}
+
+const PLAN_RULING_NAMES = ["ruling.md", "ruling-plan.md"];
+
+/** `dir` holds an answer file (`isAnswerFile`) modified after `sinceMs`. */
+export function answerNewerThan(dir: string, sinceMs: number): boolean {
+  try {
+    return fs.readdirSync(dir).some((name) => {
+      const m = mtimeOf(path.join(dir, name));
+      return m !== null && m > sinceMs && isAnswerFile(dir, name);
+    });
+  } catch {
+    return false;
+  }
+}
+
 /** `needs_ruling: no` line of an ask.md: an informational ask. */
 export const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
 

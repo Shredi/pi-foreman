@@ -28,6 +28,8 @@ export interface WorldOpts {
   ceremony?: Record<string, unknown>;
   /** Production wiring of the launch snapshot (no `worktreeSnapshot` dependency); by default the rig passes a no-op. */
   realSnapshot?: boolean;
+  /** Collects the custom messages the adapter sends (`pi.sendMessage`) with their options. */
+  sent?: { message: { customType: string; content: string }; options: unknown }[];
 }
 
 export function world(t: { after(fn: () => void | Promise<void>): void }, o: WorldOpts = {}) {
@@ -98,7 +100,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       setActiveTools: () => undefined,
       setModel: async () => true,
       setThinkingLevel: () => undefined,
-      sendMessage: () => undefined,
+      sendMessage: (message: { customType: string; content: string }, options?: unknown) => void o.sent?.push({ message, options }),
     };
     coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), ...(o.realSnapshot ? {} : { worktreeSnapshot: async () => null }) });
     const ctx = {
