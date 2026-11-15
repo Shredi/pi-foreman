@@ -85,8 +85,17 @@ import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
 import { normPath } from "./pathnorm.ts";
 import { READ_PATH_TOOLS, psPubKeyReadWords, pubKeyReadWords, sshPublicKey } from "./floors.ts";
-import { globSegMatch, wildMatch } from "./glob.ts";
+import { expandHomePattern, globSegMatch, wildcardRegExp, wildMatch } from "./glob.ts";
 import { childHandoffWrite, realDefault, realSpelling } from "./pathrules.ts";
+import { obj, readBaseline, strs } from "./baseline.ts";
+import type { Baseline } from "./baseline.ts";
+import { gitConfigRead } from "./defaults.ts";
+import { GIT_GREP_PAGER, GREP_FAMILY, baseName, nonPathArgs, scriptOperands, unitReadOnly } from "./patternargs.ts";
+import { isSelfHost } from "./owned.ts";
+
+// the helpers that moved out of this file in round 2, step 1 (the old importers keep working until the overlay goes)
+export { isSelfHost, readBaseline, wildcardRegExp };
+export type { Baseline };
 
 export interface PathRule {
   pattern: string;
@@ -150,13 +159,6 @@ export interface OverlayRules {
   probeDirs?: string[];
   /** R41: the floors (policy files, harness state) and the roots named in a whole-filesystem scan deny; set by buildOverlayRules. */
   floors?: { agentDir: string; pkgRoot?: string };
-}
-
-export interface Baseline {
-  bash: { deny: string[]; ask: string[]; allow?: string[] };
-  paths: { deny: string[]; except: string[] };
-  protect: { deny: string[]; ask: string[]; childDeny: string[]; writeAsk: string[]; writeAskSelfHost?: string[]; removeAsk?: string[] };
-  externalDirectory?: { probe?: string[] };
 }
 
 /**
@@ -759,26 +761,6 @@ function refsBound(word: string, names: ReadonlySet<string>): boolean {
   return false;
 }
 
-const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
-const obj = (v: unknown): Json => (v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : {});
-
-export function readBaseline(pkgRoot: string): Baseline | null {
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(pkgRoot, "config", "permissions.baseline.json"), "utf8")) as Json;
-    const bash = obj(raw.bash);
-    const paths = obj(raw.paths);
-    const pr = obj(raw.protect);
-    return {
-      bash: { deny: strs(bash.deny), ask: strs(bash.ask), allow: strs(bash.allow) },
-      paths: { deny: strs(paths.deny), except: strs(paths.except) },
-      protect: { deny: strs(pr.deny), ask: strs(pr.ask), childDeny: strs(pr.childDeny), writeAsk: strs(pr.writeAsk), writeAskSelfHost: strs(pr.writeAskSelfHost), removeAsk: strs(pr.removeAsk) },
-      externalDirectory: { probe: strs(obj(raw.externalDirectory).probe) },
-    };
-  } catch {
-    return null;
-  }
-}
-
 /** Foreman-owned paths a child never touches, on path tools and shell operands (the child's own scratch dir stays its own). */
 const CHILD_BLOCK = ["{agentDir}/pi-foreman/handoffs", "{agentDir}/pi-foreman/handoffs/*", "{agentDir}/sessions/*/subagent-artifacts", "{agentDir}/sessions/*/subagent-artifacts/*", "{agentDir}/foreman.json", "{agentDir}/pi-foreman/claude-config", "{agentDir}/pi-foreman/claude-config/*"];
 
@@ -790,21 +772,6 @@ const CHILD_BLOCK_EXCEPT = ["plan.md", "result.md"].map((f) => `{agentDir}/pi-fo
 
 function without(list: string[], base: string[]): string[] {
   return list.filter((x) => !base.includes(x));
-}
-
-/** True when the session cwd is the package root or inside it (a dev checkout). Paths are resolved through symlinks; case-insensitive on win32/darwin. */
-export function isSelfHost(cwd: string, pkgRoot: string, platform: string = process.platform): boolean {
-  const real = (p: string): string => {
-    try {
-      return fs.realpathSync.native(p);
-    } catch {
-      return path.resolve(p);
-    }
-  };
-  const fold = platform === "win32" || platform === "darwin";
-  const norm = (p: string): string => (fold ? p.toLowerCase() : p);
-  const rel = (platform === "win32" ? path.win32 : path.posix).relative(norm(real(pkgRoot)), norm(real(cwd)));
-  return rel === "" || (!rel.startsWith("..") && !(platform === "win32" ? path.win32 : path.posix).isAbsolute(rel));
 }
 
 /**
@@ -890,37 +857,10 @@ function probeHit(rules: OverlayRules, word: string, ctx: MatchCtx): string | nu
 
 // ------------------------------------------------------------------ wildcard
 
-const reCache = new Map<string, RegExp>();
-
-function expandHomePattern(p: string, home: string): string {
-  if (p === "~") return home;
-  if (p.startsWith("~/") || p.startsWith("~\\")) return home + p.slice(1);
-  if (p.startsWith("$HOME")) return home + p.slice(5);
-  if (p.startsWith("${HOME}")) return home + p.slice(7);
-  return p;
-}
-
 /** The tree root of the call's cwd, lifted out of a nested submodule checkout up to the round (or the workspace) holding it and no further. */
 function treeRootOfCtx(ctx: { cwd: string; roundRoots?: string[] }): string | null {
   const ceiling = (ctx.roundRoots ?? []).find((r) => insideDir(r, ctx.cwd, ctx as never)) ?? workspaceOf(ctx.cwd).root;
   return treeRootOf(ctx.cwd, ceiling);
-}
-
-/** PS's compileWildcardPattern: split on `*`, `?` = one char, trailing " *" makes the args optional. */
-export function wildcardRegExp(pattern: string, opts: { home: string; ignoreCase: boolean; foldSeparators: boolean }): RegExp {
-  const key = `${opts.ignoreCase ? "i" : "s"}${opts.foldSeparators ? "f" : "-"}${opts.home}\u0000${pattern}`;
-  const hit = reCache.get(key);
-  if (hit) return hit;
-  let expanded = expandHomePattern(pattern, opts.home);
-  if (opts.foldSeparators) expanded = expanded.replace(/\\/g, "/");
-  let escaped = expanded
-    .split("*")
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\?/g, ".").replace(/\//g, () => "[\\\\/]"))
-    .join(".*");
-  if (escaped.endsWith(" .*")) escaped = `${escaped.slice(0, -3)}( .*)?`;
-  const re = new RegExp(`^${escaped}$`, opts.ignoreCase ? "si" : "s");
-  reCache.set(key, re);
-  return re;
 }
 
 function bashMatches(pattern: string, text: string, ctx: MatchCtx): boolean {
@@ -1479,37 +1419,6 @@ function repoScriptWord(verb: string, args: string[]): string | null {
   return (verb === "node" ? /\.(mjs|cjs|js)$/.test(s) : /\.py$/.test(s)) ? s : null;
 }
 
-const CONFIG_MODES = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"]);
-const CONFIG_MODS = new Set(["--local", "--worktree", "--global", "--system", "--includes", "--no-includes", "-z", "--null", "--show-origin", "--show-scope", "--name-only", "--bool", "--int", "--bool-or-int", "--path", "--expiry-date"]);
-
-/**
- * `git config` args (after the subcommand) that only read: `<key>`, `get <key> [<re>]`, `list`, `--get|--get-all|--get-regexp <key> [<re>]`,
- * `--get-urlmatch <name> <url>`, `--list`, with the modifiers above and `--default <v>` / `--type=<t>`. `--file`, `--blob`, `set`, `unset`,
- * `--add`, `--replace-all`, `--edit`, any other flag, or a second operand without a --get mode is a write.
- */
-export function gitConfigRead(rest: string[]): boolean {
-  let mode: string | undefined;
-  const ops: string[] = [];
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i];
-    if (a === "--default") {
-      if (++i >= rest.length) return false;
-    } else if (a.startsWith("--type=") || CONFIG_MODS.has(a)) {
-      continue;
-    } else if (CONFIG_MODES.has(a)) {
-      if (mode !== undefined) return false;
-      mode = a === "-l" ? "--list" : a;
-    } else if (a.startsWith("-")) {
-      return false;
-    } else ops.push(a);
-  }
-  if (mode === undefined && (ops[0] === "get" || ops[0] === "list")) mode = `--${ops.shift()}`;
-  if (mode === "--list") return ops.length === 0;
-  if (mode === "--get-urlmatch") return ops.length === 2;
-  if (mode === undefined) return ops.length === 1;
-  return ops.length >= 1 && ops.length <= 2;
-}
-
 /** Options of a test runner whose next word (or `=value`) is a program or path it loads, and ones whose value is no path. */
 const RUN_PATH_OPTS = new Set(["--require", "--import", "--loader", "--experimental-loader", "--test-reporter", "--test-reporter-destination", "--test-global-setup", "--config", "--directory", "--include-dir", "--file", "--makefile", "--start-directory", "--top-level-directory", "--env-file"]);
 /** The short path options of each runner (`-sv` of pytest is no `-s` path). */
@@ -1698,11 +1607,6 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean, envSet = fa
   return { targets: [], unknown: verb };
 }
 
-function baseName(w: string): string {
-  const b = w.split(/[\\/]/).pop() ?? w;
-  return b.toLowerCase().replace(/\.(exe|cmd|bat)$/, "");
-}
-
 /** The unit as written, then with env assignments / wrapper commands / the path prefix stripped; `env` lists the stripped assignments. */
 function variants(words: string[]): { texts: string[]; core: string[]; env: string[] } {
   let w = words.slice();
@@ -1840,46 +1744,6 @@ const PURE_VERBS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk"
  */
 const PROTECTED_READERS = new Set(["cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ls", "stat", "file", "diff", "cmp", "md5sum", "sha1sum", "sha256sum", "shasum", "cd", "sed", "echo", "pwd", "true", "false"]);
 
-/** Short options that take a value, and long ones that take the next word, per read command. */
-const VALUE_OPTS: Record<string, { short: string; long: string[]; pattern: string; patternLong: string[]; file: string; fileLong: string[]; globLong?: string[]; globShort?: string }> = {
-  grep: { short: "ABCDdefm", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--devices", "--directories", "--label", "--binary-files", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--color", "--colour"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"], globLong: ["--include", "--exclude", "--exclude-dir", "--include-dir"] },
-  rg: { short: "ABCEMTdefgjmrt", long: ["--regexp", "--file", "--after-context", "--before-context", "--context", "--max-count", "--max-depth", "--max-columns", "--glob", "--iglob", "--type", "--type-not", "--type-add", "--type-clear", "--replace", "--pre", "--pre-glob", "--encoding", "--threads", "--sort", "--sortr", "--max-filesize", "--colors", "--color", "--path-separator", "--engine", "--ignore-file", "--context-separator", "--field-match-separator", "--field-context-separator", "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format", "--hostname-bin"], pattern: "e", patternLong: ["--regexp"], file: "f", fileLong: ["--file"], globLong: ["--glob", "--iglob"], globShort: "g" },
-  sed: { short: "ef", long: ["--expression", "--file", "--line-length"], pattern: "e", patternLong: ["--expression"], file: "f", fileLong: ["--file"] },
-  awk: { short: "Fvfeil", long: ["--field-separator", "--assign", "--file", "--source", "--include", "--load"], pattern: "e", patternLong: ["--source"], file: "f", fileLong: ["--file"] },
-};
-for (const k of ["egrep", "fgrep"]) VALUE_OPTS[k] = VALUE_OPTS.grep;
-for (const k of ["gawk", "mawk", "nawk"]) VALUE_OPTS[k] = VALUE_OPTS.awk;
-
-/** A sed script that writes, reads or runs nothing (`w`/`W`/`r`/`R`/`e` commands, the `s///w|e` flags, `a`/`i`/`c` text). */
-function sedReadOnly(script: string): boolean {
-  let s = script.replace(/\\\n/g, " ");
-  s = s.replace(/s(.)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1([A-Za-z0-9]*)/gs, (_m, _d, _a, _b, flags: string) => (/[we]/.test(flags) ? " w " : ";"));
-  s = s.replace(/y(.)((?:\\.|(?!\1).)*)\1((?:\\.|(?!\1).)*)\1/gs, ";");
-  s = s.replace(/\/(?:\\.|[^/\\])*\//g, " ").replace(/\\(.)(?:\\.|(?!\1).)*\1/gs, " ");
-  return !/[wWrReFaic]/.test(s.replace(/[^A-Za-z]/g, ""));
-}
-
-/** An awk program without redirection, pipes, getline or system(). */
-function awkReadOnly(prog: string): boolean {
-  return !/[<>|]|system|getline|close|fflush/.test(prog);
-}
-
-/**
- * Indices (into `core`) of the pattern or script operands of a read command: the grep/rg pattern
- * and `-e` values, the sed script, the awk program, find's -name/-iname/-path/-regex values,
- * every echo/printf argument. `skip` = redirect targets. Files named by `-f` stay paths.
- */
-export function nonPathArgs(core: string[], skip: Set<number>): number[] {
-  const verb = core.length ? baseName(core[0]) : "";
-  const readOnly = (s: string): boolean => (verb === "sed" ? sedReadOnly(s) : verb.endsWith("awk") ? awkReadOnly(s) : true);
-  // a script-file or output flag may mis-sort the operands (`awk -F -- --fil=p.awk f`): then every word stays a path
-  if ((verb === "sed" || verb.endsWith("awk")) && !unitReadOnly(core, skip)) return [];
-  return scriptOperands(core, skip).filter((i) => readOnly(core[i]));
-}
-
-/** A `git grep` option cluster with `O` (digits included: `-1Oecho`) or `--open-files-in-pager` by any `--op` prefix. */
-const GIT_GREP_PAGER = /^-[^-]*O|^--op/;
-
 /** Options of `git commit` / `git tag` whose value is the next word (so a `-F` there is that value, not the message-file option). */
 const GIT_MSG_VALUE_OPTS = new Set(["-m", "-c", "-C", "-t", "-u", "--message", "--author", "--date", "--template", "--cleanup", "--fixup", "--squash", "--trailer", "--reuse-message", "--reedit-message", "--local-user", "--pathspec-from-file"]);
 
@@ -1903,190 +1767,8 @@ function gitMessageFiles(core: string[], skip: Set<number>): { tag: boolean; at:
   return { tag, at: out };
 }
 
-/** nonPathArgs before the read-only filter: every pattern/script operand (and, for grep and rg, the include/exclude/glob values). */
-function scriptOperands(core: string[], skip: Set<number>): number[] {
-  if (!core.length) return [];
-  const verb = baseName(core[0]);
-  const out: number[] = [];
-  const ok = (i: number): boolean => !skip.has(i);
-  if (verb === "echo" || verb === "printf") return core.map((_, i) => i).filter((i) => i > 0 && ok(i));
-  if (verb === "find") {
-    if (core.some((x) => /^-(exec|execdir|ok|okdir|delete)$/.test(x))) return [];
-    core.forEach((x, i) => {
-      if (/^-(name|iname|path|ipath|regex|iregex|wholename|iwholename)$/.test(x) && i + 1 < core.length && ok(i + 1)) out.push(i + 1);
-    });
-    return out;
-  }
-  if (verb === "git") {
-    // `git grep` takes grep's pattern forms after its global options
-    let k = 1;
-    while (k < core.length && core[k].startsWith("-")) k += /^-[Cc]$/.test(core[k]) ? 2 : 1;
-    if (core[k] === "log") return gitLogPatterns(core, k, skip);
-    if (core[k] !== "grep") return [];
-    // `-O<cmd>` runs a program on the matched files and mis-sorts the operands (`-Orm x -- F` reads `x` as -m's value, F as the pattern): every word stays a path
-    if (core.slice(k).some((a) => GIT_GREP_PAGER.test(a))) return [];
-    const rest = core.slice(k);
-    return scriptOperands(rest, new Set([...skip].filter((i) => i > k).map((i) => i - k))).map((i) => i + k);
-  }
-  const spec = VALUE_OPTS[verb];
-  if (!spec) return [];
-  const grepLike = GREP_FAMILY.has(verb);
-  const isRg = verb === "rg";
-  if (isRg && core.some((x) => x === "--files" || x === "--type-list")) return [];
-  const scripts: number[] = [];
-  let given = false;
-  let positional = -1;
-  let ended = false;
-  for (let i = 1; i < core.length; i++) {
-    if (!ok(i)) continue;
-    const x = core[i];
-    if (!ended && x === "--") {
-      ended = true;
-      continue;
-    }
-    if (!ended && /^--[^=]/.test(x)) {
-      const eq = x.indexOf("=");
-      const name = eq > 0 ? x.slice(0, eq) : x;
-      const isPat = spec.patternLong.includes(name);
-      if (isPat || spec.fileLong.includes(name)) given = true;
-      if (spec.globLong?.includes(name)) {
-        // a file-name pattern (`--exclude-dir=.git`), never a path
-        if (eq > 0) scripts.push(i);
-        else if (i + 1 < core.length && ok(i + 1)) scripts.push(i + 1);
-      }
-      if (eq < 0 && spec.long.includes(name)) {
-        // the value of any other option (`--encoding re`, `-A 3`) is no path either; file-reading options keep theirs
-        if ((isPat || (grepLike && !PATH_VALUED.test(name))) && i + 1 < core.length && ok(i + 1)) scripts.push(i + 1);
-        i++;
-      } else if (eq > 0 && isPat) scripts.push(i);
-      continue;
-    }
-    if (!ended && /^-[^-]/.test(x) && !(verb.endsWith("awk") && /^-[0-9]/.test(x))) {
-      for (let k = 1; k < x.length; k++) {
-        const c = x[k];
-        if (!spec.short.includes(c)) continue;
-        if (c === spec.pattern || c === spec.file) given = true;
-        const isGlob = c === spec.globShort;
-        if (k + 1 < x.length) {
-          if (c === spec.pattern || isGlob) scripts.push(i);
-        } else if (i + 1 < core.length) {
-          if ((c === spec.pattern || isGlob || (grepLike && c !== spec.file)) && ok(i + 1)) scripts.push(i + 1);
-          i++;
-        }
-        break;
-      }
-      continue;
-    }
-    if (positional < 0) positional = i;
-    // awk stops at its program; grep, rg and GNU sed take options after operands too (`grep x f -e y`)
-    if (verb.endsWith("awk")) break;
-  }
-  if (!given && positional > 0) scripts.push(positional);
-  return scripts;
-}
-
-/** An unknown word: an expansion (`$`, backtick) outside single quotes, or an unquoted tilde. */
-const unknownWord = (w: string): boolean => /[$`]/.test(w.replace(/'[^']*'/g, "''")) || w.startsWith("~");
-/** A word that is one double-quoted string (`"$PAT"`, `"$(cat p)"`): no word splitting or globbing, so it is exactly one operand. */
-const wholeDoubleQuoted = (w: string): boolean => /^"(?:[^"\\]|\\.)*"$/s.test(w);
-
-/**
- * A8: a grep or rg segment whose only unknown words are double-quoted strings (`"$PAT"`, `"$(...)"`) in a pattern position or the value of a non-file
- * option is a read: those words are replaced by a neutral literal and the segment is no longer opaque. An unquoted unknown word, an unknown program,
- * redirect target or path operand, a file option (`-f`), a wrapper and sed/awk (their script text is the pattern position and is unknown) keep the
- * segment as it is. Returns the relaxed segment, or the segment itself when nothing applies.
- */
-export function relaxPatternWords<S extends { program: string; argv: string[]; redirects: Array<{ target: string }>; wrappers: string[]; opaque: string | null; heredoc: boolean }>(seg: S): S {
-  if (seg.opaque !== "unresolved_var" && seg.opaque !== "glob_target") return seg;
-  if (seg.wrappers.length > 0 || seg.heredoc || !GREP_FAMILY.has(seg.program) || unknownWord(seg.program)) return seg;
-  if (seg.redirects.some((r) => unknownWord(r.target))) return seg;
-  const core = [seg.program, ...seg.argv];
-  const slots = new Set(scriptOperands(core, new Set()));
-  const argv = [...seg.argv];
-  let relaxed = false;
-  for (let i = 0; i < argv.length; i++) {
-    if (!unknownWord(argv[i])) continue;
-    if (!slots.has(i + 1) || !wholeDoubleQuoted(argv[i])) return seg;
-    argv[i] = "_";
-    relaxed = true;
-  }
-  if (!relaxed) return seg;
-  return { ...seg, argv, opaque: seg.opaque === "glob_target" ? seg.opaque : null };
-}
-
-/**
- * R10 item 4: the pickaxe/grep values of `git log` (`-S <string>`, `-G <regex>`, `--grep <pattern>`, their attached forms `-S<s>`, `--grep=<p>`),
- * up to `--`. `-L <range>:<file>` is left out: its <file> part stays a path word.
- */
-function gitLogPatterns(core: string[], k: number, skip: Set<number>): number[] {
-  const out: number[] = [];
-  for (let i = k + 1; i < core.length; i++) {
-    const x = core[i];
-    if (skip.has(i)) continue;
-    if (x === "--") break;
-    if ((x === "-S" || x === "-G" || x === "--grep") && i + 1 < core.length) {
-      if (!skip.has(i + 1)) out.push(i + 1);
-      i++;
-    } else if (/^-[SG]./.test(x) || x.startsWith("--grep=")) out.push(i);
-  }
-  return out;
-}
-
-/** Long grep/rg options whose separate value names a file or program: it stays a path word. */
-const PATH_VALUED = /^--(file|exclude-from|ignore-file|pre|pre-glob|hostname-bin)$/;
-
 /** Words that can never name a file to change in a redirect. */
 const DEV_TARGET = /^(\/dev\/(null|stdout|stderr|tty)|\d+|-)$/;
-
-/**
- * Long options each read command may carry and stay read-only. Anything else (an abbreviation such as
- * `--o=` for `--output`, `--in-pl`, `--pr=sh`, or an unknown option) makes the unit not read-only.
- */
-const READ_LONG: Record<string, string[]> = {
-  sort: "reverse numeric-sort unique ignore-case key field-separator human-numeric-sort month-sort version-sort general-numeric-sort ignore-leading-blanks dictionary-order ignore-nonprinting stable check merge zero-terminated parallel buffer-size temporary-directory random-sort help version".split(" "),
-  uniq: "count repeated unique ignore-case skip-fields skip-chars check-chars all-repeated group zero-terminated help version".split(" "),
-  sed: "quiet silent expression regexp-extended separate null-data line-length posix debug sandbox unbuffered binary help version".split(" "),
-  awk: "assign field-separator posix traditional re-interval sandbox help version".split(" "),
-  grep: "recursive dereference-recursive line-number ignore-case no-ignore-case invert-match count files-with-matches files-without-match include exclude exclude-dir regexp fixed-strings extended-regexp basic-regexp perl-regexp word-regexp line-regexp no-filename with-filename only-matching quiet silent max-count context after-context before-context color colour binary-files null text no-messages byte-offset initial-tab binary directories devices help version".split(" "),
-  rg: "glob iglob type type-not files files-with-matches files-without-match count count-matches line-number no-line-number ignore-case smart-case case-sensitive hidden no-ignore fixed-strings word-regexp line-regexp invert-match only-matching max-count max-depth context after-context before-context regexp heading no-heading with-filename no-filename follow multiline color json sort sortr threads type-list column pretty vimgrep null text quiet stats no-messages unrestricted glob-case-insensitive pcre2 engine replace trim help version".split(" "),
-  find: ["help", "version"],
-  diff: "unified context brief recursive ignore-case ignore-space-change ignore-all-space ignore-blank-lines side-by-side new-file text color report-identical-files minimal show-c-function label exclude help version".split(" "),
-};
-
-/** Whether one command (wrappers stripped) can only read: no in-place edit, output file, exec or script file. */
-function unitReadOnly(core: string[], skip: Set<number>): boolean {
-  const verb = baseName(core[0]);
-  const args = core.map((x, i) => (i > 0 && !skip.has(i) ? x : "")).slice(1);
-  const has = (re: RegExp): boolean => args.some((x) => re.test(x));
-  const longs = READ_LONG[verb.endsWith("awk") ? "awk" : verb];
-  if (longs) {
-    // never stop at `--`: it can be an option's value (`sort -T -- --o=FILE`)
-    for (const x of args) {
-      if (/^--./.test(x) && !longs.includes(x.slice(2).split("=")[0])) return false;
-    }
-  }
-  if (verb === "sort") return !has(/^-[A-Za-z]*o|^--(output|compress-program)\b/);
-  if (verb === "xxd") {
-    // `-r` reverts a dump into a binary and `xxd IN OUT` writes OUT: a read only without -r and with at most one operand (the values of -l -s -c -g -o are no operands)
-    if (has(/^-[A-Za-z]*r|^--(revert|r)\b/)) return false;
-    return args.filter((x, i) => x && !x.startsWith("-") && !/^-[lscgo]$/.test(args[i - 1] ?? "")).length <= 1;
-  }
-  if (verb === "find") return !has(/^-(exec|execdir|ok|okdir|delete|fprint0?|fprintf|fls)$/);
-  if (verb === "uniq") return !has(/^-[^-]*[^-cdDfisuwz0-9]/) && args.filter((x) => x && (x === "-" || !x.startsWith("-"))).length <= 1;
-  if (verb === "rg") return !has(/^--(pre|hostname-bin)\b/);
-  if (verb === "sed") {
-    // only flag letters and `-e` (BSD `-I`/`-l`, `-i`, `-f` write or take a file); `-l` is no value option, so its script is still checked
-    if (args.some((x) => /^-[^-]/.test(x) && !/^-[nErsuze]*$/.test(x))) return false;
-    const scripts = scriptOperands(core, skip);
-    return scripts.length > 0 && scripts.every((i) => sedReadOnly(core[i]));
-  }
-  if (verb.endsWith("awk")) {
-    if (has(/^-[A-Za-z]*[fEdilop]|^--(f|e|include|load)/)) return false;
-    const scripts = scriptOperands(core, skip);
-    return scripts.length > 0 && scripts.every((i) => awkReadOnly(core[i]));
-  }
-  return true;
-}
 
 /** Whether one unit (wrappers stripped) may have its protected operands skipped as a read: see PROTECTED_READERS. */
 function protectedReader(core: string[], skip: Set<number>): boolean {
@@ -2125,7 +1807,6 @@ const LEAD_KEYWORDS = new Set(["do", "then", "else", "elif", "if", "while", "unt
 /** Units that only steer control flow: `for f in a b`, `case x in`, a lone `done`/`fi`/`esac`. */
 const NEUTRAL_UNITS = new Set(["for", "select", "case"]);
 const NEUTRAL_END = new Set(["done", "fi", "esac"]);
-const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
 /** `git worktree` subcommands a child may run (`remove` is ask in the permission system). */
 const WORKTREE_OK = new Set(["list", "remove"]);
 

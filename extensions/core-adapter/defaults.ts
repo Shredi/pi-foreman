@@ -10,7 +10,6 @@ import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { nullDevice } from "./pathnorm.ts";
-import { gitConfigRead } from "./permoverlay.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -1323,4 +1322,35 @@ export function dangerSegment(seg: ShellSegment, env: DangerEnv): string | null 
   const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject"];
   const i = SEGMENT_RULES.findIndex((f) => f(seg, env));
   return i < 0 ? null : names[i];
+}
+
+const CONFIG_MODES = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"]);
+const CONFIG_MODS = new Set(["--local", "--worktree", "--global", "--system", "--includes", "--no-includes", "-z", "--null", "--show-origin", "--show-scope", "--name-only", "--bool", "--int", "--bool-or-int", "--path", "--expiry-date"]);
+
+/**
+ * `git config` args (after the subcommand) that only read: `<key>`, `get <key> [<re>]`, `list`, `--get|--get-all|--get-regexp <key> [<re>]`,
+ * `--get-urlmatch <name> <url>`, `--list`, with the modifiers above and `--default <v>` / `--type=<t>`. `--file`, `--blob`, `set`, `unset`,
+ * `--add`, `--replace-all`, `--edit`, any other flag, or a second operand without a --get mode is a write.
+ */
+export function gitConfigRead(rest: string[]): boolean {
+  let mode: string | undefined;
+  const ops: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--default") {
+      if (++i >= rest.length) return false;
+    } else if (a.startsWith("--type=") || CONFIG_MODS.has(a)) {
+      continue;
+    } else if (CONFIG_MODES.has(a)) {
+      if (mode !== undefined) return false;
+      mode = a === "-l" ? "--list" : a;
+    } else if (a.startsWith("-")) {
+      return false;
+    } else ops.push(a);
+  }
+  if (mode === undefined && (ops[0] === "get" || ops[0] === "list")) mode = `--${ops.shift()}`;
+  if (mode === "--list") return ops.length === 0;
+  if (mode === "--get-urlmatch") return ops.length === 2;
+  if (mode === undefined) return ops.length === 1;
+  return ops.length >= 1 && ops.length <= 2;
 }

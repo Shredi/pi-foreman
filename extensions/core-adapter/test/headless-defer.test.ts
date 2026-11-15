@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readBaseline } from "../permoverlay.ts";
+import { readBaseline } from "../baseline.ts";
 import { bashRules, deterministicAllow, timeoutCommandAllowed, unitAllowed, unwrapTimeout } from "../timeoutallow.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");

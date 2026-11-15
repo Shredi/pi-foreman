@@ -8,6 +8,21 @@ import * as path from "node:path";
 import { SCRATCH_DIR_NAME } from "./childscratch.ts";
 import type { Spawner } from "./spawn.ts";
 
+/** True when the session cwd is the package root or inside it (a dev checkout). Paths are resolved through symlinks; case-insensitive on win32/darwin. */
+export function isSelfHost(cwd: string, pkgRoot: string, platform: string = process.platform): boolean {
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  const fold = platform === "win32" || platform === "darwin";
+  const norm = (p: string): string => (fold ? p.toLowerCase() : p);
+  const rel = (platform === "win32" ? path.win32 : path.posix).relative(norm(real(pkgRoot)), norm(real(cwd)));
+  return rel === "" || (!rel.startsWith("..") && !(platform === "win32" ? path.win32 : path.posix).isAbsolute(rel));
+}
+
 export interface OwnedRoots {
   /** Read and write for the foreman. `sessions/*` is a wildcard segment (one dir per session). */
   readWrite: string[];

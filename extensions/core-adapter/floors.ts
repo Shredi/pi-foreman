@@ -9,7 +9,7 @@ import type { ShellSegment } from "./shellast.ts";
 import { lexUnder, normPath, sameOrUnder, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch } from "./glob.ts";
 import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
-import { nonPathArgs } from "./permoverlay.ts";
+import { nonPathArgs } from "./patternargs.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { redactCommand } from "./trace.ts";
 

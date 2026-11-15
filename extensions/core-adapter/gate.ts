@@ -11,13 +11,13 @@ import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
 import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, resolveWord, under } from "./pathrules.ts";
-import { boundNames, relaxPatternWords } from "./permoverlay.ts";
+import { relaxPatternWords } from "./patternargs.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
-import { parseShell } from "./shellast.ts";
+import { boundNames, parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
 import { matchProtected } from "./protected.ts";
@@ -394,7 +394,8 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         // an opaque unit (a leading `~` / `$HOME`) gets only the public-key rule, and only when it is a verified read (pubKeyReadWords)
         const r = opaque ? null : segmentDefault(s, cmd, dctx, ec);
         if (r !== null) return r;
-        const pubs = pubKeyReadWords([s], env, boundNames(cmd));
+        const bn = boundNames(cmd);
+        const pubs = pubKeyReadWords([s], env, bn.any ? new Set(["HOME", "USERPROFILE"]) : bn.names);
         if (pubs.size > 0 && s.argv.every((w) => w.startsWith("-") || pubs.has(w) || w === "/dev/null" || (s.program === "ssh-keygen" && /^(?:md5|sha256)$/.test(w))) && s.redirects.every((x) => x.op === "dup" || x.op === "<" || x.target === "/dev/null")) return PUBKEY_READ_RULE;
         if (opaque) return null;
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;

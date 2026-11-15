@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { diffGitSnapshots, takeGitSnapshot } from "../gitdrift.ts";
 import { launchWaitText, worktreeOfRun } from "../launchwait.ts";
-import { wildcardRegExp } from "../permoverlay.ts";
+import { wildcardRegExp } from "../glob.ts";
 import { runSessionCommand } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
 import { globRegExp } from "../worktreeroot.ts";
