@@ -1,6 +1,7 @@
 // Review occasions (docs/review.md): one launch path, climb rung, model rule and extractor for every
 // review, told apart by a marker in the reviewer's task text:
 //   [plan-review]    the plan before the checkpoint (ceremony.planReview),
+//   [high-stakes]    the extra whole-change pass of a large change (highstakes.ts; not config-facing, never counts),
 //   [pre-pr]         the whole branch diff before a pull request,
 //   [second-opinion] optional advice on unchanged work (bound.ts dupReview exemption; never blocks),
 //   none             "item": the review of built ledger items.
@@ -12,7 +13,8 @@
 import { launchEntries } from "./ladder.ts";
 import { REVIEW_ROLES, verdictOf, type Verdict } from "./rounds.ts";
 
-export type Occasion = "plan-review" | "pre-pr" | "second-opinion" | "item";
+export type Occasion = "plan-review" | "pre-pr" | "second-opinion" | "item" | "high-stakes";
+/** The config-facing occasions (reviewByOccasion keys, panel gates); `high-stakes` is not one of them. */
 export const OCCASIONS: readonly Occasion[] = ["plan-review", "pre-pr", "second-opinion", "item"];
 
 type Json = Record<string, unknown>;
@@ -26,12 +28,13 @@ function prose(text: string): string {
 /** A tag is standalone when the start of the text, whitespace or an opening bracket comes before it. */
 const tagIn = (text: string, tag: string): boolean => new RegExp(`(^|[\\s(\\[])\\[${tag}\\]`, "i").test(text);
 
-/** The occasion a task text (or a launch's `reason`) names; `[second-opinion]` wins over the others, then plan-review, then pre-pr. */
+/** The occasion a task text (or a launch's `reason`) names; `[second-opinion]` wins over the others, then plan-review, then high-stakes, then pre-pr. */
 export function occasionOf(text: unknown, reason?: unknown): Occasion {
   if (reason === "second-opinion") return "second-opinion";
   const t = typeof text === "string" ? prose(text) : "";
   if (tagIn(t, "second-opinion")) return "second-opinion";
   if (tagIn(t, "plan-review")) return "plan-review";
+  if (tagIn(t, "high-stakes")) return "high-stakes";
   if (tagIn(t, "pre-pr")) return "pre-pr";
   return "item";
 }
@@ -43,6 +46,7 @@ const OCCASION_LINES: Partial<Record<Occasion, string>> = {
   "second-opinion": "occasion: second-opinion (advisory: marks no items, does not open the review gate)",
   "plan-review": "occasion: plan-review (plan only: marks no items)",
   "pre-pr": "occasion: pre-pr (counts for items and the PR gate)",
+  "high-stakes": "occasion: high-stakes (the whole change on the high-stakes model: marks no items, opens no gate)",
 };
 
 /** The launch-result line of each non-item occasion a review child of the launch names (a misclassified review is visible before it runs). */

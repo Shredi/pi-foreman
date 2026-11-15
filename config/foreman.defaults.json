@@ -52,7 +52,7 @@
     "reviewPerRevision": true,
     "budgetUsd": null,
     "reviewModel": null,
-    "highStakes": { "model": null, "paths": [".github/workflows/**"] },
+    "highStakes": { "model": null, "modules": 5, "lines": 700 },
     "reviewByOccasion": {},
     "planReview": { "trivial": false, "standard": false, "heavy": true },
     "planReviewRounds": 2,

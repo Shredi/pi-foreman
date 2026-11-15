@@ -316,7 +316,7 @@ export function reviewsOfEntry(v: unknown): ReviewRecord[] {
 }
 
 /** Every `[pr_refused:<reason>]` a PR gate can name; `pr_alias`, `pr_compound`, `pr_config`, `checks_failed`, `repo_unmatched` and `repo_ambiguous` were only emitted by the removed shell gate and are kept for old traces. */
-export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed", "cwd_unreviewed", "cwd_stale", "repo_unmatched", "repo_ambiguous"] as const;
+export const PR_REFUSALS = ["no_review", "stale_review", "head_unknown", "child", "pr_alias", "pr_compound", "pr_config", "checks_failed", "cwd_unreviewed", "cwd_stale", "repo_unmatched", "repo_ambiguous", "high_stakes_required", "high_stakes_failed"] as const;
 /** The reasons of the branch test; `cwd_unreviewed`, `cwd_stale` (pr_create {cwd}) come from the sibling-checkout rules. */
 export type PrRefusal = "no_review" | "stale_review" | "head_unknown";
 
@@ -370,25 +370,44 @@ export function isPrToolName(name: string): boolean {
  * `checkout` (pr_create {cwd}): a checkout other than the session's opens only with a counting reviewer PASS recorded for exactly that
  * checkout (`records`, matched by realpath of the git toplevel) at its current HEAD; the branch test then runs there against that checkout's PASS heads alone.
  */
-export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown>; headless?: string | null; checkout?: { cwd: string; records: readonly ReviewRecord[] } }): Promise<{ reason: string; message: string } | null> {
+export async function prGateRefusal(g: { tool: string; isChild: boolean; gateOn: boolean; reviewed: readonly string[]; cwd: string; input?: Record<string, unknown>; headless?: string | null; checkout?: { cwd: string; records: readonly ReviewRecord[] }; highStakes?: HighStakesGate }): Promise<{ reason: string; message: string } | null> {
   if (g.isChild) return { reason: "child", message: `pi-foreman: ${g.tool} refused [pr_refused:child]: children may not create pull requests. Report back and let the foreman do it after a review.` };
   if (!g.gateOn) return null;
-  if (g.checkout) return siblingRefusal(g.cwd, g.checkout.cwd, g.checkout.records, g.input ?? {}, g.reviewed, g.headless ?? null);
-  return prToolRefusal(g.cwd, g.reviewed, g.input ?? {}, g.headless ?? null);
+  if (g.checkout) return siblingRefusal(g.cwd, g.checkout.cwd, g.checkout.records, g.input ?? {}, g.reviewed, g.headless ?? null, g.highStakes);
+  const refused = await prToolRefusal(g.cwd, g.reviewed, g.input ?? {}, g.headless ?? null);
+  return refused ?? (g.highStakes ? g.highStakes(null, await prHeads(g.cwd, g.input ?? {})) : null);
+}
+
+/**
+ * The high-stakes test of the PR gate (highstakes.ts prRefusal), run after the head test passed: `scope` is the checkout the pull request comes from
+ * (a sibling `pr_create {cwd}`), null for every checkout of the session; `heads` are the commits the call opens from.
+ */
+export type HighStakesGate = (scope: string | null, heads: readonly string[]) => Promise<{ reason: string; message: string } | null>;
+
+/** The commits the branch arguments of a PR tool call name (workspace HEAD without one), unresolvable ones left out. */
+async function prHeads(cwd: string, input: Record<string, unknown>): Promise<string[]> {
+  const named = PR_BRANCH_ARGS.filter((k) => input[k] !== undefined && input[k] !== null && input[k] !== "").map((k) => input[k]);
+  const refs = named.length === 0 ? ["HEAD"] : named.map((v) => (typeof v === "string" ? v.split(":").pop() ?? "" : ""));
+  const out: string[] = [];
+  for (const ref of refs) {
+    const sha = await commitOf(cwd, ref);
+    if (sha) out.push(sha);
+  }
+  return out;
 }
 
 /** The sibling-checkout test of {@link prGateRefusal}: `dir` is the requested checkout, `session` the session's own. */
-async function siblingRefusal(session: string, dir: string, records: readonly ReviewRecord[], input: Record<string, unknown>, reviewed: readonly string[], headless: string | null): Promise<{ reason: string; message: string } | null> {
+async function siblingRefusal(session: string, dir: string, records: readonly ReviewRecord[], input: Record<string, unknown>, reviewed: readonly string[], headless: string | null, hs?: HighStakesGate): Promise<{ reason: string; message: string } | null> {
   const refuse = (reason: string, why: string) => ({ reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}.` });
   const top = await toplevelOf(dir);
   if (!top) return refuse("cwd_unreviewed", `cwd ${dir} is not inside a git checkout; pr_create {cwd} takes a checkout a reviewer ran in`);
-  if (top === (await toplevelOf(session))) return prToolRefusal(session, reviewed, input, headless);
+  if (top === (await toplevelOf(session))) return (await prToolRefusal(session, reviewed, input, headless)) ?? (hs ? hs(null, await prHeads(session, input)) : null);
   const mine = records.filter((r) => r.cwd === top);
   const heads = passHeads(mine);
   if (heads.length === 0) return refuse("cwd_unreviewed", `no reviewer PASS is recorded for the checkout ${top}. Run a reviewer with cwd ${top} on its head, then retry pr_create {cwd}`);
   const cur = await commitOf(top, "HEAD");
   if (!cur || !heads.includes(cur)) return refuse("cwd_stale", `the recorded reviewer PASS for ${top} is for another commit than its HEAD (PASS ${heads[heads.length - 1]}, HEAD ${cur ?? "unreadable"}). Run a reviewer with cwd ${top} on the current head, then retry pr_create {cwd}`);
-  return prToolRefusal(top, heads, input);
+  return (await prToolRefusal(top, heads, input)) ?? (hs ? hs(top, [cur]) : null);
 }
 
 /** One line for the review panel block when the PR's checks failed ("" otherwise). */

@@ -174,7 +174,7 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
         await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
         return { blocked: null, id };
       },
-      endRunAs: (id: string, agent: string, output: string, cwd?: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent, success: true, status: "completed", results: [{ agent, status: "completed", success: true, output, ...(cwd ? { cwd } : {}) }] }),
+      endRunAs: (id: string, agent: string, output: string, cwd?: string, summary?: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent, success: true, ...(summary ? { summary } : {}), status: "completed", results: [{ agent, status: "completed", success: true, output, ...(cwd ? { cwd } : {}) }] }),
       ownerPrompt: () => handlers.get("input")!({ source: "interactive", text: "next" }, ctx),
       command: (name: string, args: string) => commands.get(name)!.handler(args, ctx),
       /** A foreman write of the ledger (tool_call, file, tool_result) so the tier header is read. */

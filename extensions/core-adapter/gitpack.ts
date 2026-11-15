@@ -14,7 +14,7 @@ import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
 import type { GithubHosts, PrKey } from "./prhost.ts";
 import { commitOf, headOf, prGateRefusal } from "./reviews.ts";
-import type { ReviewRecord } from "./reviews.ts";
+import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import type { Spawner } from "./spawn.ts";
@@ -277,6 +277,8 @@ export interface PrPackSession {
   headless?(): Promise<string | null>;
   /** Awaits the review sync, then every recorded verdict (for the `pr_create {cwd}` checkout test). Absent: none. */
   records?(): Promise<readonly ReviewRecord[]>;
+  /** The high-stakes test of the PR gate (reviews.ts HighStakesGate); absent: none (no model set, or an older caller). */
+  highStakes?: HighStakesGate;
   watches: PrWatches;
   trace(rec: Record<string, unknown>): void;
   /** The host rule for `host` arguments and the repository of a checkout (prhost.ts). */
@@ -398,7 +400,7 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           return { content: [{ type: "text" as const, text: `pr_unwatch: ${JSON.stringify({ number: params.number, unwatched: ended })}` }], details: { decision: "ran" } };
         }
         if (t.op === "pr_create") {
-          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head }, ...(dir ? { checkout: { cwd: dir, records: (await s.records?.()) ?? [] } } : {}) });
+          const refusal = await prGateRefusal({ tool: t.name, isChild: s.isChild, gateOn: s.gateOn, reviewed: await s.reviewed(), headless: (await s.headless?.()) ?? null, cwd: ctx.cwd, input: { head: params.head }, ...(s.highStakes ? { highStakes: s.highStakes } : {}), ...(dir ? { checkout: { cwd: dir, records: (await s.records?.()) ?? [] } } : {}) });
           if (refusal) {
             s.trace({ event: "pr_refused", reason: refusal.reason, toolFamily: "pr_create" });
             return failure(refusal.message, { decision: "pr_refused", reason: refusal.reason });

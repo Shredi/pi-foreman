@@ -2,7 +2,7 @@
 // a configured pair is used as set, also a self-pair or the same id on another provider, without a warning.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyOccasionOverrides, applyReviewModelRule, effectiveReviewer, missingPairWarning, modelIdOf, stakeOf } from "../reviewerclimb.ts";
+import { applyOccasionOverrides, applyReviewModelRule, effectiveReviewer, missingPairWarning, modelIdOf } from "../reviewerclimb.ts";
 import { entryOccasions } from "../occasion.ts";
 import { sanitizeTrace } from "../trace.ts";
 
@@ -67,21 +67,14 @@ test("modelIdOf: level and the provider up to the first slash dropped; a bare id
   assert.equal(modelIdOf("model-x:low"), "model-x");
 });
 
-// High stakes: a differing ceremony.highStakes.model wins over a self-pair for the foreman.
-test("high stakes: a differing highStakes.model wins over a self-pair (paired_skipped, review_stakes model_applied)", () => {
+// ceremony.highStakes.model replaces no other review's model: a self-pair for the foreman keeps its pair for a second opinion.
+test("highStakes.model does not win over a self-pair (the pair is used as set)", () => {
   const roles = { reviewer: { model: "provA/model-r" } };
   const config = { ceremony: { reviewModel: { "provA/model-x": "provA/model-x" }, highStakes: { model: "provB/model-z" } } };
   const input: Record<string, unknown> = { agent: "reviewer", task: "[second-opinion] x", model: "provA/model-r" };
   const occasions = entryOccasions(input);
-  const stakes = new Map<Record<string, unknown>, NonNullable<ReturnType<typeof stakeOf>>>();
-  for (const [e, occ] of occasions) {
-    const st = stakeOf(occ, "standard", [], null, config);
-    if (st) stakes.set(e, st);
-  }
-  const occ = applyOccasionOverrides(input, occasions, [], { config, maxThinking: "high", childMaxThinking: undefined, stakes });
-  const pinned = new Map([...occ.overrode].map((e) => [e, "occasion" as const]));
-  const rule = applyReviewModelRule(input, roles, opts(config, "provA/model-x", { thinking: occ.thinking, pinned }));
-  assert.equal(String(input.model).split(":")[0], "provB/model-z");
-  assert.deepEqual(rule.map((r) => [r.reason, r.pin]), [["paired_skipped", "occasion"]]);
-  assert.deepEqual(occ.traces.filter((t) => t.event === "review_stakes").map((t) => t.model_applied), [true]);
+  const occ = applyOccasionOverrides(input, occasions, [], { config, maxThinking: "high", childMaxThinking: undefined });
+  assert.deepEqual([occ.traces, [...occ.overrode]], [[], []]);
+  applyReviewModelRule(input, roles, opts(config, "provA/model-x", { thinking: occ.thinking }));
+  assert.equal(String(input.model).split(":")[0], "provA/model-x");
 });

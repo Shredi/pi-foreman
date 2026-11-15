@@ -12,7 +12,6 @@
 // used as set (the rank check skips it, like a pair; index.ts).
 import { get, type Json } from "./config.ts";
 import { clampLevel, splitLevel, type Thinking } from "./launchmodel.ts";
-import { globSegMatch } from "./glob.ts";
 import { OCCASIONS, type Occasion } from "./occasion.ts";
 import { ranksOf, tierOf } from "./ranks.ts";
 import { hasStrongRung, launchEntries } from "./ladder.ts";
@@ -157,6 +156,8 @@ export interface ReviewerClimbInput {
   fails: ReviewerFails;
   /** The work diff a reviewer entry will review (taken once; diffscan.ts ReviewFacts.diffOf). */
   diffOf: (entry: Json) => Promise<string | null>;
+  /** Entries that never climb (the `[high-stakes]` entry runs on its configured model). */
+  skip?: ReadonlySet<Json>;
 }
 
 /**
@@ -176,7 +177,7 @@ export async function planReviewerClimbs(input: Json, roles: Record<string, Json
   const rec = (to: string, reason: string, extra: Record<string, unknown>): Record<string, unknown> =>
     from === to ? { event: "rung_top", role: "reviewer", model: to, reason, ...extra } : { event: "rung_up", role: "reviewer", from, to, reason, ...extra };
   for (const e of launchEntries(input)) {
-    if (e.agent !== "reviewer") continue;
+    if (e.agent !== "reviewer" || o.skip?.has(e)) continue;
     const passed = e.model ?? (composite ? input.model : undefined);
     if (typeof passed === "string" && passed.trim()) continue; // the foreman chose the model
     const hits = securityScan(await o.diffOf(e));
@@ -235,66 +236,6 @@ export interface OccasionOverrideInput {
   config: Json | undefined;
   maxThinking: unknown;
   childMaxThinking: unknown;
-  /** High-stakes launches by entry (stakeOf): they take ceremony.highStakes.model when the occasion has no model of its own. */
-  stakes?: Map<Json, Stake>;
-}
-
-/** ceremony.highStakes: the model high-stakes reviews use (null: none) and the diff path globs that make a review high stakes. */
-export const HIGH_STAKES_PATHS: readonly string[] = [".github/workflows/**"];
-export const STAKE_TAGS: readonly string[] = ["security", "guard", "permission"];
-
-export function highStakesConfig(config: Json | undefined): { model: string | null; paths: string[] } {
-  const raw = get(config, "ceremony.highStakes");
-  const box = isObj(raw) ? raw : {};
-  const model = typeof box.model === "string" && box.model.trim() ? box.model.trim() : null;
-  const paths = Array.isArray(box.paths) ? box.paths.filter((p): p is string => typeof p === "string" && p.trim() !== "") : [...HIGH_STAKES_PATHS];
-  return { model, paths };
-}
-
-/** Why a reviewer launch is high stakes (any rule fires), with the risk tags and the first matching paths. */
-export interface Stake {
-  reasons: string[];
-  tags?: string[];
-  paths?: string[];
-}
-
-/** A path glob: `**` spans any number of segments (also none), `*` `?` and classes stay inside one segment. */
-export function pathGlob(glob: string, path: string): boolean {
-  const walk = (g: string[], p: string[]): boolean => {
-    if (g.length === 0) return p.length === 0;
-    if (g[0] === "**") return walk(g.slice(1), p) || (p.length > 0 && walk(g, p.slice(1)));
-    return p.length > 0 && globSegMatch(g[0], p[0]) && walk(g.slice(1), p.slice(1));
-  };
-  return walk(glob.split("/").filter(Boolean), path.split("/").filter(Boolean));
-}
-
-/** The paths a unified diff touches, in order, without repeats. */
-export function diffPaths(diff: string | null): string[] {
-  const out = new Set<string>();
-  for (const line of (diff ?? "").split(/\r?\n/)) {
-    const m = /^diff --git a\/(.*) b\/(.*)$/.exec(line);
-    if (m) out.add(m[2]);
-  }
-  return [...out];
-}
-
-/**
- * The high-stakes rules of a reviewer launch: occasion plan-review / second-opinion; pre-pr on the heavy tier; a session builder
- * risk tag security / guard / permission since the last counted review; a work-diff path matching ceremony.highStakes.paths.
- * Null when none fires.
- */
-export function stakeOf(occasion: Occasion | undefined, tier: string | undefined, tags: Iterable<string>, diff: string | null, config: Json | undefined): Stake | null {
-  if (!occasion) return null;
-  const reasons: string[] = [];
-  if (occasion === "plan-review" || occasion === "second-opinion") reasons.push("occasion");
-  if (occasion === "pre-pr" && tier === "heavy") reasons.push("heavy_pre_pr");
-  const hit = [...new Set(tags)].filter((t) => STAKE_TAGS.includes(t));
-  if (hit.length > 0) reasons.push("risk_tag");
-  const globs = highStakesConfig(config).paths;
-  const paths = globs.length === 0 ? [] : diffPaths(diff).filter((p) => globs.some((g) => pathGlob(g, p))).slice(0, 5);
-  if (paths.length > 0) reasons.push("sensitive_path");
-  if (reasons.length === 0) return null;
-  return { reasons, ...(hit.length > 0 ? { tags: hit } : {}), ...(paths.length > 0 ? { paths } : {}) };
 }
 
 /**
@@ -302,9 +243,8 @@ export function stakeOf(occasion: Occasion | undefined, tier: string | undefined
  * `reviewer` entry of an occasion with an override (panel shadows come later and keep theirs). The
  * model replaces the mapped one unless a repeat-fail or security climb raised the entry (the climb
  * wins); thinking replaces the level (also a security climb's rung, written after the rank check),
- * capped by maxThinking and childMaxThinking. A high-stakes entry (`o.stakes`) whose occasion has no model takes
- * ceremony.highStakes.model the same way (the occasion's own model wins) and gets `review_stakes {occasion, level, reasons,
- * tags?, paths?, model_applied}`. Returns `review_occasion {occasion, thinking, model_overridden}` records, the record
+ * capped by maxThinking and childMaxThinking. ceremony.highStakes.model plays no part here: it belongs to the `[high-stakes]`
+ * occasion alone (highstakes.ts). Returns `review_occasion {occasion, thinking, model_overridden}` records, the record
  * that carries the model per entry (the caller marks `policy_override`), and the applied level per entry (for the
  * different-model rule).
  */
@@ -314,16 +254,13 @@ export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasio
   const thinking = new Map<Json, Thinking>();
   const overrode = new Set<Json>();
   const traceOf = new Map<Json, Record<string, unknown>>();
-  if (table.size === 0 && !o.stakes?.size) return { traces, thinking, overrode, traceOf };
-  const hs = highStakesConfig(o.config);
+  if (table.size === 0) return { traces, thinking, overrode, traceOf };
   for (const e of launchEntries(input)) {
     const occ = e.agent === "reviewer" ? occasions.get(e) : undefined;
     if (!occ) continue;
     const ov = table.get(occ);
-    const stake = o.stakes?.get(e);
-    if (!ov && !stake) continue;
-    const fromStakes = !ov?.model && stake !== undefined && hs.model !== null;
-    const model = ov?.model ?? (fromStakes ? hs.model : null);
+    if (!ov) continue;
+    const model = ov.model;
     const climb = climbs.find((c) => c.entry === e);
     const overridden = model !== null && !climb;
     if (overridden) {
@@ -334,23 +271,15 @@ export function applyOccasionOverrides(input: Json, occasions: Map<Json, Occasio
       e.model = cappedRung(m.level || !own ? (model as string) : `${m.base}:${own}`, o.maxThinking, o.childMaxThinking);
     }
     let level: Thinking | null = null;
-    if (ov?.thinking) {
+    if (ov.thinking) {
       level = clampLevel(clampLevel(ov.thinking, o.maxThinking), o.childMaxThinking);
       if (typeof e.model === "string" && e.model) e.model = `${baseOf(e.model)}:${level}`;
       if (climb?.reason === "security") climb.model = `${baseOf(climb.model)}:${level}`;
       thinking.set(e, level);
     }
-    let rec: Record<string, unknown> | undefined;
-    if (ov) {
-      rec = { event: "review_occasion", role: "reviewer", occasion: occ, thinking: level, model_overridden: ov.model !== null && !climb };
-      traces.push(rec);
-    }
-    if (stake) {
-      const st: Record<string, unknown> = { event: "review_stakes", role: "reviewer", occasion: occ, level: "high", reasons: stake.reasons.join(","), ...(stake.tags ? { tags: stake.tags.join(",") } : {}), ...(stake.paths ? { paths: stake.paths.length } : {}), model_applied: fromStakes && overridden };
-      traces.push(st);
-      if (fromStakes) rec = st;
-    }
-    if (rec && overridden) traceOf.set(e, rec);
+    const rec: Record<string, unknown> = { event: "review_occasion", role: "reviewer", occasion: occ, thinking: level, model_overridden: ov.model !== null && !climb };
+    traces.push(rec);
+    if (overridden) traceOf.set(e, rec);
   }
   return { traces, thinking, overrode, traceOf };
 }
@@ -369,7 +298,8 @@ export interface ReviewModelInput {
   pinned?: Map<Json, ReviewPin>;
 }
 
-export type ReviewPin = "explicit" | "security_rung" | "occasion";
+/** `high_stakes`: the `[high-stakes]` entry keeps its configured model whatever it is (no pair, no different-model move). */
+export type ReviewPin = "explicit" | "security_rung" | "occasion" | "high_stakes";
 
 /** ceremony.reviewModel as a pair map `{<foreman base id>: "<model>[:<level>]"}`; non-string values and keys without `/` dropped. */
 function reviewPairs(config: Json | undefined): Map<string, string> {
@@ -445,6 +375,7 @@ export function applyReviewModelRule(input: Json, roles: Record<string, Json>, o
     if (e.agent !== "reviewer" || typeof e.model !== "string") continue;
     const from = baseOf(e.model);
     const pin = o.pinned?.get(e);
+    if (pin === "high_stakes") continue;
     const r = effectiveReviewer(e.model, roles, o.config, o.foreman, pin !== undefined, pin === "occasion");
     if (r.reason === "distinct") continue;
     if (r.reason === "no_alternative" || r.reason === "paired_skipped") {

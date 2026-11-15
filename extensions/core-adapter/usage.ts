@@ -57,6 +57,8 @@ export interface LaunchBinding {
   install?: true;
   /** ceremony-fixes-2: a single launch with `worktree: true` (tasks/chain launches carry no binding yet); the child exports FOREMAN_CHECKOUT=<workspace>. */
   worktree?: true;
+  /** A `[high-stakes]` review launch (highstakes.ts): its child marks no ledger item, item V included (the ledger tool refuses the mark). */
+  highStakes?: true;
   /** The parent-owned ask dir (childask.ts) where the child's gate writes `ask.md` for a policy ask; absent = the child cannot ask. */
   askDir?: string;
   /** Why the launch has no ask dir: the parent's `gate.childAsk` is `deny`, or the parent has no pane; absent = unknown. */
@@ -253,7 +255,7 @@ export function readBinding(env: Env): LaunchBinding | null {
     const pm = isObj(b.perms) && str(b.perms.mode) ? b.perms : null;
     const perms = pm ? { mode: str(pm.mode) as string, ...(str(pm.override) ? { override: str(pm.override) as string } : {}), ...(str(pm.profile) ? { profile: str(pm.profile) as string } : {}), ...(pm.childDeny === true ? { childDeny: true as const } : {}) } : null;
     const mcp = b.mcp === undefined ? {} : { mcp: Array.isArray(b.mcp) && b.mcp.every((x) => typeof x === "string") ? (b.mcp as string[]) : [] }; // malformed fails closed
-    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}) };
+    return { foremanSession, workspace: str(b.workspace) ?? "", role, launchId, kind, model: str(b.model), ...limit, ...(scratch && path.isAbsolute(scratch) ? { scratch } : {}), ...(askDir && path.isAbsolute(askDir) ? { askDir } : {}), ...(noAsk ? { noAsk } : {}), ...(handoffDir && (path.isAbsolute(handoffDir) || path.win32.isAbsolute(handoffDir)) ? { handoffDir } : {}), ...(perms ? { perms } : {}), ...(b.retro === true ? { retro: true } : {}), ...mcp, ...(pos(b.reads) ? { reads: b.reads as number } : {}), ...(b.install === true ? { install: true as const } : {}), ...(b.worktree === true ? { worktree: true as const } : {}), ...(b.highStakes === true ? { highStakes: true as const } : {}) };
   } catch {
     return null;
   }
