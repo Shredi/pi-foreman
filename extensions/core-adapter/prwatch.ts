@@ -1236,7 +1236,10 @@ export class PrWatches {
       this.setStatus(w, TRACKER_DOWN);
       if (!this.trackerDown) {
         this.trackerDown = true;
-        this.deps.send(noticeMessage(null, `watch: ${TRACKER_DOWN} (the watch stays armed)`, "tracker_down"), this.idle());
+        // a watch that manages a draft: nothing leaves draft while no tracker reports the PR, and the watch does not poll the host itself
+        const drafts = [...this.watches.values()].some((x) => !x.ended && this.managed(x));
+        const note = drafts ? "; a PR it manages may still be a draft, and nothing takes it out of draft until a tracker runs" : "";
+        this.deps.send(noticeMessage(null, `watch: ${TRACKER_DOWN} (the watch stays armed${note})`, "tracker_down"), this.idle());
         this.deps.trace({ event: "pr_watch", outcome: "tracker_down" });
       }
       return this.arm(w);
