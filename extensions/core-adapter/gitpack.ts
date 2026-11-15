@@ -8,7 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { get } from "./config.ts";
 import type { Env } from "./env.ts";
 import { PrWatches, TRACKER_DOWN, countRuns, oneLine, reviewFact } from "./prwatch.ts";
-import type { WatchSnapshot } from "./prwatch.ts";
+import type { StoreRead, WatchSnapshot } from "./prwatch.ts";
 import { FULL_TEXT } from "./prstore.ts";
 import type { AddOutcome } from "./prstore.ts";
 import { isTrackedKey, keyText, parsePrUrl, validHost, validNumber, validRepo } from "./prhost.ts";
@@ -409,10 +409,13 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           if (push) return failure(`pr_create: a push floor refuses pushing this branch (${push}); nothing was done.`, { decision: "push_refused" });
         }
         // pr_create under the draft flow opens as a draft; GitHub's refusal of drafts (a repository without them) is answered by one more create without it
-        let draftAsked = t.op === "pr_create" && (await askDraft(s, ctx, dir));
+        const asked = t.op === "pr_create" ? await askDraft(s, ctx, dir) : "no";
+        let draftAsked = asked === "yes";
+        let refusedDraft = false;
         let outcome = await run(t.op as PrOp, draftAsked ? { ...params, draft: true } : params);
         if (draftAsked && outcome.kind !== "ran" && draftRefused(outcome)) {
           draftAsked = false;
+          refusedDraft = true;
           outcome = await run("pr_create", { ...params, draft: false });
         }
         const res = report(t.op === "pr_status" ? await withReview(s, outcome) : outcome);
@@ -423,13 +426,17 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
         const r0 = res as { content: { type: "text"; text: string }[]; details: Record<string, unknown> };
         let draftNote = "";
         let out = armed.tracked ? { ...r0, details: { ...r0.details, tracked: armed.tracked } } : r0;
-        // a draft nobody watches could never be taken out of draft: no arm, or a PR the tracker will not report, and it leaves draft at once
-        if (draftAsked && !("key" in armed && armed.owned)) {
+        // a draft nobody watches could never be taken out of draft: no arm, a PR the tracker will not report, or no tracker running, and it leaves draft at once
+        const managed = draftAsked && "key" in armed && !!armed.owned;
+        if (draftAsked && !managed) {
           const key = "key" in armed ? armed.key : await watchKey(s, ctx, outcome.result.number, outcome.result.url, dir).catch(() => ({ host: "", repo: "", n: outcome.result.number as number }));
           const undone = await run("pr_draft", { number: outcome.result.number, ...(key.repo ? { repo: key.repo, ...(key.host ? { host: key.host } : {}) } : {}), draft: false }).catch((): SafeOpOutcome => ({ kind: "error", message: "no answer" }));
           s.trace({ event: "pr_watch", outcome: undone.kind === "ran" ? "draft_undone" : "draft_undo_failed" });
-          draftNote = `\n${undone.kind === "ran" ? "the PR is not handled as a draft (it is not watched or not tracked), so it was taken out of draft" : "the PR was opened as a draft and is not watched or tracked: take it out of draft by hand"}`;
-        }
+          const down = "key" in armed && armed.down;
+          draftNote = `\n${undone.kind === "ran" ? (down ? `the PR is not a draft: ${TRACKER_DOWN}, so it was taken out of draft` : "the PR is not handled as a draft (it is not watched or not tracked), so it was taken out of draft") : "the PR was opened as a draft and is not watched or tracked: take it out of draft by hand"}`;
+        } else if (managed) draftNote = `\n${DRAFT_MANAGED}`;
+        else if (params.draft === true && !refusedDraft) draftNote = "\nthe PR is a draft (draft: true) and nothing takes it out of draft automatically: do it by hand";
+        else draftNote = `\n${asked === "no_tracker" ? `the PR is not a draft: ${TRACKER_DOWN}, and nothing would take it out of draft` : refusedDraft ? "the PR is not a draft (the repository has no draft pull requests)" : "the PR is not a draft (draft handling is off or does not cover this host)"}`;
         const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote }] };
         out = { ...out, content: r.content };
         if ("duplicate" in armed) return out;
@@ -547,13 +554,20 @@ type Armed =
   | { key: PrKey; snap: WatchSnapshot | null; down: boolean; tracked?: TrackOutcome; owned?: boolean };
 
 /** pr_create: ask for a draft when the flow is on and the PR's host is a GitHub host the watch covers (a template or GitLab host never gets one). */
-async function askDraft(s: PrPackSession, ctx: ExtensionContext, dir?: string): Promise<boolean> {
-  if (!s.draftFlow?.()) return false;
+async function askDraft(s: PrPackSession, ctx: ExtensionContext, dir?: string): Promise<"yes" | "no" | "no_tracker"> {
+  if (!s.draftFlow?.()) return "no";
   const hosts = hostsOf(s);
-  if ("error" in hosts) return false;
+  if ("error" in hosts) return "no";
   const at = await s.tracker?.repoFor?.(dir ?? ctx.cwd).catch(() => null);
-  return !!at && isTrackedKey({ host: at.host, repo: at.repo, n: 1 }, hosts.hosts);
+  if (!at || !isTrackedKey({ host: at.host, repo: at.repo, n: 1 }, hosts.hosts)) return "no";
+  // no draft without a live tracker: nothing else takes a PR out of draft (the store's `down` rule, prstore.ts trackerLive)
+  // a store that cannot be read says nothing about the tracker: the draft is asked and the arm's failure undoes it
+  const st = await s.watches.stored({ host: at.host, repo: at.repo, n: 1 }).catch((): StoreRead => ({ kind: "waiting" }));
+  return st.kind === "down" ? "no_tracker" : "yes";
 }
+
+/** The report line of a draft PR the watch manages: the condition is the readiness rule (prready.ts) and needs a tracker report. */
+const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a reviewer PASS stands on its head, its checks have passed and the host says it is mergeable";
 
 /** GitHub's answer for a repository without draft pull requests, matched loosely (the wording is the host's). */
 function draftRefused(o: SafeOpOutcome): boolean {
@@ -590,8 +604,8 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
       return { error: "the pull request was not found", tracked };
     }
     tracked ??= await track();
-    // the watch owns the PR's draft state only when it was opened as a draft and the tracker will report it
-    const owned = draftAsked && (tracked === "added" || tracked === "present");
+    // the watch owns the PR's draft state only when it was opened as a draft, a tracker runs and it will report the PR
+    const owned = draftAsked && st?.kind !== "down" && (tracked === "added" || tracked === "present");
     if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen

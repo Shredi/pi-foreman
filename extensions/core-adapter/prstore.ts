@@ -231,6 +231,19 @@ export function parseSources(v: unknown): Record<string, SourceStatus> | undefin
 
 const one = (s: unknown): string => (typeof s === "string" ? s.replace(/\s+/g, " ").trim().slice(0, 300) : "");
 
+/** The tracker's state file when a tracker is live: the feed is on, the file parses as version 1, is not `off`, and its `trackedAt` is not older than 10 min. Null: no tracker. */
+function liveState(agentDir: string, now: number, feedOn: boolean): { prs: Record<string, unknown>; [k: string]: unknown } | null {
+  if (!feedOn) return null;
+  const state = readCached(trackedStateFile(agentDir));
+  if (!isObj(state) || state.v !== 1 || state.off === true || !finite(state.trackedAt) || now - state.trackedAt > SERVE_FRESH_MS || !isObj(state.prs)) return null;
+  return state as { prs: Record<string, unknown> };
+}
+
+/** A tracker is live: the one rule behind `readStoreEntry`'s `down` (the feed is on and the state file is fresh), nothing else (no pid, no heartbeat). */
+export function trackerLive(agentDir: string, now: number, feedOn: boolean): boolean {
+  return liveState(agentDir, now, feedOn) !== null;
+}
+
 /**
  * What the poll CLI stored for `key`, as a watch needs it. `down`: the feed is off, or the state file is missing, `off`, or its `trackedAt` is older
  * than 10 min (no tracker running). `waiting`: the tracker runs but has no snap for this key yet. `entry`: a snap (merged and closed ones too,
@@ -240,8 +253,8 @@ const one = (s: unknown): string => (typeof s === "string" ? s.replace(/\s+/g, "
 export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn: boolean, hosts: GithubHosts = DEFAULT_HOSTS): StoreRead {
   if (!feedOn) return { kind: "down" };
   if ("error" in hosts) return { kind: "error", error: hosts.error };
-  const state = readCached(trackedStateFile(agentDir));
-  if (!isObj(state) || state.v !== 1 || state.off === true || !finite(state.trackedAt) || now - state.trackedAt > SERVE_FRESH_MS || !isObj(state.prs)) return { kind: "down" };
+  const state = liveState(agentDir, now, feedOn);
+  if (!state) return { kind: "down" };
   if (!isTrackedKey(key, hosts.hosts)) return { kind: "error", error: `only ${hosts.hosts.join(", ")} PRs are tracked` };
   const k = storeKey(key.repo, key.n, key.host);
   const e = state.prs[k];
