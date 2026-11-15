@@ -55,7 +55,7 @@ test("readOwnAddonTasks lists only <sessionId>-<digits> dirs, with no log tails;
   assert.deepEqual(readOwnAddonTasks(dotted, "a.b").map((x) => x.id), ["x"], "the id is matched literally");
 });
 
-test("live file: waits keep bg, the pr_watch entry carries prs, tasks come from this session's dir, asks while an own ask is open", () => {
+test("live file: waits keep bg, the pr_watch entry carries prs, tasks come from this session's dir, an own ask.md adds no asks field", () => {
   const agent = tmp();
   const cwd = tmp();
   task(cwd, "s1-100", "t1");
@@ -79,12 +79,8 @@ test("live file: waits keep bg, the pr_watch entry carries prs, tasks come from 
   assert.deepEqual(a.tasks.map((x: { id: string; tail: string[] }) => [x.id, x.tail]), [["t1", []]]);
   assert.equal("asks" in a, false, "no ask, no field");
   fs.writeFileSync(path.join(hand, "ask.md"), "# Ask 1: rule scope\n\nbody\n");
-  fs.writeFileSync(path.join(hand, ".ask"), "ask-1\n");
   l.flush();
-  assert.deepEqual(read().asks, [{ n: 1, topic: "rule scope" }]);
-  fs.writeFileSync(path.join(hand, ".seen"), "ruling-1.md");
-  l.flush();
-  assert.equal("asks" in read(), false, "answered: gone");
+  assert.equal("asks" in read(), false, "the own ask.md is not a live field");
   l.stop();
 });
 

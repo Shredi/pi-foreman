@@ -283,7 +283,7 @@ PLAN_FIRST_NOTES = [
 def plan_first_notes(local):
     """`PLAN_FIRST_NOTES` for a footer; `local`: the parent is reached by intercom, else by file."""
     fill = {"to_parent": "in a message whose first line starts with `Question` (by file, `ask.md`, when the parent is not a Pi session)", "no_human": "ask the parent in a message"} if local else \
-        {"to_parent": "by file (`ask.md`)", "no_human": "ask by file (`ask.md`)"}
+        {"to_parent": "by file (`ask.md`)", "no_human": "ask by file (`ask.md`) and end your turn: the answer comes as a brief"}
     return [n % fill for n in PLAN_FIRST_NOTES]
 
 
@@ -330,10 +330,10 @@ def footer(label, plan_first):
         "never by a message.",
         "Ask by file: use this only when the parent is not a Pi session or intercom to the parent says `Session not found`.",
         "On `Session not found`, do not retry intercom: no retry reaches a parent that never registers with the broker.",
-        "Write `ask.md` in the handoff dir; its first line is `# Ask <n>: <topic>` (n = 1, 2, ... in order). pi-foreman",
-        "then touches `.ask` there and shows you as blocked in Herdr. The parent answers in `ruling-<n>.md` (same n).",
-        "Wait with `foreman_wait` kind `file` on `ruling-<n>.md` in the handoff dir. When the wait wakes, the harness writes",
-        "`.seen` (the ruling file name) itself; writing it by hand is harmless. Never ask by `herdr agent prompt`.",
+        "A question that a human at your pane can answer goes to the owner as a dialog instead. Otherwise:",
+        "Write `ask.md` in the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), say at your pane that you",
+        "wait for the parent, and end your turn. The answer comes as a brief (`brief-<n>.md` in the handoff dir) and starts your",
+        "next turn; do not `foreman_wait` for it. Never ask by `herdr agent prompt`.",
         "",
         "PR watch: a PR watch message tells you about CI, comments and conflicts. Report to the parent only",
         "`PR #n green on <sha>, mergeable, ready to merge` (a PR that is green and still a draft: `PR #n green on <sha>,",
@@ -389,10 +389,11 @@ def remote_footer(label, plan_first):
         "",
         "Ask once: a question goes to the parent or, when a human is at the pane and it is the owner's to decide, to the owner",
         "as a dialog, never both.",
-        "Ask: write `ask.md` in the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), then run",
+        "A question that a human at your pane can answer goes to the owner as a dialog. Otherwise ask by file: write `ask.md` in",
+        "the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), then run",
         "       %s ask" % base,
-        "The parent answers in `ruling-<n>.md` (same n). Wait with `foreman_wait` kind `file` on `ruling-<n>.md` in the",
-        "handoff dir. Never ask by `herdr agent prompt`.",
+        "Say at your pane that you wait for the parent and end your turn. The answer comes as a brief (`brief-<n>.md` in the",
+        "handoff dir) and starts your next turn; do not `foreman_wait` for it. Never ask by `herdr agent prompt`.",
         "",
         "PR: your work on a PR ends at ready (checks green, mergeable, a reviewer PASS on the head, out of draft). When the",
         "PR watch reports that, append the watch's line under `## Update` in `result.md` (create the file when there is",
@@ -2289,13 +2290,15 @@ def remote_brief(a, adir, entry):
             s["lastError"] = None
             s["lastDeliverAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             ruling = re.fullmatch(r"ruling-(\d+)\.md", file_name)
-            if kind == "ruling":
-                s["rulings"] = int(s.get("rulings") or 0) + 1  # the watcher clears an ask on a ruling, not on a plain brief
+            # the answer to a remote ask is a brief (or a `ruling-<n>.md` from a parent on the old footer); the watcher clears an ask on `answers`
+            # going up. A plan ruling (`ruling.md`, `ruling-plan.md`) and a steer never answer it.
+            if kind == "brief" or ruling:
+                s["answers"] = int(s.get("answers") or 0) + 1
             ask = s.get("ask")
-            if kind == "ruling" and isinstance(ask, dict):
+            if isinstance(ask, dict):
                 known = isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool)
-                # a delivered ruling answers the ask: its number reaches the ask's, or the ask's number is unknown
-                if not known or (ruling and int(ruling.group(1)) >= ask["n"]):
+                # a delivered brief answers the ask; so does a ruling whose number reaches the ask's, or when the ask's number is unknown
+                if kind == "brief" or (ruling and (not known or int(ruling.group(1)) >= ask["n"])):
                     s["ask"] = None
     write_registry(adir, reg)
     print("pi-foreman session: %s delivered to %s@%s (%s bytes%s)." % (

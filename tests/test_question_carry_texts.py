@@ -37,7 +37,7 @@ class RemoteFooterTest(unittest.TestCase):
     def test_remote_footer_keeps_the_ask_by_file_wording(self):
         text = fsn.remote_footer("demo", True)
         self.assertIn("everything else you cannot settle goes to the parent by file (`ask.md`). When unsure", text)
-        self.assertIn("(no human at the pane), ask by file (`ask.md`).", text)
+        self.assertIn("(no human at the pane), ask by file (`ask.md`) and end your turn: the answer comes as a brief.", text)
         self.assertNotIn("starts with `Question`", text)
         self.assertNotIn("Question to the parent", fsn.remote_footer("demo", False))
 

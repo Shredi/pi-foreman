@@ -28,9 +28,14 @@ class HandoffCarveOut(unittest.TestCase):
                           self.h if handoff else None)
 
     def test_allowed_names(self):
-        for name in ("plan.md", "result.md", "ask.md", "ask-3.md", ".ask", ".seen", ".steer-last-read.json", "work/x/y.txt"):
+        for name in ("plan.md", "result.md", "ask.md", "ask-3.md", ".steer-last-read.json", "work/x/y.txt"):
             with self.subTest(name=name):
                 self.assertIsNone(self.d(f"echo x > {self.h}/{name}"))
+
+    def test_ask_marker_names_are_no_longer_child_names(self):
+        for name in (".ask", ".seen"):
+            with self.subTest(name=name):
+                self.assertIsNotNone(self.d(f"echo x > {self.h}/{name}"))
 
     def test_variable_spelling(self):
         self.assertIsNone(self.d('echo x > "$PI_FOREMAN_HANDOFF_DIR/result.md"'))

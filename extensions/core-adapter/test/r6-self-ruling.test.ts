@@ -54,7 +54,7 @@ test("self ruling: pure reads of the ruling and the dir stay allowed", async () 
   assert.equal(await refuse(r, "bash", { command: `head -3 ${inBash(path.join(r.up, "ruling.md"))} | wc -l` }), undefined);
 });
 
-test("self ruling: parent-side dirs, unrelated shell commands and the harness .seen write are unaffected", async () => {
+test("self ruling: parent-side dirs, unrelated shell commands and a .seen write are unaffected", async () => {
   const r = rig();
   assert.equal(await refuse(r, "write", { path: path.join(r.down, "ruling.md") }), undefined);
   assert.equal(await refuse(r, "bash", { command: `echo APPROVED > ${inBash(path.join(r.down, "ruling-2.md"))}` }), undefined);

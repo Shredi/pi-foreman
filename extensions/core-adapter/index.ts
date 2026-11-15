@@ -50,7 +50,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -218,7 +218,7 @@ import { selfFinish, spawnDetached } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
-import { AskContract } from "./askcontract.ts";
+import { OwnAsk } from "./ownask.ts";
 import { SteerReader } from "./steer.ts";
 import { foremanTriage, GATED_TOOLS, isTriaged, OUTWARD_TOOLS, triageAdvice, triageGateBlock, TRIAGE_RULES, TRIAGE_TOOL, trivialPathAdvice, workspaceTargets } from "./triage.ts";
 import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectChange, scratchDirOf } from "./editmode.ts";
@@ -334,7 +334,7 @@ interface Session {
   /** Tool call ids of bash/powershell calls and of ask_user_question/plan_mode_question calls in flight (the warm tier reads them). */
   commandCalls: Set<string>;
   questionCalls: Set<string>;
-  /** Foreman only: ms epoch of the last parent ruling/brief that lifted the caps (capsReset); persisted with reviewCount. */
+  /** Foreman only: ms epoch of the last parent brief that lifted the caps (capsReset); persisted with reviewCount. */
   capsResetAt: number;
   /** Foreman bash calls made while a child run was active, since the last trace emit (D5; delta, reset on emit). */
   pollBash: number;
@@ -1741,6 +1741,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     await reviewPairNotice(s, ctx, ctx.model);
     herdrMeta.start(ctx, get(s.config.config, "herdr.groupTag") !== false);
+    evalOwnAsk(s);
     if (!s.isChild) bgTrace = (r) => s.trace?.emit(r);
     remoteWatch?.stop();
     remoteWatch = null;
@@ -1767,7 +1768,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         seconds: () => noticeSeconds(get(s.config.config, "sessions.blockedNoticeSeconds")),
         carry: s.carry,
         contact: (child) => (watch as RemoteWatcher | null)?.lastContact(child),
-        ask: (label, file) => waits.childNotice(s.id, label, "ask", file),
         send: (text, wake) => {
           let idle = true;
           try {
@@ -1887,8 +1887,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!s) return;
     shutdownAborts.get(s.id)?.abort(); // closes every open permission dialog of this session without an answer
     shutdownAborts.delete(s.id);
-    asks.get(s.id)?.releaseAll();
-    asks.delete(s.id);
+    ownAsks.get(s.id)?.releaseAll();
+    ownAsks.delete(s.id);
     for (const [id, h] of [...ledgerHolds]) if (h.sid === s.id) releaseLedgerHold(id);
     gateRuntimes.delete(s.id);
     gateOwnerMessages.delete(s.id);
@@ -4210,6 +4210,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (cause === "wake") s.turn.wakeKinds = [...new Set((m.details as { kinds?: unknown[] } | undefined)?.kinds ?? [])].map(String).join(",");
     // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
+    if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) evalOwnAsk(s);
     if (m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender(m.details);
     if (m.customType === INTERCOM_MESSAGE_TYPE) noteQuestion(s, m.details);
     if (m.customType === NOTIFY_TYPE) onCompletionNotice(s, m.content);
@@ -4246,6 +4247,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) ownAskFor(s).typed();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), persistRounds(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) reviewFacts.reset(); // a new piece of work: the next builder launch records a new diff base (diffscan.ts ReviewFacts)
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) {
@@ -4471,15 +4473,37 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The owned handoffs root (`<agentDir>/pi-foreman/handoffs`). */
   const handoffsRoot = (s: Session): string | undefined => s.owned.readWrite.find((r) => path.basename(r) === "handoffs");
 
-  /** The ask contract of a session (askcontract.ts): `ask.md` in an own handoff dir -> `.ask` marker + blocked signal. */
-  const asks = new Map<string, AskContract>();
-  function askContractFor(s: Session): AskContract {
-    let c = asks.get(s.id);
+  /** The own `ask.md` of a session (ownask.ts): open by the one rule sets the parent blocked source, not open releases it. */
+  const ownAsks = new Map<string, OwnAsk>();
+  function ownAskFor(s: Session): OwnAsk {
+    let c = ownAsks.get(s.id);
     if (!c) {
-      c = new AskContract({ ownDirs: () => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.ownOn(label, BLOCK_PARENT) });
-      asks.set(s.id, c);
+      c = new OwnAsk({ dirs: () => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), block: (label) => blockedShim.ownOn(label, BLOCK_PARENT) });
+      ownAsks.set(s.id, c);
     }
     return c;
+  }
+
+  /** Evaluate the rule; a version found open for the first time lets the turn end without the finish checks (until the next message, wake or typed input). */
+  function evalOwnAsk(s: Session): void {
+    if (s.isChild) return;
+    if (ownAskFor(s).evaluate().fresh) {
+      s.waitingForParent = true;
+      s.trace?.emit({ event: "waiting_for_parent", decision: "set", toolFamily: "ask" });
+    }
+  }
+
+  /** `file` is directly inside one of this session's own handoff dirs. */
+  function inOwnHandoff(s: Session, file: string): boolean {
+    const real = (p: string): string => {
+      try {
+        return fs.realpathSync.native(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    const dir = real(path.dirname(file));
+    return childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)).some((d) => real(d) === dir);
   }
 
   /** steer.md of the own handoff dirs (steer.ts): appended to every wake delivered to this session. */
@@ -4523,7 +4547,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const MUTATING_TOOLS = new Set(["write", "edit", "bash", "powershell"]);
 
   /**
-   * A parent-written `ruling-<n>.md` / `brief-<x>.md` in this session's handoff dir lifts the loop stop and the read
+   * A parent-written `brief-<x>.md` in this session's handoff dir lifts the loop stop and the read
    * budget (rounds.ts rulingReset, strict: regular file, ctime and mtime newer than the watermark, not self-written; no text parser).
    * Skipped while another write/edit/shell call is in flight. Runs at the top of tool_call, before the budget and cap checks.
    */
@@ -4551,7 +4575,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.budget.resetAll();
     s.capsResetAt = Math.ceil(at);
     persistRounds(s);
-    s.trace?.emit({ event: "cap_reset", by: isBriefName(hits[0]) ? "brief" : "ruling", count: hits.length });
+    s.trace?.emit({ event: "cap_reset", by: "brief", count: hits.length });
   }
 
   /**
@@ -4747,7 +4771,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
-        if (askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given)) === "note") owner.trace?.emit({ event: "ask_note", needs_ruling: "no" });
+        if (inOwnHandoff(owner, path.resolve(ctx.cwd, given))) evalOwnAsk(owner);
         if (isTrackedRulingName(path.basename(given))) {
           const abs = path.resolve(ctx.cwd, given);
           let real = abs;
@@ -4761,11 +4785,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           selfRulingsFor(owner).mark(real);
         }
       }
-    }
-    // R6 4a: a ruling-<n>.md / ruling.md read through the read tool writes `.seen` and the blocked state is recomputed now; only the ask's own ruling-<n>.md closes an open ask, a read of ruling.md (a plan ruling) never does by itself (ruling.ts askOpen).
-    if (owner && !owner.isChild && !event.isError && event.toolName === "read") {
-      const given = (event.input as Record<string, unknown>).path;
-      if (typeof given === "string" && isRulingName(path.basename(given))) askContractFor(owner).onRulingWake(path.resolve(ctx.cwd, given));
     }
     const bashSnap = bashRulingSnaps.get(event.toolCallId);
     if (owner && bashSnap) {
@@ -4784,8 +4803,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     owner?.questionCalls.delete(event.toolCallId);
     releaseQuestion(event.toolCallId);
     if (owner?.isChild && event.toolName === "bash" && process.env[SCRATCH_ENV]) clearOpenCommand(process.env[SCRATCH_ENV]!, event.toolCallId);
-    // A `.seen` written by a shell command ends the ask too: the blocked state is recomputed from the files (R6 lane 4a).
-    if (owner && !owner.isChild && event.toolName === "bash") askContractFor(owner).recheck();
+    // A shell command may have copied in an ask.md or a brief: the rule is evaluated again.
+    if (owner && !owner.isChild && event.toolName === "bash") evalOwnAsk(owner);
     const pending = owner?.pendingChanges.get(event.toolCallId);
     let planFormNote = "";
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
@@ -5278,7 +5297,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", inRun: () => s.inRun, onStart: (spec, id) => {
         markHandoffWait(s, spec, id);
         if (spec.kind === "pid" && spec.bg) bgRecords.post(`fb-${id}`, "working", spec.note, "Running");
-      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), onRulingWake: (file) => void askContractFor(s).onRulingWake(file), unreportedAsk: (label) => childBlocked?.takeAsk(label) ?? null, steer: (text) => steerFor(s).append(text) };
+      }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), steer: (text) => steerFor(s).append(text) };
     },
   });
 

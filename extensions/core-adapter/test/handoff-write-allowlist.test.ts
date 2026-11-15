@@ -11,8 +11,8 @@ const w = (rel: string, real: (p: string) => string | null = ident): boolean => 
 };
 
 test("win32: allow-list names are writable, parent-owned names are not", () => {
-  for (const n of ["plan.md", "result.md", "ask.md", "ask-2.md", ".ask", ".seen", ".steer-last-read.json", "work\\a\\b.txt"]) assert.equal(w(n), true, n);
-  for (const n of ["brief.md", "ruling-1.md", "steer.md", "close.json", "parent", "child", "x.txt"]) assert.equal(w(n), false, n);
+  for (const n of ["plan.md", "result.md", "ask.md", "ask-2.md", ".steer-last-read.json", "work\\a\\b.txt"]) assert.equal(w(n), true, n);
+  for (const n of [".ask", ".seen", "brief.md", "ruling-1.md", "steer.md", "close.json", "parent", "child", "x.txt"]) assert.equal(w(n), false, n);
 });
 
 test("win32: case, trailing dot/space, ADS and 8.3 spellings", () => {

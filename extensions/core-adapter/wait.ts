@@ -279,12 +279,8 @@ export interface RuntimeDeps {
   mtime?: (p: string) => number | null;
   /** Entries of a directory with their mtimes (production only); lets a ruling wait end when a newer `brief-<x>.md` lands beside it. Absent = no supersede. */
   briefs?: (dir: string) => { name: string; mtimeMs: number }[];
-  /** A file wait on a ruling file woke (the harness writes `.seen`; ask contract). */
-  onRulingWake?: (file: string) => void;
   /** A foreman_bg wait ended: `exited` (the process is gone), `timeout` (the wait hit maxSeconds, the process is still alive) or `cancelled` (the session closed and the process was sent SIGTERM) or `dropped` (the agent cancelled the wait; the process is left alone). */
   onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
-  /** child waits: an open ask of the child `label` (or of any child for `any`) that nobody was told about yet; the lookup counts it as reported. Absent = no replay. */
-  unreportedAsk?: (label: string) => { label: string; path: string } | null;
   /** True while a run is in progress (the adapter's own record, agent_start .. agent_end). Absent = never. */
   inRun?: () => boolean;
   /** A carried child notice ended a wait inside a run: the wait ends with this one quiet line, not a wake. */
@@ -384,15 +380,6 @@ export class WaitRuntime {
     else if (spec.kind !== "child") this.poll(e, spec, 0);
     this.d.trace({ event: "wait", decision: "start", toolFamily: spec.kind });
     this.notify();
-    if (spec.kind === "child") {
-      let ask: { label: string; path: string } | null = null;
-      try {
-        ask = this.d.unreportedAsk?.(spec.label) ?? null;
-      } catch {
-        // a lookup never breaks a wait
-      }
-      if (ask) this.resolve(id, `child ${ask.label}: ask${ask.path ? ` ${oneLine(ask.path, 300)}` : ""}`);
-    }
     return { id };
   }
 
@@ -413,11 +400,9 @@ export class WaitRuntime {
         if (spec.kind === "file") {
           const size = this.d.stat(spec.path);
           if (size !== null && (!this.d.mtime || rulingFresh(spec.path, this.d.mtime))) {
-            if (isRulingName(path.basename(spec.path))) this.d.onRulingWake?.(spec.path);
             return this.resolve(e.id, `exists, ${size} bytes`);
           }
           // A ruling wait outlives its purpose when the parent answers with a brief instead: a brief newer than the wait ends it.
-          // `.ask` stays open until a ruling or `.seen` arrives.
           if (this.d.briefs && this.d.mtime && isRulingName(path.basename(spec.path))) {
             const dir = path.dirname(spec.path);
             const brief = this.d.briefs(dir).find((b) => isBriefName(b.name) && b.mtimeMs > e.started);
@@ -489,7 +474,7 @@ export class WaitRuntime {
 
   /**
    * A plan, result, update, ask or closed notice of the registry child `label` (a remote child passes its mirror path): resolves the first child wait
-   * naming that label (else the first naming `any`). A notice before the wait starts is not replayed, except an unreported open ask (`unreportedAsk`). `carried`: the notice came as an intercom message;
+   * naming that label (else the first naming `any`). A notice before the wait starts is not replayed. `carried`: the notice came as an intercom message;
    * with a run in progress that message is already in the run, so the wait ends through `taken` (one quiet line) and nothing is woken.
    */
   childNotice(label: string, kind: string, notePath: string, carried = false): boolean {
@@ -663,10 +648,6 @@ export interface WaitSession {
   onCancel?: (id: string) => void;
   /** A foreman_bg wait ended (bgrecords.ts posts or clears the task's hc record). */
   onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
-  /** Called when a file wait on a ruling file woke (the harness writes `.seen`; askcontract.ts). */
-  onRulingWake?: (file: string) => void;
-  /** child waits: the unreported open ask lookup of the child-blocked tick (childblocked.ts `takeAsk`). */
-  unreportedAsk?: (label: string) => { label: string; path: string } | null;
   /** Appends a pending steer.md (steer.ts) to a wake message text. */
   steer?: (text: string) => string;
   /** The current pressure level and reasons (pressure waits). */
@@ -688,7 +669,7 @@ const PARAMS = {
     path: { type: "string", description: "file: resolves when this file exists (inside the workspace, its .workflow/ or <agentDir>/pi-foreman/state/wait/)." },
     pid: { type: "integer", minimum: 2, description: "pid: resolves when this process has exited." },
     runId: { type: "string", description: "ci: GitHub Actions run id (digits); resolves when the run completes." },
-    label: { type: "string", description: "child: the label of a session opened by `foreman session open`, or any; resolves on its next plan, result, update, ask or closed notice (a remote child's wake names its mirror path; an open ask of the child that nobody was told about yet is replayed once when the wait starts; any other notice that came before the wait started is not replayed)." },
+    label: { type: "string", description: "child: the label of a session opened by `foreman session open`, or any; resolves on its next plan, result, update, ask or closed notice (a remote child's wake names its mirror path; a notice that came before the wait started is not replayed)." },
     note: { type: "string", maxLength: NOTE_MAX, description: "start: shown back in the wake message." },
     log: { type: "string", description: "start, pid or ci: a log file shown by `/foreman waits` (last 5 lines) and named in the wake message." },
     id: { type: "string", description: "cancel: the wait id." },
@@ -781,8 +762,6 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       stat: fileSize,
       mtime: fileMtime,
       briefs: dirBriefs,
-      onRulingWake: (file) => s.onRulingWake?.(file),
-      unreportedAsk: (label) => s.unreportedAsk?.(label) ?? null,
       onBgEnd: (id, note, how) => s.onBgEnd?.(id, note, how),
       alive: processAlive,
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),

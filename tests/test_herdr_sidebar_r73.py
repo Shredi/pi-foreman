@@ -171,13 +171,14 @@ class NeedsYouSourcesTest(World):
         tokens, _ = self.push()
         self.assertNotEqual(tokens["fm_state"], "needs-you")
 
-    def test_open_ask_file_without_a_ruling(self):
-        self.put("sid-1", state="idle", presence="idle", asks=[{"n": 1, "topic": "which way"}])
+    def test_open_ask_file_without_an_answer_is_the_presence_of_the_live_file(self):
+        # an own ask.md is the blocked source of the session, so the live file says needs-you; a live `asks` list alone is no longer read
+        self.put("sid-1", state="blocked", presence="needs-you", blockedSince=iso(5))
         tokens, tpl = self.push()
         self.assertEqual(tokens["fm_state"], "needs-you")
         self.assertIn("❓", tokens["fm_hd"])
         self.assertIsNone(tpl)
-        self.put("sid-1", state="idle", presence="idle")  # ruling-1.md seen: the presence file lists no ask
+        self.put("sid-1", state="idle", presence="idle", asks=[{"n": 1, "topic": "which way"}])
         tokens, _ = self.push()
         self.assertNotEqual(tokens["fm_state"], "needs-you")
 
