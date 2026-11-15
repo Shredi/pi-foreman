@@ -54,7 +54,7 @@ test("tracker live (also not yet polled): a draft the watch owns; the line says 
   assert.equal(x.creates()[0].args.draft, true);
   assert.equal(x.watches.records()[0].owned, true);
   assert.deepEqual(x.drafts(), []);
-  assert.match(r.content[0].text, /the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `\[pre-pr\]` reviewer PASS is the newest code review on its head, its checks have passed and the host says it is mergeable/);
+  assert.match(r.content[0].text, /the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `\[pre-pr\]` reviewer PASS is the newest code review on its head, its checks have settled green \(or none are confirmed\), the host says it is mergeable and the merge state is not behind, dirty or unknown/);
 });
 
 test("tracker never ran or died (store down): no draft asked, nothing to undo, the line says why", async () => {

@@ -567,7 +567,7 @@ async function askDraft(s: PrPackSession, ctx: ExtensionContext, dir?: string): 
 }
 
 /** The report line of a draft PR the watch manages: the condition is the readiness rule (prready.ts) and needs a tracker report. */
-const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `[pre-pr]` reviewer PASS is the newest code review on its head, its checks have passed and the host says it is mergeable";
+const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `[pre-pr]` reviewer PASS is the newest code review on its head, its checks have settled green (or none are confirmed), the host says it is mergeable and the merge state is not behind, dirty or unknown";
 
 /** GitHub's answer for a repository without draft pull requests, matched loosely (the wording is the host's). */
 function draftRefused(o: SafeOpOutcome): boolean {
