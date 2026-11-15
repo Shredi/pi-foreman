@@ -54,7 +54,9 @@ export const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
 
 /**
  * The ask in `dir` is unanswered: `.ask` is present and `.seen` does not name its ruling (`ruling-<n>.md` for
- * `ask-<n>`, or `ruling.md`; with no number in `.ask`, any `.seen` ends it). Never a stored flag.
+ * `ask-<n>`; with no number in `.ask`, any `.seen` ends it). `ruling.md` (the plan ruling) never answers an ask by
+ * itself: with `.seen` = `ruling.md` the ask is closed only when its own `ruling-<n>.md` exists and is not older than
+ * `ask.md` (a later plan-ruling wake overwrites `.seen` and must not reopen an answered ask). Never a stored flag.
  */
 export function askOpen(dir: string): boolean {
   const ask = readText(path.join(dir, ".ask"));
@@ -66,7 +68,11 @@ export function askOpen(dir: string): boolean {
   const named = seen.trim();
   const n = ASK_N_RE.exec(ask.trim())?.[1];
   if (n === undefined) return false;
-  return !(named === `ruling-${Number(n)}.md` || named === "ruling.md");
+  const own = `ruling-${Number(n)}.md`;
+  if (named === own) return false;
+  if (named !== "ruling.md") return true;
+  const ownFile = path.join(dir, own);
+  return !(mtimeOf(ownFile) !== null && rulingFresh(ownFile));
 }
 
 const realKey = (p: string): string => {

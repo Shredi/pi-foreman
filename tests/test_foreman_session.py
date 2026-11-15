@@ -114,7 +114,7 @@ class SessionTest(unittest.TestCase):
         words = shlex.split(calls[2][3].split("; ", 1)[1])  # after the status-line printf
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
                                  "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener",
-                                 "PI_FOREMAN_SESSION_MODEL=prov/model-1", "pi", "--model", "prov/model-1",
+                                 "PI_FOREMAN_SESSION_MODEL=prov/model-1", "PI_CODING_AGENT_DIR=%s" % self.agent, "pi", "--model", "prov/model-1",
                                  "Read the handoff brief at %s and proceed." % (handoff / "brief.md").as_posix()])
 
     def test_group_tag_parent_slug_from_an_opened_child_and_off_switch(self):

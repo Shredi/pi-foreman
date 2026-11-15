@@ -1,7 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { runSessionCommand } from "../session.ts";
 import type { SessionDeps } from "../session.ts";
+
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-fallback-model-")));
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 
 function deps(over: Partial<SessionDeps> = {}): SessionDeps & { spawned: string[][] } {
   const spawned: string[][] = [];
@@ -9,7 +15,7 @@ function deps(over: Partial<SessionDeps> = {}): SessionDeps & { spawned: string[
     isChild: false,
     env: {},
     agentDir: "/tmp/pf-fallback-model-agent",
-    cwd: "/tmp",
+    cwd: root,
     piSessionId: "sess-1",
     pkgRoot: "/pkg",
     python: "/usr/bin/python3",

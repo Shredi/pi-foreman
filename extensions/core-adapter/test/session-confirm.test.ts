@@ -101,11 +101,14 @@ test("session confirm: --machine asks too and shows the machine", async () => {
   assert.equal(d.spawned.length, 0);
 });
 
-test("session confirm: an unreadable brief shows a note and the dialog still asks", async () => {
-  let message = "";
-  const d = deps({ confirm: async (_t, m) => ((message = m), false) });
-  await runSessionCommand(d, "open demo missing.md");
-  assert.match(message, /\(brief unreadable\)/);
+test("session confirm: an unreadable brief is refused before the dialog", async () => {
+  let asked = false;
+  const d = deps({ confirm: async () => ((asked = true), false) });
+  const r = await runSessionCommand(d, "open demo missing.md");
+  assert.equal(r.ok, false);
+  assert.match(r.text, /session open refused \[brief_unreadable\]/);
+  assert.equal(asked, false);
+  assert.equal(d.spawned.length, 0);
 });
 
 test("ownerConfirm: needs hasUI and tui/rpc mode; a thrown dialog counts as No; no timeout option", async () => {

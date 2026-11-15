@@ -56,5 +56,5 @@ test("reading ruling.md writes .seen ruling.md", (t) => {
   fs.writeFileSync(path.join(r.own, "ruling.md"), "ok\n");
   assert.equal(r.contract.onRulingWake(path.join(r.own, "ruling.md")), true);
   assert.equal(fs.readFileSync(path.join(r.own, ".seen"), "utf8"), "ruling.md\n");
-  assert.equal(r.tracker.active, false);
+  assert.equal(r.tracker.active, true, "ruling.md answers the plan, not the ask");
 });

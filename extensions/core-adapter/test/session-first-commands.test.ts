@@ -14,6 +14,7 @@ after(() => {
 });
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-first-")));
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 
 function deps(over: Partial<SessionDeps> = {}): SessionDeps & { spawned: string[][] } {
   const spawned: string[][] = [];

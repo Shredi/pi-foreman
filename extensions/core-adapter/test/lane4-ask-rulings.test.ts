@@ -94,10 +94,10 @@ test("4a: ruling.md wakes too; a hand-written .seen is idempotent with the harne
   fs.writeFileSync(path.join(r.own, "ruling.md"), "go\n");
   assert.equal(r.contract.onRulingWake(path.join(r.own, "ruling.md")), true);
   assert.equal(fs.readFileSync(path.join(r.own, ".seen"), "utf8").trim(), "ruling.md");
-  assert.equal(r.tracker.active, false);
+  assert.equal(r.tracker.active, true, "ruling.md answers the plan, not the ask");
   assert.equal(r.contract.onRulingWake(path.join(r.own, "ruling.md")), true);
   assert.equal(r.contract.onRulingWake(path.join(r.own, "plan.md")), false);
-  assert.equal(r.tracker.active, false);
+  assert.equal(r.tracker.active, true);
 });
 
 test("4a: blocked is recomputed from the files on any .seen write, including one made by bash", () => {

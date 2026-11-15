@@ -245,6 +245,17 @@ def check_path_text(p, what):
         raise Refused("%s has characters that cannot be passed safely: %s" % (what, p))
 
 
+def check_brief_file(name):
+    """Refuse a brief that is not a readable file (an over-long name raises OSError here); the echoed name is capped."""
+    try:
+        ok = Path(name).is_file()
+    except (OSError, ValueError):
+        ok = False
+    if not ok:
+        shown = re.sub(r"[\x00-\x1f\x7f-\x9f]+", " ", name).strip()[:100]
+        raise Refused("brief file not found: %s" % shown)
+
+
 def parent_from_config(adir):
     try:
         cfg = json.loads((Path(adir) / "intercom" / "config.json").read_text("utf-8"))
@@ -829,7 +840,8 @@ def check_profile(adir, name):
         raise Refused("unknown permissions profile %r; known profiles: %s" % (name, ", ".join(known)))
 
 
-def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, profile=None):
+def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, profile=None,
+              agent_dir=None):
     env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
     if plan_phase:
         env.append((ENV_PLAN_PHASE, "1"))
@@ -841,7 +853,11 @@ def child_env(handoff, parent, child, parent_slug, model=None, environ=None, rem
     if model:
         env.append((ENV_MODEL, model))
     # the add-on reads its features at load: the child pane starts a fresh Pi, so pass the opener's along
-    return env + addon_env(environ)
+    # a local child keeps the opener's agent dir when the opener has the variable set (the handoff dir lives in it)
+    out = env + addon_env(environ)
+    if agent_dir is not None and not remote and "PI_CODING_AGENT_DIR" in (os.environ if environ is None else environ):
+        out.append(("PI_CODING_AGENT_DIR", str(agent_dir)))
+    return out
 
 
 def opener_slug(cwd, top):
@@ -1126,9 +1142,8 @@ def cmd_open(a):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
     first = first_commands(a.first_command or [], a.plan_mode)
     check_first_commands(first)
+    check_brief_file(a.brief)
     brief = Path(a.brief)
-    if not brief.is_file():
-        raise Refused("brief file not found: %s" % a.brief)
     cwd = Path(a.cwd) if a.cwd else Path.cwd()
     if not cwd.is_dir():
         raise Refused("--cwd is not a directory: %s" % cwd)
@@ -1190,7 +1205,7 @@ def open_session(p, remote=None):
         here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
         parent_slug = opener_slug(here, git_top(here))
     env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]),
-                    profile=p.get("profile"))
+                    profile=p.get("profile"), agent_dir=adir)
     prompt = prompt_text(handoff)
     first = p.get("first") or []
     banner = start_banner(label, model, short_hostname() if remote else None, handoff / "brief.md")
@@ -1982,9 +1997,8 @@ def cmd_open_remote(a):
     entry_cfg, argv = machine_entry(adir, name)
     if not LABEL_RE.match(a.label):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
+    check_brief_file(a.brief)
     brief = Path(a.brief)
-    if not brief.is_file():
-        raise Refused("brief file not found: %s" % a.brief)
     if not a.cwd or PATH_BAD.search(a.cwd):
         raise Refused("--machine needs --cwd: a directory on %s without characters that cannot be passed safely" % name, "cwd_required")
     first = first_commands(a.first_command or [], a.plan_mode)

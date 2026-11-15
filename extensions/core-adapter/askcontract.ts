@@ -1,7 +1,8 @@
 // Ask contract for a parent that is not a Pi session (R3b point 3). When the foreman writes `<own handoff>/ask.md`
 // (first line `# Ask <n>: <topic>`), the adapter touches `<handoff>/.ask` and shows the session as blocked in Herdr
 // (the BlockedTracker, never `herdr agent prompt`); the parent polls `*.md` and `.ask`, answers `ruling-<n>.md`, and
-// the foreman writes `.seen` (the ruling file name) after reading it, which ends the blocked state.
+// the foreman writes `.seen` (the ruling file name) after reading it, which ends the blocked state. `ruling.md` (the
+// plan ruling) never answers an ask by itself (ruling.ts askOpen).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { askOpen, isRulingName, NEEDS_RULING_NO_RE } from "./ruling.ts";

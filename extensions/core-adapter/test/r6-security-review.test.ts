@@ -78,7 +78,7 @@ test("sec 3: a parent-side dir with .ask and no .seen does not block this sessio
   const contract = new AskContract({ ownDirs: () => childHandoffDirs(r.handoffs, "me"), block: (label) => tracker.own(label) });
   contract.recheck();
   assert.equal(tracker.active, true, "its own child-side ask blocks");
-  fs.writeFileSync(path.join(r.up, ".seen"), "ruling.md\n");
+  fs.writeFileSync(path.join(r.up, ".seen"), "ruling-1.md\n");
   contract.recheck();
   assert.equal(tracker.active, false, "the parent-side .ask alone never blocks");
   contract.releaseAll();

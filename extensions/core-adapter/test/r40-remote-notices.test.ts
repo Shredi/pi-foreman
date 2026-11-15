@@ -20,6 +20,7 @@ after(() => {
 });
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-remote-")));
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 const sha = (s: string): string => crypto.createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex");
 const REMOTE_DIR = "/home/u/.pi/agent/pi-foreman/handoffs/20261024-120000-demo";
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
