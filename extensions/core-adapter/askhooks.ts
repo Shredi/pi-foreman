@@ -1,6 +1,6 @@
 // Harness bookkeeping for the `ask_user_question` tool, keyed on the tool name and independent of the package that
-// registers it (@juicesharp/rpiv-ask-user-question, bundled). The ask.md file path (askcontract.ts) is unchanged: when
-// a handoff dir where this session is the child holds an open ask.md, an answer is also written to `ruling-<n>.md`.
+// registers it (@juicesharp/rpiv-ask-user-question, bundled). The ask.md file path (askcontract.ts) is unchanged: an
+// answer to a dialog is never filed as `ruling-<n>.md`; the parent writes that file itself.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ASK_FILE, parseAskHeader } from "./askcontract.ts";
@@ -34,27 +34,4 @@ export function askAnsweredSome(details: unknown, isError: boolean): boolean {
   if (!askAnswered(details, isError)) return false;
   const answers = ((details ?? {}) as { answers?: unknown }).answers;
   return Array.isArray(answers) && answers.length > 0;
-}
-
-/** The text of a tool result's content blocks. */
-export function resultText(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  return content.map((c) => (c && typeof c === "object" && (c as { type?: unknown }).type === "text" ? String((c as { text?: unknown }).text ?? "") : "")).filter(Boolean).join("\n");
-}
-
-/** Writes `ruling-<n>.md` for an open ask.md from the answer text (notes included); returns its path, or undefined when nothing was written. */
-export function writeAskRuling(ownDirs: string[], content: unknown, details: unknown, isError: boolean): string | undefined {
-  if (!askAnswered(details, isError)) return undefined;
-  const text = resultText(content).trim();
-  if (!text) return undefined;
-  const open = openAsk(ownDirs);
-  if (!open) return undefined;
-  const file = path.join(open.dir, `ruling-${open.n}.md`);
-  try {
-    fs.writeFileSync(file, `${text}\n`, { encoding: "utf8", flag: "wx" });
-    return file;
-  } catch {
-    // a ruling already exists (or the dir is unwritable): the answer still reaches the agent
-    return undefined;
-  }
 }

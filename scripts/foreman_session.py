@@ -274,7 +274,7 @@ def opener_id(given, adir, env=None):
 
 PLAN_FIRST_NOTES = [
     "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
-    "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent by file (`ask.md`). When unsure whether it is a decision, ask the parent. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
+    "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent by file (`ask.md`). When unsure whether it is a decision, ask the parent. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
     "   `plan.md` starts with a `## For the owner` section (its reader is the owner, who is in the middle of many other topics: explain it as to someone new to this one, in plain words, at most about 10 lines, no paths or ids: the goal, the essential steps, heads-ups, the implicit decisions; for example \"Goal: pages load faster. Steps: measure first, then cache the slowest query. Heads-up: cached data may be a minute old. Decided for you: the admin pages stay as they are.\"), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
 ]
 
@@ -313,6 +313,8 @@ def footer(label, plan_first):
         "%d. Close: when the parent sends `foreman:close`, pi-foreman runs its close sequence and replies" % (n + 2),
         "   `foreman:closed <path>` (or `pi-foreman: close refused: <reason>`) by itself.",
         "",
+        "Ask once: a question goes to the parent or, when a human is at the pane and it is the owner's to decide, to the owner",
+        "as a dialog, never both.",
         "Ask by file: use this when the parent is not a Pi session or intercom to the parent says `Session not found`.",
         "On `Session not found`, do not retry intercom: no retry reaches a parent that never registers with the broker.",
         "Write `ask.md` in the handoff dir; its first line is `# Ask <n>: <topic>` (n = 1, 2, ... in order). pi-foreman",
@@ -372,6 +374,8 @@ def remote_footer(label, plan_first):
         "       %s update" % base,
         "%d. When your result is sent, stop. The parent closes the session." % (n + 2),
         "",
+        "Ask once: a question goes to the parent or, when a human is at the pane and it is the owner's to decide, to the owner",
+        "as a dialog, never both.",
         "Ask: write `ask.md` in the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), then run",
         "       %s ask" % base,
         "The parent answers in `ruling-<n>.md` (same n). Wait with `foreman_wait` kind `file` on `ruling-<n>.md` in the",
