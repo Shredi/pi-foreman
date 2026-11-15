@@ -239,11 +239,6 @@ function liveState(agentDir: string, now: number, feedOn: boolean): { prs: Recor
   return state as { prs: Record<string, unknown> };
 }
 
-/** A tracker is live: the one rule behind `readStoreEntry`'s `down` (the feed is on and the state file is fresh), nothing else (no pid, no heartbeat). */
-export function trackerLive(agentDir: string, now: number, feedOn: boolean): boolean {
-  return liveState(agentDir, now, feedOn) !== null;
-}
-
 /**
  * What the poll CLI stored for `key`, as a watch needs it. `down`: the feed is off, or the state file is missing, `off`, or its `trackedAt` is older
  * than 10 min (no tracker running). `waiting`: the tracker runs but has no snap for this key yet. `entry`: a snap (merged and closed ones too,

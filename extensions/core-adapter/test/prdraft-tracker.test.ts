@@ -7,7 +7,7 @@ import { registerPrPack } from "../gitpack.ts";
 import type { PrPackSession } from "../gitpack.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { StoreRead, Timers, WatchSnapshot } from "../prwatch.ts";
-import { clearStoreCache, readStoreEntry, SERVE_FRESH_MS, trackerLive, trackedStateFile } from "../prstore.ts";
+import { clearStoreCache, readStoreEntry, SERVE_FRESH_MS, trackedStateFile } from "../prstore.ts";
 import type { ReviewFacts } from "../prready.ts";
 import type { Spawner } from "../spawn.ts";
 
@@ -54,7 +54,7 @@ test("tracker live (also not yet polled): a draft the watch owns; the line says 
   assert.equal(x.creates()[0].args.draft, true);
   assert.equal(x.watches.records()[0].owned, true);
   assert.deepEqual(x.drafts(), []);
-  assert.match(r.content[0].text, /the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a reviewer PASS stands on its head, its checks have passed and the host says it is mergeable/);
+  assert.match(r.content[0].text, /the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `\[pre-pr\]` reviewer PASS is the newest code review on its head, its checks have passed and the host says it is mergeable/);
 });
 
 test("tracker never ran or died (store down): no draft asked, nothing to undo, the line says why", async () => {
@@ -63,7 +63,9 @@ test("tracker never ran or died (store down): no draft asked, nothing to undo, t
   assert.equal("draft" in x.creates()[0].args, false);
   assert.deepEqual(x.drafts(), []);
   assert.equal(x.watches.records()[0].owned, undefined);
-  assert.ok(r.content[0].text.includes(`the PR is not a draft: no PR tracker running: ${DOWN_HOW}, and nothing would take it out of draft`));
+  assert.ok(r.content[0].text.includes("the PR is not a draft: no PR tracker is running, so nothing would take it out of draft"));
+  assert.equal(r.content[0].text.split("no PR tracker running").length - 1, 1);
+  assert.ok(r.content[0].text.includes(DOWN_HOW));
 });
 
 test("tracker live at the ask, down after the arm: the undo runs and the line says so", async () => {
@@ -73,7 +75,8 @@ test("tracker live at the ask, down after the arm: the undo runs and the line sa
   assert.equal(x.creates()[0].args.draft, true);
   assert.deepEqual(x.drafts().map((d) => d.args.draft), [false]);
   assert.notEqual(x.watches.records()[0]?.owned, true);
-  assert.ok(r.content[0].text.includes(`the PR is not a draft: no PR tracker running: ${DOWN_HOW}, so it was taken out of draft`));
+  assert.ok(r.content[0].text.includes("the PR is not a draft: no PR tracker is running, so it was taken out of draft"));
+  assert.equal(r.content[0].text.split("no PR tracker running").length - 1, 1);
 });
 
 test("tracker down after the arm and the undo fails: the by-hand line", async () => {
@@ -95,7 +98,7 @@ test("flow off: the line says the PR is not a draft; the caller's draft: true st
   assert.ok(r2.content[0].text.includes("the PR is a draft (draft: true) and nothing takes it out of draft automatically"));
 });
 
-test("trackerLive: the rule of readStoreEntry's down", () => {
+test("readStoreEntry down: missing, unparseable, off, stale, fresh", () => {
   const NOW = 10_000_000;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-live-"));
   const file = trackedStateFile(dir);
@@ -105,10 +108,7 @@ test("trackerLive: the rule of readStoreEntry's down", () => {
     clearStoreCache();
   };
   const K = { host: "github.com", repo: "acme/app", n: 1 };
-  const agree = (live: boolean, feedOn = true) => {
-    assert.equal(trackerLive(dir, NOW, feedOn), live);
-    assert.equal(readStoreEntry(dir, K, NOW, feedOn).kind === "down", !live);
-  };
+  const agree = (live: boolean, feedOn = true) => assert.equal(readStoreEntry(dir, K, NOW, feedOn).kind === "down", !live);
   clearStoreCache();
   agree(false);
   write("{not json");

@@ -433,10 +433,10 @@ export function registerPrPack(pi: Pick<ExtensionAPI, "registerTool">, deps: PrP
           const undone = await run("pr_draft", { number: outcome.result.number, ...(key.repo ? { repo: key.repo, ...(key.host ? { host: key.host } : {}) } : {}), draft: false }).catch((): SafeOpOutcome => ({ kind: "error", message: "no answer" }));
           s.trace({ event: "pr_watch", outcome: undone.kind === "ran" ? "draft_undone" : "draft_undo_failed" });
           const down = "key" in armed && armed.down;
-          draftNote = `\n${undone.kind === "ran" ? (down ? `the PR is not a draft: ${TRACKER_DOWN}, so it was taken out of draft` : "the PR is not handled as a draft (it is not watched or not tracked), so it was taken out of draft") : "the PR was opened as a draft and is not watched or tracked: take it out of draft by hand"}`;
+          draftNote = `\n${undone.kind === "ran" ? (down ? "the PR is not a draft: no PR tracker is running, so it was taken out of draft" : "the PR is not handled as a draft (it is not watched or not tracked), so it was taken out of draft") : "the PR was opened as a draft and is not watched or tracked: take it out of draft by hand"}`;
         } else if (managed) draftNote = `\n${DRAFT_MANAGED}`;
         else if (params.draft === true && !refusedDraft) draftNote = "\nthe PR is a draft (draft: true) and nothing takes it out of draft automatically: do it by hand";
-        else draftNote = `\n${asked === "no_tracker" ? `the PR is not a draft: ${TRACKER_DOWN}, and nothing would take it out of draft` : refusedDraft ? "the PR is not a draft (the repository has no draft pull requests)" : "the PR is not a draft (draft handling is off or does not cover this host)"}`;
+        else draftNote = `\n${asked === "no_tracker" ? "the PR is not a draft: no PR tracker is running, so nothing would take it out of draft" : refusedDraft ? "the PR is not a draft (the repository has no draft pull requests)" : "the PR is not a draft (draft handling is off or does not cover this host)"}`;
         const r = { ...r0, content: [{ type: "text" as const, text: r0.content[0].text + draftNote }] };
         out = { ...out, content: r.content };
         if ("duplicate" in armed) return out;
@@ -560,14 +560,14 @@ async function askDraft(s: PrPackSession, ctx: ExtensionContext, dir?: string): 
   if ("error" in hosts) return "no";
   const at = await s.tracker?.repoFor?.(dir ?? ctx.cwd).catch(() => null);
   if (!at || !isTrackedKey({ host: at.host, repo: at.repo, n: 1 }, hosts.hosts)) return "no";
-  // no draft without a live tracker: nothing else takes a PR out of draft (the store's `down` rule, prstore.ts trackerLive)
+  // no draft without a live tracker: nothing else takes a PR out of draft (the store's `down` rule, readStoreEntry in prstore.ts)
   // a store that cannot be read says nothing about the tracker: the draft is asked and the arm's failure undoes it
   const st = await s.watches.stored({ host: at.host, repo: at.repo, n: 1 }).catch((): StoreRead => ({ kind: "waiting" }));
   return st.kind === "down" ? "no_tracker" : "yes";
 }
 
 /** The report line of a draft PR the watch manages: the condition is the readiness rule (prready.ts) and needs a tracker report. */
-const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a reviewer PASS stands on its head, its checks have passed and the host says it is mergeable";
+const DRAFT_MANAGED = "the PR is a draft: the watch takes it out of draft once the PR tracker reports it, a `[pre-pr]` reviewer PASS is the newest code review on its head, its checks have passed and the host says it is mergeable";
 
 /** GitHub's answer for a repository without draft pull requests, matched loosely (the wording is the host's). */
 function draftRefused(o: SafeOpOutcome): boolean {
