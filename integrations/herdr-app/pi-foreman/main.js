@@ -75,15 +75,6 @@ function prDot(t, st) {
       .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));
 }
 
-// SAMPLE ONLY, removed before the PR is ready: the two variants the owner picks between for "checks running, none failed". Not legend rows.
-function ownersChoice(t) {
-  const pick = (st, label) => h_flex().gap(5).items_center().text_size(11).text_color(t.muted).child(prDot(t, st)).child(label);
-  return v_flex().pl(8).pt(8).gap(4)
-    .child(div().text_size(11).font_medium().text_color(t.dim).child("Owner's choice: checks running, none failed"))
-    .child(pick({ pulse: true, fill: "amber" }, "amber pulse (today)"))
-    .child(pick({ pulse: true, fill: "green" }, "green pulse"));
-}
-
 // Conflict marker, independent of the dot: a small red disc with a bang.
 const conflictMark = (t) => h_flex().flex_none().size(11).rounded(6).bg(t.blocked).items_center().justify_center()
   .text_size(8).font_semibold().text_color(t.chrome).child("!");
@@ -806,7 +797,6 @@ export default class ForemanAgents extends View {
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
-    if (this.sample) rows.push(ownersChoice(t)); // sample only: removed before the PR is ready
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)

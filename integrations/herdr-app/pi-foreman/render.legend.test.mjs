@@ -111,20 +111,10 @@ test("the sample draws the marker of every PR key; the pulsing discs loop, the c
   assert.ok(pr["pr-not-reviewed"].parts.some((e) => hasText(e, "unreviewed head")));
   assert.ok(pr["pr-conflict"].parts.some((e) => hasText(e, "!")));
   assert.equal(pr["pr-failed"].parts[0].props.border_color, "#blocked");
-  // the two pulsing PR discs, and the two of the sample's "Owner's choice" section (amber and green pulse)
-  assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 4);
-  assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.bg === "#ansi2").length, 1, "only the choice's green pulse is green");
+  // the two pulsing PR discs; no green disc pulses
+  assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 2);
+  assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.bg === "#ansi2").length, 0, "no green pulse");
   for (const k of Object.keys(pr)) assert.equal(pr[k].parts.filter((e) => e.kind === "svg").length, 0, `${k}: no spinner in a chip`);
-});
-
-test("the sample's Owner's choice draws the amber and the green pulse, and no check mark", () => {
-  const root = view(true).render({});
-  assert.ok(els(root).some((e) => hasText(e, "Owner's choice: checks running, none failed")), "the section is drawn");
-  // the label's row holds the dot's box, and the box the disc
-  const disc = (label) => els(root).find((e) => hasText(e, label)).kids[0].kids[0];
-  assert.deepEqual([disc("amber pulse (today)").props.bg, disc("green pulse").props.bg], ["#ansi3", "#ansi2"]);
-  assert.ok(disc("amber pulse (today)").props.loop && disc("green pulse").props.loop, "both pulse");
-  assert.equal(els(root).filter((e) => hasText(e, "✓")).length, 1, "only the ready PR has a check mark");
 });
 
 test("the sample starts no exec and no task, and leaves the Agents order alone", async () => {
