@@ -437,7 +437,7 @@ test("claude-bridge preset, Opus foreman, tier heavy, no model and no risk tag: 
   applyLaunchModels(input, roles, undefined, { tier: "heavy", provider: "claude-bridge", explicit: () => false });
   assert.equal(String(input.model).split(":")[0], OPUS);
   const no = rankRefusalFor(preset, OPUS, String(input.model).split(":")[0], ["builder"]);
-  // pinned, not changed: no risk tag means the equalOnStrongRisk tie does not apply, so the heavy-tier default (the strong rung) is refused
+  // no risk tag means the equalOnStrongRisk tie does not apply, so the rank policy refuses the heavy-tier default (the strong rung); the adapter skips that climb (ladder.plan, source heavy) instead of refusing the launch
   assert.equal(no?.message, 'pi-foreman: launch refused [rank_policy:below]: child model claude-bridge/claude-opus-5-5 (tier 1) is not below the foreman model claude-bridge/claude-opus-5-5 (tier 1). Add a ranks entry for it, map the role to a lower-ranked model, or set ladder.childPolicy to "any" in the user or overlay config.');
 });
 

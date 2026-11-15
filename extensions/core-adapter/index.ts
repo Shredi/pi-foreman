@@ -3751,7 +3751,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const plan = sizedPlans.find((p) => p.entry === e);
             return foremanAt !== null && splitLevel(strongModel).base === foremanAt && rankTie(s.config.config, foremanAt, strongModel, "builder") && equalOnStrongRisk(s.config.config) && plan?.role === "builder" && plan.target === "strong" && plan.probe.length > 0;
           };
-          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs, strongAllowed, explicitAllowed: (m) => explicitModelAllowed(s.config.config, foremanAt, m, "builder") });
+          const lp = s.ladder.plan(input, resolution.roles, { tier: s.ceremony.tier, preferStrong: revClimb !== null, revisionReason: revClimb ?? undefined, ranks: ranksOf(s.config.config), sizing: sizingClimbs, strongAllowed, sizingSource: (e) => { const p = sizedPlans.find((x) => x.entry === e); return p ? `sizing:${p.rule}` : undefined; }, explicitAllowed: (m) => explicitModelAllowed(s.config.config, foremanAt, m, "builder") });
           if (lp.block) {
             s.trace?.emit({ event: "launch_refused", reason: "strong_no_reason", tier: s.ceremony.tier, ...launchDeny(input) });
             return { block: true, reason: lp.block };
@@ -3779,7 +3779,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const c of climbs) if (c.entry === p.entry) c.to = splitLevel(sizingTop).base;
           }
           const rungs: RungContext = { roles: resolution.roles, ranks: ranksOf(s.config.config), top: sizingTop };
-          sizingRecords = sizedPlans.map((p) => sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default"));
+          // a skipped climb (rank policy) keeps the rung that was rated (`rated`) next to the rung launched (`rung`)
+          sizingRecords = sizedPlans.map((p) => {
+            const rec = sizingTrace(p, p.role === "builder" && typeof p.entry.model === "string" ? (rungOfModel(p.entry.model, rungs) ?? "default") : "default");
+            return climbs.some((c) => c.entry === p.entry && c.skipped && c.source?.startsWith("sizing")) ? { ...rec, rated: p.target, note: [...p.combo.note, "rank_capped"].join(",") } : rec;
+          });
         }
         const equalLines: string[] = []; // the launch lines of the builders that ladder.equalOnStrongRisk let run on the foreman's own model
         // A panel shadow runs on its own model (rank-checked in shadowLaunch): no occasion override, rank loop or different-model rule.
