@@ -160,7 +160,7 @@ test("r16 hard_deny cp_into_child_handoff_ruling: the gate allows (mode auto), t
 const DANGEROUS = "terraform apply -auto-approve";
 
 // R41: the self-modification writes are a dialog by rule (selfmod.ts, plan 2.5): the owner gets one gate dialog and no model is called,
-// whatever the stub answers. tee into the agent extensions is no selfmod rule: the review judges it.
+// whatever the stub answers. tee into the agent extensions is one of them.
 const SM: Expect = ["dialog:selfmod:comment", 1, 0, true];
 // ruling-10: a self-modification the foreman's edit mode refuses anyway as a shell write into project files gets the refusal before any dialog or model call
 const REFUSED: Expect = ["pass", 0, 0, true];
@@ -170,7 +170,7 @@ const ASKING: Record<string, Expect> = {
   probe_ask_after_protect_hit: SM,
   redirect_into_pi_settings: REFUSED,
   cp_into_agent_settings: SM,
-  tee_into_agent_extensions: ["dialog:danger:comment", 1, 1, true],
+  tee_into_agent_extensions: SM,
   rm_pi_settings: REFUSED,
   read_then_write_pi_settings: REFUSED,
   cd_then_redirect_into_pi: REFUSED,
@@ -189,7 +189,7 @@ for (const c of [...FX.selfMod, ...FX.cdRelativeGaps.filter((x) => !(x.name in A
 const TOOLS: Record<string, Expect> = {
   write_tool_agent_settings: SM,
   edit_tool_pi_settings: SM,
-  copy_tool_into_agent_foreman_json: ["allowed:path-read-worktree", 0, 0],
+  copy_tool_into_agent_foreman_json: SM,
 };
 for (const c of FX.selfModTool) {
   test(`r16 selfMod tool ${c.name}: ${TOOLS[c.name]?.[0]}, no model call`, async () => {

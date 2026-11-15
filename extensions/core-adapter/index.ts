@@ -2856,6 +2856,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       child: s.isChild,
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
       agentDir: s.agentDir,
+      home: os.homedir(),
+      ...(process.env.XDG_CONFIG_HOME ? { configHome: process.env.XDG_CONFIG_HOME } : {}),
       ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,

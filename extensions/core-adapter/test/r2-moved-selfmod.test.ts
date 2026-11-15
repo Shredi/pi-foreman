@@ -163,3 +163,129 @@ test("5e: config/foreman.defaults.json and package.json of the own worktree are 
     }
   }
 });
+
+// step 2, rows 5b to 5d (ruling D1): the user-level harness and config folders, with a fixture home, agent dir and config home
+const uHome = path.join(base, "uh", "home");
+const uAgent = path.join(uHome, ".pi", "agent");
+const uXdg = path.join(base, "uh", "xdg");
+const uHand = path.join(uAgent, "pi-foreman", "handoffs", "20261115-100000-x");
+for (const d of [uAgent, uXdg, uHand]) fs.mkdirSync(d, { recursive: true });
+const userAns = (role: string, tool: string, input: Record<string, unknown>, rootsExtra: object = { home: uHome, configHome: uXdg }): string => {
+  const r: GateResult = gateDecide(tool, input, work, { env: () => envOf(role !== "foreman", { home: uHome, agentDir: uAgent }), roots: () => mkRoots(role, { agentDir: uAgent, ...rootsExtra }) });
+  return r === null || r === undefined ? "none" : "block" in r && r.block ? `block:${r.rule}` : "ask" in r && r.ask ? `ask:${r.rule}` : `allow:${(r as { rule?: string }).rule}`;
+};
+/** main asks with `rule`, a builder is denied by it, a reviewer is refused by it. */
+function refused(rule: string, tool: string, input: Record<string, unknown>, rootsExtra?: object): void {
+  const at = `${tool} ${JSON.stringify(input)}`;
+  assert.equal(userAns("foreman", tool, input, rootsExtra), `ask:${rule}`, `foreman: ${at}`);
+  assert.equal(userAns("builder", tool, input, rootsExtra), `block:${rule}`, `builder: ${at}`);
+  assert.equal(userAns("reviewer", tool, input, rootsExtra), `block:${rule}`, `reviewer: ${at}`);
+}
+
+test("5b: the agent dir harness folders and files are asked for main, denied for a builder, refused for a reviewer, whatever the write", posixOnly, () => {
+  for (const name of ["extensions", "npm", "agents", "intercom", "claude-config"]) {
+    const dir = path.join(uAgent, name);
+    const file = path.join(dir, "x.ts");
+    refused("selfmod-agent-harness", "write", { path: file, content: "x" });
+    refused("selfmod-agent-harness", "bash", { command: `echo x > ${file}` });
+    refused("selfmod-agent-harness", "bash", { command: `cp a ${dir}/` });
+    refused("selfmod-agent-harness", "bash", { command: `cp a ${file}` });
+    refused("selfmod-agent-harness", "bash", { command: `sed -i s/a/b/ ${file}` });
+    refused("selfmod-agent-harness", "bash", { command: `mv d ${dir}` });
+    refused("selfmod-agent-harness", "bash", { command: `mv ${file} ${scr}/y` });
+  }
+  for (const name of ["foreman.json", "claude-bridge.json"]) {
+    const file = path.join(uAgent, name);
+    refused("selfmod-agent-harness", "write", { path: file, content: "{}" });
+    refused("selfmod-agent-harness", "bash", { command: `echo x > ${file}` });
+    refused("selfmod-agent-harness", "bash", { command: `cp a ${file}` });
+    refused("selfmod-agent-harness", "bash", { command: `sed -i s/a/b/ ${file}` });
+    refused("selfmod-agent-harness", "bash", { command: `mv a ${file}` });
+  }
+});
+
+test("5b: a tilde spelling of the agent dir harness is resolved against the home folder", posixOnly, () => {
+  refused("selfmod-agent-harness", "bash", { command: "echo x > ~/.pi/agent/extensions/x.ts" });
+  refused("selfmod-agent-harness", "bash", { command: "cp a ~/.pi/agent/agents/" });
+  refused("selfmod-agent-harness", "write", { path: "~/.pi/agent/foreman.json", content: "{}" });
+});
+
+test("5b: the handoff identity files live.json, parent and child are asked for main, denied for a builder, refused for a reviewer", posixOnly, () => {
+  for (const name of ["live.json", "parent", "child"]) {
+    refused("selfmod-identity", "write", { path: path.join(uHand, name), content: "x" });
+    refused("selfmod-identity", "bash", { command: `echo x > ${path.join(uHand, name)}` });
+  }
+});
+
+test("5c: the user git config and the Claude folder are asked for main and denied for children", posixOnly, () => {
+  const where: [string, string][] = [
+    [path.join(uHome, ".gitconfig"), "~/.gitconfig"],
+    [path.join(uHome, ".config", "git", "config"), "~/.config/git/config"],
+    [path.join(uXdg, "git", "config"), path.join(uXdg, "git", "config")],
+    [path.join(uHome, ".claude", "settings.json"), "~/.claude/settings.json"],
+  ];
+  for (const [abs, spelled] of where) {
+    for (const role of ["foreman", "builder", "reviewer"]) {
+      const ask = role === "foreman" ? "ask" : "block";
+      for (const [tool, input] of [["write", { path: abs, content: "x" }], ["write", { path: spelled, content: "x" }], ["bash", { command: `echo x > ${spelled}` }], ["bash", { command: `echo x | tee ${spelled}` }], ["bash", { command: `sed -i s/a/b/ ${spelled}` }]] as [string, Record<string, unknown>][]) {
+        assert.equal(userAns(role, tool, input), `${ask}:selfmod-user-config`, `${role}: ${tool} ${JSON.stringify(input)}`);
+      }
+    }
+  }
+});
+
+test("5c: the config home spelled as a variable is not resolved (as the agent dir rules treat a variable); a roots object without home gives no 5c answer", posixOnly, () => {
+  assert.ok(!/selfmod-user-config/.test(userAns("foreman", "bash", { command: "echo x > $XDG_CONFIG_HOME/git/config" })));
+  const bare = { home: undefined, configHome: undefined };
+  for (const [tool, input] of [["write", { path: path.join(uHome, ".gitconfig"), content: "x" }], ["write", { path: path.join(uXdg, "git", "config"), content: "x" }], ["bash", { command: "echo x > ~/.gitconfig" }], ["bash", { command: `echo x > ${path.join(uHome, ".claude", "settings.json")}` }]] as [string, Record<string, unknown>][]) {
+    for (const role of ["foreman", "builder"]) assert.ok(!/selfmod-user-config/.test(userAns(role, tool, input, bare)), `${role}: ${tool} ${JSON.stringify(input)}`);
+  }
+});
+
+test("5d: moving, replacing or removing the agent dir, its parent folder or its pi-foreman folder asks main and refuses a child", posixOnly, () => {
+  for (const d of [uAgent, path.dirname(uAgent), path.join(uAgent, "pi-foreman")]) {
+    // `rmdir` of a dir outside the write roots is already a floor deny (`floor-delete-outside`) for every role, ahead of the selfmod layer
+    for (const role of ["foreman", "builder", "reviewer"]) assert.equal(userAns(role, "bash", { command: `rmdir ${d}` }), "block:floor-delete-outside", `${role}: rmdir ${d}`);
+    for (const line of [`mv ${d} ${scr}/y`, `mv x ${d}`, `echo x > ${d}`]) {
+      assert.equal(userAns("foreman", "bash", { command: line }), "ask:selfmod-agent-dir", line);
+      assert.equal(userAns("builder", "bash", { command: line }), "block:selfmod-agent-dir", line);
+      assert.equal(userAns("reviewer", "bash", { command: line }), "block:selfmod-agent-dir", line);
+    }
+    for (const role of ["foreman", "builder", "reviewer"]) assert.equal(userAns(role, "bash", { command: `rm -r ${d}` }), "block:floor-delete-outside", `${role}: rm -r ${d}`);
+  }
+});
+
+test("5b to 5d: reads stay free", posixOnly, () => {
+  const ordinary = (role: string, line: string): string => userAns(role, "bash", { command: line });
+  for (const role of ["foreman", "builder"]) {
+    assert.equal(ordinary(role, "cat ~/.gitconfig"), ordinary(role, "cat ~/.zshrc"), role);
+    assert.equal(ordinary(role, `ls ${uAgent}/extensions`), ordinary(role, `ls ${uAgent}/sessions`), role);
+    assert.equal(ordinary(role, `cp ${uAgent}/foreman.json ${scr}/x`), ordinary(role, `cp ${uAgent}/models.json ${scr}/x`), role);
+    assert.ok(!/selfmod/.test(ordinary(role, "git config --global --get user.name")), role);
+    assert.ok(!/selfmod/.test(userAns(role, "read", { path: path.join(uHome, ".gitconfig") })), role);
+  }
+});
+
+test("5c: `git config --file <protected>` in a write form is a write target for the self-modification rules; read forms and ordinary files keep their answers", posixOnly, () => {
+  const G = path.join(uHome, ".gitconfig");
+  const P = path.join(work, ".pi", "settings.json");
+  const writes = (f: string, spelled = f): string[] => [
+    `git config --file ${spelled} user.name x`, `git config -f ${spelled} user.name x`, `git config --file=${spelled} a b`, `git config set --file ${spelled} a b`,
+    `git -C ${path.join(work, "sub")} config -f ${spelled} a b`, `git config --file ${spelled} --unset a`, `git config --file ${spelled} --add a b`,
+    `git config --file ${spelled} --replace-all a b`, `git config --file ${spelled} --remove-section a`, `git config --file ${spelled} --rename-section a b`,
+  ];
+  // a tilde inside `--file=~/x` is not a word of its own (the shell leaves it), so only the spaced spellings are given the tilde
+  for (const line of [...writes(G), ...writes(G, "~/.gitconfig").filter((l) => !l.includes("--file="))]) refused("selfmod-user-config", "bash", { command: line });
+  for (const line of writes(P)) refused("selfmod-project-settings", "bash", { command: line });
+  refused("selfmod-project-settings", "bash", { command: "git config --file .pi/settings.json a b" });
+  for (const role of ["foreman", "builder", "reviewer"]) {
+    const plain = userAns(role, "bash", { command: "git config --get a.b" });
+    for (const line of [`git config --file ${G} --get a.b`, `git config -f ${G} -l`, `git config --file ${G} get a.b`, `git config --file ${G} list`]) {
+      assert.ok(!/selfmod/.test(userAns(role, "bash", { command: line })), `${role}: ${line}`);
+      // a read-only role keeps its refusal of a `--file` form (unchanged), main and a builder answer as for the plain read
+      if (role !== "reviewer") assert.equal(userAns(role, "bash", { command: line }), plain, `${role}: ${line}`);
+    }
+  }
+  // an ordinary file of the worktree: main and a builder answer as before (no decision)
+  for (const role of ["foreman", "builder"]) assert.equal(userAns(role, "bash", { command: `git config --file ${work}/x.cfg a b` }), "none", role);
+});

@@ -8,6 +8,7 @@ import { opsOf, realDefault, realSpelling, resolveWord, under } from "./pathrule
 import type { GateRoots } from "./pathrules.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { shellWriteTargets } from "./defaults.ts";
+import { toolPath } from "./pathnorm.ts";
 
 export interface SelfmodHit {
   rule: string;
@@ -21,7 +22,10 @@ const HITS = {
   "selfmod-agent-settings": "this writes the Pi agent settings.json, which changes how Pi and its extensions run",
   "selfmod-state": "this writes pi-foreman session state, which other sessions and the foreman read as live data",
   "selfmod-session-dir": "this moves or removes the Pi session dir or one of its ancestors up to the agent sessions dir, which breaks the running session's file",
-  "selfmod-identity": "this writes a handoff's live.json, the session identity file the adapter keeps",
+  "selfmod-identity": "this writes a handoff's live.json, parent or child file, the session identity files the adapter keeps",
+  "selfmod-agent-harness": "this writes a harness folder or file of the Pi agent dir (extensions, npm, agents, intercom, claude-config, foreman.json, claude-bridge.json), which changes what Pi loads and runs",
+  "selfmod-user-config": "this writes the user's git config or Claude folder (~/.gitconfig, ~/.config/git, $XDG_CONFIG_HOME/git, ~/.claude), which change how git and Claude run commands as the owner",
+  "selfmod-agent-dir": "this removes or renames the Pi agent dir, the folder that holds it, or its pi-foreman folder, which breaks every running session",
   "selfmod-state-read": "this reads pi-foreman session state of other sessions, which a child does not read",
 } as const;
 type SelfmodRule = keyof typeof HITS;
@@ -49,6 +53,16 @@ function sameFile(a: string, b: string): boolean {
 function leaf(platform: string, name: string): string {
   if (platform === "win32") return name.replace(/:.*$/, "").replace(/[. ]+$/, "").toLowerCase();
   return platform === "darwin" ? name.toLowerCase() : name;
+}
+
+/** The agent dir folders and files that change what Pi loads and runs (each directly under the agent dir, folders with everything below them). */
+const AGENT_HARNESS = ["extensions", "npm", "agents", "intercom", "claude-config", "foreman.json", "claude-bridge.json"];
+
+/** `p` is `base/<names...>` or below it (the names compared as `leaf()` spells them). */
+function below(platform: string, base: string, p: string, names: string[]): boolean {
+  if (!under(platform, base, p)) return false;
+  const rel = (platform === "win32" ? path.win32 : path.posix).relative(base, p).split(/[\\/]/);
+  return names.every((n, i) => rel[i] !== undefined && leaf(platform, rel[i]) === leaf(platform, n));
 }
 
 /** `a` is an existing regular file with more than one hard link. */
@@ -87,6 +101,10 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
   const states = agent.map((a) => x.join(a, "pi-foreman", "state"));
   const own = [...r.handoffs, ...r.scratch].flatMap((d) => spellings(platform, d, real));
   const handoffRoots = agent.map((a) => x.join(a, "pi-foreman", "handoffs"));
+  // the home-based rules fire only when the roots carry the home folder
+  const homes = r.home ? spellings(platform, r.home, real) : [];
+  const userConfigs = [...homes.flatMap((h): [string, string[]][] => [[h, [".gitconfig"]], [h, [".config", "git"]], [h, [".claude"]]]), ...(r.configHome ? spellings(platform, r.configHome, real).map((h): [string, string[]] => [h, ["git"]]) : [])];
+  const agentDirs = [...agent, ...agent.map((a) => x.dirname(a)), ...agent.map((a) => x.join(a, "pi-foreman"))];
   const sessionDirs = r.sessionDir ? sessionDirChain(platform, spellings(platform, r.sessionDir, real), agent.map((a) => x.join(a, "sessions"))) : [];
   for (const c of spellings(platform, abs, real)) {
     if (dir === "read") {
@@ -96,10 +114,13 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
     if (sessionDirs.includes(c)) return hit("selfmod-session-dir");
     for (const h of handoffRoots) {
       const rel = under(platform, h, c) ? x.relative(h, c).split(/[\\/]/) : [];
-      if (rel.length === 2 && rel[1] === "live.json") return hit("selfmod-identity");
+      if (rel.length === 2 && ["live.json", "parent", "child"].includes(leaf(platform, rel[1]))) return hit("selfmod-identity");
     }
     if (settings.includes(c)) return hit("selfmod-project-settings");
     if (agentSettings.includes(c)) return hit("selfmod-agent-settings");
+    if (agent.some((a) => AGENT_HARNESS.some((n) => below(platform, a, c, [n])))) return hit("selfmod-agent-harness");
+    if (userConfigs.some(([b, names]) => below(platform, b, c, names))) return hit("selfmod-user-config");
+    if (agentDirs.some((d) => under(platform, d, c) && under(platform, c, d))) return hit("selfmod-agent-dir");
     for (const pi of pis) {
       if (!under(platform, pi, c)) continue;
       if (under(platform, x.join(pi, "scratch"), c) || under(platform, x.join(pi, "tasks"), c)) continue;
@@ -158,7 +179,11 @@ function writtenWords(s: ShellSegment): string[] {
 }
 
 /** The self-modification hit of a shell line, or undefined. A child also hits on any word that names another session's state. */
-export function shellSelfmod(segs: ShellSegment[], cwd: string, roots: GateRoots, platform: string): SelfmodHit | undefined {
+export function shellSelfmod(lines: ShellSegment[], cwd: string, roots: GateRoots, platform: string): SelfmodHit | undefined {
+  // a word that is `~` or starts `~/` names the home folder, as Pi's file tools read it (`toolPath`); the segments are copied with those words expanded
+  const home = roots.home;
+  const expand = (w: string): string => (home && (w === "~" || w.startsWith("~/") || (platform === "win32" && w.startsWith("~\\"))) ? (toolPath(w, cwd, home, platform) ?? w) : w);
+  const segs = home ? lines.map((s) => ({ ...s, argv: s.argv.map(expand), redirects: s.redirects.map((rd) => ({ ...rd, target: expand(rd.target) })) })) : lines;
   // the named targets of the write-target code (in-place `sed -i`, `perl -i`, `dd of=` ...) join the fixed word list
   const targets = shellWriteTargets(segs, platform).filter((t) => t.named);
   for (const s of segs) {

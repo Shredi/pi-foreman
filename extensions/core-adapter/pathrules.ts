@@ -44,6 +44,10 @@ export interface GateRoots {
   tmpAccess: boolean;
   /** The Pi agent dir (settings.json, pi-foreman/state); the self-modification rules read it. */
   agentDir?: string;
+  /** The user's home folder; the self-modification rules for the user git config, the Claude folder and `~` words need it (absent: they do not fire). */
+  home?: string;
+  /** `$XDG_CONFIG_HOME` when set; its `git/` folder is the user git config. */
+  configHome?: string;
   /** The dir of the session's own Pi session file (moving it, or an ancestor up to `<agentDir>/sessions`, is a self-modification ask). */
   sessionDir?: string;
   /** Work folders of the user file (permconfig.ts), each as written and in its real spelling. Foreman only; a child gets none. Reads in them are allowed; writes relax only in `auto` ones (`workFolderOf`). */

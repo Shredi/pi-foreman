@@ -1070,6 +1070,11 @@ function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
       const head = a.slice(0, a.indexOf(sub));
       const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
       if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);
+      // the file of `git config --file <path>` is written unless the rest is a read form (the same `gitConfigRead` that clears the plain forms)
+      if (sub === "config") {
+        const bare = rest.filter((w, i) => !(w === "--file" || w === "-f" || /^--file=|^-f[^-]/.test(w) || rest[i - 1] === "--file" || rest[i - 1] === "-f"));
+        if (!gitConfigRead(bare)) extra.push(...optValues(rest, ["-f"], ["--file"]));
+      }
       const any = anywhere(["."]);
       if (sub === "branch" && gitBranchListMode(rest)) for (const t of any) t.list = true;
       return [...any, ...named(extra)];
