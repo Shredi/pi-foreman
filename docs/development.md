@@ -47,8 +47,8 @@ The herdr-app mod `pi-foreman` can draw its sidebar from invented data, to look 
 
 To look at the sample view without touching your own app window (herdr-app 0.1.x, macOS):
 
-1. Make an empty directory as a second app home. Copy `integrations/herdr-app/pi-foreman` and `integrations/herdr-app/pi-foreman-plan` into its `mods/`, and put a layout file into its `layouts/`: a copy of the layout you use, with `"props": { "sample": true }` on the `pi-foreman` block.
-2. Start the second window: `HERDR_APP_HOME=<app home> herdr-app`. The app fills in the shipped mods there itself. The window attaches to the same herdr-core, so it shows your spaces; the sample view itself starts nothing.
+1. Make an empty directory as a second app home, and keep its path short: the app's socket `herdr-app.sock` lives in it, and a long path fails with "path must be shorter than SUN_LEN", so use a short temp directory. Copy `integrations/herdr-app/pi-foreman` and `integrations/herdr-app/pi-foreman-plan` into its `mods/`, and put a layout file into its `layouts/`: a copy of the layout you use, with `"props": { "sample": true }` on the `pi-foreman` block.
+2. Before you start the second window, put `"frame.welcomed": "finished"` into the app home's `shared.json` (create it as `{"frame.welcomed": "finished"}` when the file does not exist yet): a fresh app home shows the welcome dialog over the sidebar, or you can close that dialog by hand. Start the second window: `HERDR_APP_HOME=<app home> herdr-app`. The app fills in the shipped mods there itself. The window attaches to the same herdr-core, so it shows your spaces; the sample view itself starts nothing.
 3. Switch to the sample layout, check the status, and save a picture:
 
    ```sh

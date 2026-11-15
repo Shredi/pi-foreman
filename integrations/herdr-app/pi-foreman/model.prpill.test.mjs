@@ -31,7 +31,7 @@ test("owned PR: the five states", () => {
   const ready = chip([entry()], w);
   assert.equal(prState(ready), "ok");
   assert.equal(prStateText(ready), "ready to merge");
-  assert.deepEqual(prDotState(ready), { pulse: false, fill: "green", conflict: false });
+  assert.deepEqual(prDotState(ready), { pulse: false, fill: "green", mark: "check", conflict: false });
 });
 
 test("a session fact about an older head never shows ready on a newer host head", () => {

@@ -65,8 +65,11 @@ const statusGlyph = (t, status) => glyph(t, glyphSpec(status));
 const tones = prTones;
 
 // One dot per PR: its colour is the PR's state, and it pulses (opacity, native loop) while a job runs or the checks are not settled.
+// A ready PR (`mark: "check"`) gets a check mark in the same box instead: a bold text glyph in its green, never pulsing.
 function prDot(t, st) {
   const color = tones(t)[st.fill];
+  if (st.mark === "check") return h_flex().relative().flex_none().size(14).mx(1).items_center().justify_center()
+    .text_size(12).font_semibold().text_color(color).child("✓");
   return div().relative().flex_none().size(14).mx(1)
     .child(div().absolute().top(4).left(4).size(6).rounded(3).bg(color)
       .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));

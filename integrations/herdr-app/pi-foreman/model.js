@@ -1096,7 +1096,9 @@ export function displayStatus(item, folded) {
 
 /** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, unless a finished job failed (red never
  *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses or the merge is blocked or
- *  behind (still), "red" once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
+ *  behind (still), "red" once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent.
+ *  `mark: "check"` is set on a ready PR: a check mark replaces the dot, its fill stays green. A green dot without a mark says only "CI passing"
+ *  (an older feed, or a PR not known to be mergeable). */
 export function prDotState(pr) {
   const d = baseDot(pr);
   const p = pillOf(pr, d);
@@ -1104,19 +1106,19 @@ export function prDotState(pr) {
   if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
   if (p.state === "waiting") return { pulse: false, fill: "amber", conflict: d.conflict };
-  if (p.state === "ready" && d.fill === "dim") return { pulse: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
+  if (p.state === "ready") return { pulse: false, fill: "green", mark: "check", conflict: d.conflict }; // checks passed, or none confirmed
   return { pulse, fill: pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
 }
 
 /**
  * The pill state from the host's current head, draft flag, checks and merge state plus the session's review fact (`pr.review`, set from the live file's
- * `review` list), `d` being the checks' dot. `state` is red | wip | running | waiting | unreviewed | ready, or null for a PR the pill has nothing to add to (today's dot):
+ * `review` list), `d` being the checks' dot. `state` is red | wip | running | waiting | unreviewed | ready, or null for a PR the pill has nothing to add to (the plain green or grey dot):
  * an older feed without head and merge state and without a session fact, a PR without checks, a green PR that is not mergeable.
  *  - red: a failed check, on a draft or work-in-progress PR too; wip: a draft on the host, or the session fact for the host's head is `wip`;
  *    running: checks running or unsettled;
  *  - waiting: settled (green, or no checks confirmed for the head) and the merge state is blocked or behind: amber and still;
  *  - unreviewed: settled green (or no checks confirmed for the head) and the fact is `unreviewed` or about another head than the host's;
- *  - ready: settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
+ *  - ready (the check mark, see prDotState): settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
  *    facts alone (`reviewed` false: no review claim).
  */
 function pillOf(pr, d) {
