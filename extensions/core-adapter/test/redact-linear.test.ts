@@ -119,6 +119,7 @@ const ADVERSARIAL: Record<string, (n: number) => string> = {
   "curl -u / --password units": rep("(-u --password "),
   "AKIA run": rep("AKIA"),
   "provider prefix run": rep("sk-"),
+  "AIza rule": rep("AIza-"),
   "hex run ending in a non-hex letter": (n) => "a".repeat(n) + "g",
   "base64 run": rep("ABCDEFabcdefghijklmnopqrstuvwxyz0123456789+"),
 };
@@ -143,17 +144,10 @@ function ratios(fn: (s: string) => string, small: number, large: number): Record
   return out;
 }
 
+// The previous function (redactOld) measured a ratio of about 15 on the keyword, authorization, URL userinfo and provider prefix units (figures in the commit that introduced this test), so the bound of 8 separates the two.
 test("redactCommand runs in linear time on an adversarial input per rule", () => {
   const [small, large] = [200_000, 800_000];
   for (const [name, ratio] of Object.entries(ratios(redactCommand, small, large))) {
     assert.ok(ratio < 8, `${name}: ${small / 1000}k to ${large / 1000}k ratio ${ratio.toFixed(1)}`);
   }
-});
-
-// Not a test of the shipped code: the ratio check above would flag the previous function. Run on demand with FOREMAN_RATIO_OLD=1; the old
-// function is quadratic on these inputs, so the smaller sizes (5k vs 20k) already show a ratio near 16 in well under a minute.
-test("the ratio check flags the previous function", { skip: process.env.FOREMAN_RATIO_OLD !== "1" }, () => {
-  const r = ratios(redactOld, 5_000, 20_000);
-  console.log(JSON.stringify(r));
-  assert.ok(Object.values(r).some((v) => v >= 8));
 });
