@@ -159,3 +159,10 @@ test("no model and PR tools off: no rank line and no tracker line", async (t) =>
   assert.deepEqual(rankLines(lines), []);
   assert.deepEqual(trackerLines(lines), []);
 });
+
+test("doctor output: a foreman ranked above every role gets the OK line and no rank FAIL", async (t) => {
+  const d = await doctor(t, { config: PRESET("claude-bridge"), model: { provider: "claude-bridge", id: "claude-opus-5-5" } });
+  const lines = await d.run();
+  assert.deepEqual(rankLines(lines), ["OK   every role's normal model is launchable under the foreman model (rank policy)"]);
+  assert.ok(!lines.some((l) => l.startsWith("FAIL") && /rank policy/.test(l)));
+});
