@@ -197,13 +197,31 @@ export class ManifestRecorder {
   }
 }
 
-/** Run `record` for each entry; never throws. */
-export async function recordEntries(es: ManifestEntry[], o: { session: string; owner: string; stateDir: string }, run: (args: string[]) => Promise<unknown>): Promise<void> {
+/**
+ * Run `record` for each entry; never throws. A call that throws or resolves `{ok: false}` (a spawn error, a time-out, a non-zero exit)
+ * is reported to `onFail` with the first line of its text or the error message; the next entry is still recorded.
+ */
+export async function recordEntries(
+  es: ManifestEntry[],
+  o: { session: string; owner: string; stateDir: string },
+  run: (args: string[]) => Promise<unknown>,
+  onFail?: (e: ManifestEntry, reason: string) => void,
+): Promise<void> {
   for (const e of es) {
+    let reason: string | null = null;
     try {
-      await run(recordArgs(e, o));
-    } catch {
-      // best effort: the sweep is the backstop
+      const r = await run(recordArgs(e, o));
+      if (r && typeof r === "object" && (r as { ok?: unknown }).ok === false) reason = String((r as { text?: unknown }).text ?? "").split("\n")[0];
+    } catch (err) {
+      reason = err instanceof Error ? err.message : String(err);
+    }
+    if (reason !== null) {
+      // best effort: the sweep is the backstop; a failing reporter does not stop the recording
+      try {
+        onFail?.(e, reason);
+      } catch {
+        // ignored
+      }
     }
   }
 }

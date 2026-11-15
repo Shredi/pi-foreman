@@ -52,6 +52,8 @@ Entries get there silently, with no model turn and no tokens:
 
 A child's entries go into its parent session's manifest with `owner` = the child's launch id.
 
+A record call that fails (a time-out, a non-zero exit or a throw) is not retried; the trace gets `manifest_record_failed {kind, error}` (the first line of the script's text, paths scrubbed).
+
 ## CLOSE report
 
 `foreman close [--session S] [--cwd D] [--state D] [--dry-run] [--result PATH] [--json]` prints at most 40 lines:

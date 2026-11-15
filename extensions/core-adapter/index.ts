@@ -4714,7 +4714,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const created = manifest.onToolResult(event.toolCallId, event.isError);
     if (owner && created.length) {
       const o = manifestOwner({ id: owner.id, isChild: owner.isChild, foremanSession: owner.usage.line.foremanSession, launchId: owner.usage.line.launchId }, process.env);
-      await recordEntries(created, { ...o, stateDir: manifestCtx(owner, ctx.cwd).stateDir }, (args) => runScript(owner, "foreman_close.py", args, 15_000));
+      await recordEntries(created, { ...o, stateDir: manifestCtx(owner, ctx.cwd).stateDir }, (args) => runScript(owner, "foreman_close.py", args, 15_000), (e, why) => owner.trace?.emit({ event: "manifest_record_failed", kind: e.kind, error: why }));
     }
     // an answer to an open ask.md is also written to ruling-<n>.md; details stay the package's (ownerAnswered reads them)
     if (owner && !owner.isChild && event.toolName === ASK_USER_TOOL) writeAskRuling(childDirsOf(owner), event.content, event.details, event.isError);
@@ -5294,7 +5294,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const roots = await piRootsOf(s);
     return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, python: pyPath(s), protectedRoots: { installRoot: roots.installRoot, npmRoot: roots.npmRoot, npmRootPending: s.npmRootPending }, model: idleModel.baseModel(ctx.model) ?? undefined, config: s.config.config, trace: (r) => s.trace?.emit(r), recordWorktree: async (e) => {
       const o = manifestOwner({ id: s.id, isChild: s.isChild, foremanSession: s.usage.line.foremanSession, launchId: s.usage.line.launchId }, process.env);
-      await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000));
+      await recordEntries([e], { ...o, stateDir: manifestCtx(s, ctx.cwd).stateDir }, (args) => runScript(s, "foreman_close.py", args, 15_000), (k, why) => s.trace?.emit({ event: "manifest_record_failed", kind: k.kind, error: why }));
     } };
   };
   const sessionCmd = registerSession(pi, {

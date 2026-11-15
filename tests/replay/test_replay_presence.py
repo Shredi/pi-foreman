@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
 import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from driver import load_fixture, tool_results  # noqa: E402
+from driver import load_fixture, tool_results, wait_until  # noqa: E402
 from test_replay import REASON, ReplayCase  # noqa: E402
 
 
@@ -53,28 +52,20 @@ class TestPresenceStates(ReplayCase):
         self.assertEqual(seen["state"], "idle")
 
     def test_replay_presence_working(self):
+        # The child holds in a bash loop until the marker exists, so it is live for as long as the test wants, whatever the scheduling.
+        self.user_permissions(self.rig_, {"allow": ["Bash(until test -f presence-release.marker*)"]})
         pi = self.rig_.start()
         path = self._file(pi)
-        seen = []
-        stop = threading.Event()
-
-        def sample():
-            while not stop.is_set():
-                d = self._read(path)
-                seen.append((d.get("presence"), d.get("state")))
-                time.sleep(0.1)
-
-        t = threading.Thread(target=sample, daemon=True)
-        t.start()
         recs = pi.prompt("[[replay:p_work]] launch", timeout=60)
-        pi.wait_child_notify(timeout=120)
-        stop.set()
-        t.join(5)
-        pi.close()
         [(_, err, _)] = tool_results(recs, "subagent")
         self.assertFalse(err)
-        # A live child alone is work: presence says working while the legacy state is already idle.
-        self.assertIn(("working", "idle"), seen)
+        pair = lambda: (lambda d: (d.get("presence"), d.get("state")))(self._read(path))  # noqa: E731
+        # A live child alone is work: presence says working while the legacy state is already idle (the file lags a turn end by up to 1 s).
+        wait_until(lambda: pair() == ("working", "idle"), timeout=30, describe=lambda _: "last pair %s" % (pair(),), interval=0.1)
+        (self.rig_.project / "presence-release.marker").write_text("go", "utf-8")
+        pi.wait_child_notify(timeout=120)
+        wait_until(lambda: pair() == ("idle", "idle"), timeout=30, describe=lambda _: "last pair %s" % (pair(),), interval=0.1)
+        pi.close()
 
     def test_replay_presence_needs_you(self):  # an own permission ask is needs-you since round 73 (was waiting-owner)
         pi = self.rig_.start()
