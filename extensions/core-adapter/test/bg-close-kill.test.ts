@@ -25,7 +25,7 @@ function harness(t: { after(fn: () => void): void }) {
   const tools = new Map<string, Tool>();
   const handlers = new Map<string, Handler>();
   const pi = { on: (n: string, h: Handler) => void handlers.set(n, h), registerTool: (x: Tool) => void tools.set(x.name, x), sendMessage: () => undefined, getAllTools: () => [] };
-  const session = { id: "s1", isChild: false, cwd, agentDir: path.join(root, "agent"), overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
+  const session = { id: "s1", isChild: false, cwd, agentDir: path.join(root, "agent"), roots: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
   const handle = registerWait(pi as never, { session: async () => session as never, home: root, platform: process.platform });
   const ctx = { mode: "tui", cwd, isIdle: () => true, sessionManager: { getSessionId: () => "s1" } };
   const start = async (): Promise<number> => {

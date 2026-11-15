@@ -36,7 +36,8 @@ const ownTasks = ownTaskReadable([ws], SID);
 // as index.ts builds them for the foreman: the own task dirs are in ownTasks (strict reads) and in the own-read set (ownReads)
 const main: MatchCtx = { cwd: ws, home, platform: process.platform, role: "main", ownTasks, ownReads: ownTasks };
 const sh = (command: string): string => checkToolCall(rules, "bash", { command }, main)?.kind ?? "pass";
-const bound = { cwd: ws, home, agentDir: ag, platform: process.platform, overlay: rules, ownTasks };
+const roots = { worktree: ws, scratch: [], tmp: [], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: true, agentDir: ag, home, pkgRoot: PKG } as never;
+const bound = { cwd: ws, home, agentDir: ag, platform: process.platform, roots, ownTasks };
 
 test("own_bg_output_cat_literal_passes", () => {
   assert.equal(sh(`cat ${OWN}`), "pass");
@@ -75,7 +76,7 @@ test("own_bg_output_foreman_wait_tool_log_accepted", async () => {
   const tools = new Map<string, Tool>();
   const handlers = new Map<string, (e: unknown, c: unknown) => Promise<unknown>>();
   const pi = { on: (n: string, h: (e: unknown, c: unknown) => Promise<unknown>) => void handlers.set(n, h), registerTool: (t: Tool) => void tools.set(t.name, t), sendMessage: () => undefined, getAllTools: () => [] };
-  const session = { id: SID, isChild: false, cwd: ws, agentDir: ag, overlay: rules, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined, ownTasks: (cwd: string) => ownTaskReadable([cwd], SID) };
+  const session = { id: SID, isChild: false, cwd: ws, agentDir: ag, roots, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined, ownTasks: (cwd: string) => ownTaskReadable([cwd], SID) };
   // the tools register for the foreman only (a test run inside a child session has PI_SUBAGENT_CHILD set)
   const childEnv = process.env.PI_SUBAGENT_CHILD;
   delete process.env.PI_SUBAGENT_CHILD;

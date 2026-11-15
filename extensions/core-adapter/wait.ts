@@ -11,7 +11,7 @@
 //
 // File bound (item 39): the path (as given and with symlinks resolved, triage.ts realDeep) must
 // sit inside the workspace (its .workflow/ included) or `<agentDir>/pi-foreman/state/wait/`;
-// inside the workspace the overlay's write protection set refuses it too. Owned dirs (owned.ts readWrite:
+// inside the workspace the gate's write protection (floors, self-modification, protected folders) refuses it too. Owned dirs (owned.ts readWrite:
 // the handoff dirs, subagent-artifacts, the round worktree dir) are accepted when the caller passes them.
 import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -21,8 +21,11 @@ import { isBriefName, isRulingName, rulingFresh } from "./ruling.ts";
 import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, freshBgLogPath, shellPathSetting, spawnWithFreshLog } from "./bg.ts";
 import { get } from "./config.ts";
 import { underOwned } from "./owned.ts";
-import { isProtectedPath } from "./permoverlay.ts";
-import type { OverlayRules } from "./permoverlay.ts";
+import { baseFloorEnv } from "./gate.ts";
+import { pathFloors } from "./floors.ts";
+import { folderProtected } from "./pathrules.ts";
+import type { GateRoots } from "./pathrules.ts";
+import { pathSelfmod } from "./selfmod.ts";
 import { resolveToolPath } from "./payload.ts";
 import { underTask } from "./recheckexempt.ts";
 import { workspaceOf } from "./python.ts";
@@ -80,8 +83,8 @@ export interface PathBoundOpts {
   home: string;
   agentDir: string;
   platform: string;
-  /** Overlay rules (write protection); null = baseline unreadable, workspace paths are refused. */
-  overlay: OverlayRules | null;
+  /** The session's gate roots (write protection: floors, self-modification, protected folders); null = unavailable, workspace paths are refused. */
+  roots: GateRoots | null;
   /** ownedRoots(...).readWrite: a file wait may also watch a path under these (default: none). */
   owned?: string[];
   /** R14 item 1: the session's own bg_run task dirs (roundsurface.ts ownTaskReadable): a pid/ci `log` may be a file there. */
@@ -116,9 +119,19 @@ export function checkWaitPath(raw: unknown, o: PathBoundOpts): { path: string } 
   };
   if ((o.owned ?? []).some(ownedHit)) return { path: abs };
   if (inside(rootsOf(workspaceOf(o.cwd).root))) {
-    if (!o.overlay) return { error: `pi-foreman: ${WAIT_TOOL} on '${shown}' refused: the permission baseline is unreadable, so the write protection cannot be checked. Run /foreman doctor.` };
-    const ctx = { cwd: o.cwd, home: o.home, platform: o.platform };
-    if (isProtectedPath(o.overlay, abs, ctx) || isProtectedPath(o.overlay, real, ctx)) {
+    const roots = o.roots;
+    if (!roots) return { error: `pi-foreman: ${WAIT_TOOL} on '${shown}' refused: the gate roots are unavailable, so the write protection cannot be checked. Run /foreman doctor.` };
+    const env = baseFloorEnv(o.cwd, { home: o.home, platform: o.platform, agentDir: o.agentDir, ...(roots.pkgRoot ? { pkgRoot: roots.pkgRoot } : {}), ...(roots.sessionDir ? { sessionDir: roots.sessionDir } : {}), ...(roots.child ? { child: true } : {}) });
+    // `<worktree>/.pi/tasks/`: only the session's own task dirs pass (path as given and resolved); another session's output is refused
+    const taskRoots = [o.cwd, workspaceOf(o.cwd).root].flatMap((r) => rootsOf(path.join(r, ".pi", "tasks")));
+    const inTasks = (p: string): boolean => taskRoots.some((r) => under(r, p, o.platform));
+    if (inTasks(abs) || (real !== null && inTasks(real))) {
+      const own = (p: string): boolean => (o.ownTasks ?? []).some((pat) => underTask(pat, p, o.platform) || underTask(path.join(realDeep(path.dirname(pat)), path.basename(pat)), p, o.platform));
+      if (real !== null && own(abs) && own(real)) return { path: abs };
+      return { error: `pi-foreman: ${WAIT_TOOL} on '${shown}' refused: the path is under the write protection (another session's task output).` };
+    }
+    const protectedAt = (p: string): boolean => !!pathFloors({ path: p }, env, "write") || !!pathSelfmod("write", { path: p }, o.cwd, roots, o.platform) || folderProtected(roots, o.platform, p);
+    if (protectedAt(abs) || (real !== null && protectedAt(real))) {
       return { error: `pi-foreman: ${WAIT_TOOL} on '${shown}' refused: the path is under the write protection (git internals, agent or harness configuration).` };
     }
     return { path: abs };
@@ -649,7 +662,8 @@ export interface WaitSession {
   isChild: boolean;
   cwd: string;
   agentDir: string;
-  overlay: OverlayRules | null;
+  /** The gate roots of this session (index.ts gateRootsOf), for the file wait's write protection. */
+  roots: GateRoots | null;
   /** The merged config (read at each use, so a reload applies). */
   config: () => unknown;
   trace: (rec: Record<string, unknown>) => void;
@@ -865,7 +879,7 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       }
       if (params.action !== "start") return refuse(`${WAIT_TOOL}: action must be start, list or cancel.`);
       const l = limits();
-      const spec = parseStart(params, l, { cwd: ctx.cwd, home: deps.home, agentDir: s.agentDir, platform: deps.platform, overlay: s.overlay, owned: s.owned?.(), ownTasks: s.ownTasks?.(ctx.cwd) });
+      const spec = parseStart(params, l, { cwd: ctx.cwd, home: deps.home, agentDir: s.agentDir, platform: deps.platform, roots: s.roots, owned: s.owned?.(), ownTasks: s.ownTasks?.(ctx.cwd) });
       if ("error" in spec) return refuse(spec.error, params.kind);
       const r = ensure().start(spec);
       if ("error" in r) return text(r.error, { decision: "refused" }, true);

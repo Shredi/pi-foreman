@@ -289,3 +289,46 @@ test("5c: `git config --file <protected>` in a write form is a write target for 
   // an ordinary file of the worktree: main and a builder answer as before (no decision)
   for (const role of ["foreman", "builder"]) assert.equal(userAns(role, "bash", { command: `git config --file ${work}/x.cfg a b` }), "none", role);
 });
+
+// Row 4: a child's writes of foreman-owned paths. Roots as a child session builds them: no owned roots, its own scratch and its own handoff dir (`childHandoff`).
+const agentDirC = path.join(home, ".pi", "agent");
+const ownHandoff = path.join(agentDirC, "pi-foreman", "handoffs", "own");
+const otherHandoff = path.join(agentDirC, "pi-foreman", "handoffs", "other");
+const otherScratch = path.join(base, "scrbase", "other");
+const siblingWt = path.join(base, "work.worktrees", "b1");
+for (const d of [ownHandoff, otherHandoff, otherScratch, siblingWt, path.join(agentDirC, "sessions", "x", "subagent-artifacts", "run"), path.join(agentDirC, "claude-config")]) fs.mkdirSync(d, { recursive: true });
+const ansChild = (role: string, tool: string, input: Record<string, unknown>): string => {
+  const r: GateResult = gateDecide(tool, input, work, { env: () => envOf(true), roots: () => mkRoots(role, { agentDir: agentDirC, home, pkgRoot: PKG_ROOT, childHandoff: ownHandoff }) });
+  return r === null || r === undefined ? "none" : "block" in r && r.block ? `block:${r.rule}` : "ask" in r && r.ask ? `ask:${r.rule}` : `allow:${(r as { rule?: string }).rule}`;
+};
+const writesOf = (p: string): [string, Record<string, unknown>][] => [["write", { path: p, content: "x" }], ["bash", { command: `echo x > ${p}` }]];
+
+test("row 4: a child's write of another session's handoff dir, artifacts, harness config, a sibling worktree or another child's scratch is refused", posixOnly, () => {
+  const rows: [string, string][] = [
+    [path.join(otherHandoff, "plan.md"), "child-write-outside"], [path.join(otherHandoff, "ruling.md"), "child-write-outside"], [path.join(otherHandoff, "brief.md"), "child-write-outside"],
+    [path.join(agentDirC, "sessions", "x", "subagent-artifacts", "run", "result.json"), "child-write-outside"],
+    [path.join(agentDirC, "sessions", "x", "y.jsonl"), "floor-policy-file"],
+    [path.join(agentDirC, "foreman.json"), "selfmod-agent-harness"], [path.join(agentDirC, "claude-config", "x.json"), "selfmod-agent-harness"],
+    [path.join(siblingWt, "f.txt"), "child-write-outside"], [path.join(otherScratch, "x.txt"), "child-write-outside"],
+  ];
+  for (const [p, rule] of rows) {
+    for (const role of ["builder", "reviewer"]) {
+      for (const [tool, input] of writesOf(p)) assert.equal(ansChild(role, tool, input), `block:${rule}`, `${role}: ${tool} ${p}`);
+    }
+  }
+});
+
+test("row 4: a child's own handoff plan.md and result.md, scratch and worktree stay open", posixOnly, () => {
+  for (const role of ["builder", "reviewer"]) {
+    for (const f of ["plan.md", "result.md"]) {
+      assert.equal(ansChild(role, "write", { path: path.join(ownHandoff, f), content: "x" }), "allow:path-write-handoff", `${role}: ${f}`);
+      assert.ok(!ansChild(role, "bash", { command: `echo x > ${path.join(ownHandoff, f)}` }).startsWith("block"), `${role}: redirect ${f}`);
+    }
+    assert.equal(ansChild(role, "write", { path: path.join(scr, "x.txt"), content: "x" }), "allow:path-write-scratch", role);
+    assert.equal(ansChild(role, "read", { path: path.join(scr, "x.txt") }), "allow:path-read-scratch", role);
+    assert.equal(ansChild(role, "bash", { command: `cat ${path.join(scr, "x.txt")}` }), "allow:default-read", role);
+    assert.equal(ansChild(role, "read", { path: path.join(work, "a.txt") }), "allow:path-read-worktree", role);
+  }
+  assert.equal(ansChild("builder", "write", { path: path.join(work, "a.txt"), content: "x" }), "allow:path-write-worktree");
+  assert.equal(ansChild("reviewer", "write", { path: path.join(work, "a.txt"), content: "x" }), "block:child-readonly-write");
+});

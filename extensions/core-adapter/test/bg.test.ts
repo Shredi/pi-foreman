@@ -56,7 +56,7 @@ function waitHarness(t: { after(fn: () => void): void }, opts: { toolNames?: str
     sendMessage: (m: { content: string }) => void wakes.push(m),
     getAllTools: () => (opts.toolNames ?? []).map((name) => ({ name })),
   };
-  const session = { id: "s1", isChild: opts.isChild === true, cwd, agentDir, overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
+  const session = { id: "s1", isChild: opts.isChild === true, cwd, agentDir, roots: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
   const handle = registerWait(pi as never, { session: async () => session as never, home: root, platform: process.platform });
   const ctx = { mode: "tui", cwd, isIdle: () => true, sessionManager: { getSessionId: () => "s1" } };
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
@@ -126,7 +126,7 @@ test("foreman_wait pid and ci accept log; a log outside the bound is refused", (
   const cwd = path.join(root, "proj");
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(cwd, { recursive: true });
-  const bound = { cwd, home: root, agentDir, platform: process.platform, overlay: null };
+  const bound = { cwd, home: root, agentDir, platform: process.platform, roots: null };
   const limits = { batchWindowSeconds: 0, maxSeconds: 3600, maxActive: 4, ci: true };
   const scratchLog = path.join(agentDir, "pi-foreman", "state", "scratch", "s1", "wait-w1.log");
   const pid = parseStart({ kind: "pid", pid: 4242, note: "n", log: scratchLog }, limits, bound);

@@ -113,7 +113,7 @@ test("regression: a resolved or cancelled wait fires changed once and the next p
   const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "r61w-"));
   let tool!: { execute: (...a: unknown[]) => Promise<{ details: Record<string, unknown> }> };
   const pi = { on: () => undefined, registerTool: (t: never) => (tool = t), sendMessage: () => undefined };
-  const session = { id: "s1", isChild: false, cwd: agentDir, agentDir, overlay: null, config: () => ({}), trace: () => undefined };
+  const session = { id: "s1", isChild: false, cwd: agentDir, agentDir, roots: null, config: () => ({}), trace: () => undefined };
   const waits = registerWait(pi as never, { session: async () => session as never, home: agentDir, platform: process.platform });
   const ctx = { mode: "rpc", cwd: agentDir, isIdle: () => true, sessionManager: { getSessionId: () => "s1" } };
   const live = LiveState.start({ agentDir, sessionId: "s1", cwd: agentDir, mode: "rpc", env: {} }, () => [], undefined, () => waits.active("s1"))!;
