@@ -50,7 +50,7 @@ test("the loop-stop text: byte-identical without a parent; the parented text nam
   );
   const p = loopRefusalParented(STOP);
   assert.match(p, /^pi-foreman: launch refused \[review_loop\]: the last two plan review rounds failed with the same findings \(item:1\)\. /);
-  assert.match(p, /report the open findings to the parent by file \(ask\.md in the handoff dir\) and wait for its ruling/);
+  assert.match(p, /report the open findings to the parent in an intercom message whose first line starts with Question, and end your turn: the parent lifts this stop with a brief; a message does not, and a ruling-<n>\.md from a parent still does/);
   assert.match(p, /ask_user_question only when a finding needs the owner's decision/);
   assert.match(loopRefusalParented({ rule: "stalled", kind: "code", sig: ["item:2"] }), /no change to the work since the round before \(item:2\)/);
 });
@@ -129,7 +129,7 @@ test("a parented session: a revised plan failing under the same item goes on; th
   await until("the loop stop is set", async () => (await w.traceEvents()).some((e) => e.event === "review_loop"));
   const refused = await review(FAIL2);
   assert.ok(isLoop(refused), "the same version failing again with nothing new stops");
-  assert.match(refused ?? "", /to the parent by file \(ask\.md in the handoff dir\)/);
+  assert.match(refused ?? "", /to the parent in an intercom message whose first line starts with Question/);
   w.rule("ruling-1.md", "go on\n");
   const first = await review(FAIL1); // the first launch after a ruling is told about it, once
   assert.match(first ?? "", /a newer ruling arrived/);

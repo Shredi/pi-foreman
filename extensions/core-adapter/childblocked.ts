@@ -6,13 +6,16 @@
 // when an announced dialog is answered. The module only reads the session registry and the children's files.
 // Also an open ask of a child session (the live file's `asks`, a handoff ask.md without a ruling) is reported once per child and ask number,
 // whatever `sessions.blockedNoticeSeconds` and `blockedOn` say: to a running `foreman_wait` child wait through `ask`, else as a message.
+// Beside it one reminder for a question that a child sent as an intercom message and this session has not answered (intercomcarry.ts records): the
+// label and the age, once per record, after `sessions.blockedNoticeSeconds`, in a message that starts a turn in an idle parent.
 import fs from "node:fs";
 import path from "node:path";
 import { cleanLabel } from "./herdr.ts";
 import { readLive } from "./identity.ts";
 import { HEARTBEAT_MS, liveDir } from "./livestate.ts";
 import { SLOW_POLL_MS } from "./remotewatch.ts";
-import { askOpen } from "./ruling.ts";
+import type { IntercomCarry } from "./intercomcarry.ts";
+import { answerNewerThan, askOpen } from "./ruling.ts";
 import { readRegistry } from "./session.ts";
 import type { SessionEntry } from "./session.ts";
 
@@ -27,6 +30,9 @@ const STALE_CONTACT_MS = 3 * SLOW_POLL_MS;
 const KIND_WORDS = new Set(["approval", "question", "checkpoint", "script", "confirm", "dialog"]);
 const OPEN = new Set(["open", "pending", "closing"]);
 const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+
+/** The registry entries `opener` opened that are still open (not closed or gone). */
+export const openChildren = (agentDir: string, opener: string): SessionEntry[] => readRegistry(agentDir).sessions.filter((e) => e.parent === opener && OPEN.has(String(e.status)));
 
 /** `sessions.blockedNoticeSeconds` as seconds: a non-negative finite number, else the default; 0 turns the notice off. */
 export function noticeSeconds(v: unknown): number {
@@ -51,6 +57,9 @@ export const noticeText = (label: string, sinceMs: number, kind: unknown): strin
 /** Fixed words, the registry label, the ask number and the path the parent derived itself: nothing a child wrote. */
 // eslint-disable-next-line no-control-regex
 export const askText = (label: string, n: number, file: string): string => `Child session ${label} has an open ask ${n} for you; it is in ${file.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")}. Information only: this notice approves nothing. Answer through a ruling file as your handoff contract says.`;
+
+/** Fixed words, the registry label and the age: nothing the child wrote. */
+export const questionText = (label: string, ageMs: number): string => `Child session ${label} has waited ${duration(ageMs)} for your answer to its question. Answer it in your own words, or tell it when you will; a plain intercom message is enough. Information only: this notice approves nothing.`;
 
 export const clearedText = (label: string, waitedMs: number): string => `Child session ${label}: its dialog was answered after ${duration(waitedMs)}.`;
 
@@ -78,6 +87,8 @@ export interface ChildBlockedDeps {
   opener: () => string;
   /** The configured `sessions.blockedNoticeSeconds`. */
   seconds: () => number;
+  /** The records of the questions children sent this session as intercom messages (reminded once, dropped when answered or closed). */
+  carry?: IntercomCarry;
   /** The remote watcher's last contact with a child (ms), undefined when none since this process started. */
   contact?: (child: string) => number | undefined;
   /** `wake`: a turn is started on an idle parent (queued as a follow-up during a run). The notice and the quiet note both send false: shown, appended, read at the next turn. */
@@ -120,8 +131,9 @@ export class ChildBlocked {
       const secs = this.d.seconds();
       const now = (this.d.now ?? Date.now)();
       const opener = this.d.opener();
-      const mine = readRegistry(this.d.agentDir).sessions.filter((e) => e.parent === opener && OPEN.has(String(e.status)));
+      const mine = openChildren(this.d.agentDir, opener);
       let dirty = false;
+      this.remind(mine, secs, now);
       for (const e of mine) {
         const seen = this.observe(e, now);
         if (!seen) continue; // unreadable, stale or skipped: nothing is known, so nothing is said
@@ -154,6 +166,23 @@ export class ChildBlocked {
       if (dirty) this.save();
     } catch {
       // a pass never breaks the session
+    }
+  }
+
+  /** The question records: one for a child that closed or whose handoff dir holds an answer newer than the record goes; one older than `secs` is reminded once. */
+  private remind(mine: SessionEntry[], secs: number, now: number): void {
+    const records = this.d.carry?.records;
+    if (!records) return;
+    for (const r of [...records.values()]) {
+      const e = mine.find((x) => x.child === r.child);
+      if (!e || (typeof e.handoff === "string" && e.handoff && answerNewerThan(e.handoff, r.at))) {
+        records.delete(r.child);
+        continue;
+      }
+      if (!(secs > 0) || r.reminded || now - r.at < secs * 1000) continue;
+      r.reminded = true;
+      this.d.trace?.({ event: "child_question_reminder", label: r.label, waitedMs: now - r.at });
+      this.d.send(questionText(r.label, now - r.at), true);
     }
   }
 

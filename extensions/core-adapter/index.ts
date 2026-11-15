@@ -183,7 +183,8 @@ import type { BlockClass } from "./herdr.ts";
 import { installHerdrMeta } from "./herdrmeta.ts";
 import { installBgRecords } from "./bgrecords.ts";
 import { RemoteWatcher } from "./remotewatch.ts";
-import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds } from "./childblocked.ts";
+import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds, openChildren } from "./childblocked.ts";
+import { IntercomCarry, addresses, deliveredSendTo, isQuestion, parentIdsOf, senderOf } from "./intercomcarry.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
 import { builderLaunchRefusal, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
@@ -211,7 +212,7 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDocto
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { HANDOFF_DIR_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { selfFinish, spawnDetached } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
@@ -398,6 +399,8 @@ interface Session {
   waitingForParent: boolean;
   /** Foreman only: ids of the active waits that set waitingForParent (cleared with it). */
   handoffWaits: Set<string>;
+  /** Foreman only: in-memory state of the questions that travel as intercom messages (intercomcarry.ts): the parent's records of its children's questions. */
+  carry: IntercomCarry;
   /** Foreman only: a run is in progress (agent_start .. agent_end); a child notice that came as an intercom message is then already in it (wait.ts). */
   inRun: boolean;
   /** Foreman only: custom messages handled so far, so an idle-appended one is handled once at the next input (idlecustom.ts, ledger 11). */
@@ -999,6 +1002,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       finishRefusals: 0,
       waitingForParent: false,
       handoffWaits: new Set(),
+      carry: new IntercomCarry(),
       inRun: false,
       customSeen: new CustomSeen(),
       attention: new AttentionNotices(),
@@ -1761,6 +1765,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         sessionId: s.id,
         opener: () => openerIntercomId(process.env, s.agentDir, s.id),
         seconds: () => noticeSeconds(get(s.config.config, "sessions.blockedNoticeSeconds")),
+        carry: s.carry,
         contact: (child) => (watch as RemoteWatcher | null)?.lastContact(child),
         ask: (label, file) => waits.childNotice(s.id, label, "ask", file),
         send: (text, wake) => {
@@ -3693,7 +3698,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           await s.reviewSync; // a review round still being recorded lands (and may set the stop) before the gate reads it
           if (s.loopStop && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
-            return { block: true, reason: (checkpointMode(undefined, process.env) === "parent" ? loopRefusalParented : loopRefusal)(s.loopStop) };
+            return { block: true, reason: (checkpointMode(undefined, process.env) === "parent" ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
@@ -4172,6 +4177,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return !!s && !s.attention.endedRuns.has(runId) && (s.activeRuns.has(runId) || s.pendingLaunches.size > 0);
   }
 
+  /** An inbound intercom message: a question of one of this session's open child sessions (its first line starts with `Question`) is recorded, never its text. */
+  function noteQuestion(s: Session, details: unknown): void {
+    s.carry.seen(details);
+    const from = senderOf(details);
+    if (!from || !isQuestion(details) || (details as { message?: { crossMachine?: unknown } }).message?.crossMachine) return;
+    const e = openChildren(s.agentDir, openerIntercomId(process.env, s.agentDir, s.id)).find((x) => x.child === from.id);
+    if (e) s.carry.note(e.child, cleanLabel(e.label), Date.now());
+  }
+
+  /** A delivered intercom `send`: to this session's parent it lets the turn end without the finish checks (cleared by the next inbound message, wake or typed input); to an open child it answers that child's recorded question. */
+  function onSendDelivered(s: Session, to: string): void {
+    if (parentIdsOf(childDirsOf(s)).some((id) => addresses(to, id, s.carry.namesOf(id)))) {
+      s.waitingForParent = true;
+      s.trace?.emit({ event: "waiting_for_parent", decision: "set", toolFamily: "intercom" });
+    }
+    s.carry.answered(to);
+  }
+
   /** A custom message the foreman received: at message_end, or appended while idle and found at the next input (idlecustom.ts). */
   function onCustomMessage(s: Session, message: unknown): void {
     const m = message as { customType?: string; details?: unknown; content?: unknown };
@@ -4188,6 +4211,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // An inbound intercom message or a foreman_wait wake is the parent answering: the finish gate is active again.
     if (m.customType === INTERCOM_MESSAGE_TYPE || m.customType === WAKE_MESSAGE_TYPE) (s.waitingForParent = false), s.handoffWaits.clear();
     if (m.customType === INTERCOM_MESSAGE_TYPE) s.turn.intercomFrom = intercomSender(m.details);
+    if (m.customType === INTERCOM_MESSAGE_TYPE) noteQuestion(s, m.details);
     if (m.customType === NOTIFY_TYPE) onCompletionNotice(s, m.content);
   }
 
@@ -4776,6 +4800,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && event.toolName === INTERCOM_TOOL) {
       const i = event.input as Record<string, unknown>;
       if (i.action === "send") owner.show?.planSent(i.message);
+    }
+    if (owner && !owner.isChild) {
+      const to = deliveredSendTo(event);
+      if (to) onSendDelivered(owner, to);
     }
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
