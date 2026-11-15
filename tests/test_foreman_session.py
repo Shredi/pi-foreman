@@ -235,7 +235,12 @@ class SessionTest(unittest.TestCase):
             code, out, err = self.run_main(*self.open_args("--dry-run", "--model", child), PI_FOREMAN_SESSION_MODEL="prov/mid-1")
             self.assertEqual(code, 0, err)
             self.assertIn("session model: %s" % child, out)
-            self.assertNotIn("rank", out + err)
+            # the checkout's own folder name (its path, its parent label) may contain "rank"; it is not CLI output about a rank rule
+            text = out + err
+            for name in {Path.cwd().name, SCRIPTS.parent.name}:
+                for own in sorted({name, fsn.slug_of(name)}, key=len, reverse=True):
+                    text = text.replace(own, "")
+            self.assertNotIn("rank", text)
 
     def test_footer_contract_and_no_home_path(self):
         code, _, _ = self.run_main(*self.open_args("--plan-first"))

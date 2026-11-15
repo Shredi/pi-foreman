@@ -58,7 +58,11 @@ class TestRemoteClose(ReplayCase):
         wt = rig.root / "project.worktrees" / "wt-replay"
         self.assertTrue(wt.is_dir())
         safe = "".join(c for c in sid if c.isalnum() or c in "-_")
-        manifest = json.loads((rig.state_dir / "sessions" / sid / "manifest.json").read_text("utf-8"))
+        manifest_file = rig.state_dir / "sessions" / sid / "manifest.json"
+        if not manifest_file.exists():  # name the failed record calls the adapter traced (manifest_record_failed), if any
+            failed = [r for r in rig.traces().get("trace-" + safe, []) if r.get("event") == "manifest_record_failed"]
+            self.fail("no manifest.json; manifest_record_failed trace records: %s" % (failed if failed else "none traced"))
+        manifest = json.loads(manifest_file.read_text("utf-8"))
         self.assertEqual([(e["kind"], e.get("branch")) for e in manifest["entries"] if e["kind"] == "worktree"], [("worktree", "wt-replay")])
         pi.prompt("[[replay:c1]] hello", timeout=60)
         try:

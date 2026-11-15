@@ -121,8 +121,8 @@ CI runs on Windows; these caused repeated Windows-only failures:
 Commands (run from the worktree root):
 
 - `python -m unittest discover -s tests -v`
-- `node --test "extensions/core-adapter/test/*.test.ts"`
-- `node --test "tests/installer/*.test.mjs"`
+- `node --import ./extensions/core-adapter/test/_hermetic-env.mjs --test "extensions/core-adapter/test/*.test.ts"`
+- `node --import ./tests/installer/_hermetic-env.mjs --test "tests/installer/*.test.mjs"`
 - `npm run typecheck` (tsc --noEmit)
 - replay: `python -m unittest discover -s tests/replay -v`
   (uses a temp `PI_CODING_AGENT_DIR`; the npm cache is shared and reused at

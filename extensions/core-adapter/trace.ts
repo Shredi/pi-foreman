@@ -46,10 +46,10 @@ export function redactCommand(cmd: string): string {
   // a run of few distinct characters ("xxxx…") is padding, not a key
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd
-    .replace(/(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s'"]+/gi, `$1${R}`)
+    .replace(/(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s*)?[^\s'"]+/gi, `$1${R}`)
     .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
-    .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
+    .replace(/(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
+    .replace(/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
     .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
     .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`) // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)
