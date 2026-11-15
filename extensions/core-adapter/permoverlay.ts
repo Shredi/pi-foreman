@@ -92,6 +92,7 @@ import type { Baseline } from "./baseline.ts";
 import { gitConfigRead } from "./defaults.ts";
 import { GIT_GREP_PAGER, GREP_FAMILY, baseName, nonPathArgs, scriptOperands, unitReadOnly } from "./patternargs.ts";
 import { isSelfHost } from "./owned.ts";
+import { LEAD_KEYWORDS, LIVE_WORDS, MAX_DEPTH, REDIRECTS, SHELLS, WORD_SPANS, WRAPPERS, WRITE_REDIRECTS, innerScript, parseShell, psProfile, unitHasRedirect, variants } from "./psunits.ts";
 
 // the helpers that moved out of this file in round 2, step 1 (the old importers keep working until the overlay goes)
 export { isSelfHost, readBaseline, wildcardRegExp };
@@ -934,94 +935,6 @@ function shortNameVariants(cands: string[], patterns: string[]): string[] {
 
 // --------------------------------------------------------------------- lexer
 
-interface Parsed {
-  pipelines: string[][][];
-  /** The operator that ended each pipeline: `&&`, `||`, `&`, `;` (also newline), `(`/`)`, `` ` ``, `{`/`}`, or `end`. */
-  seps: string[];
-  subs: string[];
-}
-
-function matchParen(src: string, open: number): number {
-  let depth = 0;
-  for (let i = open; i < src.length; i++) {
-    const c = src[i];
-    if (c === "\\") i++;
-    else if (c === "'") {
-      const j = src.indexOf("'", i + 1);
-      if (j < 0) return src.length;
-      i = j;
-    } else if (c === '"') {
-      i++;
-      while (i < src.length && src[i] !== '"') i += src[i] === "\\" ? 2 : 1;
-    } else if (c === "(") depth++;
-    else if (c === ")" && --depth === 0) return i;
-  }
-  return src.length;
-}
-
-/** Inner text of `$( )` and backtick substitutions, also inside double quotes (never inside single quotes). */
-function substitutions(src: string, shell: "posix" | "powershell"): string[] {
-  const out: string[] = [];
-  let inDq = false;
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    if (c === "\\" && shell === "posix") i++;
-    else if (c === "`" && shell === "powershell") i++;
-    else if (c === '"') inDq = !inDq;
-    else if (c === "'" && !inDq) {
-      const j = src.indexOf("'", i + 1);
-      if (j < 0) break;
-      i = j;
-    } else if (c === "$" && src[i + 1] === "(") {
-      const end = matchParen(src, i + 1);
-      out.push(src.slice(i + 2, end));
-    } else if (c === "`" && shell === "posix") {
-      const j = src.indexOf("`", i + 1);
-      const end = j < 0 ? src.length : j;
-      out.push(src.slice(i + 1, end));
-      i = end;
-    }
-  }
-  return out;
-}
-
-const ANSI: Record<string, string> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v", "\\": "\\", "'": "'", '"': '"', "?": "?" };
-
-/** Body of `$'...'` from `start` (after the quote) -> [decoded text, index of the closing quote]. */
-function ansiC(src: string, start: number): [string, number] {
-  let out = "";
-  let j = start;
-  while (j < src.length) {
-    const c = src[j];
-    if (c === "'") return [out, j];
-    if (c === "\\" && j + 1 < src.length) {
-      const e = src[j + 1];
-      let m: RegExpExecArray | null;
-      if (e in ANSI) {
-        out += ANSI[e];
-        j += 2;
-      } else if ((e === "x" || e === "u" || e === "U") && (m = new RegExp(`^[0-9A-Fa-f]{1,${e === "x" ? 2 : e === "u" ? 4 : 8}}`).exec(src.slice(j + 2)))) {
-        const cp = parseInt(m[0], 16);
-        out += cp <= 0x10ffff ? String.fromCodePoint(cp) : "";
-        j += 2 + m[0].length;
-      } else if ((m = /^[0-7]{1,3}/.exec(src.slice(j + 1)))) {
-        out += String.fromCharCode(parseInt(m[0], 8) & 0xff);
-        j += 1 + m[0].length;
-      } else if (e === "c" && j + 2 < src.length) {
-        out += String.fromCharCode(src.charCodeAt(j + 2) & 0x1f);
-        j += 3;
-      } else {
-        out += "\\" + e;
-        j += 2;
-      }
-      continue;
-    }
-    out += c;
-    j++;
-  }
-  return [out, src.length];
-}
-
 /** Bash brace expansion of one word (`a{b,c}d`, `{1..3}`, nested), at most `budget` results; [] when it has none. */
 export function expandBraces(w: string, budget = 64): string[] {
   for (let i = 0; i < w.length; i++) {
@@ -1203,162 +1116,10 @@ export function codeLiterals(code: string): string[] {
   return out.filter(Boolean);
 }
 
-/** Word indices of a parsed unit that are redirect targets (`> f`, `2>> f`, `< f`). */
-const REDIRECTS = new WeakMap<string[], Set<number>>();
-/** The subset of REDIRECTS written to (`>`, `>>`, `&>`, `>|`, `>&`), not read from. */
-const WRITE_REDIRECTS = new WeakMap<string[], Set<number>>();
-/** Word indices of a parsed unit with a `$` or backtick outside single quotes (the shell may expand it, `${N:=v}` binds N). */
-const LIVE_WORDS = new WeakMap<string[], Set<number>>();
-/** Source offsets [start, end) of each word of a parsed unit, in the string given to parseShell. */
-const WORD_SPANS = new WeakMap<string[], Array<[number, number]>>();
-
-/** True when a unit parsed by `parseShell` has a redirect (the operators are dropped from its words). */
-export function unitHasRedirect(unit: string[]): boolean {
-  return REDIRECTS.has(unit);
-}
-
-/** pipelines -> units -> words (quotes removed). */
-export function parseShell(src: string, shell: "posix" | "powershell" = "posix"): Parsed {
-  const pipelines: string[][][] = [];
-  const seps: string[] = [];
-  let units: string[][] = [];
-  let words: string[] = [];
-  let cur: string | null = null;
-  let redir = new Set<number>();
-  let wredir = new Set<number>();
-  let redirNext = false;
-  let writeNext = false;
-  let pos = 0;
-  let wordStart = 0;
-  let wordLive = false;
-  let spans: Array<[number, number]> = [];
-  let live = new Set<number>();
-  const flush = (): void => {
-    if (cur !== null) {
-      if (redirNext) {
-        redir.add(words.length);
-        if (writeNext) wredir.add(words.length);
-      }
-      redirNext = false;
-      writeNext = false;
-      spans.push([wordStart, pos]);
-      if (wordLive) live.add(words.length);
-      words.push(cur);
-    }
-    cur = null;
-    wordLive = false;
-  };
-  const endUnit = (): void => {
-    flush();
-    if (words.length) {
-      units.push(words);
-      if (redir.size) REDIRECTS.set(words, redir);
-      if (wredir.size) WRITE_REDIRECTS.set(words, wredir);
-      LIVE_WORDS.set(words, live);
-      WORD_SPANS.set(words, spans);
-    }
-    words = [];
-    spans = [];
-    live = new Set();
-    redir = new Set();
-    wredir = new Set();
-    redirNext = false;
-    writeNext = false;
-  };
-  const endPipe = (sep: string): void => {
-    endUnit();
-    if (units.length) {
-      pipelines.push(units);
-      seps.push(sep);
-    }
-    units = [];
-  };
-  const add = (s: string): void => {
-    cur = (cur ?? "") + s;
-  };
-  const posix = shell === "posix";
-  let pipeOpen = false;
-  for (let i = 0; i < src.length; i++) {
-    const c = src[i];
-    pos = i;
-    if (cur === null) wordStart = i;
-    if (c !== " " && c !== "\t" && c !== "\r" && c !== "\n" && c !== "|") pipeOpen = false;
-    if (c === (posix ? "\\" : "`")) {
-      if (src[i + 1] === "\n") i++;
-      else if (i + 1 < src.length) add(src[++i]);
-    } else if (!posix && c === "\\") add(c);
-    else if (posix && c === "$" && src[i + 1] === "'") {
-      const [text, end] = ansiC(src, i + 2);
-      add(text);
-      i = end;
-    } else if (posix && c === "$" && src[i + 1] === '"') {
-      // $"..." (locale translation): the double-quoted string follows
-    } else if (c === "'") {
-      const j = src.indexOf("'", i + 1);
-      const end = j < 0 ? src.length : j;
-      add(src.slice(i + 1, end));
-      i = end;
-    } else if (c === '"') {
-      let j = i + 1;
-      let s = "";
-      while (j < src.length && src[j] !== '"') {
-        if (src[j] === (posix ? "\\" : "`") && j + 1 < src.length && (posix ? '"\\$`\n'.includes(src[j + 1]) : true)) j++;
-        else if (src[j] === "$" || (posix && src[j] === "`")) wordLive = true;
-        s += src[j++];
-      }
-      add(s);
-      i = j;
-      cur = cur ?? "";
-    } else if (c === " " || c === "\t" || c === "\r") flush();
-    else if (c === "\n" && pipeOpen && cur === null && words.length === 0) continue; // `a |\nb`: one pipeline
-    else if (c === "\n" || c === ";") endPipe(";");
-    else if (c === "&" && src[i + 1] === ">" && posix) {
-      // `&>file` / `&>>file`: both streams to a file
-      flush();
-      redirNext = true;
-      writeNext = true;
-      i++;
-      while (src[i + 1] === ">") i++;
-    } else if (c === "&") {
-      const and = src[i + 1] === "&";
-      if (and) i++;
-      endPipe(and ? "&&" : "&");
-    } else if (c === "|") {
-      if (src[i + 1] === "|") {
-        i++;
-        endPipe("||");
-      } else {
-        if (src[i + 1] === "&") i++;
-        endUnit();
-        pipeOpen = true;
-      }
-    } else if (c === "(" || c === ")" || (posix && c === "`") || (!posix && (c === "{" || c === "}"))) endPipe(c);
-    else if (c === "<" || c === ">") {
-      if (cur !== null && /^\d+$/.test(cur)) cur = null; // 2>file: the fd number is not a word
-      flush();
-      redirNext = true;
-      writeNext = c === ">";
-      while (src[i + 1] === c) i++;
-      // `>&2`, `<&-`, `<&3`: an fd dup or close, its operand is no word of the command and `&` is no background operator
-      if ((c === ">" || (posix && c === "<")) && src[i + 1] === "&") i++;
-      else if (c === ">" && posix && src[i + 1] === "|") i++;
-    } else if (c === "#" && cur === null && (i === 0 || /\s|[;&|()]/.test(src[i - 1]))) {
-      while (i < src.length && src[i] !== "\n") i++;
-      i--;
-    } else {
-      if (c === "$") wordLive = true;
-      add(c);
-    }
-  }
-  pos = src.length;
-  endPipe("end");
-  return { pipelines, seps, subs: substitutions(src, shell) };
-}
+// the lexer (parseShell, variants, innerScript) lives in psunits.ts; parseShell and unitHasRedirect stay importable from here
+export { parseShell, unitHasRedirect };
 
 // -------------------------------------------------------------- command units
-
-const WRAPPERS = new Set(["sudo", "doas", "env", "command", "builtin", "exec", "nohup", "time", "nice", "ionice", "timeout", "stdbuf", "setsid", "xargs", "watch", "chroot"]);
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash"]);
 
 /** Verbs whose operands (all, or the last one) are written; with the redirects they feed a child's /tmp deny. */
 const TMP_WRITERS = new Map<string, "all" | "last">([["tee", "all"], ["touch", "all"], ["mkdir", "all"], ["mv", "all"], ["cp", "last"], ["install", "last"], ["ln", "last"]]);
@@ -1607,50 +1368,6 @@ function roEffect(core: string[], skip: Set<number>, inner: boolean, envSet = fa
   return { targets: [], unknown: verb };
 }
 
-/** The unit as written, then with env assignments / wrapper commands / the path prefix stripped; `env` lists the stripped assignments. */
-function variants(words: string[]): { texts: string[]; core: string[]; env: string[] } {
-  let w = words.slice();
-  const texts: string[] = [];
-  const env: string[] = [];
-  for (let n = 0; n < 8 && w.length; n++) {
-    texts.push(w.join(" "));
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0])) {
-      env.push(w[0]);
-      w = w.slice(1);
-      continue;
-    }
-    const base = baseName(w[0]);
-    if (base !== w[0]) {
-      w = [base, ...w.slice(1)];
-      texts.push(w.join(" "));
-    }
-    if (!WRAPPERS.has(base)) break;
-    w = w.slice(1);
-    while (w.length && (w[0].startsWith("-") || /^\d+(\.\d+)?[smhd]?$/.test(w[0]))) w = w.slice(1);
-  }
-  return { texts, core: w, env };
-}
-
-/** The script a shell-ish unit carries in an argument (`bash -c '...'`, `eval ...`, `pwsh -c ...`). */
-function innerScript(core: string[]): { script: string; shell: "posix" | "powershell" } | null {
-  if (!core.length) return null;
-  const cmd = baseName(core[0]);
-  if (SHELLS.has(cmd)) {
-    const i = core.findIndex((x, k) => k > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(x));
-    return i > 0 && core[i + 1] !== undefined ? { script: core[i + 1], shell: "posix" } : null;
-  }
-  if (cmd === "eval") return core.length > 1 ? { script: core.slice(1).join(" "), shell: "posix" } : null;
-  if (cmd === "pwsh" || cmd === "powershell") {
-    const i = core.findIndex((x, k) => k > 0 && /^-(c|command)$/i.test(x));
-    return i > 0 && core[i + 1] !== undefined ? { script: core.slice(i + 1).join(" "), shell: "powershell" } : null;
-  }
-  if (cmd === "cmd") {
-    const i = core.findIndex((x, k) => k > 0 && /^\/[ck]$/i.test(x));
-    return i > 0 ? { script: core.slice(i + 1).join(" "), shell: "powershell" } : null;
-  }
-  return null;
-}
-
 interface Collected {
   /** The verb of every non-neutral unit (`""` for a unit with an env assignment or wrapper prefix): the probe-dir check (PROBE_VERBS). */
   verbs?: string[];
@@ -1794,16 +1511,12 @@ function protectedReader(core: string[], skip: Set<number>): boolean {
 /** Commands that remove or rename their operands (POSIX, Windows, PowerShell names and aliases). */
 const REMOVERS = new Set(["rm", "rmdir", "unlink", "trash", "trash-put", "gio", "mv", "rename", "ren", "move", "del", "erase", "rd", "srm", "shred", "remove-item", "ri", "rni", "rename-item", "move-item", "mi"]);
 
-const MAX_DEPTH = 4;
-
 /** An include/exclude filter option with its value attached (`--exclude-dir=.git`): the value is a pattern to leave out, not a path the command opens. */
 const FILTER_OPT = /^--(exclude|include|exclude-dir|include-dir)=/;
 
 /** Builtins that assign their words to a variable. */
 const ASSIGNERS = new Set(["read", "declare", "typeset", "export", "local", "readonly", "mapfile", "readarray"]);
 
-/** Reserved words that precede a command (`do cat x`, `then grep y`, `! find`). */
-const LEAD_KEYWORDS = new Set(["do", "then", "else", "elif", "if", "while", "until", "!", "{", "}"]);
 /** Units that only steer control flow: `for f in a b`, `case x in`, a lone `done`/`fi`/`esac`. */
 const NEUTRAL_UNITS = new Set(["for", "select", "case"]);
 const NEUTRAL_END = new Set(["done", "fi", "esac"]);
@@ -1951,9 +1664,6 @@ function npmInstallOwnedWin32(c: Collected, ctx: MatchCtx): boolean {
   const lock = ctx.foremanRoot ? spellings(path.win32.join(ctx.foremanRoot, "bench", "pi-lock")) : [];
   return lock.length > 0 && into(lock);
 }
-
-/** `${env:USERPROFILE}` as `$env:USERPROFILE`: the braces would split the word in the PowerShell parse (same variable). */
-const psProfile = (s: string): string => s.replace(/\$\{env:USERPROFILE\}(?=[\\/])/gi, "$env:USERPROFILE");
 
 function collect(src0: string, shell: "posix" | "powershell", depth: number, out: Collected): void {
   const src = shell === "powershell" ? psProfile(psDashes(src0)) : src0;

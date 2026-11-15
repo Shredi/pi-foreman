@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, scanToolFloor, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -180,8 +180,9 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   if (outside !== null) {
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
+    const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? ` Use $FOREMAN_SCRATCH${r.scratch.length ? ` (${r.scratch[0]})` : ""}, not /tmp.` : "";
     const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md, ask-<n>.md, .seen and anything below work/)` : "no handoff dir is set";
-    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.`);
+    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.${tmpHint}`);
   }
   if (env.roots.roundReadOnly) {
     const target = readonlyWrite(tool, input, segments, cmd, env);
@@ -421,6 +422,8 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       const ph0 = ph0r?.kind === "deny" ? ph0r : ph0n;
       const fh0 = readField !== undefined && ph0?.kind !== "deny" ? fieldFloors(nin, "", env, false, 0, true) : null;
       const h = fh0?.kind === "deny" ? fh0 : (ph0 ?? fh0);
+      const scan = h?.kind === "deny" ? null : scanToolFloor(toolName, nin, cwd, env);
+      if (scan) return decided(blocked(scan, toolName));
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
       const sm = selfmodResult(pathSelfmod(toolName, nin, cwd, roots, platform), roots.child);
