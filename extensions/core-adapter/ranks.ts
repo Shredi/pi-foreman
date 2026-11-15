@@ -125,6 +125,44 @@ export function rankRefusalFor(config: Json | undefined, foremanModel: string | 
   return null;
 }
 
+/** The foreman-model fix a refusal under `role`'s policy ends with. */
+const rankedAbove = (config: Json | undefined, role: string): string => (rolePolicy(config, role) === "below" ? "above" : "at or above");
+
+/**
+ * The sentence a refusal of `childModel` gets when it is the normal (mapped default) model of the first of `roles` whose own policy refuses it,
+ * both models ranked: the cause and the way out. Null for a strong rung or an explicit other model (not the role's normal model) and for an unranked model.
+ */
+export function normalModelSentence(config: Json | undefined, foremanModel: string | null, childModel: string, roles: readonly string[], roleMap: Record<string, Json>): string | null {
+  const role = roles.find((r) => rankRefusal(config, foremanModel, childModel, r) !== null);
+  if (!role || !foremanModel) return null;
+  const ranks = ranksOf(config);
+  const base = splitLevel(childModel.trim()).base;
+  const normal = get(roleMap, `${role}.model`);
+  if (tierOf(ranks, base) === null || tierOf(ranks, foremanModel) === null || typeof normal !== "string" || splitLevel(normal.trim()).base !== base) return null;
+  return `${base} is the ${role}'s normal model: run the foreman on a model ranked ${rankedAbove(config, role)} it.`;
+}
+
+/**
+ * `/foreman doctor`: the roles whose normal model the foreman model cannot launch (each under its own policy), as {message, fix}. An unranked
+ * model (the role's or the foreman's) is reported as a missing ranks entry. Empty with no ranks configured.
+ */
+export function rankDoctorFindings(config: Json | undefined, foremanModel: string | null, roleMap: Record<string, Json>): { message: string; fix: string }[] {
+  const out: { message: string; fix: string }[] = [];
+  const ranks = ranksOf(config);
+  if (ranks.size === 0 || !foremanModel) return out;
+  for (const role of ["explorer", "builder", "reviewer"]) {
+    const normal = get(roleMap, `${role}.model`);
+    if (typeof normal !== "string" || normal === "" || rolePolicy(config, role) === "any") continue;
+    const no = rankRefusal(config, foremanModel, normal, role);
+    if (!no) continue;
+    const model = splitLevel(normal.trim()).base;
+    const unranked = tierOf(ranks, model) === null ? model : tierOf(ranks, foremanModel) === null ? foremanModel : null;
+    if (unranked !== null) out.push({ message: `${role}'s normal model ${model} cannot be rank-checked: ${unranked} is in no providers.<p>.ranks list`, fix: "add a ranks entry for it" });
+    else out.push({ message: `${role}'s normal model ${model} is not launchable under the foreman model ${foremanModel} (rank policy ${no.policy})`, fix: `run the foreman on a model ranked ${rankedAbove(config, role)} it, or map the role to a lower-ranked model` });
+  }
+  return out;
+}
+
 /** An explicit launch model is honoured only with ranks configured, ranked, and allowed for `role`. */
 export function explicitModelAllowed(config: Json | undefined, foremanModel: string | null, childModel: string, role: string): boolean {
   const ranks = ranksOf(config);
