@@ -65,11 +65,23 @@ const statusGlyph = (t, status) => glyph(t, glyphSpec(status));
 const tones = prTones;
 
 // One dot per PR: its colour is the PR's state, and it pulses (opacity, native loop) while a job runs or the checks are not settled.
+// A ready PR (`mark: "check"`) gets a check mark in the same box instead: a bold text glyph in its green, never pulsing.
 function prDot(t, st) {
   const color = tones(t)[st.fill];
+  if (st.mark === "check") return h_flex().relative().flex_none().size(14).mx(1).items_center().justify_center()
+    .text_size(12).font_semibold().text_color(color).child("✓");
   return div().relative().flex_none().size(14).mx(1)
     .child(div().absolute().top(4).left(4).size(6).rounded(3).bg(color)
       .when(st.pulse, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 })));
+}
+
+// SAMPLE ONLY, removed before the PR is ready: the two variants the owner picks between for "checks running, none failed". Not legend rows.
+function ownersChoice(t) {
+  const pick = (st, label) => h_flex().gap(5).items_center().text_size(11).text_color(t.muted).child(prDot(t, st)).child(label);
+  return v_flex().pl(8).pt(8).gap(4)
+    .child(div().text_size(11).font_medium().text_color(t.dim).child("Owner's choice: checks running, none failed"))
+    .child(pick({ pulse: true, fill: "amber" }, "amber pulse (today)"))
+    .child(pick({ pulse: true, fill: "green" }, "green pulse"));
 }
 
 // Conflict marker, independent of the dot: a small red disc with a bang.
@@ -794,6 +806,7 @@ export default class ForemanAgents extends View {
       .map((g) => ({ ...g, prs: this.enrich(g.prs) })), []);
     const listedAt = Math.max(0, ...[...this.radar.values()].map((r) => (r.ok && r.openPrsAt) || 0));
     rows.push(...guard(() => this.openPrRows(t, orphanGroups, listedAt ? openPrsAge(listedAt, now) : ""), []));
+    if (this.sample) rows.push(ownersChoice(t)); // sample only: removed before the PR is ready
     const needs = list.filter((a) => statusOf(a) === "blocked").length;
 
     const title = h_flex().flex_none().items_end().h(38).px(14).pb(6)
