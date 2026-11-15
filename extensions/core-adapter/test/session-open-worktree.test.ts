@@ -1,5 +1,6 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { SESSION_USAGE, WORKTREE_MARK, parseSessionArgs, runSessionCommand, runSessionOpenTool } from "../session.ts";
@@ -13,6 +14,8 @@ after(() => {
 });
 
 const root = path.join(os.tmpdir(), "pf-session-worktree");
+fs.mkdirSync(root, { recursive: true });
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 const wt = { path: path.join(root, "r.worktrees", "demo"), branch: "round/demo", base: "origin/main", install: "none" };
 
 function deps(over: Partial<SessionDeps> = {}, stdout = "handoff: x"): SessionDeps & { spawned: string[][]; traced: Record<string, unknown>[]; recorded: unknown[] } {

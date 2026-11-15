@@ -2,6 +2,8 @@
 // foreman_session_open and the doctor still judge the BASE model; a manual /model re-keys them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { r11Rig } from "./_r11rig.ts";
 import { defaultSpawner } from "../spawn.ts";
 
@@ -69,6 +71,7 @@ test("downshifted: foreman_session_open shows the base model", async (t) => {
   const r = await rig(t);
   await downshift(r);
   const open = r.tools.get("foreman_session_open")!;
+  fs.writeFileSync(path.join((r.ctx as { cwd: string }).cwd, "b.md"), "brief\n");
   const ok = await open.execute("o1", { label: "demo", brief: "b.md", dryRun: true }, undefined, undefined, r.ctx);
   assert.match(ok.content?.[0]?.text ?? "", /^session model: pa\/big\n/);
   assert.equal(r.spawned[0].includes("--own-model"), false);

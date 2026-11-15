@@ -13,6 +13,7 @@ import type { SessionDeps } from "../session.ts";
 import type { SpawnResult } from "../spawn.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-rclose-")));
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 const mk = (name: string): string => fs.mkdtempSync(path.join(root, `${name}-`));
 const CHILD = "0a1b2c3d-0000-4000-8000-0123456789ab";
 const PARENT = "opener-1@gamma";

@@ -511,6 +511,17 @@ function openSummary(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>
   ].join("\n");
 }
 
+/** Why `file` is not a readable regular file (a short fixed phrase, never the error text with its path), or null when it is one. */
+function briefProblem(file: string): string | null {
+  try {
+    if (!fs.statSync(file).isFile()) return "not a regular file";
+    fs.accessSync(file, fs.constants.R_OK);
+    return null;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? "file not found" : "file not readable";
+  }
+}
+
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
   if (c.planMode && !c.machine && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
@@ -527,6 +538,12 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
     const raw = (d.config as { close?: { worktreeDir?: unknown } } | undefined)?.close?.worktreeDir;
     const root = main ? resolveWorktreeRoot(main, raw, { installRoot: d.protectedRoots?.installRoot, npmRoot: d.protectedRoots?.npmRoot }) : null;
     if (root?.error) return { text: `session open refused [${root.error.code}]: ${root.error.message}`, ok: false };
+  }
+  const briefFile = path.resolve(d.cwd, c.brief);
+  const why = briefProblem(briefFile);
+  if (why) {
+    const shown = c.brief.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 100);
+    return { text: `session open refused [brief_unreadable]: ${why} (${shown}); pass the path of a brief file`, ok: false };
   }
   // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
   const cwdArg = c.machine ? c.cwd! : path.resolve(d.cwd, c.cwd ?? ".");
