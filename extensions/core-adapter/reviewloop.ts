@@ -4,8 +4,8 @@
 //   repeat:  the sig is non-empty and equal, or
 //   stalled: the state is unchanged (no diff) and the sig brings nothing new (a subset).
 // A PASS restarts the comparison; a FAIL with an empty sig fires nothing (there is nothing to compare). The stop
-// (`LoopStop`) refuses builder and reviewer launches (index.ts) until an owner prompt, a parent ruling or brief, or a
-// `/ceremony` tier change clears it.
+// (`LoopStop`) refuses builder and reviewer launches (index.ts) until an owner prompt, an answered ask_user_question, a parent brief,
+// or a `/ceremony` tier change clears it.
 // Plan reviews (`loopVerdictOf`): an equal set across two different plan versions is a repeat only when it holds an `at:` key; an
 // unknown state ("") equals only another unknown state. A session with a parent gets `loopRefusalParented` instead of `loopRefusal`.
 import { failedItemsOf } from "./costguard.ts";
@@ -53,7 +53,7 @@ export function loopVerdict(prev: LoopRound | null, cur: LoopRound): LoopRule | 
 export function loopRefusal(stop: LoopStop): string {
   const what = stop.kind === "plan" ? "plan" : "work";
   const why = stop.rule === "repeat" ? `the last two ${stop.kind} review rounds failed with the same findings` : `the last ${stop.kind} review failed again with no new finding and no change to the ${what} since the round before`;
-  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent ruling or brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.`;
+  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.`;
 }
 
 /** `loopVerdict` per review kind. A plan review that fails again on a revised plan (a new plan version) with only `item:<N>` keys in common is not a repeat: new findings under the same ledger item are progress. A located key (`at:`) in the set still stops it. Code reviews and same-version plan rounds are `loopVerdict` unchanged. */

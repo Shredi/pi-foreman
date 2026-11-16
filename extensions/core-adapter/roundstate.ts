@@ -2,21 +2,16 @@
 // session (PI_FOREMAN_HANDOFF_DIR; none = nothing written, nothing restored).
 //
 // The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan
-// and the round state (built, review open). It never keeps an approval: on session_start the checkpoint
-// approval comes back only from the parent's `ruling.md` (a `plan-version: <hash>` line stamped by the parent pane's harness naming this
-// plan version, else `ruling-plan.md` or `ruling.md` in parentApproval restore mode: first line APPROVED, ctime newer
-// than the ctime of both `<scratch>/plan-<topic>.md` and `<handoff>/plan.md`, and both plan files of one version hash). Any other field (`approved: true`) is
-// ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). A file of an older version (`chains`, review
+// and the round state (built, review open). It never keeps or brings back an approval: the session's own dialog approval returns from
+// its ceremony-state entry or the approval store (index.ts), and no parent file (`ruling.md`, `ruling-plan.md`) approves a plan. Any other
+// field (`approved: true`) is ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). A file of an older version (`chains`, review
 // counters) restores its main chain's state and drops the counters. The caps-reset
-// watermark (`capsResetAt`, ms epoch of the last parent ruling/brief that lifted the loop stop and the budgets) is kept, so a reload does not apply it twice.
+// watermark (`capsResetAt`, ms epoch of the last parent brief that lifted the loop stop and the budgets) is kept, so a reload does not apply it twice.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE, planVersionHash, stampedApproval } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
 import { initialRounds } from "./rounds.ts";
 import type { RoundState } from "./rounds.ts";
-import { parentApproval } from "./ruling.ts";
-import type { SelfRulings } from "./ruling.ts";
 
 export const ROUND_STATE_FILE = "round-state.json";
 
@@ -34,7 +29,7 @@ export interface PersistedRounds {
   /** The plan-review lineage of that plan, or null. */
   planReview: PersistedReview | null;
   round: RoundState;
-  /** Watermark of the last caps reset by a parent ruling/brief (index.ts capsReset); absent = none. */
+  /** Watermark of the last caps reset by a parent brief (index.ts capsReset); absent = none. */
   capsResetAt?: number;
 }
 
@@ -66,8 +61,6 @@ const TOPIC = /^[A-Za-z0-9._-]{1,64}$/;
 export interface Restored {
   round: RoundState;
   capsResetAt: number;
-  /** The checkpoint approval, granted by the parent's ruling.md; null = re-ceremony. */
-  approval: { topic: string; path: string; hash: string; ruling: string; at: number; review: PersistedReview | null } | null;
 }
 
 /**
@@ -75,7 +68,7 @@ export interface Restored {
  * readPlan rules), or null. Returns null when nothing is restored: no file, unreadable, another handoff dir, or a plan
  * whose hash changed or that is gone.
  */
-export function restoreRoundState(dir: string, currentPlan: (topic: string) => { path: string; hash: string } | null, self?: SelfRulings): Restored | null {
+export function restoreRoundState(dir: string, currentPlan: (topic: string) => { path: string; hash: string } | null): Restored | null {
   let raw: Record<string, unknown>;
   try {
     const v = JSON.parse(fs.readFileSync(path.join(dir, ROUND_STATE_FILE), "utf8")) as unknown;
@@ -86,64 +79,14 @@ export function restoreRoundState(dir: string, currentPlan: (topic: string) => {
   }
   if (typeof raw.handoffDir !== "string" || path.resolve(raw.handoffDir) !== path.resolve(dir)) return null;
   const p = raw.plan as Record<string, unknown> | null | undefined;
-  let plan: { topic: string; path: string; hash: string } | null = null;
   if (p !== null && p !== undefined) {
     if (typeof p !== "object" || typeof p.topic !== "string" || !TOPIC.test(p.topic) || typeof p.hash !== "string") return null;
     const now = currentPlan(p.topic);
     if (!now || now.hash !== p.hash) return null;
-    plan = { topic: p.topic, ...now };
   }
   const old = raw.chains && typeof raw.chains === "object" && !Array.isArray(raw.chains) ? (raw.chains as Record<string, unknown>).main : undefined;
   const rs = raw.round && typeof raw.round === "object" && !Array.isArray(raw.round) ? raw.round : old;
   const c = (rs && typeof rs === "object" ? rs : {}) as Record<string, unknown>;
   const round: RoundState = { ...initialRounds(), built: c.built === true, reviewOpen: c.reviewOpen === true, ...(c.revisionAnswered === true ? { revisionAnswered: true } : {}) };
-  return { round, capsResetAt: count(raw.capsResetAt) ?? 0, approval: plan ? approvalOf(dir, plan, raw.planReview, self) : null };
-}
-
-const ctimeOf = (f: string): number | null => {
-  try {
-    return fs.statSync(f).ctimeMs;
-  } catch {
-    return null;
-  }
-};
-
-/** `<dir>/ruling-plan.md` (first line APPROVED, a regular file with a ctime newer than `after`, not written by this session), or null. */
-function planVerdictApproval(dir: string, after: number, self?: SelfRulings): string | null {
-  try {
-    const file = path.join(dir, PLAN_VERDICT_FILE);
-    const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES || st.ctimeMs <= after || self?.has(file, st.mtimeMs)) return null;
-    return fs.readFileSync(file, "utf8").split(/\r?\n/, 1)[0].trim() === "APPROVED" ? file : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The parent's ruling-plan.md or ruling.md approves `plan` when it is newer (ctime) than both plan files and the scratch plan has the
- * version hash of the handoff plan.md the parent ruled on (planVersionHash: the body above any appendix); never a stored flag.
- */
-function approvalOf(dir: string, plan: { topic: string; path: string; hash: string }, review: unknown, self?: SelfRulings): Restored["approval"] {
-  const handoffPlan = path.join(dir, "plan.md");
-  const a = ctimeOf(plan.path);
-  const b = ctimeOf(handoffPlan);
-  if (a === null || b === null) return null;
-  let parentHash: string;
-  try {
-    parentHash = planVersionHash(fs.readFileSync(handoffPlan));
-  } catch {
-    return null;
-  }
-  if (parentHash !== plan.hash) return null;
-  // a ruling.md the parent pane's harness stamped with this plan version needs no ctime; one stamped for another version approves nothing
-  const stamped = stampedApproval(dir, plan.hash, self);
-  if (stamped === "stale") return null;
-  const ruling = stamped ? stamped.file : planVerdictApproval(dir, Math.max(a, b), self) ?? parentApproval([dir], Math.max(a, b), self, true);
-  const at = ruling ? ctimeOf(ruling) : null;
-  if (!ruling || at === null) return null;
-  const r = review as Record<string, unknown> | null | undefined;
-  const rounds = r && typeof r === "object" ? count(r.rounds) : null;
-  const ok = r && rounds !== null && rounds >= 1 && r.hash === plan.hash && (r.verdict === "pass" || r.verdict === "fail") && (r.model === null || typeof r.model === "string");
-  return { ...plan, ruling, at, review: ok ? { hash: plan.hash, verdict: r.verdict as Verdict, model: r.model as string | null, rounds } : null };
+  return { round, capsResetAt: count(raw.capsResetAt) ?? 0 };
 }

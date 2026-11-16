@@ -88,10 +88,11 @@ test("a timer wait that resolves by itself brings the gates back", async (t) => 
 
 test("pending checkpoint, no wait/child/bg: the finish gate passes with waiting_for_parent and refuses nothing", async (t) => {
   const w = world(t, { ceremony: { default: "standard" }, handoff: true, parent: true });
+  w.state.answer = undefined; // the owner's dialog in the child's pane stays unanswered
   const a = await w.adapter();
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [x] 1. done\n- [x] V. fresh-eyes verification passed\n");
   assert.equal(await a.review("PASS"), null);
-  assert.equal((await a.checkpoint()).decision, "pending", "no ruling yet: the checkpoint stays pending");
+  assert.equal((await a.checkpoint()).decision, "pending", "no answer yet: the checkpoint stays pending");
   const r = (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
   assert.equal(r, undefined);
   const ev = await w.traceEvents();

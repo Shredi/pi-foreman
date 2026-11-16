@@ -1,6 +1,8 @@
 // Shared rig of the R46 slice A tests: the real adapter over one temp world (project, agent dir, optional handoff dir)
 // and a fake session file (`entries`, written by pi.appendEntry and read back through getBranch). A second `adapter()`
-// call over the same world is a /reload (or a resume, or a fork: `reason`).
+// call over the same world is a /reload (or a resume, or a fork: `reason`). `sharedWorld` lets the cases of one file start from one
+// built state (a snapshot of the files and the session file, put back by a reset).
+import { after } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -23,7 +25,7 @@ let n = 0;
 export interface WorldOpts {
   /** PI_FOREMAN_HANDOFF_DIR set (a session opened by another session). */
   handoff?: boolean;
-  /** Also PI_FOREMAN_PARENT_INTERCOM: checkpoint mode `parent` (the verdict comes from ruling-plan.md). */
+  /** Also PI_FOREMAN_PARENT_INTERCOM: a session opened by a parent (its checkpoint is still the owner's dialog; no parent file approves). */
   parent?: boolean;
   ceremony?: Record<string, unknown>;
   /** Production wiring of the launch snapshot (no `worktreeSnapshot` dependency); by default the rig passes a no-op. */
@@ -60,13 +62,16 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   fs.mkdirSync(handoff, { recursive: true });
   fs.writeFileSync(path.join(handoff, "child"), `${sessionId}\n`);
   fs.writeFileSync(path.join(handoff, "parent"), "parent-session\n");
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.PI_INTERCOM_SESSION_ID = sessionId;
-  for (const k of ["PI_INTERCOM_STABLE_ID", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "HERDR_PANE_ID", "HERDR_ENV"]) delete process.env[k];
-  if (o.handoff) process.env.PI_FOREMAN_HANDOFF_DIR = handoff;
-  else delete process.env.PI_FOREMAN_HANDOFF_DIR;
-  if (o.parent) process.env.PI_FOREMAN_PARENT_INTERCOM = "parent-session";
-  else delete process.env.PI_FOREMAN_PARENT_INTERCOM;
+  const applyEnv = () => {
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PI_INTERCOM_SESSION_ID = sessionId;
+    for (const k of ["PI_INTERCOM_STABLE_ID", "PI_SUBAGENT_CHILD", "PI_FOREMAN_PRESSURE_FIXTURE", "HERDR_PANE_ID", "HERDR_ENV"]) delete process.env[k];
+    if (o.handoff) process.env.PI_FOREMAN_HANDOFF_DIR = handoff;
+    else delete process.env.PI_FOREMAN_HANDOFF_DIR;
+    if (o.parent) process.env.PI_FOREMAN_PARENT_INTERCOM = "parent-session";
+    else delete process.env.PI_FOREMAN_PARENT_INTERCOM;
+  };
+  applyEnv();
   const planFile = path.join(project, ".workflow", "scratch", "plan-widget.md");
   fs.writeFileSync(planFile, PLAN);
   fs.writeFileSync(path.join(handoff, "plan.md"), PLAN);
@@ -210,7 +215,60 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
     return files.flatMap((f) => fs.readFileSync(path.join(dir, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>));
   };
   const ceremonyEntries = () => entries.filter((e) => e.customType === "pi-foreman-ceremony-state");
-  return { adapter, rule, traceEvents, entries, ceremonyEntries, notes, state, handoff, planFile, project, sessionFile, hash: () => planVersionHash(fs.readFileSync(planFile)) };
+  /** Shuts every adapter instance of the world down and waits until its state dir is quiet. */
+  async function settle() {
+    for (const s of shutdowns.splice(0)) {
+      try { await s(); } catch { /* best effort */ }
+    }
+    await waitQuiet(path.join(agentDir, "pi-foreman", "state"));
+  }
+  /** A copy of the world (all instances shut down): its files with their mtimes, the session file, the notes and the dialog answer. */
+  async function snapshot(): Promise<Snapshot> {
+    await settle();
+    const dir = `${root}-snap`;
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(root, dir, { recursive: true, preserveTimestamps: true });
+    return { dir, entries: JSON.parse(JSON.stringify(entries)) as Entry[], notes: [...notes], answer: state.answer };
+  }
+  /** Puts `snap` back at the same paths (the instances of the case before are shut down first) and sets the env again. */
+  async function reset(snap: Snapshot) {
+    await settle();
+    for (const name of fs.readdirSync(root)) fs.rmSync(path.join(root, name), { recursive: true, force: true });
+    fs.cpSync(snap.dir, root, { recursive: true, preserveTimestamps: true });
+    entries.splice(0, entries.length, ...(JSON.parse(JSON.stringify(snap.entries)) as Entry[]));
+    notes.splice(0, notes.length, ...snap.notes);
+    state.answer = snap.answer;
+    o.sent?.splice(0);
+    applyEnv();
+  }
+  t.after(() => rmTestTmp(`${root}-snap`));
+  return { adapter, rule, traceEvents, entries, ceremonyEntries, notes, state, handoff, planFile, project, sessionFile, snapshot, reset, hash: () => planVersionHash(fs.readFileSync(planFile)) };
+}
+
+type Snapshot = { dir: string; entries: Entry[]; notes: string[]; answer: string | undefined };
+export type World = ReturnType<typeof world>;
+
+/**
+ * One world for the cases of a file that start from the same state. Call it at the top level of the test file. `build` runs once, in the
+ * first case that asks (its assertions with it); every later case gets the built state back through a reset: same paths and session id,
+ * files and session file restored, earlier instances shut down. The world is removed when the file's cases are done.
+ */
+export function sharedWorld(o: WorldOpts, build: (w: World) => Promise<void>): () => Promise<World> {
+  const ends: (() => void | Promise<void>)[] = [];
+  after(async () => {
+    for (const fn of ends) await fn();
+  });
+  let made: { w: World; snap: Snapshot } | undefined;
+  return async () => {
+    if (made) {
+      await made.w.reset(made.snap);
+      return made.w;
+    }
+    const w = world({ after: (fn) => void ends.push(fn) }, o);
+    await build(w);
+    made = { w, snap: await w.snapshot() };
+    return w;
+  };
 }
 
 export const planRequired = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_required\]/.test(r.reason ?? "");

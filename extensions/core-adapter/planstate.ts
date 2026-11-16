@@ -2,19 +2,17 @@
 // (appended with pi.appendEntry, read back from the branch like idlemodel.ts latestIdleEntry), keyed on the plan version hash.
 //
 //   { v: 1, plan: {topic, path, hash, status, by, at, source} | null, lineages: [{path, hash, verdict, model, rounds, reviews}],
-//     userTier: tier | null, tier: tier | null, tierSource: source | null, planPhase: boolean }
+//     userTier: tier | null, tier: tier | null, tierSource: source | null, planPhase: boolean, planPhaseOrigin?: "parent" }
 //
 // `tier` is the effective tier and `tierSource` the source of its last change; a reload never lowers it (index.ts restoreCeremonyState).
 //
 // An approval comes back only when the plan file's version hash still equals the recorded one (an Addendum below the body keeps
-// it) and, for a verdict from the parent, the verdict file still reads APPROVED. The session file is write-protected for the
-// foreman and its children (permoverlay.ts), so only the adapter writes this entry. `planPhase` is the plan phase (index.ts).
-import * as fs from "node:fs";
-import * as path from "node:path";
+// it) and it came from the owner's dialog; no file from a parent approves a plan. The session file is write-protected for the
+// foreman and its children (permoverlay.ts), so only the adapter writes this entry. `planPhase` is the plan phase (index.ts);
+// `planPhaseOrigin` is `parent` when a parent's launch started it, absent (the owner's origin) otherwise and in an older entry.
 import { isTier } from "./ceremony.ts";
 import type { Tier, TierSource } from "./ceremony.ts";
 import type { PlanRecord } from "./checkpoint.ts";
-import { PLAN_MAX_BYTES, PLAN_VERDICT_FILE } from "./checkpoint.ts";
 import type { Verdict } from "./rounds.ts";
 import { checkoutsOfEntry, type HsCheckout } from "./highstakes.ts";
 import { reviewsOfEntry } from "./reviews.ts";
@@ -24,7 +22,9 @@ import type { PassMark, ReviewGate, StepCounts } from "./bound.ts";
 
 export const CEREMONY_ENTRY = "pi-foreman-ceremony-state";
 
-export type PlanSource = "dialog" | "ruling-plan" | "ruling";
+export type PlanSource = "dialog";
+/** Who started the plan phase: a parent's launch (`--plan-first`) or the owner (`/foreman plan`). */
+export type PlanPhaseOrigin = "parent" | "owner";
 
 export interface PersistedPlan {
   topic: string;
@@ -62,6 +62,8 @@ export interface CeremonyStateEntry {
   tierSource: TierSource | null;
   /** The plan phase is on (index.ts): .workflow-only writes, no builder launch. */
   planPhase: boolean;
+  /** `parent`: a parent's launch started the plan phase; absent: the owner's origin (also in an entry from before it was recorded). */
+  planPhaseOrigin?: "parent";
   /** Reviewer verdicts with the head they covered (reviews.ts), so the PR gate survives compaction, /reload and resume. */
   reviews: ReviewRecord[];
   /** The loop guard's stop (reviewloop.ts), absent when none is set. */
@@ -105,7 +107,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: readonly HsCheckout[] }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: readonly HsCheckout[] }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -115,6 +117,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     tier: o.tier ?? null,
     tierSource: o.tierSource ?? null,
     planPhase: o.planPhase,
+    ...(o.planPhase && o.planPhaseOrigin === "parent" ? { planPhaseOrigin: "parent" as const } : {}),
     reviews: (o.reviews ?? []).map((r) => ({ role: r.role, verdict: r.verdict, head: r.head, ...(r.cwd ? { cwd: r.cwd } : {}), ...(r.why ? { why: r.why } : {}), ...(r.kind ? { kind: r.kind } : {}), ...(r.state !== undefined ? { state: r.state } : {}), ...(r.sig ? { sig: r.sig } : {}), ...(r.occasion ? { occasion: r.occasion } : {}) })),
     ...(o.loopStop ? { loopStop: o.loopStop } : {}),
     ...(o.gate ? { gate: o.gate } : {}),
@@ -127,7 +130,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
 
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 const STATUS = new Set(["pending", "approved", "revise", "rejected"]);
-const SOURCES = new Set(["dialog", "ruling-plan", "ruling"]);
+const SOURCES = new Set(["dialog"]);
 const TIER_SOURCES = new Set(["default", "ledger", "user", "auto", "foreman"]);
 
 /** The newest ceremony-state entry of a branch, validated field by field (a bad field is dropped, not trusted), or null. */
@@ -155,6 +158,7 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     out.tier = isTier(d.tier) ? d.tier : null;
     out.tierSource = typeof d.tierSource === "string" && TIER_SOURCES.has(d.tierSource) ? (d.tierSource as TierSource) : null;
     out.planPhase = d.planPhase === true;
+    if (out.planPhase && d.planPhaseOrigin === "parent") out.planPhaseOrigin = "parent";
     out.reviews = reviewsOfEntry(d.reviews);
     const ls = d.loopStop as Record<string, unknown> | null | undefined;
     if (ls && typeof ls === "object" && (ls.rule === "repeat" || ls.rule === "stalled") && (ls.kind === "plan" || ls.kind === "code") && Array.isArray(ls.sig) && ls.sig.every((x) => typeof x === "string")) out.loopStop = { rule: ls.rule, kind: ls.kind, sig: ls.sig as string[] };
@@ -192,24 +196,11 @@ function gateOfEntry(v: unknown): PersistedGate | null {
   return { steps: { builder, reviewer }, reviewGate, passMark };
 }
 
-/** True when `<dir>/<name>` is a regular file whose first line is APPROVED (no ctime binding: an Addendum edit does not void it). */
-export function readsApproved(dir: string, name: string): boolean {
-  try {
-    const file = path.join(dir, name);
-    const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES) return false;
-    return fs.readFileSync(file, "utf8").split(/\r?\n/, 1)[0].trim() === "APPROVED";
-  } catch {
-    return false;
-  }
-}
-
 /**
- * The approval an entry may bring back: only `approved`, only while the plan file's version hash (`currentHash`, null = gone) still
- * equals the recorded one, and for a verdict from the parent only while that file still reads APPROVED in the handoff dir.
+ * The approval an entry may bring back: only `approved`, only from the owner's dialog (an entry from a parent's verdict file, `source`
+ * `ruling-plan` or `ruling`, is dropped when read), and only while the plan file's version hash (`currentHash`, null = gone) still equals the recorded one.
  */
-export function restorableApproval(plan: PersistedPlan | null, currentHash: string | null, handoffDir: string | null): PlanRecord | null {
-  if (!plan || plan.status !== "approved" || currentHash === null || currentHash !== plan.hash) return null;
-  if (plan.source !== "dialog" && !(handoffDir && readsApproved(handoffDir, plan.source === "ruling-plan" ? PLAN_VERDICT_FILE : "ruling.md"))) return null;
+export function restorableApproval(plan: PersistedPlan | null, currentHash: string | null): PlanRecord | null {
+  if (!plan || plan.status !== "approved" || plan.source !== "dialog" || currentHash === null || currentHash !== plan.hash) return null;
   return { topic: plan.topic, path: plan.path, hash: plan.hash, status: "approved", approvedAt: plan.at, by: plan.by, source: plan.source, note: "restored after reload" };
 }

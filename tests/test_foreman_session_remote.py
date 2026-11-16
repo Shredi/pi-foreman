@@ -1603,7 +1603,8 @@ class FooterTest(unittest.TestCase):
             self.assertEqual(any(c.endswith(" plan") for c in cmds), plan_first)
             self.assertNotIn("ruling-<n>.md", text)
             self.assertIn("brief-<n>.md", text)
-            self.assertEqual("`ruling.md`" in text, plan_first)
+            self.assertNotIn("kind `file` on `ruling.md`", text)  # PR 4: no wait on a parent's ruling
+            self.assertEqual("`ruling.md`" in text, plan_first)  # named in the plan-first item only, as a note
             for gone in ("outbox", "bytes (", "owner closes this pane"):
                 self.assertNotIn(gone, text)
 

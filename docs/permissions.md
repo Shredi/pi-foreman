@@ -554,7 +554,7 @@ The gate that asked a review model to judge every undecided call against policy 
 | `safety.policy.files[]` | removed |
 | the review model judged every undecided call | undecided calls run under `auto`; the classifier sees only the dangerous class and only clears what a sentence of yours covers |
 | `foreman perms candidates`, `export-eval`, the live eval | gone; the remember step in the dialog and the rule workshop (`foreman perms suggest|adopt|review`, see Commands) grow the whitelist |
-| `ask.md` from a session opened by another session to its parent for a gate ask | gone; such a session asks in its own pane. The handoff files `plan.md`, `ruling.md`, `result.md` and `brief-<n>.md` stay |
+| `ask.md` from a session opened by another session to its parent for a gate ask | gone; such a session asks in its own pane. The handoff files `plan.md`, `ruling.md`, `result.md` and `brief-<n>.md` stay; a `ruling.md` is a note from the parent and approves nothing |
 | `gate.mode: "floors-only"` | retired; maps to mode `allow` with a notice. Set `"mode": "allow"` in `permissions.json` |
 | `gate.askTimeoutMs` | no effect; a child waits for its parent's ruling without a time limit |
 

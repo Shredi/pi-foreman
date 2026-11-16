@@ -56,7 +56,8 @@ test("caps_name_predicates", () => {
   for (const n of ["brief-1.md", "brief-x.y_z-9.md"]) assert.ok(isCapsResetName(n), n);
   for (const n of ["ruling-1.md", "ruling-2.md", "ruling.md", "ruling-0.md", "ruling-plan.md", "brief.md", "brief-.md", "brief-a b.md", "brief-x.md.ack", "ruling-1.md.ack"]) assert.ok(!isCapsResetName(n), n);
   assert.ok(isBriefName("brief-1.md") && !isBriefName("ruling-1.md"));
-  for (const n of ["brief-1.md", "ruling-2.md", "ruling-plan.md", "ruling.md"]) assert.ok(isTrackedRulingName(n), n);
+  for (const n of ["brief-1.md", "ruling-2.md", "ruling.md"]) assert.ok(isTrackedRulingName(n), n);
+  assert.ok(!isTrackedRulingName("ruling-plan.md"), "ruling-plan.md left the tracked names with the parent's plan approval (PR 4)");
 });
 
 test("parent_brief_file_lifts_loop_stop", async (t) => {

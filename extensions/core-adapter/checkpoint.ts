@@ -13,9 +13,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { scratchRoot } from "./editmode.ts";
 import { resolveToolPath } from "./payload.ts";
-import { parentApproval } from "./ruling.ts";
 import type { Verdict } from "./rounds.ts";
-import type { SelfRulings } from "./ruling.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
 
@@ -37,8 +35,8 @@ export interface PlanRecord {
   status: PlanStatus;
   approvedAt: string | null;
   by: "user" | "rig" | null;
-  /** Where the approval came from (planstate.ts persists it): the dialog, the parent's ruling-plan.md or ruling.md. */
-  source?: "dialog" | "ruling-plan" | "ruling";
+  /** Where the approval came from (planstate.ts persists it): always the owner's dialog; no file from a parent approves a plan. */
+  source?: "dialog";
   note?: string;
 }
 
@@ -247,9 +245,7 @@ export function builderLaunchRefusal(rec: PlanRecord | null | undefined, tier: s
 // ---------------------------------------------------------------- reload survival (R41 item 17)
 // A checkpoint approval and a plan-review verdict outlive /reload keyed by the plan VERSION hash (planVersionHash).
 // Human approvals: <agentDir>/pi-foreman/state/approvals/<hash>.json, written only by this harness (never a model tool: the
-// path is a policy floor) and never in round-state.json. Parent rulings: a `plan-version: <hash>` line that the PARENT pane's
-// harness appends to a ruling it just wrote into a CHILD's handoff dir (stampPlanVersion; never the session brief CLI, never the
-// caller's own dir); a ruling without the line falls back to the ctime binding.
+// path is a policy floor) and never in round-state.json. No file from a parent (`ruling.md`, `ruling-plan.md`) approves a plan.
 
 export const approvalsDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "approvals");
 const HASH_RE = /^[0-9a-f]{64}$/;
@@ -333,104 +329,27 @@ export function restoreFromStore(agentDir: string, o: PlanOpts): StoredRestore {
   return out;
 }
 
-const PLAN_VERSION_LINE = /^plan-version: ([0-9a-f]{64})[ \t]*$/m;
-const PLAN_VERSION_LINES = /^plan-version: .*(?:\r?\n|$)/gm;
-
-/** The plan version a ruling text names in its `plan-version:` line, or null. */
-export const planVersionLineOf = (text: string): string | null => PLAN_VERSION_LINE.exec(text)?.[1] ?? null;
-
 /**
- * Parent pane harness only: append `plan-version: <hash>` (version hash of `<handoffDir>/plan.md`) to a ruling file the parent just wrote
- * in a child's handoff dir. Returns the hash, or null when there is no readable plan.md or the file cannot be rewritten.
+ * `ceremony.checkpoint`: the owner answers the checkpoint in the session's own pane, in every session. The old value `parent` is refused
+ * with this text (no approval travels from a parent to a child); any other value, or none, is the owner's dialog. Null = no refusal.
  */
-export function stampPlanVersion(rulingFile: string, handoffPlan: string): string | null {
-  try {
-    const ps = fs.lstatSync(handoffPlan);
-    const rs = fs.lstatSync(rulingFile);
-    if (!ps.isFile() || ps.size > PLAN_MAX_BYTES || !rs.isFile() || rs.size > PLAN_MAX_BYTES) return null;
-    const hash = planVersionHash(fs.readFileSync(handoffPlan));
-    const text = fs.readFileSync(rulingFile, "utf8").replace(PLAN_VERSION_LINES, "").replace(/\s+$/, "");
-    fs.writeFileSync(rulingFile, `${text}\nplan-version: ${hash}\n`);
-    return hash;
-  } catch {
-    return null;
-  }
+export function checkpointConfigRefusal(configured: unknown): string | null {
+  return configured === "parent"
+    ? `pi-foreman: ${CHECKPOINT_TOOL} refused [checkpoint_parent]: ceremony.checkpoint "parent" is no longer supported; no approval travels from a parent session to a child, the owner answers the checkpoint in this session's own pane. Remove ceremony.checkpoint from the user or overlay config (or set it to "human"), then call ${CHECKPOINT_TOOL} again.`
+    : null;
 }
 
-/**
- * The stamped `ruling.md` of `dir` for the plan version `planHash`: `{ file }` when its first line is APPROVED and the plan-version line
- * names `planHash` (no ctime needed); `"stale"` when it is APPROVED for another version (no approval at all); null when there is no usable
- * ruling.md or it carries no line (the caller falls back to the ctime binding).
- */
-export function stampedApproval(dir: string, planHash: string, self?: SelfRulings): { file: string } | "stale" | null {
-  try {
-    const file = path.join(dir, "ruling.md");
-    const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES || self?.has(file, st.mtimeMs)) return null;
-    const text = fs.readFileSync(file, "utf8");
-    if (text.split(/\r?\n/, 1)[0].trim() !== "APPROVED") return null;
-    const v = planVersionLineOf(text);
-    if (v === null) return null;
-    return v === planHash ? { file } : "stale";
-  } catch {
-    return null;
-  }
+/** The `foreman_checkpoint` refusal in a plan phase a parent's launch started, below heavy: the plan review ends that phase, not the owner. */
+export function parentPhaseCheckpointText(triaged: boolean): string {
+  const tier = triaged ? "" : ` Record your tier with foreman_triage first: without a recorded tier a plan-review PASS does not end the phase.`;
+  return `pi-foreman: ${CHECKPOINT_TOOL} refused [plan_phase_review]: below tier heavy the plan phase your parent's launch started ends with your own plan review, not with a checkpoint: no builders until your plan review passes. Launch the reviewer with "[plan-review]" in its task, naming the plan and the ledger; a PASS on the current version of the plan ends the phase.${tier}`;
 }
 
-/** The parent-written verdict file of the plan checkpoint, in the session's handoff dir. */
-export const PLAN_VERDICT_FILE = "ruling-plan.md";
-export type CheckpointMode = "parent" | "human";
-export type PlanVerdict = { kind: "approve" } | { kind: "revise"; note: string } | { kind: "reject" };
-
-/** `ceremony.checkpoint` when set, else `parent` for a session opened with a parent (handoff dir and parent intercom id in the env), else `human`. */
-export function checkpointMode(configured: unknown, env: NodeJS.ProcessEnv): CheckpointMode {
-  if (configured === "parent" || configured === "human") return configured;
-  return env.PI_FOREMAN_HANDOFF_DIR?.trim() && env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? "parent" : "human";
-}
-
-/**
- * The parent's verdict on the plan: first line `APPROVED`, `REVISE <text>` (the rest of the file joins the text) or `REJECT` in
- * `<dir>/ruling-plan.md`. A regular file whose ctime is newer than the plan file's ctime (neither can be set back, unlike an mtime): a plan edit after the
- * verdict makes it stale, so the edited plan needs a new one. Null = no usable verdict. Without a usable `ruling-plan.md`, the parent's
- * `ruling.md` (first line `APPROVED`, same ctime binding, not written by this session: `self`) approves too.
- */
-export function readPlanVerdict(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
-  const own = readPlanVerdictFile(dir, planFile, self);
-  if (own) return own;
-  try {
-    const stamped = stampedApproval(dir, planVersionHash(fs.readFileSync(planFile)), self);
-    if (stamped === "stale") return null;
-    if (stamped) return { kind: "approve" };
-    return parentApproval([dir], fs.statSync(planFile).ctimeMs, self, true) ? { kind: "approve" } : null;
-  } catch {
-    return null;
-  }
-}
-
-export function readPlanVerdictFile(dir: string, planFile: string, self?: SelfRulings): PlanVerdict | null {
-  try {
-    const file = path.join(dir, PLAN_VERDICT_FILE);
-    const st = fs.lstatSync(file);
-    if (!st.isFile() || st.size > PLAN_MAX_BYTES || self?.has(file, st.mtimeMs)) return null;
-    const raw = fs.readFileSync(file, "utf8");
-    // a stamped verdict (stampPlanVersion) is bound to the plan version it was written for; an unstamped one to the plan file's ctime
-    const stamp = planVersionLineOf(raw);
-    if (stamp !== null ? stamp !== planVersionHash(fs.readFileSync(planFile)) : st.ctimeMs <= fs.statSync(planFile).ctimeMs) return null;
-    const text = raw.replace(PLAN_VERSION_LINES, "");
-    const first = text.split(/\r?\n/, 1)[0].trim();
-    if (first === "APPROVED") return { kind: "approve" };
-    if (first === "REJECT") return { kind: "reject" };
-    if (/^REVISE(\s|$)/.test(first)) return { kind: "revise", note: (first.slice(6) + text.slice(text.indexOf("\n") < 0 ? text.length : text.indexOf("\n"))).trim() };
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** The refusal text for a builder launch. */
-export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null | undefined, scratchDir: string): string {
+/** The refusal text for a builder launch. `byReview`: a plan phase a parent's launch started, below heavy (it ends with the plan review's PASS). */
+export function launchRefusalText(reason: LaunchRefusal, rec: PlanRecord | null | undefined, scratchDir: string, byReview = false): string {
   const head = `pi-foreman: builder launch refused [launch_refused:${reason}]:`;
   const name = rec ? `plan-${rec.topic}.md` : "";
+  if (reason === "plan_phase" && byReview) return `${head} the session is in the plan phase: only explorers and [plan-review] reviewers launch, no builders until your plan review passes. Write the plan under ${scratchDir}/ (ask only for real decisions until it is decision-complete), then launch the reviewer with "[plan-review]" on it; a PASS on the current version ends the phase. The owner can also end it with /foreman plan off.`;
   if (reason === "plan_phase") return `${head} the session is in the plan phase: only explorers and [plan-review] reviewers launch. Write the plan under ${scratchDir}/ (ask only for real decisions until it is decision-complete), then call ${CHECKPOINT_TOOL}; an approval ends the phase. The owner can also end it with /foreman plan off.`;
   if (reason === "plan_required" && rec?.status === "rejected") return `${head} the owner rejected ${name}, so the heavy path is stopped. Launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`;
   if (reason === "plan_required") return `${head} at tier heavy a builder starts only after the owner approved a plan. Write ${scratchDir}/plan-<topic>.md, then call ${CHECKPOINT_TOOL} with its path and wait for the owner's answer.`;
