@@ -93,6 +93,7 @@ export interface NoteResult {
 export type PageOutcome = { path: string } | { reason: string };
 
 /** What the owner or the review decided about the plan the page shows. */
+const PLAN_STATES: readonly string[] = ["draft", "in review", "waits for you", "approved", "revise", "rejected"];
 export type PlanState = "draft" | "in review" | "waits for you" | "approved" | "revise" | "rejected";
 
 /** The file operations of the show dir, replaceable by tests to inject a failure at one step. */
@@ -307,6 +308,8 @@ export class Show {
       if (fs.existsSync(pages)) {
         realDir(pages);
         this.pages = readPages(path.join(pages, PAGES_JSON)) ?? this.pages;
+        const entry = this.pages.pages.find((p) => p.id === "plan");
+        if (entry && this.meta && entry.version === this.meta.v && PLAN_STATES.includes(entry.state)) this.pstate = { state: entry.state as PlanState, hash: this.meta.hash };
       }
     } catch (e) {
       if (codeOf(e) === "ENOTDIR") init.trace?.({ event: "show_error", kind: "start", errorKind: "ENOTDIR" });

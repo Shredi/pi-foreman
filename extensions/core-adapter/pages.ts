@@ -100,18 +100,40 @@ export function inline(src: string): string {
   s = s.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (_m, _t, code: string) => hold(`<code>${escapeHtml(code.replace(/^ (.*) $/, "$1"))}</code>`));
   s = escapeHtml(s);
   s = s.replace(/\[([^\]]+)\]\(([^()\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, text: string, url: string) => {
-    const href = safeHref(url.replace(/&amp;/g, "&"));
+    const href = safeHref(url.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
     return href ? hold(`<a href="${escapeHtml(href)}">${emphasis(text)}</a>`) : emphasis(text);
   });
   s = emphasis(s);
   return s.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => held[Number(i)]).replace(/\u0000(\d+)\u0000/g, (_m, i: string) => held[Number(i)]);
 }
 
+/**
+ * Wrap `delim`…`delim` pairs in `tag`: an opener is followed by a non-space, a closer is preceded by one; the first closer wins. `word` makes `_`-style
+ * delimiters need a non-word before the opener and after the closer. Linear: an opener with no closer means no later opener has one either.
+ */
+function pairs(s: string, delim: string, tag: string, word: boolean): string {
+  const n = delim.length;
+  const isWord = (c: string | undefined): boolean => c !== undefined && /\w/.test(c);
+  let out = "";
+  let i = 0; // scanned up to here
+  let from = 0;
+  while ((from = s.indexOf(delim, from)) !== -1) {
+    const c = s[from + n];
+    if (c === undefined || /\s/.test(c) || (word && isWord(s[from - 1]))) {
+      from++;
+      continue;
+    }
+    let j = s.indexOf(delim, from + n + 1);
+    while (j !== -1 && (/\s/.test(s[j - 1]) || (word && isWord(s[j + n])))) j = s.indexOf(delim, j + 1);
+    if (j === -1) break;
+    out += `${s.slice(i, from)}<${tag}>${s.slice(from + n, j)}</${tag}>`;
+    i = from = j + n;
+  }
+  return out + s.slice(i);
+}
+
 function emphasis(s: string): string {
-  return s
-    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "<strong>$1</strong>")
-    .replace(/(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)/g, "<strong>$1</strong>")
-    .replace(/~~(?=\S)([\s\S]*?\S)~~/g, "<del>$1</del>")
+  return pairs(pairs(pairs(s, "**", "strong", false), "__", "strong", true), "~~", "del", false)
     .replace(/\*(?=\S)([^*]*?\S)\*/g, "<em>$1</em>")
     .replace(/(?<!\w)_(?=\S)([^_]*?\S)_(?!\w)/g, "<em>$1</em>");
 }
@@ -122,7 +144,28 @@ export interface MarkdownOpts {
 }
 
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
-const HEADING = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
+const HEADING_OPEN = /^ {0,3}(#{1,6})(?=[ \t])/;
+const isBlank = (c: string): boolean => c === " " || c === "\t";
+
+/** An ATX heading line: its level and text (closing `#` run and outer blanks dropped), or null. Scans once, no backtracking. */
+function headingOf(line: string): { level: number; text: string } | null {
+  const m = HEADING_OPEN.exec(line);
+  if (!m) return null;
+  const tail = line.slice(m[0].length); // starts with a blank
+  let e = tail.length;
+  while (e > 0 && isBlank(tail[e - 1])) e--;
+  let j = e;
+  while (j > 0 && tail[j - 1] === "#") j--;
+  let end = e;
+  if (j < e && j >= 1 && isBlank(tail[j - 1])) {
+    let k = j - 1;
+    while (k > 0 && isBlank(tail[k - 1])) k--;
+    if (k > 0 || j - k >= 2) end = k;
+  }
+  let b = 0;
+  while (b < end && isBlank(tail[b])) b++;
+  return { level: m[1].length, text: tail.slice(b, end) };
+}
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const ITEM = /^( *)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
 const TABLE_SEP = /^[ \t]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
@@ -139,7 +182,7 @@ export function renderMarkdown(markdown: string, opts: MarkdownOpts = {}): strin
   return blocks(markdown.replace(/\r\n?/g, "\n").split("\n"), opts, false, 0);
 }
 
-const startsBlock = (l: string): boolean => FENCE_OPEN.test(l) || HEADING.test(l) || RULE.test(l) || /^ {0,3}>/.test(l) || /^ {0,3}(?:[-*+]|1[.)])[ \t]+\S/.test(l);
+const startsBlock = (l: string): boolean => FENCE_OPEN.test(l) || headingOf(l) !== null || RULE.test(l) || /^ {0,3}>/.test(l) || /^ {0,3}(?:[-*+]|1[.)])[ \t]+\S/.test(l);
 
 function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: number): string {
   const out: string[] = [];
@@ -168,9 +211,9 @@ function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: numb
       out.push(diagram ?? `<pre><code${/^[\w+#.-]{1,30}$/.test(lang) ? ` class="language-${escapeHtml(lang)}"` : ""}>${escapeHtml(text)}</code></pre>`);
       continue;
     }
-    const h = HEADING.exec(line);
+    const h = headingOf(line);
     if (h) {
-      out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
+      out.push(`<h${h.level}>${inline(h.text)}</h${h.level}>`);
       i++;
       continue;
     }
