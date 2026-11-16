@@ -214,7 +214,7 @@ import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESS
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
 import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
-import { selfFinish, spawnDetached } from "./selffinish.ts";
+import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
 import { cliModelOf, foremanModelSpec, markOwnClosed, openerIntercomId, registerSession, remoteReplier, remoteRunner, registerSessionOpenTool, sessionModelOf } from "./session.ts";
 import { closeChildren } from "./closechildren.ts";
@@ -5212,6 +5212,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     preflight: async (ctx, op, callId) => {
       const s = await ensureSession(ctx);
       return safeOpDriftPreflight(s.gitDrift, s.isChild, ctx.cwd, os.homedir(), op, driftAsk(ctx, s.trace), (r) => s.trace?.emit(r), callId);
+    },
+    verifiedMerge: async (ctx, raw) => {
+      const s = await ensureSession(ctx);
+      const target = path.resolve(ctx.cwd, raw);
+      return verifiedMergeFor({ run: (op, args, timeoutMs) => prRun(s, target, op, args, timeoutMs), git: async (args) => (await git(target, args))?.trim() || null });
     },
     spawner,
     env: () => Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => typeof e[1] === "string")),

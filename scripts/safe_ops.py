@@ -27,7 +27,11 @@ Documented limits:
 - Path checks resolve symlinks once; a symlink swapped in after the check but before the action
   is not detected (same race as above). Files are opened with O_NOFOLLOW where available.
 - `git worktree remove` would also delete ignored files; that is why ignored files block the
-  removal unless they sit under a `worktreeDisposable` path component. An entry without a trailing `/` matches
+  removal unless they sit under a `worktreeDisposable` path component. Untracked files and folders under such a
+  component do not block either: remove_worktree deletes exactly those (a link is unlinked, never followed; a folder
+  holding a top-level `.git` refuses), then runs the plain `git worktree remove`. Any other untracked file or a tracked
+  change refuses. A top-level `verifiedMerged` sha (with `verifiedBranch`, set by the adapter from the PR host, never read
+  from `args`) replaces the `not_merged` check for `worktree_remove`, as in the session close. An entry without a trailing `/` matches
   a file only (write folder entries as `name/`). A pattern with an inner `/`
   (`.pi/tasks/`) matches only at the worktree's top level. A wholly ignored folder that git reports as one
   record is walked (symlinks are leaf files, never followed; 20 000 entries at most, else the folder
@@ -646,6 +650,22 @@ def resolve_base(cwd, configured):
     raise Precondition("base_branch_unknown", "no origin HEAD, main or master; set safety.ops.baseBranch")
 
 
+def is_default_branch(ws, branch, configured):
+    """True when `branch` is the repository's default (base) branch; False when the base does not resolve."""
+    try:
+        base_ref, _ = resolve_base(ws, configured)
+    except Precondition:
+        return False
+    for pre in ("refs/heads/", "refs/remotes/"):
+        if base_ref.startswith(pre):
+            base_ref = base_ref[len(pre):]
+            break
+    names = {base_ref}
+    if "/" in base_ref:  # `origin/main` (a remote ref): the short name too
+        names.add(base_ref.split("/", 1)[1])
+    return branch in names
+
+
 def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     """Every worktree_remove precondition for `raw` (relative to `cwd`); raises Precondition.
 
@@ -676,9 +696,19 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     if cw:  # a submodule: `worktree list` item 0 is its module git dir; the checkout is core.worktree
         main_dir = os.path.realpath(os.path.join(dirs[2], cw))
 
-    code, out, _ = git(["status", "--porcelain", "-z", "--untracked-files=all"], target)
-    if code != 0 or out.strip("\0"):
-        raise Precondition("worktree_dirty", "git status is not empty (changes or untracked files)")
+    code, out, _ = git(["status", "--porcelain", "-z", "--untracked-files=normal"], target)
+    if code != 0:
+        raise Precondition("worktree_dirty", "git status failed")
+    untracked = []  # untracked paths under worktreeDisposable: deleted by remove_worktree right before `git worktree remove`
+    for rec in out.split("\0"):
+        if not rec:
+            continue
+        if not rec.startswith("?? ") or not disposable(rec[3:], cfg["worktreeDisposable"]):
+            raise Precondition("worktree_dirty", "git status is not empty (changes or untracked files)")
+        rel = rec[3:]
+        if rel.endswith("/") and os.path.lexists(os.path.join(target, *rel.split("/"), ".git")):
+            raise Precondition("worktree_dirty", "an untracked folder holds a nested repository: %s" % clean_path(rel))
+        untracked.append(rel)
     code, out, _ = git(["status", "--porcelain", "-z", "--ignored=traditional", "--untracked-files=normal"], target)
     if code != 0:
         raise Precondition("worktree_dirty", "git status --ignored failed")
@@ -716,7 +746,28 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
             names = re.match(r"^(?:WIP on|On) (.+?):", subject)
             if (branch and names and names.group(1) == branch) or (parents and parents[0] == head):
                 raise Precondition("stash_references_branch", "a stash entry references this worktree's branch")
-    return {"target": target, "main_dir": main_dir, "branch": branch, "head": head}
+    return {"target": target, "main_dir": main_dir, "branch": branch, "head": head, "untracked": untracked}
+
+
+def delete_untracked(target, rels):
+    """Delete the disposable untracked paths `rels` (git-relative, `/`-separated, a trailing `/` = folder) of the
+    worktree `target`. A path whose parent resolves outside `target` is refused; a symlink or junction (the path itself,
+    or one inside a folder) is unlinked, never followed; a folder with a top-level `.git` is refused."""
+    real_target = os.path.realpath(target)
+    for rel in rels:
+        path = os.path.join(real_target, *[x for x in rel.split("/") if x])
+        if not is_inside(real_target, os.path.realpath(os.path.dirname(path)), True):
+            raise ActionError("untracked_outside", "%s resolves outside the worktree" % clean_path(rel))
+        if os.path.islink(path):
+            os.unlink(path)
+        elif is_link(path):  # a junction: remove the link, not the target
+            os.rmdir(path)
+        elif os.path.isdir(path):
+            if os.path.lexists(os.path.join(path, ".git")):
+                raise ActionError("untracked_nested_repo", "%s holds a nested repository" % clean_path(rel))
+            shutil.rmtree(path)
+        elif os.path.lexists(path):
+            os.unlink(path)
 
 
 def remove_worktree(chk, force_branch=False, verified_sha=None):
@@ -724,6 +775,7 @@ def remove_worktree(chk, force_branch=False, verified_sha=None):
     squash merge) uses `branch -D` for exactly that branch, or with `verified_sha` `update-ref -d` against that sha
     (atomic: a branch whose tip moved is kept)."""
     target, main_dir, branch = chk["target"], chk["main_dir"], chk["branch"]
+    delete_untracked(target, chk.get("untracked", []))
     git(["worktree", "remove", target], main_dir, check=True)  # never --force
     try:
         import foreman_trust
@@ -745,8 +797,27 @@ def remove_worktree(chk, force_branch=False, verified_sha=None):
 
 
 def op_worktree_remove(req):
+    """Top-level `verifiedMerged` (the PR host's sha, set by the adapter only; never read from args) and `verifiedBranch`
+    give the close path's fact: refused for the default branch, a moved tip or HEAD, or another branch."""
     args = req.get("args") if isinstance(req.get("args"), dict) else {}
-    return remove_worktree(check_worktree(req.get("cwd"), args.get("path"), ops_config(req.get("config"))))
+    cfg = ops_config(req.get("config"))
+    sha = req.get("verifiedMerged")
+    if not sha:
+        return remove_worktree(check_worktree(req.get("cwd"), args.get("path"), cfg))
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
+        raise Precondition("bad_request", "verifiedMerged must be a commit sha")
+    cwd = req.get("cwd")
+    chk = check_worktree(cwd, args.get("path"), cfg, verified_merged=True)
+    branch = chk["branch"]
+    if not branch or is_default_branch(chk["main_dir"], branch, cfg["baseBranch"]):
+        raise Precondition("default_branch", "the verified-merged fact never removes the default branch")
+    vb = req.get("verifiedBranch")
+    if vb is not None and vb != branch:
+        raise Precondition("branch_mismatch", "the verified branch is not the worktree's branch")
+    tip = git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], chk["main_dir"])[1].strip()
+    if tip != sha or chk["head"] != sha:
+        raise Precondition("verified_merged_stale", "the branch tip or HEAD moved since the host reported the merge")
+    return remove_worktree(chk, force_branch=True, verified_sha=sha)
 
 
 # ------------------------------------------------------------ git read ops

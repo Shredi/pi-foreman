@@ -31,13 +31,16 @@ export interface RunSafeOpInput {
   srcRoots?: string[];
   /** `pr_comments` with `args.repo` needs no work tree (the PR poll CLI runs outside any checkout); a top-level request key, never in `config` or the model's `args`. */
   repoless?: boolean;
+  /** `worktree_remove`: the host's verified-merged commit and its branch (selffinish.ts verifiedMergeFor); top-level request keys, set by the adapter only, never from the model's `args`. */
+  verifiedMerged?: string;
+  verifiedBranch?: string;
 }
 
 export async function runSafeOp(input: RunSafeOpInput): Promise<SafeOpOutcome> {
   if (!input.python) return { kind: "error", message: "no Python >= 3.13 found; nothing was done. Set python.path or PI_FOREMAN_PYTHON and run /foreman doctor." };
   const timeoutMs = input.timeoutMs ?? SAFE_OP_TIMEOUT_MS;
   const r = await input.spawner(input.python, ["-E", "-s", input.script], {
-    input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {}, ...(input.op === "copy" && input.srcRoots?.length ? { srcRoots: input.srcRoots } : {}), ...(input.op === "pr_comments" && input.repoless === true ? { repoless: true } : {}) }),
+    input: asciiJson({ op: input.op, args: input.args, cwd: input.cwd, config: input.config ?? {}, ...(input.op === "copy" && input.srcRoots?.length ? { srcRoots: input.srcRoots } : {}), ...(input.op === "pr_comments" && input.repoless === true ? { repoless: true } : {}), ...(input.op === "worktree_remove" && input.verifiedMerged && input.verifiedBranch ? { verifiedMerged: input.verifiedMerged, verifiedBranch: input.verifiedBranch } : {}) }),
     env: input.env,
     cwd: input.cwd,
     timeoutMs,
@@ -85,7 +88,7 @@ export const SAFE_OP_TOOLS: { name: string; op: SafeOp; label: string; descripti
     op: "worktree_remove",
     label: "Remove worktree (checked)",
     description:
-      "Remove a linked git worktree and delete its branch with `git branch -d`, without approval. Runs only when the worktree is clean (no untracked files, no ignored files outside safety.ops.worktreeDisposable), its HEAD is merged into the base branch or contained in its pushed upstream, and no stash references its branch. Never forces. Otherwise it changes nothing and returns `precondition failed: <which>`.",
+      "Remove a linked git worktree and delete its branch (`git branch -d`; a squash-merged branch is deleted against the verified commit), without approval. Runs only when the worktree is clean (no tracked changes; untracked and ignored files only under safety.ops.worktreeDisposable, such as node_modules/ or build output, which are deleted first; links are never followed), its HEAD is merged into the base branch or contained in its pushed upstream, or the PR host reports the branch's PR as merged with this exact head commit (the fact the session close uses), and no stash references its branch. Never forces. Otherwise it changes nothing and returns `precondition failed: <which>`.",
     parameters: { type: "object", properties: { path: PATH_PROP("Path of the linked worktree.") }, required: ["path"], additionalProperties: false },
     foremanOnly: true,
   },
@@ -113,6 +116,8 @@ export interface SafeOpsDeps {
   timeoutMs?: number;
   /** Runs before the script (foreman git-config drift check); a block refuses the op. */
   preflight?(ctx: ExtensionContext, op: SafeOp, callId: string): Promise<{ block: true; reason: string } | undefined>;
+  /** `worktree_remove`: the verified-merged fact (host PR MERGED, head ref and sha match) for the worktree at `path`; undefined when there is none. */
+  verifiedMerge?(ctx: ExtensionContext, path: string): Promise<{ sha: string; branch: string } | undefined>;
 }
 
 export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: SafeOpsDeps): string[] {
@@ -145,7 +150,8 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
         if (s.packOn === true) s.trace({ event: "tool_pack", pack: "git", op: t.op });
         // R12 item 10: a foreman copy may read from its own handoff dirs; a child gets no extra source root.
         const srcRoots = t.op === "copy" && !s.isChild && !deps.isChild ? (s.handoffDirs ?? []) : [];
-        const outcome = await runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs, ...(srcRoots.length ? { srcRoots } : {}) });
+        const fact = t.op === "worktree_remove" && !s.isChild && typeof params.path === "string" && deps.verifiedMerge ? await deps.verifiedMerge(ctx, params.path).catch(() => undefined) : undefined;
+        const outcome = await runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs, ...(srcRoots.length ? { srcRoots } : {}), ...(fact ? { verifiedMerged: fact.sha, verifiedBranch: fact.branch } : {}) });
         if (outcome.kind === "ran") {
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "ran" });
           return { content: [{ type: "text" as const, text: `${t.name}: done. ${summary(outcome.result)}` }], details: { decision: "ran", result: outcome.result } };
