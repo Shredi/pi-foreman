@@ -18,7 +18,7 @@ import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { runSafeOp } from "./safeops.ts";
 import type { SafeOpOutcome } from "./safeops.ts";
 import type { Spawner } from "./spawn.ts";
-import { resolveBin } from "./wait.ts";
+import { resolveBin } from "./ghbin.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
 
