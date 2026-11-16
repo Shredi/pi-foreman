@@ -217,8 +217,8 @@ any of these happened:
   about the `risk` field only with launch sizing on, so with sizing off in practice only the next two apply. A malformed
   `size` drops the launch's tags.
 - The task is heavy (tier `heavy`) and the session launched a builder or changed a project file. The reason `heavy` counts
-  until the owner lowers the tier below heavy with `/ceremony`; a later `foreman_triage` or an automatic raise does not
-  bring it back. The tag and `foreman` reasons stay.
+  until the owner lowers the tier below heavy with `/ceremony`; a later `foreman_triage` or a raise that stays below heavy
+  does not bring it back; a raise back to tier heavy (a heavy signal in a prompt, say) does. The tag and `foreman` reasons stay.
 - The foreman launched a `[high-stakes]` review itself: a launch with no reason yet is allowed when a normal PASS stands,
   and the accepted launch adds the reason `foreman`.
 

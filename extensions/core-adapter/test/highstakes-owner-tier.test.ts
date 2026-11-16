@@ -34,10 +34,11 @@ test("after the owner's /ceremony trivial, an automatic raise to standard keeps 
   assert.doesNotMatch(await settle(a), FINISH);
 });
 
-test("after the owner's /ceremony heavy, the foreman lowering the tier leaves the gate shut", async (t) => {
+test("after the owner's /ceremony heavy, foreman_triage standard is refused and the gate stays shut", async (t) => {
   const { a } = await heavyFired(t);
   await a.command("ceremony", "heavy");
-  await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
+  const triage = await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
+  assert.match(JSON.stringify(triage), /foreman_triage never lowers a recorded or escalated tier/);
   await a.writeLedger(finishLedger());
   assert.match(await pr(a), NOT_DUE);
   assert.match(await settle(a), FINISH);
