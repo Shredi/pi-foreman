@@ -1240,8 +1240,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
-  /** The task is heavy and the session built something: `heavy` counts toward a due review (stored for the trace and texts; dropped by lowering the tier). */
-  const hsHeavyOn = (s: Session): boolean => s.ceremony.tier === "heavy" && (s.hs.state().fired?.reasons.includes("heavy") === true || s.steps.builder > 0 || s.tally.files.length > 0);
+  /** The task is heavy and the session built something: `heavy` counts toward a due review. Once stored it stays until the owner (`/ceremony`, source `user`) lowers the tier; a foreman triage or a ledger line cannot drop it. */
+  const hsHeavyOn = (s: Session): boolean => {
+    if (s.hs.state().fired?.reasons.includes("heavy") === true) return s.ceremony.tier === "heavy" || s.ceremony.source !== "user";
+    return s.ceremony.tier === "heavy" && (s.steps.builder > 0 || s.tally.files.length > 0);
+  };
 
   /** The reasons that count now (empty: no pass is due). */
   const hsDue = (s: Session): string[] => dueReasons(s.hs.state(), hsHeavyOn(s));

@@ -24,6 +24,8 @@ export interface SetupOpts {
   remote?: boolean;
   /** The session starts on `main` instead of a `feature` branch. */
   onMain?: boolean;
+  /** No `/ceremony` command and no ledger: the tier comes from `ceremony.default` alone (source default). */
+  noOwner?: boolean;
 }
 
 export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
@@ -50,8 +52,10 @@ export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
   fs.writeFileSync(cfgFile, JSON.stringify(cfg));
   if (!o.onMain) git(w.project, "checkout", "-q", "-b", "feature");
   const a = await w.adapter("startup");
-  await a.command("ceremony", tier);
-  await a.writeLedger(ledger(tier));
+  if (!o.noOwner) {
+    await a.command("ceremony", tier);
+    await a.writeLedger(ledger(tier));
+  }
   if (tier === "heavy") {
     // the plan passes its review and the owner approves it: a builder may launch
     assert.equal(await a.review("PASS"), null);

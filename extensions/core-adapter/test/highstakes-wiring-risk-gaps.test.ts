@@ -149,3 +149,42 @@ test("a FAIL whose worktree was removed keeps the PR gate and the finish gate cl
   assert.match(fin, /revise after the high-stakes FAIL/);
   assert.match(fin, /that checkout is gone/);
 });
+
+// ---------------------------------------------------------------- only the owner lowers the heavy reason
+
+const NOT_DUE = /high_stakes/;
+const FINISH = /a high-stakes review must run/;
+/** A complete ledger (every item but V marked) for the finish gate; `tier` adds a header line. */
+const finishLedger = (tier?: string) => `# Ledger: x\n${tier ? `Tier: ${tier}\n` : ""}\n- [x] 1. item\n- [x] V. fresh-eyes verification passed\n`;
+
+async function defaultHeavy(t: Parameters<typeof setup>[0]) {
+  const r = await setup(t, { tier: "heavy", noOwner: true });
+  commitIn(r.w.project, "src/a/x.ts");
+  await build(r.a);
+  assert.deepEqual(await stakes(r.w), ["heavy"]);
+  refused(await pr(r.a));
+  return r;
+}
+
+test("default-heavy: the foreman's own foreman_triage standard does not drop the heavy reason", async (t) => {
+  const { a } = await defaultHeavy(t);
+  await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
+  await a.writeLedger(finishLedger());
+  refused(await pr(a));
+  assert.match(await settle(a), FINISH);
+});
+
+test("default-heavy: a ledger Tier: standard line does not drop the heavy reason", async (t) => {
+  const { a } = await defaultHeavy(t);
+  await a.writeLedger(finishLedger("standard"));
+  refused(await pr(a));
+  assert.match(await settle(a), FINISH);
+});
+
+test("default-heavy: the owner's /ceremony standard drops the heavy reason", async (t) => {
+  const { a } = await defaultHeavy(t);
+  await a.command("ceremony", "standard");
+  await a.writeLedger(finishLedger());
+  assert.doesNotMatch(await pr(a), NOT_DUE);
+  assert.doesNotMatch(await settle(a), FINISH);
+});

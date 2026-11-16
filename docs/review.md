@@ -294,6 +294,7 @@ foreman to add one line per pass to the PR body, `High-stakes review: <verdict> 
 - One pass per session, wherever the work lands: work from a second worktree, branch or repository after the pass is not
   reviewed again, and any pass opens every PR of the session.
 - A malformed `size` with sizing off drops the launch's tags.
+- Migrating an old per-checkout entry keeps the runs of one checkout only, so an old FAIL in another checkout is dropped.
 - A pass that ran is the one pass. Work built after it reaches the pull request with the normal review only; the finish
   gate asks for the pass only once every ledger item except V is marked, and the rules text says to launch it when the
   change is complete.
