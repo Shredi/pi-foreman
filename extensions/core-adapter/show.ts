@@ -246,9 +246,15 @@ function noteHashOnDisk(file: string): string | null {
   }
 }
 
-/** The checkpoint dialog's plan page line: waits up to `waitMs` for the page write, then names the file URL or the real reason. No promise: the scratch dir is off. */
-export async function planPageLine(page: Promise<PageOutcome> | undefined, waitMs = 3000): Promise<string> {
-  if (!page) return "Plan page: not available (scratch dir off)";
+/** Why a session has no Show (Show.start returned null or never ran): live state off, an unsafe session id, else the scratch dir is off. */
+export function showOffReason(hasLive: boolean, sessionId: string): string {
+  if (!hasLive) return "live state off";
+  return !ID_RE.test(sessionId) || sessionId === "." || sessionId === ".." ? "session id unsafe" : "scratch dir off";
+}
+
+/** The checkpoint dialog's plan page line: waits up to `waitMs` for the page write, then names the file URL or the real reason. No promise: `off` says why (default: the scratch dir is off). */
+export async function planPageLine(page: Promise<PageOutcome> | undefined, waitMs = 3000, off = "scratch dir off"): Promise<string> {
+  if (!page) return `Plan page: not available (${off})`;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<PageOutcome>((resolve) => {
     timer = setTimeout(() => resolve({ reason: "page not written yet" }), waitMs);

@@ -92,14 +92,63 @@ function safeHref(raw: string): string | null {
   return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(u) ? null : u;
 }
 
+/** Code spans: a run of N backticks, then the next run of exactly N closes it. Linear: runs are paired once, an opener with no partner stays text. */
+function codeSpans(s: string, span: (code: string) => string): string {
+  const runs: { at: number; len: number }[] = [];
+  for (const m of s.matchAll(/`+/g)) runs.push({ at: m.index, len: m[0].length });
+  const next: number[] = new Array(runs.length).fill(-1);
+  const seen = new Map<number, number>();
+  for (let k = runs.length - 1; k >= 0; k--) {
+    next[k] = seen.get(runs[k].len) ?? -1;
+    seen.set(runs[k].len, k);
+  }
+  let out = "";
+  let pos = 0;
+  for (let k = 0; k < runs.length; k++) {
+    const j = next[k];
+    if (j === -1) continue;
+    out += s.slice(pos, runs[k].at) + span(s.slice(runs[k].at + runs[k].len, runs[j].at));
+    pos = runs[j].at + runs[j].len;
+    k = j;
+  }
+  return out + s.slice(pos);
+}
+
+const LINK_TAIL = /\(([^()\s]+)(?:\s+&quot;[^&]*&quot;)?\)/y;
+
+/** `[text](url "title")` on escaped text. Linear: each `]` is tried once, and with no `]` left no later `[` can match. */
+function links(s: string, link: (text: string, url: string) => string): string {
+  let out = "";
+  let pos = 0;
+  let from = 0;
+  let close = -2; // the `]` after `from`, -1 none
+  const failed = new Set<number>();
+  while ((from = s.indexOf("[", from)) !== -1) {
+    if (close < from) close = s.indexOf("]", from);
+    if (close === -1) break;
+    if (close > from + 1 && !failed.has(close)) {
+      LINK_TAIL.lastIndex = close + 1;
+      const m = LINK_TAIL.exec(s);
+      if (m) {
+        out += s.slice(pos, from) + link(s.slice(from + 1, close), m[1]);
+        pos = from = LINK_TAIL.lastIndex;
+        continue;
+      }
+      failed.add(close);
+    }
+    from++;
+  }
+  return out + s.slice(pos);
+}
+
 /** Inline markdown of one paragraph, cell or heading: code spans, links, strong, emphasis, strikethrough; everything else is escaped text. */
 export function inline(src: string): string {
   const held: string[] = [];
   const hold = (html: string): string => `\u0000${held.push(html) - 1}\u0000`;
   let s = src.replace(/\u0000/g, "");
-  s = s.replace(/(`+)([\s\S]*?[^`])\1(?!`)/g, (_m, _t, code: string) => hold(`<code>${escapeHtml(code.replace(/^ (.*) $/, "$1"))}</code>`));
+  s = codeSpans(s, (code) => hold(`<code>${escapeHtml(code.replace(/^ (.*) $/, "$1"))}</code>`));
   s = escapeHtml(s);
-  s = s.replace(/\[([^\]]+)\]\(([^()\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, text: string, url: string) => {
+  s = links(s, (text, url) => {
     const href = safeHref(url.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
     return href ? hold(`<a href="${escapeHtml(href)}">${emphasis(text)}</a>`) : emphasis(text);
   });

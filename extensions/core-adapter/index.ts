@@ -152,7 +152,7 @@ import { reviewFactsForHead } from "./prready.ts";
 import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
-import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL } from "./show.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -5676,7 +5676,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const title = `pi-foreman checkpoint: ${name} (${hash8})`;
         s.trace?.emit({ event: "dialog", surface: "checkpoint" });
         try {
-          ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n${await planPageLine(planPage)}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n${await planPageLine(planPage, undefined, showOffReason(!!s.live, s.id))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
           answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
         } catch {
           answer = undefined;
