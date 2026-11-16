@@ -870,6 +870,8 @@ export interface PrWatchesDeps {
   child?(): boolean;
   /** The watched PR was merged (the watch has ended and its message is sent). */
   onMerged?(info: MergedInfo): void;
+  /** A milestone of a PR for the owner's page list: an owned PR was armed, a child's PR got its ready line, a watched PR was merged. */
+  milestone?(kind: "pr_opened" | "pr_ready" | "pr_merged", n: number): void;
   /**
    * The merged PR's checkout goes back to the base branch (returntobase.ts mergedReturn): the line for the merged message and the outcome; null: nothing to say (the key is off).
    * Not called in a child session. `cwd` is the watch's directory. A throw is reported in the line; it never stops the ending.
@@ -977,6 +979,15 @@ export class PrWatches {
     this.arm(w);
     this.persist();
     this.deps.changed?.();
+    if (owned) this.milestone("pr_opened", key.n);
+  }
+
+  private milestone(kind: "pr_opened" | "pr_ready" | "pr_merged", n: number): void {
+    try {
+      this.deps.milestone?.(kind, n);
+    } catch {
+      // the page list must not break the watch
+    }
   }
 
   /**
@@ -989,6 +1000,7 @@ export class PrWatches {
     this.arm(w);
     this.persist();
     this.deps.changed?.();
+    if (owned) this.milestone("pr_opened", key.n);
   }
 
   /** The session's PASS heads, null when the watch does not judge reviews (no dep, or it threw). */
@@ -1303,6 +1315,7 @@ export class PrWatches {
     if (delta) {
       this.deps.send(prMessage(w.key.n, leaving ? this.leavingDelta(delta, child) : delta), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "event" });
+      if (delta.ready || delta.readyNoChecks) this.milestone("pr_ready", w.key.n);
     }
     if (changed || delta) this.deps.changed?.();
     this.arm(w);
@@ -1517,6 +1530,7 @@ export class PrWatches {
     this.deps.send(prMessage(w.key.n, d), this.idle());
     this.deps.trace({ event: "pr_watch", outcome: d.final });
     if (d.final === "merged") {
+      this.milestone("pr_merged", w.key.n);
       try {
         this.deps.onMerged?.({ key: w.key, head: d.head, base: d.base });
       } catch {

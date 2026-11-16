@@ -152,7 +152,7 @@ import { reviewFactsForHead } from "./prready.ts";
 import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
-import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
+import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
 import { CompactionGate } from "./compaction.ts";
@@ -935,6 +935,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           }, { cwd: dir, number: key.n });
         },
         notice: (text) => s.prCtx?.ui.notify(text, "info"),
+        milestone: (kind, n) => s.show?.milestone(kind, `PR #${n} ${kind === "pr_opened" ? "opened" : kind === "pr_ready" ? "is ready to merge" : "was merged"}`),
         rememberMerged: () => !!process.env[HANDOFF_DIR_ENV]?.trim(),
         persist: (watches, merged) => pi.appendEntry(PRWATCH_ENTRY, { v: 2, piSessionId: s.id, watches, ...(merged.length ? { merged } : {}) }),
         send: (msg, idle) => pi.sendMessage(msg, idle ? { triggerTurn: true } : { deliverAs: "followUp" }),
@@ -2712,6 +2713,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if ("plan" in rp) {
           s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
           s.planReviews.keepReviewed(rp.plan.path, planVersionHash(rp.plan.bytes));
+          s.show?.planReviewed(r.verdict === "pass", planVersionHash(rp.plan.bytes)); // plan page state and milestone (show.ts)
           reviewed.add(rp.plan.path);
           const state = planVersionHash(rp.plan.bytes);
           s.reviewSync = s.reviewSync.then(async () => {
@@ -4811,7 +4813,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
     }
     // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.
-    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) owner.show?.planWritten((event.input as Record<string, unknown>).path);
+    if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit")) {
+      owner.show?.planWritten((event.input as Record<string, unknown>).path);
+      owner.show?.resultWritten((event.input as Record<string, unknown>).path); // a session opened by another session: its result.md becomes a page
+    }
     // A child's `Plan from` / `foreman:plan` notice is a ruling point: the snapshots roll.
     if (owner && !owner.isChild && !event.isError && event.toolName === INTERCOM_TOOL) {
       const i = event.input as Record<string, unknown>;
@@ -5413,28 +5418,31 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     pi.registerTool({
       name: SHOW_TOOL,
       label: "Show a note",
-      description: "The general explanation tool: use it whenever the owner asks you to explain something they should read rendered (a design, a bug analysis, a comparison, how something works), with text, tables, code fences and ```mermaid diagrams; then answer in chat with a two to three sentence summary that points at the panel. Not for status lines or questions (questions go to ask_user_question). Each call replaces the previous note, so write it self-contained; the panel keeps one earlier version of the same title for a diff. Title up to 120 characters, markdown up to 256 KiB; takes the text itself, never a file path.",
-      parameters: { type: "object", properties: { title: { type: "string", minLength: 1, description: "Heading of the note, up to 120 characters." }, markdown: { type: "string", description: "The whole note as markdown, up to 256 KiB." } }, required: ["title", "markdown"], additionalProperties: false } as never,
+      description: "The general explanation tool: use it whenever the owner asks you to explain something they should read rendered (a design, a bug analysis, a comparison, how something works), with text, tables, code fences and ```mermaid diagrams; each call writes a standalone page the owner opens in the browser, then answer in chat with a two to three sentence summary that points at it. Not for status lines or questions (questions go to ask_user_question). Each call replaces the previous note in the panel, so write it self-contained; the pages of the last 20 calls are kept. Title up to 120 characters; give exactly one of markdown (converted to the page) or html (a whole page you wrote, stored as is and opened with scripts and network access), each up to 256 KiB; takes the text itself, never a file path.",
+      parameters: { type: "object", properties: { title: { type: "string", minLength: 1, description: "Heading of the note, up to 120 characters." }, markdown: { type: "string", description: "The whole note as markdown, up to 256 KiB. Give this or html, not both." }, html: { type: "string", description: "The whole note as one HTML page, up to 256 KiB, stored as is. Give this or markdown, not both." } }, required: ["title"], additionalProperties: false } as never,
       async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
         const s = await ensureSession(ctx);
         const refuse = (text: string) => ({ content: [{ type: "text" as const, text }], details: { decision: "refused" }, isError: true });
         if (s.isChild) return refuse(`${SHOW_TOOL} is for the foreman only.`);
         const title = typeof params.title === "string" ? params.title.trim() : "";
-        const markdown = typeof params.markdown === "string" ? params.markdown : "";
+        const html = typeof params.html === "string" ? params.html : undefined;
+        const markdown = typeof params.markdown === "string" ? params.markdown : undefined;
         if (!title) return refuse(`${SHOW_TOOL}: title is required.`);
         if (title.length > NOTE_TITLE_MAX) return refuse(`${SHOW_TOOL}: the title is ${title.length} characters, the limit is ${NOTE_TITLE_MAX}. Shorten it.`);
-        const size = Buffer.byteLength(markdown, "utf8");
+        if ((html === undefined) === (markdown === undefined)) return refuse(`${SHOW_TOOL}: give exactly one of markdown or html.`);
+        const size = Buffer.byteLength(html ?? markdown ?? "", "utf8");
         if (size > NOTE_MAX_BYTES) return refuse(`${SHOW_TOOL}: the note is ${size} bytes, the limit is ${NOTE_MAX_BYTES} (256 KiB). Cut it down or split it.`);
         if (!s.show) return refuse(`${SHOW_TOOL}: no side panel is available in this session (the scratch dir is disabled).`);
         try {
-          const r = await s.show.note(title, markdown);
+          const r = await s.show.note(title, markdown ?? "", html);
           // the harness knows the Herdr pane (env) but not the layout: without a pane no panel can show the note, with one only the block is in doubt
           const inHerdr = !!((process.env.HERDR_PANE_ID ?? "").trim() || (process.env.HC_TERMINAL_ID ?? "").trim());
           const hint = inHerdr
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
-          const openHint = showHint(markdown);
-          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+          const openHint = markdown === undefined ? null : showHint(markdown);
+          const page = r.page ? ` It writes a page the owner opens in the browser: ${r.page}.` : " Its page could not be written.";
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
         }
@@ -5651,8 +5659,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // Capped: the checkpoint opens on a FAIL with the open findings visible.
           reviewed = planReviewSection(g.verdict, await g.verdict.findings, g.capped ? { rounds: g.rounds ?? cap, cap } : undefined);
         }
-        s.show?.checkpointed(plan.path); // ruling point (show.ts): the plan the owner is about to see
-        if (s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path) {
+        const alreadyApproved = !!s.plan && s.plan.status === "approved" && s.plan.hash === plan.hash && s.plan.path === plan.path;
+        const planPage = s.show?.checkpointed(plan.path, alreadyApproved ? "approved" : "waits for you"); // ruling point (show.ts): the plan the owner is about to see, and its page
+        if (alreadyApproved && s.plan) {
           // No dialog ran: the trace carries by: null so a re-check never counts as another approval.
           return done("approve", null, `${name} (${hash8}) is already approved by the owner (${s.plan.by}, ${s.plan.approvedAt}); builders may launch while it stays unchanged.`);
         }
@@ -5667,7 +5676,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const title = `pi-foreman checkpoint: ${name} (${hash8})`;
         s.trace?.emit({ event: "dialog", surface: "checkpoint" });
         try {
-          ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n${await planPageLine(planPage)}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
           answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
         } catch {
           answer = undefined;
@@ -5680,6 +5689,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (currentPlanHash(rec, planOpts(s, ctx)) !== rec.hash) {
             return done("pending", null, `${name} changed while the owner was reviewing it, so the approval is not applied: the checkpoint stays pending. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`);
           }
+          s.show?.planDecided("approved", rec.hash);
           rec.status = "approved";
           rec.source = "dialog";
           rec.approvedAt = new Date().toISOString();
@@ -5700,10 +5710,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             note = undefined;
           }
           rec.status = "revise";
+          s.show?.planDecided("revise", rec.hash);
           if (note && note.trim()) rec.note = note.trim();
           return done("revise", null, `The owner asked for a revision of ${name}. The owner's words:\n${rec.note ?? "(no note given)"}\nChange the plan (edit it), then call ${CHECKPOINT_TOOL} again. Builders stay refused at tier heavy until the owner approves.`);
         }
         rec.status = "rejected";
+        s.show?.planDecided("rejected", rec.hash);
         ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
         return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
       },

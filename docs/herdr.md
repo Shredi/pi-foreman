@@ -826,9 +826,13 @@ compared, and without a snapshot, or when the snapshot belongs to another plan p
 sanitised before it renders: `![` is escaped everywhere, code spans and fences included (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
 only when it is `https://`, through the platform opener (never a shell).
 
+### Pages
+
+Besides `plan.json` and `note.json`, the harness writes standalone HTML pages into `<show dir>/pages/` (made one level at a time and checked like `diagrams/`; never a link) and an index `pages.json` (`{v:1, pages, events}`). Pages are `plan.html` (title, version, hash prefix and a state: `draft`, `in review`, `waits for you`, `approved`, `revise`, `rejected`), `note-<n>.html` (one per `foreman_show` call, the last 20 kept) and `result.html` (a session's own `result.md`, read through the same guarded reader as a child's `plan.md`; no page when it is written some other way). The plan page is written on every plan write, `[plan-review]` launch, checkpoint call and plan notice, on the checkpoint answer and on a plan-review verdict, and again when its diagrams are ready. `file` of each entry is derived from its `id`, never taken from the file. `events` (at most 50) lists plan review PASS/FAIL, the checkpoint answer, PR opened, PR ready, PR merged and result written. Markdown is converted by `pages.ts` (raw HTML is escaped, links keep only http, https and relative targets); mermaid fences become a `<picture>` with both themes as data URIs, or stay a code block; a whole page over 900 KiB drops its diagrams, and still over it says it is too large and names the markdown file. A page `html` note is stored as the model wrote it. A child's pages go with its worktree when its session closes. The checkpoint dialog shows `Plan page: <file URL>` (a path on that session's machine) or why there is none. `plan.json`, `note.json`, `note.md` and the snapshots are written as before.
+
 ### Notes
 
-The foreman can put a document in front of you with the `foreman_show({title, markdown})` tool: a design, a comparison, a report. It is for
+The foreman can put a document in front of you with the `foreman_show({title, markdown | html})` tool: a design, a comparison, a report. It is for
 things you should read rendered, not for status or questions, and it takes the text itself, never a path. Each call replaces the previous
 note (title up to 120 characters, text up to 256 KiB, larger input is refused with the limit named). The harness writes `note.md`, `note.json`
 (`v`, `title`, `at`, `hash`, `prevHash`, `fences`, `diagrams`) and, only while the title stays the same, the previous text as `note.prev.md`; the

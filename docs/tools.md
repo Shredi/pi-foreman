@@ -503,9 +503,10 @@ A watch costs a session no host call: it reads the tracker's store. The tracker 
 
 ### foreman_show
 
-`foreman_show({title, markdown})` publishes a note for the owner's side panel (foreman sessions, including child foreman sessions opened with `foreman session open`, get it; subagent children such as explorer, builder and reviewer do not). Title up to 120
-characters, markdown up to 256 KiB; larger input is refused with the limit named. It never takes a path. Each call replaces the previous note; the result is
-`shown: <title> (v<n>, <k> diagram(s)) at <path>`, and the trace gets one `show_note` event. `mermaid` fences are rendered to sidecar SVGs after the call returns.
+`foreman_show({title, markdown | html})` publishes a note for the owner (foreman sessions, including child foreman sessions opened with `foreman session open`, get it; subagent children such as explorer, builder and reviewer do not). Title up to 120
+characters; exactly one of `markdown` (converted to the page) or `html` (a whole page the model wrote, stored as is, with no script or network restriction), each up to 256 KiB; larger input is refused with the limit named. It never takes a path. Each call replaces the previous note in the panel and writes a standalone page, `pages/note-<n>.html` in the show dir (the last 20 are kept); the result is
+`shown: <title> (v<n>, <k> diagram(s)) at <path>. It writes a page the owner opens in the browser: <page>.`, and the trace gets one `show_note` event. `mermaid` fences are rendered to sidecar SVGs after the call returns; the page is written again with them. The plan (on each plan call and answer) and a session's `result.md` get pages too, and `pages.json` lists the pages and milestones; see [herdr](herdr.md#pages). Pages are in the show dir, so a child's pages go when its session closes.
+A `html` note is not checked for scripts or network use; `note.md` then only names the page.
 The tool stays declared whatever `tools.deferred` says. See [Notes](herdr.md#notes).
 When the note does not open with a plain paragraph of at most three sentences, the reply adds a hint to open with a short summary (never a refusal).
 

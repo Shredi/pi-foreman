@@ -13,17 +13,25 @@
 // Notes (`foreman_show`): note.md, note.prev.md (kept only while the title stays the same) and note.json (written last) in the same dir.
 // Diagram sidecars (diagrams/<sha>-dark.svg and -light.svg, mermaid.ts) are rendered by a second chain after the document is published:
 // the write that published a plan or note never waits for a render, and plan.json / note.json list the sidecars once they exist.
+//
+// Pages (pages.ts): <show dir>/pages/ holds plan.html, note-<n>.html (the last 20), result.html and pages.json (`{v:1, pages, events}`). The plan
+// page is written on each trigger call whether or not plan.json changed, on a checkpoint answer and a plan-review verdict, and again when its diagrams
+// are listed; a note page by every foreman_show; the result page from the child's result.md through the guarded reader. `pages/` is made one level at a
+// time and checked with realDir; a delete only ever names a file derived from a page id, inside that checked dir, after lstat.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { handoffPlanPath, HANDOFF_PLAN, isPlanPath, PLAN_MAX_BYTES, planBody, planVersionHash, readHandoffPlan, readPlan, sha256 } from "./checkpoint.ts";
+import { clean, handoffPlanPath, HANDOFF_PLAN, HANDOFF_RESULT, isPlanPath, PLAN_MAX_BYTES, planBody, planVersionHash, readHandoffPlan, readHandoffResult, readPlan, sha256 } from "./checkpoint.ts";
 import type { PlanOpts } from "./checkpoint.ts";
 import { scratchRoot } from "./editmode.ts";
 import { planReviewFiles } from "./findings.ts";
 import { liveDir } from "./livestate.ts";
 import type { LiveShow } from "./livestate.ts";
-import { createEngine, DIAGRAMS_DIR, diagramName, renderSidecars, scanFences, sidecarOnDisk } from "./mermaid.ts";
+import { createEngine, DIAGRAMS_DIR, diagramName, renderSidecars, scanFences, sidecarOnDisk, SVG_MAX_BYTES, validateSvg } from "./mermaid.ts";
 import type { Diagram, Engine, Fence } from "./mermaid.ts";
+import { EVENTS_MAX, fileOfId, NOTES_KEPT, noteId, PAGES_DIR, PAGES_JSON, parsePagesJson, renderPage } from "./pages.ts";
+import type { PageEntry, PageEvent, PagesIndex, Svgs } from "./pages.ts";
 import { resolveToolPath } from "./payload.ts";
 import { planPathsOf } from "./planreview.ts";
 import { workspaceOf } from "./python.ts";
@@ -77,7 +85,15 @@ export interface NoteResult {
   /** Mermaid fences in the note (their sidecars are rendered after this returns). */
   diagrams: number;
   path: string;
+  /** The note's page file, or null when the page could not be written (the note itself is published). */
+  page: string | null;
 }
+
+/** The plan page of a trigger: its file, or why there is none. */
+export type PageOutcome = { path: string } | { reason: string };
+
+/** What the owner or the review decided about the plan the page shows. */
+export type PlanState = "draft" | "in review" | "waits for you" | "approved" | "revise" | "rejected";
 
 /** The file operations of the show dir, replaceable by tests to inject a failure at one step. */
 export interface ShowIo {
@@ -187,6 +203,30 @@ function readMeta(file: string): PlanJson | null {
   }
 }
 
+/** pages.json, validated entry by entry (pages.ts parsePagesJson); null when it is missing, too big or not an index. */
+function readPages(file: string): PagesIndex | null {
+  try {
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > JSON_MAX_BYTES) return null;
+    return parsePagesJson(fs.readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** A sidecar SVG as text: a regular file within the size cap that passes the allow-list again; else null. */
+function readSidecar(dir: string, name: string): string | null {
+  try {
+    const file = path.join(dir, name);
+    const st = fs.lstatSync(file);
+    if (!st.isFile() || st.size > SVG_MAX_BYTES) return null;
+    const svg = fs.readFileSync(file, "utf8");
+    return validateSvg(svg) === null ? svg : null;
+  } catch {
+    return null;
+  }
+}
+
 function ruledHashOnDisk(file: string): string | null {
   try {
     const st = fs.lstatSync(file);
@@ -205,11 +245,31 @@ function noteHashOnDisk(file: string): string | null {
   }
 }
 
+/** The checkpoint dialog's plan page line: waits up to `waitMs` for the page write, then names the file URL or the real reason. No promise: the scratch dir is off. */
+export async function planPageLine(page: Promise<PageOutcome> | undefined, waitMs = 3000): Promise<string> {
+  if (!page) return "Plan page: not available (scratch dir off)";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<PageOutcome>((resolve) => {
+    timer = setTimeout(() => resolve({ reason: "page not written yet" }), waitMs);
+  });
+  try {
+    const r = await Promise.race([page, late]);
+    return "path" in r ? `Plan page: ${pathToFileURL(r.path).href} (a path on this session's machine)` : `Plan page: not available (${r.reason})`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class Show {
   /** Absolute show dir of this session. */
   readonly dir: string;
   private meta: PlanJson | null;
   private noteMeta: NoteJson | null = null;
+  private pages: PagesIndex = { v: 1, pages: [], events: [] };
+  /** The state of the plan version with this hash; any other version is a draft. */
+  private pstate: { state: PlanState; hash: string | null } | null = null;
+  /** The latest note as written, for the page rewrite when its diagrams arrive (a model-written html page has none). */
+  private noteSrc: { hash: string; markdown: string; html: boolean } | null = null;
   private tracked: Tracked | null = null;
   private q: Promise<void> = Promise.resolve();
   /** The render chain: sidecars only, never awaited by a publication. */
@@ -243,6 +303,11 @@ export class Show {
       realDir(this.dir);
       this.meta = readMeta(path.join(this.dir, PLAN_JSON)); // v continues across a reload
       this.noteMeta = readNoteMeta(path.join(this.dir, NOTE_JSON));
+      const pages = path.join(this.dir, PAGES_DIR);
+      if (fs.existsSync(pages)) {
+        realDir(pages);
+        this.pages = readPages(path.join(pages, PAGES_JSON)) ?? this.pages;
+      }
     } catch (e) {
       if (codeOf(e) === "ENOTDIR") init.trace?.({ event: "show_error", kind: "start", errorKind: "ENOTDIR" });
     }
@@ -271,11 +336,11 @@ export class Show {
    * `foreman_show`: publish a note. Resolves once note.json is on disk; the diagram sidecars come later (renderChain). The caller checks the
    * caps; a title or text over them is refused here too. Rejects when a write failed (the note is then not published).
    */
-  note(title: string, markdown: string): Promise<NoteResult> {
+  note(title: string, markdown: string, html?: string): Promise<NoteResult> {
     return new Promise<NoteResult>((resolve, reject) => {
       this.q = this.q.then(async () => {
         try {
-          resolve(await this.writeNote(title, markdown));
+          resolve(await this.writeNote(title, markdown, html));
         } catch (e) {
           reject(e);
           throw e;
@@ -289,14 +354,72 @@ export class Show {
     const t = this.trackedFor(raw);
     if (!t) return false;
     this.tracked = t;
-    this.enqueue("refresh", () => this.sync(false));
+    this.enqueue("refresh", async () => {
+      await this.sync(false);
+      await this.planPage();
+    });
     return true;
   }
 
-  /** `foreman_checkpoint` passed the plan guards for `planPath`: track it and roll the snapshots. */
-  checkpointed(planPath: string): void {
+  /**
+   * `foreman_checkpoint` passed the plan guards for `planPath`: track it and roll the snapshots. The promise is for this call's own plan page write
+   * (not for the diagram renders) and never rejects: the file, or the reason there is none. `state` is "approved" for a plan the owner approved before.
+   */
+  checkpointed(planPath: string, state: PlanState = "waits for you"): Promise<PageOutcome> {
     this.tracked = { kind: "scratch", path: planPath };
-    this.enqueue("checkpoint", () => this.sync(true));
+    return new Promise<PageOutcome>((resolve) => {
+      this.enqueue("checkpoint", async () => {
+        try {
+          await this.sync(true);
+          this.setState(state);
+          resolve(await this.planPage());
+        } catch (e) {
+          resolve({ reason: `page failed: ${codeOf(e)}` });
+          throw e;
+        }
+      });
+    });
+  }
+
+  /** The owner answered the checkpoint for the plan version `hash`: rewrite the plan page with the new state and add the milestone. */
+  planDecided(state: "approved" | "revise" | "rejected", hash: string): void {
+    this.enqueue("decided", async () => {
+      await this.sync(false);
+      this.pstate = { state, hash };
+      await this.planPage({ kind: "checkpoint", text: state === "approved" ? "You approved the plan" : state === "revise" ? "You asked for a revision of the plan" : "You rejected the plan", page: "plan" });
+    });
+  }
+
+  /** A plan-review verdict for the plan version `hash`: a PASS leaves the draft for the checkpoint, a FAIL asks for a revision. */
+  planReviewed(pass: boolean, hash: string): void {
+    this.enqueue("verdict", async () => {
+      await this.sync(false);
+      this.pstate = { state: pass ? "draft" : "revise", hash };
+      await this.planPage({ kind: "plan_review", text: `Plan review: ${pass ? "PASS" : "FAIL"}`, page: "plan" });
+    });
+  }
+
+  /** A milestone for the page list (PR opened, ready or merged); `page` names the page it belongs to. */
+  milestone(kind: string, text: string, page?: string): void {
+    this.enqueue("milestone", async () => {
+      const dir = await this.ensurePages();
+      await this.writeIndex(dir, this.pages.pages, { kind, text, ...(page ? { page } : {}) });
+    });
+  }
+
+  /** A write or edit tool result named `raw`: when it is this child session's `<handoff dir>/result.md`, publish the result page (guarded read, no close.ts trigger). */
+  resultWritten(raw: unknown): boolean {
+    if (!this.resultNamed(raw)) return false;
+    this.enqueue("result", async () => {
+      const r = this.init.handoffDir ? readHandoffResult(this.init.handoffDir, this.init.platform) : null;
+      if (!r || "error" in r) return;
+      const markdown = r.bytes.toString("utf8");
+      const title = clean(/^#[ \t]+(.+?)[ \t#]*$/m.exec(markdown)?.[1] ?? "").slice(0, 120) || "Result";
+      const version = (this.pages.pages.find((p) => p.id === "result")?.version ?? 0) + 1;
+      const html = renderPage({ title, kicker: `Result · v${version}`, markdown, source: HANDOFF_RESULT });
+      await this.putPage({ id: "result", kind: "result", title, state: "written", version }, html, { kind: "result", text: "Result written", page: "result" });
+    });
+    return true;
   }
 
   /**
@@ -308,7 +431,11 @@ export class Show {
     const t = this.handoffNamedIn(task) ? ({ kind: "handoff" } as Tracked) : this.scratchNamedIn(task);
     if (!t) return;
     this.tracked = t;
-    this.enqueue("review", () => this.sync(true));
+    this.enqueue("review", async () => {
+      await this.sync(true);
+      this.setState("in review");
+      await this.planPage();
+    });
   }
 
   /** A successful `intercom` send: a `Plan from <label>: <path>` or `foreman:plan <path>` notice rolls the snapshots of the tracked plan. */
@@ -317,7 +444,10 @@ export class Show {
     const named = this.trackedFor(message.replace(PLAN_NOTICE, "").split(/\r?\n/, 1)[0].trim());
     if (named) this.tracked = named;
     if (!this.tracked) return;
-    this.enqueue("send", () => this.sync(true));
+    this.enqueue("send", async () => {
+      await this.sync(true);
+      await this.planPage();
+    });
   }
 
   private get planOpts(): PlanOpts {
@@ -329,6 +459,15 @@ export class Show {
     const abs = resolveToolPath(raw, this.init.cwd, this.init.home);
     if (abs && isPlanPath(abs, this.planOpts)) return { kind: "scratch", path: abs };
     return handoffPlanPath(raw, this.init.handoffDir, this.planOpts) ? { kind: "handoff" } : null;
+  }
+
+  private resultNamed(raw: unknown): boolean {
+    const dir = this.init.handoffDir?.trim();
+    const abs = resolveToolPath(raw, this.init.cwd, this.init.home);
+    if (!dir || !path.isAbsolute(dir) || !abs) return false;
+    const f = fold(this.init.platform);
+    const real = path.join(realDeep(path.dirname(abs)), path.basename(abs));
+    return f(path.dirname(real)) === f(realDeep(path.resolve(dir))) && path.basename(real) === HANDOFF_RESULT;
   }
 
   private handoffNamedIn(task: string): boolean {
@@ -430,11 +569,13 @@ export class Show {
   }
 
   /** One queued job: note.md (the previous one rolls to note.prev.md only when the title is unchanged), then note.json last. */
-  private async writeNote(rawTitle: string, markdown: string): Promise<NoteResult> {
+  private async writeNote(rawTitle: string, given: string, html?: string): Promise<NoteResult> {
     const title = rawTitle.replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim();
     if (!title || title.length > NOTE_TITLE_MAX) throw new Error("title");
+    // a model-written html page is stored as it is; note.md then only points at it
+    const markdown = html === undefined ? given : `# ${title}\n\nThis note is an HTML page: ${PAGES_DIR}/${noteId((this.noteMeta?.v ?? 0) + 1)}.html\n`;
     const bytes = Buffer.from(markdown, "utf8");
-    if (bytes.length > NOTE_MAX_BYTES) throw new Error("too_large");
+    if (bytes.length > NOTE_MAX_BYTES || (html !== undefined && Buffer.byteLength(html, "utf8") > NOTE_MAX_BYTES)) throw new Error("too_large");
     await this.ensureDir();
     const md = path.join(this.dir, NOTE_MD);
     const prev = this.noteMeta;
@@ -469,8 +610,99 @@ export class Show {
     } catch {
       // the live refresh is best effort
     }
+    this.noteSrc = { hash: meta.hash, markdown, html: html !== undefined };
+    let page: string | null = null;
+    try {
+      page = await this.notePage(meta, markdown, html);
+    } catch (e) {
+      this.init.trace?.({ event: "show_error", kind: "page", errorKind: codeOf(e) }); // the note is published; only its page is missing
+    }
     if (fences.length > 0) this.renderChain("note", meta.hash, markdown);
-    return { v: meta.v, diagrams: fences.length, path: md };
+    return { v: meta.v, diagrams: fences.length, path: md, page };
+  }
+
+  private notePage(meta: NoteJson, markdown: string, html?: string): Promise<string> {
+    const body = html ?? renderPage({ title: meta.title, kicker: `Note v${meta.v}`, markdown, svgs: this.svgsFor(meta.diagrams), source: NOTE_MD });
+    return this.putPage({ id: noteId(meta.v), kind: "note", title: meta.title, state: "shown", version: meta.v }, body);
+  }
+
+  private setState(state: PlanState): void {
+    this.pstate = { state, hash: this.meta?.hash ?? null };
+  }
+
+  /** Write the plan page of the tracked plan as the guarded reader sees it now; `event` is a milestone of the same write. */
+  private async planPage(event?: Omit<PageEvent, "at">): Promise<PageOutcome> {
+    const cur = this.tracked ? this.read(this.tracked) : null;
+    const meta = this.meta;
+    if (!cur || !meta) return { reason: "plan not readable" };
+    const state: PlanState = this.pstate && this.pstate.hash === cur.hash ? this.pstate.state : "draft";
+    const title = titleOf(cur.bytes);
+    const html = renderPage({ title, kicker: `Plan v${meta.v} · ${state} · ${cur.hash.slice(0, 8)}`, markdown: cur.bytes.toString("utf8"), svgs: meta.hash === cur.hash ? this.svgsFor(meta.diagrams) : undefined, source: path.basename(cur.path) });
+    return { path: await this.putPage({ id: "plan", kind: "plan", title, state, version: meta.v }, html, event) };
+  }
+
+  /** The SVG texts of the listed diagrams that are still valid sidecars on disk (names derived from the sha, never from the listing). */
+  private svgsFor(diagrams: Diagram[] | undefined): Map<string, Svgs> | undefined {
+    if (!diagrams?.length) return undefined;
+    const dir = path.join(this.dir, DIAGRAMS_DIR);
+    const out = new Map<string, Svgs>();
+    try {
+      realDir(dir);
+    } catch {
+      return undefined;
+    }
+    for (const d of diagrams) {
+      if (!/^[0-9a-f]{64}$/.test(d.sha)) continue;
+      const dark = readSidecar(dir, diagramName(d.sha, "dark"));
+      const light = readSidecar(dir, diagramName(d.sha, "light"));
+      if (dark !== null && light !== null) out.set(d.sha, { dark, light });
+    }
+    return out;
+  }
+
+  /** `<show dir>/pages`, made one level at a time and checked like diagrams/. */
+  private async ensurePages(): Promise<string> {
+    await this.ensureDir();
+    const dir = path.join(this.dir, PAGES_DIR);
+    await this.io.mkdir(dir);
+    realDir(dir);
+    return dir;
+  }
+
+  /** Write a page file, then its index entry (and the milestone); the notes beyond the last NOTES_KEPT are removed afterwards. Returns the page file. */
+  private async putPage(e: Omit<PageEntry, "file" | "at">, html: string, event?: Omit<PageEvent, "at">): Promise<string> {
+    const file = fileOfId(e.id);
+    if (!file) throw new Error("page id");
+    const dir = await this.ensurePages();
+    await this.atomic(path.join(dir, file), html);
+    const prev = this.pages.pages.find((p) => p.id === e.id);
+    const entry: PageEntry = { ...e, file, at: prev && prev.title === e.title && prev.state === e.state && prev.version === e.version ? prev.at : new Date().toISOString() };
+    let list = prev ? this.pages.pages.map((p) => (p.id === e.id ? entry : p)) : [...this.pages.pages, entry];
+    const notes = list.filter((p) => p.kind === "note").sort((a, b) => a.version - b.version);
+    const drop = notes.slice(0, Math.max(0, notes.length - NOTES_KEPT));
+    list = list.filter((p) => !drop.includes(p));
+    await this.writeIndex(dir, list, event);
+    for (const d of drop) await this.rmPage(dir, d.id);
+    return path.join(dir, file);
+  }
+
+  private async writeIndex(dir: string, pages: PageEntry[], event?: Omit<PageEvent, "at">): Promise<void> {
+    const events = event ? [...this.pages.events, { at: new Date().toISOString(), ...event }].slice(-EVENTS_MAX) : this.pages.events;
+    const idx: PagesIndex = { v: 1, pages, events };
+    await this.atomic(path.join(dir, PAGES_JSON), JSON.stringify(idx) + "\n");
+    this.pages = idx;
+  }
+
+  /** Delete the page of `id`: only the name derived from the id, inside the checked pages dir, and only a regular file. */
+  private async rmPage(dir: string, id: string): Promise<void> {
+    const file = fileOfId(id);
+    if (!file) return;
+    try {
+      if (!fs.lstatSync(path.join(dir, file)).isFile()) return;
+    } catch {
+      return;
+    }
+    await this.io.rm(path.join(dir, file));
   }
 
   /** Render the missing sidecars of a published document, then list them. Runs after the publication, on its own chain. */
@@ -513,6 +745,7 @@ export class Show {
       const m = this.meta;
       if (!m || m.hash !== hash || JSON.stringify(m.diagrams ?? []) === JSON.stringify(diagrams)) return;
       await this.writeMeta({ ...m, fences: diagrams.map((d) => d.sha), diagrams });
+      await this.planPage(); // the page shows the diagrams now
       return;
     }
     const n = this.noteMeta;
@@ -526,6 +759,7 @@ export class Show {
     } catch {
       // the live refresh is best effort
     }
+    if (this.noteSrc && this.noteSrc.hash === hash && !this.noteSrc.html) await this.notePage(meta, this.noteSrc.markdown); // the page shows the diagrams now
   }
 
   private tmpName(file: string): string {

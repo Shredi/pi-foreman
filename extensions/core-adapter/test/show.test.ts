@@ -35,7 +35,8 @@ function env(t: { after: (fn: () => void) => void }) {
 
 const json = (show: Show, file = "plan.json") => JSON.parse(fs.readFileSync(path.join(show.dir, file), "utf8")) as PlanJson;
 const text = (show: Show, file: string) => fs.readFileSync(path.join(show.dir, file), "utf8");
-const names = (show: Show) => fs.readdirSync(show.dir).sort();
+const names = (show: Show) => fs.readdirSync(show.dir).filter((n) => n !== "pages").sort(); // pages/ has its own tests (pages.test.ts)
+const inPages = (f: string) => path.basename(path.dirname(f)) === "pages";
 
 test("show: a plan write publishes plan.json with the version hash, title and live field", async (t) => {
   const e = env(t);
@@ -312,7 +313,7 @@ test("show: an EPERM on rename is retried once after a delay, a second EPERM kee
   let planJsonFails = 1;
   const io: Partial<ShowIo> = {
     rename: async (from, to) => {
-      seen.push(base(to));
+      if (!inPages(to)) seen.push(base(to));
       if (base(to) === "plan.json" && planJsonFails-- > 0) throw Object.assign(new Error("busy"), { code: "EPERM" });
       await fs.promises.rename(from, to);
     },
@@ -339,11 +340,11 @@ test("show: plan.json is written atomically (temp then rename, no temp left)", a
   const ops: string[] = [];
   const io: Partial<ShowIo> = {
     writeFile: async (file, data) => {
-      ops.push(`write ${base(file).replace(/\.\d+\.\d+\.tmp$/, ".tmp")}`);
+      if (!inPages(file)) ops.push(`write ${base(file).replace(/\.\d+\.\d+\.tmp$/, ".tmp")}`);
       await fs.promises.writeFile(file, data, { flag: "wx" });
     },
     rename: async (from, to) => {
-      ops.push(`rename ${base(from).replace(/\.\d+\.\d+\.tmp$/, ".tmp")} ${base(to)}`);
+      if (!inPages(to)) ops.push(`rename ${base(from).replace(/\.\d+\.\d+\.tmp$/, ".tmp")} ${base(to)}`);
       await fs.promises.rename(from, to);
     },
   };
@@ -374,7 +375,8 @@ test("show: a symlinked handoff plan is refused, path is cleared and the live pl
   assert.equal(j.path, null);
   assert.equal(j.hash, planVersionHash(Buffer.from(A))); // the foreign bytes were never hashed
   assert.deepEqual(show.field(), { dir: show.dir });
-  assert.equal(fs.readdirSync(show.dir).some((n) => fs.readFileSync(path.join(show.dir, n), "utf8").includes("not mine")), false);
+  const files = fs.readdirSync(show.dir).flatMap((n) => (n === "pages" ? fs.readdirSync(path.join(show.dir, n)).map((p) => path.join(n, p)) : [n]));
+  assert.equal(files.some((n) => fs.readFileSync(path.join(show.dir, n), "utf8").includes("not mine")), false);
   show.checkpointed(hp); // a ruling point does not copy it either
   await show.idle();
   assert.equal(fs.existsSync(path.join(show.dir, "plan.ruled.md")), false);
