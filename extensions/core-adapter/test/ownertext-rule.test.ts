@@ -15,7 +15,7 @@ const defaults = { ladder: "on", ownerScript: "on", ownerReadable: "on", reviewM
 test("the rendered foreman prompt carries OWNER_TEXT_POINTS verbatim once, only with ownerReadable on", () => {
   const on = applyVariants(rules, defaults);
   assert.equal(on.split(OWNER_TEXT_POINTS).length - 1, 1);
-  assert.match(on, /Text between sessions \(briefs, rulings, results, reports, notes, ledger, commit messages\) stays dense/);
+  assert.match(on, /Text between sessions \(briefs, rulings, results, reports, handoff notes, ledger, commit messages\) stays dense/);
   assert.ok(!applyVariants(rules, { ...defaults, ownerReadable: "off" }).includes(OWNER_TEXT_POINTS));
 });
 
@@ -33,8 +33,9 @@ test("the facts line carries the points, also for a plan that cannot be read", (
 });
 
 test("both hints name owner text and keep their pinned words", () => {
-  assert.match(questionHint({ questions: [{ question: "Change `index.ts`?" }] }, "") ?? "", /owner text.*plain|plain.*owner text/s);
-  assert.match(questionHint({ questions: [{ question: "Change `index.ts`?" }] }, "") ?? "", /jargon/);
+  const q = questionHint({ questions: [{ question: "Change `index.ts`?" }] }, "") ?? "";
+  assert.match(q, /owner text.*plain|plain.*owner text/s);
+  assert.match(q, /jargon/);
   const h = showHint("") ?? "";
   assert.match(h, /owner text/);
   assert.match(h, /plain 2-3 sentence/);
