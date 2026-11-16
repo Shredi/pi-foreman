@@ -16,7 +16,8 @@ test("a ruling-plan.md lifts no stop and a brief still does; the child's own wri
     if (saved === undefined) delete process.env.PI_FOREMAN_HANDOFF_DIR;
     else process.env.PI_FOREMAN_HANDOFF_DIR = saved;
   });
-  const a = await r11Rig(t, {}, reviewAllowOpts());
+  // inTmp: the gate (first tool_call handler) allows the write as a tmp path, so the self_ruling guard after it is the one that refuses
+  const a = await r11Rig(t, {}, { ...reviewAllowOpts(), inTmp: true });
   const dir = a.handoff("round", "child");
   // the child's own write of a brief, by tool and by shell, is refused (the write protection stays)
   const own = path.join(dir, "brief-9.md");
