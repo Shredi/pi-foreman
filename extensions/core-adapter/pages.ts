@@ -87,7 +87,7 @@ export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ES
 /** A link target we keep: http, https, or relative (no scheme, not network-path). */
 function safeHref(raw: string): string | null {
   const u = raw.trim();
-  if (!u || /[\u0000- \u007f]/.test(u) || u.startsWith("//")) return null;
+  if (!u || /[\u0000- \u007f]/.test(u) || u.startsWith("//") || u.includes("\\")) return null;
   if (/^https?:\/\//i.test(u)) return u;
   return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(u) ? null : u;
 }
@@ -227,11 +227,11 @@ function list(lines: string[], start: number, opts: MarkdownOpts, depth: number)
     while (i < lines.length) {
       const l = lines[i];
       if (!l.trim()) {
-        const nextIdx = lines.findIndex((x, k) => k > i && x.trim());
-        if (nextIdx < 0 || indentOf(lines[nextIdx]) <= base) break;
-        body.push("");
+        let nextIdx = i + 1;
+        while (nextIdx < lines.length && !lines[nextIdx].trim()) nextIdx++;
+        if (nextIdx >= lines.length || indentOf(lines[nextIdx]) <= base) break;
+        for (; i < nextIdx; i++) body.push("");
         loose = true;
-        i++;
         continue;
       }
       if (indentOf(l) > base) body.push(l.slice(Math.min(indentOf(l), base + 2)));

@@ -101,9 +101,10 @@ function diagramSpans(lines: string[]): [number, number][] {
   return spans;
 }
 
-/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. The first mermaid fence is the section's diagram and does not count. */
+/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. The first mermaid fence is the section's diagram and does not count when it is closed; an unclosed one counts in full. */
 const measure = (sec: OwnerSection): { wrapped: number; chars: number } => {
-  const first = diagramSpans(sec.lines)[0];
+  const span = diagramSpans(sec.lines)[0];
+  const first = span && span[1] > span[0] && FENCE.test(sec.lines[span[1]]) ? span : undefined;
   const kept = first ? sec.lines.filter((_l, i) => i < first[0] || i > first[1]) : sec.lines;
   return {
     wrapped: kept.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0),
