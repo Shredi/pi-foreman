@@ -34,7 +34,7 @@ function world(flavor, { note = true, bin = true } = {}) {
 function interactive(w, argv, input, env = {}) {
   const r = spawnSync(PYTHON, ["-I", PTY, input, ...argv], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH, HOME: w.base, TERM: "dumb", PI_CODING_AGENT_DIR: w.agentDir, HC_TERMINAL_ID: "t1", ...env },
+    env: { PATH: process.env.PATH, HOME: w.base, TERM: "dumb", PI_CODING_AGENT_DIR: w.agentDir, HC_TERMINAL_ID: "t1", TMPDIR: w.base, XDG_RUNTIME_DIR: "", ...env },
   });
   return { out: r.stdout, marker: fs.existsSync(w.marker) ? fs.readFileSync(w.marker, "utf8").trim().split("\n") : [] };
 }

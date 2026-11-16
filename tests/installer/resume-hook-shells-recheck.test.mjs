@@ -29,7 +29,7 @@ function run(flavor, input) {
   const rc = path.join(base, "rc");
   fs.writeFileSync(rc, `${renderResumeBlock({ bin: stub, flavor })}\n`);
   const note = path.join(panes, "t1.json");
-  const env = { PATH: process.env.PATH, HOME: base, TMPDIR: base, TERM: "dumb", PI_CODING_AGENT_DIR: agentDir, HC_TERMINAL_ID: "t1" };
+  const env = { PATH: process.env.PATH, HOME: base, TMPDIR: base, XDG_RUNTIME_DIR: "", TERM: "dumb", PI_CODING_AGENT_DIR: agentDir, HC_TERMINAL_ID: "t1" };
   let argv;
   if (flavor === "bash") argv = ["bash", "--noprofile", "--rcfile", rc, "-i"];
   else if (flavor === "zsh") {

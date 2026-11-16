@@ -191,7 +191,7 @@ alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 
 Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<`, under the same guard (default agent dir or
 `PI_FOREMAN_HOME`; never in a dry run, never on Windows, never with `--no-env`). It restarts a Pi session in its pane after a crash
-(see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$TMPDIR` records the check). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
+(see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
 `~/.bash_login`, `~/.profile`; fish `~/.config/fish/conf.d/pi-foreman-resume.fish`. The block calls this checkout's `bin/foreman` by its absolute path, so
 re-run `foreman setup` after the package moved (an nvm switch that moves the global npm root, a `pi update` into a new folder). Run setup on a remote machine too
 if sessions there should come back. `--no-resume-hook` writes no block and removes an existing one; `foreman setup --remove` removes it too. With `--no-env`
@@ -205,8 +205,8 @@ if [ -n "${BASH_VERSION:-}" ]; then
     [ -t 0 ] || return 0
     __pi_foreman_note="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json"
     [ -f "$__pi_foreman_note" ] || return 0
-    __pi_foreman_mark="${TMPDIR:-/tmp}/pi-foreman-resume.$$"
-    if [ -n "${__pi_foreman_resume_seen:-}" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return 0; fi
+    __pi_foreman_mark="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$"
+    if [ -n "${__pi_foreman_resume_seen:-}" ] && [ -e "$__pi_foreman_mark" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return 0; fi
     __pi_foreman_resume_seen=1
     : > "$__pi_foreman_mark" 2>/dev/null
     '<foreman>' pane-resume --shell-pid "$$"

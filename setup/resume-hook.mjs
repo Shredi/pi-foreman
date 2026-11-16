@@ -24,15 +24,16 @@ export function resumeTargets({ home, shell = "" }) {
 }
 
 // A prompt with no note costs only file tests. A note is checked when this shell has not checked one yet or the note is newer than the shell's
-// marker file (touched before each check); a kept note that did not change is not checked again.
+// marker file (touched before each check, in $XDG_RUNTIME_DIR when set, else $TMPDIR); a kept note that did not change is not checked again.
+// A missing marker (tmp cleaner, unwritable dir) means check.
 const POSIX_BODY = (bin) => [
   "__pi_foreman_resume() {",
   "  [ -n \"${HC_TERMINAL_ID:-}\" ] || return 0",
   "  [ -t 0 ] || return 0",
   "  __pi_foreman_note=\"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
   "  [ -f \"$__pi_foreman_note\" ] || return 0",
-  "  __pi_foreman_mark=\"${TMPDIR:-/tmp}/pi-foreman-resume.$$\"",
-  "  if [ -n \"${__pi_foreman_resume_seen:-}\" ] && ! [ \"$__pi_foreman_note\" -nt \"$__pi_foreman_mark\" ]; then return 0; fi",
+  "  __pi_foreman_mark=\"${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$\"",
+  "  if [ -n \"${__pi_foreman_resume_seen:-}\" ] && [ -e \"$__pi_foreman_mark\" ] && ! [ \"$__pi_foreman_note\" -nt \"$__pi_foreman_mark\" ]; then return 0; fi",
   `  [ -x ${q(bin)} ] || return 0`,
   "  __pi_foreman_resume_seen=1",
   "  : > \"$__pi_foreman_mark\" 2>/dev/null",
@@ -55,8 +56,9 @@ export function renderResumeBlock({ bin, flavor }) {
       "    test -f \"$note\"; or return 0",
       "    set -l tmp /tmp",
       "    test -n \"$TMPDIR\"; and set tmp $TMPDIR",
+      "    test -n \"$XDG_RUNTIME_DIR\"; and set tmp $XDG_RUNTIME_DIR",
       "    set -l mark \"$tmp/pi-foreman-resume.$fish_pid\"",
-      "    if set -q __pi_foreman_resume_seen; and not test \"$note\" -nt \"$mark\"",
+      "    if set -q __pi_foreman_resume_seen; and test -e \"$mark\"; and not test \"$note\" -nt \"$mark\"",
       "        return 0",
       "    end",
       `    test -x ${q(bin)}; or return 0`,
