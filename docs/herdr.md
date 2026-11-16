@@ -728,6 +728,9 @@ Owner and overlay config only (a project cannot change the GitHub search):
 | `radar.openPrs.mine` | `true` | list PRs you authored and PRs with your review requested |
 | `radar.openPrs.authors` | `[]` | other authors, for example `renovate[bot]` (a GitHub App `<name>[bot]` is searched as `author:app/<name>`) |
 | `radar.openPrs.scope` | `[]` | owners (`example-org`) or `owner/repo`; authors are searched only inside it, never unscoped |
+| `radar.openPrs.hideRepos` | `[]` | globs over the lowercased `owner/name` (`*`, `?`, case-insensitive; the matcher of `tools.prSources.<name>.repos`; at most 50 globs of 200 characters); the mod leaves the PRs of matching repositories out of the Open PRs list. Empty hides nothing; a malformed value hides nothing and is named by a manual `foreman prs poll` |
+
+`hideRepos` is display only: a hidden PR is still polled, watched and wakes its session, and its session chip stays. The PR tracker (`foreman prs poll`) marks entries `hiddenRepo: true` in `open-prs.json` and `tracked-prs-state.json` on every poll, so a change shows within about 30 s while the tracker runs; without it the marks stay as they were (a Pi session's refresh only copies them per repo, so a repo it sees first stays unmarked until the next poll). The mod hides a repository when any machine's feed marks it, so list the pattern on each machine whose feed has the repo. A session's PR of a repository the feed does not list at all stays listed (there is nothing to judge it by). The header shows no hidden count.
 
 A Pi session (not a child) or `foreman prs poll` refreshes `<agent dir>/pi-foreman/state/open-prs.json` in the background, at most once per
 `refreshSeconds` across all sessions on the machine: one refresher per machine (an exclusive lock file with a stale timeout, then an atomic rename). One
@@ -742,9 +745,9 @@ logged in or rate limited, the last file stays and carries `error` and `errorAt`
 
 | File | Writer |
 |---|---|
-| `open-prs.json` | `refreshOpenPrs` (a Pi session or `foreman prs poll`), under `open-prs.json.lock` |
+| `open-prs.json` (`hiddenRepo` per entry) | `refreshOpenPrs` (a Pi session or `foreman prs poll`) and the poll's re-mark of `hiddenRepo` (rewrites only when a mark changed), each under `open-prs.json.lock` |
 | `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt, host?}]}` (at most 200 lines; `host` is absent for `github.com`) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
-| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt` per PR; `trackedAt`; `off`) | the poll only |
+| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt`, `hiddenRepo` per PR; `trackedAt`; `off`) | the poll only |
 | `tracked-prs-comments.json` | the poll only |
 
 The stored snap also carries the host's review decision as the optional field `reviewDecision` (`approved`, `changes_requested` or `review_required`; left out when the host gives none, and an entry without it still reads). The files stay version 1. Only the session's [ready label](tools.md#ready-label) reads the field; the radar feed, the pill and the child's blocked line do not.

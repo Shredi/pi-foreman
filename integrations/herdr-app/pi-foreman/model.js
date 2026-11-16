@@ -157,6 +157,7 @@ function normOpenPrs(raw) {
     out.push({
       number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
       state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p), ...(p.tracked === true ? { tracked: true } : {}),
+      ...(p.hiddenRepo === true ? { hiddenRepo: true } : {}),
     });
   }
   return out;
@@ -750,10 +751,14 @@ export function twinOf(pr, feed, fallbackRepo = "") {
 
 /** The "Open PRs" section. A PR is listed once, at the first place of: (a) the row of a shown session (then not here at all),
  *  (b) a session that is not shown (the first one owning it), (c) the radar `openPrs` feed. `shown` holds the nodes and/or the
- *  node keys drawn in the tree. One group per repo, `[{repo, prs: [{...pr, href, title}]}]`. Empty when there is nothing. */
+ *  node keys drawn in the tree. One group per repo, `[{repo, prs: [{...pr, href, title}]}]`. Empty when there is nothing.
+ *  A repo with a feed entry marked `hiddenRepo` (radar.openPrs.hideRepos, any machine's feed) is skipped in (b) and (c); a (b) PR of a repo
+ *  the feed does not list stays. */
 export function openPrGroups(openPrs, tops, shown = new Set()) {
   const groups = new Map();
   const feed = (Array.isArray(openPrs) ? openPrs : []).filter(isObj);
+  const hiddenRepos = new Set(feed.filter((p) => p.hiddenRepo === true).map((p) => nameOf(p.repo).toLowerCase()));
+  const hides = (repo) => nameOf(repo) !== "" && hiddenRepos.has(nameOf(repo).toLowerCase());
   // A PR counts once, as the feed entry it is, else by its URL, else by repo#number; with none of them it is its own entry.
   const claimed = new Set();
   const idOf = (s, pr) => {
@@ -779,13 +784,14 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
     if (isShown(s)) continue;
     for (const own of s.prs) {
       if (/^(merged|closed)$/.test(twinOf(own, feed, s.repoUrl)?.state ?? "")) continue;
+      if (hides(own.repo || s.repoUrl)) continue;
       const pr = enrichPrs([own], feed, s.repoUrl)[0];
       add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr), idOf(s, own));
     }
   }
   // (c) the feed, under its repo
   feed.forEach((p) => {
-    if (p.state === "merged" || p.state === "closed") return;
+    if (p.state === "merged" || p.state === "closed" || hides(p.repo)) return;
     add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p), idOf(null, p));
   });
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));

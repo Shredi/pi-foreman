@@ -617,7 +617,7 @@
       "title": "Open PRs in radar and the herdr-app mod",
       "purpose": "The only PR and run data source: a tracked list (`pr_follow`, and the PRs `pr_create` and `pr_watch` handle) that `foreman prs poll` (herdr-app runs it) polls for checks and drops once merged or closed, and the extension searches GitHub through `gh` (at most every `radar.openPrs.refreshSeconds`, default 120, one refresher per machine) for your open PRs, those with your review requested (`mine`) and those of configured bot `authors` inside `scope`, and caches them on disk with title, branch, a redacted description excerpt, mergeability and up to 20 check names. `foreman radar --json` reports them as `openPrs` for the herdr-app mod, which draws one dot per PR; radar polls never call the network. On by default; GitHub only (GitLab users get no PR display). User or overlay config only.",
       "doc": "docs/herdr.md#open-prs",
-      "keys": ["radar.openPrs.enabled", "radar.openPrs.refreshSeconds", "radar.openPrs.mine", "radar.openPrs.authors", "radar.openPrs.scope"],
+      "keys": ["radar.openPrs.enabled", "radar.openPrs.refreshSeconds", "radar.openPrs.mine", "radar.openPrs.authors", "radar.openPrs.scope", "radar.openPrs.hideRepos"],
       "commands": ["foreman radar --json", "foreman prs"],
       "switch": {"key": "radar.openPrs.enabled", "on": "true"},
       "state": "on",

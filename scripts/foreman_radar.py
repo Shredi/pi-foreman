@@ -248,6 +248,8 @@ def read_open_prs(adir):
             out[-1]["bodyText"] = body[:500]
         if mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
             out[-1]["mergeable"] = mergeable
+        if p.get("hiddenRepo") is True:  # the PR tracker's mark (radar.openPrs.hideRepos); passed through, never computed here
+            out[-1]["hiddenRepo"] = True
     return out, datetime.datetime.fromtimestamp(at, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -297,6 +299,8 @@ def _tracked_entries(adir):
             v = src.get(key)
             if isinstance(v, str) and v:
                 ent[dst] = v[:255]
+        if e.get("hiddenRepo") is True:  # the PR tracker's mark (radar.openPrs.hideRepos)
+            ent["hiddenRepo"] = True
         # the host is the store key's prefix (`<host>/o/r#n`); a key without one is github.com
         kparts = skey.split("#")[0].split("/") if isinstance(skey, str) else []
         if len(kparts) == 3 and RADAR_HOST_RE.match(kparts[0].lower()) and kparts[0].lower() != "github.com":
@@ -331,6 +335,8 @@ def read_pr_feed(adir, now):
                 ent["bodyText"] = twin["bodyText"]
             if "headRepo" not in ent and twin.get("headRepo"):
                 ent["headRepo"] = twin["headRepo"]
+            if twin.get("hiddenRepo"):  # both are tracker marks: hidden when either side is
+                ent["hiddenRepo"] = True
             entries[i] = ent
     entries.sort(key=lambda p: (p["repo"].lower(), p["number"]))
     return entries, at
