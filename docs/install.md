@@ -222,13 +222,17 @@ if [ -n "${BASH_VERSION:-}" ]; then
     [ -f "$__pi_foreman_note" ] || return 0
     __pi_foreman_mark="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$"
     if [ -n "${__pi_foreman_resume_seen:-}" ] && [ -e "$__pi_foreman_mark" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return 0; fi
+    [ -x '<foreman>' ] || return 0
     __pi_foreman_resume_seen=1
     : >| "$__pi_foreman_mark" 2>/dev/null
     '<foreman>' pane-resume --shell-pid "$$"
     case $? in 75|127) rm -f "$__pi_foreman_mark" ;; esac
     return 0
   }
-  case "${PROMPT_COMMAND:-}" in *__pi_foreman_resume*) ;; *) PROMPT_COMMAND="__pi_foreman_resume${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;; esac
+  case "${PROMPT_COMMAND:-}" in
+    *__pi_foreman_resume*) ;;
+    *) PROMPT_COMMAND="__pi_foreman_resume${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+  esac
 fi
 ```
 
