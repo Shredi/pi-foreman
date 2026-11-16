@@ -68,6 +68,36 @@ test("standard child opened plan-first: refused before a PASS, not by a PASS on 
   assert.equal(planPhase(await b.launch("builder")), false, "a reload does not put the phase back");
 });
 
+test("standard child opened plan-first: a plan-review FAIL on the current version leaves the phase on", async (t) => {
+  const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const a = await w.adapter("startup");
+  await ready(w, a);
+  await triage(a, "standard");
+  assert.equal(await a.review("FAIL"), null);
+  assert.ok(planPhase(await a.launch("builder")), "a FAIL leaves the phase on");
+  assert.equal(entry(w).planPhase, true, "no exit is persisted");
+});
+
+test("standard child opened plan-first: one run with two [plan-review] results, PASS then FAIL, leaves the phase on (the latest verdict counts)", async (t) => {
+  const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
+  process.env.PI_FOREMAN_PLAN_PHASE = "1";
+  const a = await w.adapter("startup");
+  await ready(w, a);
+  await triage(a, "standard");
+  const task = "[plan-review] review .workflow/scratch/plan-widget.md";
+  const input = { tasks: [{ agent: "reviewer", task }, { agent: "reviewer", task }] };
+  w.state.answer = "allow once"; // a multi-child launch asks the owner
+  await a.fire("message_end", { message: { role: "assistant", content: [{ type: "toolCall", id: "two", name: "subagent", arguments: input }] } });
+  assert.equal(await a.fire("tool_call", { toolName: "subagent", toolCallId: "two", input }), undefined);
+  await a.fire("tool_result", { toolName: "subagent", toolCallId: "two", input, details: { runId: "run-two" }, content: [{ type: "text", text: "started" }], isError: false });
+  a.endRunMany("two", ["Overall verdict: PASS", "Overall verdict: FAIL"]);
+  await tick();
+  assert.equal((await w.traceEvents()).filter((e) => e.event === "plan_review").length, 2, "both results are plan-review verdicts");
+  assert.ok(planPhase(await a.launch("builder")), "the latest verdict is a FAIL: the phase stays on");
+  assert.equal(entry(w).planPhase, true, "no exit is persisted");
+});
+
 test("a parent-started phase is recognised after a restart without PI_FOREMAN_PLAN_PHASE; an entry without the origin field reads as the owner's", async (t) => {
   const w = world(t, { handoff: true, parent: true, ceremony: { default: "standard" } });
   process.env.PI_FOREMAN_PLAN_PHASE = "1";

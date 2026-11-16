@@ -2702,6 +2702,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
     const plans = planPathsOf(s.reviewRuns.byRun.get(runId)?.files ?? [], opts.scratchDir);
+    const reviewed = new Set<string>();
     for (const r of planReviewResults(results)) {
       s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
       const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
@@ -2710,11 +2711,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if ("plan" in rp) {
           s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
           s.planReviews.keepReviewed(rp.plan.path, planVersionHash(rp.plan.bytes));
-          if (r.verdict === "pass" && s.planReviews.reviewedText(rp.plan.path) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
-            // the reviewer read the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
-            s.planPhase = false;
-            s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
-          }
+          reviewed.add(rp.plan.path);
           const state = planVersionHash(rp.plan.bytes);
           s.reviewSync = s.reviewSync.then(async () => {
             const prev = s.reviews.findLast((x) => x.kind === "plan");
@@ -2725,6 +2722,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
           saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
         }
+      }
+    }
+    for (const p of reviewed) {
+      if (s.planReviews.lineage(p)?.latest.verdict === "pass" && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
+        // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
+        s.planPhase = false;
+        s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
       }
     }
     persistRounds(s);

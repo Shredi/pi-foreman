@@ -171,6 +171,8 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       fire: (name: string, event: unknown) => handlers.get(name)?.(event, ctx),
       /** The run-end event of a launch started by `reviewLaunch` (its callId), as the harness delivers it. */
       endRun: (id: string, output: string) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, agent: "reviewer", success: true, status: "completed", results: [{ agent: "reviewer", status: "completed", success: true, output }] }),
+      /** The run-end event of a launch with one reviewer result per output, in order. */
+      endRunMany: (id: string, outputs: string[]) => channels.get("subagent:async-complete")!({ runId: `run-${id}`, success: true, status: "completed", results: outputs.map((output) => ({ agent: "reviewer", status: "completed", success: true, output })) }),
       /** A launch of any `agent` that started (a run id came back), or the block reason; `endRunAs` ends it. */
       async agentLaunch(agent: string, task: string, extra: Record<string, unknown> = {}): Promise<{ blocked: string | null; id: string }> {
         const id = `c${++calls}`;
