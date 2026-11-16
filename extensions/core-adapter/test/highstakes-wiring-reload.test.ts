@@ -45,7 +45,8 @@ test("an old seenHead (a real SHA) becomes the review base after a reload: the t
   const { w, a, seed } = await setup(t, { cfg: { safety: { ops: { baseBranch: "no-such-branch" } } } }); // no merge-base resolves: the recorded base decides
   commitIn(w.project, "src/a/one.ts");
   await build(a, TAGGED);
-  await persisted(w, (hs) => hs?.fired?.reasons?.includes("design"));
+  // the PASS (reviews) lands after the builder launch wrote the fired tag: wait for both
+  await persisted(w, (hs, en) => (en?.reviews?.length ?? 0) > 0 && hs?.fired?.reasons?.includes("design"));
   const e = w.ceremonyEntries().at(-1)!.data as { highStakes?: unknown };
   await a.down();
   const e2 = w.ceremonyEntries().at(-1)!.data as { highStakes?: unknown };

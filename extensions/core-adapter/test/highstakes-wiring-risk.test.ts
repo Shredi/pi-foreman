@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
 import { retiredHighStakesLines } from "../doctorcache.ts";
+import { persisted } from "./_hsrig.ts";
 import { tick, world } from "./_r46world.ts";
 
 process.env.PI_OFFLINE = "1";
@@ -109,11 +110,9 @@ test("an old per-checkout array entry loads at session start: reasons migrated, 
   const { w, a } = await setup(t);
   work(w, "src/a/x.ts");
   await build(a, { size: { files: ["src/a/x.ts"] }, risk: ["design"] });
-  const stop = Date.now() + 8000;
-  const entryOf = () => w.ceremonyEntries().at(-1)?.data as { highStakes?: unknown; reviews?: unknown[] } | undefined;
   // the newest entry holds the PASS and the fired tag: an earlier one (only the noted base) would reload without the PASS
-  while (Date.now() < stop && !((entryOf()?.reviews?.length ?? 0) > 0 && JSON.stringify(entryOf()?.highStakes ?? null).includes('"design"'))) await tick(50);
-  const e = entryOf()!;
+  await persisted(w, (hs, en) => (en?.reviews?.length ?? 0) > 0 && JSON.stringify(hs ?? null).includes('"design"'));
+  const e = w.ceremonyEntries().at(-1)!.data as { highStakes?: unknown };
   assert.ok(e.highStakes !== undefined);
   e.highStakes = [{ cwd: w.project, fired: { reasons: ["lines", "design"], files: 1, lines: 100, modules: 1 }, runs: [], runIds: [], seenHead: "abc" }];
   const b = await w.adapter("reload");

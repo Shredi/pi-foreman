@@ -115,11 +115,12 @@ export const hsRun = async (a: Rig, verdict: "PASS" | "FAIL", cwd?: string) => {
 };
 export const hsPass = (a: Rig, cwd?: string) => hsRun(a, "PASS", cwd);
 
-/** Waits until the newest ceremony-state entry satisfies `ok`. */
-export async function persisted(w: World, ok: (hs: any) => boolean): Promise<void> {
+/** Waits until the newest ceremony-state entry satisfies `ok(highStakes, wholeEntry)`. */
+export async function persisted(w: World, ok: (hs: any, entry: { highStakes?: unknown; reviews?: unknown[] } | undefined) => boolean): Promise<void> {
   const stop = Date.now() + 8000;
-  const hs = () => (w.ceremonyEntries().at(-1)?.data as { highStakes?: unknown } | undefined)?.highStakes;
-  while (Date.now() < stop && !ok(hs())) await tick(50);
-  assert.ok(ok(hs()), "the high-stakes state was persisted");
+  const entry = () => w.ceremonyEntries().at(-1)?.data as { highStakes?: unknown; reviews?: unknown[] } | undefined;
+  const good = () => ok(entry()?.highStakes, entry());
+  while (Date.now() < stop && !good()) await tick(50);
+  assert.ok(good(), "the high-stakes state was persisted");
 }
 export { tick };
