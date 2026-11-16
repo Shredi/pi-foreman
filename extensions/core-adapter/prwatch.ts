@@ -633,6 +633,8 @@ function fromBatch(p: Record<string, unknown>): Omit<WatchSnapshot, "comments"> 
 }
 
 /**
+ * A one-PR shorthand of `pollWatchBatch` for tests. No production code calls it: a session never polls the host, the tracker (`foreman prs poll`) does.
+ *
  * One poll of a watched PR. gh with a resolved repository: one pr_batch (watch fields); otherwise (or when the host answers
  * pr_unsupported) pr_status plus pr_checks, run identity `name@startedAt`. Comments are fetched when the PR's updatedAt moved.
  * `pr_not_found` anywhere is `{gone}`.

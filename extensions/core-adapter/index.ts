@@ -113,7 +113,7 @@ import type { ScriptRunAction } from "./scriptapproval.ts";
 import { runGuard } from "./runguard.ts";
 import { PR_FOLLOW, applyGitPack, applyPrPack, gitPackOn, prHostLabel, prPackOn, isOwnTool, registerGitPack, registerPrFollow, registerPrPack } from "./gitpack.ts";
 import type { PrPackSession } from "./gitpack.ts";
-import { addTracked, readStoreEntry } from "./prstore.ts";
+import { addTracked, lastPollAgeMs, readStoreEntry, trackerDoctorLine } from "./prstore.ts";
 import type { PrOp } from "./gitpack.ts";
 import { PRWATCH_ENTRY, PrWatches, latestWatches, settleMsOf, watchIntervalMs } from "./prwatch.ts";
 import { parseWakeRules } from "./prwake.ts";
@@ -225,7 +225,7 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolesOfModel } from "./ranks.ts";
+import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -3779,7 +3779,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (sizedPlans.length > 0) {
           // The top rung is written after the mapped models, like the research floor; its rung_up names it.
           for (const p of sizedPlans) {
-            if (!p.combo.climb || p.target !== "top" || !sizingTop) continue;
+            if (!p.combo.climb || p.target !== "top" || !sizingTop || climbs.some((c) => c.entry === p.entry && c.skipped)) continue;
             p.entry.model = sizingTop;
             for (const c of climbs) if (c.entry === p.entry) c.to = splitLevel(sizingTop).base;
           }
@@ -3842,7 +3842,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const marker = floorMarker(raised, m);
             s.trace?.emit({ event: "launch_refused", reason: "rank_policy", ...launchDeny(input), policy: no.policy, foreman: no.foreman, requested: no.requested, ...(marker ? { marker } : {}) });
             const strongAsked = carrying.some((e) => strongKeyed.has(e));
-            return { block: true, reason: (marker ? `${no.message} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : no.message) + (strongAsked ? ` Relaunch with model "default" and a reason to run on the default rung.` : "") + (tie ? ` ${equalKeySentence()}` : "") };
+            const cause = normalModelSentence(s.config.config, foremanModel, m, roles, resolution.roles);
+            const refusal = cause ? `${no.message} ${cause}` : no.message;
+            return { block: true, reason: (marker ? `${refusal} The [${marker}] marker raised this entry to its role's strong rung, which the rank policy refuses; drop the marker or map a strong rung the policy allows.` : refusal) + (strongAsked ? ` Relaunch with model "default" and a reason to run on the default rung.` : "") + (tie ? ` ${equalKeySentence()}` : "") };
           }
           // The security rung is explicit config: written after the rank check (docs/ladder.md); traced when it overrides the policy.
           markPolicyOverrides(reviewerClimbs, (m) => rankRefusalFor(s.config.config, foremanModel, m, ["reviewer"]) !== null);
@@ -6263,6 +6265,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(pressureDoctorLine(readPressure(pressurePath(s.agentDir), sampleSecondsOf(s.config.config), pressureNow())));
 
     if (!s.isChild && ctx.model) {
+      // the base model, never the idle-downshift one: children and the rank policy keep the base
+      const found = rankDoctorFindings(s.config.config, foremanBaseModel(ctx), (await currentRoles(s, ctx)).roles);
+      for (const f of found) fail(f.message, f.fix);
+      if (found.length === 0 && ranksOf(s.config.config).size > 0 && ["explorer", "builder", "reviewer"].some((r) => rolePolicy(s.config.config, r) !== "any")) ok("every role's normal model is launchable under the foreman model (rank policy)");
       const w = missingPairWarning(s.config.config, (await currentRoles(s, ctx)).roles, `${ctx.model.provider}/${ctx.model.id}`);
       if (w) out.push(`WARN ${w}`);
     }
@@ -6338,6 +6344,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(`INFO ceremony: ${tierLine(s.ceremony)}`);
     out.push(`INFO sidebar status: ${s.extStatus.describe()}`);
     out.push(`INFO PR tools: ${s.prPack ? prHostLabel(get(s.config.config, "tools.prHost") ?? "auto", workspaceOf(s.cwd).root, process.env, platform) : "off (tools.pr)"}`);
+    if (s.prPack && !s.isChild) {
+      const hosts = resolveGithubHosts(s.config.config);
+      out.push(trackerDoctorLine(prFeedOn(s), "error" in hosts ? hosts.error : undefined, lastPollAgeMs(s.agentDir, Date.now())));
+    }
     // The cache lines judge the base model: while downshifted the live model is the idle rung, which the idle-rung line below covers.
     const dm = idleModel.baseRef(ctx.model);
     const dmModel = dm && ctx.model && dm.provider === ctx.model.provider && dm.id === ctx.model.id ? ctx.model : dm ? (ctx.modelRegistry.find(dm.provider, dm.id) as typeof ctx.model) : undefined;

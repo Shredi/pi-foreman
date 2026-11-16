@@ -8,8 +8,8 @@ import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const BIG = "x\n".repeat(1700);
 const RANKS = [{ match: "foreman", tier: 0 }, { match: "strong", tier: 0 }, { match: "*", tier: 3 }];
-// the text of today's refusal of a tie (the foreman and the child both on fake/foreman, tier 0)
-const TODAY = 'pi-foreman: launch refused [rank_policy:below]: child model fake/foreman (tier 0) is not below the foreman model fake/foreman (tier 0). Add a ranks entry for it, map the role to a lower-ranked model, or set ladder.childPolicy to "any" in the user or overlay config.';
+// the text of today's refusal of a tie (the foreman and the child both on fake/foreman, tier 0), ending with the cause: the builder's normal model
+const TODAY = 'pi-foreman: launch refused [rank_policy:below]: child model fake/foreman (tier 0) is not below the foreman model fake/foreman (tier 0). Add a ranks entry for it, map the role to a lower-ranked model, or set ladder.childPolicy to "any" in the user or overlay config. fake/foreman is the builder\'s normal model: run the foreman on a model ranked above it.';
 const NOTE = /ladder\.equalOnStrongRisk/;
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
