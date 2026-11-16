@@ -34,6 +34,7 @@ from foreman_session import agent_dir, entry_gone, hc_terminal_addresses  # noqa
 LOST_AFTER = 90.0
 STALE_AFTER = 900.0
 DONE_TTL_MINUTES = 30.0
+NOTE_KEEP_SECONDS = 14 * 86400.0  # a live record named by a pane note outlives the TTL this long (the note sweep uses the same bound)
 RECENT_RUN_SECONDS = 8
 STARTING_WINDOW = 120.0
 SYMBOLS_PATH = Path(__file__).resolve().parent.parent / "config" / "symbols.json"
@@ -448,27 +449,47 @@ def provably_closed(d):
     return not (isinstance(pane, str) and pane in panes)
 
 
-def prune_done(path, d, now, ttl_min, closed=None):
+def noted_sessions(adir):
+    """Session ids that a pane note (state/panes/<terminal>.json) names: their live record is what a restart after a crash reads."""
+    out = set()
+    panes = Path(adir) / "pi-foreman" / "state" / "panes"
+    try:
+        names = os.listdir(panes)
+    except OSError:
+        return out
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        d = read_json(panes / name)
+        if isinstance(d, dict) and isinstance(d.get("sessionId"), str):
+            out.add(d["sessionId"])
+    return out
+
+
+def prune_done(path, d, now, ttl_min, closed=None, noted=None):
     """Delete one presence file whose state is done and whose last activity is older than the TTL; with `closed`
-    (a predicate on the file's data) only when that also holds."""
+    (a predicate on the file's data) only when that also holds. A session id in `noted` (a pane note names it) is kept
+    for NOTE_KEEP_SECONDS."""
     if d.get("state") != "done":
         return False
-    return _prune_aged(path, d, now, ttl_min, closed)
+    return _prune_aged(path, d, now, ttl_min, closed, noted)
 
 
-def prune_dead(path, d, now, ttl_min, closed=None):
+def prune_dead(path, d, now, ttl_min, closed=None, noted=None):
     """Delete the presence file of a closed session whose heartbeat went late (state not done) under the rule of
     prune_done; `closed` (a predicate on the file's data) is required."""
     hb = parse_ts(d.get("heartbeatAt"))
     if closed is None or d.get("state") == "done" or (hb is not None and now - hb <= LOST_AFTER):
         return False
-    return _prune_aged(path, d, now, ttl_min, closed)
+    return _prune_aged(path, d, now, ttl_min, closed, noted)
 
 
-def _prune_aged(path, d, now, ttl_min, closed):
+def _prune_aged(path, d, now, ttl_min, closed, noted=None):
     times = [t for t in (parse_ts(d.get("heartbeatAt")), parse_ts(d.get("lastEventAt"))) if t is not None]
     last = max(times) if times else mtime(path)
     if last is None or now - last <= ttl_min * 60:
+        return False
+    if noted and d.get("sessionId") in noted and now - last <= NOTE_KEEP_SECONDS:
         return False
     if closed is not None and not closed(d):
         return False
@@ -507,6 +528,7 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
     reg = read_json(base / "state" / "sessions.json")
     reg = [s for s in (reg.get("sessions") if isinstance(reg, dict) else None) or [] if isinstance(s, dict)]
     closed_ids = set()
+    noted = noted_sessions(adir) if now is not None and done_ttl is not None else None
     for s in reg:
         if s.get("status") != "closed":
             continue
@@ -522,11 +544,11 @@ def load(adir, cache=None, now=None, done_ttl=None, only=None, closed=None):
             continue
         if now is not None and done_ttl is not None:
             path = base / "state" / "live" / name
-            if prune_done(path, d, now, done_ttl, closed):
+            if prune_done(path, d, now, done_ttl, closed, noted):
                 continue
             iid, ho = d.get("intercomId"), d.get("handoff")
             matched = (isinstance(iid, str) and iid in closed_ids) or (isinstance(ho, str) and ho and leaf(ho) in closed_ids)
-            if matched and prune_dead(path, d, now, done_ttl, closed):
+            if matched and prune_dead(path, d, now, done_ttl, closed, noted):
                 continue
         sid = d.get("sessionId") if isinstance(d.get("sessionId"), str) and d.get("sessionId") else name[:-5]
         d["sessionId"] = sid

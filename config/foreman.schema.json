@@ -384,7 +384,7 @@
     "radar": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
+      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file. A presence file that a pane note (state/panes) names is kept while its last activity is within 14 days, so a crash restart can read it." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
         "openPrs": {
           "type": "object",
           "additionalProperties": false,
@@ -473,7 +473,8 @@
           "additionalProperties": false,
           "description": "herdr-core settings of `foreman session open`. User or overlay config only.",
           "properties": {
-            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." }
+            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." },
+            "resume": { "type": "string", "enum": ["auto", "off"], "description": "Restart of a Pi session in its kept terminal after a crash (default `auto`): Pi writes a pane note while it runs in an `hc` terminal, and a shell hook restarts the session after a 5 s countdown. `off` writes no note and the hook does nothing. User or overlay config only." }
           }
         },
         "machines": {
