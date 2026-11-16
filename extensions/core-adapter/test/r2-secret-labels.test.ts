@@ -103,3 +103,10 @@ test("S5 without the floor env in DangerEnv: the label does not fire", () => {
   assert.equal(dangerSegment(seg[0], env), null);
   assert.equal(dangerSegment(seg[0], { ...env, floor: envOf(false) }), "danger-harness-folder");
 });
+
+test("S5: an input redirect of a policy file by an unknown program is labelled danger-harness-folder (the redirects branch); a known reader's is not", () => {
+  const env = { roots: roots("foreman"), platform: process.platform, cwd: work, facts, floor: envOf(false) };
+  assert.equal(dangerSegment(parseShell(`mytool < ${POLICY}`, { cwd: work })[0], env), "danger-harness-folder");
+  assert.equal(dangerSegment(parseShell(`cat < ${POLICY}`, { cwd: work })[0], env), null);
+  assert.equal(dangerSegment(parseShell("mytool < a.txt", { cwd: work })[0], env), null);
+});

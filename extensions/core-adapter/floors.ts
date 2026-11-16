@@ -1274,7 +1274,7 @@ export function harnessFolderWord(words: string[], cwd: string, env: FloorEnv): 
 const BRACE_LIMIT = 64;
 
 /** `word` with its first top-level `{a,b}` group expanded (not `${..}`), recursively, at most BRACE_LIMIT variants; the word itself when it has none. */
-function braceVariants(word: string): string[] {
+export function braceVariants(word: string): string[] {
   const out: string[] = [];
   const walk = (w: string): void => {
     if (out.length >= BRACE_LIMIT) return;

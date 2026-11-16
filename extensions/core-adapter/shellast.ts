@@ -69,7 +69,7 @@ export interface ShellParseOptions {
 export const MAX_DEPTH = 4;
 
 const HARMLESS = new Set(["LANG", "TZ", "NO_COLOR", "FORCE_COLOR", "CI", "DEBUG", "NODE_ENV", "PYTHONDONTWRITEBYTECODE", "GIT_PAGER", "PAGER"]);
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
+export const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash"]);
 const INTERPRETERS = new Set([...SHELLS, "node", "nodejs", "bun", "deno", "python", "python2", "python3", "perl", "ruby", "php", "lua", "rscript"]);
 const FOREIGN = new Set(["powershell", "pwsh", "cmd", "wsl"]);
 const BUILTINS = new Set(["alias", "unalias", "shopt", "trap", "enable", "builtin"]);

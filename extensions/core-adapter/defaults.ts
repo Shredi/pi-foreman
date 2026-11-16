@@ -991,7 +991,7 @@ const PKG_READ_VERBS = new Set(["ls", "list", "ll", "la", "view", "info", "show"
 const CODE_FLAG: Record<string, RegExp> = { python: /^-[A-Za-z]*c(?:.+)?$/, node: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, nodejs: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, bun: /^(?:-e|--eval(?:=.*)?|--print(?:=.*)?)$/, perl: /^-[A-Za-z]*[eE]$/, ruby: /^-[A-Za-z]*e$/, php: /^-[A-Za-z]*r$/, lua: /^-[A-Za-z]*e$/, rscript: /^-e$/ };
 
 /** An interpreter run with code on its command line (`python3 -c`, `node -e`, `perl -e` ...): the code is not read by the gate. */
-function inlineCode(s: ShellSegment): boolean {
+export function inlineCode(s: ShellSegment): boolean {
   const p = progOf(s);
   if (p === "deno") return s.argv[0] === "eval";
   const key = /^python/.test(p) ? "python" : p.replace(/[0-9.]+$/, "");
@@ -1020,8 +1020,24 @@ interface WriteTarget {
 const named = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: false }));
 const anywhere = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: true }));
 
+/**
+ * The files an output option names: the value of a long git output option (`--output <f>`, `--output=<f>`, `--output-directory`) of any git subcommand
+ * (a short `-o` names no target: it means other things for `ls-files`, `grep`, `commit`), a download's `-o` / `--output` (curl, also in a cluster
+ * such as `-sSo f`) and `-O` / `--output-document` (wget).
+ */
+function outputTargets(s: ShellSegment): WriteTarget[] {
+  const p = progOf(s);
+  const a = s.argv;
+  if (p === "git") return named(optValues(gitParts(a).rest, [], ["--output", "--output-directory"]));
+  if (p === "curl") return named([...optValues(a, ["-o"], ["--output"]), ...a.flatMap((w, i) => (/^-[A-Za-z]+o$/.test(w) && a[i + 1] !== undefined ? [a[i + 1]] : []))]);
+  if (p === "wget") return named(optValues(a, ["-O"], ["--output-document"]));
+  return [];
+}
+
 /** `writeTargets` with the tag: set here, where the list is built, never read back from the word. */
-function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
+const taggedWriteTargets = (s: ShellSegment): WriteTarget[] => [...programTargets(s), ...outputTargets(s)];
+
+function programTargets(s: ShellSegment): WriteTarget[] {
   const p = progOf(s);
   const a = s.argv;
   switch (p) {
@@ -1029,7 +1045,8 @@ function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
       const scripts = optValues(a, ["-e"], ["--expression"]);
       const files = operands(a, new Set(["-e", "-f", "--expression", "--file"])).filter((w) => w !== "");
       if (scripts.length === 0 && optValues(a, ["-f"], ["--file"]).length === 0 && files.length > 0) scripts.push(files.shift() as string);
-      const inPlace = a.some((w) => w === "--in-place" || w.startsWith("--in-place=") || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
+      // sed takes any unambiguous prefix of a long option (`--in`, `--in-pl=.bak`): every prefix of `--in-place` from `--i` on is it
+      const inPlace = a.some((w) => (/^--i/.test(w) && "--in-place".startsWith(w.split("=")[0])) || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
       const wfiles: string[] = [];
       for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
       return named([...(inPlace ? files : []), ...wfiles]);
@@ -1146,14 +1163,32 @@ export function shellWriteTargets(segments: ShellSegment[], platform: string): S
   const out: ShellWriteTarget[] = [];
   for (const seg of segments) {
     if (seg.program === "") continue;
-    const words: WriteTarget[] = [...taggedWriteTargets(seg), ...named(seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup").map((r) => r.target))];
-    if (progOf(seg) === "tee") words.push(...named(operands(seg.argv)));
-    for (const t of words) {
+    for (const t of segWriteWords(seg)) {
       if (/[$`]/.test(t.w) || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
       if (seg.cwd === null && !path.isAbsolute(t.w) && !path.win32.isAbsolute(t.w)) continue;
       const abs = resolveWord(platform, seg.cwd ?? "/", t.w);
       if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), seg });
     }
+  }
+  return out;
+}
+
+/** The write words of one segment: its `taggedWriteTargets`, its write redirects and a `tee`'s operands. */
+function segWriteWords(seg: ShellSegment): WriteTarget[] {
+  const words: WriteTarget[] = [...taggedWriteTargets(seg), ...named(seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup").map((r) => r.target))];
+  if (progOf(seg) === "tee") words.push(...named(operands(seg.argv)));
+  return words;
+}
+
+/**
+ * The write words `shellWriteTargets` skips because the parse cannot resolve them: a `$`, backtick or substitution, or a brace list (`f{,-1}`) in a redirect
+ * target or a named destination. `$FOREMAN_SCRATCH` (also `${FOREMAN_SCRATCH}`) is the one variable that does not count, rebound on the line or not.
+ */
+export function unresolvedWriteWords(segments: ShellSegment[]): string[] {
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    for (const t of segWriteWords(seg)) if (/[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(t.w.replace(/\$\{?FOREMAN_SCRATCH\}?/g, ""))) out.push(t.w);
   }
   return out;
 }
