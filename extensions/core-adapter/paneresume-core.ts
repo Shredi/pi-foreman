@@ -269,6 +269,8 @@ export interface Decision {
   reason: string;
   /** What a `clear` prints: the hand-resume line, or the custom-session-dir line. */
   print?: "hand" | "custom_dir";
+  /** A `keep` the hook should decide again at the next prompt: Pi wrote `done` after a signal but is still draining input. */
+  recheck?: boolean;
 }
 
 export interface ResumeInputs {
@@ -309,7 +311,7 @@ export function decideResume(i: ResumeInputs): Decision {
   if (live.state === "done" && live.endedBy !== "signal") return clear("normal_end"); // 6
   const beforeBoot = live.heartbeatMs === null || live.heartbeatMs < i.bootMs;
   const piGone = beforeBoot || live.pid === null || !i.pidAlive(live.pid);
-  if (!piGone) return keep("pi_alive"); // 7
+  if (!piGone) return live.state === "done" ? { ...keep("pi_alive"), recheck: true } : keep("pi_alive"); // 7
   if (!beforeBoot && i.hc.pid === note.rootPid) return clear("lone_crash", "hand"); // 8
   if (live.heartbeatMs === null || i.now - live.heartbeatMs > NOTE_MAX_AGE_MS || !i.cwdIsDir) return clear("too_old_or_no_cwd", "hand"); // 9
   if (!i.lock()) return keep("locked"); // 10

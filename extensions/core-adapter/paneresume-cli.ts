@@ -10,6 +10,8 @@ import { COUNTDOWN_MS, HC_GET_TIMEOUT_MS, TERMINAL_RE, buildSpawnEnv, decideResu
 import type { Decision, LaunchKeys, PaneNote } from "./paneresume-core.ts";
 
 export const USAGE = "usage: foreman pane-resume --shell-pid <pid>";
+/** Exit code for "kept, check again at the next prompt": the hook removes its marker on it. */
+export const RECHECK_EXIT = 75;
 
 type Env = Record<string, string | undefined>;
 type Key = "enter" | "cancel" | "timeout";
@@ -115,7 +117,7 @@ function runPi(d: PaneResumeDeps, note: PaneNote, env: Record<string, string>): 
 
 const handLine = (name: string | null, id: string): string => `pi-foreman: Pi session${name ? ` "${clean(name)}"` : ""} ended without a clean quit and is not restarted. Resume by hand: pi --session ${id}`;
 
-/** The command: 0 on every outcome the hook should ignore, Pi's exit code after a restart, 2 on a usage error. */
+/** The command: 0 on every outcome the hook should ignore, RECHECK_EXIT for a keep to decide again, Pi's exit code after a restart, 2 on a usage error. */
 export async function runPaneResume(argv: string[], over: Partial<PaneResumeDeps> = {}): Promise<number> {
   const d = { ...defaults(), ...over };
   if (d.platform === "win32") {
@@ -151,7 +153,7 @@ export async function runPaneResume(argv: string[], over: Partial<PaneResumeDeps
   }
   const hc = early ? "error" : await d.hcGet(terminal, HC_GET_TIMEOUT_MS, d.env);
   const decision: Decision = decideResume({ setting, note: check, tty, hc, socket: (d.env.HC_TERMINAL_SOCKET ?? "").trim() || null, shellPid, live, pidAlive: d.pidAlive, now, bootMs: now - d.uptimeS() * 1000, cwdIsDir, lock: () => (note ? takeLock(agentDir, note.sessionId, now) : false) });
-  if (decision.action === "keep") return 0;
+  if (decision.action === "keep") return decision.recheck ? RECHECK_EXIT : 0;
   if (decision.action === "clear") {
     deleteNote(agentDir, terminal);
     if (decision.print === "custom_dir" && check.ok === false && check.sessionFile) d.out(`pi-foreman: not restarted (custom session dir); resume by hand: pi --session ${clean(check.sessionFile, 400)}`);
@@ -160,6 +162,7 @@ export async function runPaneResume(argv: string[], over: Partial<PaneResumeDeps
   }
   if (!note) return 0;
   const session = readSessionFile(note.sessionFile, note.sessionId, agentDir);
+  for (const key of session.dropped) d.out(`pi-foreman: launch key ${clean(key)} is not valid any more and is not restored`);
   d.out(`pi-foreman: Pi session "${clean(session.name ?? note.sessionId)}" ran here before a crash. Restarting in ${Math.round(d.countdownMs / 1000)} s (Enter: now, any other key: cancel).`);
   const key = await countdown(d.stdin, d.countdownMs);
   if (key === "cancel") {

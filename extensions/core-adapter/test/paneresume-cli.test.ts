@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { EventEmitter } from "node:events";
-import { runPaneResume } from "../paneresume-cli.ts";
+import { RECHECK_EXIT, runPaneResume } from "../paneresume-cli.ts";
 import type { PaneResumeDeps, PiChild } from "../paneresume-cli.ts";
 import { COUNTDOWN_MS, HC_GET_TIMEOUT_MS, LOCK_STALE_MS, decideResume, notePath, panesDir, readNoteRaw, writeNote } from "../paneresume-core.ts";
 import type { PaneNote } from "../paneresume-core.ts";
@@ -325,4 +325,31 @@ test("the fake hc through HC_BIN: the command asks `hc get t1 --json` and resume
   exitPi(r, 0);
   assert.equal(await done, 0);
   assert.equal(notePath(r.agentDir, "t1").endsWith("t1.json"), true);
+});
+
+test("a live record done by a signal with Pi still alive exits 75 (check again at the next prompt); a running Pi is a plain keep (0)", async (t) => {
+  const r = rig(t);
+  r.live({ state: "done", endedBy: "signal", pid: 4242 });
+  assert.equal(await runPaneResume(r.argv, r.deps({ pidAlive: () => true })), RECHECK_EXIT);
+  assert.equal(RECHECK_EXIT, 75);
+  assert.notEqual(readNoteRaw(r.agentDir, "t1"), undefined, "the note is kept");
+  r.live({ state: "working", pid: 4242 });
+  assert.equal(await runPaneResume(r.argv, r.deps({ pidAlive: () => true })), 0, "a suspended Pi is not rechecked");
+  assert.deepEqual(r.spawns, []);
+});
+
+test("an invalid launch key is named (key only, no value) before the countdown", async (t) => {
+  const r = rig(t);
+  const entry = { type: "custom", customType: "pi-foreman-identity", data: { v: 1, piSessionId: SID, child: "c1", handoff: "/h", permsProfile: "gone-secret-value", planPhase: "2" } };
+  fs.appendFileSync(r.sessionFile, `${JSON.stringify(entry)}\n`);
+  const done = runPaneResume(r.argv, r.deps({ countdownMs: 5 }));
+  await new Promise((res) => setTimeout(res, 60));
+  const lines = r.out.filter((l) => l.includes("launch key"));
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /launch key permsProfile /);
+  assert.match(lines[1], /launch key planPhase /);
+  assert.equal(r.out.join("\n").includes("gone-secret-value"), false);
+  assert.match(r.out[2], /ran here before a crash/, "the lines come before the countdown line");
+  exitPi(r, 0);
+  await done;
 });

@@ -637,7 +637,7 @@ of the machine, the herdr core or the terminal. `hc keep` restores the terminal 
 - **Hook.** `foreman setup` writes a marked block (`# >>> pi-foreman resume >>>`) into your shell startup file ([install](install.md#the-resume-hook)).
   At a prompt it runs `foreman pane-resume --shell-pid <pid>` only when `HC_TERMINAL_ID` is set, stdin is a terminal, the note exists and this shell has
   not checked it yet (the note is new, or newer than the shell's marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, touched before each check; a missing marker means check again); otherwise it
-  starts no process and prints nothing. With no note a prompt costs only file tests.
+  starts no process and prints nothing. With no note a prompt costs only file tests. The hook removes its marker, so the next prompt checks again, when the command exits 75 (Pi wrote `done` after a signal but is still ending) or 127 (`node` not found yet, for example a lazy-loaded nvm); a suspended Pi (record not `done`) is a plain keep.
 - **Decision.** `foreman pane-resume` restarts the session only when all of these hold: `sessions.hc.resume` is not `off`; `hc get` answers; the terminal
   is the one the note names (same creation time and socket); this shell is the terminal's root program; the presence file exists, names this terminal and
   is not a normal end; its Pi process is gone (heartbeat before the last boot, or the pid is dead); the terminal's root pid differs from the note's (a lone

@@ -25,7 +25,8 @@ export function resumeTargets({ home, shell = "" }) {
 
 // A prompt with no note costs only file tests. A note is checked when this shell has not checked one yet or the note is newer than the shell's
 // marker file (touched before each check, in $XDG_RUNTIME_DIR when set, else $TMPDIR); a kept note that did not change is not checked again.
-// A missing marker (tmp cleaner, unwritable dir) means check.
+// A missing marker (tmp cleaner, unwritable dir) means check; the hook removes the marker itself when the command asks for a recheck (exit 75:
+// Pi is still ending) or could not run (exit 127: no node yet), so the next prompt checks again. `>|` keeps the touch working under noclobber.
 const POSIX_BODY = (bin) => [
   "__pi_foreman_resume() {",
   "  [ -n \"${HC_TERMINAL_ID:-}\" ] || return 0",
@@ -36,8 +37,9 @@ const POSIX_BODY = (bin) => [
   "  if [ -n \"${__pi_foreman_resume_seen:-}\" ] && [ -e \"$__pi_foreman_mark\" ] && ! [ \"$__pi_foreman_note\" -nt \"$__pi_foreman_mark\" ]; then return 0; fi",
   `  [ -x ${q(bin)} ] || return 0`,
   "  __pi_foreman_resume_seen=1",
-  "  : > \"$__pi_foreman_mark\" 2>/dev/null",
+  "  : >| \"$__pi_foreman_mark\" 2>/dev/null",
   `  ${q(bin)} pane-resume --shell-pid "$$"`,
+  "  case $? in 75|127) rm -f \"$__pi_foreman_mark\" ;; esac",
   "  return 0",
   "}",
 ];
@@ -65,6 +67,8 @@ export function renderResumeBlock({ bin, flavor }) {
       "    set -g __pi_foreman_resume_seen 1",
       "    : > \"$mark\" 2>/dev/null",
       `    ${q(bin)} pane-resume --shell-pid $fish_pid`,
+      "    set -l rc $status",
+      "    if test $rc -eq 75; or test $rc -eq 127; rm -f \"$mark\"; end",
       "    return 0",
       "end",
       RESUME_END,

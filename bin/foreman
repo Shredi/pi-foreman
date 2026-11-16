@@ -43,7 +43,8 @@ if [ "$sub" = "perms" ]; then
 fi
 if [ "$sub" = "pane-resume" ]; then
     shift
-    # the shell hook's command (paneresume-cli.ts); a prompt must never fail on it, so a too-old Node is silent
+    # the shell hook's command (paneresume-cli.ts); a prompt must never fail on it, so a too-old Node is silent; no node exits 127 (the hook checks again at a later prompt)
+    command -v node >/dev/null 2>&1 || exit 127
     if ! node -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)' 2>/dev/null; then
         exit 0
     fi

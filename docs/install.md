@@ -187,11 +187,26 @@ When an add-on needs an environment variable (`env` in `addons.json`), setup wri
 is not rewritten. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
 alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 
+- `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
+- `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
+  starts**: setup writes it into your shell profile (see above). Without `process`, its attribution hook
+  takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.5.x;
+  the doctor reports that. See [herdr](herdr.md#optional-add-on-background-tasks).
+- `quiver` (`pi-quiver`): `fetch` and `doc_to_md` tools. Session naming, header, fast mode and the stall watchdog are opt-in in its own
+  settings and stay off. No name clash with pi-foreman.
+- `memory` (`pi-memory`): persistent memory tools (`memory_write`, `memory_read`, ..., `scratchpad`). It injects its memory files into
+  every turn and makes one extra model call at shutdown unless `PI_MEMORY_EXIT_SUMMARY=0`. `memory_search` needs the optional `qmd`
+  command (`npm i -g @tobilu/qmd`); without it only that tool is missing, installing works anyway (Windows too), and `/foreman
+  doctor` prints an INFO line.
+
+`--remove` lists installed add-ons as `add-ons installed: <id> (<source>); kept, remove with: pi remove <source>` and runs
+nothing for them.
+
 ### The resume hook
 
 Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<`, under the same guard (default agent dir or
 `PI_FOREMAN_HOME`; never in a dry run, never on Windows, never with `--no-env`). It restarts a Pi session in its pane after a crash
-(see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
+(see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). The block removes its marker when the check should repeat at the next prompt: Pi is still ending after a signal (exit code 75), or `node` was not found yet (exit code 127, for example a lazy-loaded nvm). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
 `~/.bash_login`, `~/.profile`; fish `~/.config/fish/conf.d/pi-foreman-resume.fish`. The block calls this checkout's `bin/foreman` by its absolute path, so
 re-run `foreman setup` after the package moved (an nvm switch that moves the global npm root, a `pi update` into a new folder). Run setup on a remote machine too
 if sessions there should come back. `--no-resume-hook` writes no block and removes an existing one; `foreman setup --remove` removes it too. With `--no-env`
@@ -208,8 +223,9 @@ if [ -n "${BASH_VERSION:-}" ]; then
     __pi_foreman_mark="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$"
     if [ -n "${__pi_foreman_resume_seen:-}" ] && [ -e "$__pi_foreman_mark" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return 0; fi
     __pi_foreman_resume_seen=1
-    : > "$__pi_foreman_mark" 2>/dev/null
+    : >| "$__pi_foreman_mark" 2>/dev/null
     '<foreman>' pane-resume --shell-pid "$$"
+    case $? in 75|127) rm -f "$__pi_foreman_mark" ;; esac
     return 0
   }
   case "${PROMPT_COMMAND:-}" in *__pi_foreman_resume*) ;; *) PROMPT_COMMAND="__pi_foreman_resume${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;; esac
@@ -217,21 +233,6 @@ fi
 ```
 
 To remove it by hand, delete the lines between the two markers.
-
-- `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
-- `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
-  starts**: setup writes it into your shell profile (see above). Without `process`, its attribution hook
-  takes over the global `anthropic` provider slot. Its declared Pi peer range (0.81 to 0.84) excludes the pinned Pi 1.5.x;
-  the doctor reports that. See [herdr](herdr.md#optional-add-on-background-tasks).
-- `quiver` (`pi-quiver`): `fetch` and `doc_to_md` tools. Session naming, header, fast mode and the stall watchdog are opt-in in its own
-  settings and stay off. No name clash with pi-foreman.
-- `memory` (`pi-memory`): persistent memory tools (`memory_write`, `memory_read`, ..., `scratchpad`). It injects its memory files into
-  every turn and makes one extra model call at shutdown unless `PI_MEMORY_EXIT_SUMMARY=0`. `memory_search` needs the optional `qmd`
-  command (`npm i -g @tobilu/qmd`); without it only that tool is missing, installing works anyway (Windows too), and `/foreman
-  doctor` prints an INFO line.
-
-`--remove` lists installed add-ons as `add-ons installed: <id> (<source>); kept, remove with: pi remove <source>` and runs
-nothing for them.
 
 ### foreman features
 
