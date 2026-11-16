@@ -135,6 +135,19 @@ class DisposableUntrackedTest(WorktreeCase):
         self.assertFalse(os.path.exists(wt))
         self.assertEqual(Path(outside, "keep.txt").read_text("utf-8"), "keep")
 
+    def test_node_modules_bin_link_to_an_outside_folder_is_not_followed(self):
+        if not base.SYMLINKS:
+            self.skipTest(base.NO_SYMLINK)
+        wt = self.add_worktree()
+        outside = os.path.join(self.tmp, "outside")
+        self.write("keep.txt", "keep", base=outside)
+        os.makedirs(os.path.join(wt, "node_modules"))
+        os.symlink(outside, os.path.join(wt, "node_modules", ".bin"), target_is_directory=True)
+        res = self.request(wt)
+        self.assertTrue(res["ok"], res)
+        self.assertFalse(os.path.exists(wt))
+        self.assertEqual(Path(outside, "keep.txt").read_text("utf-8"), "keep")
+
     def test_delete_refuses_a_path_resolving_outside(self):
         if not base.SYMLINKS:
             self.skipTest(base.NO_SYMLINK)

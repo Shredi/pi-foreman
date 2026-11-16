@@ -33,7 +33,7 @@ def link_or_copy(src, dst):
         os.symlink(src, dst)
 
 
-@unittest.skipUnless(sys.platform != "win32" and node_ok(), "needs Node >= 22.6 and a POSIX shell")
+@unittest.skipUnless(shutil.which("sh") and node_ok(), "needs Node >= 22.6 and sh")
 class NoPiPackage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

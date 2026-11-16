@@ -61,12 +61,14 @@ test("verifiedMergeFor: a thrown run is no fact", async () => {
   assert.equal(await verifiedMergeFor(deps), undefined);
 });
 
-function wired(fact: { sha: string; branch: string } | undefined | "throw") {
+function wired(fact: { sha: string; branch: string } | undefined | "throw", firstReply: Record<string, unknown> = { ok: true, action: "worktree_remove" }) {
   const inputs: string[] = [];
+  let lookups = 0;
   const tools = new Map<string, { execute: (...a: unknown[]) => Promise<unknown> }>();
   const spawner: Spawner = async (_c, _a, o) => {
     inputs.push(o.input ?? "");
-    return { code: 0, stdout: JSON.stringify({ ok: true, action: "worktree_remove" }), stderr: "", timedOut: false };
+    const reply = o.input?.includes("verifiedMerged") ? { ok: true, action: "worktree_remove" } : firstReply;
+    return { code: 0, stdout: JSON.stringify(reply), stderr: "", timedOut: false };
   };
   const session: SafeOpsSession = { python: "/py", isChild: false, opsConfig: {}, trace: () => {} };
   registerSafeOps({ registerTool: (t: unknown) => void tools.set((t as { name: string }).name, t as never) } as never, {
@@ -75,21 +77,50 @@ function wired(fact: { sha: string; branch: string } | undefined | "throw") {
     script: "s.py",
     spawner,
     env: () => ({}),
-    verifiedMerge: async () => { if (fact === "throw") throw new Error("x"); return fact; },
+    verifiedMerge: async () => { lookups++; if (fact === "throw") throw new Error("x"); return fact; },
   });
   const call = (name: string, params: Record<string, unknown>) => tools.get(name)!.execute("id", params, undefined, undefined, { cwd: "/ws" });
-  return { inputs, call };
+  return { inputs, call, lookups: () => lookups };
 }
 
+const NOT_MERGED = { ok: false, precondition: "not_merged", message: "not merged" };
+
 test("safeops: the fact travels as top-level verifiedMerged and verifiedBranch, only for worktree_remove", async () => {
-  const h = wired({ sha: TIP, branch: "feat" });
+  const h = wired({ sha: TIP, branch: "feat" }, NOT_MERGED);
   await h.call("foreman_worktree_remove", { path: "wt" });
-  const req = JSON.parse(h.inputs[0]);
+  const req = JSON.parse(h.inputs[1]);
   assert.equal(req.verifiedMerged, TIP);
   assert.equal(req.verifiedBranch, "feat");
   assert.deepEqual(req.args, { path: "wt" });
   await h.call("foreman_move", { src: "a", dst: "b" });
-  assert.equal("verifiedMerged" in JSON.parse(h.inputs[1]), false);
+  assert.equal("verifiedMerged" in JSON.parse(h.inputs[2]), false);
+});
+
+test("safeops: the lookup runs only after a not_merged refusal, then the op is retried once with the fact", async () => {
+  const h = wired({ sha: TIP, branch: "feat" }, NOT_MERGED);
+  await h.call("foreman_worktree_remove", { path: "wt" });
+  assert.equal(h.lookups(), 1);
+  assert.equal(h.inputs.length, 2);
+  assert.equal("verifiedMerged" in JSON.parse(h.inputs[0]), false);
+  assert.equal(JSON.parse(h.inputs[1]).verifiedMerged, TIP);
+});
+
+test("safeops: no lookup on a normal success or a refusal other than not_merged", async () => {
+  const ok = wired({ sha: TIP, branch: "feat" });
+  await ok.call("foreman_worktree_remove", { path: "wt" });
+  assert.equal(ok.lookups(), 0);
+  assert.equal(ok.inputs.length, 1);
+  const other = wired({ sha: TIP, branch: "feat" }, { ok: false, precondition: "not_a_worktree", message: "x" });
+  await other.call("foreman_worktree_remove", { path: "wt" });
+  assert.equal(other.lookups(), 0);
+  assert.equal(other.inputs.length, 1);
+});
+
+test("safeops: a not_merged refusal without a fact is not retried", async () => {
+  const h = wired(undefined, NOT_MERGED);
+  await h.call("foreman_worktree_remove", { path: "wt" });
+  assert.equal(h.lookups(), 1);
+  assert.equal(h.inputs.length, 1);
 });
 
 test("safeops: without a fact, or when the lookup throws, the request has no verifiedMerged key", async () => {

@@ -150,8 +150,13 @@ export function registerSafeOps(pi: Pick<ExtensionAPI, "registerTool">, deps: Sa
         if (s.packOn === true) s.trace({ event: "tool_pack", pack: "git", op: t.op });
         // R12 item 10: a foreman copy may read from its own handoff dirs; a child gets no extra source root.
         const srcRoots = t.op === "copy" && !s.isChild && !deps.isChild ? (s.handoffDirs ?? []) : [];
-        const fact = t.op === "worktree_remove" && !s.isChild && typeof params.path === "string" && deps.verifiedMerge ? await deps.verifiedMerge(ctx, params.path).catch(() => undefined) : undefined;
-        const outcome = await runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs, ...(srcRoots.length ? { srcRoots } : {}), ...(fact ? { verifiedMerged: fact.sha, verifiedBranch: fact.branch } : {}) });
+        const run = (fact?: { sha: string; branch: string }) => runSafeOp({ python: s.python, script: deps.script, op: t.op, args: params, cwd: ctx.cwd, config: s.opsConfig, env: deps.env(), spawner: deps.spawner, timeoutMs: deps.timeoutMs, ...(srcRoots.length ? { srcRoots } : {}), ...(fact ? { verifiedMerged: fact.sha, verifiedBranch: fact.branch } : {}) });
+        let outcome = await run();
+        // The PR-host lookup runs only after the script refused with not_merged, then the op is retried once with the fact.
+        if (outcome.kind === "precondition" && outcome.precondition === "not_merged" && t.op === "worktree_remove" && !s.isChild && typeof params.path === "string" && deps.verifiedMerge) {
+          const fact = await deps.verifiedMerge(ctx, params.path).catch(() => undefined);
+          if (fact) outcome = await run(fact);
+        }
         if (outcome.kind === "ran") {
           s.trace({ event: "safe_op", toolFamily: t.op, decision: "ran" });
           return { content: [{ type: "text" as const, text: `${t.name}: done. ${summary(outcome.result)}` }], details: { decision: "ran", result: outcome.result } };
