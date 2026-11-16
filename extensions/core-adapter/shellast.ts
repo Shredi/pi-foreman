@@ -792,6 +792,34 @@ function walkScript(script: Script, src: string, sc: Scope): void {
 }
 
 /**
+ * The here-document bodies the parser reads in `command`, as source offsets from the start of the body to the end of the closing line, or null when `command` does
+ * not parse (a quote left open, a `<<` inside it, is none). A here-document inside a word (`$(...)`, backticks) or a function body is not listed, and nor is one
+ * the parser reports without a closing line. The third element is true when a shell does not expand the body: the tag has a quoted part (the parser's `quoted`).
+ * An unquoted body is never data, whatever it holds.
+ */
+export function heredocSpans(command: string): Array<[number, number, boolean]> | null {
+  let script: Script | undefined;
+  try {
+    script = parse(command);
+  } catch {
+    return null;
+  }
+  if (!script || (script as any).errors?.length) return null;
+  const spans: Array<[number, number, boolean]> = [];
+  const visit = (n: SyntaxNode, depth: number): void => {
+    const x = n as any;
+    if (depth > 200 || x.type === "Word" || x.type === "Function") return;
+    if (x.type === "HereDoc") {
+      if (x.closing) spans.push([x.body.pos, x.closing.end, !!x.delimiter?.quoted]);
+      return;
+    }
+    forEachChild(n, (c) => visit(c, depth + 1));
+  };
+  visit(script as SyntaxNode, 0);
+  return spans;
+}
+
+/**
  * Parses `command` into segments (see the header). A parse error is one opaque `parse_error` segment; an empty line has none.
  * Any RangeError (a stack overflow while parsing or walking a line too deep for the stack is the case that occurs) is the same:
  * one `parse_error` segment, none of the partial ones. Any other error propagates.

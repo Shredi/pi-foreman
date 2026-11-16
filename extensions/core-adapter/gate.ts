@@ -9,7 +9,7 @@ import { FIND_BAD, segmentAlias } from "./effects.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, dataBodies, fieldLineFloors, lineFloors, pathFloors, pubKeyReadWords, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -20,7 +20,7 @@ import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./ru
 import { pathSelfmod, shellSelfmod, type SelfmodHit } from "./selfmod.ts";
 import type { GateRoots } from "./pathrules.ts";
 import { toolPath } from "./pathnorm.ts";
-import { boundNames, parseShell } from "./shellast.ts";
+import { boundNames, heredocSpans, parseShell } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { webReadAllow } from "./webread.ts";
 import { matchProtected } from "./protected.ts";
@@ -262,8 +262,58 @@ export const PROSE_FIELDS = new Set(["markdown", "brief", "text", "note", "notes
 /** Fields that name a file or directory: a secret path there is a floor deny. */
 const PATH_FIELD = /^(?:path|paths|cwd|worktree|file|files|dir|dirs|directory|target|dest|destination|src|source|from|to|root|repo|output|outputPath|output_path|outputFile)$/i;
 
+/** True when the parser reads a line as a command line that does not parse (an unbalanced quote) and holds no command. */
+const unreadable = (segs: ShellSegment[]): boolean => segs.length === 0 || (segs.length === 1 && segs[0].opaque === "parse_error" && segs[0].program === "" && segs[0].argv.length === 0);
+
 /**
- * Floors on the fields of a structured payload: secretPath on path-like fields; with `raw`, raw-text floors on every other string field except the
+ * The line numbers of a leaf that are here-document body or closing line, read from the parse of the whole leaf (the shell's own context: a `<<` in a quote opened on an
+ * earlier line, in a comment or in `$((1<<2))` is none). Only when every body feeds `cat`/`tee` or a bare redirect (a body fed to a shell is run, so its lines stay),
+ * and only a heredoc with a quoted tag (an unquoted body is always scanned: a shell may expand it);
+ * a leaf that does not parse has none.
+ */
+function bodyLines(leaf: string, whole: ShellSegment[]): Set<number> {
+  const out = new Set<number>();
+  if (!dataBodies(whole)) return out;
+  const count = (to: number): number => leaf.slice(0, to).split("\n").length - 1;
+  for (const [start, end, data] of heredocSpans(leaf) ?? []) if (data) for (let n = count(start); n <= count(end); n++) out.add(n);
+  return out;
+}
+
+/**
+ * A string leaf of a non-shell payload field read as a command: each line is parsed (shellast.ts) and the raw-text and opaque-text floors run on the
+ * parsed line (fieldLineFloors), nothing else; the body lines of a here-document (bodyLines) are not lines. A line the parser cannot read alone is not floored
+ * (it is prose, or code in another language), and no segment floor (secret paths, policy files, config keys) runs here.
+ * When the whole leaf parses and a line does not parse alone (a quote that closes on a later line), the whole leaf is scanned as one shell line too.
+ * The verdict is the floor's: ask for main on a push, remote or git config word, a refusal for a child, a refusal for every other floor.
+ */
+function leafFloors(leaf: string, env: FloorEnv): FloorHit | null {
+  const opts = { cwd: env.cwd, platform: env.platform };
+  const whole = parseShell(leaf, opts);
+  const body = bodyLines(leaf, whole);
+  let found: FloorHit | null = null;
+  let blind = false;
+  const lines = leaf.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (body.has(i) || !lines[i].trim()) continue;
+    const segs = parseShell(lines[i], opts);
+    if (unreadable(segs)) {
+      blind = blind || segs.length > 0;
+      continue;
+    }
+    const h = fieldLineFloors(lines[i], segs, env);
+    if (h?.kind === "deny") return h;
+    found = found ?? h;
+  }
+  if (blind && !unreadable(whole)) {
+    const h = fieldLineFloors(leaf, whole, env);
+    if (h?.kind === "deny") return h;
+    found = found ?? h;
+  }
+  return found;
+}
+
+/**
+ * Floors on the fields of a structured payload: secretPath on path-like fields; with `raw`, the command floors (leafFloors) on every other string field except the
  * prose fields (own tools). Floors are permanent, so only free text is exempt, never a whole tool.
  */
 function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth = 0, read = false): FloorHit | null {
@@ -271,7 +321,7 @@ function fieldFloors(v: unknown, key: string, env: FloorEnv, raw: boolean, depth
   if (typeof v === "string") {
     if (!v) return null;
     if (PATH_FIELD.test(key)) return secretPath(v, env, read);
-    return raw ? (rawFloors(v) ?? opaqueTextFloors(v, env)) : null;
+    return raw ? leafFloors(v, env) : null;
   }
   let found: FloorHit | null = null;
   if (depth < 8 && v && typeof v === "object") {
@@ -298,21 +348,15 @@ function payloadFloors(tool: string, inp: Record<string, unknown>, env: FloorEnv
     }
     return null;
   }
-  // the leaves as one text, then each quote- or line-delimited piece (`sh('rm -rf /')` in code is the text `rm -rf /`). Raw-text floors only:
-  // segment floors (secret paths) stay with the inner calls of codemode, which the gate decides one by one.
+  // each string leaf read as a command (leafFloors): prose and code that does not parse as a command line is not floored. Segment floors (secret paths)
+  // stay with the inner calls of codemode, which the gate decides one by one.
   const pathHit = fieldFloors(inp, "", env, false);
   if (pathHit) return pathHit;
   // codemode: the `code` field is not word-matched; every other field keeps the raw floors
   const scanned = tool === "codemode" ? Object.fromEntries(Object.entries(inp).filter(([k]) => k !== "code")) : inp;
-  const leaves = stringLeaves(scanned, [], 0, proseExempt);
-  const text = leaves.join("\n");
-  if (!text) return null;
   let found: FloorHit | null = null;
-  const hit = rawFloors(text) ?? opaqueTextFloors(text, env);
-  if (hit?.kind === "deny") return hit;
-  found = hit;
-  for (const piece of leaves.flatMap((l) => l.split(/[\n'"`]/)).map((p) => p.trim()).filter(Boolean)) {
-    const h = rawFloors(piece) ?? opaqueTextFloors(piece, env);
+  for (const leaf of stringLeaves(scanned, [], 0, proseExempt)) {
+    const h = leafFloors(leaf, env);
     if (h?.kind === "deny") return h;
     found = found ?? h;
   }

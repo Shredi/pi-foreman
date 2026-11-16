@@ -9,7 +9,7 @@ import { parseShell, type ShellSegment } from "./shellast.ts";
 import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
-import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
+import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
 import { nonPathArgs } from "./patternargs.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { psUnitTexts } from "./psunits.ts";
@@ -1086,7 +1086,7 @@ function maskHeredocs(text: string): string {
 }
 
 /** The line has a here-document or here-string and every one feeds `cat`/`tee` or a bare redirect: `maskLine` blanks the bodies. */
-function dataBodies(segments: ShellSegment[]): boolean {
+export function dataBodies(segments: ShellSegment[]): boolean {
   const bodies = segments.filter((s) => s.heredoc);
   const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
   return bodies.length > 0 && data && !segments.some((s) => s.opaque === "stdin_fed");
@@ -1146,7 +1146,7 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
     const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
-    const o = opaqueTextFloorsAt(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true));
+    const o = opaqueTextFloorsAt(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true, segments));
     if (o?.kind === "deny") return o;
     pending = o;
   }
@@ -1160,6 +1160,47 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
     if (h) return h;
   }
   return pending;
+}
+
+/**
+ * The text floors of one command line read from a payload field (gate.ts leafFloors), no path or policy floor: the raw-text rules and the opaque-text rules (a push, a git
+ * config key, a remote change, a package publish, the removal of the root). The whole line is scanned as a shell line is (`lineFloors`), and then each parsed segment
+ * (the inner commands of `bash -c`, `eval` and backticks included) by its own words, so a floor anchored at a command position meets a program and never a word of
+ * prose or an argument (a quoted word is data). A quoted program word is the program (`'sudo' ls`), and is no assignment when it holds an `=`.
+ */
+export function fieldLineFloors(line: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
+  const scan = maskLine(line, segments);
+  const whole = rawScan(scan, cleanLine(segments));
+  if (whole) return whole;
+  let ask: FloorHit | null = null;
+  if (segments.some((s) => s.opaque !== null)) {
+    const o = opaqueTextFloorsAt(scan, env, segments.some((s) => runsText(s) || /^[$`]/.test(s.program)));
+    if (o?.kind === "deny") return o;
+    ask = o;
+  }
+  // a function body is only defined here, so its quoted text is not parsed: each quote-delimited piece of it is scanned
+  if (segments.some((s) => s.opaque === "function_def")) {
+    for (const piece of line.split(/[\n'"`]/).map((p) => p.trim()).filter(Boolean)) {
+      const h = rawScan(piece, false) ?? opaqueTextFloors(piece, env);
+      if (h?.kind === "deny") return h;
+      ask = ask ?? h;
+    }
+  }
+  for (const s of segments) {
+    // a download piped into a shell or interpreter, read from the segments (the program of the download may be a quoted word)
+    if (SHELL_LIKE.has(base(s.program)) && s.opaque === "stdin_fed" && segments.some((o) => o !== s && DOWNLOAD.has(base(o.program)))) {
+      const dl = RAW.find((r) => r.name === "download-shell");
+      if (dl) return hit(dl.name, dl.reason);
+    }
+    const prog = /^\$'([^']*)'$/.exec(s.program)?.[1] ?? (/[=\s]/.test(s.program) ? "''" : s.program);
+    const text = [prog, ...s.argv.map((w) => (/[\s;&|()<>`]/.test(w) ? "''" : w))].join(" ");
+    let h = rawScan(text, false) ?? opaqueTextFloors(text, env);
+    // the unanchored publish word counts only as the segment's program
+    if (h?.rule === "floor-publish" && !text.toLowerCase().startsWith((h.fragment ?? "").toLowerCase().split(/\s/)[0])) h = null;
+    if (h?.kind === "deny") return h;
+    ask = ask ?? h;
+  }
+  return ask;
 }
 
 /** The input keys a path tool call is floored on (the path keys are also what the gate reads for the public-key rule id). */
@@ -1476,8 +1517,26 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
   return null;
 }
 
-/** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1). */
-function opaqueProtected(text: string, env: FloorEnv, deny = false): FloorHit | null {
+/**
+ * A segment that parsed cleanly and only reads: a read-class program (a `find` with no action) or `git status|log|diff|show` with no program or output option,
+ * and no redirect but a read, an fd dup or the null device. A config file it names is read, not written.
+ */
+function cleanReadSegment(seg: ShellSegment, env: FloorEnv): boolean {
+  if (seg.opaque !== null || seg.heredoc || runsText(seg)) return false;
+  if (!seg.redirects.every((r) => r.op === "<" || r.op === "dup" || NULL_TARGET.test(r.target))) return false;
+  const p = base(seg.program);
+  if (p === "git") {
+    const call = gitCall(seg, env);
+    return call !== null && call.overrides.length === 0 && GIT_READ.has(call.sub) && !gitReadWrites(call.rest);
+  }
+  return READ_CLASS.has(p) && !(p === "find" && seg.argv.some((a) => FIND_BAD.has(a)));
+}
+
+/**
+ * Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1).
+ * A config file word that only a cleanly parsed read segment of `line` carries is a read: it is no config-keys hit (the segments judge the writes).
+ */
+function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellSegment[] = []): FloorHit | null {
   const flag = deny ? opaqueDeny : askHit;
   const entries = protectedEntries(env);
   // both spellings: split on braces and commas (the pieces of a brace group) and whole (a brace group inside one word is expanded by protectedWord)
@@ -1486,7 +1545,9 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false): FloorHit | 
   const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
   if (w !== undefined) return flag("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`, w);
   if (FLOOR_KEYS.test(text)) {
-    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env));
+    const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
+    const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
+    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
   }
   return null;
