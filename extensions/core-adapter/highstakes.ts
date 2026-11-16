@@ -406,7 +406,7 @@ export function prRefusal(s: HsState, due: readonly string[], heads: readonly st
 export function finishNeeds(s: HsState, o: { due: readonly string[]; ledgerDone: boolean; own: string }): { missing: string[]; hint: string } {
   const r = lastRun(s);
   if (r && uncleared(s)) return { missing: [FAIL_ENTRY], hint: `(the high-stakes review${whereOf(r.cwd, o.own)} FAILED${goneNote(r.cwd)}: revise, then pass the normal reviewer; it gets the findings)` };
-  if (required(s, o.due) && o.ledgerDone) return { missing: [RUN_ENTRY], hint: `(${LAUNCH})` };
+  if (required(s, o.due) && o.ledgerDone) return { missing: [RUN_ENTRY], hint: `(${LAUNCH}; ${reasonsText(o.due)})` };
   return { missing: [], hint: "" };
 }
 

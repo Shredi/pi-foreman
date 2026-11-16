@@ -368,6 +368,10 @@ test("finishNeeds: the pass is asked only once the ledger is done; the FAIL entr
   const asked = finishNeeds(st(), { ...o, ledgerDone: true });
   assert.deepEqual(asked.missing, [RUN_ENTRY]);
   assert.match(asked.hint, /launch one reviewer with \[high-stakes\] on the whole change, in the checkout that holds it/);
+  assert.match(asked.hint, /risk tag security/);
+  const named = finishNeeds(st(), { own: OWN, due: ["design", "heavy"], ledgerDone: true });
+  assert.match(named.hint, /risk tag design/);
+  assert.match(named.hint, /the task is heavy/);
   const failed = finishNeeds(st({ runs: [run("fail")] }), { ...o, ledgerDone: false });
   assert.deepEqual(failed.missing, [FAIL_ENTRY]);
   const second = finishNeeds(st({ runs: [run("fail", { revised: true, cleared: true })] }), { ...o, ledgerDone: true });
