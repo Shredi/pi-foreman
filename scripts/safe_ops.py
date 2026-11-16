@@ -806,13 +806,15 @@ def op_worktree_remove(req):
         return remove_worktree(check_worktree(req.get("cwd"), args.get("path"), cfg))
     if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha):
         raise Precondition("bad_request", "verifiedMerged must be a commit sha")
+    vb = req.get("verifiedBranch")
+    if not isinstance(vb, str) or not vb:
+        raise Precondition("bad_request", "verifiedMerged needs verifiedBranch")
     cwd = req.get("cwd")
     chk = check_worktree(cwd, args.get("path"), cfg, verified_merged=True)
     branch = chk["branch"]
     if not branch or is_default_branch(chk["main_dir"], branch, cfg["baseBranch"]):
         raise Precondition("default_branch", "the verified-merged fact never removes the default branch")
-    vb = req.get("verifiedBranch")
-    if vb is not None and vb != branch:
+    if vb != branch:
         raise Precondition("branch_mismatch", "the verified branch is not the worktree's branch")
     tip = git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], chk["main_dir"])[1].strip()
     if tip != sha or chk["head"] != sha:

@@ -76,6 +76,12 @@ class VerifiedMergedTest(WorktreeCase):
         self.failed(self.request(wt, config={"baseBranch": "feat"}, verifiedMerged=head, verifiedBranch="feat"), "default_branch")
         self.assertTrue(os.path.isdir(wt))
 
+    def test_fact_without_verified_branch_is_refused(self):
+        wt, head = self.squash_merged()
+        self.failed(self.request(wt, verifiedMerged=head), "bad_request")
+        self.assertTrue(os.path.isdir(wt))
+        self.assertIn("feat", self.branches())
+
     def test_other_verified_branch_is_refused(self):
         wt, head = self.squash_merged()
         self.failed(self.request(wt, verifiedMerged=head, verifiedBranch="other"), "branch_mismatch")

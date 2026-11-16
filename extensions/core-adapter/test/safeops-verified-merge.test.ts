@@ -125,8 +125,10 @@ test("safeops: a not_merged refusal without a fact is not retried", async () => 
 
 test("safeops: without a fact, or when the lookup throws, the request has no verifiedMerged key", async () => {
   for (const f of [undefined, "throw"] as const) {
-    const h = wired(f);
+    const h = wired(f, NOT_MERGED);
     await h.call("foreman_worktree_remove", { path: "wt" });
+    assert.equal(h.lookups(), 1);
+    assert.equal(h.inputs.length, 1);
     const req = JSON.parse(h.inputs[0]);
     assert.equal("verifiedMerged" in req, false);
     assert.equal("verifiedBranch" in req, false);
