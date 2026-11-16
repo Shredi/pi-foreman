@@ -27,7 +27,8 @@ function run(flavor, withNote) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-hook-st-")));
   const marker = path.join(base, "marker");
   const stub = path.join(base, "foreman");
-  fs.writeFileSync(stub, `#!/bin/sh\necho "$@" >> "${marker}"\n`, { mode: 0o755 });
+  // exit 75 removes the marker, so with a note every prompt takes the full path and the status after the foreman command is what the test checks
+  fs.writeFileSync(stub, `#!/bin/sh\necho "$@" >> "${marker}"\n${withNote ? "exit 75\n" : ""}`, { mode: 0o755 });
   const agentDir = path.join(base, "agent");
   const panes = path.join(agentDir, "pi-foreman", "state", "panes");
   fs.mkdirSync(panes, { recursive: true });
