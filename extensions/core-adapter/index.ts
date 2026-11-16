@@ -1242,7 +1242,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The task is heavy and the session built something: `heavy` counts toward a due review. Once stored it stays until the owner (`/ceremony`, source `user`) lowers the tier; a foreman triage or a ledger line cannot drop it. */
   const hsHeavyOn = (s: Session): boolean => {
-    if (s.hs.state().fired?.reasons.includes("heavy") === true) return s.ceremony.tier === "heavy" || s.ceremony.source !== "user";
+    if (s.hs.state().fired?.reasons.includes("heavy") === true) return s.ceremony.tier === "heavy" || !s.ceremony.userTier || s.ceremony.userTier === "heavy";
     return s.ceremony.tier === "heavy" && (s.steps.builder > 0 || s.tally.files.length > 0);
   };
 
