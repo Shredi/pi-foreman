@@ -123,19 +123,24 @@ export function planFormIssues(text: string, opts: { requiredHeadings?: readonly
   return issues;
 }
 
+/** The plain-language rule for owner text, in one place: instructions, hints and the plan-review facts point at it. */
+export const OWNER_TEXT_POINTS = "short sentences, one instruction or fact each; active voice; one word for one thing; common words, a needed term explained once; steps as a list";
+
 /** Facts lines of a `[plan-review]` launch, one per plan file (relative paths resolve against `cwd`). */
 export function ownerFactsLines(planPaths: readonly string[], cwd: string): string[] {
-  return planPaths.map((p) => {
-    let text: string;
-    try {
-      text = fs.readFileSync(path.resolve(cwd, p), "utf8");
-    } catch {
-      return `Owner section (${p}): plan not readable`;
-    }
-    const sec = ownerSection(text);
-    const issues = ownerSectionIssues(text);
-    return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : `present (${measure(sec).wrapped} lines, ${measure(sec).chars} characters; checked by the harness)`}`;
-  });
+  return planPaths.map((p) => `${ownerFactLine(p, cwd)}; judge it as owner text: ${OWNER_TEXT_POINTS}`);
+}
+
+function ownerFactLine(p: string, cwd: string): string {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.resolve(cwd, p), "utf8");
+  } catch {
+    return `Owner section (${p}): plan not readable`;
+  }
+  const sec = ownerSection(text);
+  const issues = ownerSectionIssues(text);
+  return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : `present (${measure(sec).wrapped} lines, ${measure(sec).chars} characters; checked by the harness)`}`;
 }
 
 /** The owner section for the checkpoint dialog (control characters stripped, 200 characters a line), or the warning line. */
@@ -193,7 +198,7 @@ export function questionHint(input: unknown, prefix: string): string | null {
     for (const o of q?.options ?? []) if (typeof o?.description === "string") texts.push(o.description);
   }
   const hits = jargonHits(texts.join("\n"), 4);
-  return hits.length ? `pi-foreman: the question text reads like jargon (${hits.join(" ")}). The owner reads it cold: say in plain words what is decided and why, no paths, identifiers or ids, recommended option first with a one-line consequence.` : null;
+  return hits.length ? `pi-foreman: the question text reads like jargon (${hits.join(" ")}). The owner reads it cold: write it as owner text (plain, no jargon): say what is decided and why, no paths, identifiers or ids, recommended option first with a one-line consequence.` : null;
 }
 
 /** The hint for a foreman_show reply when the note does not open with a short plain paragraph, else null. */
@@ -207,5 +212,5 @@ export function showHint(markdown: string): string | null {
   const plain = text !== "" && !FENCE.test(para[0] ?? "") && !/^[|>#]/.test(text) && !/^(?:[-*+]|\d+[.)])[ \t]/.test(text);
   const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim()).length;
   if (plain && sentences <= 3) return null;
-  return "pi-foreman hint: open the note with a plain 2-3 sentence summary (what it is about and the answer), before tables, code or diagrams; the owner may open it cold.";
+  return "pi-foreman hint: write it as owner text and open the note with a plain 2-3 sentence summary (what it is about and the answer), before tables, code or diagrams; the owner may open it cold.";
 }
