@@ -797,8 +797,8 @@ Install:
    { "id": "plan", "type": "block", "content": { "mod": "pi-foreman-plan" } }
    ```
 
-3. The "📄 Plan" button in the Agents header brings the panel forward on its Plan child; the plan and note rows under a session do the same
-   and pin it to that session's tab. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
+3. The "📄 Plan" button in the Agents header selects the `plan` block (the page list) in the panel's body stack and shows the panel; the plan and note rows
+   under a session do the same and also pin the list to that session's tab. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
    `tabs` mod has no slot for a third panel button, so the button lives in the Agents header.)
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman-plan`, then switch to the layout.
 

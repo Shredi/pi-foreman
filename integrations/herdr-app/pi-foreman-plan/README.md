@@ -1,7 +1,7 @@
 # pi-foreman-plan mod for herdr-app
 
 A panel that lists the pages and milestones of the foreman that owns the tab, and of each of its child sessions (one tab each). A page is
-a standalone HTML file the foreman writes (plan, note, result); a click opens it in the system browser. Read-only; own code on the public
+a standalone HTML file the foreman writes (plan, note, result); a click opens it in the system browser through a copy the mod writes into its own slot folder. It writes nothing else; own code on the public
 mod API (`shared`, `readTextFile`, `writeTextFile`, `watchFolder`, `agents`, `panes`, `focused`, `exec`, `theme`, `window`).
 
 It installs together with `pi-foreman/` (the Agents mod): that mod publishes the radar this panel reads and adds the sidebar rows that open it.
