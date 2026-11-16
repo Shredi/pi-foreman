@@ -121,9 +121,9 @@ A handler failure denies (fail safe). A call with no session to decide it in is 
 
 | Mode | A call no rule decided | A dangerous-class call |
 |---|---|---|
-| `auto` (default) | runs | the classifier; what it cannot clear opens the dialog (a line the gate could not read goes through the [read question](#the-read-question) first) |
+| `auto` (default) | runs | the classifier; what it cannot clear opens the dialog (a line the gate could not read goes through the [read question](#the-read-question) first); `danger-readonly-run` skips the classifier and goes to the [role question](#the-role-question) |
 | `ask` | opens the dialog | opens the dialog (no classifier call) |
-| `allow` | runs | runs (no classifier call, so whitelist deny sentences do not apply) |
+| `allow` | runs | runs (no classifier call, so whitelist deny sentences do not apply); `danger-readonly-run` still goes to the [role question](#the-role-question) and opens the dialog when it does not clear |
 | `deny` | denied: `pi-foreman: denied: permissions mode is deny (no rule allows this call)` | denied the same way |
 
 **Resolution order.** Session override (`/foreman perms mode`) > profile mode > user file mode > `auto`. The project and tracked files cannot set a mode. An invalid user file reads as `ask`. The footer shows `perms: <mode>` whenever the mode is not `auto`.
@@ -152,6 +152,7 @@ A built-in table in `defaults.ts` (`DANGER_RULES`). A call that falls into one e
 | `danger-launch-outside` | A `subagent` launch with a `cwd` or worktree outside the owned roots, or a workflow script, `tasks` or `chain` form | `subagent` with `cwd: "/srv/other-repo"` |
 | `danger-git-secret` | A `git` argument `<rev>:<path>` whose path is a [secret path](#floors) (`git show`, `cat-file`, `archive` and the like print the file out of the object store); a plain revision, a source path or a `--format=%h:%s` is no match | `git show HEAD:.env` |
 | `danger-harness-folder` | A shell segment that is no known read and names a policy or state file or folder of the harness (the user's and the project's `permissions.json` files, `managed.json`, `state/round-parents.json`, `state/bridge-trust.json`, the `state/approvals`, `state/gate` and `state/child-asks` folders, session `.jsonl` files); a read (`cat`, `grep`, `ls`) is no match, and a write to such a file is a [floor](#floors) that answers first | `git add ~/.pi/agent/pi-foreman/permissions.json` |
+| `danger-readonly-run` | A shell segment of a call of a read-only role (reviewer, explorer) that is none of: a read, a declared test run, a fetch or a git read with no redirect into the worktree and no code from a writable folder; a segment whose only writes are named targets inside the scratch dir or the handoff files, that runs no code from there, and that is a file writer of the write-in rule, a rule-1 form once its redirects are left out, or a plain reader with no option word at all (`rg --pre ./x foo > <scratch>/o` and `sort -u a > <scratch>/o` are labelled); a git segment whose repository is in the scratch dir. Every other segment: an unknown program, script or inline code, an unknown git form (a subcommand or global option such as `-c` that is not a known read, a short `-o`), a build run no declared rule accepts, code from a writable folder. A write into the worktree is refused first (`child-readonly-write`). Builders and the main session never match | `bash -c 'ls'`, `git grep foo`, `node <scratch>/probe.mts`, `make` |
 
 A PR's draft state is changed by the harness only, in process, for a PR the session itself opened with `pr_create` (see [tools](tools.md#draft)). No model-facing tool does it. `gh pr ready` from a shell is a forge write like any other and stays under `danger-forge` for every agent.
 
@@ -374,6 +375,18 @@ A second, separate model call under mode `auto`, for one narrow case: a shell li
 - **No classifier model.** Without a classifier model configured (the dangerous class then asks you directly) the read question never runs and these lines go to the dialog as before.
 - **Trial.** A trial of the rulebook on a real model measures that model on one day and is no guarantee; see Known limits.
 
+### The role question
+
+A separate model call for one label: `danger-readonly-run`, a shell segment of a reviewer or explorer that the gate cannot see into (see the label table). It is never the allow-sentence classifier: a sentence such as "Anything at all." does not clear this label, and the classifier is not called for it.
+
+- **Only for the label alone.** The role question is asked only when the line's labels are `danger-readonly-run` alone or together with `danger-opaque`. A line that also carries any other danger label (a secret behind a git revision, an install, a network write, a process or deploy label) goes to the parent ask in `auto`, `allow` and `ask` with no role call and no allow-sentence call; `deny` refuses it, and a child with `gate.childAsk` off or no ask dir denies it. A role clear never overrides another label.
+- **Modes.** `auto` and `allow` ask the role question; if it does not clear, the parent is asked (the dialog, or `ask.md` for a child). `ask` asks the parent without a model call. `deny` refuses. A child with `gate.childAsk` off and a headless session deny what does not clear.
+- **Before the question.** Every labelled line first passes the deterministic entry check of the read question (no secret-path word, no redirect that writes, bash shell, a length bound). A redirect that writes passes only when every target is named, resolved and inside the scratch dir or the handoff files. A line that fails the check goes to the parent ask with no model call, so `F=~/.ssh/id_rsa; cat $F` and `for f in ~/.ssh/*; do cat $f; done` are asked, as they were before the label.
+- **The answer.** Five fixed answers, each yes, no or unsure: changes a file in the project; writes outside scratch; installs or publishes; network write; reads a secret, key or credential file, or a file outside the session's folders listed in the request (the rulebook of the read question says the same). Only five `no` clear. A yes, an unsure, a malformed answer, a timeout or a model error asks the parent; the judge never denies and never runs a line on a failure.
+- **Reasoning and cache.** The same model, transport and reasoning level as the read question. A clear is cached for the session by tool, cwd, role, session kind, writable directories, inside folders and the exact line, in its own key space; a non-clear is never cached. The cache is cleared wherever the classifier's is.
+- **What you see.** A log row with `rule` `readonly-run` (a non-clear is `readonly-run:<cause>`) and a trace `review` event with `entry` `readonly-run`.
+- **Switch.** `gate.readonlyClear` (default `true`). A project or session layer may only set `false`. Any value but the boolean `true` or an absent key counts as off: the parent is asked without a model call.
+
 ### Child asks
 
 `gate.childAsk` is `"parent"` (default) or `"deny"`. A child's gate runs the same steps with the mode, profile and session override of its launch. When a child's call escalates (a dangerous-class call the classifier could not clear, an ask rule, a self-modification hit is denied outright for a child) and `gate.childAsk` is `parent`:
@@ -484,6 +497,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.askTimeoutMs` | no effect: a child waits for its parent's ruling without a time limit; kept so configs load | lower only |
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
 | `gate.readClear` | `true` (default): the classifier model may clear a line the gate could not read when it judges the line only reads inside the session's directories, see [The read question](#the-read-question); `false` restores the dialog; it does nothing when no classifier model is configured; only the boolean `true` or an absent key turns it on | `false` only |
+| `gate.readonlyClear` | `true` (default): the classifier model may clear a `danger-readonly-run` line of a reviewer or explorer when it answers no to the five questions of [The role question](#the-role-question); `false` asks the parent without a model call | `false` only |
 | `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks) | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |

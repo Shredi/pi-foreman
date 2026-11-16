@@ -105,6 +105,8 @@ const POSITIVE: Record<string, Case[]> = {
   "danger-git-secret": [sh("git show HEAD:.env"), sh("git show HEAD:config/.env.production"), sh("git cat-file -p HEAD:config/.env.production"), sh("git show HEAD:~/.ssh/id_rsa")],
   // fires only with the gate's floor env (`DangerEnv.floor`), which this table's env lacks; its positives are in r2-secret-labels.test.ts
   "danger-harness-folder": [],
+  // fires only for a read-only role (`roots.roundReadOnly`), which this table's roots lack; its positives are in r2-readonly-judge.test.ts
+  "danger-readonly-run": [],
 };
 
 const NEGATIVE: Record<string, Case[]> = {
@@ -125,6 +127,8 @@ const NEGATIVE: Record<string, Case[]> = {
   ],
   "danger-git-secret": [sh("git show HEAD:src/a.ts"), sh("git show HEAD"), sh("git log --format=%h:%s"), sh("git fetch origin a:b")],
   "danger-harness-folder": [sh("ls src"), sh("cat a.txt"), sh("mytool a.txt")],
+  // never for the main session or a builder, whatever the program
+  "danger-readonly-run": [sh("ls src"), sh("git grep foo"), sh("mytool a.txt"), sh("make")],
 };
 
 test("DANGER_RULES: every entry has the danger- name and a reason; the tables cover each entry", () => {

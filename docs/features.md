@@ -531,6 +531,7 @@ Switch: `gate.readClear` is true.
 | Key | Default | Layer |
 |---|---|---|
 | `gate.readClear` | `true` | tighten-only (only false is accepted) |
+| `gate.readonlyClear` | `true` | tighten-only (only false is accepted) |
 
 ### protected-targets
 

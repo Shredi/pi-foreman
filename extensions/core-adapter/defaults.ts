@@ -5,11 +5,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderWord, injection, secretPath } from "./floors.ts";
+import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderWord, injection, secretPath } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { scratchScriptRun } from "./childscratch.ts";
 import { nullDevice } from "./pathnorm.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
@@ -212,7 +213,7 @@ const REFLOG_WRITE = new Set(["expire", "delete", "drop"]);
  */
 export function gitReadSubWrite(sub: string | undefined, rest: string[]): boolean {
   if (sub === undefined || !(GIT_READ.has(sub) || GIT_READ_MORE.has(sub))) return false;
-  return gitReadWrites(rest.filter((w) => w !== "-c" && w !== "-o")) || rest.some(gitWriteOption) || (sub === "reflog" && rest.some((w) => REFLOG_WRITE.has(w)));
+  return gitReadWrites(rest.filter((w) => w !== "-c" && w !== "-o")) || (sub === "reflog" && rest.some((w) => REFLOG_WRITE.has(w)));
 }
 
 /** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */
@@ -1225,14 +1226,11 @@ export function unresolvedShellWriteWords(segments: ShellSegment[], platform: st
     for (const t of segWriteWords(seg)) {
       if (t.any || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
       const vs = braceVariants(t.w);
-      if (vs.length > 1 && vs.length < BRACE_VARIANT_LIMIT ? vs.some((v) => unresolvedWord(seg, platform, v)) : unresolvedWord(seg, platform, t.w)) out.push(t.w);
+      if (vs.length > 1 && vs.length < BRACE_LIMIT ? vs.some((v) => unresolvedWord(seg, platform, v)) : unresolvedWord(seg, platform, t.w)) out.push(t.w);
     }
   }
   return out;
 }
-
-/** The upper bound `braceVariants` stops at (floors.ts `BRACE_LIMIT`): an expansion that reaches it is incomplete. */
-const BRACE_VARIANT_LIMIT = 64;
 
 /** One write word that does not resolve (see `unresolvedShellWriteWords`); a `$FOREMAN_SCRATCH` form without another variable or brace counts as resolved. */
 function unresolvedWord(seg: ShellSegment, platform: string, word: string): boolean {
@@ -1252,7 +1250,7 @@ export function braceWriteTargets(segments: ShellSegment[], platform: string): S
     if (seg.program === "") continue;
     for (const t of segWriteWords(seg)) {
       const vs = braceVariants(t.w);
-      if (t.any || vs.length < 2 || vs.length >= BRACE_VARIANT_LIMIT) continue;
+      if (t.any || vs.length < 2 || vs.length >= BRACE_LIMIT) continue;
       for (const v of vs) {
         if (/[$`{]/.test(v) || SINK.has(v) || nullDevice(platform, v) || (seg.cwd === null && !path.isAbsolute(v) && !path.win32.isAbsolute(v))) continue;
         const abs = resolveWord(platform, seg.cwd ?? "/", v);
@@ -1426,6 +1424,135 @@ function webNotRead(c: DangerCall, env: DangerEnv): boolean {
   return v.candidate && !v.ok;
 }
 
+// ------------------------------------------------------------------ danger-readonly-run
+//
+// A read-only role (`roots.roundReadOnly`: reviewer, explorer) keeps a segment as it is when it is a read, a test run, a fetch or a git read, or when it writes
+// only the scratch dir or the handoff files and runs no code from there; a git segment whose repository is in the scratch dir is free too. Every other
+// segment is something the gate cannot see into and gets this label. Decided from the rule names and effect classes the gate already has, no program list.
+
+/** The built-in rules (and the web-read and public-key rules of gate.ts) that leave a segment of a read-only role as it is. */
+const READONLY_FREE: ReadonlySet<string> = new Set(["default-read", "default-git-read", "default-build-test", "default-git-fetch", "default-gh-read", "builtin-web-read", "floor-pubkey-read"]);
+
+interface ReadonlyCtx {
+  dctx: DefaultCtx;
+  ec: EffectCtx;
+  /** `abs` is a place the role may write: the scratch dir or the handoff files. */
+  sanctioned: (abs: string) => boolean;
+  inScratch: (abs: string) => boolean;
+}
+
+/** A git segment's global options: `sub` and `rest` after them, `other` when an option is none of `-C`, `--no-pager`, `-P`, `--no-optional-locks`, `--git-dir`, `--work-tree`, `dirs` the values of the last two. */
+function gitHead(a: string[]): { sub: string | undefined; rest: string[]; other: boolean; dirs: string[] } {
+  const dirs: string[] = [];
+  let other = false;
+  let i = 0;
+  while (i < a.length && a[i].startsWith("-")) {
+    const w = a[i];
+    const glued = /^--(?:git-dir|work-tree)=(.*)$/.exec(w);
+    if (w === "-C") i += 2;
+    else if (w === "--no-pager" || w === "-P" || w === "--no-optional-locks") i++;
+    else if (w === "--git-dir" || w === "--work-tree") {
+      if (a[i + 1] !== undefined) dirs.push(a[i + 1]);
+      i += 2;
+    } else if (glued) {
+      dirs.push(glued[1]);
+      i++;
+    } else {
+      other = true;
+      i += gitGlobalWidth(a, i);
+    }
+  }
+  return { sub: a[i], rest: a.slice(i + 1), other, dirs };
+}
+
+/** A git read: the read rule on the segment as the read rule sees it (`gitPlainSegment`), or a read form of a subcommand the write table lists (`stash list`, `tag -l`, `config --get`). */
+function gitReadForm(seg: ShellSegment, text: string, x: ReadonlyCtx): boolean {
+  if (seg.opaque !== null || !seg.wrappers.every((w) => w === "timeout")) return false;
+  const plain = gitPlainSegment(seg);
+  const sub = plain?.argv[0];
+  if (!plain || sub === undefined) return false;
+  return segmentDefault(plain, text, x.dctx, x.ec) === "default-git-read" || (GIT_WRITE_SUBS.has(sub) && !gitWriteForm(plain));
+}
+
+/** A git segment whose repository, `--git-dir`, `--work-tree` and every named write target lie in the scratch dir (or the handoff files), with no env prefix, no other global option and no short `-o`. */
+function gitScratchRepo(seg: ShellSegment, x: ReadonlyCtx): boolean {
+  if (seg.opaque !== null || !seg.wrappers.every((w) => w === "timeout") || seg.cwd === null) return false;
+  const h = gitHead(seg.argv);
+  const cwd = seg.cwd;
+  const platform = x.dctx.platform;
+  if (h.other || h.sub === undefined || !x.inScratch(cwd)) return false;
+  if (h.dirs.some((d) => { const abs = resolveWord(platform, cwd, d); return abs === null || !x.inScratch(abs); })) return false;
+  const stop = h.rest.indexOf("--");
+  if ((stop < 0 ? h.rest : h.rest.slice(0, stop)).some((w) => !w.startsWith("--") && /^-[A-Za-z]*o/.test(w))) return false;
+  return scratchTargets(seg, x, true);
+}
+
+/** Every write target of `seg` is resolved and inside the scratch dir or the handoff files (`catchAll`: the catch-all ones too); with no target at all, false unless `catchAll`. */
+function scratchTargets(seg: ShellSegment, x: Pick<ReadonlyCtx, "sanctioned" | "inScratch"> & { dctx: Pick<DefaultCtx, "platform"> }, catchAll: boolean): boolean {
+  const platform = x.dctx.platform;
+  const ts = shellWriteTargets([seg], platform);
+  if ((!catchAll && ts.length === 0) || unresolvedShellWriteWords([seg], platform).length > 0) return false;
+  const ok = (p: string): boolean => x.inScratch(p) || x.sanctioned(p);
+  return ts.every((t) => (catchAll || t.named) && ok(t.path)) && braceWriteTargets([seg], platform).every((t) => ok(t.path));
+}
+
+/** The segment runs code from a place the role may write: a test or build run that names a scratch or handoff path, or a script in the scratch dir (`scratchScriptRun`). */
+function codeFromWritable(seg: ShellSegment, rule: string | null, x: ReadonlyCtx): boolean {
+  if (rule !== "default-build-test") return scratchScriptRun([seg.program, ...seg.argv], x.dctx.roots.scratch, x.dctx.platform);
+  return seg.argv.some((w) => {
+    const v = w.startsWith("-") ? (w.includes("=") ? w.slice(w.indexOf("=") + 1) : "") : w;
+    const abs = v === "" ? null : resolveWord(x.dctx.platform, seg.cwd ?? x.dctx.cwd, v);
+    return abs !== null && x.sanctioned(abs);
+  });
+}
+
+/** One segment of a read-only role's line gets the label (true) or is left to the rest of the gate (false). `given`: the built-in rule the gate already found for it. */
+function readonlyRunSeg(seg: ShellSegment, text: string, x: ReadonlyCtx, given: string | null): boolean {
+  const rule = given ?? segmentDefault(seg.heredoc ? { ...seg, heredoc: false } : seg, text, x.dctx, x.ec);
+  const free = rule !== null && READONLY_FREE.has(rule);
+  // a line that does not parse (an opaque unit the gate could not read) fails closed, unless a rule above accepted it
+  if (seg.program === "") return seg.opaque !== null && !free;
+  if (progOf(seg) === "git") return !(free || gitReadForm(seg, text, x) || gitScratchRepo(seg, x));
+  const code = codeFromWritable(seg, rule, x);
+  if (free) return code;
+  // rule 2: a segment whose only writes are named targets in scratch or the handoff files is free when the write-in rule has it, when the same segment without its
+  // redirects is a rule-1 form (the read rule's own option checks apply), or when it is a plain reader with no option word at all; a redirect on an unknown or
+  // opaque program, a script, inline code, a reader whose option can run code (`rg --pre`, `sort --compress-program`) or a wrapper around them frees nothing
+  const bare = (): boolean => {
+    const r1 = segmentDefault({ ...seg, redirects: [], heredoc: false }, text, x.dctx, x.ec);
+    return r1 !== null && READONLY_FREE.has(r1);
+  };
+  const known = rule === "default-write-in" || bare() || (seg.opaque === null && seg.wrappers.length === 0 && READ_PROGS.has(seg.program) && !seg.argv.some((w) => w.startsWith("-")));
+  return code || !known || !scratchTargets(seg, x, false);
+}
+
+/**
+ * `danger-readonly-run`: some shell segment of a call of a read-only role is none of the free forms above. `ruleOf(i)`: the built-in rule the gate found for segment `i`
+ * (the web-read and public-key rules are not `segmentDefault`'s). False for every other role and for a call that is no posix shell line.
+ */
+export function readonlyRunLine(c: DangerCall, env: DangerEnv, ruleOf?: (i: number) => string | null): boolean {
+  const { roots, platform } = env;
+  if (!roots.roundReadOnly || !env.facts || !c.segments || c.tool === "powershell" || !BASH_TOOL_NAMES.has(c.tool)) return false;
+  const dctx: DefaultCtx = { roots, facts: env.facts, platform, cwd: env.cwd, floor: env.floor };
+  const x: ReadonlyCtx = {
+    dctx,
+    ec: effectCtxOf(dctx),
+    sanctioned: (abs) => pathDecide("write", { path: abs }, env.cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined,
+    inScratch: (abs) => roots.scratch.some((d) => rootHolds(d, abs, platform, roots.realpath, roots.worktree)),
+  };
+  return c.segments.some((seg, i) => readonlyRunSeg(seg, c.text ?? "", x, ruleOf?.(i) ?? null));
+}
+
+/** Every writing redirect of `seg` has a named, resolved target inside the scratch dir or the handoff files (the program's own writes are not looked at); with no such target at all, false. */
+export function redirectsInScratch(seg: ShellSegment, roots: GateRoots, platform: string, cwd: string): boolean {
+  const redirects = seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup");
+  return scratchTargets({ ...seg, program: "true", argv: [], wrappers: [], opaque: null, heredoc: false, redirects }, {
+    dctx: { platform },
+    sanctioned: (abs) => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined,
+    inScratch: (abs) => roots.scratch.some((d) => rootHolds(d, abs, platform, roots.realpath, roots.worktree)),
+  }, false);
+}
+
 const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && c.tool !== "foreman_bg" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
 export const DANGER_RULES: readonly DangerRule[] = [
@@ -1443,6 +1570,7 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
   { name: "danger-git-secret", reason: "shows a secret or key file through a git revision (git show HEAD:<path>)", test: segs(gitSecretSeg) },
   { name: "danger-harness-folder", reason: "a program that is no known read names a policy or state file of the harness", test: segs(harnessFolderSeg) },
+  { name: "danger-readonly-run", reason: "a read-only role runs something the gate cannot see into (an unknown program or git form, code from a writable folder, a build run it does not know)", test: (c, e) => readonlyRunLine(c, e) },
 ];
 
 /** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */

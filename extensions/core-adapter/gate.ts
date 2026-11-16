@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD } from "./effects.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, scanToolFloor, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
@@ -429,9 +429,11 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         return web.candidate && web.ok && (baseProg(s.program) === "curl" || baseProg(s.program) === "wget") ? WEB_READ_RULE : null;
       };
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
-      if (result) return { result, danger: null, segments: segs };
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
       const denv = { roots, platform, cwd, facts, floor: env };
+      // a read-only role: a built-in allow of a segment the fence cannot see into (an unknown run, code from a writable folder) gives way to the `danger-readonly-run` label; an owner's allow rule stands
+      const heldBack = !!result && "allow" in result && result.layer === "default" && readonlyRunLine(dcall, denv, (i) => builtin(i));
+      if (result && !heldBack) return { result, danger: null, segments: segs };
       const hits = DANGER_RULES.filter((r) => r.test(dcall, denv));
       const danger: DangerHit | null = hits.length ? { name: hits[0].name, reason: hits[0].reason } : null;
       return { result: undefined, danger, segments: segs, ...(hits.length ? { dangers: hits.map((r) => r.name) } : {}) };

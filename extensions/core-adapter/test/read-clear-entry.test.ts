@@ -136,6 +136,8 @@ const OTHER_ENTRY: Record<string, string> = {
   "danger-inject": "herdr pane send-text 1-2 hi; grep x src/*.ts",
   "danger-git-secret": "git show HEAD:.env; grep x src/*.ts",
   "danger-harness-folder": "mytool .workflow/permissions.json; grep x src/*.ts",
+  // the label needs a read-only role, which this table's roots lack: a line a floor refuses first stands for it
+  "danger-readonly-run": "sudo ls; grep x src/*.ts",
 };
 const NOT_BASH_ENTRIES = ["danger-opaque", "danger-mcp-act", "danger-launch-outside"];
 
