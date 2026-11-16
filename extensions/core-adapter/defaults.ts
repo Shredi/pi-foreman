@@ -3,9 +3,9 @@
 // returns null and falls through to the review. Rule names: `default-<name>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
+import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { gitGlobalWidth, gitOptSpellings, harnessFolderWord, injection, secretPath } from "./floors.ts";
+import { braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderWord, injection, secretPath } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
@@ -203,7 +203,17 @@ function commitOk(rest: string[]): boolean {
 }
 
 const BRANCH_LIST = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--list", "--show-current"]);
-const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev"]);
+const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev", "reflog", "show-branch", "check-ignore", "var", "ls-remote", "whatchanged", "verify-commit"]);
+const REFLOG_WRITE = new Set(["expire", "delete", "drop"]);
+
+/**
+ * A read-table subcommand (`GIT_READ`, `GIT_READ_MORE`) in a form that writes or runs a program: a long output or program option (`gitWriteOption`: `--output*`, `--exec`,
+ * `--upload-pack`, `--ext-diff`, `--textconv`, by any prefix), `reflog expire|delete|drop`. A short `-o` or `-c` is no write here (`ls-files -o`, `log -c` mean other things).
+ */
+export function gitReadSubWrite(sub: string | undefined, rest: string[]): boolean {
+  if (sub === undefined || !(GIT_READ.has(sub) || GIT_READ_MORE.has(sub))) return false;
+  return gitReadWrites(rest.filter((w) => w !== "-c" && w !== "-o")) || rest.some(gitWriteOption) || (sub === "reflog" && rest.some((w) => REFLOG_WRITE.has(w)));
+}
 
 /** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */
 function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boolean {
@@ -263,7 +273,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   }
   if (!sub || sub.startsWith("-")) return null; // global options (-C, -c, --git-dir ...) are never a default
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
-  if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !rest.some((w) => /^--(?:output|exec|upload-pack)/.test(w)) ? "default-git-read" : null;
+  if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !gitReadSubWrite(sub, rest) ? "default-git-read" : null;
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
   if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
   switch (sub) {
@@ -723,6 +733,23 @@ function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
   return { sub: a[i], rest: a.slice(i + 1) };
 }
 
+/**
+ * A git segment whose subcommand the gate knows writes (or runs a program): a `GIT_WRITE_SUBS` form that is no list or read form (the catch-all target of
+ * `taggedWriteTargets`, not the `list` one), or a read-table subcommand in a write form (`gitReadSubWrite`).
+ */
+export function gitWriteForm(seg: ShellSegment): boolean {
+  if (progOf(seg) !== "git") return false;
+  const { sub, rest } = gitParts(seg.argv);
+  return programTargets(seg).some((t) => t.any && !t.list) || gitReadSubWrite(sub, rest);
+}
+
+/** The git segment as the read rule sees it: `-C <dir>` (the segment's cwd already carries it), `--no-pager`, `-P` and `--no-optional-locks` dropped; null when another global option remains. */
+export function gitPlainSegment(seg: ShellSegment): ShellSegment | null {
+  let i = 0;
+  while (seg.argv[i] === "-C" || seg.argv[i] === "--no-pager" || seg.argv[i] === "-P" || seg.argv[i] === "--no-optional-locks") i += seg.argv[i] === "-C" ? 2 : 1;
+  return seg.argv[i]?.startsWith("-") ? null : { ...seg, argv: seg.argv.slice(i) };
+}
+
 /** `git worktree list` with only its read flags (`--expire` needs its `=value`): names no write target. */
 function gitWorktreeListRead(rest: string[]): boolean {
   return rest[0] === "list" && rest.slice(1).every((w) => w === "--porcelain" || w === "-v" || w === "--verbose" || w === "-z" || /^--expire=[^\s]+$/.test(w));
@@ -1016,9 +1043,12 @@ interface WriteTarget {
   any: boolean;
   /** the catch-all of a `git branch` in list mode (`--contains HEAD`, `--merged`, `-l pat`): a read the read-only fence does not count */
   list?: true;
+  /** the catch-all of a file writer with no directory option (`tar -x`, `unzip`, `patch`): it writes the cwd; only the read-only fence counts it */
+  implicit?: true;
 }
 const named = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: false }));
 const anywhere = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: true }));
+const implicitCwd = (): WriteTarget[] => [{ w: ".", any: true, implicit: true }];
 
 /**
  * The files an output option names: the value of a long git output option (`--output <f>`, `--output=<f>`, `--output-directory`) of any git subcommand
@@ -1089,16 +1119,24 @@ function programTargets(s: ShellSegment): WriteTarget[] {
       const dir = optValues(a, ["-d"], ["--directory"]);
       const out = optValues(a, ["-o"], ["--output"]);
       const files = operands(a, new Set(["-d", "--directory", "-o", "--output", "-i", "--input", "-r", "--reject-file", "-p", "--strip", "-B", "-V", "-Y", "-z", "-F"]));
-      return [...(dir.length ? named(dir) : anywhere(["."])), ...named([...out, ...files])];
+      // `--dry-run` (any prefix from `--dry`) changes no file: no implicit write of the cwd
+      const dry = a.some((w) => /^--dry/.test(w) && "--dry-run".startsWith(w));
+      return [...(dir.length ? named(dir) : dry ? [] : implicitCwd()), ...named([...out, ...files])];
     }
     case "rsync": {
       const ops = operands(a, new Set(["-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--files-from", "--filter", "-f"]));
       return named(ops.length >= 2 ? [ops[ops.length - 1]] : []);
     }
-    case "tar":
-      return a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? "") ? [...named(optValues(a, ["-C"], ["--directory"])), ...anywhere(["."])] : [];
-    case "unzip":
-      return [...named(optValues(a, ["-d"], [])), ...anywhere(["."])];
+    case "tar": {
+      if (!(a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? ""))) return [];
+      const dir = optValues(a, ["-C"], ["--directory"]);
+      return [...named(dir), ...(dir.length ? anywhere(["."]) : implicitCwd())];
+    }
+    case "unzip": {
+      const dir = optValues(a, ["-d"], []);
+      // a listing, test or pipe form (`-l`, `-v`, `-t`, `-p`, `-Z`) extracts nothing to the cwd
+      return [...named(dir), ...(dir.length || a.some((w) => /^-[A-Za-z]*[lvtpZ]/.test(w)) ? anywhere(["."]) : implicitCwd())];
+    }
     case "git": {
       const { sub, rest } = gitParts(a);
       if (sub === undefined || !GIT_WRITE_SUBS.has(sub)) return [];
@@ -1151,6 +1189,8 @@ export interface ShellWriteTarget {
   named: boolean;
   /** the catch-all of a `git branch` in list mode: the read-only role fence does not count it (`install-root-write` still does) */
   list?: true;
+  /** the implicit-cwd catch-all of `tar -x`, `unzip`, `patch` with no directory option: only the read-only role fence counts it */
+  implicit?: true;
   seg: ShellSegment;
 }
 
@@ -1167,7 +1207,57 @@ export function shellWriteTargets(segments: ShellSegment[], platform: string): S
       if (/[$`]/.test(t.w) || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
       if (seg.cwd === null && !path.isAbsolute(t.w) && !path.win32.isAbsolute(t.w)) continue;
       const abs = resolveWord(platform, seg.cwd ?? "/", t.w);
-      if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), seg });
+      if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), ...(t.implicit ? { implicit: true as const } : {}), seg });
+    }
+  }
+  return out;
+}
+
+/**
+ * The named write words `shellWriteTargets` skips because they do not resolve: a `$` or backtick, a brace list, `~`, a drive-relative word, a relative word under an
+ * unknown cwd (after `cd "$X"`). A standard sink and a `$FOREMAN_SCRATCH` form never count; the catch-all targets are not words and are left to their own rules.
+ * A comma brace list counts only when a variant of it does not resolve (or the expansion is cut at the limit); `braceWriteTargets` names the paths the others reach.
+ */
+export function unresolvedShellWriteWords(segments: ShellSegment[], platform: string): string[] {
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    for (const t of segWriteWords(seg)) {
+      if (t.any || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
+      const vs = braceVariants(t.w);
+      if (vs.length > 1 && vs.length < BRACE_VARIANT_LIMIT ? vs.some((v) => unresolvedWord(seg, platform, v)) : unresolvedWord(seg, platform, t.w)) out.push(t.w);
+    }
+  }
+  return out;
+}
+
+/** The upper bound `braceVariants` stops at (floors.ts `BRACE_LIMIT`): an expansion that reaches it is incomplete. */
+const BRACE_VARIANT_LIMIT = 64;
+
+/** One write word that does not resolve (see `unresolvedShellWriteWords`); a `$FOREMAN_SCRATCH` form without another variable or brace counts as resolved. */
+function unresolvedWord(seg: ShellSegment, platform: string, word: string): boolean {
+  const w = word.replace(/\$\{?FOREMAN_SCRATCH\}?/g, "");
+  const open = /[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(w);
+  if (w !== word && !open) return false;
+  return open || (seg.cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) || resolveWord(platform, seg.cwd ?? "/", w) === null;
+}
+
+/**
+ * The paths the variants of a comma brace list in a named write word reach (`touch sub/{a,b}`, `{x,<scratch>}/f`), for the words `unresolvedShellWriteWords` does not
+ * report: `shellWriteTargets` sees such a word as one literal name. A `$FOREMAN_SCRATCH` variant is the scratch dir and is left out.
+ */
+export function braceWriteTargets(segments: ShellSegment[], platform: string): ShellWriteTarget[] {
+  const out: ShellWriteTarget[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    for (const t of segWriteWords(seg)) {
+      const vs = braceVariants(t.w);
+      if (t.any || vs.length < 2 || vs.length >= BRACE_VARIANT_LIMIT) continue;
+      for (const v of vs) {
+        if (/[$`{]/.test(v) || SINK.has(v) || nullDevice(platform, v) || (seg.cwd === null && !path.isAbsolute(v) && !path.win32.isAbsolute(v))) continue;
+        const abs = resolveWord(platform, seg.cwd ?? "/", v);
+        if (abs) out.push({ path: abs, named: true, seg });
+      }
     }
   }
   return out;

@@ -44,15 +44,13 @@ const REFUSED = [
   "echo x > f", "echo x >> tracked", 'echo "$X" > f', "echo x >| f", "env A=1 touch f", "nohup touch f", "sed -i s/a/b/ f", "touch f", "rm f", "cp a b", "mv a b", "mkdir d",
   "cat a | tee f", "npm test > out.txt", "npm test && touch f", "cd sub && touch f", "cd sub && rm -rf .", "cd sub && cp a .", "xargs touch f", "bash -c 'touch f'",
   "tar -xf a.tar -C sub", "git commit -m x", "git add .", "git reset --hard", "git checkout -- f", "git stash", "git tag v1", "git config user.name x",
-  `git -C ${W} -C . commit -m x`, "git fetch origin main:main", `git clone . ${S}/c`, `echo x > ${W}/abs.txt`,
+  `git -C ${W} -C . commit -m x`, "tar -xf a.tar", "git fetch origin main:main", `git clone . ${S}/c`, `echo x > ${W}/abs.txt`,
 ];
 const ALLOWED = [
   "git status", "git log", "git diff", "git branch --list", "git config --get x", "git fetch origin", "npm test", "npm run lint", "node --test x.test.ts", "make test", "make", "make -C sub test",
   "npm --prefix sub test", "cargo test --target-dir target", `cd ${S} && git clone ${W} c`, "npm run test:node", "npm run typecheck", "npm run check", "npm ci", "python3 -m pytest",
   `node ${S}/p.mjs`, `tar -xf a.tar -C ${S}`, `unzip a.zip -d ${S}`, `echo x > ${S}/f`, `cp a ${S}/b`, `npm test > ${S}/out.txt`, "cat f > /dev/null", "ls 2>&1", "pnpm -C sub test",
   `git -C ${S}/c commit -m x`, `echo x > ${fwd(handoff)}/result.md`,
-  // open: no named target (the old line refused it); verdict of today
-  "tar -xf a.tar",
 ];
 
 for (const role of ["reviewer", "explorer"]) {
@@ -90,8 +88,8 @@ test("shellWriteTargets tags a named target and the catch-all of build tools, pa
 });
 
 test("open, verdict of today: a write the gate has no target for is not child-readonly-write", () => {
-  // `find -delete`, `chmod` and a write after `cd "$X"` name no target the write-target code reads: the old line refused them, this fence does not (docs/safety.md)
-  for (const l of ["find . -delete", "chmod +x a", 'cd "$X" && touch f']) assert.ok(!refused(bash(l)), `${l} -> ${JSON.stringify(bash(l))}`);
+  // `chmod` and a write after `cd "$X"` (refused by child-write-outside, not by this fence) name no target the write-target code reads (docs/safety.md); `find -delete` is refused since step 3a
+  for (const l of ["chmod +x a", 'cd "$X" && touch f']) assert.ok(!refused(bash(l)), `${l} -> ${JSON.stringify(bash(l))}`);
 });
 
 test("the directory forms the docs name (unzip -d, patch -d, dd of=, perl -i) are refused in the worktree and allowed in the scratch dir", () => {

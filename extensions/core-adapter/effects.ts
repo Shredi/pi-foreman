@@ -491,16 +491,24 @@ export function gitProtectedRead(words: string[]): boolean {
   return true;
 }
 
+/** The long options that name an output file or run a program. */
+const GIT_PROGRAM_OPTS = ["--output", "--exec", "--upload-pack", "--ext-diff", "--textconv"];
+
+/**
+ * A word that is a write or program option of git, by any prefix of it (`--ext-d`, `--outp=x`, `--upl=touch`): git accepts a unique prefix, and an ambiguous one is an error,
+ * so every prefix counts as the option. Not: `--text` (git's own `-a`) and `--output-indicator-new|old|context` (they only change the display).
+ */
+export function gitWriteOption(word: string): boolean {
+  const name = word.split("=")[0];
+  if (!/^--[A-Za-z]/.test(name) || name === "--text" || /^--output-indicator-(?:new|old|context)$/.test(name)) return false;
+  return name.startsWith("--output") || GIT_PROGRAM_OPTS.some((o) => o.startsWith(name));
+}
+
 /** An option of a GIT_READ subcommand that runs a program or names an output file: the call is not read-only. */
 export function gitReadWrites(rest: string[]): boolean {
   // a brace word with a leading `-` expands to options (`--{output=F,stat}`)
   if (rest.some((a) => /[{}]/.test(a) && a.startsWith("-"))) return true;
-  // git accepts any unambiguous prefix of a long option (`--ext-d`, `--outp=x`); an ambiguous one is an error, so a prefix counts as the option
-  const abbrev = (a: string): boolean => {
-    const name = a.split("=")[0];
-    return name.length > 2 && ["--output", "--ext-diff", "--textconv"].some((w) => w.startsWith(name));
-  };
-  return rest.some((a) => a === "-c" || a === "-o" || a.startsWith("--output") || a === "--ext-diff" || a.startsWith("--textconv") || abbrev(a));
+  return rest.some((a) => a === "-c" || a === "-o" || gitWriteOption(a));
 }
 const GIT_DRY = new Set(["add", "clean", "mv", "rm"]);
 

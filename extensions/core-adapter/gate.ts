@@ -4,13 +4,14 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, createsPullRequest, dangerMatch, effectCtxOf, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { FIND_BAD } from "./effects.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
 import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, scanToolFloor, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
-import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, resolveWord, under } from "./pathrules.ts";
+import { PATH_TOOL_NAMES, opsOf, pathDecide, realDefault, realSpelling, resolveWord, under } from "./pathrules.ts";
 import { relaxPatternWords } from "./patternargs.ts";
 import { matchRules, readFieldOf, ruleCallOf } from "./rules.ts";
 import type { ReadToolMap, RuleCall, RuleEnv, RuleSets, RuleVerdict } from "./rules.ts";
@@ -99,13 +100,17 @@ const READONLY_ROLE_RUNS = new Set(["default-read", "default-git-read", "default
  * A read-only role (`roots.roundReadOnly`: a reviewer or explorer in a round): the first write the gate can name into the worktree, or null. A path tool's write
  * operations; a shell segment's named targets (step 0 helper), and a git segment's catch-all target (every git write subcommand). The scratch dir and the handoff
  * files are no worktree writes. A segment a read, test-run or fetch rule accepts, with no redirect of its own into the worktree, is no write. The catch-all of
- * any other program (`make`, `npm run <script>`, `tar -x` without a directory) is not counted.
+ * any other program (`make`, `npm run <script>`) is not counted. A path counts as inside by its spelling or by its real path (a link to the worktree). Also refused:
+ * a write target that does not resolve (`> "$OUT"`), a git segment whose subcommand writes and whose repository is the worktree (`-C "$D"` counts as the worktree)
+ * unless it is a git read, the implicit-cwd catch-all of `tar -x`, `unzip`, `patch` with no directory option, and a `find` with an action (`-delete`, `-exec`) in the worktree.
  */
-function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): { path: string; gitAny: boolean } | null {
+function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | undefined, cmd: string | null, env: { roots: GateRoots; platform: string; cwd: string; facts: GitFacts }): { path: string; gitAny: boolean; what?: string } | null {
   const { roots, platform, cwd } = env;
   // the targets the child may write: its scratch dir and handoff files (the worktree term left out of the path rules)
   const sanctioned = (abs: string): boolean => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined;
-  const inside = (abs: string): boolean => under(platform, roots.worktree, abs) && !sanctioned(abs);
+  const real = platform === process.platform ? (roots.realpath ?? realDefault) : () => null;
+  const realWt = realSpelling(platform, roots.worktree, real);
+  const inside = (abs: string): boolean => (under(platform, roots.worktree, abs) || under(platform, realWt, realSpelling(platform, abs, real))) && !sanctioned(abs);
   if (!segments) {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     for (const [w, dir] of opsOf(tool, inp, roots.readTools) ?? []) {
@@ -118,12 +123,34 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
   const ec = effectCtxOf(dctx);
   for (const t of shellWriteTargets(segments, platform)) {
     const git = baseProg(t.seg.program) === "git";
-    if (!(t.named || git) || t.list || !inside(t.path)) continue;
+    if (!(t.named || t.implicit || git) || t.list || !inside(t.path)) continue;
     const own = t.seg.redirects.some((r) => r.op !== "<" && r.op !== "dup" && resolveWord(platform, t.seg.cwd ?? cwd, r.target) === t.path);
     const rule = own ? null : segmentDefault(t.seg, cmd ?? "", dctx, ec);
     if (rule !== null && READONLY_ROLE_RUNS.has(rule)) continue;
-    return { path: t.path, gitAny: !t.named };
+    return { path: t.path, gitAny: !t.named && !t.implicit };
   }
+  for (const t of braceWriteTargets(segments, platform)) if (inside(t.path)) return { path: t.path, gitAny: false };
+  for (const seg of segments) {
+    const prog = baseProg(seg.program);
+    if (prog === "find" && seg.argv.some((a) => FIND_BAD.has(a) && !/^-(?:[LH]|follow)$/.test(a))) {
+      const lead = seg.argv.findIndex((a) => !/^-[HLP]$/.test(a));
+      const dirs = lead < 0 ? [] : seg.argv.slice(lead).filter((_, i, all) => all.slice(0, i + 1).every((a) => !/^[-(!]/.test(a)));
+      for (const d of dirs.length ? dirs : ["."]) {
+        const abs = seg.cwd === null && !/^(?:[\\/]|[A-Za-z]:[\\/])/.test(d) ? null : resolveWord(platform, seg.cwd ?? "/", d);
+        if (abs && inside(abs)) return { path: abs, gitAny: false };
+        // a root that does not resolve (relative under an unknown cwd) may be the worktree
+        if (!abs) return { path: d, gitAny: false, what: `the find root ${d} cannot be resolved, so it may lie in ${roots.worktree}` };
+      }
+    }
+    if (prog === "git" && gitWriteForm(seg) && inside(seg.cwd ?? roots.worktree)) {
+      const plain = gitPlainSegment(seg);
+      const rule = segmentDefault(seg, cmd ?? "", dctx, ec);
+      if ((rule !== null && READONLY_ROLE_RUNS.has(rule)) || (plain !== null && segmentDefault(plain, cmd ?? "", dctx, ec) === "default-git-read")) continue;
+      return { path: seg.cwd ?? roots.worktree, gitAny: true };
+    }
+  }
+  const open = unresolvedShellWriteWords(segments, platform)[0];
+  if (open !== undefined) return { path: open, gitAny: false, what: `the target ${open} cannot be resolved, so it may lie in ${roots.worktree}` };
   return null;
 }
 
@@ -189,7 +216,7 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
     if (target !== null) {
       const r = env.roots;
       const scratch = r.scratch.length ? r.scratch[0] : "your scratch dir";
-      const what = target.gitAny ? `a git command changes the repository of the round worktree ${r.worktree}, which is read-only for your role` : `${target.path} is inside ${r.worktree}`;
+      const what = target.what ?? (target.gitAny ? `a git command changes the repository of the round worktree ${r.worktree}, which is read-only for your role` : `${target.path} is inside ${r.worktree}`);
       return deny("child-readonly-write", `Your role reads the round worktree and never writes it: ${what}. Report the change you need to the foreman; files you need go to the scratch dir ${scratch} (a clone: cd ${scratch} && git clone ${r.worktree} <name>).`);
     }
   }
