@@ -83,7 +83,7 @@ import { probeFileHit } from "./splitliteral.ts";
 import { gitProtectedRead, gitReadWrites } from "./effects.ts";
 import { parseShell as parseAst } from "./shellast.ts";
 import { netReadCommand } from "./netread.ts";
-import { normPath } from "./pathnorm.ts";
+import { SHORT_NAME, normPath, shortNameFits } from "./pathnorm.ts";
 import { READ_PATH_TOOLS, psPubKeyReadWords, pubKeyReadWords, sshPublicKey } from "./floors.ts";
 import { expandHomePattern, globSegMatch, wildcardRegExp, wildMatch } from "./glob.ts";
 import { childHandoffWrite, realDefault, realSpelling } from "./pathrules.ts";
@@ -893,20 +893,7 @@ function wordMatches(word: string, value: string, ctx: MatchCtx): boolean {
   return wildMatch(expandHomePattern(pat, ctx.home), (win ? winSegments(value) : value).replace(/\\/g, "/"), foldsCase(ctx.platform));
 }
 
-const SHORT_NAME = /^[^~\\/]{1,6}~[0-9]+(\.[^\\/]{0,3})?$/i;
-
-/**
- * Could the 8.3 short name `short` stand for `long`? Windows builds it from the long name with
- * dots and spaces removed, upper case, `+,;=[]` as `_`: the first six characters (`~1`..`~4`) or
- * two characters plus a 4-hex hash (`~5` on). The extension is not compared (more matches, never fewer).
- */
-export function shortNameFits(short: string, long: string): boolean {
-  const base = short.slice(0, short.indexOf("~")).toUpperCase();
-  const norm = (s: string): string => s.toUpperCase().replace(/[. ]/g, "").replace(/[+,;=[\]]/g, "_");
-  const lastDot = long.lastIndexOf(".");
-  const forms = [norm(long), ...(lastDot > 0 ? [norm(long.slice(0, lastDot))] : [])];
-  return forms.some((f) => f.length > 0 && (f.slice(0, 6) === base || (/^..[0-9A-F]{4}$/.test(base) && f.slice(0, 2) === base.slice(0, 2))));
-}
+export { shortNameFits };
 
 /**
  * Win32 8.3 spellings (M1): each candidate with every short-name segment (`CLAUDE~1`) replaced by

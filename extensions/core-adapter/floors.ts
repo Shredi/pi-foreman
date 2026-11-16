@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseShell, type ShellSegment } from "./shellast.ts";
-import { comparableFs, lexUnder, normPath, sameOrUnder, tildeWord, type Resolver } from "./pathnorm.ts";
+import { comparableFs, lexUnder, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
 import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
@@ -857,6 +857,8 @@ const SECRET_FILE = new RegExp(`(^|/)(${SECRET_GLOBS.map((g) => g.replace(/[.+?^
 
 /** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
 const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|\.claude\/\.credentials\.json|credentials(\.[^/]*)?)(\/|$)/i;
+/** Every literal name `SECRET_DIRS`, `SECRET_EXTRA`, `.git/config` and the auth file compare a segment with (the win32 8.3 short-name fold reads a short name as one of these). */
+const SECRET_NAMES = [".ssh", ".gnupg", ".aws", ".azure", ".config", "gcloud", "gh", "hub", "glab-cli", ".kube", "config", ".docker", "config.json", ".git-credentials", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git", "auth.json", ".claude", ".credentials.json", "credentials", ".pi", "agent", "extensions", "pi-permission-system"];
 const ENV_FILE = /(^|\/)([^/]*\.env|\.env\.[^/]+)$/i;
 /** A bare (separator-free) word is a secret only when it is a dotenv name itself, so `process.env` or `app.env` as an argument is not judged. `.envrc` is not a secret. */
 const ENV_BARE = /^\.env(\.[^/]+)?$/i;
@@ -916,11 +918,15 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
   if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
   let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
+  // win32: a short-name segment (`.ssh` as `SSH~1`) that fits a secret name is judged as that name
+  const shorts = pathLike ? shortNameSpellings(env.platform ?? process.platform, x, SECRET_NAMES) : [];
+  if (!bad) bad = shorts.some((s) => GIT_CONFIG_FILE.test(s) || SECRET_DIRS.test(s) || SECRET_EXTRA.test(s));
   if (!bad && pathLike) {
-    const abs = expandWord(x, env);
-    if (abs !== null) {
+    for (const v of [x, ...shorts]) {
+      const abs = expandWord(v, env);
+      if (abs === null) continue;
       const mine = formsOf(abs, env);
-      bad = authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)));
+      if (authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)))) bad = true;
     }
   }
   if (!bad) return null;

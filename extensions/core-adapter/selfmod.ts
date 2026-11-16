@@ -8,7 +8,7 @@ import { opsOf, realDefault, realSpelling, resolveWord, under } from "./pathrule
 import type { GateRoots } from "./pathrules.ts";
 import type { ShellSegment } from "./shellast.ts";
 import { shellWriteTargets } from "./defaults.ts";
-import { toolPath } from "./pathnorm.ts";
+import { shortNameSpellings, toolPath } from "./pathnorm.ts";
 
 export interface SelfmodHit {
   rule: string;
@@ -58,6 +58,9 @@ function leaf(platform: string, name: string): string {
 /** The agent dir folders and files that change what Pi loads and runs (each directly under the agent dir, folders with everything below them). */
 const AGENT_HARNESS = ["extensions", "npm", "agents", "intercom", "claude-config", "foreman.json", "claude-bridge.json"];
 
+/** Every name the rules of `classify` compare a path segment with (the 8.3 short-name fold reads a short name as one of these). */
+const RULE_NAMES = [...AGENT_HARNESS, ".pi", ".claude", ".mcp.json", "settings.json", "pi-foreman", "state", "handoffs", "sessions", "live.json", "parent", "child", ".gitconfig", ".config", "git", "scratch", "tasks"];
+
 /** `p` is `base/<names...>` or below it (the names compared as `leaf()` spells them). */
 function below(platform: string, base: string, p: string, names: string[]): boolean {
   if (!under(platform, base, p)) return false;
@@ -106,7 +109,9 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
   const userConfigs = [...homes.flatMap((h): [string, string[]][] => [[h, [".gitconfig"]], [h, [".config", "git"]], [h, [".claude"]]]), ...(r.configHome ? spellings(platform, r.configHome, real).map((h): [string, string[]] => [h, ["git"]]) : [])];
   const agentDirs = [...agent, ...agent.map((a) => x.dirname(a)), ...agent.map((a) => x.join(a, "pi-foreman"))];
   const sessionDirs = r.sessionDir ? sessionDirChain(platform, spellings(platform, r.sessionDir, real), agent.map((a) => x.join(a, "sessions"))) : [];
-  for (const c of spellings(platform, abs, real)) {
+  // win32: a short-name segment (`CLAUDE~1`) that fits a name the rules below compare is also judged as that name
+  const real_ = spellings(platform, abs, real);
+  for (const c of [...real_, ...real_.flatMap((s) => shortNameSpellings(platform, s, RULE_NAMES))]) {
     if (dir === "read") {
       if (r.child && states.some((s) => under(platform, s, c)) && !own.some((d) => under(platform, d, c))) return hit("selfmod-state-read");
       continue;
