@@ -703,7 +703,7 @@ def check_worktree(cwd, raw, cfg, verified_merged=False, top_level=()):
     for rec in out.split("\0"):
         if not rec:
             continue
-        if not rec.startswith("?? ") or not disposable(rec[3:], cfg["worktreeDisposable"]):
+        if not rec.startswith("?? ") or not disposable(rec[3:], cfg.get("worktreeDisposable") or []):
             raise Precondition("worktree_dirty", "git status is not empty (changes or untracked files)")
         rel = rec[3:]
         if rel.endswith("/") and os.path.lexists(os.path.join(target, *rel.split("/"), ".git")):
