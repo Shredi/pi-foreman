@@ -636,7 +636,7 @@ of the machine, the herdr core or the terminal. `hc keep` restores the terminal 
   `foreman radar` keeps the presence file a note names for up to 14 days (`radar.doneTtlMinutes` does not delete it).
 - **Hook.** `foreman setup` writes a marked block (`# >>> pi-foreman resume >>>`) into your shell startup file ([install](install.md#the-resume-hook)).
   At a prompt it runs `foreman pane-resume --shell-pid <pid>` only when `HC_TERMINAL_ID` is set, stdin is a terminal, the note exists and this shell has
-  not checked it yet (the note is new, or newer than the shell's marker file `$TMPDIR/pi-foreman-resume.<pid>`, touched before each check); otherwise it
+  not checked it yet (the note is new, or newer than the shell's marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, touched before each check; a missing marker means check again); otherwise it
   starts no process and prints nothing. With no note a prompt costs only file tests.
 - **Decision.** `foreman pane-resume` restarts the session only when all of these hold: `sessions.hc.resume` is not `off`; `hc get` answers; the terminal
   is the one the note names (same creation time and socket); this shell is the terminal's root program; the presence file exists, names this terminal and
