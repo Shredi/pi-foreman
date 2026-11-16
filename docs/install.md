@@ -216,18 +216,19 @@ or a custom agent dir setup prints one line instead; to add it by hand, copy the
 ```sh
 if [ -n "${BASH_VERSION:-}" ]; then
   __pi_foreman_resume() {
-    [ -n "${HC_TERMINAL_ID:-}" ] || return 0
-    [ -t 0 ] || return 0
+    __pi_foreman_rc=$?
+    [ -n "${HC_TERMINAL_ID:-}" ] || return "$__pi_foreman_rc"
+    [ -t 0 ] || return "$__pi_foreman_rc"
     __pi_foreman_note="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json"
-    [ -f "$__pi_foreman_note" ] || return 0
+    [ -f "$__pi_foreman_note" ] || return "$__pi_foreman_rc"
     __pi_foreman_mark="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$"
-    if [ -n "${__pi_foreman_resume_seen:-}" ] && [ -e "$__pi_foreman_mark" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return 0; fi
-    [ -x '<foreman>' ] || return 0
+    if [ -n "${__pi_foreman_resume_seen:-}" ] && [ -e "$__pi_foreman_mark" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return "$__pi_foreman_rc"; fi
+    [ -x '<foreman>' ] || return "$__pi_foreman_rc"
     __pi_foreman_resume_seen=1
     : >| "$__pi_foreman_mark" 2>/dev/null
     '<foreman>' pane-resume --shell-pid "$$"
     case $? in 75|127) rm -f "$__pi_foreman_mark" ;; esac
-    return 0
+    return "$__pi_foreman_rc"
   }
   case "${PROMPT_COMMAND:-}" in
     *__pi_foreman_resume*) ;;

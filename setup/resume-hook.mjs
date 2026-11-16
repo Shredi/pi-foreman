@@ -23,24 +23,26 @@ export function resumeTargets({ home, shell = "" }) {
   return [];
 }
 
+// The function saves `$?` on entry and returns it on every path, so a later PROMPT_COMMAND entry or precmd hook still sees the status of the user's command.
 // A prompt with no note costs only file tests. A note is checked when this shell has not checked one yet or the note is newer than the shell's
 // marker file (touched before each check, in $XDG_RUNTIME_DIR when set, else $TMPDIR); a kept note that did not change is not checked again.
 // A missing marker (tmp cleaner, unwritable dir) means check; the hook removes the marker itself when the command asks for a recheck (exit 75:
 // Pi is still ending) or could not run (exit 127: no node yet), so the next prompt checks again. `>|` keeps the touch working under noclobber.
 const POSIX_BODY = (bin) => [
   "__pi_foreman_resume() {",
-  "  [ -n \"${HC_TERMINAL_ID:-}\" ] || return 0",
-  "  [ -t 0 ] || return 0",
+  "  __pi_foreman_rc=$?",
+  "  [ -n \"${HC_TERMINAL_ID:-}\" ] || return \"$__pi_foreman_rc\"",
+  "  [ -t 0 ] || return \"$__pi_foreman_rc\"",
   "  __pi_foreman_note=\"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
-  "  [ -f \"$__pi_foreman_note\" ] || return 0",
+  "  [ -f \"$__pi_foreman_note\" ] || return \"$__pi_foreman_rc\"",
   "  __pi_foreman_mark=\"${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$\"",
-  "  if [ -n \"${__pi_foreman_resume_seen:-}\" ] && [ -e \"$__pi_foreman_mark\" ] && ! [ \"$__pi_foreman_note\" -nt \"$__pi_foreman_mark\" ]; then return 0; fi",
-  `  [ -x ${q(bin)} ] || return 0`,
+  "  if [ -n \"${__pi_foreman_resume_seen:-}\" ] && [ -e \"$__pi_foreman_mark\" ] && ! [ \"$__pi_foreman_note\" -nt \"$__pi_foreman_mark\" ]; then return \"$__pi_foreman_rc\"; fi",
+  `  [ -x ${q(bin)} ] || return "$__pi_foreman_rc"`,
   "  __pi_foreman_resume_seen=1",
   "  : >| \"$__pi_foreman_mark\" 2>/dev/null",
   `  ${q(bin)} pane-resume --shell-pid "$$"`,
   "  case $? in 75|127) rm -f \"$__pi_foreman_mark\" ;; esac",
-  "  return 0",
+  "  return \"$__pi_foreman_rc\"",
   "}",
 ];
 
@@ -51,25 +53,26 @@ export function renderResumeBlock({ bin, flavor }) {
     return [
       ...head,
       "function __pi_foreman_resume --on-event fish_prompt",
-      "    test -n \"$HC_TERMINAL_ID\"; or return 0",
+      "    set -l last $status",
+      "    test -n \"$HC_TERMINAL_ID\"; or return $last",
       "    set -l dir $HOME/.pi/agent",
       "    test -n \"$PI_CODING_AGENT_DIR\"; and set dir $PI_CODING_AGENT_DIR",
       "    set -l note \"$dir/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
-      "    test -f \"$note\"; or return 0",
+      "    test -f \"$note\"; or return $last",
       "    set -l tmp /tmp",
       "    test -n \"$TMPDIR\"; and set tmp $TMPDIR",
       "    test -n \"$XDG_RUNTIME_DIR\"; and set tmp $XDG_RUNTIME_DIR",
       "    set -l mark \"$tmp/pi-foreman-resume.$fish_pid\"",
       "    if set -q __pi_foreman_resume_seen; and test -e \"$mark\"; and not test \"$note\" -nt \"$mark\"",
-      "        return 0",
+      "        return $last",
       "    end",
-      `    test -x ${q(bin)}; or return 0`,
+      `    test -x ${q(bin)}; or return $last`,
       "    set -g __pi_foreman_resume_seen 1",
       "    : > \"$mark\" 2>/dev/null",
       `    ${q(bin)} pane-resume --shell-pid $fish_pid`,
       "    set -l rc $status",
       "    if test $rc -eq 75; or test $rc -eq 127; rm -f \"$mark\"; end",
-      "    return 0",
+      "    return $last",
       "end",
       RESUME_END,
     ].join("\n");

@@ -642,7 +642,7 @@ of the machine, the herdr core or the terminal. `hc keep` restores the terminal 
   is the one the note names (same creation time and socket); this shell is the terminal's root program; the presence file exists, names this terminal and
   is not a normal end; its Pi process is gone (heartbeat before the last boot, or the pid is dead); the terminal's root pid differs from the note's (a lone
   Pi crash with the shell still the same program is not restarted: the note is cleared and the hand-resume line printed); the session was active within 14 days and its folder exists; and no other run holds the
-  session's lock. Otherwise it keeps the note (a kept note is not decided again at every prompt: only in a new shell, or after the note changed, for example when Pi ran again in this shell) or clears it and, where you can resume by hand, prints `pi --session <file>`.
+  session's lock. Otherwise it keeps the note (a kept note is not decided again at every prompt: only in a new shell, or after the note changed, for example when Pi ran again in this shell) or clears it and, where you can resume by hand, prints `pi --session <id>` (the session id; for a session in a custom session dir, which is never restarted, the session file path).
 - **Restart.** A 5 s countdown (Enter starts now, any other key cancels and deletes the note), then `pi --session <file>` in the note's folder with the
   session's permission profile, plan phase and `PI_BG_*` variables again. The session comes back with its history, identity (an opened child keeps its parent
   link) and ceremony state. It gets one message (appended, never system text, no turn) with the time of the last sign of life; waits are lost.
