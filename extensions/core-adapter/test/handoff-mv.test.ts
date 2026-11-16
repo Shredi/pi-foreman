@@ -24,7 +24,7 @@ const seen = (command: string): string => {
 };
 
 test("mv onto an allow-list name or a file below work/ passes the child floor and is a default allow", { skip: !posix }, () => {
-  for (const n of ["result.md", "plan.md", "ask.md", ".seen", "ask-3.md", "work/y.txt", "work/sub/z.txt"]) assert.equal(seen(`mv ${wt}/a ${H}/${n}`), "allow:default-write-in", n);
+  for (const n of ["result.md", "plan.md", "ask.md", "ask-3.md", "work/y.txt", "work/sub/z.txt"]) assert.equal(seen(`mv ${wt}/a ${H}/${n}`), "allow:default-write-in", n);
 });
 
 test("mv into an existing dir: work/ and work/sub/ accept the moved name", { skip: !posix }, () => {

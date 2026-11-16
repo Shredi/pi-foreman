@@ -1,6 +1,5 @@
-// Ruling files of the ask contract (R6 lane 4): `ruling-<n>.md` / `ruling.md` next to an `ask.md` in a handoff dir.
-// Pure file-state helpers: the harness writes `.seen` when a ruling wait wakes, the blocked state is recomputed from
-// the files, a ruling older than its ask is ignored. A parent ruling never satisfies the finish gate (the chair runs
+// Ruling files (R6 lane 4): `ruling-<n>.md` / `ruling.md` next to an `ask.md` in a handoff dir.
+// Pure file-state helpers: a ruling older than its ask is ignored. A parent ruling never satisfies the finish gate (the chair runs
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -9,21 +8,17 @@ import type { Decision } from "./permoverlay.ts";
 import { isRulingName, RULING_RE } from "./rulingname.ts";
 
 export { isRulingName };
-const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
 
 const BRIEF_RE = /^brief-[A-Za-z0-9._-]{1,64}\.md$/;
 
-/** True for a `brief-<x>.md` file name (a parent's brief to the session; not a ruling name for the ask contract). */
+/** True for a `brief-<x>.md` file name (a parent's brief to the session; the answer to a child's `ask.md`). */
 export const isBriefName = (name: string): boolean => BRIEF_RE.test(name);
 
 /** A name for self-write tracking and refusals: `isRulingName`, the plan checkpoint's `ruling-plan.md` (checkpoint.ts) and `brief-<x>.md` (both lift the caps, index.ts capsReset). */
 export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || name === "ruling-plan.md" || isBriefName(name);
 
-/** A parent file that lifts the review cap and the read budgets: `ruling-<n>.md` (n >= 1) or `brief-<x>.md`; never `ruling.md`, `ruling-plan.md`, `brief.md`. */
-export const isCapsResetName = (name: string): boolean => {
-  const n = RULING_RE.exec(name)?.[1];
-  return (n !== undefined && Number(n) >= 1) || isBriefName(name);
-};
+/** A parent file that lifts the review cap and the read budgets: `brief-<x>.md`; never `ruling-<n>.md`, `ruling.md`, `ruling-plan.md`, `brief.md`. */
+export const isCapsResetName = (name: string): boolean => isBriefName(name);
 
 const mtimeOf = (p: string): number | null => {
   try {
@@ -72,42 +67,16 @@ export function isAnswerFile(dir: string, name: string): boolean {
 
 const PLAN_RULING_NAMES = ["ruling.md", "ruling-plan.md"];
 
-/** `dir` holds an answer file (`isAnswerFile`) modified after `sinceMs`. */
-export function answerNewerThan(dir: string, sinceMs: number): boolean {
+/** `dir` holds an answer file (`isAnswerFile`) modified after `sinceMs` (`orAt`: or at `sinceMs`, so an equal mtime counts). */
+export function answerNewerThan(dir: string, sinceMs: number, orAt = false): boolean {
   try {
     return fs.readdirSync(dir).some((name) => {
       const m = mtimeOf(path.join(dir, name));
-      return m !== null && m > sinceMs && isAnswerFile(dir, name);
+      return m !== null && (orAt ? m >= sinceMs : m > sinceMs) && isAnswerFile(dir, name);
     });
   } catch {
     return false;
   }
-}
-
-/** `needs_ruling: no` line of an ask.md: an informational ask. */
-export const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
-
-/**
- * The ask in `dir` is unanswered: `.ask` is present and `.seen` does not name its ruling (`ruling-<n>.md` for
- * `ask-<n>`; with no number in `.ask`, any `.seen` ends it). `ruling.md` (the plan ruling) never answers an ask by
- * itself: with `.seen` = `ruling.md` the ask is closed only when its own `ruling-<n>.md` exists and is not older than
- * `ask.md` (a later plan-ruling wake overwrites `.seen` and must not reopen an answered ask). Never a stored flag.
- */
-export function askOpen(dir: string): boolean {
-  const ask = readText(path.join(dir, ".ask"));
-  if (ask === null) return false;
-  // an informational ask (`needs_ruling: no`) never holds the hand, whatever an older `.ask` says
-  if (NEEDS_RULING_NO_RE.test(readText(path.join(dir, "ask.md")) ?? "")) return false;
-  const seen = readText(path.join(dir, ".seen"));
-  if (seen === null) return true;
-  const named = seen.trim();
-  const n = ASK_N_RE.exec(ask.trim())?.[1];
-  if (n === undefined) return false;
-  const own = `ruling-${Number(n)}.md`;
-  if (named === own) return false;
-  if (named !== "ruling.md") return true;
-  const ownFile = path.join(dir, own);
-  return !(mtimeOf(ownFile) !== null && rulingFresh(ownFile));
 }
 
 const realKey = (p: string): string => {

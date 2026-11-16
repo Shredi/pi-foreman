@@ -24,7 +24,6 @@ async function openRig(t: T) {
   const rig = await r11Rig(t, {}, { piExtra: { registerTool: (d: { name: string }) => void registered.push(d.name) } });
   const dir = rig.handoff("h1", "child");
   fs.writeFileSync(path.join(dir, "ask.md"), "# Ask 3: db choice\nWhich?\n");
-  fs.writeFileSync(path.join(dir, ".ask"), "ask-3\n");
   return { rig, dir, registered };
 }
 
@@ -70,7 +69,6 @@ test("an answered owner dialog writes no ruling-<n>.md into any handoff dir, chi
   const { rig, dir: asChild } = await openRig(t);
   const asParent = rig.handoff("kid", "parent");
   fs.writeFileSync(path.join(asParent, "ask.md"), "# Ask 2: other\n");
-  fs.writeFileSync(path.join(asParent, ".ask"), "ask-2\n");
   for (const r of [plain, notes]) assert.equal(await result(rig, r), undefined);
   for (const dir of [asChild, asParent]) assert.deepEqual(fs.readdirSync(dir).filter((f) => /^ruling/.test(f)), [], dir);
 });

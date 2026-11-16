@@ -381,14 +381,14 @@ def sym_key(n):
 
 
 def asks_you(n):
-    """An open ask waits for the owner on this session: an open ask.md of its own handoff, or a child run or
-    session that asks (a forwarded permission prompt) and has not ended."""
+    """An open ask waits for the owner on this session: a remote child's pending ask from the registry, or a
+    child run or session that asks (a forwarded permission prompt) and has not ended."""
     return bool(n.get("asks")) or any(c["state"] == "ask" and c.get("ended") is None for c in n["children"])
 
 
 def icon_key(n):
-    """Symbol key for a row: `needs-you` while an own dialog or ask, an open ask file or a forwarded child ask waits
-    for the owner (it beats every other state but done and lost), else the presence state of a live session when
+    """Symbol key for a row: `needs-you` while an own dialog or ask, a remote child's pending ask or a forwarded child ask
+    waits for the owner (it beats every other state but done and lost), else the presence state of a live session when
     its file has one, else sym_key."""
     key = sym_key(n)
     p = n.get("presence")
@@ -741,10 +741,6 @@ def build(data, now):
                 n["tasks"].append({"id": str(t.get("id") or ""), "label": str(t.get("label") or ""),
                                    "pid": t["pid"] if isinstance(t.get("pid"), int) and not isinstance(t.get("pid"), bool) else None,
                                    "ageSeconds": int(num(t.get("ageSeconds")) + since_hb)})
-        asks = [{"n": a["n"], "topic": str(a.get("topic") or "")} for a in (d.get("asks") or [])
-                if isinstance(a, dict) and isinstance(a.get("n"), int) and not isinstance(a.get("n"), bool)]
-        if asks:
-            n["asks"] = asks
         dots = []
         # a live file nobody refreshes (heartbeat older than LOST_AFTER, the lost rule) or of a finished session keeps
         # PR dots from before a merge: its dots are not trusted

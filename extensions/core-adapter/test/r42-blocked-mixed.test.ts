@@ -48,8 +48,8 @@ async function parentWait(r: Rig): Promise<() => Promise<void>> {
   await within(r.wrote(path.join(dir, "ask.md")));
   await until(() => r.events("blocked_open").length === 1);
   return async () => {
-    fs.writeFileSync(path.join(dir, "ruling-1.md"), "A\n");
-    await within(r.fire("tool_result", { toolName: "read", toolCallId: "r1", input: { path: path.join(dir, "ruling-1.md") }, content: [{ type: "text", text: "A" }], isError: false }));
+    fs.writeFileSync(path.join(dir, "brief-1.md"), "A\n");
+    await within(r.fire("tool_result", { toolName: "bash", toolCallId: "r1", input: { command: "cp brief.md brief-1.md" }, details: { exitCode: 0 }, content: [{ type: "text", text: "" }], isError: false }));
     await until(() => r.events("blocked_closed").length >= 1);
   };
 }

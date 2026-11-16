@@ -356,7 +356,7 @@ test("watcher: two machines get two listeners, each filtered to its own entries"
   assert.equal(r.wakes.length, 1);
 });
 
-test("watcher: a delivered ruling (rulings up) clears the ask on refresh; a plain brief does not", async () => {
+test("watcher: a delivered brief or ruling-<n>.md (answers up) clears the ask on refresh; a plan ruling or a steer (rulings or briefs up) does not", async () => {
   const r = rig();
   r.w.start();
   r.put("ask.md", "q");
@@ -364,12 +364,14 @@ test("watcher: a delivered ruling (rulings up) clears the ask on refresh; a plai
   assert.ok(r.reg().ask);
   const reg = readRegistry(r.dir);
   reg.sessions[0].briefs = 1;
+  reg.sessions[0].rulings = 1;
   writeRegistry(r.dir, reg);
   r.w.refresh();
-  assert.ok(r.reg().ask, "a plain brief leaves the ask");
+  assert.ok(r.reg().ask, "a steer or a plan ruling leaves the ask");
   const ruled = readRegistry(r.dir);
   ruled.sessions[0].briefs = 2;
   ruled.sessions[0].rulings = 1;
+  ruled.sessions[0].answers = 1;
   writeRegistry(r.dir, ruled);
   r.w.refresh();
   assert.equal(r.reg().ask, undefined);
@@ -623,6 +625,23 @@ test("watcher: the ask stores n and topic from the ask.md header, never the noti
   assert.equal(ask.seq, 7);
   assert.equal(ask.n, 3);
   assert.equal(ask.topic, "db choice");
+});
+
+test("watcher: an ask written before `answers` existed (it carries `rulings` only) is cleared when answers go up, and stays while they do not", () => {
+  const r = rig([entry({ ask: { seq: 1, rulings: 0 } })]);
+  r.w.refresh();
+  assert.ok(r.reg().ask, "no answer yet");
+  const reg = readRegistry(r.dir);
+  reg.sessions[0].briefs = 1;
+  reg.sessions[0].rulings = 1;
+  writeRegistry(r.dir, reg);
+  r.w.refresh();
+  assert.ok(r.reg().ask, "a steer or a plan ruling leaves it");
+  const answered = readRegistry(r.dir);
+  answered.sessions[0].answers = 1;
+  writeRegistry(r.dir, answered);
+  r.w.refresh();
+  assert.equal(r.reg().ask, undefined);
 });
 
 test("watcher: an ask.md without the header stores no n", async () => {

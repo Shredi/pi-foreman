@@ -23,8 +23,8 @@ const write = (name: string, c: MatchCtx) => checkToolCall(rules, "write", { pat
 
 test("child with handoffDir: allow-list names pass the childBlock, parent-owned names stay blocked", () => {
   const c = ctx({ handoffDir: H });
-  for (const n of ["plan.md", "result.md", "ask.md", "ask-2.md", ".ask", ".seen", ".steer-last-read.json", "work/a/b.txt"]) assert.notEqual(write(n, c)?.kind, "deny", `${n}: ${JSON.stringify(write(n, c))}`);
-  for (const n of ["ruling.md", "brief-1.md", "steer.md", "close.json", "parent", "child"]) assert.equal(write(n, c)?.kind, "deny", n);
+  for (const n of ["plan.md", "result.md", "ask.md", "ask-2.md", ".steer-last-read.json", "work/a/b.txt"]) assert.notEqual(write(n, c)?.kind, "deny", `${n}: ${JSON.stringify(write(n, c))}`);
+  for (const n of [".ask", ".seen", "ruling.md", "brief-1.md", "steer.md", "close.json", "parent", "child"]) assert.equal(write(n, c)?.kind, "deny", n);
 });
 
 test("child without handoffDir keeps today's rules for the same names", () => {

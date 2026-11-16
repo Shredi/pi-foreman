@@ -196,7 +196,7 @@ are additive: older readers ignore them, and each is present only when there is 
 | `unreviewed` | the `pr_watch` wait | `[{n, repo, host}]`, present only for watched PRs whose head moved past the session's last reviewer PASS (see [tools](tools.md#watch)); the herdr-app mod matches it to the PR chip by number, repository and host and shows `unreviewed head` on the chip and its hover card; the sidebar's `fm_a2` item reads `pr #<n> unreviewed head`. A PR the session only follows has no entry; a PASS on the head or the end of the PR removes it |
 | `review` | the `pr_watch` wait | `[{n, repo, host, head, state}]` for the PRs the session opened with its PR tool and manages as drafts (see [tools](tools.md#draft)): `head` is the host head the fact is about (the head the watch last evaluated; for `wip` and `unreviewed` it is not a reviewed head), `state` is `ok`, `wip` or `unreviewed`, with `noChecks` when no checks are confirmed. Additive; the pill uses it beside the host's facts. The radar copies it only when well-formed and also passes the host's head and merge state of each tracked PR (`head`, `mergeState`) into the feed |
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
-| `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
+| `asks` | radar session node | `[{n, topic}]` for a remote session's open ask; the live file has no `asks` field |
 | `dots` | live file, radar session node | the dots row: `[{n, state, label, src}]`, at most 14: the external status items (`src` `ext`); `n` is `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters. The extension writes no `pr` dots any more; the radar still reads one from an older live file (`url`) and the herdr-app mod draws one aggregate dot for it (the job list of the hover card comes from the `openPrs` feed). The radar copies the dots to the session node unless the live file is stale (heartbeat older than 90 s, the lost rule) or its session is done, so a finished session keeps no PR dot from before a merge; the herdr-app mod counts a PR seen twice once and skips a merged or closed one. The `prs` field of the `pr_watch` wait is separate and unchanged |
 | `repo`, `branch` | live file, radar session node | `owner/name` of the origin remote and the checked-out branch (each present only when known); the herdr-app mod attaches a feed PR to the session with equal repo and head branch, and also one the session watches (`prs`, see above) whose repo or head repo is the session's |
 
@@ -227,7 +227,7 @@ State and cell:
 
 | `sym` | Cell (`unicode`) | Animated |
 |---|---|---|
-| `needs-you` (an own dialog or ask, an open `ask.md` with no `ruling-<n>.md`, or a child's ask forwarded to this session) | ❓ (`?` in `ascii`) | no: beats the spinner |
+| `needs-you` (an own dialog or ask, an own `ask.md` that no answer file or typed input has closed, or a remote child's ask) | ❓ (`?` in `ascii`) | no: beats the spinner |
 | `working` (a turn or run; registry `starting` and `pending` too) | spinner frame | yes |
 | `waiting-external` or `idle` while the session has work of its own: a child run or live child session, a `bg_run` or `foreman_bg` task, a running `pr_watch` or `foreman_wait` | spinner frame | yes |
 | `waiting-external` with no local work | ↻ | no |
@@ -270,7 +270,7 @@ The presence file (`state/live/<session>.json`) carries `presence`, one of six n
 `config/symbols.json`. Precedence: `done` > `needs-you` > `working` > `waiting-external` > `idle` (a finished
 session is `done` whatever else is still open). The legacy `state` field is unchanged for older readers (`blocked` is
 an own dialog; `waiting-external` still reads `working`), and `presence` is absent from files written by older versions.
-The radar derives `needs-you` from the file too (an open `asks` entry, or a child run in state `ask`), so a parent whose
+The radar derives `needs-you` from the file too (an open `asks` entry of a remote session, or a child run in state `ask`), so a parent whose
 turn ended still shows ❓ while a forwarded child ask waits.
 
 **Away field.** The presence file gains the optional `away: true`, written only while a foreman warm window is open and
@@ -285,7 +285,7 @@ rule; `presence` and `away` are unchanged. The radar JSON carries `owner` when t
 | `presence` | `state_icon` glyph (unicode / nerd) | Meaning |
 |---|---|---|
 | `working` | ⏳ / `\uf252` | the foreman turn runs, or a child run is live, with nothing for you to do |
-| `needs-you` | ❓ / `\uf128` (`?` in `ascii`) | an own permission dialog, `ask_user_question`, guard or drift ask or checkpoint, an open `ask.md` with no `ruling-<n>.md`, or a child's ask forwarded to this session waits for you |
+| `needs-you` | ❓ / `\uf128` (`?` in `ascii`) | an own permission dialog, `ask_user_question`, guard or drift ask or checkpoint, an own `ask.md` that no answer file or typed input has closed, or a remote child's ask waits for you |
 | `waiting-owner` | ✋ / `\uf256` | older files only: an open ask or dialog (now `needs-you`) |
 | `waiting-external` | ↻ / `\uf017` | only external waits are pending: `foreman_wait`, `foreman_bg` pid waits, `pr_watch` |
 | `idle` | ⏸ / `\uf04c` | none of the above |
@@ -383,9 +383,8 @@ live file shows as idle. The opener id is `--parent-id`, `PI_INTERCOM_SESSION_ID
 config `stableId`; a child that closes marks its own entry `closed`. A remote child (`--machine`, see [remote child sessions](sessions.md#remote-child-sessions)) is shown as `label@machine · state · age`; its state is `ask` when an ask is set, else the hc terminal status the watcher stores in `remoteLive` (the registry status only before the first hc status), not a local live file.
 
 Ask signal: when a session opened by `foreman session open` writes `ask.md` (first line `# Ask <n>: <topic>`) in its own
-handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so Herdr shows `blocked` with the label
-`ask <n>: <topic>` (`herdr:blocked`, the same channel as a dialog; never `herdr agent prompt`). Writing `.seen` in that
-dir, or shutdown, releases it; a ruling wait that ends as `superseded by brief <path>` (see [sessions](sessions.md)) does not release it. A parent that is not a Pi session polls `*.md` and `.ask`; the file contract is in
+handoff dir, pi-foreman opens a blocked source (no marker file), so Herdr shows `blocked` with the label
+`ask <n>: <topic>` (`ask` when the first line is not that header; `herdr:blocked`, the same channel as a dialog; never `herdr agent prompt`). An answer file (a brief or an old-footer `ruling-<n>.md`, not older than `ask.md`), typed input at the pane, or shutdown releases it. The end of the turn releases only the `herdr:blocked` signal (Herdr shows the pane unblocked from then on, and a later check of the same still-open version of `ask.md` does not raise it again, except after a reload or a new session start, which check afresh, or when a new `ask.md` version is written); the live file keeps "needs you" until the ask is answered. That label is the child's own pane; the parent's radar shows no separate ask row for a local file ask, a remote ask keeps it. A parent that is not a Pi session reads `ask.md` in the handoff dir. What counts as an answer, and what a reload forgets, is in
 [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session).
 
 ## Remote clients and Pi pane status
@@ -417,7 +416,7 @@ folder and reapplied at startup, because Herdr forgets the view on a server rest
 Herdr marks an agent that needs you from its agent status, and it has no separate switch for the highlight in its
 config reference (`herdr --default-config`): the highlight follows the status. pi-foreman raises that status through the
 `herdr:blocked` event whenever the sidebar draws ✋ or `?` for a session: a dialog or permission prompt, a checkpoint,
-the ask-by-file `.ask` of a child session, and a forwarded child prompt that a child run is waiting on. See
+the ask-by-file `ask.md` of the session itself, and a forwarded child prompt that a child run is waiting on. See
 [blocked shim](sessions.md#blocked-shim), including when the shim steps aside (Herdr's own integration, version 10 or
 later, takes over) and the `herdr.blockedShim` switch.
 

@@ -50,7 +50,7 @@ test("the loop-stop text: byte-identical without a parent; the parented text nam
   );
   const p = loopRefusalParented(STOP);
   assert.match(p, /^pi-foreman: launch refused \[review_loop\]: the last two plan review rounds failed with the same findings \(item:1\)\. /);
-  assert.match(p, /report the open findings to the parent in an intercom message whose first line starts with Question, and end your turn: the parent lifts this stop with a brief; a message does not, and a ruling-<n>\.md from a parent still does/);
+  assert.match(p, /report the open findings to the parent in an intercom message whose first line starts with Question, and end your turn: the parent lifts this stop with a brief; a message does not, and neither does a ruling-<n>\.md/);
   assert.match(p, /ask_user_question only when a finding needs the owner's decision/);
   assert.match(loopRefusalParented({ rule: "stalled", kind: "code", sig: ["item:2"] }), /no change to the work since the round before \(item:2\)/);
 });
@@ -134,5 +134,7 @@ test("a parented session: a revised plan failing under the same item goes on; th
   const first = await review(FAIL1); // the first launch after a ruling is told about it, once
   assert.match(first ?? "", /a newer ruling arrived/);
   assert.ok(!isLoop(first));
-  assert.equal(await review(FAIL1), null, "the ruling lifts the stop");
+  assert.ok(isLoop(await review(FAIL1)), "a ruling-<n>.md does not lift the stop");
+  w.rule("brief-1.md", "go on\n");
+  assert.equal(await review(FAIL1), null, "the brief lifts the stop");
 });

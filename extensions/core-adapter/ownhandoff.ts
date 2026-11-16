@@ -5,7 +5,7 @@
 //
 // Narrow on purpose: fixed flags (no recursion, no -t/-T/-L), no redirects, no `$`, `~` or `..`, a glob only as
 // a trailing `<dir>/*` on a read (the `"cp"` destination excluded), write operands contained in the two roots (symlinks resolved, never below
-// `.git`), and never a handoff dir's `parent` or `child` file (the close check and the ask contract read them).
+// `.git`), and never a handoff dir's `parent` or `child` file (the close check reads them).
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained } from "./effects.ts";

@@ -447,8 +447,10 @@ class AskFooterTest(unittest.TestCase):
     def test_footer_names_the_ask_file_contract_in_both_variants(self):
         for plan_first in (True, False):
             text = fsn.footer("demo", plan_first)
-            for needle in ("# Ask <n>: <topic>", "ask.md", "ruling-<n>.md", ".seen", ".ask", "foreman_wait", "Session not found"):
+            for needle in ("# Ask <n>: <topic>", "ask.md", "brief-<n>.md", "foreman_wait", "Session not found"):
                 self.assertIn(needle, text)
+            for gone in ("ruling-<n>.md", ".seen", ".ask`"):
+                self.assertNotIn(gone, text)
             self.assertIn("Never ask by `herdr agent prompt`", text)
 
     def test_footer_says_session_not_found_means_no_intercom_retry(self):

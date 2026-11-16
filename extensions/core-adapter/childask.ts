@@ -5,10 +5,16 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseAskHeader } from "./askcontract.ts";
 import { isRulingName } from "./ruling.ts";
 
 export const CHILD_ASK_POLL_MS = 500;
+const ASK_HEADER_RE = /^# Ask (\d{1,6}): (\S.*)$/;
+
+/** `# Ask <n>: <topic>` on the first line of ask.md; null for anything else. */
+export function parseAskHeader(text: string): { n: number; topic: string } | null {
+  const m = ASK_HEADER_RE.exec(text.split(/\r?\n/, 1)[0].trim());
+  return m ? { n: Number(m[1]), topic: m[2].trim() } : null;
+}
 const safe = (s: string): string => s.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "_";
 
 export const childAsksRoot = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "child-asks");

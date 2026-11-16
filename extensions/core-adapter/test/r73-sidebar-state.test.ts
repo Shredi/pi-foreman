@@ -106,17 +106,17 @@ test("LiveState: an own dialog shows needs-you and clears on release", () => {
   l.stop();
 });
 
-test("LiveState: an open ask.md with no ruling shows needs-you and clears when ruling-<n>.md is seen", () => {
+test("LiveState: an own ask.md alone shows no needs-you (the ask's blocked source does, ownask.ts)", () => {
   const d = tmp();
   const dir = path.join(d, "pi-foreman", "handoffs", "20260101-000000-job");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "child"), "kid-1\n");
   fs.writeFileSync(path.join(dir, "ask.md"), "# Ask 1: which way\n");
-  fs.writeFileSync(path.join(dir, ".ask"), "ask-1\n");
   const l = LiveState.start({ agentDir: d, sessionId: "kid-1", cwd: "/w", mode: "rpc", env: { PI_INTERCOM_SESSION_ID: "kid-1" } }, () => [])!;
+  assert.equal(l.snapshot().presence, "idle");
+  const release = l.hold();
   assert.equal(l.snapshot().presence, "needs-you");
-  fs.writeFileSync(path.join(dir, "ruling-1.md"), "go\n");
-  fs.writeFileSync(path.join(dir, ".seen"), "ruling-1.md\n");
+  release();
   assert.equal(l.snapshot().presence, "idle");
   l.stop();
 });
