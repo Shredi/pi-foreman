@@ -194,15 +194,8 @@ test("item 4/8: a risky change: the PR gate refuses until the pass ran; the trig
   assert.deepEqual((await traces(w, "review_stakes")).map((e) => e.reasons), ["design", "foreman"], "the foreman's own launch adds its reason once");
 });
 
-test("item 4: an untagged large change asks nothing; with reviewBeforePr false there is no PR check; with no model nothing is required", async (t) => {
-  const small = await setup(t);
-  for (let i = 0; i < 7; i++) work(small.w, `src/m${i}/big.ts`, 200);
-  await builder(small.a);
-  await normal(small.a, "PASS");
-  assert.equal(await pr(small.a), "");
-  assert.doesNotMatch(await settle(small.a), /high-stakes/);
-  assert.deepEqual(await traces(small.w, "review_stakes"), []);
-
+// an untagged large change asks nothing: asserted in highstakes-wiring-risk-gaps.test.ts (the parser tag and a large untagged change)
+test("item 4: with reviewBeforePr false there is no PR check; with no model nothing is required", async (t) => {
   const off = await setup(t, { model: MODEL }, { reviewBeforePr: false });
   await built(off.w, off.a);
   assert.doesNotMatch(await pr(off.a), /high_stakes/);

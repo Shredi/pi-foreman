@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { build, commitIn, git, hsPass, hsRun, launch, pr, setup, settle, stakes, worktree } from "./_hsrig.ts";
+import { build, commitIn, end, git, hsPass, hsRun, launch, pr, setup, settle, stakes, worktree } from "./_hsrig.ts";
 import type { SetupOpts } from "./_hsrig.ts";
 
 const SIZING_OFF: SetupOpts = { cfg: { ladder: { sizing: { enabled: false } } } };
@@ -14,60 +14,86 @@ const sized = (risk: string[]) => ({ size: { files: ["src/a/x.ts"] }, risk });
 const tagged = (risk: string[], sizing: boolean) => (sizing ? sized(risk) : { risk });
 const refused = (text: string) => assert.match(text, /\[pr_refused:high_stakes_required\]/);
 
-for (const sizing of [true, false]) {
-  for (const tag of ["permission", "guard", "concurrency"]) {
-    test(`risk tag ${tag} on a one-line change fires the review with sizing ${sizing ? "on" : "off"}`, async (t) => {
-      const { w, a } = await setup(t, sizing ? {} : SIZING_OFF);
-      commitIn(w.project, "src/a/x.ts");
-      await build(a, tagged([tag], sizing));
-      assert.deepEqual(await stakes(w), [tag]);
-      const text = await pr(a);
-      refused(text);
-      assert.match(text, new RegExp(`risk tag ${tag}`));
-    });
-  }
+const TAGS = ["security", "permission", "guard", "concurrency", "design"];
 
-  test(`the parser tag alone fires nothing, and neither does a large untagged change, with sizing ${sizing ? "on" : "off"}`, async (t) => {
+for (const sizing of [true, false]) {
+  test(`risk tags ${TAGS.join(", ")} on a one-line change each fire the review with sizing ${sizing ? "on" : "off"}${sizing ? "; the pass stays valid after a fast-forward into the base branch" : ""}`, async (t) => {
     const { w, a } = await setup(t, sizing ? {} : SIZING_OFF);
-    for (const m of ["a", "b", "c", "d", "e", "f"]) commitIn(w.project, `src/${m}/big.ts`, "x\n".repeat(150)); // 900 lines in 6 modules
+    if (sizing) {
+      for (const m of ["a", "b", "c", "d", "e", "f"]) {
+        fs.mkdirSync(path.join(w.project, "src", m), { recursive: true });
+        fs.writeFileSync(path.join(w.project, "src", m, "big.ts"), "x\n".repeat(150)); // 900 lines in 6 modules, one commit
+      }
+    }
     commitIn(w.project, "src/a/x.ts");
-    await build(a, tagged(["parser"], sizing));
-    assert.deepEqual(await stakes(w), [], "parser fires nothing");
-    assert.equal(await pr(a), "");
-    await build(a, sizing ? { size: { files: ["src/a/big.ts", "src/b/big.ts", "src/c/big.ts", "src/d/big.ts", "src/e/big.ts", "src/f/big.ts"] } } : {});
-    assert.deepEqual(await stakes(w), [], "a large untagged change fires nothing");
-    assert.equal(await pr(a), "");
-    assert.equal(await settle(a), "");
+    if (sizing) {
+      // the parser tag alone fires nothing, and neither does a large change (the parser tag is no trigger, the size is none)
+      await build(a, { size: { files: ["src/a/big.ts", "src/b/big.ts", "src/c/big.ts", "src/d/big.ts", "src/e/big.ts", "src/f/big.ts"] }, risk: ["parser"] });
+      assert.deepEqual(await stakes(w), [], "parser and a large change fire nothing");
+      assert.equal(await pr(a), "");
+      assert.equal(await settle(a), "");
+      // a heavy builder launch needs an approved plan; the tier is raised after the build (the gates read it)
+      await a.command("ceremony", "heavy");
+      const heavy = await pr(a);
+      refused(heavy);
+      assert.match(heavy, /the task is heavy/);
+      await a.command("ceremony", "standard");
+      assert.doesNotMatch(await pr(a), /high_stakes/, "the owner's standard drops the heavy reason");
+    } else {
+      const parser = await launch(a, "builder", "build the widget", { risk: ["parser"] });
+      assert.equal(parser.blocked, null, String(parser.blocked));
+      assert.deepEqual(await stakes(w), [], "the parser tag alone fires nothing with sizing off");
+      await end(a, parser, "builder", "done");
+    }
+    await build(a, tagged(TAGS, sizing));
+    const fired = await stakes(w);
+    assert.equal(fired.length, sizing ? 2 : 1, "the tags fire once, after the heavy tier of the sizing-on session");
+    assert.deepEqual(String(fired.at(-1)).split(",").sort(), [...TAGS].sort(), "every tag is a reason");
+    const text = await pr(a);
+    refused(text);
+    for (const tag of TAGS) assert.match(text, new RegExp(`\\b${tag}\\b`));
+    assert.match(text, /risk tag /);
+    if (sizing) {
+      // tier heavy joins the tags, then the owner's /ceremony standard drops only the heavy reason
+      await a.command("ceremony", "heavy");
+      assert.match(await pr(a), /risk tag .*; the task is heavy/);
+      await a.command("ceremony", "standard");
+      const lowered = await pr(a);
+      refused(lowered);
+      assert.match(lowered, /risk tag /);
+      assert.doesNotMatch(lowered, /the task is heavy/, "only the heavy reason is dropped");
+      assert.match(await settle(a), /a high-stakes review must run/);
+      await hsPass(a);
+      git(w.project, "checkout", "-q", "main");
+      git(w.project, "merge", "-q", "--ff-only", "feature");
+      assert.doesNotMatch(await pr(a), /high_stakes/, "main holds the reviewed head");
+      assert.doesNotMatch(await settle(a), /high-stakes review must run/);
+    }
   });
 }
 
-test("a builder launched while the tier is already heavy makes the review due at the launch", async (t) => {
+test("heavy with no builder and no change asks for none; a builder launched while heavy makes the review due at the launch; builders in three worktrees ask for exactly one review", async (t) => {
   const { w, a } = await setup(t, { tier: "heavy" });
-  commitIn(w.project, "src/a/x.ts");
-  const b = await launch(a, "builder", "build the widget");
-  assert.equal(b.blocked, null, String(b.blocked));
-  assert.deepEqual(await stakes(w), ["heavy"], "fired at the launch, before any gate");
-  await build(a);
-  const text = await pr(a);
-  refused(text);
-  assert.match(text, /the task is heavy/);
-});
+  assert.doesNotMatch(await settle(a), /high-stakes/);
+  assert.doesNotMatch(await pr(a), /high_stakes/);
+  assert.deepEqual(await stakes(w), []);
 
-test("heavy with builders in three worktrees asks for exactly one review; heavy with no builder and no change asks for none", async (t) => {
-  const idle = await setup(t, { tier: "heavy" });
-  assert.doesNotMatch(await settle(idle.a), /high-stakes/);
-  assert.doesNotMatch(await pr(idle.a), /high_stakes/);
-  assert.deepEqual(await stakes(idle.w), []);
-
-  const { w, a } = await setup(t, { tier: "heavy" });
   w.state.answer = "allow once"; // a launch in a sibling asks the gate
   const wts = ["w1", "w2", "w3"].map((n) => worktree(w, n));
-  for (const dir of wts) {
-    commitIn(dir, "src/a/x.ts");
+  commitIn(wts[0], "src/a/w1.ts");
+  const b = await launch(a, "builder", "build the widget", { cwd: wts[0] });
+  assert.equal(b.blocked, null, String(b.blocked));
+  assert.deepEqual(await stakes(w), ["heavy"], "fired at the launch, before any gate");
+  await end(a, b, "builder", "done", wts[0]);
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch", { cwd: wts[0] }), "reviewer", "Overall verdict: PASS", wts[0]);
+  for (const dir of wts.slice(1)) {
+    commitIn(dir, `src/a/${path.basename(dir)}.ts`);
     await build(a, {}, dir);
   }
   assert.deepEqual(await stakes(w), ["heavy"]);
-  refused(await pr(a, { head: "w1" }));
+  const text = await pr(a, { head: "w1" });
+  refused(text);
+  assert.match(text, /the task is heavy/);
   await hsPass(a, wts[1]);
   for (const head of ["w1", "w2", "w3"]) assert.doesNotMatch(await pr(a, { head }), /high_stakes/, "one review covers every worktree");
   assert.doesNotMatch(await settle(a), /high-stakes/);
@@ -75,27 +101,8 @@ test("heavy with builders in three worktrees asks for exactly one review; heavy 
   assert.match(again.blocked ?? "", /\[high_stakes_done\]/, "exactly one");
 });
 
-test("/ceremony standard after heavy fired the review drops it at the PR gate and the finish gate; a tag reason stays after the lowering", async (t) => {
-  const heavy = await setup(t, { tier: "heavy" });
-  commitIn(heavy.w.project, "src/a/x.ts");
-  await build(heavy.a);
-  refused(await pr(heavy.a));
-  assert.match(await settle(heavy.a), /a high-stakes review must run/);
-  await heavy.a.command("ceremony", "standard");
-  assert.doesNotMatch(await pr(heavy.a), /high_stakes/, "the PR gate no longer asks");
-  assert.doesNotMatch(await settle(heavy.a), /high-stakes review must run/, "the finish gate no longer asks");
-
-  const tag = await setup(t, { tier: "heavy" });
-  commitIn(tag.w.project, "src/a/x.ts");
-  await build(tag.a, sized(["design"]));
-  assert.deepEqual(await stakes(tag.w), ["design,heavy"]);
-  await tag.a.command("ceremony", "standard");
-  const text = await pr(tag.a);
-  refused(text);
-  assert.match(text, /risk tag design/);
-  assert.doesNotMatch(text, /the task is heavy/, "only the heavy reason is dropped");
-  assert.match(await settle(tag.a), /a high-stakes review must run/);
-});
+// the heavy-only lowering (the PR gate and the finish gate stop asking after the owner's /ceremony below heavy) is asserted in highstakes-owner-tier.test.ts,
+// a tag reason staying after the lowering in the sizing-on tag test above
 
 // ---------------------------------------------------------------- one review per session, wherever the work lands
 
@@ -166,23 +173,15 @@ async function defaultHeavy(t: Parameters<typeof setup>[0]) {
   return r;
 }
 
-test("default-heavy: the foreman's own foreman_triage standard does not drop the heavy reason", async (t) => {
+test("default-heavy: neither the foreman's own foreman_triage standard nor a ledger Tier: standard line drops the heavy reason; the owner's /ceremony standard does", async (t) => {
   const { a } = await defaultHeavy(t);
   await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
   await a.writeLedger(finishLedger());
   refused(await pr(a));
   assert.match(await settle(a), FINISH);
-});
-
-test("default-heavy: a ledger Tier: standard line does not drop the heavy reason", async (t) => {
-  const { a } = await defaultHeavy(t);
   await a.writeLedger(finishLedger("standard"));
   refused(await pr(a));
   assert.match(await settle(a), FINISH);
-});
-
-test("default-heavy: the owner's /ceremony standard drops the heavy reason", async (t) => {
-  const { a } = await defaultHeavy(t);
   await a.command("ceremony", "standard");
   await a.writeLedger(finishLedger());
   assert.doesNotMatch(await pr(a), NOT_DUE);
