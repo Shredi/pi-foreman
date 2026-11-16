@@ -4212,8 +4212,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const live = (runId: string): boolean => isLiveRun(s, runId);
     const stale = s.supervisor.staleRequest(message, live);
     if (stale) s.trace?.emit({ event: "supervisor_request", role: stale.role, decision: "stale" });
+    const again = s.supervisor.wasReplied(message);
     const opened = s.supervisor.onMessage(message, live);
     if (opened) s.trace?.emit({ event: "supervisor_request", role: opened.role, decision: "open" });
+    if (opened && again) s.trace?.emit({ event: "supervisor_reply", role: opened.role, outcome: "reopened" });
     if (s.isChild) return;
     const cause = causeOfCustom(m.customType);
     // the starting intercom message of a close turn arrives after close claimed the run: the cause stays "close"
@@ -4850,7 +4852,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (event.toolName === SUPERVISOR_TOOL) {
       const s = sessionFor(ctx);
+      const outcome = s?.supervisor.replyOutcome(event.details, event.isError, (runId) => isLiveRun(s, runId));
       const closed = s?.supervisor.onSupervisorResult(event.details, event.isError, (runId) => isLiveRun(s, runId));
+      if (s && outcome) s.trace?.emit({ event: "supervisor_reply", replyTo: typeof (event.details as { replyTo?: unknown } | undefined)?.replyTo === "string", isError: event.isError === true, outcome });
       if (closed) s?.trace?.emit({ event: "supervisor_request", role: closed.role, decision: event.isError ? "closed_dead_run" : "replied" });
     }
     if (event.toolName === "subagent") {

@@ -52,8 +52,30 @@ function isStale(req: OpenRequest, isLive: (runId: string) => boolean): boolean 
   return req.runId !== null && !isLive(req.runId);
 }
 
+/** How many answered request ids the window remembers (trace only). */
+const REPLIED_CAP = 64;
+
+/** What a `subagent_supervisor` result does to the window: it closes its request, finds none open, or leaves it open (an errored reply of a live run). */
+export type ReplyOutcome = "closed" | "not_open" | "kept_error";
+
 export class SupervisorWindow {
   readonly open = new Map<string, OpenRequest>();
+  /** Ids of requests a successful reply closed, capped; read by `wasReplied` for the trace. */
+  private readonly replied = new Set<string>();
+
+  /** True when the message is a request whose id a successful reply already closed (a re-delivery reopens the window). */
+  wasReplied(message: unknown): boolean {
+    const req = requestOf(message);
+    return !!req && this.replied.has(req.requestId);
+  }
+
+  /** The outcome `onSupervisorResult` would have for these arguments, read before the call (no state change). */
+  replyOutcome(details: unknown, isError: boolean, isLive: (runId: string) => boolean = () => true): ReplyOutcome {
+    if (!isObj(details) || typeof details.replyTo !== "string") return "not_open";
+    const req = this.open.get(details.replyTo);
+    if (!req) return "not_open";
+    return isError && !isStale(req, isLive) ? "kept_error" : "closed";
+  }
 
   /**
    * A message the foreman received; returns the opened request, or null when it is not one or its run
@@ -82,6 +104,10 @@ export class SupervisorWindow {
     if (!req) return null;
     if (isError && !isStale(req, isLive)) return null;
     this.open.delete(details.replyTo);
+    if (!isError) {
+      this.replied.add(details.replyTo);
+      if (this.replied.size > REPLIED_CAP) this.replied.delete(this.replied.values().next().value as string);
+    }
     return req;
   }
 
