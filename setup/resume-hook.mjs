@@ -1,4 +1,4 @@
-// The shell block that restarts a Pi session in its pane after a crash: at the first prompt of a shell the block runs `foreman pane-resume`
+// The shell block that restarts a Pi session in its pane after a crash: at a prompt of a shell the block runs `foreman pane-resume`
 // when a pane note exists for the terminal (docs/herdr.md). Pure over its inputs (home, shell, platform, the foreman command), so tests never
 // touch a real profile. The block has its own markers; it is independent of the env block of persist-env.mjs.
 import * as fs from "node:fs";
@@ -23,14 +23,19 @@ export function resumeTargets({ home, shell = "" }) {
   return [];
 }
 
+// A prompt with no note costs only file tests. A note is checked when this shell has not checked one yet or the note is newer than the shell's
+// marker file (touched before each check); a kept note that did not change is not checked again.
 const POSIX_BODY = (bin) => [
   "__pi_foreman_resume() {",
-  "  [ -z \"${__pi_foreman_resume_ran:-}\" ] || return 0",
-  "  __pi_foreman_resume_ran=1",
   "  [ -n \"${HC_TERMINAL_ID:-}\" ] || return 0",
   "  [ -t 0 ] || return 0",
-  "  [ -f \"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json\" ] || return 0",
+  "  __pi_foreman_note=\"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
+  "  [ -f \"$__pi_foreman_note\" ] || return 0",
+  "  __pi_foreman_mark=\"${TMPDIR:-/tmp}/pi-foreman-resume.$$\"",
+  "  if [ -n \"${__pi_foreman_resume_seen:-}\" ] && ! [ \"$__pi_foreman_note\" -nt \"$__pi_foreman_mark\" ]; then return 0; fi",
   `  [ -x ${q(bin)} ] || return 0`,
+  "  __pi_foreman_resume_seen=1",
+  "  : > \"$__pi_foreman_mark\" 2>/dev/null",
   `  ${q(bin)} pane-resume --shell-pid "$$"`,
   "  return 0",
   "}",
@@ -43,13 +48,20 @@ export function renderResumeBlock({ bin, flavor }) {
     return [
       ...head,
       "function __pi_foreman_resume --on-event fish_prompt",
-      "    set -q __pi_foreman_resume_ran; and return 0",
-      "    set -g __pi_foreman_resume_ran 1",
       "    test -n \"$HC_TERMINAL_ID\"; or return 0",
       "    set -l dir $HOME/.pi/agent",
       "    test -n \"$PI_CODING_AGENT_DIR\"; and set dir $PI_CODING_AGENT_DIR",
-      "    test -f \"$dir/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"; or return 0",
+      "    set -l note \"$dir/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
+      "    test -f \"$note\"; or return 0",
+      "    set -l tmp /tmp",
+      "    test -n \"$TMPDIR\"; and set tmp $TMPDIR",
+      "    set -l mark \"$tmp/pi-foreman-resume.$fish_pid\"",
+      "    if set -q __pi_foreman_resume_seen; and not test \"$note\" -nt \"$mark\"",
+      "        return 0",
+      "    end",
       `    test -x ${q(bin)}; or return 0`,
+      "    set -g __pi_foreman_resume_seen 1",
+      "    : > \"$mark\" 2>/dev/null",
       `    ${q(bin)} pane-resume --shell-pid $fish_pid`,
       "    return 0",
       "end",
