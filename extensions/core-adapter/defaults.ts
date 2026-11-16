@@ -5,7 +5,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { gitGlobalWidth, gitOptSpellings, injection } from "./floors.ts";
+import { gitGlobalWidth, gitOptSpellings, harnessFolderWord, injection, secretPath } from "./floors.ts";
+import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
@@ -36,6 +37,8 @@ export interface DefaultCtx {
   facts: GitFacts;
   platform: string;
   cwd: string;
+  /** The gate's floor env (home, agent dir); the `danger-harness-folder` label fires only when it is set. */
+  floor?: FloorEnv;
 }
 
 /** pi-foreman's own tools that carry no file path and no shell or message payload (plan Addendum 2, "B, own-tools default"). */
@@ -132,7 +135,7 @@ function folderCtxOf(c: DefaultCtx): EffectCtx | null {
 /** The folder-aware context when every live segment of the call is a built-in default under it (decision 9 rule), else null. */
 function folderAware(c: DangerCall, env: DangerEnv): { ctx: DefaultCtx; ec: EffectCtx } | null {
   if (!env.facts || env.roots.child) return null;
-  const ctx: DefaultCtx = { roots: env.roots, facts: env.facts, platform: env.platform, cwd: env.cwd };
+  const ctx: DefaultCtx = { roots: env.roots, facts: env.facts, platform: env.platform, cwd: env.cwd, floor: env.floor };
   const ec = folderCtxOf(ctx);
   const segs = (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
   if (!ec || segs.length === 0) return null;
@@ -430,7 +433,7 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   const chain = toChain(seg);
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;
   // r79 item 3: a segment of the dangerous class is never a built-in allow (the class is the question the classifier answers)
-  if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts }) !== null) return null;
+  if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts, floor: c.floor }) !== null) return null;
   for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform) && !handoffRedirect(r, ec, cwd)) return null;
   if (seg.program === "cd" && cdIntoOwn(seg.argv, cwd, c)) return "default-read";
   if (seg.program === "git") return gitDefault(seg.argv, text, cwd, c, ec, chain);
@@ -465,6 +468,8 @@ export interface DangerEnv {
   platform: string;
   cwd: string;
   facts?: GitFacts;
+  /** The gate's floor env; the `danger-harness-folder` label fires only when it is set. */
+  floor?: FloorEnv;
 }
 
 /** What the dangerous class sees of a call. `segments` is the parse of a shell tool's line; `text` its raw text. */
@@ -894,6 +899,25 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   }
 }
 
+/** `git <sub> <x>:<path>` where `<path>` is a secret path by the floors' matcher (`git show HEAD:.env` prints the file out of the object store). */
+function gitSecretSeg(s: ShellSegment, env: DangerEnv): boolean {
+  if (progOf(s) !== "git") return false;
+  const fenv: FloorEnv = env.floor ?? { cwd: env.cwd, platform: env.platform };
+  return s.argv.some((w) => {
+    const i = w.indexOf(":");
+    return i >= 0 && secretPath(w.slice(i + 1), fenv, true) !== null;
+  });
+}
+
+/** A segment that is no known read and names a policy or state file or folder of the harness; only with `env.floor`. Floors that refuse a write answer first. */
+function harnessFolderSeg(s: ShellSegment, env: DangerEnv): boolean {
+  if (!env.floor) return false;
+  const chain = toChain(s);
+  // a child's reads stay open (owner ruling brief-16): the read question is asked as for a session that is not a child
+  if (chain && segmentEffect(effectCtxOf({ ...env, roots: { ...env.roots, child: false } }), s.cwd, chain).cls === "read") return false;
+  return harnessFolderWord([...s.argv, ...s.redirects.map((r) => r.target)], s.cwd ?? env.cwd, env.floor);
+}
+
 const DETACH = new Set(["nohup", "setsid", "disown"]);
 const detachSeg = (s: ShellSegment): boolean => DETACH.has(progOf(s)) || s.wrappers.some((w) => DETACH.has(w));
 
@@ -1292,6 +1316,8 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable, an unparsed form or an interpreter one-liner such as python -c or node -e)", test: (c, e) => (c.segments ?? []).some((s) => s.opaque !== null) || segs(inlineCode)(c, e) },
   { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
+  { name: "danger-git-secret", reason: "shows a secret or key file through a git revision (git show HEAD:<path>)", test: segs(gitSecretSeg) },
+  { name: "danger-harness-folder", reason: "a program that is no known read names a policy or state file of the harness", test: segs(harnessFolderSeg) },
 ];
 
 /** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */
@@ -1319,12 +1345,12 @@ export function dangerMatch(call: DangerCall, env: DangerEnv): DangerHit | null 
   return null;
 }
 
-const SEGMENT_RULES = [deploySeg, forgeSeg, publishSeg, netWriteSeg, installSeg, gitSeg, (s: ShellSegment) => processSeg(s) || detachSeg(s), injectSeg] as const;
+const SEGMENT_RULES = [deploySeg, forgeSeg, publishSeg, netWriteSeg, installSeg, gitSeg, (s: ShellSegment) => processSeg(s) || detachSeg(s), injectSeg, gitSecretSeg, harnessFolderSeg] as const;
 
 /** The `danger-*` name of a single non-opaque segment (every entry that needs no path facts), or null. `segmentDefault` refuses such a segment. */
 export function dangerSegment(seg: ShellSegment, env: DangerEnv): string | null {
   if (seg.opaque !== null || seg.program === "") return null;
-  const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject"];
+  const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject", "danger-git-secret", "danger-harness-folder"];
   const i = SEGMENT_RULES.findIndex((f) => f(seg, env));
   return i < 0 ? null : names[i];
 }

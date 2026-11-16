@@ -856,7 +856,7 @@ export const SECRET_GLOBS: readonly string[] = loadSecretGlobs();
 const SECRET_FILE = new RegExp(`(^|/)(${SECRET_GLOBS.map((g) => g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})$`, "i");
 
 /** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
-const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|credentials(\.[^/]*)?)(\/|$)/i;
+const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|\.claude\/\.credentials\.json|credentials(\.[^/]*)?)(\/|$)/i;
 const ENV_FILE = /(^|\/)([^/]*\.env|\.env\.[^/]+)$/i;
 /** A bare (separator-free) word is a secret only when it is a dotenv name itself, so `process.env` or `app.env` as an argument is not judged. `.envrc` is not a secret. */
 const ENV_BARE = /^\.env(\.[^/]+)?$/i;
@@ -1263,6 +1263,12 @@ function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protec
     if (found !== null) return found;
   }
   return null;
+}
+
+/** Whether any of `words` names a policy or state file or folder of the harness (the check the write floors use; no write is implied). */
+export function harnessFolderWord(words: string[], cwd: string, env: FloorEnv): boolean {
+  const entries = protectedEntries(env);
+  return words.some((w) => protectedWord(w, cwd, env, entries) !== null);
 }
 
 const BRACE_LIMIT = 64;

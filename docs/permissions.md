@@ -150,6 +150,8 @@ A built-in table in `defaults.ts` (`DANGER_RULES`). A call that falls into one e
 | `danger-opaque` | Any segment the parser cannot state exactly, once the floors found nothing | `eval "$cmd"` |
 | `danger-mcp-act` | An MCP tool whose name is not a read (`list_*`, `get_*`, `search_*`, `read_*`, `take_*`, `find_*`, `describe_*`; `navigate_page` to a plain URL) | `mcp__chrome__click` |
 | `danger-launch-outside` | A `subagent` launch with a `cwd` or worktree outside the owned roots, or a workflow script, `tasks` or `chain` form | `subagent` with `cwd: "/srv/other-repo"` |
+| `danger-git-secret` | A `git` argument `<rev>:<path>` whose path is a [secret path](#floors) (`git show`, `cat-file`, `archive` and the like print the file out of the object store); a plain revision, a source path or a `--format=%h:%s` is no match | `git show HEAD:.env` |
+| `danger-harness-folder` | A shell segment that is no known read and names a policy or state file or folder of the harness (the permissions files, `managed.json`, `state/*`, session files); a read (`cat`, `grep`, `ls`) is no match, and a write to such a file is a [floor](#floors) that answers first | `git add ~/.pi/agent/pi-foreman/permissions.json` |
 
 A PR's draft state is changed by the harness only, in process, for a PR the session itself opened with `pr_create` (see [tools](tools.md#draft)). No model-facing tool does it. `gh pr ready` from a shell is a forge write like any other and stays under `danger-forge` for every agent.
 

@@ -381,7 +381,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
         const sm = selfmodResult(shellSelfmod(segs, cwd, roots, platform), roots.child);
         if (sm) return decided(sm);
       }
-      const dctx = { roots, facts, platform, cwd };
+      const dctx = { roots, facts, platform, cwd, floor: env };
       if (roots.child && toolName !== "powershell") {
         const cd = childDenied(toolName, inp, segs, cmd, dctx);
         if (cd) return decided(cd);
@@ -404,7 +404,7 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       const result = ruled(ruleCallOf(toolName, inp, callCtx(segs)), h, builtin, segs);
       if (result) return { result, danger: null, segments: segs };
       const dcall = { tool: toolName, input: inp, segments: segs, text: cmd };
-      const denv = { roots, platform, cwd, facts };
+      const denv = { roots, platform, cwd, facts, floor: env };
       const hits = DANGER_RULES.filter((r) => r.test(dcall, denv));
       const danger: DangerHit | null = hits.length ? { name: hits[0].name, reason: hits[0].reason } : null;
       return { result: undefined, danger, segments: segs, ...(hits.length ? { dangers: hits.map((r) => r.name) } : {}) };
