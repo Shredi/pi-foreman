@@ -1,12 +1,12 @@
 // R41 item 17: a checkpoint approval and a plan-review verdict survive /reload keyed by the plan version hash. Human approvals live in the
-// harness-only approval store; parent rulings carry a `plan-version: <hash>` line (ctime fallback); round-state.json never holds an approval.
+// harness-only approval store; no file from a parent approves a plan (PR 4); round-state.json never holds an approval.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { approvalsDir, planVersionHash, readPlanVerdict, readStored, restoreFromStore, saveStored, stampedApproval, stampPlanVersion } from "../checkpoint.ts";
+import { approvalsDir, planVersionHash, readStored, restoreFromStore, saveStored } from "../checkpoint.ts";
 import { ROUND_STATE_FILE } from "../roundstate.ts";
 import coreAdapter from "../index.ts";
 
@@ -16,7 +16,6 @@ type Result = { details?: { decision?: string; by?: string | null }; content: { 
 const KEYS = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD", "PI_FOREMAN_HANDOFF_DIR", "PI_FOREMAN_PARENT_INTERCOM", "PI_INTERCOM_SESSION_ID", "PI_INTERCOM_STABLE_ID"];
 const PLAN = ".workflow/scratch/plan-ck.md";
 const BODY = "# Widget\n\n## Goal\nShip it.\n\n## Approach\nOne builder.\n";
-const tick = () => new Promise((r) => setTimeout(r, 25));
 const tmp = (t: import("node:test").TestContext, p: string): string => {
   const d = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), p)));
   t.after(() => rmTestTmp(d));
@@ -58,36 +57,6 @@ test("restoreFromStore: only the plan version now on disk is restored", (t) => {
   assert.equal(r.reviews[0].review.verdict, "fail");
   fs.appendFileSync(plan, "edit\n");
   assert.equal(restoreFromStore(agent, opts).approved, null, "an edited plan is a new version");
-});
-
-test("parent ruling: the plan-version stamp is preferred over ctime, a stamp for another version approves nothing", async (t) => {
-  const d = tmp(t, "pf-ckrl-stamp-");
-  const plan = path.join(d, "plan.md");
-  fs.writeFileSync(plan, BODY);
-  await tick();
-  const ruling = path.join(d, "ruling.md");
-  fs.writeFileSync(ruling, "APPROVED\n");
-  const hash = stampPlanVersion(ruling, plan);
-  assert.equal(hash, planVersionHash(fs.readFileSync(plan)));
-  assert.match(fs.readFileSync(ruling, "utf8"), new RegExp(`^APPROVED\\nplan-version: ${hash}\\n$`));
-  assert.deepEqual(stampedApproval(d, hash!), { file: ruling });
-  // the plan file's ctime moves past the ruling (same bytes): the unstamped ctime binding would refuse, the stamp still approves
-  await tick();
-  fs.writeFileSync(plan, BODY);
-  assert.deepEqual(readPlanVerdict(d, plan), { kind: "approve" });
-  // a plan edit makes the stamp name another version
-  await tick();
-  fs.appendFileSync(plan, "edit\n");
-  assert.equal(stampedApproval(d, planVersionHash(fs.readFileSync(plan))), "stale");
-  assert.equal(readPlanVerdict(d, plan), null);
-  // an unstamped ruling.md falls back to ctime
-  const d2 = tmp(t, "pf-ckrl-ctime-");
-  const plan2 = path.join(d2, "plan.md");
-  fs.writeFileSync(plan2, BODY);
-  await tick();
-  fs.writeFileSync(path.join(d2, "ruling.md"), "APPROVED\n");
-  assert.equal(stampedApproval(d2, HASH(BODY)), null);
-  assert.deepEqual(readPlanVerdict(d2, plan2), { kind: "approve" });
 });
 
 /** A foreman (non-round, non-child) session over a project; each call to `start` is a fresh adapter instance, like a /reload. */

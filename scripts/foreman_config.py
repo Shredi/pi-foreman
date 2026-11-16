@@ -95,7 +95,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.orientation.<enabled|maxLines>   free per layer (no tighten rule)
     ceremony.ledgerHelper            tighten only, off < bash < tool (may only move toward off)
     ceremony.reviewPerRevision       only true is accepted (false lifts the one-review-per-revision refusal)
-    ceremony.checkpoint              ignored (who approves the plan checkpoint: L1/L3/L2 only)
+    ceremony.checkpoint              ignored (the checkpoint mode, human only; parent is refused: L1/L3/L2 only)
     ceremony.reviewModel             ignored (the fallback reviewer model or the pair map: L1/L3/L2 only)
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
     ceremony.highStakes              ignored (the high-stakes review model and its size bounds: L1/L3/L2 only)
@@ -254,7 +254,7 @@ IGNORED_KEYS = [
     (("sessions", "remote"), "the fetch timeout of a remote child's notice file comes from the user or overlay config"),
     (("sessions", "blockedNoticeSeconds"), "when a parent is told its child waits on the owner or for its answer comes from the user or overlay config"),
     (("sessions", "worktree"), "the branch prefix of a session's own worktree comes from the user or overlay config"),
-    (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
+    (("ceremony", "checkpoint"), "the checkpoint mode (human only; parent is refused) comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model and the reviewer pair map come from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
     (("ceremony", "highStakes"), "the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config"),

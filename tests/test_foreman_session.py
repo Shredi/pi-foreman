@@ -461,11 +461,12 @@ class AskFooterTest(unittest.TestCase):
 
 
 class PlanFirstFooterTest(unittest.TestCase):
-    def test_plan_first_footer_names_the_ruling_handoff(self):
+    def test_plan_first_footer_has_no_parent_ruling_handoff(self):
+        # PR 4: the child owns its plan; the parent's ruling.md approves nothing and is named only as a note
         text = fsn.footer("demo", True)
-        self.assertIn("ruling.md", text)
-        self.assertIn("APPROVED", text)
-        self.assertIn("foreman session brief demo", text)
+        self.assertIn("A `ruling.md` the parent writes is a note like any other file; it approves nothing.", text)
+        self.assertNotIn("APPROVED", text)
+        self.assertNotIn("foreman session brief demo", text)
         self.assertNotIn("ruling.md", fsn.footer("demo", False))
 
 

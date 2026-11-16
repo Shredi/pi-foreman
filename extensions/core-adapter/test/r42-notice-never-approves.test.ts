@@ -62,6 +62,7 @@ const snapshot = (dir: string): string[] =>
 
 test("a pending checkpoint stays pending after the notice; no file is written and parentApproval answers as before", async (t) => {
   const w = world(t, { handoff: true, parent: true });
+  w.state.answer = undefined; // the owner's dialog in the child's pane stays unanswered: the checkpoint is pending
   const a = await w.adapter();
   assert.equal(await a.review("PASS"), null);
   const before = await a.checkpoint();

@@ -17,7 +17,7 @@ import { execFile, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { isBriefName, isRulingName, rulingFresh } from "./ruling.ts";
+import { rulingFresh } from "./ruling.ts";
 import { BG_PARAMS, BG_TOOL, ADDON_REFUSAL, addonPresent, freshBgLogPath, shellPathSetting, spawnWithFreshLog } from "./bg.ts";
 import { get } from "./config.ts";
 import { underOwned } from "./owned.ts";
@@ -277,8 +277,6 @@ export interface RuntimeDeps {
   changed?: () => void;
   /** Modification time (ms) of a file, else null; lets a ruling wait ignore a ruling older than its ask.md. */
   mtime?: (p: string) => number | null;
-  /** Entries of a directory with their mtimes (production only); lets a ruling wait end when a newer `brief-<x>.md` lands beside it. Absent = no supersede. */
-  briefs?: (dir: string) => { name: string; mtimeMs: number }[];
   /** A foreman_bg wait ended: `exited` (the process is gone), `timeout` (the wait hit maxSeconds, the process is still alive) or `cancelled` (the session closed and the process was sent SIGTERM) or `dropped` (the agent cancelled the wait; the process is left alone). */
   onBgEnd?: (id: string, note: string, how: "exited" | "cancelled" | "timeout" | "dropped") => void;
   /** True while a run is in progress (the adapter's own record, agent_start .. agent_end). Absent = never. */
@@ -401,12 +399,6 @@ export class WaitRuntime {
           const size = this.d.stat(spec.path);
           if (size !== null && (!this.d.mtime || rulingFresh(spec.path, this.d.mtime))) {
             return this.resolve(e.id, `exists, ${size} bytes`);
-          }
-          // A ruling wait outlives its purpose when the parent answers with a brief instead: a brief newer than the wait ends it.
-          if (this.d.briefs && this.d.mtime && isRulingName(path.basename(spec.path))) {
-            const dir = path.dirname(spec.path);
-            const brief = this.d.briefs(dir).find((b) => isBriefName(b.name) && b.mtimeMs > e.started);
-            if (brief) return this.resolve(e.id, `superseded by brief ${path.join(dir, brief.name)}`);
           }
         } else if (spec.kind === "pid") {
           if (!this.d.alive(spec.pid)) return this.resolve(e.id, "exited (exit code not knowable)");
@@ -604,23 +596,6 @@ function fileMtime(p: string): number | null {
   }
 }
 
-function dirBriefs(dir: string): { name: string; mtimeMs: number }[] {
-  try {
-    const out: { name: string; mtimeMs: number }[] = [];
-    for (const name of fs.readdirSync(dir)) {
-      if (!isBriefName(name)) continue;
-      try {
-        out.push({ name, mtimeMs: fs.statSync(path.join(dir, name)).mtimeMs });
-      } catch {
-        // vanished between readdir and stat
-      }
-    }
-    return out;
-  } catch {
-    return [];
-  }
-}
-
 function fileSize(p: string): number | null {
   try {
     return fs.statSync(p).size;
@@ -761,7 +736,6 @@ export function registerWait(pi: ExtensionAPI, deps: { session: (ctx: ExtensionC
       limits: limitsOf(s),
       stat: fileSize,
       mtime: fileMtime,
-      briefs: dirBriefs,
       onBgEnd: (id, note, how) => s.onBgEnd?.(id, note, how),
       alive: processAlive,
       gh: (runId) => ghRunView(runId, workspaceOf(s.cwd).root),

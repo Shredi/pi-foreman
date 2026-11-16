@@ -274,7 +274,7 @@ def opener_id(given, adir, env=None):
 
 # `%(to_parent)s` and `%(no_human)s` are filled by `plan_first_notes`: a local child asks its parent in a message, a remote one by file.
 PLAN_FIRST_NOTES = [
-    "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
+    "   While you plan, change files only under `.workflow/` and use explorers and plan reviewers; builders wait until the plan phase ends.",
     "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent %(to_parent)s. When unsure whether it is a decision, ask the parent. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), %(no_human)s.",
     "   `plan.md` starts with a `## For the owner` section (its reader is the owner, who is in the middle of many other topics: explain it as to someone new to this one, in plain words, at most about 10 lines, no paths or ids: the goal, the essential steps, heads-ups, the implicit decisions; for example \"Goal: pages load faster. Steps: measure first, then cache the slowest query. Heads-up: cached data may be a minute old. Decided for you: the admin pages stay as they are.\"), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
 ]
@@ -306,10 +306,16 @@ def footer(label, plan_first):
     n = 1
     if plan_first:
         lines += [
-            "%d. Plan first: write `plan.md` in the handoff dir, send `Plan from %s: <absolute path of plan.md>`," % (n, label),
-            "   then stop and wait for the parent's ruling. The parent writes `ruling.md` in the handoff dir (first",
-            "   line `APPROVED` = go ahead; anything else = revise `plan.md` and send `Plan from %s: <path>` again)" % label,
-            "   and wakes you with a brief naming `brief-<n>.md`, a copy of the ruling (`foreman session brief %s <ruling path>`)." % label,
+            "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
+            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir and send",
+            "   `Plan from %s: <absolute path of plan.md>`; it informs the parent, so do not wait for an answer to it." % label,
+            "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
+            "   - Tier heavy: send the parent the plain line `%s waits on the owner at its plan checkpoint`, then call" % label,
+            "     `foreman_checkpoint`; the owner answers in a dialog in this pane, and you build after the approval. The line",
+            "     tells the parent why you are quiet; send it exactly so, not as an `Update from` message, which is a report.",
+            "   The parent may send notes, corrections or owner decisions as a brief (`brief-<n>.md`); treat it as input. A brief",
+            "   that changes the plan makes a new plan version: have it reviewed again and, at heavy, take it to the checkpoint again.",
+            "   A `ruling.md` the parent writes is a note like any other file; it approves nothing.",
         ] + plan_first_notes(True)
         n += 1
     lines += [
@@ -373,10 +379,17 @@ def remote_footer(label, plan_first):
     n = 1
     if plan_first:
         lines += [
-            "%d. Plan first: write `plan.md` in the handoff dir, then run" % n,
+            "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
+            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir and run",
             "       %s plan" % base,
-            "   and stop to wait for the parent's ruling: `foreman_wait` kind `file` on `ruling.md` in the handoff dir",
-            "   (first line `APPROVED` = go ahead; anything else = revise `plan.md` and run the command again).",
+            "   It informs the parent, so do not wait for an answer to it.",
+            "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
+            "   - Tier heavy: call `foreman_checkpoint`; the owner answers in a dialog in this pane (attaching to it from the",
+            "     other machine), and you build after the approval. Run no notice before it: the parent learns from its own check",
+            "     that you wait on the owner.",
+            "   The parent may send notes, corrections or owner decisions as a brief (`brief-<n>.md`); treat it as input. A brief",
+            "   that changes the plan makes a new plan version: have it reviewed again and, at heavy, take it to the checkpoint again.",
+            "   A `ruling.md` the parent delivers is a note like any other file; it approves nothing.",
         ] + plan_first_notes(False)
         n += 1
     lines += [

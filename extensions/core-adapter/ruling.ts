@@ -14,8 +14,8 @@ const BRIEF_RE = /^brief-[A-Za-z0-9._-]{1,64}\.md$/;
 /** True for a `brief-<x>.md` file name (a parent's brief to the session; the answer to a child's `ask.md`). */
 export const isBriefName = (name: string): boolean => BRIEF_RE.test(name);
 
-/** A name for self-write tracking and refusals: `isRulingName`, the plan checkpoint's `ruling-plan.md` (checkpoint.ts) and `brief-<x>.md` (both lift the caps, index.ts capsReset). */
-export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || name === "ruling-plan.md" || isBriefName(name);
+/** A name for self-write tracking and refusals: `isRulingName` and `brief-<x>.md` (it lifts the caps, index.ts capsReset). */
+export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || isBriefName(name);
 
 /** A parent file that lifts the review cap and the read budgets: `brief-<x>.md`; never `ruling-<n>.md`, `ruling.md`, `ruling-plan.md`, `brief.md`. */
 export const isCapsResetName = (name: string): boolean => isBriefName(name);
@@ -135,30 +135,20 @@ export class SelfRulings {
  * `afterMs` (the last FAIL verdict). Returns its path, or null. Only for naming it in the finish refusal: it is never a
  * verdict. `dirs` must be the dirs where this session is the child (owned.ts childHandoffDirs); `self` skips rulings
  * this session wrote.
- *
- * `restore` (reload, roundstate.ts): only `ruling.md` (never `ruling-<n>.md`), first line `APPROVED`, and its ctime
- * (which a session cannot set back) newer than `afterMs` (the ctime of both plan files). Such a ruling restores the
- * plan checkpoint approval after /reload, nothing else: the finish gate still needs a reviewer PASS.
  */
-export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings, restore = false): string | null {
+export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings): string | null {
   for (const dir of dirs) {
     let names: string[] = [];
     try {
-      names = fs.readdirSync(dir).filter(restore ? (n) => n === "ruling.md" : isRulingName);
+      names = fs.readdirSync(dir).filter(isRulingName);
     } catch {
       continue;
     }
     for (const n of names) {
       const m = mtimeOf(path.join(dir, n));
-      let c: number | null = null;
-      try {
-        c = fs.statSync(path.join(dir, n)).ctimeMs;
-      } catch {
-        // vanished
-      }
-      if (m === null || c === null || (restore ? c : m) <= afterMs || self?.has(path.join(dir, n), m)) continue;
+      if (m === null || m <= afterMs || self?.has(path.join(dir, n), m)) continue;
       const first = (readText(path.join(dir, n)) ?? "").split(/\r?\n/, 1)[0].trim();
-      if (first === "APPROVED" || (!restore && first === "SHIP")) return path.join(dir, n);
+      if (first === "APPROVED" || first === "SHIP") return path.join(dir, n);
     }
   }
   return null;

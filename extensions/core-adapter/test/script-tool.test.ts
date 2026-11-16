@@ -313,7 +313,7 @@ test("foreman_script: a ruling file in the handoff dir does not approve; without
   assert.deepEqual(r.runs(), []);
 });
 
-test("foreman_script: a session in parent-ruling mode still gets the dialog in its own window, and a REJECT there holds against an APPROVED file", async (t) => {
+test("foreman_script: a session with a parent gets the dialog in its own window, and a REJECT there holds against an APPROVED file", async (t) => {
   const r = await rig(t, { parent: true, answer: () => "reject" });
   for (const f of ["ruling-plan.md", "ruling.md"]) fs.writeFileSync(path.join(r.handoff, f), "APPROVED\n");
   const out = await r.propose();

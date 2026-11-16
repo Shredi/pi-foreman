@@ -1007,7 +1007,7 @@ export function registerSessionOpenTool(
     name: SESSION_OPEN_TOOL,
     label: "Open a session",
     description:
-      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan is approved); a session with an approved plan: no planFirst. Refused in subagent children.",
+      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan review passes; at tier heavy the owner then approves the plan at its checkpoint); a session with an approved plan: no planFirst. Refused in subagent children.",
     parameters: OPEN_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);

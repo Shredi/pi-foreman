@@ -187,7 +187,7 @@ import { CHILD_BLOCKED_TYPE, ChildBlocked, noticeSeconds, openChildren } from ".
 import { IntercomCarry, addresses, deliveredSendTo, isQuestion, parentIdsOf, senderOf } from "./intercomcarry.ts";
 import { captureIdentity, IDENTITY_ENTRY, latestIdentity, restoreIdentity, writeLive } from "./identity.ts";
 import type { IdentityRestore } from "./identity.ts";
-import { builderLaunchRefusal, checkpointMode, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, PLAN_NAME, PLAN_VERDICT_FILE, readPlanVerdictFile, planSummary, planVersionHash, readPlan, readPlanVerdict, restoreFromStore, saveStored, sha256, stampPlanVersion } from "./checkpoint.ts";
+import { builderLaunchRefusal, checkpointConfigRefusal, CHECKPOINT_CHOICES, CHECKPOINT_TOOL, currentPlanHash, isPlanPath, launchRefusalText, parentPhaseCheckpointText, PLAN_NAME, planSummary, planVersionHash, readPlan, restoreFromStore, saveStored, sha256 } from "./checkpoint.ts";
 import type { PlanRecord } from "./checkpoint.ts";
 import type { EventBus } from "./herdr.ts";
 import { claimCore, emitReady, installInert, markCoreStarted, missingBundled, setupInvocation } from "./registry.ts";
@@ -230,7 +230,7 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, type PlanPhaseOrigin, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -413,8 +413,10 @@ interface Session {
   reviewerFails: ReviewerFails;
   /** Foreman only: the loop guard's stop (reviewloop.ts): builder and reviewer launches are refused while set; persisted in the ceremony-state entry (planstate.ts). */
   loopStop: LoopStop | null;
-  /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval or /foreman plan off. */
+  /** Plan phase (persisted in the ceremony-state entry): .workflow-only writes, explorers without a ledger, no builder. Entered by PI_FOREMAN_PLAN_PHASE=1 or /foreman plan; left by a checkpoint approval, /foreman plan off, or below heavy in a phase a parent's launch started by the session's plan-review PASS. */
   planPhase: boolean;
+  /** Who started the plan phase (persisted beside it): `parent` (a parent's launch, PI_FOREMAN_PLAN_PHASE=1 with a handoff dir) or `owner` (/foreman plan, or an entry without the field). */
+  planPhaseOrigin: PlanPhaseOrigin;
   /** The ceremony-state entry last appended or restored, as JSON (an identical state is not appended again). */
   ceremonyEntry: string;
   /** restoreCeremonyState has read the branch: before that, a tier change must not append an entry that shadows the one to restore. */
@@ -458,7 +460,7 @@ interface Session {
   /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
   launchTreesByCall: Map<string, Map<string, string | null>>;
   launchTrees: Map<string, Map<string, string | null>>;
-  /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a session opened by another session reloads an approval only from the parent's ruling.md, roundstate.ts). */
+  /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a reload brings back only the owner's own dialog approval: from the session's ceremony-state entry, planstate.ts, and without a handoff dir also from the approval store). */
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
   script: ScriptState;
@@ -1010,6 +1012,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviewerFails: new ReviewerFails(),
       loopStop: null,
       planPhase: !isChild && process.env.PI_FOREMAN_PLAN_PHASE === "1",
+      planPhaseOrigin: process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim() ? "parent" : "owner",
       ceremonyEntry: JSON.stringify(emptyCeremonyState()),
       ceremonyRestored: false,
       failItems: [],
@@ -1190,6 +1193,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       tier: s.ceremony.tier,
       tierSource: s.ceremony.source,
       planPhase: s.planPhase,
+      planPhaseOrigin: s.planPhaseOrigin,
       reviews: s.reviews,
       loopStop: s.loopStop,
       gate: { steps: { ...s.steps }, reviewGate: s.reviewGate, passMark: s.passMark },
@@ -1410,6 +1414,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!e) return persistCeremonyState(s); // a plan phase entered through the env is recorded at once
     for (const l of e.lineages) s.planReviews.restore(l.path, { hash: l.hash, verdict: l.verdict, model: l.model, findings: Promise.resolve([]) }, l.rounds, l.reviews);
     s.planPhase = e.planPhase;
+    s.planPhaseOrigin = e.planPhaseOrigin ?? "owner"; // an entry without the field: the owner's origin (a PASS does not end it)
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
     if (e.highStakes && s.hs.all().length === 0) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
@@ -1426,7 +1431,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (reason !== "fork" && e.plan?.status === "approved") {
       const o = planOpts(s, ctx);
       const now = readPlan(e.plan.path, o);
-      const rec = restorableApproval(e.plan, "plan" in now ? now.plan.hash : null, roundStateDir(process.env));
+      const rec = restorableApproval(e.plan, "plan" in now ? now.plan.hash : null);
       if (rec) {
         s.plan = rec;
         approved = true;
@@ -1454,14 +1459,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
-  /** session_start of a session opened by another session: what the reload file may bring back; the approval only from the parent's ruling.md. */
+  /** session_start of a session opened by another session: what the reload file may bring back; never an approval. */
   function restoreRounds(s: Session, ctx: ExtensionContext, reason: string): void {
     const dir = roundStateDir(process.env);
     if (s.isChild) return;
     s.roundStateOn = true;
     if (!dir) return;
     const o = planOpts(s, ctx);
-    const r = restoreRoundState(dir, (topic) => { const p = readPlan(path.join(o.scratchDir, `plan-${topic}.md`), o); return "plan" in p ? { path: p.plan.path, hash: p.plan.hash } : null; }, selfRulingsFor(s));
+    const r = restoreRoundState(dir, (topic) => { const p = readPlan(path.join(o.scratchDir, `plan-${topic}.md`), o); return "plan" in p ? { path: p.plan.path, hash: p.plan.hash } : null; });
     if (!r) {
       // discarded: the file now holds the fresh state, so nothing of the old one can come back later
       if (fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s);
@@ -1469,22 +1474,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     s.round = r.round;
     s.capsResetAt = r.capsResetAt;
-    // The session entry (restoreCeremonyState) comes first; this file only fills in when it restored no approval, and never on a fork.
-    const a = s.plan?.status === "approved" || reason === "fork" ? null : r.approval;
-    if (a) {
-      s.plan = { topic: a.topic, path: a.path, hash: a.hash, status: "approved", approvedAt: new Date(a.at).toISOString(), by: "rig", source: path.basename(a.ruling) === PLAN_VERDICT_FILE ? "ruling-plan" : "ruling", note: `restored after reload from ${a.ruling}` };
-      if (a.review && !s.planReviews.lineage(a.path)) s.planReviews.restore(a.path, { hash: a.review.hash, verdict: a.review.verdict, model: a.review.model, findings: Promise.resolve([]) }, a.review.rounds);
-    }
-    s.trace?.emit({ event: "round_state_restored", approval: a ? "ruling" : "none" });
+    s.trace?.emit({ event: "round_state_restored", approval: "none" });
     persistRounds(s);
   }
 
   /**
    * session_start after a reload or resume (R41 item 17): the checkpoint approval and the plan-review verdicts come back from the harness-only approval
-   * store, keyed by the plan version hash of the plan files now in the scratch dir. A parent ruling is restoreRounds' business.
+   * store, keyed by the plan version hash of the plan files now in the scratch dir. Not in a session opened by another session: the store keeps no session or
+   * plan path, so a shared scratch dir would hand it the parent's approval; its own dialog approval comes back from its ceremony-state entry (restoreCeremonyState).
    */
   function restoreStoredPlans(s: Session, ctx: ExtensionContext): void {
-    if (s.isChild || roundStateDir(process.env)) return; // the approval of a session opened by another session comes from the parent's ruling (restoreRounds), never from a stored human answer
+    if (s.isChild || roundStateDir(process.env)) return;
     const r = restoreFromStore(s.agentDir, planOpts(s, ctx));
     for (const v of r.reviews) if (!s.planReviews.lineage(v.plan.path)) s.planReviews.restore(v.plan.path, { hash: v.plan.hash, verdict: v.review.verdict, model: v.review.model, findings: Promise.resolve([]) }, v.review.rounds);
     const a = r.approved;
@@ -2703,6 +2703,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function recordPlanReviews(s: Session, runId: string, results: ReturnType<typeof reviewResultsOfRunEnd>): void {
     const opts = { cwd: s.cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir };
     const plans = planPathsOf(s.reviewRuns.byRun.get(runId)?.files ?? [], opts.scratchDir);
+    const reviewed = new Set<string>();
     for (const r of planReviewResults(results)) {
       s.trace?.emit({ event: "plan_review", model: r.model, decision: r.verdict });
       const findings = (s.reviewRuns.findings.get(runId) ?? Promise.resolve([])).then((b) => b.find((x) => x.result.index === r.index)?.findings ?? [], () => []);
@@ -2711,6 +2712,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if ("plan" in rp) {
           s.planReviews.record(rp.plan.path, { hash: planVersionHash(rp.plan.bytes), verdict: r.verdict, model: r.model, findings });
           s.planReviews.keepReviewed(rp.plan.path, planVersionHash(rp.plan.bytes));
+          reviewed.add(rp.plan.path);
           const state = planVersionHash(rp.plan.bytes);
           s.reviewSync = s.reviewSync.then(async () => {
             const prev = s.reviews.findLast((x) => x.kind === "plan");
@@ -2721,6 +2723,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const rounds = s.planReviews.lineage(rp.plan.path)?.rounds ?? 1;
           saveStored(s.agentDir, rp.plan.hash, rp.plan.topic, { review: { verdict: r.verdict, model: r.model, rounds } }); // survives /reload (checkpoint.ts)
         }
+      }
+    }
+    for (const p of reviewed) {
+      if (s.planReviews.lineage(p)?.latest.verdict === "pass" && s.planReviews.reviewedText(p) !== null && parentPhaseByReview(s) && isTriaged(s.ceremony)) {
+        // the plan's latest verdict is a PASS on the current version: below heavy a plan phase a parent's launch started ends here (persisted below)
+        s.planPhase = false;
+        s.trace?.emit({ event: "plan_phase", decision: "off", cause: "plan_review" });
       }
     }
     persistRounds(s);
@@ -3698,7 +3707,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           await s.reviewSync; // a review round still being recorded lands (and may set the stop) before the gate reads it
           if (s.loopStop && (subagentAgents(input).includes("builder") || [...occasions].some(([e, o]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && o !== "second-opinion"))) {
             s.trace?.emit({ event: "launch_refused", reason: "review_loop", tier: s.ceremony.tier, rule: s.loopStop.rule, kind: s.loopStop.kind, ...launchDeny(input) });
-            return { block: true, reason: (checkpointMode(undefined, process.env) === "parent" ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
+            return { block: true, reason: (process.env.PI_FOREMAN_HANDOFF_DIR?.trim() && process.env.PI_FOREMAN_PARENT_INTERCOM?.trim() ? (st: LoopStop) => loopRefusalParented(st, process.env[REMOTE_PARENT_ENV] === "1") : loopRefusal)(s.loopStop) };
           }
           if (s.failItems.length > 0) for (const [e, occ] of occasions) if (occ === "item" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string") e.task = prependReReview(e.task, s.failItems);
           // R39: builders launched with a strong risk tag (sizing.ts): the next item or pre-pr reviewer is asked for bypass probes.
@@ -4360,6 +4369,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return [...subagentAgents(input), ...roundSteps(input, s.runs).flat()];
   }
 
+  /** A plan phase a parent's launch started, at a tier below heavy: the session's own plan-review PASS ends it, and foreman_checkpoint is refused. */
+  function parentPhaseByReview(s: Session): boolean {
+    return s.planPhase && s.planPhaseOrigin === "parent" && s.ceremony.tier !== "heavy";
+  }
+
   /** Heavy tier: a builder launch needs the owner's approval of the current plan (checkpoint.ts). A refusal records nothing. */
   function builderPlanBlock(s: Session, ctx: ExtensionContext, input: Record<string, unknown>): string | undefined {
     const tier = s.ceremony.tier;
@@ -4367,7 +4381,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const roles = launchRoles(s, input);
       if (roles.includes("builder")) {
         s.trace?.emit({ event: "launch_refused", reason: "plan_phase", tier, ...launchDeny(input) });
-        return launchRefusalText("plan_phase", s.plan, planOpts(s, ctx).scratchDir);
+        return launchRefusalText("plan_phase", s.plan, planOpts(s, ctx).scratchDir, parentPhaseByReview(s));
       }
     }
     if (tier !== "heavy" || !launchRoles(s, input).includes("builder")) return undefined;
@@ -4404,6 +4418,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function onEditRefused(s: Session, mode: EditMode, kind: string): string {
     s.trace?.emit({ event: "foreman_edit_refused", mode, kind });
     if (mode === "bounded") return "";
+    if (parentPhaseByReview(s)) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait until your plan review passes (a [plan-review] PASS on the current version ends the phase) or /foreman plan off.";
     if (s.planPhase) return " The plan phase is on: write the plan under .workflow/ and use explorers; code changes wait for a checkpoint approval or /foreman plan off.";
     s.ceremony = { ...s.ceremony, needsChange: true };
     if (s.ceremony.tier !== "trivial") return isTriaged(s.ceremony) ? "" : ` Record the tier with ${TRIAGE_TOOL}: this task needs a builder, so trivial counts as standard.`;
@@ -4525,24 +4540,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   };
   /** The handoff dirs where this session is the child: the only ones the ask state and the parent-ruling gate read. */
   const childDirsOf = (s: Session): string[] => childHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id));
-  /** A `ruling.md` / `ruling-plan.md` written by this session in a handoff dir where it is the PARENT gets the `plan-version:` line of that dir's plan.md (checkpoint.ts stampPlanVersion). */
-  function stampParentRuling(s: Session, file: string): void {
-    if (path.basename(file) !== "ruling.md" && path.basename(file) !== PLAN_VERDICT_FILE) return;
-    const realOf = (d: string): string => {
-      try {
-        return fs.realpathSync.native(d);
-      } catch {
-        return path.resolve(d);
-      }
-    };
-    const dir = realOf(path.dirname(file));
-    const own = new Set(childDirsOf(s).map(realOf));
-    if (own.has(dir)) return;
-    const parentOf = ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)).map(realOf);
-    if (!parentOf.includes(dir)) return;
-    const hash = stampPlanVersion(file, path.join(dir, "plan.md"));
-    if (hash) s.trace?.emit({ event: "plan_ruling_stamped", to: hash.slice(0, 16) });
-  }
   const bashRulingSnaps = new Map<string, Map<string, number>>();
   /** ask_user_question calls whose text read like jargon: the hint is appended to the result (ownertext.ts). */
   const questionHints = new Map<string, string>();
@@ -4782,8 +4779,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           } catch {
             // keep the resolved path
           }
-          // R41 item 17: the parent pane's harness stamps the plan version into a plan ruling it wrote for a CHILD's handoff dir (never the caller's own dir)
-          if (event.toolName === "write" || event.toolName === "edit") stampParentRuling(owner, real);
           selfRulingsFor(owner).mark(real);
         }
       }
@@ -5635,6 +5630,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { content: [{ type: "text" as const, text }], details: { decision, by }, ...(isError ? { isError: true } : {}) };
         };
         if (s.isChild) return done("refused", null, `${CHECKPOINT_TOOL} is for the foreman only.`, true);
+        const configRefusal = checkpointConfigRefusal(get(s.config.config, "ceremony.checkpoint"));
+        if (configRefusal) return done("refused", null, configRefusal, true, "checkpoint_parent");
+        // below heavy a plan phase a parent's launch started ends with the plan review's PASS: no owner dialog opens
+        if (parentPhaseByReview(s)) return done("refused", null, parentPhaseCheckpointText(isTriaged(s.ceremony)), true, "plan_phase_review");
         const r = readPlan(params.path, planOpts(s, ctx));
         if ("error" in r) return done("refused", null, r.error, true);
         const plan = r.plan;
@@ -5660,28 +5659,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // Pending first: a crash, an abort or no answer leaves it pending, never approved.
         const rec: PlanRecord = { topic: plan.topic, path: plan.path, hash: plan.hash, status: "pending", approvedAt: null, by: null };
         s.plan = rec;
-        s.waitingForParent = true; // pending: the owner/parent answers; the finish gate lets the turn end until the next input
+        s.waitingForParent = true; // pending: the owner answers; the finish gate lets the turn end until the next input
         const pendingText = `No answer from the owner; the checkpoint of ${name} (${hash8}) stays pending — ask the owner in your reply. Builders stay refused at tier heavy until the owner approves (call ${CHECKPOINT_TOOL} again).`;
-        // ceremony.checkpoint: `parent` (default for a session opened with a parent) takes the verdict from the parent-written ruling-plan.md, never a dialog.
-        const parentMode = checkpointMode(get(s.config.config, "ceremony.checkpoint"), process.env) === "parent";
-        const handoff = roundStateDir(process.env);
-        const verdict = parentMode && handoff ? readPlanVerdict(handoff, plan.path, selfRulingsFor(s)) : null;
+        // The owner answers in this session's own pane, also in a session opened by another session: no file from a parent approves a plan.
+        if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
         let answer: string | undefined;
-        if (verdict) {
-          answer = verdict.kind === "approve" ? "approve" : verdict.kind;
-        } else if (parentMode) {
-          const file = handoff ? path.join(handoff, PLAN_VERDICT_FILE) : null;
-          return done("pending", null, `${pendingText}${file ? ` The parent answers in ${file} (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit; a ruling.md APPROVED there counts as APPROVED): wait with foreman_wait kind file on that path, then call ${CHECKPOINT_TOOL} again.` : ""}`);
-        } else {
-          if (!ctx.hasUI || (ctx.mode !== "tui" && ctx.mode !== "rpc")) return done("pending", null, pendingText);
-          const title = `pi-foreman checkpoint: ${name} (${hash8})`;
-          s.trace?.emit({ event: "dialog", surface: "checkpoint" });
-          try {
-            ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
-            answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
-          } catch {
-            answer = undefined;
-          }
+        const title = `pi-foreman checkpoint: ${name} (${hash8})`;
+        s.trace?.emit({ event: "dialog", surface: "checkpoint" });
+        try {
+          ctx.ui.notify(`${ownerSummary(plan.bytes.toString("utf8"))}\n\n${planSummary(plan.bytes.toString("utf8"), plan.rel, plan.hash)}${reviewed ? `\n${reviewed}` : ""}`, "info");
+          answer = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, title, () => ctx.ui.select(title, [...CHECKPOINT_CHOICES], { signal }));
+        } catch {
+          answer = undefined;
         }
         // A newer checkpoint replaced this one while the dialog was open: this answer is not applied.
         if (s.plan !== rec || answer === undefined || !(CHECKPOINT_CHOICES as readonly string[]).includes(answer)) return done("pending", null, pendingText);
@@ -5692,11 +5681,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             return done("pending", null, `${name} changed while the owner was reviewing it, so the approval is not applied: the checkpoint stays pending. Call ${CHECKPOINT_TOOL} again so the owner approves the current version.`);
           }
           rec.status = "approved";
-          rec.source = !verdict ? "dialog" : handoff && readPlanVerdictFile(handoff, plan.path, selfRulingsFor(s)) ? "ruling-plan" : "ruling";
+          rec.source = "dialog";
           rec.approvedAt = new Date().toISOString();
-          rec.by = !verdict && ctx.mode === "tui" ? "user" : "rig";
-          // a human's dialog answer (not a parent verdict) is kept in the harness-only approval store, keyed by the plan version hash
-          if (!verdict) saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
+          rec.by = ctx.mode === "tui" ? "user" : "rig";
+          // the owner's dialog answer is kept in the harness-only approval store, keyed by the plan version hash
+          saveStored(s.agentDir, rec.hash, rec.topic, { approval: { at: rec.approvedAt, by: rec.by } });
           if (s.planPhase) {
             s.planPhase = false; // an approval ends the plan phase
             s.trace?.emit({ event: "plan_phase", decision: "off", cause: "checkpoint" });
@@ -5705,20 +5694,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (answer === "revise") {
           let note: string | undefined;
-          if (verdict?.kind === "revise") note = verdict.note;
-          else {
-            try {
-              note = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
-            } catch {
-              note = undefined;
-            }
+          try {
+            note = await withBlockedOn(herdrEvents, BLOCK_CHECKPOINT, "What should change?", () => ctx.ui.input("What should change?", undefined, { signal }));
+          } catch {
+            note = undefined;
           }
           rec.status = "revise";
           if (note && note.trim()) rec.note = note.trim();
           return done("revise", null, `The owner asked for a revision of ${name}. The owner's words:\n${rec.note ?? "(no note given)"}\nChange the plan (edit it), then call ${CHECKPOINT_TOOL} again. Builders stay refused at tier heavy until the owner approves.`);
         }
         rec.status = "rejected";
-        if (!verdict) ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
+        ctx.ui.notify(`pi-foreman: ${name} was rejected; the heavy path is stopped (no builder launches until a new plan is approved).`, "warning");
         return done("reject", null, `The owner rejected ${name}. The heavy path is stopped: launch no builder; report to the owner and ask how to go on. A new plan needs a new ${CHECKPOINT_TOOL} approval.`);
       },
     } as never);
@@ -6043,6 +6029,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return;
         }
         s.planPhase = rest[0] !== "off";
+        if (s.planPhase) s.planPhaseOrigin = "owner"; // the owner's phase, also inside a child: a plan-review PASS never ends it
         s.trace?.emit({ event: "plan_phase", decision: s.planPhase ? "on" : "off", cause: "user" });
         persistCeremonyState(s);
         ctx.ui.notify(s.planPhase ? "pi-foreman: plan phase on. Changes only under .workflow/, explorers need no ledger, builders wait for a checkpoint approval or /foreman plan off." : "pi-foreman: plan phase off.", "info");
