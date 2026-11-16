@@ -55,7 +55,7 @@ import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
 import { firstRunNotice, presetNames, presetProviders, providerGapNotice } from "./firstrun.ts";
-import { dormantDoctorLine } from "./features.ts";
+import { dormantDoctorLine, withBuiltinKeepalive } from "./features.ts";
 import { bridgeTrusted, trustBridgeCommand } from "./bridgetrust.ts";
 import { withNudge } from "./knowledge.ts";
 import { preBashConfigOf, runPreBashHooks } from "./prebash.ts";
@@ -70,7 +70,7 @@ import { bgWaitLocations, coordinationCall, launchLocations, inRecorded, noticeL
 import { roleToolDenied } from "./roledeny.ts";
 import { McpChild, configuredServers, searchableOf } from "./mcpchild.ts";
 import { missingFloorTools } from "./toolfloor.ts";
-import { DEFERRED_ENTRY, DEFERRED_SECTION, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
+import { DEFERRED_ENTRY, DEFERRED_SECTION, addedPatterns, deferredDoctorLines, deferredHint, hiddenSet, latestDeferredLoaded, mergeDeferredLayers } from "./deferred.ts";
 import { createToolSearchTool } from "./toolsearch.ts";
 import { ToolUsageTracker, packageOf } from "./toolusage.ts";
 import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, type SkillRules } from "./skillvisibility.ts";
@@ -83,7 +83,7 @@ import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
 import { childRoleIds, roleLaunchBlock, roleModelBlock } from "./roles.ts";
 import { BRIDGE_PROVIDER, BridgeIsolation, bridgeLoadOrder, providersLine, isolationDir, isolationDoctor, isolationOn, loadOrderNotice, PROJECT_BRIDGE_FIX, PROJECT_CLAUDE_FIX, projectBridgeConfigRisks, projectClaudeRisks, userBridgeConfigRisks } from "./bridgeiso.ts";
-import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, splitLevel, STRENGTHS } from "./launchmodel.ts";
+import { applyLaunchModels, applyLaunchTimeouts, roleModelsOf, roleTimeoutMs, rowModelOf, splitLevel, STRENGTHS } from "./launchmodel.ts";
 import { hubWorkflowDriftLines } from "./hubdrift.ts";
 import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
@@ -4078,7 +4078,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent") {
         const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}) });
-        if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: b?.model ?? null });
+        if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
       if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
       return undefined;
@@ -5471,7 +5471,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     defaultActive: false,
     executionMode: "sequential",
     description: "Manage the requirements ledger. Foreman: action status, mark (items: numbers, several in one call; \"V\" only after a reviewer PASS with no revision since), add (text), upsert ({item?, text}: replace that item's whole text keeping its state, or append a new item when item is omitted; identical text is a no-op), note or defer ({item, text} or {items: [n], text}: exactly one item). Reviewer children: only {action: \"mark\", items: [\"V\"]}. Every call returns ledger status.",
-    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
+    parameters: { type: "object", properties: { action: { type: "string", enum: [...LEDGER_ACTIONS] }, items: { type: "array", items: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }] } }, item: { anyOf: [{ type: "integer", minimum: 1 }, { type: "string", enum: ["V", "v"] }], description: "upsert, note, defer: the item; upsert without it appends a new item." }, text: { type: "string", description: "add: the item text; upsert: the new item text; note: the note; defer: the reason; mark: an optional note, given to every marked item." }, path: { type: "string", description: "Reviewer children only, when the foreman's ledger is not found: .workflow/LEDGER-<topic>.md." } }, required: ["action"], additionalProperties: false } as never,
     async execute(_id: string, params: Record<string, unknown>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await ensureSession(ctx);
       const mode = ledgerHelperMode(get(s.config.config, "ceremony.ledgerHelper"));
@@ -6387,11 +6387,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const addonOn = addonPresent(pi.getAllTools().map((t) => t.name), { agentDir: s.agentDir, cwd: s.cwd });
     out.push(`INFO background-tasks: ${addonOn ? "present" : "absent"}`);
     out.push(...bgFeaturesDoctor(addonOn, s.agentDir, process.env));
-    if (!s.isChild) out.push(...deferredDoctorLines(deferred.patterns, pi.getAllTools().map((t) => t.name)));
+    if (!s.isChild) out.push(...deferredDoctorLines(addedPatterns(deferred.patterns, shippedDeferred()), pi.getAllTools().map((t) => t.name)));
     const peerLine = addonPeerRangeLine({ agentDir: s.agentDir, cwd: s.cwd }, await (deps.piVersion ?? runningPiVersion)());
     if (peerLine) out.push(peerLine);
     out.push(...optionalAddonsDoctor({ agentDir: s.agentDir, cwd: s.cwd }, pi.getAllTools().map((t) => t.name), process.env));
-    out.push(dormantDoctorLine(PKG_ROOT, s.config.config));
+    out.push(dormantDoctorLine(PKG_ROOT, withBuiltinKeepalive(s.config.config, dm?.provider, cache.active)));
     // The profile and its deviations are read without the project layer (the agent dir has no .pi/foreman.json), so project tightening is not noise.
     const userOnly = s.python.ok ? await loadMergedConfig({ python: pyPath(s), pkgRoot: PKG_ROOT, agentDir: s.agentDir, projectDir: s.agentDir, trusted: false, spawner }) : null;
     out.push(...profileDoctorLines(userOnly && userOnly.source === "cli" ? userOnly.config : s.config.config, s.config.config, PKG_ROOT));
@@ -6400,6 +6400,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 }
 
 /** Trace label for a core-guard ask, from the translated block reason (undefined = approved). */
+/** `tools.deferred` of the shipped config/foreman.defaults.json (empty when unreadable). */
+function shippedDeferred(): string[] {
+  try {
+    const d = (JSON.parse(fs.readFileSync(path.join(PKG_ROOT, "config", "foreman.defaults.json"), "utf8")) as { tools?: { deferred?: unknown } }).tools?.deferred;
+    return Array.isArray(d) ? d.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 /** A `subagent` call that starts a run: a launch (no action) or a resume. */
 function isLaunchArgs(args: unknown): boolean {
   if (!args || typeof args !== "object" || Array.isArray(args)) return false;
