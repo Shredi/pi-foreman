@@ -794,8 +794,9 @@ function walkScript(script: Script, src: string, sc: Scope): void {
 /**
  * The here-document bodies the parser reads in `command`, as source offsets from the start of the body to the end of the closing line, or null when `command` does
  * not parse (a quote left open, a `<<` inside it, is none). A here-document inside a word (`$(...)`, backticks) or a function body is not listed, and nor is one
- * the parser reports without a closing line. The third element is true when a shell does not expand the body: the tag has a quoted part (the parser's `quoted`).
- * An unquoted body is never data, whatever it holds.
+ * the parser reports without a closing line. The third element is true when a shell does not expand the body: the tag has a quoted part (the parser's `quoted`)
+ * and its source text (the delimiter word's slice of `command`) holds no `$'` or `$"`, which dash does not read as a quote (it ends such a heredoc at a line `$EOF`,
+ * earlier than the parser). An unquoted body is never data, whatever it holds.
  */
 export function heredocSpans(command: string): Array<[number, number, boolean]> | null {
   let script: Script | undefined;
@@ -810,7 +811,7 @@ export function heredocSpans(command: string): Array<[number, number, boolean]> 
     const x = n as any;
     if (depth > 200 || x.type === "Word" || x.type === "Function") return;
     if (x.type === "HereDoc") {
-      if (x.closing) spans.push([x.body.pos, x.closing.end, !!x.delimiter?.quoted]);
+      if (x.closing) spans.push([x.body.pos, x.closing.end, !!x.delimiter?.quoted && !/\$['"]/.test(command.slice(x.delimiter.pos, x.delimiter.end))]);
       return;
     }
     forEachChild(n, (c) => visit(c, depth + 1));

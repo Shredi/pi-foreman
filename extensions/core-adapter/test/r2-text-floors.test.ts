@@ -462,6 +462,25 @@ test("ruled rule (brief-21): only a quoted tag makes a written body data, all th
   }
 });
 
+test("ruled (item 16): a tag written with $'…' or $\"…\" is no quoted tag, its body is scanned (dash ends it at a line $EOF); the plain quoted spellings stay free", () => {
+  for (const c of FLOORED5) {
+    for (const head of ["cat > f <<$'EOF'", 'cat > f <<$"EOF"']) {
+      const l = heredoc(head, `$EOF\n${c}`);
+      for (const kind of ["main", "child"] as const) {
+        const f = field("mcp_run", { q: l }, kind === "child");
+        assert.ok(flagged(f), `field ${kind}: ${JSON.stringify(l)} -> ${JSON.stringify(f)}`);
+        assert.equal(kindOf(f), kind === "child" || !/^git /.test(c) ? "block" : "ask", `field ${kind} kind: ${JSON.stringify(l)}`);
+      }
+    }
+    for (const head of ["cat > f <<'EOF'", 'cat > f <<"EOF"', "cat > f <<\\EOF"]) {
+      const l = heredoc(head, `$EOF\n${c}`);
+      for (const kind of ["main", "child"] as const) {
+        assert.ok(!flagged(field("mcp_run", { q: l }, kind === "child")), `field ${kind}: ${JSON.stringify(l)}`);
+      }
+    }
+  }
+});
+
 test("field: a quote that closes on a later line is read by the scan of the whole leaf, a floored command after it is floored", () => {
   for (const c of FLOORED5) {
     for (const mk of [(x: string) => `echo "a\nb"; ${x}`, (x: string) => `echo 'a\nb' && ${x}`, (x: string) => `v="a\nb" ${x}`]) {
