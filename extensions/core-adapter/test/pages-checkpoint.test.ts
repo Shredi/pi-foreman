@@ -17,7 +17,7 @@ const PLAN = "# Widget\n\n## For the owner\nWe ship the widget.\n```mermaid\ngra
 async function rig(t: { after(fn: () => void | Promise<void>): void }, answers: string[]) {
   const keys = ["PI_FOREMAN_PYTHON", "PI_FOREMAN_STATE_DIR", "PI_CODING_AGENT_DIR", "PI_SUBAGENT_CHILD"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-pagesck-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-pagesck-")));
   let shutdown: (() => Promise<unknown>) | undefined;
   t.after(async () => {
     try { await shutdown?.(); } catch { /* best effort */ }
