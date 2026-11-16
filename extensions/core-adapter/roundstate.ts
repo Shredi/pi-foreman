@@ -3,7 +3,7 @@
 //
 // The file keeps the handoff dir, the checkpointed plan's topic and version hash, the plan-review lineage of that plan
 // and the round state (built, review open). It never keeps or brings back an approval: the session's own dialog approval returns from
-// its ceremony-state entry or the approval store (index.ts), and no parent file (`ruling.md`, `ruling-plan.md`) approves a plan. Any other
+// its ceremony-state entry only, never the approval store (index.ts), and no parent file (`ruling.md`, `ruling-plan.md`) approves a plan. Any other
 // field (`approved: true`) is ignored. A different handoff dir or plan hash discards the whole file (re-ceremony). A file of an older version (`chains`, review
 // counters) restores its main chain's state and drops the counters. The caps-reset
 // watermark (`capsResetAt`, ms epoch of the last parent brief that lifted the loop stop and the budgets) is kept, so a reload does not apply it twice.

@@ -460,7 +460,7 @@ interface Session {
   /** Foreman only: the working-tree snapshot (tree id) per directory at launch, kept beside the heads above (reviews.ts reviewedHeadVia). */
   launchTreesByCall: Map<string, Map<string, string | null>>;
   launchTrees: Map<string, Map<string, string | null>>;
-  /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a reload brings back only the owner's own dialog approval, planstate.ts and the approval store). */
+  /** Foreman only: the latest plan checkpoint (checkpoint.ts; in memory, a restart checkpoints again; a reload brings back only the owner's own dialog approval: from the session's ceremony-state entry, planstate.ts, and without a handoff dir also from the approval store). */
   plan: PlanRecord | null;
   /** The owner-script proposal and its approval (scriptapproval.ts): in memory only, so a reload or restart drops the approval. */
   script: ScriptState;
@@ -1480,10 +1480,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /**
    * session_start after a reload or resume (R41 item 17): the checkpoint approval and the plan-review verdicts come back from the harness-only approval
-   * store, keyed by the plan version hash of the plan files now in the scratch dir. In a session opened by another session too: its approval is the owner's own dialog answer.
+   * store, keyed by the plan version hash of the plan files now in the scratch dir. Not in a session opened by another session: the store keeps no session or
+   * plan path, so a shared scratch dir would hand it the parent's approval; its own dialog approval comes back from its ceremony-state entry (restoreCeremonyState).
    */
   function restoreStoredPlans(s: Session, ctx: ExtensionContext): void {
-    if (s.isChild) return;
+    if (s.isChild || roundStateDir(process.env)) return;
     const r = restoreFromStore(s.agentDir, planOpts(s, ctx));
     for (const v of r.reviews) if (!s.planReviews.lineage(v.plan.path)) s.planReviews.restore(v.plan.path, { hash: v.plan.hash, verdict: v.review.verdict, model: v.review.model, findings: Promise.resolve([]) }, v.review.rounds);
     const a = r.approved;

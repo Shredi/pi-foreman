@@ -651,7 +651,7 @@
       "id": "round-state",
       "area": "sessions",
       "title": "Reload-safe round state",
-      "purpose": "In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval, always the owner's dialog answer, returns from the session's own state entry or the approval store; no file from the parent approves a plan.",
+      "purpose": "In a session opened by another session with `PI_FOREMAN_HANDOFF_DIR` set, `<handoff dir>/round-state.json` keeps the checkpointed plan's topic and hash, its plan-review verdict and counters, so `/reload` keeps them. It never keeps an approval: the checkpoint approval, always the owner's dialog answer, returns only from the session's own state entry, never from the approval store; no file from the parent approves a plan.",
       "doc": "docs/sessions.md#child-orchestrator-sessions",
       "keys": [],
       "commands": [],

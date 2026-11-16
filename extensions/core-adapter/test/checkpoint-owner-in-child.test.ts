@@ -1,7 +1,7 @@
 // The child owns its plan (PR 4): in a session opened by a parent (handoff dir and parent intercom id set), the heavy checkpoint is
 // the owner's dialog in the session's own pane, as in a session without a parent. No file from the parent approves: a `ruling.md` or
 // `ruling-plan.md` in the handoff dir approves nothing, not at the checkpoint and not on a reload. The dialog holds the owner blocked
-// state (kind checkpoint) while open; the approval survives a reload; with no UI the checkpoint stays pending; `ceremony.checkpoint:
+// state (kind checkpoint) while open; the approval survives a reload from the session's own entry, never from the approval store; with no UI the checkpoint stays pending; `ceremony.checkpoint:
 // parent` is refused with its message.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -12,7 +12,7 @@ import type { Block } from "./_r46world.ts";
 
 const pending = (r: Block): boolean => r?.block === true && /\[launch_refused:checkpoint_pending\]/.test(r.reason ?? "");
 
-test("heavy child: no parent file approves (checkpoint, no UI, reload); the owner's dialog does, and its approval survives a reload and a lost session file", async (t) => {
+test("heavy child: no parent file approves (checkpoint, no UI, reload); the owner's dialog does, its approval survives a reload, not a lost session file", async (t) => {
   const w = world(t, { handoff: true, parent: true });
   const a = await w.adapter("startup");
   assert.equal(await a.review("PASS"), null);
@@ -52,11 +52,11 @@ test("heavy child: no parent file approves (checkpoint, no UI, reload); the owne
   const c = await w.adapter("reload");
   assert.equal(await c.launch("builder"), undefined, "the dialog approval survives a reload");
   await c.down();
-  // the session file is gone (a new branch): the approval comes back from the approval store, also in a session with a parent
+  // the session file is gone (a new branch): a session with a handoff dir does not restore from the approval store (it cannot tell whose approval it holds)
   w.entries.length = 0;
   for (const f of ["ruling.md", "ruling-plan.md"]) fs.rmSync(path.join(w.handoff, f));
   const d = await w.adapter("resume");
-  assert.equal(await d.launch("builder"), undefined, "the owner's own approval survives without the session entry");
+  assert.ok(planRequired(await d.launch("builder")), "without the session entry the checkpoint is asked again");
 });
 
 test("an entry recorded from a parent's verdict file restores nothing, and the dialog holds the owner blocked state while open", async (t) => {
@@ -69,6 +69,7 @@ test("an entry recorded from a parent's verdict file restores nothing, and the d
   await a.down();
   const b = await w.adapter("reload");
   assert.ok(planRequired(await b.launch("builder")) || pending(await b.launch("builder")), "an approval from a parent's file does not come back");
+  assert.equal(await b.review("PASS"), null); // the entry above holds no plan-review verdict, and the store is not read in a child
   // the dialog: owner blocked (kind checkpoint) in the live file and the trace while it is open, released after the answer
   const ctx = b.ctx as { ui: { select: (...x: unknown[]) => Promise<string | undefined> } };
   let answer: (v: string) => void = () => undefined;

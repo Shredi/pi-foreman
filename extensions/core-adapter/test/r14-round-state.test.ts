@@ -1,7 +1,7 @@
 // R14 item 6 (P2): reload-safe round state. `<handoff>/round-state.json` keeps the plan hash and the review counters;
 // the checkpoint approval is never stored there. Since PR 4 (the child owns its plan) no parent file approves: after /reload the
-// owner's dialog approval comes back from the approval store, keyed on the plan version hash, whatever ruling files the handoff dir
-// holds. Each case runs the real adapter twice over the same dirs (a fresh instance = a reload).
+// session's own dialog approval comes back from its ceremony-state entry (never from the approval store in a session with a handoff dir),
+// while the plan version hash is unchanged, whatever ruling files the handoff dir holds. Each case runs the real adapter twice over the same dirs (a fresh instance = a reload).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -62,6 +62,9 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   fs.writeFileSync(planFile, PLAN);
   fs.writeFileSync(path.join(handoff, "plan.md"), PLAN);
   const stateFile = path.join(handoff, ROUND_STATE_FILE);
+  /** The fake session file: the custom entries the adapter appends, read back through getBranch by the next instance (a reload). */
+  const entries: unknown[] = [];
+  let snapEntries = "[]";
 
   /**
    * Until the clock is past every file the session will read. steerwatch.ts baseline counts a file as seen only when its mtime is
@@ -92,10 +95,11 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
       setModel: async () => true,
       setThinkingLevel: () => undefined,
       sendMessage: () => undefined,
+      appendEntry: (customType: string, data: unknown) => void entries.push({ type: "custom", customType, data: JSON.parse(JSON.stringify(data)) }),
     };
     coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null });
     const ctx = {
-      sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
+      sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => entries, getBranch: () => entries },
       cwd: project,
       model: { provider: "fake", id: "foreman" },
       mode: "tui",
@@ -176,6 +180,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
     await settle();
     const copy = `${root}-snap`;
     fs.cpSync(root, copy, { recursive: true, preserveTimestamps: true });
+    snapEntries = JSON.stringify(entries);
     return copy;
   }
   /** Starts a case from `copy`: the instances of the case before are shut down, the files replaced, the env set again. */
@@ -183,6 +188,7 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
     await settle();
     for (const name of fs.readdirSync(root)) fs.rmSync(path.join(root, name), { recursive: true, force: true });
     fs.cpSync(copy, root, { recursive: true, preserveTimestamps: true });
+    entries.splice(0, entries.length, ...(JSON.parse(snapEntries) as unknown[]));
     applyEnv();
   }
   t.after(() => rmTestTmp(`${root}-snap`));
@@ -232,7 +238,7 @@ test("approve -> persist -> fresh adapter instance over the same handoff dir -> 
   await a.down();
   const b = await w.adapter();
   assert.equal(await b.recheck(), "approve", "the plan-review verdict came back with the approval: no plan_review_required");
-  assert.equal(await b.launch("builder"), undefined, "the owner's dialog approval from the approval store; revision 2 of 2");
+  assert.equal(await b.launch("builder"), undefined, "the owner's dialog approval from the session entry; revision 2 of 2");
   assert.equal(await b.launch("reviewer"), undefined);
   assert.equal(await b.launch("builder"), undefined, "no revision limit: a third revision is allowed");
 });
@@ -257,7 +263,7 @@ test("plan rewritten after a ruling.md with the same bytes -> same version: the 
   fs.writeFileSync(w.planFile, PLAN); // same bytes, same hash: only the ctime moved past the ruling
   const b = await w.adapter();
   assert.deepEqual(w.stored().round, { built: true, reviewOpen: true }, "dir and hash match: the round state comes back");
-  assert.equal(await b.launch("builder"), undefined, "no ctime binding to a parent file: the owner's approval of this version comes back from the store");
+  assert.equal(await b.launch("builder"), undefined, "no ctime binding to a parent file: the owner's approval of this version comes back from the session entry");
 });
 
 test("handoff plan.md rewritten after the ruling -> the scratch plan's dialog approval still comes back (plan.md is information)", async () => {
@@ -288,7 +294,7 @@ test("session-written round-state.json with approved: true and matching hash but
   assert.ok(planRequired(await b.launch("builder")));
 });
 
-test("ruling-<n>.md APPROVED and ruling.md SHIP change nothing: the dialog approval comes back from the store", async () => {
+test("ruling-<n>.md APPROVED and ruling.md SHIP change nothing: the dialog approval comes back from the session entry", async () => {
   const w = await fromApprovedRound();
   w.pastPlans();
   w.rule("ruling-2.md", "APPROVED\n");
@@ -320,7 +326,7 @@ test("different handoff dir -> discarded", async () => {
   assert.equal(w.stored().handoffDir, w.handoff);
   assert.deepEqual(w.stored().round, { built: false, reviewOpen: false }, "no round state came back");
   const r = await b.launch("builder");
-  assert.equal(r, undefined, "the approval is the owner's, from the store, not from round-state.json");
+  assert.equal(r, undefined, "the approval is the owner's, from the session entry, not from round-state.json");
   assert.deepEqual(w.stored().round, { built: true, reviewOpen: false }, "a first build, not a revision of the discarded round");
 });
 
@@ -344,7 +350,7 @@ test("an owner prompt clears the round state in the file", async () => {
   assert.deepEqual(w.stored().round, { built: false, reviewOpen: false });
   await a.down();
   const b = await w.adapter();
-  assert.equal(await b.launch("builder"), undefined, "the owner's approval restored from the store");
+  assert.equal(await b.launch("builder"), undefined, "the owner's approval restored from the session entry");
   assert.equal(await b.launch("reviewer"), undefined);
   assert.equal(await b.launch("builder"), undefined, "revision 1: the cleared count did not come back");
 });
