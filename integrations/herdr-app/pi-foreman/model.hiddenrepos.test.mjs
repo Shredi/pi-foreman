@@ -43,10 +43,12 @@ test("the repository match ignores case", () => {
 });
 
 test("a session chip of a hidden repo stays", () => {
-  const root = session("fm-a", { repo: "acme/widgets", dots: [{ n: 56, state: "ok", label: "#56", src: "pr", url: url(56) }] });
-  const parsed = parseRadarDoc(JSON.stringify({ v: 1, now: "2026-11-02T20:23:27Z", roots: [root], openPrs: [hide(77)], openPrsAt: "2026-11-02T20:22:18Z" }));
-  assert.deepEqual(parsed.nodes[0].prs.map((p) => p.number), []);
-  assert.deepEqual(parsed.openPrs.map((p) => p.number), [77], "the feed keeps the entry for covered");
+  const root = session("fm-a", { repo: "acme/widgets", dots: [{ n: 77, state: "ok", label: "#77", src: "pr", url: url(77) }] });
+  const byBranch = session("fm-b", { repo: "acme/widgets", branch: "feat" });
+  const parsed = parseRadarDoc(JSON.stringify({ v: 1, now: "2026-11-02T20:23:27Z", roots: [root, byBranch], openPrs: [hide(77), hide(78, { headRefName: "feat" })], openPrsAt: "2026-11-02T20:22:18Z" }));
+  assert.deepEqual(parsed.nodes[0].prs.map((p) => p.number), [77], "the dot's chip survives dropClosedPrs");
+  assert.deepEqual(parsed.nodes[1].prs.map((p) => p.number), [78], "matchPrs still attaches a hidden repo's PR by branch");
+  assert.deepEqual(parsed.openPrs.map((p) => p.number), [77, 78], "the feed keeps the entry for covered");
 });
 
 test("a step-(b) PR of a hidden repo is skipped, with and without a twin", () => {

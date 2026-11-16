@@ -81,6 +81,15 @@ test("refreshOpenPrs copies the marks of the file as it is under the lock", asyn
   r.done();
 });
 
+test("refreshOpenPrs tolerates a file entry without a string repo", async () => {
+  const r = rig();
+  r.put([pr(1, "acme/archive", { hiddenRepo: true }), { number: 2, hiddenRepo: true } as unknown as OpenPr, { repo: 3, number: 3 } as unknown as OpenPr]);
+  const gh: GhRunner = async () => answer(node(5, "acme/archive"));
+  assert.equal(await refreshOpenPrs({ file: r.file, config: openPrsConfig({ enabled: true }), gh, now: () => T, force: true }), "refreshed");
+  assert.equal(r.read().openPrs.find((p) => p.number === 5)?.hiddenRepo, true);
+  r.done();
+});
+
 test("remarkOpenPrs marks, unmarks and does not rewrite when nothing changed", () => {
   const r = rig();
   r.put([pr(1, "acme/archive"), pr(2, "acme/widgets", { hiddenRepo: true })]);

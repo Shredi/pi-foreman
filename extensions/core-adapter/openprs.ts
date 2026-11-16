@@ -278,7 +278,7 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
     try {
       // The file as it is under the lock (the tracker may have re-marked it since the read above): the marks are copied from it per repo.
       const cur = readFile(o.file);
-      const marked = new Set((cur?.openPrs ?? []).filter((p) => p.hiddenRepo === true).map((p) => p.repo.toLowerCase()));
+      const marked = new Set((cur?.openPrs ?? []).filter((p) => p.hiddenRepo === true && typeof p.repo === "string").map((p) => p.repo.toLowerCase()));
       const keep = (p: OpenPr): OpenPr => (marked.has(p.repo.toLowerCase()) ? { ...p, hiddenRepo: true } : p);
       const stamp = (): string => new Date(now()).toISOString();
       try {

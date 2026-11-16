@@ -299,9 +299,9 @@ def _tracked_entries(adir):
             v = src.get(key)
             if isinstance(v, str) and v:
                 ent[dst] = v[:255]
-        # the host is the store key's prefix (`<host>/o/r#n`); a key without one is github.com
         if e.get("hiddenRepo") is True:  # the PR tracker's mark (radar.openPrs.hideRepos)
             ent["hiddenRepo"] = True
+        # the host is the store key's prefix (`<host>/o/r#n`); a key without one is github.com
         kparts = skey.split("#")[0].split("/") if isinstance(skey, str) else []
         if len(kparts) == 3 and RADAR_HOST_RE.match(kparts[0].lower()) and kparts[0].lower() != "github.com":
             ent["host"] = kparts[0].lower()
