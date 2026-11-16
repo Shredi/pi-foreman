@@ -394,7 +394,8 @@
             "refreshSeconds": { "type": "integer", "minimum": 60, "maximum": 86400, "description": "Seconds between two searches (default 120); the radar polls read the cache only." },
             "mine": { "type": "boolean", "description": "List the open PRs you authored and those with your review requested (default true)." },
             "authors": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$" }, "description": "Other authors whose open PRs are listed, for example renovate[bot] (a GitHub App is searched as author:app/<name>). Searched only inside scope." },
-            "scope": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(/[A-Za-z0-9._-]+)?$" }, "description": "Owners or owner/repo that authors are searched in; without scope no author is searched." }
+            "scope": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(/[A-Za-z0-9._-]+)?$" }, "description": "Owners or owner/repo that authors are searched in; without scope no author is searched." },
+            "hideRepos": { "type": "array", "items": { "type": "string", "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]{1,200}$" }, "description": "Globs (* and ?, case-insensitive, the matcher of tools.prSources.<name>.repos) over owner/name of repositories whose PRs the herdr-app mod leaves out of its Open PRs list (default empty: hides nothing). Marked by the PR tracker (foreman prs poll), at most 50 globs; display only, the PRs are still polled and watched. User or overlay config only." }
           }
         }
       }
