@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadMergedConfig, get, pythonPathHint } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { piAgentDir } from "./env.ts";
-import { openPrsConfig, openPrsFile, realGh, refreshOpenPrs, MAX_BODY } from "./openprs.ts";
+import { hiddenRepo, openPrsConfig, openPrsFile, realGh, refreshOpenPrs, remarkOpenPrs, MAX_BODY } from "./openprs.ts";
 import type { OpenPrsConfig, RefreshResult } from "./openprs.ts";
 import { NO_PYTHON_FIX, resolvePython } from "./python.ts";
 import type { PythonResolution } from "./python.ts";
@@ -77,6 +77,8 @@ interface SourceEnv {
   /** tools.prSettleSeconds in ms (the PR watch's key and default): how long a pass without a required-check set is held. */
   settleMs: number;
   cfgs: SourceCfg[];
+  /** radar.openPrs.hideRepos: entries of these repositories are marked `hiddenRepo`. */
+  hide: string[];
   run: NonNullable<PollDeps["runSource"]>;
   trace: (rec: Record<string, unknown>) => void;
 }
@@ -133,6 +135,14 @@ function withStateLock<T>(agentDir: string, now: number, fn: (token: string, loc
   }
 }
 
+/** Every entry gets `hiddenRepo: true` when its repo matches `globs` and loses it otherwise. */
+function markHidden(prs: Record<string, StateEntry>, globs: string[]): void {
+  for (const e of Object.values(prs)) {
+    if (hiddenRepo(globs, e.repo)) e.hiddenRepo = true;
+    else delete e.hiddenRepo;
+  }
+}
+
 function setOff(agentDir: string, now: number, off: boolean): void {
   try {
     withStateLock(agentDir, now, () => {
@@ -170,12 +180,13 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
     const hosts = deps.githubHosts ? deps.githubHosts(config.config) : DEFAULT_HOSTS;
     if ("error" in hosts) res.error = hosts.error;
     else if (!py.ok) res.error = `no Python >= 3.13 found (${py.rejected.join("; ") || "none tried"}). ${NO_PYTHON_FIX}`;
-    else {
+    if (oc.hideError) res.error ??= oc.hideError;
+    if (!("error" in hosts) && py.ok) {
       try {
         const ps = parsePrSources(get(config.config, "tools.prSources"));
         if (ps.errors.length > 0) res.error ??= ps.errors[0];
         const settle = get(config.config, "tools.prSettleSeconds");
-        const sx: SourceEnv = { settleMs: settleMsOf(settle), cfgs: ps.sources, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
+        const sx: SourceEnv = { settleMs: settleMsOf(settle), cfgs: ps.sources, hide: oc.hideRepos, run: deps.runSource ?? (async () => ({ outcome: "program_missing", error: "no runner", checks: [], comments: [] })), trace: deps.trace?.(config.config) ?? (() => undefined) };
         if (!deps.runSource) sx.cfgs = [];
         await trackedStep(deps, py.info.executable, res, hosts.hosts, sx);
       } catch (err) {
@@ -187,6 +198,7 @@ export async function pollPrs(deps: PollDeps): Promise<PollResult> {
     } catch (err) {
       res.error ??= msg(err);
     }
+    remarkOpenPrs(openPrsFile(deps.agentDir), oc.hideRepos, deps.now());
   } catch (err) {
     res.error = msg(err);
   }
@@ -225,6 +237,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   const listed = readTracked(agentDir);
   if (listed.kind === "bad") {
     res.skipped = "list_unreadable";
+    markHidden(state.prs, sx.hide);
     if (ownsLock(lock, token)) writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs: state.prs, ...(state.baselines ? { baselines: state.baselines } : {}) });
     return;
   }
@@ -324,6 +337,7 @@ async function locked_step(deps: PollDeps, python: string, res: PollResult, lock
   expectSteps(pick, polls, rows, flagged, state.prs, prs, baselines, deps.now());
 
   if (!ownsLock(lock, token)) return; // another run took the lock over: discard
+  markHidden(prs, sx.hide);
   if (JSON.stringify(newComments) !== commentsBefore) writeAtomic(trackedCommentsFile(agentDir), { v: 1, prs: newComments });
   writeAtomic(trackedStateFile(agentDir), { v: 1, trackedAt: t0, prs, ...(Object.keys(baselines).length ? { baselines } : {}) });
   if (drop.size) {

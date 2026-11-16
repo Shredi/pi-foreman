@@ -697,6 +697,7 @@ Switch: `radar.openPrs.enabled` is true.
 | `radar.openPrs.mine` | `true` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
 | `radar.openPrs.authors` | `[]` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
 | `radar.openPrs.scope` | `[]` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
+| `radar.openPrs.hideRepos` | `[]` | not in project/session (the open PRs source (a GitHub search through gh) comes from the user or overlay config) |
 
 ### remote-sessions
 

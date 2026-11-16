@@ -334,6 +334,7 @@ The record (the label name, whether the label is the watch's own, the head last 
 |---|---|---|
 | `tools.prSources.<name>.command` | required | One command line, split like a POSIX shell (quotes and backslashes, no expansion). Without it the source is dropped with a message. |
 | `tools.prSources.<name>.repos` | `["*"]` | Globs over the lowercased `owner/name` (`*` any run of characters, `?` one character, case-insensitive). The source runs only for PRs of matching repositories. There is no `hosts` key: `repos` and `tools.prGithubHosts` scope it, and `{host}` tells the program which host a PR is on. |
+| (shared globs) | | `radar.openPrs.hideRepos` ([herdr](herdr.md#open-prs)) takes the same globs, to hide repositories from the sidebar's Open PRs list. |
 | `tools.prSources.<name>.timeoutSeconds` | `20` | Per run, 5 to 120; a value outside that range is clamped. |
 | `tools.prSources.<name>.gates` | `true` | `true`: its checks count toward "checks finished", "ready to merge" and "no checks reported". `false`: they are shown and can wake, but gate nothing. |
 

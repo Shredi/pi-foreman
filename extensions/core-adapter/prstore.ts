@@ -72,6 +72,8 @@ export interface StateEntry {
   gone?: true;
   /** Set with a merged or closed snap; the entry is pruned ENDED_KEEP_MS later. */
   endedAt?: number;
+  /** Set by the PR tracker when the repository matches `radar.openPrs.hideRepos`; display only (the sidebar's Open PRs list), nothing else reads it. */
+  hiddenRepo?: true;
   at: number;
 }
 /** The check names of the newest merged pull requests into one base, and when the host answered (epoch ms). */
