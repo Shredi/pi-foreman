@@ -18,10 +18,10 @@ const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =
 
 test("the plan panel and the radar mod, and two plan panels, share no state", () => {
   const a = boot(Mod).m, b = boot(Mod).m, r = boot(Radar).m;
-  for (const k of ["recs", "watched", "noteSeen", "diagOk"]) assert.notEqual(a[k], b[k], `${k} is per copy`);
+  for (const k of ["recs", "watched", "seen"]) assert.notEqual(a[k], b[k], `${k} is per copy`);
   assert.notEqual(a.recs, r.recs);
-  a.noteSeen.set("x", 1); a.noTimeout = true;
-  assert.equal(b.noteSeen.size, 0);
+  a.seen.set("x", "1"); a.noTimeout = true;
+  assert.equal(b.seen.size, 0);
   assert.equal(b.noTimeout, false);
   assert.equal(r.noteSeen.size, 0);
 });

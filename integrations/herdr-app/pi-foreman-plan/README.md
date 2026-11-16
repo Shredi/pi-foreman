@@ -1,8 +1,8 @@
 # pi-foreman-plan mod for herdr-app
 
-A panel that renders the plan (and note) of the foreman that owns the tab, with NEW / CHANGED marks against the last ruling, a Diff
-view, and one tab per child session that published a plan or a note. Read-only; own code on the public mod API (`shared`, `readTextFile`,
-`watchFolder`, `agents`, `panes`, `focused`, `exec`, `theme`, `window`).
+A panel that lists the pages and milestones of the foreman that owns the tab, and of each of its child sessions (one tab each). A page is
+a standalone HTML file the foreman writes (plan, note, result); a click opens it in the system browser. Read-only; own code on the public
+mod API (`shared`, `readTextFile`, `writeTextFile`, `watchFolder`, `agents`, `panes`, `focused`, `exec`, `theme`, `window`).
 
 It installs together with `pi-foreman/` (the Agents mod): that mod publishes the radar this panel reads and adds the sidebar rows that open it.
 
@@ -17,41 +17,46 @@ Updating: `foreman setup --mods` refreshes both installed mods from the package 
 
 The Agents mod's header has a "📄 Plan" button that brings the panel forward.
 
-## Note tab, diagrams, code
+## The list
 
-- A `Note` tab appears when the session published a note (`foreman_show`). A note newer than the one seen before opens the panel (selects
-  the block, shows the hidden panel around it) and switches to that tab; the first sight of a session does not. A child's note opens the
-  panel on that child's tab.
-- A child with a plan and a note has a Plan | Note switch on its tab. A child tab that is not on screen
-  gets a ● on its label while its plan or note is newer than the last one shown there (a first sight counts as new); showing the tab
-  clears it. On the switch, the button of a part with unseen content carries its own ● until that part is shown. Block and panel ids are
-  found by searching the shown layout for this mod, with the `foreman.json` ids (`panel-body`, `plan`, `panel`) as fallback. When the layout
-  has no such block this mod is not running; the Agents mod (`pi-foreman`) posts the notification that says to add
-  `{ "mod": "pi-foreman-plan" }` to a stack.
-- Code fences render in a read-only highlighted editor (language from the info string).
-- A `mermaid` fence whose sha256 (same fence rule as the harness, `tests/fixtures/mermaid-fences.json`) is listed in `fences` of the JSON
-  shows the rendered SVG; otherwise it stays a `mermaid` code block. The SVG is checked against an element allow-list (no script, href,
-  url(), style, foreignObject), then copied to `mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home, where the host reads it.
+- Per tab, pages newest first with a state chip ("plan v3 · waits for you") and their age, then the milestones (plan review, checkpoint
+  answer, PR opened, PR ready, PR merged, result written), newest first. A milestone with an `https://` link opens it.
+- A page that arrives (a new id, or a higher version of the plan; the first sight of a session only records) opens the panel (selects the
+  block, shows the hidden panel around it) on the tab of the session that wrote it. Block and panel ids are found by searching the shown
+  layout for this mod, with the `foreman.json` ids (`panel-body`, `plan`, `panel`) as fallback. When the layout has no such block this mod is
+  not running; the Agents mod (`pi-foreman`) posts the notification that says to add `{ "mod": "pi-foreman-plan" }` to a stack.
+- A page not opened yet at its current state has a ● on its entry; a tab that is not on screen gets a ● on its label while one of its
+  pages is unseen.
 
 ## Anchor
 
 The panel shows the foreman of the agent terminal that owns the tab's pane, never the keyboard focus. A focused floating child at most
-selects that child's tab. Child plans and notes are tabs joined by the radar `parent` field.
+selects that child's tab. Child sessions are tabs joined by the radar `parent` field.
 
 ## Data
 
-`shared("pi-foreman.radar")` (herdr-app persists it in `shared.json`), then for the session on screen `plan.json` and `note.json` in its
-`show.dir`, the plan they name, and `plan.ruled.md` / `plan.prev.md`. Every 5 s only the two JSON files are re-read; documents are
-re-read when those bytes change or the folder watch fires. Nothing is written.
+`shared("pi-foreman.radar")` (herdr-app persists it in `shared.json`), then for each session of the tab `pages/pages.json` in its
+`show.dir`. Every 5 s the index files are re-read (local ones also on a folder watch). An entry counts only when its `file` matches
+`^(?:plan|result|note-\d{1,6})\.html$`; any other entry is dropped before a path is built.
+
+## Opening a page
+
+The page is read (local or remote, at most 1 MiB). For a local session its relative `src` and `poster` values (no scheme, not starting with
+`/` or `#`) are made absolute against the session's `pages/` folder, so relative pictures and videos load. The text is written into one of
+eight fixed files, `mods/pi-foreman-plan/cache/pages/slot-<0-7>.html` in the app home (round robin, overwritten, never deleted), and the
+platform opener runs on that copy only: `open`, `xdg-open` or `rundll32 url.dll,FileProtocolHandler`, no shell, and only that exact path is
+accepted (`pageOpenerArgv`; the compare ignores case on macOS and Windows). The opener runs the handler of the file type, so opening our own
+`.html` copy keeps it to the browser, also when the source file is a symlink. An opener that fails raises an error notice with the exit code
+and the first error line. Beyond the copies and the clearing of the sidebar's pending request (`pi-foreman.show-pending`) the mod writes
+nothing; the only process it starts is the platform opener, for page copies and for `https://` links.
 
 ## Limits
 
 - Plans written through the shell are not observed; remote child sessions show no tab.
-- Marks stop above 4000 lines per side or 1500 changed lines.
-- Markdown images never load (`![` is escaped everywhere, code spans and fences included); only checked diagram SVGs are shown; only `https://` links open, through the platform opener.
-- HTML tags are removed except `del, br, sub, sup, kbd`; `<mark>` is shown as bold because the host paints it as a yellow background under the theme's text colour.
-- The SVG cache has no delete, stat or realpath API: it is not pruned (it grows by two files per distinct diagram) and the cache path is
-  built from the sha and theme only, with the content allow-list as the check.
+- The rewrite for local copies covers `src` and `poster` only, not `srcset`, `<link href>` or CSS `url()`; links and `#` anchors stay as written.
+  A `result.md` written by `cp` or a heredoc gets no page.
+- The page runs in the browser as written, with no script or network restriction.
+- Older versions of this mod left `cache/<sha>-<theme>.svg` files; nothing reads them now and they can be deleted.
 - `model.js` holds copies of a few helpers from `../pi-foreman/model.js` (the loader refuses cross-mod imports); `model.parity.test.mjs` keeps them equal.
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.

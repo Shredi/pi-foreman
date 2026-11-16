@@ -650,7 +650,7 @@ Rows of finished or lost sessions disappear from radar after `--since` hours; th
 show dir `<scratchDir>/show/<sessionId>/` with `plan.json` (path, title, version `v`, time, hashes) and two snapshots, `plan.ruled.md` and
 `plan.prev.md`, rolled at the ruling points: a `foreman_checkpoint`, a `[plan-review]` launch, and a child's `Plan from` message to its parent. The
 live file then carries `show: {dir, plan?, note?}` (`plan` and `note` are version hints), which radar passes through on the session node; the
-[herdr-app plan panel](herdr.md#plan-panel) renders it. Plans written through the shell are not observed, and a remote child's live file is
+[herdr-app plan panel](herdr.md#plan-panel) reads the session's `pages/pages.json` from that dir and lists its pages. Plans written through the shell are not observed, and a remote child's live file is
 on the remote machine, so a parent shows no plan for it.
 
 A `done` session expires sooner: once its last activity (newest of `heartbeatAt`, `lastEventAt`, the trace mtime) is older
