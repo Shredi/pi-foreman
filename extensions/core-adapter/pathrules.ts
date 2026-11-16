@@ -3,7 +3,7 @@
 // falls through to the review (`undefined`). Rule names are `path-<read|write>-<class>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { longForm } from "./pathnorm.ts";
+import { longForm, nativeResolver } from "./pathnorm.ts";
 import { readFieldOf, type ReadToolMap } from "./rules.ts";
 
 /** The roots of one session, resolved by index.ts at call time. All paths absolute. */
@@ -89,11 +89,7 @@ export function tmpRoots(tmpdir: string, platform: string, real: (p: string) => 
 }
 
 export function realDefault(p: string): string | null {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
-  }
+  return nativeResolver(p);
 }
 
 /**

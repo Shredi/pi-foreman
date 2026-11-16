@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseShell, type ShellSegment } from "./shellast.ts";
-import { comparableFs, lexUnder, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
+import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
 import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
 import { readBaseline } from "./baseline.ts";
 import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
@@ -1198,16 +1198,19 @@ export function realDeep(abs: string): string | null {
   const tail: string[] = [];
   let cur = abs;
   for (let n = 0; n < 64; n++) {
-    try {
-      // win32: the native realpath expands 8.3 short names (RUNNER~1), so a floored path in short form still meets its long-form floor
-      const real = process.platform === "win32" ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
-      return tail.length ? path.join(real, ...tail.reverse()) : real;
-    } catch {
-      const parent = path.dirname(cur);
-      if (parent === cur) return null;
-      tail.push(path.basename(cur));
-      cur = parent;
-    }
+    // win32: the native realpath expands 8.3 short names (RUNNER~1), so a floored path in short form still meets its long-form floor
+    const real = memoLookup<string | null>(`d:${cur}`, () => {
+      try {
+        return process.platform === "win32" ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
+      } catch {
+        return null;
+      }
+    });
+    if (real !== null) return tail.length ? path.join(real, ...tail.reverse()) : real;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
+    tail.push(path.basename(cur));
+    cur = parent;
   }
   return null;
 }

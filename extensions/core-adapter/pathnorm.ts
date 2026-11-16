@@ -9,13 +9,36 @@ import { fileURLToPath } from "node:url";
 /** realpath of an existing path, null when it does not exist. */
 export type Resolver = (p: string) => string | null;
 
-export const nativeResolver: Resolver = (p) => {
+let lookups: Map<string, unknown> | null = null;
+
+/** Run `fn` with the file-system look-ups that go through `memoLookup` answered once per path (one gate call: the file system does not change meanwhile). Nested calls share the cache. */
+export function withLookupCache<T>(fn: () => T): T {
+  if (lookups) return fn();
+  lookups = new Map();
   try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
+    return fn();
+  } finally {
+    lookups = null;
   }
-};
+}
+
+/** `look()`, remembered under `key` while a `withLookupCache` scope is open. */
+export function memoLookup<T>(key: string, look: () => T): T {
+  if (!lookups) return look();
+  if (lookups.has(key)) return lookups.get(key) as T;
+  const v = look();
+  lookups.set(key, v);
+  return v;
+}
+
+export const nativeResolver: Resolver = (p) =>
+  memoLookup(`n:${p}`, () => {
+    try {
+      return fs.realpathSync.native(p);
+    } catch {
+      return null;
+    }
+  });
 
 const px = (platform: string): typeof path.posix => (platform === "win32" ? path.win32 : path.posix);
 

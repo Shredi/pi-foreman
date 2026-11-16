@@ -28,7 +28,7 @@ import type { Redirect, Segment } from "./shellchain.ts";
 import { tmpDest } from "./tmpscratch.ts";
 import { unwrapTimeout } from "./timeoutallow.ts";
 import { netReadSegment } from "./netread.ts";
-import { foldCase, longForm, nullDevice } from "./pathnorm.ts";
+import { foldCase, longForm, memoLookup, nativeResolver, nullDevice } from "./pathnorm.ts";
 import type { NetRole } from "./netread.ts";
 
 /** `net-read` (netread.ts: gh / npm / curl / wget reads) is never in SAFE_CLASSES: it composes only with `read` segments (timeoutallow.ts compose). */
@@ -88,21 +88,16 @@ export const SAFE_CLASSES: readonly EffectClass[] = ["read", "build-test", "writ
 
 // ------------------------------------------------------------------ paths
 
-const realDefault = (p: string): string | null => {
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    return null;
-  }
-};
-const existsDefault = (p: string): boolean => {
-  try {
-    fs.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-};
+const realDefault = (p: string): string | null => nativeResolver(p);
+const existsDefault = (p: string): boolean =>
+  memoLookup(`e:${p}`, () => {
+    try {
+      fs.lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
 /** `r` is `h` or one of its ancestors (`/Users`, `~/..`, `/private`): it would cover all of `h`. Case-folded on win32 and darwin. */
 export function holdsHome(platform: string, r: string, h: string): boolean {

@@ -1528,11 +1528,13 @@ function readonlyRunSeg(seg: ShellSegment, text: string, x: ReadonlyCtx, given: 
 
 /**
  * `danger-readonly-run`: some shell segment of a call of a read-only role is none of the free forms above. `ruleOf(i)`: the built-in rule the gate found for segment `i`
- * (the web-read and public-key rules are not `segmentDefault`'s). False for every other role and for a call that is no posix shell line.
+ * (the web-read and public-key rules are not `segmentDefault`'s). False for every other role and for a call that is no shell line; a `powershell` line is always true.
  */
 export function readonlyRunLine(c: DangerCall, env: DangerEnv, ruleOf?: (i: number) => string | null): boolean {
   const { roots, platform } = env;
-  if (!roots.roundReadOnly || !env.facts || !c.segments || c.tool === "powershell" || !BASH_TOOL_NAMES.has(c.tool)) return false;
+  if (!roots.roundReadOnly || !env.facts || !c.segments || !BASH_TOOL_NAMES.has(c.tool)) return false;
+  // a powershell line is one opaque foreign-shell segment no rule of 1-3 settles: always labelled
+  if (c.tool === "powershell") return true;
   const dctx: DefaultCtx = { roots, facts: env.facts, platform, cwd: env.cwd, floor: env.floor };
   const x: ReadonlyCtx = {
     dctx,

@@ -5,9 +5,11 @@
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
-import { FIND_BAD } from "./effects.ts";
+import { FIND_BAD, segmentAlias } from "./effects.ts";
+import { psWords } from "./pswords.ts";
+import { withLookupCache } from "./pathnorm.ts";
 import type { DangerHit, GitFacts } from "./defaults.ts";
-import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, scanToolFloor, secretPath, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
+import { PATH_KEYS, READ_PATH_TOOLS, cutFragment, lineFloors, opaqueTextFloors, pathFloors, pubKeyReadWords, rawFloors, realDeep, scanToolFloor, secretPath, segmentFloors, sshPublicKey, type FloorEnv, type FloorHit } from "./floors.ts";
 
 /** The trace/log rule of a read that only an SSH public key in ~/.ssh made pass the floors (floors.ts sshPublicKey). */
 const PUBKEY_READ_RULE = "floor-pubkey-read";
@@ -235,6 +237,11 @@ function powershellSegment(cwd: string): ShellSegment {
   return { program: "powershell", argv: [], redirects: [], heredoc: false, cwd, wrappers: [], opaque: "foreign_shell" };
 }
 
+/** The resolved words of a powershell line (pswords.ts) as the write redirects of one segment: the checks a bash write target gets read them, and no rule can make the segment free. */
+function powershellWordSegment(words: string[], cwd: string): ShellSegment {
+  return { program: "true", argv: [], redirects: words.map((target) => ({ op: ">" as const, fd: null, target })), heredoc: false, cwd, wrappers: [], opaque: null };
+}
+
 /**
  * Tools whose payload is prose for another agent or the user (a builder brief may say "never use sudo"): the raw-text floors do NOT run
  * on their prose fields, only the structured fields below are floored.
@@ -357,6 +364,11 @@ function ruleResult(v: RuleVerdict): GateResult {
  * the floor ask -> allow rules and built-in allows -> dangerous class. The caller applies the mode step to what is left.
  */
 export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
+  // a powershell line has one word per path: each distinct path is looked up once for the whole call
+  return toolName === "powershell" ? withLookupCache(() => gateRun(toolName, input, cwd, deps)) : gateRun(toolName, input, cwd, deps);
+}
+
+function gateRun(toolName: string, input: unknown, cwd: string, deps: GateDeps): GateOutcome {
   try {
     const inp = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
     const env = deps.env(cwd);
@@ -399,22 +411,31 @@ export function gateEvaluate(toolName: string, input: unknown, cwd: string, deps
       // a child's $FOREMAN_SCRATCH is its own scratch dir (set in its process env); without the binding the variable would make every scratch write opaque
       const scratchVar = roots?.child && roots.scratch[0] ? { env: { FOREMAN_SCRATCH: roots.scratch[0] } } : {};
       const parsed = toolName === "powershell" ? [powershellSegment(cwd)] : parseShell(cmd, { cwd, platform: env.platform, ...scratchVar });
-      const h = lineFloors(cmd, parsed, env);
+      // a powershell line: its words go to the write-target checks below, the secret-path and policy-file floors first (a floor deny of the line itself wins)
+      const psSeg = toolName === "powershell" ? powershellWordSegment(psWords(cmd, cwd, home, platform), cwd) : null;
+      const lineHit = lineFloors(cmd, parsed, env);
+      const wordHit = psSeg ? segmentFloors(psSeg, env, [psSeg]) : null;
+      const h = lineHit?.kind === "deny" ? lineHit : wordHit?.kind === "deny" ? wordHit : (lineHit ?? wordHit);
       // A8: the floors read the line as written; a grep/rg whose only unknown words are quoted pattern or option values is a read from here on
       const segs = parsed.map(relaxPatternWords);
       if (h && h.kind === "deny") return decided(blocked(h, toolName));
       if (!roots) return decided(h ? askFromFloor(h) : undefined);
-      if (toolName !== "powershell") {
-        const sm = selfmodResult(shellSelfmod(segs, cwd, roots, platform), roots.child);
-        if (sm) return decided(sm);
-      }
+      // the words of a powershell line are write targets for the self-modification rules and the protected folders (`.git`); no word earns an allow
+      const sm = selfmodResult(shellSelfmod(psSeg ? [psSeg] : segs, cwd, roots, platform), roots.child);
+      if (sm) return decided(sm);
       const dctx = { roots, facts, platform, cwd, floor: env };
-      if (roots.child && toolName !== "powershell") {
-        const cd = childDenied(toolName, inp, segs, cmd, dctx);
+      if (roots.child) {
+        // a powershell child: only its words inside a `.git` get the child deny set (what a bash write there gets: child-write-outside); the other words stay free
+        const gitWords = psSeg ? psSeg.redirects.filter((r) => r.target.split(/[\\/]+/).some((s) => segmentAlias(platform, ".git", s))) : [];
+        const cd = psSeg ? (gitWords.length ? childDenied(toolName, inp, [powershellWordSegment(gitWords.map((r) => r.target), cwd)], cmd, dctx) : undefined) : childDenied(toolName, inp, segs, cmd, dctx);
         if (cd) return decided(cd);
       }
       const ec = effectCtxOf(dctx);
-      if (toolName !== "powershell") installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
+      if (psSeg) {
+        // the words as write targets (the own worktree is exempt inside installRootWrite): main is asked, a child is refused (its bash line meets child-write-outside first)
+        const ask = installRootWrite(toolName, inp, [psSeg], cmd, dctx);
+        installAsk = ask && "ask" in ask && roots.child ? { block: true, rule: ask.rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${ask.rule}): ${ask.reason}. Report what you need to the foreman and continue with what you can.` } : ask;
+      } else installAsk = installRootWrite(toolName, inp, segs, cmd, dctx);
       const web = webReadAllow(toolName, inp, { cwd, scratch: roots.scratch, platform });
       const builtin = (i: number, opaque = false): string | null => {
         const s = segs[i];
