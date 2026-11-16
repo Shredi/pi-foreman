@@ -24,7 +24,7 @@ is read from a marker in the reviewer's task text.
 | `item` | none | Built ledger items | yes |
 | `plan-review` | `[plan-review]` | The plan, before the checkpoint | no |
 | `pre-pr` | `[pre-pr]` | The whole branch diff before a PR | yes |
-| `high-stakes` | `[high-stakes]` | The whole change, one extra pass on a large change (see [High stakes](#high-stakes)) | no: marks no items, writes no normal review record |
+| `high-stakes` | `[high-stakes]` | The whole change, one extra pass on a risky change (see [High stakes](#high-stakes)) | no: marks no items, writes no normal review record |
 | `second-opinion` | `[second-opinion]` | Advice on unchanged work (also exempt from `ceremony.reviewPerRevision`) | no |
 
 "Counts" means the verdict marks items, satisfies the review gate and PR gate, feeds the repeated-FAIL rule. A plan review, a second opinion and every panel shadow are recorded as findings only and never block.
@@ -42,7 +42,7 @@ The ledger is the scope source. The adapter prepends the ledger text to every `r
 
 The review record in the session keeps the occasion of the review (`item`, `pre-pr` and so on). A record from an older session entry has none and never counts as a `[pre-pr]` PASS.
 
-A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), except that a large change also needs its [high-stakes review](#high-stakes) first, and an open PR is held while that pass is due.
+A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), except that a risky change also needs its [high-stakes review](#high-stakes) first, and an open PR is held while that pass is due.
 
 ## Verdict file
 
@@ -185,16 +185,15 @@ through the role map is still checked. Trace `review_occasion {occasion, thinkin
 
 ### High stakes
 
-The high-stakes review is one extra reviewer pass on a large change. It never replaces the model of a normal review:
+The high-stakes review is one extra reviewer pass on a risky change. It never replaces the model of a normal review:
 item, `[pre-pr]`, `[plan-review]` and `[second-opinion]` reviews take the pair, the different-model rule and
 `ceremony.reviewByOccasion` as if `ceremony.highStakes` did not exist. With no `ceremony.highStakes.model` nothing runs:
-no measurement, no state, no trace, no requirement.
+no state, no trace, no requirement.
 
 | Key | Values | Meaning |
 |---|---|---|
 | `ceremony.highStakes.model` | `<provider>/<model>[:<level>]`, default `null` | Model of the `[high-stakes]` review; `null` = no high-stakes review. |
-| `ceremony.highStakes.modules` | integer >= 0, default `5` | The change is large at this many modules; `0` = off. |
-| `ceremony.highStakes.lines` | integer >= 0, default `700` | The change is large at this many added plus removed lines; `0` = off. |
+| `ceremony.highStakes.modules`, `ceremony.highStakes.lines` | any | Retired: accepted and ignored. The size of the change no longer matters; doctor says so when either is set. |
 | `ceremony.highStakes.paths` | glob list | Retired: accepted and ignored. The sensitive-path rule no longer selects a model. |
 
 User or overlay config only.
@@ -210,25 +209,29 @@ base. It marks no ledger item, never closes V (the ledger tool refuses the mark 
 repeat and writes no normal review record, so PR readiness, the PR gate heads and the repeated-FAIL rule never see it.
 Its findings go to the findings store with `--gate high-stakes`.
 
-**When it is asked.** The adapter measures each checkout (the real path of the checkout root; the session's own and every
-one a builder or a normal review ran in) against the merge-base of its HEAD with the PR base branch: `safety.ops.baseBranch`,
-else the remote's default branch, against `<remote>/<base>` when that ref exists, else the local branch. Committed and
-uncommitted tracked changes and untracked, not ignored files count, because normal reviews pass before the commit. Only
-files that belong to a component count (no root files, `docs/`, `*.md`, test directories); `modules` is the number of
-distinct components, `lines` the added plus removed lines. The trigger fires at `modules` or `lines` (the bound is
-reached, not exceeded; `0` switches that measure off), and when a builder launch carried the risk tag `design` (it fires the
-checkout that launch ran in; risk tags are read only with `ladder.sizing` on, so with sizing off only the measures
-fire). The merge-base does not move on owner prompts or ledger writes; it moves when the base branch is merged into the
-branch, and the merged commits stop counting. When no merge-base resolves (no remote, detached history) the base is the
-HEAD the session first saw in that checkout, kept in the session state; with a model set only later in the session it is
-the HEAD at the first measurement. Measurement runs at each normal PASS and when the PR gate or the finish gate asks. A
-measurement that fails (git error, no base) fires nothing and is traced once per checkout as `review_stakes_unmeasured`.
+**When it is asked.** The change is risky, whatever its size; nothing is measured. The review is due for the session when
+any of these happened:
 
-The trigger is sticky: once fired for a checkout it stays fired for the session, whatever a later measurement says, and
-raised thresholds apply only to checkouts that have not fired. The foreman can raise but not lower it: a `[high-stakes]`
-launch with no fired trigger is allowed when a normal PASS stands, and the accepted launch fires the checkout with reason
-`foreman`. Only the owner lowers it, by unsetting the model, which ends every high-stakes check at once (stored state is
-kept and not read). A large test or docs change alone does not fire, and the heavy tier alone is no trigger.
+- A builder launch carried a risk tag `security`, `permission`, `guard`, `concurrency` or `design` (fixed in code; `parser`
+  does not count). The tags are read from the launch with `ladder.sizing` and the ladder on or off, but the foreman is told
+  about the `risk` field only with launch sizing on, so with sizing off in practice only the next two apply. A malformed
+  `size` drops the launch's tags.
+- The task is heavy (tier `heavy`) and the session launched a builder or changed a project file. The reason `heavy` counts
+  only while the tier is heavy: lowering it with `/ceremony` drops it; the tag and `foreman` reasons stay.
+- The foreman launched a `[high-stakes]` review itself: a launch with no reason yet is allowed when a normal PASS stands,
+  and the accepted launch adds the reason `foreman`.
+
+The reasons are sticky for the session and one state serves the whole session, wherever the work lands: a builder
+worktree that passed and was then merged into the main checkout asks for no second review, with a remote or without, and
+a later tagged builder after the pass asks for nothing. Only the owner lowers the requirement, by unsetting the model,
+which ends every high-stakes check at once (stored state is kept and not read). A large change alone never fires.
+
+**The base.** The review reads the whole change against the merge-base of the checkout's HEAD with the PR base branch:
+`safety.ops.baseBranch`, else the remote's default branch, against `<remote>/<base>` when that ref exists, else the
+local branch. When no merge-base resolves (no remote, detached history) the base is the first HEAD the session saw in that
+repository (a worktree shares its repository's), recorded at `session_start` for the session's own repository and at the
+first builder launch for another one, when it is an ancestor of the checkout's HEAD. With neither the task line names no base and the facts keep the normal review
+base. The base triggers nothing.
 
 **Order and refusals.** A `[high-stakes]` launch is refused, first match wins, each traced as
 `review_high_stakes_refused {reason}`:
@@ -238,14 +241,14 @@ kept and not read). A large test or docs change alone does not fire, and the hea
 | `high_stakes_unset` | No model is set. |
 | `high_stakes_single` | The launch is inside a `tasks` or `chain` launch. |
 | `high_stakes_resume` | The call resumes a run. A run that ended without a verdict is launched fresh. |
-| `high_stakes_done` | The passes of the checkout are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
-| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the checkout's last high-stakes pass is a FAIL that no normal PASS has cleared. |
+| `high_stakes_done` | The passes of the session are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
+| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass is a FAIL that no normal PASS has cleared. |
 
 After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.
 
 **After a FAIL.** The FAIL is recorded with its head and findings, and the review gate is set to a failed verdict. It is
-cleared by a normal PASS (item or `[pre-pr]`) after a revision in the same checkout; a revision or PASS in another checkout
-clears nothing. Meanwhile:
+cleared by a normal PASS (item or `[pre-pr]`) after a revision in the checkout the FAIL ran in; a revision or PASS in another
+checkout clears nothing. Meanwhile:
 
 - A normal reviewer launch for the checkout is refused (`high_stakes_unrevised`) until a revision happened (a builder run, a
   project edit or a send-back marker; a launch with a builder before the reviewer counts). `[second-opinion]` and
@@ -255,31 +258,32 @@ clears nothing. Meanwhile:
   earlier review, with review tags defused.
 - The finish gate carries its own entry "revise after the high-stakes FAIL, then pass the normal reviewer", whatever
   `ceremony.reviewGate` says.
-- The head of a high-stakes FAIL never opens the PR gate (`pr_refused:high_stakes_failed`), nor does any head while the
-  FAIL is uncleared.
+- The head of a high-stakes FAIL never opens the PR gate (`pr_refused:high_stakes_failed`), nor does any head of the
+  session, from any checkout, while the FAIL is uncleared.
+- A FAIL whose checkout was removed can no longer be cleared: the gates stay closed until the owner unsets the model. The
+  refusal and the finish hint say that the checkout is gone.
 
 Once the normal PASS cleared the FAIL, a second and last high-stakes pass is required like the first and reviews the whole
 revised change. If the second pass fails too, the same steps follow, but no third pass: the normal PASS after the revision
 opens the gate, and the foreman tells the owner in one line that the second high-stakes review failed and on what.
 
 **Gates.** Once the normal head test passed, `pr_create` is refused with `pr_refused:high_stakes_required` while a pass is
-due (trigger fired and no pass yet, or one cleared FAIL), through the pack's `pr_create` and foreign PR tools alike. With
-`pr_create {cwd}` for a sibling checkout the state of that checkout applies; in the main path every checkout of the
-session applies, since the head may come from any of them. The refusal names the checkout and the `cwd` to launch with when
-it is not the session's own. With `ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish
+due (a reason counts and no pass yet, or one cleared FAIL), through the pack's `pr_create` and foreign PR tools alike. The
+state is the session's: any high-stakes PASS of the session satisfies the requirement for every PR, so a pull request from an
+unrelated branch or a second repository opens too, and an uncleared FAIL in one checkout also refuses `pr_create {cwd}` for
+a sibling. The refusal names the reasons and the checkout of a FAIL when it is not the session's own. With `ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish
 gate adds "a high-stakes review must run" for standard and heavy sessions, for the first and the second pass, but asks only
 once every ledger item except V is marked (no bound ledger, or an unreadable one, counts as marked); the FAIL entry does
 not depend on the ledger. A session that changed nothing is not asked. A PR that is already open is held session-wide:
-its readiness answers `unreviewed` while any checkout has a pass due and `wip` while any checkout has an uncleared FAIL or
+its readiness answers `unreviewed` while a pass is due and `wip` while a FAIL stands uncleared or
 when the PR head is the head of a high-stakes FAIL. Under the draft flow the PR then goes back to draft until the pass ran
-and passed, or the FAIL was cleared and the head moved; a PR from one checkout is held by the state of another checkout of
-the same session. A PR opened from the shell is not refused; the rules text carries the duty.
+and passed, or the FAIL was cleared and the head moved; a PR from one checkout is held by the state of the session. A PR opened from the shell is not refused; the rules text carries the duty.
 
-**Traces and the PR body.** `review_stakes {level: high, reasons, files, lines, modules, base}` is written once per checkout
-when the trigger first fires (reasons `modules`, `lines`, `design`, `foreman`): the pass is then required. `role_launch` and
+**Traces and the PR body.** `review_stakes {level: high, reasons}` is written when a reason fires for the first time in the
+session (a risk tag, `heavy`, `foreman`): the pass is then required. `role_launch` and
 `review_done` of the run carry `occasion: high-stakes`, and each verdict writes `review_high_stakes {verdict, head, count}`
 (`count` is 1 or 2, the number of the pass). A `review_high_stakes` record shows that the pass ran. The rules text also tells the
-foreman to add one line per pass to the PR body, `High-stakes review: <verdict> on <sha>`; no code checks the body.
+foreman to add one line per pass to the PR body, `High-stakes review: <verdict> on <sha> (<reasons>)`; no code checks the body.
 
 **Known limits.**
 
@@ -287,6 +291,9 @@ foreman to add one line per pass to the PR body, `High-stakes review: <verdict> 
   high-stakes launch go ahead in another.
 - After a high-stakes FAIL and a revision in one checkout, a normal PASS in another checkout resets the shared review gate;
   the next normal review in the first checkout is then refused as a repeat until one more revision there.
+- One pass per session, wherever the work lands: work from a second worktree, branch or repository after the pass is not
+  reviewed again, and any pass opens every PR of the session.
+- A malformed `size` with sizing off drops the launch's tags.
 - A pass that ran is the one pass. Work built after it reaches the pull request with the normal review only; the finish
   gate asks for the pass only once every ledger item except V is marked, and the rules text says to launch it when the
   change is complete.

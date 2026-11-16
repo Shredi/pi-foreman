@@ -16,8 +16,11 @@ const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c
 const lines = (n: number) => "x\n".repeat(n);
 const PR_TOOL = "create_pull_request";
 
-/** A standard-tier world over a real git repo (main, then work measured against it); `lines: 50` fires with one 100-line file. */
-async function setup(t: Parameters<typeof world>[0], hs: Record<string, unknown> | null = { model: MODEL, modules: 0, lines: 50 }, extra: Record<string, unknown> = {}) {
+/** A builder launch that fires the review: risk tag `design` (the size is the sizing field the launch needs when sizing is on). */
+const TAGGED = { size: { files: ["src/a/big.ts"] }, risk: ["design"] };
+
+/** A standard-tier world over a real git repo (main, then work on a feature branch); a risk tag, tier heavy or the foreman fires the review, never the size. */
+async function setup(t: Parameters<typeof world>[0], hs: Record<string, unknown> | null = { model: MODEL }, extra: Record<string, unknown> = {}) {
   const w = world(t, { ceremony: { default: "standard", ...(hs ? { highStakes: hs } : {}), ...extra } });
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
   git(w.project, "init", "-q", "-b", "main");
@@ -66,7 +69,7 @@ const settle = async (a: Rig): Promise<string> => {
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";
 };
 const pr = async (a: Rig): Promise<string> => (await a.checkCall(PR_TOOL, {}))?.reason ?? "";
-const builder = async (a: Rig) => end(a, await launch(a, "builder", "build the widget"), "builder", "done");
+const builder = async (a: Rig, extra: Record<string, unknown> = {}) => end(a, await launch(a, "builder", "build the widget", extra), "builder", "done");
 const normal = async (a: Rig, verdict: "PASS" | "FAIL", task = "[pre-pr] review the branch") => {
   const s = await launch(a, "reviewer", task);
   if (s.blocked === null) await end(a, s, "reviewer", `Overall verdict: ${verdict}`);
@@ -78,10 +81,10 @@ const hsPass = async (a: Rig, verdict: "PASS" | "FAIL", findings = "") => {
   return s;
 };
 const traces = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
-/** Builder, then the normal pre-pr PASS: the large change is built and reviewed. */
+/** A builder tagged `design`, then the normal pre-pr PASS: the risky change is built and reviewed. */
 const built = async (w: World, a: Rig) => {
   work(w);
-  await builder(a);
+  await builder(a, TAGGED);
   await normal(a, "PASS");
 };
 
@@ -113,7 +116,7 @@ test("item 2/5: the launch refusals: no model, not single, resume of a run, earl
 });
 
 test("item 5: the resume of a high-stakes run is refused (the model equals the role map's, so only the high-stakes check can refuse it)", async (t) => {
-  const { w, a } = await setup(t, { model: "fake/reviewer", modules: 0, lines: 50 });
+  const { w, a } = await setup(t, { model: "fake/reviewer" });
   await built(w, a);
   const first = await launch(a, "reviewer", "[high-stakes] review");
   assert.equal(first.blocked, null, String(first.blocked));
@@ -127,7 +130,7 @@ test("item 5: the resume of a high-stakes run is refused (the model equals the r
 
 test("item 2: the model as set, also when equal to the foreman's id; an explicit model: is replaced; no item marks, not a panel gate", async (t) => {
   for (const model of [MODEL, "fake/foreman"]) {
-    const { w, a } = await setup(t, { model, modules: 0, lines: 50 });
+    const { w, a } = await setup(t, { model });
     await built(w, a);
     const s = await launch(a, "reviewer", "[high-stakes] review", { model: "fake/other" });
     assert.equal(s.blocked, null, String(s.blocked));
@@ -145,7 +148,7 @@ test("item 2: no security or repeat-fail climb for the high-stakes entry, resear
   const { w, a } = await setup(t);
   work(w, "src/a/auth.ts", 100);
   fs.writeFileSync(path.join(w.project, "src/a/auth.ts"), `${lines(100)}eval(input)\n`);
-  await builder(a);
+  await builder(a, TAGGED);
   await normal(a, "PASS");
   const s = await launch(a, "reviewer", "[high-stakes] [research] [fact-critical] review");
   assert.equal(s.blocked, null, String(s.blocked));
@@ -168,14 +171,15 @@ test("item 1: highStakes.model replaces the model of no other reviewer launch (i
 
 // ---------------------------------------------------------------- items 3, 4, 8: trigger, PR gate, finish gate
 
-test("item 4/8: a large change: the PR gate refuses until the pass ran; the trigger is traced once; the PASS opens the gate and writes no normal review record", async (t) => {
+test("item 4/8: a risky change: the PR gate refuses until the pass ran; the trigger is traced once; the PASS opens the gate and writes no normal review record", async (t) => {
   const { w, a } = await setup(t);
   await built(w, a);
   assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
-  assert.match(await pr(a), /launch one reviewer with \[high-stakes\]/);
+  assert.match(await pr(a), /Launch one reviewer with \[high-stakes\] on the whole change, in the checkout that holds it/);
   const fired = await traces(w, "review_stakes");
-  assert.equal(fired.length, 1, "traced once per checkout");
-  assert.equal(fired[0].reasons, "lines");
+  assert.equal(fired.length, 1, "traced once");
+  assert.deepEqual(fired[0], { ...fired[0], level: "high", reasons: "design" });
+  assert.equal("lines" in fired[0] || "modules" in fired[0] || "files" in fired[0] || "base" in fired[0], false, "no size facts");
   assert.match(await settle(a), /a high-stakes review must run/, "the finish gate asks for the pass too");
   // the record of the normal PASS is written by an async chain (git calls); wait for it so a late write is not counted as the pass's
   const stop = Date.now() + 15000;
@@ -187,16 +191,19 @@ test("item 4/8: a large change: the PR gate refuses until the pass ran; the trig
   assert.equal((await traces(w, "review_high_stakes")).length, 1);
   assert.equal(await pr(a), "");
   assert.doesNotMatch(await settle(a), /high-stakes/);
-  assert.equal((await traces(w, "review_stakes")).length, 1);
+  assert.deepEqual((await traces(w, "review_stakes")).map((e) => e.reasons), ["design", "foreman"], "the foreman's own launch adds its reason once");
 });
 
-test("item 4: below the bound nothing is asked; with reviewBeforePr false there is no PR check; with no model nothing is measured", async (t) => {
-  const small = await setup(t, { model: MODEL, modules: 0, lines: 500 });
-  await built(small.w, small.a);
+test("item 4: an untagged large change asks nothing; with reviewBeforePr false there is no PR check; with no model nothing is required", async (t) => {
+  const small = await setup(t);
+  for (let i = 0; i < 7; i++) work(small.w, `src/m${i}/big.ts`, 200);
+  await builder(small.a);
+  await normal(small.a, "PASS");
   assert.equal(await pr(small.a), "");
+  assert.doesNotMatch(await settle(small.a), /high-stakes/);
   assert.deepEqual(await traces(small.w, "review_stakes"), []);
 
-  const off = await setup(t, { model: MODEL, modules: 0, lines: 50 }, { reviewBeforePr: false });
+  const off = await setup(t, { model: MODEL }, { reviewBeforePr: false });
   await built(off.w, off.a);
   assert.doesNotMatch(await pr(off.a), /high_stakes/);
 
@@ -204,7 +211,6 @@ test("item 4: below the bound nothing is asked; with reviewBeforePr false there 
   await built(none.w, none.a);
   assert.equal(await pr(none.a), "");
   assert.deepEqual(await traces(none.w, "review_stakes"), []);
-  assert.deepEqual(await traces(none.w, "review_stakes_unmeasured"), []);
   assert.doesNotMatch(await settle(none.a), /high-stakes/);
 });
 
@@ -299,7 +305,7 @@ test("item 7: an old state entry without the list loads", async (t) => {
   assert.ok((e.reviews?.length ?? 0) > 0 && e.highStakes !== undefined, "the persisted entry carries the review and the state");
   delete e.highStakes;
   const b = await w.adapter("reload");
-  assert.match(await pr(b), /high_stakes_required/, "measured again at the gate");
+  assert.doesNotMatch(await pr(b), /high_stakes/, "nothing is measured again: a state without the entry asks for nothing");
 });
 
 test("item 4/6: every check is silent once the model is unset after a FAIL", async (t) => {
