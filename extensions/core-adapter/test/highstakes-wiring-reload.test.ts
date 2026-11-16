@@ -25,7 +25,7 @@ test("a [high-stakes] FAIL of a sibling worktree is restored after a reload with
   await a.down();
   const b = await w.adapter("reload"); // the state is restored from the persisted entry
   assert.match(await pr(b), /\[pr_refused:high_stakes_failed\]/, "the FAIL is recorded");
-  assert.match(await pr(b), new RegExp(`in the checkout ${sib}`), "for the sibling checkout");
+  assert.ok((await pr(b)).includes(`in the checkout ${sib}`), "for the sibling checkout");
 
   // a revision and a normal PASS in the own checkout do not clear it
   commitIn(w.project, "src/a/own.ts");
