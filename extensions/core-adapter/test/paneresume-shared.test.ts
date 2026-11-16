@@ -83,8 +83,8 @@ test("LiveInit.endedBy is read by stop() for its last write; without it the reco
 
 test("LiveInit.taskEnded drops tasks in taskList before the MAX_WAITS slice; default keeps all", (t) => {
   const { agentDir, cwd } = liveRig(t);
-  for (let i = 0; i < 25; i++) task(cwd, "sess-t", `dead${String(i).padStart(2, "0")}`, { pid: 1 });
-  task(cwd, "sess-t", "live-one", { pid: 2 });
+  for (let i = 0; i < 25; i++) task(cwd, "sess-t", `dead${String(i).padStart(2, "0")}`, { pid: 1, startTime: Date.now() - 9000 });
+  task(cwd, "sess-t", "live-one", { pid: 2, startTime: Date.now() - 1000 });
   const read = (id: string): { tasks?: { id: string }[] } => JSON.parse(fs.readFileSync(path.join(liveDir(agentDir), `${id}.json`), "utf8"));
   const kept = LiveState.start({ agentDir, sessionId: "sess-t", cwd, mode: "tui", env: {}, taskEnded: (x) => x.pid === 1 }, () => [], NO, () => [], NO, () => []) as LiveState;
   assert.deepEqual(read("sess-t").tasks?.map((x) => x.id), ["live-one"], "the live task is not pushed out of the 20-entry slice by dead ones");
