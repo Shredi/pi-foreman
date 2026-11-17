@@ -1,5 +1,6 @@
 // D27: a turn end with open ledger items and no builder run and no foreman project edit since the last owner prompt is a pause:
 // the finish gate refuses nothing. Unreviewed work from an earlier prompt gets one reminder with the next turn.
+// One world per case group: the cases of a group continue one session.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -12,10 +13,13 @@ const CLOSED = `# Ledger: x\nTier: standard\n\n${items(2, "x")}\n- [x] V. fresh-
 type R = { continue?: boolean; entries?: { customType?: string }[] } | undefined;
 type World = ReturnType<typeof world>;
 type Adapter = Awaited<ReturnType<World["adapter"]>>;
+type Sent = { message: { customType: string; content: string }; options: unknown }[];
 
 const settle = async (a: Adapter): Promise<R> => (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
 const types = (r: R) => (r?.entries ?? []).map((e) => e.customType);
 const events = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
+const pauses = async (w: World) => (await events(w, "ceremony_gate")).filter((e) => e.reason === "pause").length;
+const reminders = (sent: Sent) => sent.filter((m) => m.message.customType === "pi-foreman-review-reminder");
 /** The turn end after the ledger stop hold (it fires once per session and ledger): the finish gate's answer. */
 async function finishAnswer(a: Adapter): Promise<R> {
   const r = await settle(a);
@@ -28,28 +32,54 @@ async function built(a: Adapter) {
   await new Promise((r) => setTimeout(r, 50));
 }
 
-test("standard, open items, no builder, no edit: the turn end is a pause, nothing is refused", async (t) => {
-  const w = world(t, { ceremony: { default: "standard" } });
+test("standard: open items and no work are a pause with no reminder; a closed ledger and a builder run are refused as before, also after a restore; a new owner prompt without work is a pause with one reminder", async (t) => {
+  const sent: Sent = [];
+  const w = world(t, { ceremony: { default: "standard" }, sent });
   const a = await w.adapter();
   await a.writeLedger(OPEN);
   await a.ownerPrompt();
   assert.equal(await finishAnswer(a), undefined);
   assert.equal(await settle(a), undefined);
   assert.equal((await events(w, "finish_refused")).length, 0);
-  assert.equal((await events(w, "ceremony_gate")).filter((e) => e.reason === "pause").length, 2);
-});
+  assert.equal(await pauses(w), 2);
+  assert.deepEqual(reminders(sent), [], "a pause with no work at all sends no reminder");
 
-test("a builder ran in this prompt: the finish is refused as before", async (t) => {
-  const w = world(t, { ceremony: { default: "standard" } });
-  const a = await w.adapter();
-  await a.writeLedger(OPEN);
+  await a.writeLedger(CLOSED); // no open ledger item and no work: the finish is refused as before
   await a.ownerPrompt();
-  await built(a);
   const r = await finishAnswer(a);
   assert.equal(r?.continue, true);
   assert.deepEqual(types(r), ["pi-foreman-ceremony-gate"]);
-  assert.equal((await events(w, "finish_refused")).length, 1);
-  assert.equal((await events(w, "ceremony_gate")).filter((e) => e.reason === "pause").length, 0);
+  assert.equal(await pauses(w), 2);
+
+  // a builder ran in this prompt: refused as before
+  await a.writeLedger(OPEN);
+  await a.ownerPrompt();
+  await built(a);
+  const refused = await finishAnswer(a);
+  assert.equal(refused?.continue, true);
+  assert.deepEqual(types(refused), ["pi-foreman-ceremony-gate"]);
+  assert.equal((await events(w, "finish_refused")).length, 2);
+  assert.equal(await pauses(w), 2);
+
+  // resume: work in the prompt, the session restored, no new owner prompt: not a pause
+  const b = await w.adapter("resume");
+  const again = await finishAnswer(b);
+  assert.equal(again?.continue, true);
+  assert.deepEqual(types(again), ["pi-foreman-ceremony-gate"]);
+  assert.equal(await pauses(w), 2);
+
+  await b.ownerPrompt(); // the owner's next message: a new pause window; the work of the earlier prompt is unreviewed
+  assert.equal(await finishAnswer(b), undefined);
+  assert.equal(reminders(sent).length, 1);
+  assert.match(reminders(sent)[0].message.content, /unreviewed work: a reviewer PASS is still missing before finish or PR/);
+  assert.deepEqual(reminders(sent)[0].options, { deliverAs: "nextTurn" });
+  assert.equal(await settle(b), undefined);
+  assert.equal(reminders(sent).length, 1, "queued once until a turn starts");
+  await b.fire("agent_start", {});
+  assert.equal(await settle(b), undefined);
+  assert.equal(reminders(sent).length, 2, "one per pause");
+  assert.equal((await events(w, "finish_refused")).length, 3, "the pause refuses nothing");
+  assert.equal(await pauses(w), 5, "three more pauses: the new prompt's three turn ends");
 });
 
 test("a foreman edit of a project file in this prompt (trivial tier, then escalated to standard): refused as before", async (t) => {
@@ -65,62 +95,5 @@ test("a foreman edit of a project file in this prompt (trivial tier, then escala
   const r = await finishAnswer(a);
   assert.equal(r?.continue, true, JSON.stringify(await events(w, "ceremony_gate")));
   assert.deepEqual(types(r), ["pi-foreman-ceremony-gate"]);
-  assert.equal((await events(w, "ceremony_gate")).filter((e) => e.reason === "pause").length, 0);
-});
-
-test("work in an earlier prompt, a new owner prompt, no work: pause, and the next turn gets one reminder", async (t) => {
-  const sent: { message: { customType: string; content: string }; options: unknown }[] = [];
-  const w = world(t, { ceremony: { default: "standard" }, sent });
-  const a = await w.adapter();
-  await a.writeLedger(OPEN);
-  await a.ownerPrompt();
-  await built(a);
-  await a.ownerPrompt(); // the owner's next message: a new pause window
-  assert.equal(await finishAnswer(a), undefined);
-  const reminders = () => sent.filter((m) => m.message.customType === "pi-foreman-review-reminder");
-  assert.equal(reminders().length, 1);
-  assert.match(reminders()[0].message.content, /unreviewed work: a reviewer PASS is still missing before finish or PR/);
-  assert.deepEqual(reminders()[0].options, { deliverAs: "nextTurn" });
-  assert.equal(await settle(a), undefined);
-  assert.equal(reminders().length, 1, "queued once until a turn starts");
-  await a.fire("agent_start", {});
-  assert.equal(await settle(a), undefined);
-  assert.equal(reminders().length, 2, "one per pause");
-  assert.equal((await events(w, "finish_refused")).length, 0);
-});
-
-test("a pause with no work at all sends no reminder", async (t) => {
-  const sent: { message: { customType: string; content: string }; options: unknown }[] = [];
-  const w = world(t, { ceremony: { default: "standard" }, sent });
-  const a = await w.adapter();
-  await a.writeLedger(OPEN);
-  await a.ownerPrompt();
-  assert.equal(await finishAnswer(a), undefined);
-  assert.deepEqual(sent.filter((m) => m.message.customType === "pi-foreman-review-reminder"), []);
-});
-
-test("no open ledger item and no work: the finish is refused as before", async (t) => {
-  const w = world(t, { ceremony: { default: "standard" } });
-  const a = await w.adapter();
-  await a.writeLedger(CLOSED);
-  await a.ownerPrompt();
-  const r = await settle(a);
-  assert.equal(r?.continue, true);
-  assert.deepEqual(types(r), ["pi-foreman-ceremony-gate"]);
-  assert.equal((await events(w, "ceremony_gate")).filter((e) => e.reason === "pause").length, 0);
-});
-
-test("resume: work in the prompt, the session restored, no new owner prompt: not a pause", async (t) => {
-  const w = world(t, { ceremony: { default: "standard" } });
-  const a = await w.adapter();
-  await a.writeLedger(OPEN);
-  await a.ownerPrompt();
-  await built(a);
-  const first = await finishAnswer(a);
-  assert.equal(first?.continue, true);
-  const b = await w.adapter("resume");
-  const r = await finishAnswer(b);
-  assert.equal(r?.continue, true);
-  assert.deepEqual(types(r), ["pi-foreman-ceremony-gate"]);
-  assert.equal((await events(w, "ceremony_gate")).filter((e) => e.reason === "pause").length, 0);
+  assert.equal(await pauses(w), 0);
 });

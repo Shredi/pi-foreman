@@ -21,13 +21,14 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
   return { w, a };
 }
 
-test("text-only turn ends: two refusals, the third goes through with the notice and a transcript message, no more refusals", async (t) => {
+test("two refusals per unchanged state, then the finish goes through with the notice; an interactive input or a restore between does not reset the count", async (t) => {
   const { w, a } = await rig(t);
   const notes: string[] = [];
   (a.ctx as { ui: { notify: (m: string) => void } }).ui.notify = (m: string) => void notes.push(m);
   const first = await settle(a);
   assert.equal(first?.continue, true);
   assert.deepEqual(types(first), ["pi-foreman-ceremony-gate"]);
+  await a.ownerPrompt(); // an interactive input between refusals does not reset the count
   assert.equal((await settle(a))?.continue, true);
   const third = await settle(a);
   assert.notEqual(third?.continue, true, "the third turn end goes through");
@@ -37,56 +38,23 @@ test("text-only turn ends: two refusals, the third goes through with the notice 
   assert.equal(await count(w, "finish_refused"), 2);
   assert.ok((await count(w, "ceremony_incomplete")) >= 1);
   assert.ok(notes.some((n) => /finished with ceremony incomplete: missing builder, reviewer/.test(n)), notes.join("\n"));
-});
-
-test("a restore after the notice does not append the message again", async (t) => {
-  const { a, w } = await rig(t);
-  await settle(a);
-  await settle(a);
-  assert.deepEqual(types(await settle(a)), ["pi-foreman-ceremony-incomplete"]);
-  const b = await w.adapter("resume");
-  assert.equal(await settle(b), undefined);
-});
-
-test("an interactive input between refusals does not reset the count", async (t) => {
-  const { w, a } = await rig(t);
-  assert.equal((await settle(a))?.continue, true);
+  // a restore after the notice does not append the message again
+  assert.equal(await settle(await w.adapter("resume")), undefined);
   await a.ownerPrompt();
-  assert.equal((await settle(a))?.continue, true);
-  await a.ownerPrompt();
-  const third = await settle(a);
-  assert.notEqual(third?.continue, true);
-  assert.deepEqual(types(third), ["pi-foreman-ceremony-incomplete"]);
-  await a.ownerPrompt();
-  assert.equal(await settle(a), undefined);
-  assert.equal(await count(w, "finish_refused"), 2);
-});
+  assert.equal(await settle(a), undefined, "an interactive input after the notice starts no new refusals");
 
-test("a session restore between refusals keeps the count", async (t) => {
-  const { w, a } = await rig(t);
-  assert.equal((await settle(a))?.continue, true);
-  const b = await w.adapter("resume");
-  assert.equal((await settle(b))?.continue, true);
-  const c = await w.adapter("resume");
-  const third = await settle(c);
-  assert.notEqual(third?.continue, true);
-  assert.deepEqual(types(third), ["pi-foreman-ceremony-incomplete"]);
-  assert.equal(await count(w, "finish_refused"), 2);
-});
-
-test("a builder run between refusals starts a fresh count", async (t) => {
-  const { w, a } = await rig(t);
-  assert.equal((await settle(a))?.continue, true);
-  assert.equal((await settle(a))?.continue, true);
-  const b = await a.agentLaunch("builder", "build it");
-  assert.equal(b.blocked, null);
-  a.endRunAs(b.id, "builder", "done", undefined, "built");
+  // a builder run starts a fresh count; an interactive input and a session restore between its refusals keep it
+  const run = await a.agentLaunch("builder", "build it");
+  assert.equal(run.blocked, null);
+  a.endRunAs(run.id, "builder", "done", undefined, "built");
   await new Promise((r) => setTimeout(r, 50));
   const again = await settle(a);
   assert.equal(again?.continue, true, "the new state is refused again");
   assert.match(String((again?.entries?.[0] as { content?: string }).content), /requires reviewer;/);
-  assert.equal((await settle(a))?.continue, true);
-  const last = await settle(a);
+  await a.ownerPrompt();
+  const c = await w.adapter("resume");
+  assert.equal((await settle(c))?.continue, true);
+  const last = await settle(c);
   assert.notEqual(last?.continue, true);
   assert.deepEqual(types(last), ["pi-foreman-ceremony-incomplete"]);
   assert.equal(await count(w, "finish_refused"), 4);

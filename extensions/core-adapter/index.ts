@@ -294,6 +294,9 @@ function releaseLedgerHold(toolCallId: string): void {
   h.gate.release(h.key);
 }
 
+/** Session entry type: one small record per launch that named a ledger (run id, paths, cited), so the route survives a reload (D31). */
+const LEDGER_ROUTE_ENTRY = "pi-foreman-ledger-route";
+
 /** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). */
 interface LedgerRoute {
   paths: (string | null)[];
@@ -467,7 +470,7 @@ interface Session {
   reviewSync: Promise<void>;
   /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
   reviewMarked: Set<string>;
-  /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; absent after a reload. */
+  /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; the run records come back from the session entries after a reload. */
   ledgerByCall: Map<string, LedgerRoute>;
   ledgerByRun: Map<string, LedgerRoute>;
   /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
@@ -1460,6 +1463,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     persistCeremonyState(s);
   }
 
+  /** session_start: the run -> ledger routes of the branch's launches; a run with no record uses the bound ledger. */
+  function restoreLedgerRoutes(s: Session, ctx: ExtensionContext): void {
+    if (s.isChild) return;
+    for (const raw of (ctx.sessionManager.getBranch?.() ?? []) as unknown[]) {
+      const e = raw as { type?: unknown; customType?: unknown; data?: { v?: unknown; run?: unknown; paths?: unknown; cited?: unknown } } | null;
+      if (!e || e.type !== "custom" || e.customType !== LEDGER_ROUTE_ENTRY || !e.data || e.data.v !== 1) continue;
+      const { run, paths, cited } = e.data;
+      if (typeof run !== "string" || !Array.isArray(paths) || !Array.isArray(cited) || cited.length !== paths.length) continue;
+      if (!paths.every((p) => p === null || typeof p === "string") || !cited.every((c) => Array.isArray(c) && c.every((x) => typeof x === "string"))) continue;
+      capSet(s.ledgerByRun, run, { paths: paths as (string | null)[], cited: cited as string[][] });
+    }
+  }
+
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
@@ -1791,6 +1807,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     restoreToolFloor(s, ctx); // before the hidden set, so a floor tool that is also deferred is active when it is built
     initDeferred(s, ctx);
     restoreCeremonyState(s, ctx, event.reason);
+    restoreLedgerRoutes(s, ctx);
     restoreRounds(s, ctx, event.reason);
     if (hsModel(s)) {
       // the review base fallback: the first HEAD of each repository the session saw (a pre-upgrade entry's per-checkout sightings first; the first one wins)
@@ -4522,7 +4539,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /**
    * Mark the `N. PASS` items of a reviewer PASS in the ledger the reviewer's task named, else the bound ledger, once per review run (reviewmarks.ts).
    * `total` is the result count of the event (0 for a notice, which has no result index). A mark never lands in a ledger the entry did not name:
-   * when the result cannot be tied to its entry (misaligned, or no launch record after a reload and no task text), nothing is marked.
+   * when the result cannot be tied to its entry (misaligned counts, or a task that names a ledger that cannot be re-derived), nothing is marked.
+   * A run with no record at all (an older session) uses the result's own task, else the bound ledger.
    */
   function markByReview(s: Session, runId: string, parts: { index?: number; text: string; task?: string }[], total: number): void {
     if (s.reviewMarked.has(runId) || s.hs.ownerOf(runId) !== null) return; // a high-stakes run marks nothing
@@ -5104,7 +5122,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.reviewRuns.byCall.delete(event.toolCallId);
         const namedLedger = s.ledgerByCall.get(event.toolCallId);
         s.ledgerByCall.delete(event.toolCallId);
-        if (namedLedger && runId) capSet(s.ledgerByRun, runId, namedLedger);
+        if (namedLedger && runId) {
+          capSet(s.ledgerByRun, runId, namedLedger);
+          if (namedLedger.paths.some((p) => p !== null)) {
+            try {
+              pi.appendEntry(LEDGER_ROUTE_ENTRY, { v: 1, run: runId, paths: namedLedger.paths, cited: namedLedger.cited });
+            } catch {
+              // the session file is not writable now: the route stays in memory
+            }
+          }
+        }
         if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
         if (!s.isChild) {
