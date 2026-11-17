@@ -22,7 +22,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
-import { clean, handoffPlanPath, HANDOFF_PLAN, HANDOFF_RESULT, isPlanPath, PLAN_MAX_BYTES, planBody, planVersionHash, readHandoffPlan, readHandoffResult, readPlan, sha256 } from "./checkpoint.ts";
+import { clean, handoffPlanPath, HANDOFF_PLAN, HANDOFF_RESULT, isPlanPath, PLAN_MAX_BYTES, planBody, planHash, readHandoffPlan, readHandoffResult, readPlan, sha256 } from "./checkpoint.ts";
 import type { PlanOpts } from "./checkpoint.ts";
 import { scratchRoot } from "./editmode.ts";
 import { planReviewFiles } from "./findings.ts";
@@ -30,7 +30,7 @@ import { liveDir } from "./livestate.ts";
 import type { LiveShow } from "./livestate.ts";
 import { createEngine, DIAGRAMS_DIR, diagramName, renderSidecars, scanFences, sidecarOnDisk, SVG_MAX_BYTES, validateSvg } from "./mermaid.ts";
 import type { Diagram, Engine, Fence } from "./mermaid.ts";
-import { EVENTS_MAX, fileOfId, foldPlanSection, NOTES_KEPT, noteId, PAGES_DIR, PAGES_JSON, parsePagesJson, renderPage } from "./pages.ts";
+import { EVENTS_MAX, fileOfId, foldPlanSection, NOTES_KEPT, noteId, PAGES_DIR, PAGES_JSON, parsePagesJson, renderHtmlPlanPage, renderPage } from "./pages.ts";
 import type { PageEntry, PageEvent, PagesIndex, Svgs } from "./pages.ts";
 import { resolveToolPath } from "./payload.ts";
 import { planPathsOf } from "./planreview.ts";
@@ -149,12 +149,29 @@ const codeOf = (e: unknown): string => String((e as { code?: unknown } | null)?.
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
 
-/** First `# ` heading of the plan body, else its first non-blank line, at most 120 chars without control characters. */
+/** First `# ` heading of the plan body, else its first non-blank line (a comment line such as the generated marker skipped), at most 120 chars without control characters. */
 export function titleOf(bytes: Buffer): string {
   const lines = planBody(bytes).toString("utf8").split(/\r?\n/);
   const heading = lines.map((l) => /^#[ \t]+(.+?)[ \t#]*$/.exec(l)).find((m) => m);
-  const raw = heading ? heading[1] : (lines.find((l) => l.trim()) ?? "");
+  const raw = heading ? heading[1] : (lines.find((l) => l.trim() && !l.startsWith("<!--")) ?? "");
   return raw.replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 120) || "plan";
+}
+
+/** The page title of a read plan: an HTML plan's own `<h1>` (else `<title>`), else the first heading or line of its markdown. */
+function titleOfCur(cur: Cur): string {
+  const own = cur.kind === "html" ? (cur.title ?? "").replace(/[\u0000-\u001f\u007f\u0080-\u009f]/g, " ").trim().slice(0, 120) : "";
+  return own || titleOf(cur.kind === "html" ? Buffer.from(cur.markdown, "utf8") : cur.bytes);
+}
+
+/** A tracked plan as read now: the source bytes and their version hash, and for an HTML plan the generated markdown copy, title and rulings. */
+interface Cur {
+  path: string;
+  bytes: Buffer;
+  hash: string;
+  kind: "md" | "html";
+  markdown: string;
+  title: string | null;
+  rulings: string;
 }
 
 /** plan.json text -> PlanJson, or null when a field has the wrong type. */
@@ -228,10 +245,11 @@ function readSidecar(dir: string, name: string): string | null {
   }
 }
 
-function ruledHashOnDisk(file: string): string | null {
+/** The version hash of a snapshot: a snapshot holds the source bytes, so it is hashed by the name of the tracked plan (an `.html` page hashes whole). */
+function ruledHashOnDisk(file: string, planName: string): string | null {
   try {
     const st = fs.lstatSync(file);
-    return st.isFile() && st.size <= PLAN_MAX_BYTES ? planVersionHash(fs.readFileSync(file)) : null;
+    return st.isFile() && st.size <= PLAN_MAX_BYTES ? planHash(planName, fs.readFileSync(file)) : null;
   } catch {
     return null;
   }
@@ -464,10 +482,29 @@ export class Show {
     return { cwd: i.cwd, home: i.home, platform: i.platform, scratchDir: i.scratchDir };
   }
 
+  /** The tracked plan is a scratch HTML page: the handoff `plan.md` of a child is its text copy for the parent, never the page source. */
+  private trackedHtml(): boolean {
+    return this.tracked?.kind === "scratch" && this.tracked.path.endsWith(".html");
+  }
+
   private trackedFor(raw: unknown): Tracked | null {
     const abs = resolveToolPath(raw, this.init.cwd, this.init.home);
-    if (abs && isPlanPath(abs, this.planOpts)) return { kind: "scratch", path: abs };
-    return handoffPlanPath(raw, this.init.handoffDir, this.planOpts) ? { kind: "handoff" } : null;
+    if (abs && isPlanPath(abs, this.planOpts)) {
+      // a page and its markdown copy are one plan, tracked under the page's path
+      const r = readPlan(abs, this.planOpts);
+      return { kind: "scratch", path: "plan" in r ? r.plan.path : abs };
+    }
+    if (!handoffPlanPath(raw, this.init.handoffDir, this.planOpts)) return null;
+    return this.trackedHtml() ? null : { kind: "handoff" };
+  }
+
+  /** A write of the rulings sidecar of the tracked HTML plan: the page is written again (it shows the rulings); the tracked path and the snapshots do not change. */
+  rulingsWritten(planPath: string): void {
+    const f = fold(this.init.platform);
+    if (this.tracked?.kind !== "scratch" || f(realDeep(this.tracked.path)) !== f(realDeep(planPath))) return;
+    this.enqueue("rulings", async () => {
+      await this.planPage();
+    });
   }
 
   private resultNamed(raw: unknown): boolean {
@@ -479,18 +516,27 @@ export class Show {
     return f(path.dirname(real)) === f(realDeep(path.resolve(dir))) && path.basename(real) === HANDOFF_RESULT;
   }
 
-  private handoffNamedIn(task: string): boolean {
+  private namesHandoff(task: string): boolean {
     const dir = this.init.handoffDir?.trim();
     if (!dir || !path.isAbsolute(dir)) return false;
     return [path.join(dir, HANDOFF_PLAN), path.join(realDeep(path.resolve(dir)), HANDOFF_PLAN)].some((p) => task.includes(p));
   }
 
+  /** The task names the handoff plan and the session does not track a scratch page (that stays the page source). */
+  private handoffNamedIn(task: string): boolean {
+    return !this.trackedHtml() && this.namesHandoff(task);
+  }
+
   /** The scratch plan a task names that passes the guarded read: the tracked one when it is named, else the first. */
   private scratchNamedIn(task: string): Tracked | null {
+    if (this.tracked && this.trackedHtml() && this.namesHandoff(task)) return this.tracked; // the review of the child's text copy is the review of its page
     const f = fold(this.init.platform);
     const named = planPathsOf(planReviewFiles(task, null), this.init.scratchDir)
       .map((p) => resolveToolPath(p, this.init.cwd, this.init.home))
-      .filter((abs): abs is string => !!abs && isPlanPath(abs, this.planOpts) && "plan" in readPlan(abs, this.planOpts));
+      .flatMap((abs) => {
+        const r = abs && isPlanPath(abs, this.planOpts) ? readPlan(abs, this.planOpts) : null;
+        return r && "plan" in r ? [r.plan.path] : []; // a page and its copy: the page's path
+      });
     const cur = this.tracked?.kind === "scratch" ? this.tracked.path : null;
     const keep = cur && named.find((p) => f(realDeep(p)) === f(realDeep(cur)));
     const pick = keep ?? named[0];
@@ -502,13 +548,13 @@ export class Show {
     this.q = this.q.then(job).catch((e) => this.init.trace?.({ event: "show_error", kind: op, errorKind: codeOf(e) }));
   }
 
-  private read(t: Tracked): { path: string; bytes: Buffer; hash: string } | null {
+  private read(t: Tracked): Cur | null {
     if (t.kind === "handoff") {
       const r = this.init.handoffDir ? readHandoffPlan(this.init.handoffDir, this.init.platform) : null;
-      return r && "plan" in r ? r.plan : null;
+      return r && "plan" in r ? { ...r.plan, kind: "md", markdown: r.plan.bytes.toString("utf8"), title: null, rulings: "" } : null;
     }
     const r = readPlan(t.path, this.planOpts);
-    return "plan" in r ? { path: r.plan.path, bytes: r.plan.bytes, hash: r.plan.hash } : null;
+    return "plan" in r ? { path: r.plan.path, bytes: r.plan.bytes, hash: r.plan.hash, kind: r.plan.kind, markdown: r.plan.markdown, title: r.plan.title ?? null, rulings: r.plan.rulings ?? "" } : null;
   }
 
   /** One queued job: read the tracked plan now, apply the path-change rule, refresh plan.json, and roll when asked and the version differs from the ruled one. */
@@ -531,7 +577,7 @@ export class Show {
     const changed = !prev || moved || prev.hash !== cur.hash;
     const meta: PlanJson = {
       path: cur.path,
-      title: titleOf(cur.bytes),
+      title: titleOfCur(cur),
       v: !prev ? 1 : changed ? prev.v + 1 : prev.v,
       at: changed ? new Date().toISOString() : prev.at,
       hash: cur.hash,
@@ -541,16 +587,16 @@ export class Show {
       fences: changed ? [] : (prev?.fences ?? []),
       ...(!changed && prev?.diagrams?.length ? { diagrams: prev.diagrams } : {}),
     };
-    if (changed || !prev) this.renderChain("plan", cur.hash, planBody(cur.bytes).toString("utf8"));
+    if (changed || !prev) this.renderChain("plan", cur.hash, planBody(Buffer.from(cur.markdown, "utf8")).toString("utf8")); // the fences of the markdown copy, for an HTML plan
     if (roll && (meta.ruledPath === null || meta.ruledHash !== cur.hash)) await this.rollTo(cur, meta);
     else if (!prev || JSON.stringify(prev) !== JSON.stringify(meta)) await this.writeMeta(meta);
   }
 
-  private async rollTo(cur: { path: string; bytes: Buffer; hash: string }, meta: PlanJson): Promise<void> {
+  private async rollTo(cur: Cur, meta: PlanJson): Promise<void> {
     const ruled = path.join(this.dir, PLAN_RULED);
     const tmp = this.tmpName(ruled);
     // prev.md will hold what ruled.md holds now (it can differ from plan.json after a failed step 4); with no ruled.md, prev.md is left as it is.
-    const prevHash = ruledHashOnDisk(ruled) ?? meta.ruledHash;
+    const prevHash = ruledHashOnDisk(ruled, path.basename(cur.path)) ?? meta.ruledHash;
     try {
       await this.io.writeFile(tmp, cur.bytes); // (1)
       try {
@@ -645,8 +691,12 @@ export class Show {
     const meta = this.meta;
     if (!cur || !meta) return { reason: "plan not readable" };
     const state: PlanState = this.pstate && this.pstate.hash === cur.hash ? this.pstate.state : "draft";
-    const title = titleOf(cur.bytes);
-    const html = renderPage({ title, kicker: `Plan v${meta.v} · ${state} · ${cur.hash.slice(0, 8)}`, markdown: cur.bytes.toString("utf8"), svgs: meta.hash === cur.hash ? this.svgsFor(meta.diagrams) : undefined, fold: foldPlanSection, source: path.basename(cur.path) });
+    const title = titleOfCur(cur);
+    const kicker = `Plan v${meta.v} · ${state} · ${cur.hash.slice(0, 8)}`;
+    const svgs = meta.hash === cur.hash ? this.svgsFor(meta.diagrams) : undefined;
+    const html = cur.kind === "html"
+      ? renderHtmlPlanPage({ title, kicker, html: cur.bytes.toString("utf8"), rulings: cur.rulings, svgs, source: path.basename(cur.path) })
+      : renderPage({ title, kicker, markdown: cur.bytes.toString("utf8"), svgs, fold: foldPlanSection, source: path.basename(cur.path) });
     return { path: await this.putPage({ id: "plan", kind: "plan", title, state, version: meta.v }, html, event) };
   }
 
