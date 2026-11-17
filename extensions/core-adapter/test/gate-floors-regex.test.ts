@@ -2,8 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { lineFloors, type FloorEnv } from "../floors.ts";
-import { parseShell } from "../shellast.ts";
-import { boundNames } from "../permoverlay.ts";
+import { boundNames, parseShell } from "../shellast.ts";
 
 const env: FloorEnv = { cwd: "/w/repo", home: "/h/me", agentDir: "/h/me/.pi/agent", writeRoots: ["/w/repo"], scratch: [], protectedBranches: [], currentBranch: () => "feature/x", remoteHead: () => "trunk" };
 const floor = (line: string): string | null => lineFloors(line, parseShell(line, { cwd: env.cwd }), env)?.rule ?? null;
@@ -57,7 +56,7 @@ test("a catastrophic backtracking pattern word is never compiled and runs in con
   assert.equal(globbed.sources.some((s) => s.includes("(a+)+")), false);
 });
 
-test("permoverlay: a shell variable name that is not a plain identifier never reaches new RegExp", () => {
+test("shellast boundNames: a shell variable name that is not a plain identifier never reaches new RegExp", () => {
   const { sources } = spyRegExp(() => boundNames("declare -i 'a(+)+b' 'c.d[' ; typeset -i '(x+)+=1'; local -i 'e$' ; (a+)+=1"));
   assert.equal(sources.some((s) => s.includes("(a+)+") || s.includes("a(+)+b") || s.includes("c.d[") || s.includes("(x+)+")), false);
 });

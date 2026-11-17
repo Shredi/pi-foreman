@@ -15,7 +15,7 @@ export const DIGEST_HINTS = 8;
 const LINE_MAX = 160;
 
 export const RETRO_HEADING = "## Retro";
-export const RETRO_INSTRUCTIONS = `End the summary with a section headed exactly "${RETRO_HEADING}" of at most 10 lines: what was missing in this session (files, allow rules, brief details) and what to enhance in the harness or the briefs.`;
+export const RETRO_INSTRUCTIONS = `End the summary with a section headed exactly "${RETRO_HEADING}" of at most 10 lines (the digest is fed back into later prompts, so it must stay short): what was missing in this session (files, allow rules, brief details) and what to enhance in the harness or the briefs.`;
 
 const ITEM_LINE = /^\s*[-*] \[(.)\]\s+(?:deferred:.*? — )?(\d+|V)\.(?:\s|$)/;
 
@@ -99,7 +99,7 @@ export function retroEntry(opts: { when: Date; reason: string; counters: string;
   return [`## ${stamp} compaction (${opts.reason})`, "", opts.counters, "", opts.retro ?? "(the compaction summary has no Retro section)", ""].join("\n");
 }
 
-/** The prompt of `/retro --model`: one foreman turn of at most 10 lines. */
+/** The prompt of `/retro --model`: one foreman turn of at most 10 lines (the reply is fed back into later prompts). */
 export const MODEL_RETRO_PROMPT = "pi-foreman retro: in at most 10 lines and without any tool call, list what was missing in this session (files, allow rules, brief details) and what to enhance in the harness or the briefs. Reply with the lines only.";
 
 /** Cap of the known-limits file text added to the `/retro --model` prompt. */

@@ -63,12 +63,12 @@ test("ask_user_question in an opened session carries the session label", async (
   assert.match(input.questions[0].question, /^\[[^\]·]+ · widget-ship\] Which way\?$/);
 });
 
-test("foreman_show: a hint when the note opens with a table, none for a plain opening", async (t) => {
+test("foreman_show: the reply carries no opening hint, for a table or a plain opening", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
   const show = a.tool("foreman_show");
   assert.ok(show, "the panel tool is registered in this rig");
   const run = async (markdown: string) => ((await show.execute("s", { title: "T", markdown }, undefined, undefined, a.ctx)) as { content: { text: string }[] }).content[0].text;
-  assert.match(await run("| a | b |\n|---|---|\n"), /plain 2-3 sentence/);
+  assert.doesNotMatch(await run("| a | b |\n|---|---|\n"), /pi-foreman hint|plain 2-3 sentence/);
   assert.doesNotMatch(await run("This is about caching. It keeps pages fast.\n\n| a |\n"), /plain 2-3 sentence/);
 });

@@ -11,9 +11,7 @@ import type { CeremonyState } from "./ceremony.ts";
 import { canonical, generateSubagents, get, loadMergedConfig, pythonPathHint, readProjectDeferred } from "./config.ts";
 import type { Json, MergedConfig } from "./config.ts";
 import { loadRegister, normaliseChildExtensions, registrationPathLabel } from "./childext.ts";
-import { buildOverlayRules, checkToolCall, isOverlayTool, isSelfHost, npmCiWorktreeLabel,OVERLAY_UNAVAILABLE, readBaseline, resolveDecision } from "./permoverlay.ts";
-import type { Decision, MatchCtx, OverlayRules } from "./permoverlay.ts";
-import { childHandoffDirs, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
+import { childHandoffDirs, isSelfHost, openedHandoffDirs, npmRootOnce, ownedRoots, ownHandoffDirs, underOwned } from "./owned.ts";
 import { recheckExempt } from "./recheckexempt.ts";
 import type { OwnedRoots } from "./owned.ts";
 import { launchNeedsNestedRefusal, sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor } from "./worktreeroot.ts";
@@ -24,7 +22,7 @@ import { ownWorktreeCheck, sessionGitFacts } from "./ownworktree.ts";
 import { Classifier, CLASSIFIER_ROLE, classifierTarget, denyText } from "./classifier.ts";
 import { noClassifierModelText } from "./reviewwarn.ts";
 import { PermStore, PERM_MODES, cleanProtected, profileName, protectHintLines, protectedBlock, workFoldersBlock } from "./permconfig.ts";
-import { folderRelaxes, mergedFactKey, withMergedFacts } from "./defaults.ts";
+import { folderRelaxes, mergedFactKey, redirectsInScratch, withMergedFacts } from "./defaults.ts";
 import type { GitFacts } from "./defaults.ts";
 import type { PermMode, Resolved } from "./permconfig.ts";
 import { describeCall, exactRules, proposeRule } from "./rules.ts";
@@ -50,7 +48,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -77,7 +75,7 @@ import { SKILLS_SECTION, skillRulesOf, skillsHint, splitSkills, type SkillRef, t
 import type { McpChildOpts } from "./mcpchild.ts";
 import { mcpHintLine, namedCeilingServers, PER_ENTRY_BINDINGS, planMcpLaunch, unknownServerLine, unknownServers, wholeOnlyServers, wholeServerLine, workflowBindingBlock } from "./mcplaunch.ts";
 import { allowedMcpNamed, directMaxTools, directProviders, namedEntries, roleMcpEntries } from "./mcpscope.ts";
-import { childSkillDirs, childSkillRefs } from "./skilldirs.ts";
+import { childSkillRefs } from "./skilldirs.ts";
 import { editorBackupCommand } from "./effects.ts";
 import { RUN_END_EVENTS, SUPERVISOR_TOOL, SupervisorWindow, roleToolsFrom } from "./supervisor.ts";
 import { branchMergedFact, branchMove, chainHint, runShellWriteGuard, shellWriteGuardPayload, shellWriteVerdict } from "./shellwriteguard.ts";
@@ -153,7 +151,7 @@ import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
-import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
+import { ownerFactsLines, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -168,7 +166,8 @@ import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
 import { createWarm, liveReplayApi } from "./warmwire.ts";
 import { doctorWarm } from "./doctorwarm.ts";
 import { warmRates } from "./warmbudget.ts";
-import { forcedProjection, replayable } from "./warmreplay.ts";
+import { hidesDeclaredTools } from "./childtools.ts";
+import { forcedProjection, replayable, subagentNoticeWrap } from "./warmreplay.ts";
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
@@ -240,7 +239,7 @@ import { launchEntries } from "./ladder.ts";
 import { climbNotesOf, rungNote } from "./launchreceipt.ts";
 import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
-import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
+import { asyncRunDirs, bashOutputLogs, recordBashOutputLog, childSurface, hubWorkflowDirs, mainWorkflowReadable, ownTaskReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
 import { CustomSeen, isSubagentWake } from "./idlecustom.ts";
 import { INTERCOM_MESSAGE_TYPE, INTERCOM_TOOL, intercomBlock, intercomDoctor, intercomInbound, intercomSender } from "./intercomguard.ts";
 
@@ -264,11 +263,6 @@ function sessionDirOf(ctx: ExtensionContext): string | undefined {
 function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
-}
-/** The form faults of a plan text: the headings of a plan-first brief count only in a session opened plan-first by a parent. */
-function planFormOf(text: string): string[] {
-  const parented = process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim();
-  return planFormIssues(text, { requiredHeadings: parented ? PLAN_FIRST_HEADINGS : [] });
 }
 const ADAPTER_ID = "pi-foreman-core-adapter";
 /** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
@@ -318,11 +312,7 @@ interface Session {
   registrationError?: string;
   childExtensionErrors?: string[];
   /** Set when the permission system cannot be resolved: child launches are refused. */
-  /** Deny/ask rules enforced before the permission system; null = baseline unreadable (fail closed). */
-  overlay: OverlayRules | null;
   openPrs: OpenPrsRefresher | null;
-  /** Child only: realpaths of the skills its role names (skilldirs.ts), resolved once. */
-  skillDirs?: Promise<string[]>;
   /** Dirs the foreman owns outside the workspace (owned.ts); the npm root joins once `npm root -g` resolved. */
   owned: OwnedRoots;
   /** True until `npm root -g` resolved or failed: a custom worktree root is not owned and `--worktree` open is refused meanwhile. */
@@ -820,7 +810,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s?.questionCalls.forEach(releaseQuestion);
   });
   let isoSetting: unknown = "auto";
-  const baseline = readBaseline(PKG_ROOT);
   // A child's launch binding is in the env while its extensions load (usage.ts); read it now.
   const launchBinding = readBinding(process.env);
   if (process.env.PI_SUBAGENT_CHILD === "1" && launchBinding?.scratch) process.env[SCRATCH_ENV] = launchBinding.scratch;
@@ -868,7 +857,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const foremanSession = isChild ? b?.foremanSession ?? process.env[PARENT_SESSION_ENV] ?? id : id;
     const line: LineContext = { workspace: b?.workspace || workspaceOf(cwd).root, foremanSession, role: isChild ? b?.role ?? "child" : "foreman", launchId: b?.launchId ?? null, kind: isChild ? b?.kind ?? "first" : "foreman" };
     const selfHost = isSelfHost(cwd, PKG_ROOT);
-    // Owned dirs (owned.ts): the npm root resolves in the background and rebuilds the overlay once known.
+    // Owned dirs (owned.ts): the npm root resolves in the background and is added once known.
     const tmpRoot = path.dirname(scratchRoot() ?? path.join(os.tmpdir(), "pi-foreman-scratch"));
     // close.worktreeDir (worktreeroot.ts): only a session in the main checkout takes it; a refused value or a collision falls back to the default layout with one visible notice
     // the Pi install root and the global npm root are protected roots only this side knows; the npm root joins when it resolves (below)
@@ -883,9 +872,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       return ownedRoots({ agentDir, workspaceRoot: workspaceOf(cwd).root, tmpRoot, npmRoot, worktreeRoot: rootInputs.worktreeRoot, worktreeGlobs: globs });
     };
     const owned = computeOwned(null, false);
-    // The Pi session files are written by the adapter only (pi.appendEntry): the current session's dir gets a write deny (permoverlay.ts sessionDir).
-    const sessionDir = sessionDirOf(ctx);
-    const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
     // A child foreman session (handoff dir set) whose last watched PR was merged closes itself (close.ts `pr-merged`, selffinish.ts); one close per tick.
     const startMergeClose = mergeCloseStarter((c, r) => close.start(c, r), () => close.closing(s.id));
@@ -904,7 +890,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       python,
       config,
       configProvider: provider,
-      overlay: buildOverlay(owned),
       owned,
       npmRootPending: true,
       ceremony: initialCeremony(get(config.config, "ceremony.default")),
@@ -1109,18 +1094,16 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       pressureQ: null,
     };
     sessions.set(id, s);
-    // `npm root -g` once per process, never awaited on the hot path; the overlay is rebuilt with the root when it resolves.
+    // `npm root -g` once per process, never awaited on the hot path; the owned roots take the root when it resolves.
     void npmRootOnce({ spawn: defaultSpawner, env: process.env, platform, execPath: process.execPath })
       .then((npmRoot) => {
         s.owned = computeOwned(npmRoot);
         s.npmRootPending = false;
-        s.overlay = buildOverlay(s.owned);
         if (rootInputs.notice && !isChild) notifyOnce(s, ctx, "worktree-root", rootInputs.notice, "warning");
       })
       .catch(() => {
         s.owned = computeOwned(null);
         s.npmRootPending = false;
-        s.overlay = buildOverlay(s.owned);
       });
     if (!isChild) {
       if (ctx.mode === "tui" && footerStyleOf(get(s.config.config, "footer.style")) === "foreman") {
@@ -1719,7 +1702,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
-    return baseFloorEnv(cwd, { ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
+    // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
+    const scratch = s ? (s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null)) : [];
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {
@@ -1966,9 +1951,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // a host without the tool api hides nothing
     }
     // The hook runs only for an active tool_search, so without one nothing is hidden.
-    // A child also hides the names its role makes searchable (the floor still wins).
+    // A child hides nothing (childtools.ts): pi-subagents 0.89 aborts a child whose registered allowlisted tool is missing from the request.
+    // The branch that adds the role's searchable names for a child stays, behind that rule.
     const patterns = s.isChild ? [...deferred.patterns, ...searchableOf(get(s.config.config, "roles"), s.usage.line.role)] : deferred.patterns;
-    deferred.hidden = declared.includes("tool_search") ? hiddenSet({ patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
+    deferred.hidden = hidesDeclaredTools(s.isChild) && declared.includes("tool_search") ? hiddenSet({ patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
     if (!recorded || recorded.planMode !== deferred.planMode) persistDeferred();
     if (deferred.hidden.length) {
       s.trace?.emit({ event: "tools_deferred", count: deferred.hidden.length, names: deferred.hidden.join(",") });
@@ -2346,7 +2332,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
     const live = livePrompt(ctx); // no prompt api: undefined, the order stays
     if (!midConvo && typeof live === "string") messages = alignSections(messages ?? event.messages, live) ?? messages;
-    s.selfWarm.capture(forcedProjection(messages ?? event.messages, live)); // Pi projects a forced prompt after this hook; the warm replays what the request carries
+    s.selfWarm.capture(forcedProjection(subagentNoticeWrap(messages ?? event.messages), live)); // pi-subagents wraps its notices after this hook, Pi projects a forced prompt after it; the warm replays what the request carries
     return messages ? { messages } : undefined;
   });
   // Review S12: each run (a wake or child-notice run too) gets its own single stop-gate continue.
@@ -2870,33 +2856,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return rest ? undefined : `${queuedReason(p.reasons)}${failed}`;
   }
 
-  /** Overlay check (see permoverlay.ts); undefined = let the call go on. */
-  async function overlayBlock(s: Session, ctx: ExtensionContext, toolName: string, input: Record<string, unknown>, rulingAsk?: Decision, callId = "") {
-    // R41: a call the gate decided has no overlay check, auto review or confirm; a self-ruling ask is not a gate matter and still resolves here
-    if (gateDecided.delete(callId) && !rulingAsk) return undefined;
-    if (!s.overlay) return { block: true as const, reason: OVERLAY_UNAVAILABLE };
-    // the session's own bg_run task dirs (`.pi/tasks/<session id>-*`) are readable for the session and its children, no other session's
-    // and the session cwd's `.pi/scratch` (log copies; a child's cwd is its worktree)
-    const ownTasks = [...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...piScratchReadable([ctx.cwd, (() => { try { return fs.realpathSync(ctx.cwd); } catch { return ctx.cwd; } })()], platform), ...bashOutputLogs(s.bashLogs, platform)];
-    const hub = hubWorkflowReadable(get(s.config.config, "paths.hubWorkflow"), platform);
-    if (s.isChild) s.skillDirs ??= childSkillDirs(get(s.config.config, "roles"), launchBinding?.role, ctx.cwd, os.homedir());
-    const skillDirs = s.isChild ? await s.skillDirs : undefined;
-    const mctx: MatchCtx = { cwd: ctx.cwd, home: os.homedir(), platform, role: s.isChild ? "child" : "main", scratch: s.isChild ? launchBinding?.scratch : undefined, ...(s.isChild && launchBinding?.handoffDir ? { handoffDir: launchBinding.handoffDir } : {}), ...(s.isChild && launchBinding?.install ? { install: true } : {}), ownTasks, ...(s.isChild ? (() => { const rounds = roundWorktrees(path.join(s.agentDir, "pi-foreman", "state"), s.usage.line.foremanSession, platform); const f = childSurface(rounds, ctx.cwd, launchBinding?.role, platform); return { roundRoots: f.write, roundReadRoots: f.read, ...(skillDirs?.length ? { skillDirs } : {}), ...(s.usage.line.workspace ? { foremanRoot: workspaceOf(s.usage.line.workspace).root } : {}), readable: [...childReadable(boundLedger(s.markerDir, s.usage.line.foremanSession), ownHandoffDirs(handoffsRoot(s), intercomIdOf(process.env, s.agentDir, s.id)), rounds, platform), ...mainWorkflowReadable(rounds, platform), ...hub] }; })() : { readable: hub, ownReads: [...ownUsageReadable(s.agentDir, platform, s.id, { dir: get(s.config.config, "trace.dir"), stateDir: s.markerDir }, s.usage.line.foremanSession), ...ownTaskReadable([ctx.cwd, workspaceOf(ctx.cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform), ...asyncResultReads(s.childFiles, platform)] }) };
-    const d0 = checkToolCall(s.overlay, toolName, input, mctx);
-    if (s.isChild && toolName === "bash" && typeof input.command === "string" && mctx.install && npmCiWorktreeLabel(input.command, mctx)) s.trace?.emit({ event: "overlay_allow", rule: "npm-ci-worktree", role: s.usage.line.role });
-    // R16 item 4a: the self-ruling ask (ruling.ts selfRulingAsk) takes the place of an overlay ask that is no self-modification
-    const d = d0 && (d0.kind === "deny" || d0.selfMod) ? d0 : (rulingAsk ?? d0);
-    const r = await resolveDecision(d, { isChild: s.isChild, mode: ctx.mode, hasUI: ctx.hasUI, confirm: blockedConfirmOn(herdrEvents, BLOCK_APPROVAL, (title, msg) => ctx.ui.confirm(title, msg)) });
-    if (d) {
-      const df = denyFields((d as { reason?: unknown }).reason, toolName, input, s.isChild ? s.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]);
-      const asked = !(r && d.kind === "deny");
-      s.trace?.emit({ event: "overlay", toolFamily: toolName, decision: r ? (d.kind === "deny" ? "deny" : "ask-denied") : "ask-approved", ...(r || asked ? df : {}), ...(asked ? dialogFields(df.command) : {}) });
-      if (d.kind === "ask") askFlag.overlay({ command: df.command, rule: d.rule, approved: !r, session: s.id });
-    }
-    if (s.isChild && r && d?.kind === "deny") return repeatedDeny(s, ctx, d.reason) ?? r;
-    return r;
-  }
-
   /** Child deny reasons per child session (one child run): count by exact reason (R12 item 4). */
   const childDenyCounts = new Map<string, number>();
 
@@ -2977,6 +2936,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       child: s.isChild,
       ...(s.isChild && process.env.FOREMAN_CHECKOUT ? { checkout: process.env.FOREMAN_CHECKOUT } : {}),
       agentDir: s.agentDir,
+      home: os.homedir(),
+      ...(process.env.XDG_CONFIG_HOME ? { configHome: process.env.XDG_CONFIG_HOME } : {}),
       ...(sessionDir ? { sessionDir } : {}),
       role: s.isChild ? s.usage.line.role : "foreman",
       tmpAccess: get(s.config.config, "gate.tmpAccess") !== false,
@@ -2993,8 +2954,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
   const MAX_OWNER_MESSAGES = 3;
   const gateRuntimes = new Map<string, GateRuntime>();
-  /** Tool calls the gate decided (allow); the old overlay skips them. */
-  const gateDecided = new Set<string>();
   const readToolsWarned = new Set<string>();
   /** Sessions whose owner answered "deny and stop" (until the next user prompt), and per-session allows keyed `tool\0payload`. */
   const gateStopped = new Set<string>();
@@ -3088,12 +3047,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       note(r.layer ?? "floor", "deny", r.rule, r.reason, denialFragment(r));
       return (gs && (repeatedDeny(gs, ctx, r.reason, denialSentence(r)) ?? undefined)) || { block: true as const, reason: r.reason };
     }
-    // no session: no dialog, classifier or log to decide with, and the overlay below is no replacement for the gate; floors and rules ran above
+    // no session: no dialog, classifier or log to decide with; floors and rules ran above
     if (!gs || !rt || !resolved) return { block: true as const, reason: "pi-foreman: this tool call has no session to decide it in, so it is denied. Report this to the owner." };
     const allowed = (rule: string, layer: GateLayer, label: string, folder = false, reason?: string): undefined => {
       gs.trace?.emit({ event: "guard", guard: "gate", toolFamily: event.toolName, decision: "allowed", rule: label, role, ...(folder ? { mode: "auto", source: "workFolder" } : {}) });
       if (layer !== "classifier" && layer !== "cache") note(layer, "allow", rule, reason); // the classifier logs its own record
-      gateDecided.add(event.toolCallId);
       return undefined;
     };
     const denied = (rule: string, layer: GateLayer, reason: string): { block: true; reason: string } => {
@@ -3178,6 +3136,37 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
         if (resolved.mode === "ask") return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause: "no rule matches", noRemember: true });
         return allowed("no-rule", "mode", "mode:no-rule");
+      }
+      // a line of a read-only role the gate cannot see into (danger-readonly-run): never the allow sentences' judge, never a plain mode allow; auto and allow ask the role question, ask goes to the parent.
+      // The role question only for the label alone or with danger-opaque, and only after the read question's entry check; a line with any other danger label goes to the parent ask (no role call, no allow-sentence call).
+      if (out.dangers?.includes("danger-readonly-run") && resolved.mode !== "deny") {
+        const cause = `${danger.name}: ${danger.reason}`;
+        const roleOnly = out.dangers.every((d) => d === "danger-readonly-run" || d === "danger-opaque");
+        if (roleOnly && (resolved.mode === "auto" || resolved.mode === "allow") && [true, undefined].includes(get(gs.config.config, "gate.readonlyClear") as boolean | undefined) && roots) {
+          let rc: Awaited<ReturnType<typeof rt.classifier.roleClear>> | undefined;
+          try {
+            // the read question's deterministic entry check first (a secret-path word, a writing redirect that is not named and inside the scratch dir or handoff files, a non-bash shell): a refusal is the parent ask with no model call
+            const entryOk = cmdText !== null && !!out.segments && readClearEntry(
+              { tool: event.toolName, text: cmdText, segments: out.segments, dangers: ["danger-opaque"], shellBash: () => shellIsBash(shellPathSetting(gs.agentDir, ctx.cwd), deps.getShellConfig) },
+              floorEnvOf(gs, ctx.cwd, roots.sessionDir),
+              (seg) => redirectsInScratch(seg, roots, platform, ctx.cwd),
+            );
+            if (!entryOk) throw new Error("entry check refused");
+            rc = await rt.classifier.roleClear(
+              { tool: event.toolName, payload, kind, role, cwd: ctx.cwd, writable: [...roots.scratch, ...(roots.childHandoff ? [roots.childHandoff] : [])], inside: insideDirs(roots) },
+              {
+                prose: resolved.prose, registry: ctx.modelRegistry as never, config: gs.config.config as never, provider: ctx.model?.provider, log: rt.log,
+                recordUsage: (m: unknown) => appendUsage(gs.usage.file, usageLine({ ...gs.usage.line, role: CLASSIFIER_ROLE, launchId: null, kind: "foreman" }, m as never)),
+                trace: (t: { decision: string; entry: string; cached: boolean; latencyMs: number }) => gs.trace?.emit({ event: "review", kind: "gate", ...t }),
+                notify: (text: string) => notifyOnce(gs, ctx, "no-classifier-model", text),
+              },
+            );
+          } catch {
+            // the role question is best effort: any failure asks the parent
+          }
+          if (rc?.cleared) return allowed("readonly-run", rc.cached ? "cache" : "classifier", "classifier:readonly-run");
+        }
+        return await decideByDialog(gs, ctx, rt, resolved, { ...base, cause, dangerName: danger.name });
       }
       if (resolved.mode === "allow") return allowed(danger.name, "mode", `mode:allow:${danger.name}`);
       if (resolved.mode === "deny") return denied("mode-deny", "mode", MODE_DENY_TEXT);
@@ -3503,20 +3492,17 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (lf && !ledgerHolds.has(event.toolCallId)) wantHold = { gate: ledgerGate(lf), key: `${ps.id}:${event.toolCallId}`, sid: ps.id };
       }
     }
-    // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts): a literal path is refused here,
-    // a line that writes and names a ruling and a handoff dir is an overlay ask (selfRulingAsk, judged in overlayBlock).
-    let rulingAsk: Decision | undefined;
+    // A session never writes a ruling file in a handoff dir where it is the child (ruling.ts): a literal path is refused here.
     {
       const rs = sessionFor(ctx);
       // the path of write and edit as the tool reads it (`@`, `~`, `file://`)
       const rin = event.input as Record<string, unknown>;
       const rpath = (event.toolName === "write" || event.toolName === "edit") && typeof rin?.path === "string" ? toolPath(rin.path, ctx.cwd, os.homedir(), platform) : null;
-      const why = rs && selfRulingRefusal(event.toolName, rpath !== null ? { ...rin, path: rpath } : rin, ctx.cwd, childDirsOf(rs));
+      const why = rs && selfRulingRefusal(event.toolName, rpath !== null ? { ...rin, path: rpath } : rin, ctx.cwd, childDirsOf(rs), platform);
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
       }
-      rulingAsk = rs ? selfRulingAsk(event.toolName, event.input as Record<string, unknown>, childDirsOf(rs), { cwd: ctx.cwd, orchestrator: !rs.isChild }) : undefined;
     }
     // A newer ruling (ruling-*.md, steer-*.md) in the handoff dir is read before any child launch: the launch waits, the ruling text is the reason.
     if (event.toolName === "subagent") {
@@ -3529,15 +3515,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (process.env.PI_SUBAGENT_CHILD === "1" && isShellTool(event.toolName) && editorBackupCommand((event.input as { command?: unknown }).command)) {
       sessionFor(ctx)?.trace?.emit({ event: "guard", guard: "editor_backup", toolFamily: "bash", decision: "blocked", reason: "editor_backup" });
       return { block: true, reason: "pi-foreman: [editor_backup] deleting an editor backup (`*~`, `*.bak`, `*.orig`, `*.swp`, `.#*`) with rm is denied; report it in your result instead." };
-    }
-    // First of all, before the permission system and the core guards: the overlay's deny/ask rules.
-    if (isOverlayTool(event.toolName)) {
-      try {
-        const blocked = await overlayBlock(await ensureSession(ctx), ctx, event.toolName, event.input as Record<string, unknown>, rulingAsk, event.toolCallId);
-        if (blocked) return blocked;
-      } catch (err) {
-        return { block: true, reason: `pi-foreman: adapter error in the permission overlay (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
-      }
     }
     const sup = supervisorBlock(sessionFor(ctx), event.toolName, event.input);
     if (sup) return sup;
@@ -3823,7 +3800,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const p of planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir)) {
               const rp = readPlan(p, planOpts(s, ctx));
               if (!("plan" in rp)) continue;
-              const issues = planFormOf(rp.plan.bytes.toString("utf8"));
+              const issues = planFormIssues(rp.plan.bytes.toString("utf8"), {});
               if (issues.length > 0) faults.push(`${p}: ${issues.join("; ")}`);
             }
           }
@@ -4282,6 +4259,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const m = event.message as { role?: string; customType?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } };
     if (m.role === "custom") {
       const s = sessionFor(ctx);
+      // pi-subagents 0.89: the wake is a custom run with no `input`, so a notice appended with triggerTurn:false (held after an Esc, reserved, compaction) is caught up here: it is still the trailing entry before this message is saved
+      if (s && !s.isChild) for (const unseen of s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? [])) onCustomMessage(s, unseen);
       if (s) onCustomMessage(s, event.message);
       if (s && !s.isChild) s.customSeen.mark(event.message);
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
@@ -4988,7 +4967,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    gateDecided.delete(event.toolCallId);
     sessionFor(ctx)?.gitDrift.after(ctx.cwd, os.homedir(), event.toolCallId);
     const owner = sessionFor(ctx);
     if (event.isError) owner?.trace?.emit(toolErrorRecord(event.toolName, event.content)); // R6 lane 7f
@@ -5001,14 +4979,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
         if (inOwnHandoff(owner, path.resolve(ctx.cwd, given))) evalOwnAsk(owner);
-        if (isTrackedRulingName(path.basename(given))) {
-          const abs = path.resolve(ctx.cwd, given);
-          let real = abs;
-          try {
-            real = path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs));
-          } catch {
-            // keep the resolved path
-          }
+        const real = toolWriteRuling(path.resolve(ctx.cwd, given));
+        if (real !== null) {
           selfRulingsFor(owner).mark(real);
         }
       }
@@ -5037,7 +5009,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
       const written = readPlan((event.input as Record<string, unknown>).path, planOpts(owner, ctx));
-      const issues = "plan" in written ? planFormOf(written.plan.bytes.toString("utf8")) : [];
+      const issues = "plan" in written ? planFormIssues(written.plan.bytes.toString("utf8"), {}) : [];
       if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
     }
     // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.
@@ -5583,7 +5555,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     platform,
     session: async (ctx) => {
       const s = await ensureSession(ctx);
-      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, overlay: s.overlay, config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", inRun: () => s.inRun, onStart: (spec, id) => {
+      return { id: s.id, isChild: s.isChild, cwd: s.cwd, agentDir: s.agentDir, roots: await gateRootsOf(s, ctx.cwd, sessionDirOf(ctx)), config: () => s.config.config, trace: (r) => s.trace?.emit(r), owned: () => s.owned.readWrite, ownTasks: (cwd) => (s.isChild ? [] : ownTaskReadable([cwd, workspaceOf(cwd).root, s.usage.line.workspace], s.usage.line.foremanSession, platform)), pressure: () => pressureOf(s), idle: () => s.activeRuns.size === 0, intercomRun: () => s.turn.cause === "intercom", inRun: () => s.inRun, onStart: (spec, id) => {
         markHandoffWait(s, spec, id);
         if (spec.kind === "pid" && spec.bg) bgRecords.post(`fb-${id}`, "working", spec.note, "Running");
       }, onBgEnd: (id, note, how) => (how === "timeout" ? undefined : how === "dropped" ? bgRecords.clear(`fb-${id}`) : bgRecords.post(`fb-${id}`, "done", note, how === "exited" ? "Finished" : "Killed")), onCancel: (id) => cancelHandoffWait(s, id), steer: (text) => steerFor(s).append(text) };
@@ -5727,9 +5699,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hint = inHerdr
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
-          const openHint = markdown === undefined ? null : showHint(markdown);
           const page = r.page ? ` It writes a page the owner opens in the browser: ${r.page}.` : " Its page could not be written.";
-          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
         }
@@ -6640,8 +6611,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     out.push(...hubWorkflowDriftLines({ hubWorkflow: get(s.config.config, "paths.hubWorkflow") }));
     out.push(...gateMigrationLines({ agentDir: s.agentDir, config: s.config.config }));
     out.push(...modsDoctorLines({ packageRoot: PKG_ROOT, appHome: doctorAppHome(process.env, os.homedir()) }));
-    if (s.overlay) ok(`permission overlay active (${s.overlay.bashDeny.length} command deny, ${s.overlay.pathRules.length} path rules, ${s.overlay.bashAsk.length + s.overlay.pathAsk.length} project/session ask)`);
-    else fail("permission overlay baseline unreadable (shell and file tools are blocked)", "reinstall pi-foreman: config/permissions.baseline.json is part of the package.");
     for (const sh of shadowedRoles(s.cwd, childRoleIds(get(s.config.config, "roles")))) out.push(`WARN project agent shadows a role (${sh}) — fix: ${SHADOW_FIX}`);
 
     if (fs.existsSync(markerPath(s.markerDir, s.id))) ok(`session marker in ${s.markerDir}`);

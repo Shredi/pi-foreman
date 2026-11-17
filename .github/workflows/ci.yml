@@ -187,9 +187,95 @@ jobs:
           path: ${{ runner.temp }}/bench-jobs
           if-no-files-found: ignore
           retention-days: 7
+  fresh-install:
+    # A new user's install: plain `npm ci` in a clone, then the managed form (`pi install git:` runs `npm install --omit=dev --legacy-peer-deps`).
+    # npm 11.9 to 11.12 refuses the two forked git dependencies (EALLOWGIT); that cell must fail, with the engines warning first.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, npm: bundled}
+          - {os: windows-latest, npm: bundled}
+          - {os: ubuntu-latest, npm: "11.13.0"}
+          - {os: ubuntu-latest, npm: "11.12.1", expect-fail: true}
+    name: fresh-install (${{ matrix.os }}, npm ${{ matrix.npm }}${{ matrix.expect-fail && ', expected to fail' || '' }})
+    runs-on: ${{ matrix.os }}
+    env:
+      NPM_CMD: ${{ matrix.npm == 'bundled' && 'npm' || format('npx -y npm@{0}', matrix.npm) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: npm ci fails with EBADENGINE and EALLOWGIT (npm 11.12.1)
+        if: matrix.expect-fail
+        shell: bash
+        run: |
+          if $NPM_CMD ci > out.txt 2>&1; then
+            cat out.txt
+            echo "expected npm ci to fail"
+            exit 1
+          fi
+          cat out.txt
+          grep -q EBADENGINE out.txt
+          grep -q EALLOWGIT out.txt
+      - name: npm ci
+        if: ${{ !matrix.expect-fail }}
+        shell: bash
+        run: |
+          $NPM_CMD --version
+          $NPM_CMD ci
+          test -f node_modules/pi-intercom/package.json
+          test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
+      - name: managed install in a fresh clone
+        if: ${{ !matrix.expect-fail }}
+        shell: bash
+        run: |
+          git clone . "$RUNNER_TEMP/managed"
+          cd "$RUNNER_TEMP/managed"
+          $NPM_CMD install --omit=dev --legacy-peer-deps
+          test -f node_modules/pi-intercom/package.json
+          test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
+  fresh-install-advisory:
+    # Advisory (not in ci-ok): the newest npm, so a new npm release cannot block all work. macOS (bundled npm) runs here when runner capacity allows; it never blocks merging.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, npm: "latest"}
+          - {os: windows-latest, npm: "latest"}
+          - {os: macos-latest, npm: bundled}
+    name: fresh-install-advisory (${{ matrix.os }}, npm ${{ matrix.npm }})
+    runs-on: ${{ matrix.os }}
+    env:
+      NPM_CMD: ${{ matrix.npm == 'bundled' && 'npm' || format('npx -y npm@{0}', matrix.npm) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: npm ci
+        shell: bash
+        run: |
+          $NPM_CMD --version
+          $NPM_CMD ci
+          test -f node_modules/pi-intercom/package.json
+          test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
+      - name: managed install in a fresh clone
+        shell: bash
+        run: |
+          git clone . "$RUNNER_TEMP/managed"
+          cd "$RUNNER_TEMP/managed"
+          $NPM_CMD install --omit=dev --legacy-peer-deps
+          test -f node_modules/pi-intercom/package.json
+          test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
   ci-ok:
     # The one required check: passes only when every job it needs succeeded (a skipped or cancelled job fails it).
-    needs: [test, replay, bench-smoke]
+    needs: [test, replay, bench-smoke, fresh-install]
     if: always()
     runs-on: ubuntu-latest
     steps:

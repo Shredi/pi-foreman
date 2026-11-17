@@ -5,13 +5,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ShellSegment } from "./shellast.ts";
-import { lexUnder, normPath, sameOrUnder, tildeWord, type Resolver } from "./pathnorm.ts";
-import { globMatch } from "./glob.ts";
-import { FIND_BAD, READ_CLASS, RUNNERS } from "./effects.ts";
-import { nonPathArgs } from "./permoverlay.ts";
+import { parseShell, type ShellSegment } from "./shellast.ts";
+import { comparableFs, lexUnder, memoLookup, normPath, sameOrUnder, shortNameSpellings, tildeWord, type Resolver } from "./pathnorm.ts";
+import { globMatch, globSegMatch, wildcardRegExp } from "./glob.ts";
+import { readBaseline } from "./baseline.ts";
+import { FIND_BAD, GIT_READ, READ_CLASS, RUNNERS, gitReadWrites } from "./effects.ts";
+import { nonPathArgs } from "./patternargs.ts";
 import { protectedMatch } from "./protectedmatch.ts";
+import { psUnitTexts } from "./psunits.ts";
 import { redactCommand } from "./trace.ts";
+import { workspaceOf } from "./python.ts";
 
 interface FloorKeys {
   keyPatterns: string[];
@@ -36,7 +39,7 @@ export interface FloorEnv {
   protectedBranches?: string[];
   /** Roots a delete or a recursive overwrite may reach: the worktree, scratch dirs, the OS temp dir, owned write roots. */
   writeRoots?: string[];
-  /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: `$FOREMAN_SCRATCH`. */
+  /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: none (the process environment is never read for it). */
   scratch?: string[];
   /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
   agentDir?: string;
@@ -320,11 +323,11 @@ function configTargets(call: GitCall): string[] {
   return dirs ? [path.join(dirs.common, "config"), path.join(dirs.gitDir, "config.worktree")] : [];
 }
 
-/** Every path is below the child's scratch root (`env.scratch`, `$FOREMAN_SCRATCH`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
+/** Every path is below the child's scratch root (`env.scratch`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
 function inOwnTemp(paths: string[], env: FloorEnv): boolean {
   if (!paths.length) return false;
   const plat = env.platform ?? process.platform;
-  const roots = [...(env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : [])), path.join(os.tmpdir(), "pi-foreman-scratch")].filter(Boolean);
+  const roots = [...(env.scratch ?? []), path.join(os.tmpdir(), "pi-foreman-scratch")].filter(Boolean);
   const rootForms = roots.flatMap((r) => formsOf(r, env));
   return paths.every((p) => formsOf(p, env).every((f) => rootForms.some((r) => lexUnder(plat, r, f))));
 }
@@ -398,9 +401,9 @@ export function insideRoot(p: string, root: string, platform: string = process.p
   return lexUnder(platform, root, p);
 }
 
-function resolveWord(word: string, cwd: string | null, env: FloorEnv): string | null {
+function resolveWord(word: string, cwd: string | null, env: FloorEnv, keepGlob = false): string | null {
   const win = (env.platform ?? process.platform) === "win32";
-  const v = expandWord(word, env, win);
+  const v = expandWord(word, env, win, keepGlob);
   if (v === null) return null;
   if (px_(win).isAbsolute(v)) return px_(win).normalize(v);
   return cwd ? px_(win).resolve(cwd, v) : null;
@@ -409,7 +412,7 @@ function resolveWord(word: string, cwd: string | null, env: FloorEnv): string | 
 const px_ = (win: boolean): typeof path.posix => (win ? path.win32 : path.posix);
 
 /** `word` with `~` and `$HOME` expanded and a glob or variable tail cut to its literal directory prefix; not yet made absolute. */
-function expandWord(word: string, env: FloorEnv, win: boolean = (env.platform ?? process.platform) === "win32"): string | null {
+function expandWord(word: string, env: FloorEnv, win: boolean = (env.platform ?? process.platform) === "win32", keepGlob = false): string | null {
   const px = win ? path.win32 : path.posix;
   const w = word.replace(/^(["'])(.*)\1$/, "$2");
   const home = env.home ?? "";
@@ -422,7 +425,7 @@ function expandWord(word: string, env: FloorEnv, win: boolean = (env.platform ??
     v = px.join(home, v.replace(/^\$\{?HOME\}?/, ""));
   }
   // a glob or variable tail: judge the literal directory prefix
-  const cut = v.search(/[$`*?[{]/);
+  const cut = v.search(keepGlob ? /[$`{]/ : /[$`*?[{]/);
   if (cut >= 0) {
     const pre = v.slice(0, cut);
     v = pre.endsWith("/") || pre.endsWith("\\") ? pre : px.dirname(pre === "" ? "." : pre);
@@ -498,7 +501,7 @@ function outside(word: string, cwd: string | null, env: FloorEnv): boolean {
   if (abs === null) return false; // unknown: the walker cannot say, the gate's other steps decide
   // r79 item 4: the session's own scratch root (`<tmp>/pi-foreman-scratch/<session>/<run>`, FOREMAN_SCRATCH) is inside, also under another spelling of
   // the temp dir (macOS /var vs /private/var)
-  const own = env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : []);
+  const own = env.scratch ?? [];
   const roots = [...(env.writeRoots ?? []), ...own];
   if (roots.some((r) => insideRoot(abs, r, env.platform))) return false;
   const mine = formsOf(abs, env);
@@ -522,6 +525,8 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
   const pw = protectedWrite(seg, prog, env, line);
   if (pw) return pw;
   if (PRIVILEGE.has(prog)) return hit("privilege", `\`${prog}\` escalates privileges. Run the command as the current user; ask the user when root is needed.`);
+  const bd = builtinDeny([prog, ...seg.argv].join(" "), env, false);
+  if (bd) return bd;
   if (POWER.has(prog) || (prog === "init" && /^[06]$/.test(seg.argv[0] ?? "")) || (prog === "systemctl" && seg.argv.some((w) => /^(poweroff|reboot|halt|kexec)$/.test(w)))) return hit("shutdown", "Shutting down or rebooting the machine is not allowed. Ask the user.");
   if (prog.startsWith("mkfs") || DISK.has(prog) || (prog === "diskutil" && seg.argv.some((w) => /^(erase|partition|reformat|zero|secure|apfs)/i.test(w))) || (prog === "format" && seg.argv.some((w) => /^[a-z]:$/i.test(w)))) {
     return hit("disk", `\`${prog}\` formats or repartitions a disk. Ask the user.`);
@@ -542,6 +547,8 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
     const d = seg.argv.filter((w) => !w.startsWith("-")).slice(-1)[0];
     if (d !== undefined && outside(d, seg.cwd ?? env.cwd, env)) return hit("delete-outside", `\`rsync --delete\` into '${d}' deletes files outside the worktree, your scratch dir and /tmp.`);
   }
+  const scan = fsScanFloor(seg, env);
+  if (scan) return scan;
   const pub = publishFloor(prog, seg.argv);
   if (pub) return hit("publish", `${pub} publishes a package or image. Ask the user to publish; build and test locally instead.`);
   if (SHELL_LIKE.has(prog) && seg.opaque === "stdin_fed" && line.some((s) => s !== seg && DOWNLOAD.has(base(s.program)))) return hit("download-shell", "A download piped into a shell or interpreter runs unreviewed code. Download to your scratch dir, read the file, then run what you checked.");
@@ -558,11 +565,206 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
   return null;
 }
 
+// ------------------------------------------------------------------ whole-filesystem scan
+
+const SCAN_VALUE_FLAGS: Record<string, Set<string>> = {
+  grep: new Set(["-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "--regexp", "--file", "--max-count"]),
+  rg: new Set(["-e", "-f", "-g", "-t", "-T", "-m", "-A", "-B", "-C", "-j", "-M", "-E", "-r", "-d", "--regexp", "--file", "--glob", "--iglob", "--type", "--type-not", "--max-count", "--max-depth", "--threads"]),
+  fd: new Set(["-e", "-E", "-t", "-d", "-S", "-o", "-j", "-c", "--extension", "--exclude", "--type", "--max-depth", "--size", "--owner", "--threads", "--color"]),
+  du: new Set(["-d", "-B", "-t", "-X", "--max-depth", "--block-size", "--threshold", "--exclude"]),
+  ls: new Set(["-w", "-I", "-T", "--width", "--ignore", "--tabsize"]),
+  tree: new Set(["-L", "-P", "-I", "-o", "--charset", "--filelimit", "--timefmt"]),
+};
+
+/** The non-option words of `args` (after `--` all of them), skipping the values of the flags in `valued`; the flags seen are added to `seen`. */
+function scanOperands(args: string[], valued: Set<string>, seen: Set<string>): string[] {
+  const out: string[] = [];
+  let ended = false;
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i];
+    if (ended || !w.startsWith("-") || w === "-") out.push(w);
+    else if (w === "--") ended = true;
+    else {
+      seen.add(w);
+      if (valued.has(w)) i++;
+    }
+  }
+  return out;
+}
+
+/** The search roots of a scan segment (`find`, a recursive grep, `rg`, `fd`, `du`, `ls -R`, `tree`): [] = the cwd; null = not a scan. */
+function scanRoots(seg: ShellSegment): string[] | null {
+  const verb = base(seg.program);
+  const args = seg.argv;
+  const seen = new Set<string>();
+  if (verb === "find") {
+    const roots: string[] = [];
+    for (const w of args) {
+      if (/^-[HLP]$/.test(w)) continue;
+      if (w.startsWith("-") || w === "(" || w === "!") break;
+      roots.push(w);
+    }
+    return roots;
+  }
+  if (verb === "grep" || verb === "egrep" || verb === "fgrep") {
+    const ops = scanOperands(args, SCAN_VALUE_FLAGS.grep, seen);
+    const rec = args.some((w, i) => /^-[A-Za-z]*[rR]/.test(w) || w === "--recursive" || w === "--dereference-recursive" || w === "--directories=recurse" || (w === "-d" && args[i + 1] === "recurse"));
+    if (!rec) return null;
+    return seen.has("-e") || seen.has("-f") || seen.has("--regexp") || seen.has("--file") || args.some((w) => /^--(?:regexp|file)=/.test(w)) ? ops : ops.slice(1);
+  }
+  if (verb === "rg") {
+    const ops = scanOperands(args, SCAN_VALUE_FLAGS.rg, seen);
+    return seen.has("-e") || seen.has("-f") || seen.has("--regexp") || seen.has("--file") || seen.has("--files") || args.some((w) => /^--(?:regexp|file)=/.test(w)) ? ops : ops.slice(1);
+  }
+  if (verb === "fd" || verb === "fdfind") {
+    const cut = args.findIndex((w) => /^(?:-x|-X|--exec|--exec-batch)$/.test(w));
+    const sp = args.flatMap((w, i) => (w === "--search-path" && args[i + 1] !== undefined ? [args[i + 1]] : /^--search-path=/.test(w) ? [w.slice(14)] : []));
+    return [...scanOperands(cut >= 0 ? args.slice(0, cut) : args, SCAN_VALUE_FLAGS.fd, seen).slice(1), ...sp];
+  }
+  if (verb === "du") return scanOperands(args, SCAN_VALUE_FLAGS.du, seen);
+  if (verb === "tree") return scanOperands(args, SCAN_VALUE_FLAGS.tree, seen);
+  if (verb === "ls") {
+    const ops = scanOperands(args, SCAN_VALUE_FLAGS.ls, seen);
+    return args.some((w) => /^-[A-Za-z]*R/.test(w) || w === "--recursive") ? ops : null;
+  }
+  return null;
+}
+
+const MAX_GLOB = 200;
+
+/** Every existing path a glob in any segment of `abs` expands to, at most MAX_GLOB (dot entries match too). */
+function expandGlob(abs: string, p: typeof path.posix, win: boolean): string[] {
+  const root = p.parse(abs).root;
+  let cur = [root];
+  for (const seg of abs.slice(root.length).split(win ? /[\\/]+/ : /\/+/).filter(Boolean)) {
+    if (!/[*?[]/.test(seg)) {
+      cur = cur.map((d) => p.join(d, seg));
+      continue;
+    }
+    const next: string[] = [];
+    for (const d of cur) {
+      let names: string[] = [];
+      try {
+        names = fs.readdirSync(d).slice(0, 500);
+      } catch { /* not a directory: no match */ }
+      for (const name of names) if ((name.startsWith(".") || !seg.startsWith(".")) && globSegMatch(seg, name)) next.push(p.join(d, name));
+      if (next.length >= MAX_GLOB) break;
+    }
+    cur = next.slice(0, MAX_GLOB);
+    if (!cur.length) break;
+  }
+  return cur;
+}
+
+/**
+ * True when the search root `word` is the file system root, the home directory or a parent of it, or a parent of the workspace outside the allowed roots.
+ * A glob is expanded against the file system and every match is judged, as the old layer did (no match: only the word itself, which names no directory).
+ */
+function scanRootBad(word: string, cwd: string, env: FloorEnv, ws: string, own: string[]): boolean {
+  const platform = env.platform ?? process.platform;
+  const win = platform === "win32";
+  const p = px_(win);
+  const globbed = /[*?[]/.test(word);
+  const abs = resolveWord(word, cwd, env, globbed);
+  if (abs === null) return false; // unknown: the walker cannot say, the gate's other steps decide
+  // darwin's file system is case-insensitive too: compare through comparableFs
+  const under = (x: string, root: string): boolean => {
+    const a = comparableFs(platform, x);
+    const r = comparableFs(platform, root);
+    return a === r || a.startsWith(r.endsWith("/") ? r : `${r}/`);
+  };
+  const tmps = [os.tmpdir(), ...(win ? [] : ["/tmp"])];
+  const allowed = [...tmps, ...own, ...(env.pkgRoot ? [env.pkgRoot] : []), ...(env.writeRoots ?? [])].flatMap((a) => [a, realDeep(a)].filter((x): x is string => !!x));
+  const cands = new Set([abs, realDeep(abs)]);
+  if (globbed) for (const m of expandGlob(abs, p, win)) [m, realDeep(m)].forEach((x) => cands.add(x));
+  for (const c of cands) {
+    if (!c) continue;
+    const x = p.resolve(c);
+    if (p.parse(x).root === x || (env.home && under(env.home, x))) return true;
+    if (ws && under(ws, x) && !under(x, ws) && !allowed.some((a) => under(x, a))) return true;
+  }
+  return false;
+}
+
+/** `floor-fs-scan`: a recursive read rooted at `/`, the home directory or a parent of the workspace; the reason names the roots to read instead. */
+function fsScanFloor(seg: ShellSegment, env: FloorEnv): FloorHit | null {
+  const roots = scanRoots(seg);
+  if (!roots) return null;
+  return scanHit(roots.length ? roots : ["."], seg.cwd ?? env.cwd, seg.program, env);
+}
+
+/** `floor-fs-scan` for the Pi `find` and `grep` tools: their `path` (default: the cwd) is the search root. */
+export function scanToolFloor(tool: string, input: Record<string, unknown>, cwd: string, env: FloorEnv): FloorHit | null {
+  if (tool !== "find" && tool !== "grep") return null;
+  const root = typeof input.path === "string" && input.path ? input.path : ".";
+  return scanHit([root], cwd, tool, env);
+}
+
+function scanHit(roots: string[], cwd: string, program: string, env: FloorEnv): FloorHit | null {
+  const ws = workspaceOf(env.cwd).root;
+  const own = env.scratch ?? [];
+  const bad = roots.find((r) => scanRootBad(r, cwd, env, ws, own));
+  if (bad === undefined) return null;
+  const named = [`the worktree ${ws}`, own[0] && `your scratch dir ${own[0]}`, "/tmp", "the Pi install root", "the global npm root", env.pkgRoot ? `the bundled package roots (${env.pkgRoot})` : "the bundled package roots"].filter(Boolean);
+  const shown = bad === "." ? cwd : bad;
+  return hit("fs-scan", `A whole-filesystem scan: the search root '${cutFragment(shown)}' is /, the home directory or a parent of the workspace. Scan only inside ${named.join(", ")}; name that directory as the search root. Do not retry this scan.`, `${program} ${shown}`);
+}
+
+// ------------------------------------------------------------------ built-in command deny (the baseline's bash.deny, round 2 step 2)
+
+/** The baseline's `bash.deny` patterns, copied: the floor fails closed with these when config/permissions.baseline.json cannot be read (a test compares the two). */
+export const BUILTIN_DENY_INLINE: readonly string[] = [
+  "sudo *", "doas *",
+  "curl * | sh *", "curl * | bash *", "curl * | zsh *", "curl * | sudo *",
+  "wget * | sh *", "wget * | bash *", "wget * | zsh *", "wget * | sudo *",
+  "gh auth token*", "gh auth status --show-token*",
+  "git credential fill*",
+  "security find-generic-password* -w*", "security find-generic-password* -g*", "security find-internet-password*",
+];
+
+/** Patterns another rule owns: privilege escalation (floor-privilege), a download piped into a shell (floor-download-shell), `git credential fill` (the danger-git label the judge decides). */
+const DENY_OWNED_ELSEWHERE = (pat: string): boolean => /^(?:sudo|doas) /.test(pat) || pat.includes(" | ") || pat.startsWith("git credential fill");
+
+const denyCache = new Map<string, readonly string[]>();
+
+function builtinDenyPatterns(pkgRoot: string): readonly string[] {
+  let list = denyCache.get(pkgRoot);
+  if (!list) {
+    const file = readBaseline(pkgRoot)?.bash.deny ?? [];
+    list = (file.length ? file : BUILTIN_DENY_INLINE).filter((p) => !DENY_OWNED_ELSEWHERE(p));
+    denyCache.set(pkgRoot, list);
+  }
+  return list;
+}
+
+const DEFAULT_PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/** `floor-builtin-deny`: `text` (one segment, or one statement of the powershell tool) matches a `bash.deny` pattern of the baseline file. */
+function builtinDeny(text: string, env: FloorEnv, ps: boolean): FloorHit | null {
+  const root = env.pkgRoot ?? DEFAULT_PKG_ROOT;
+  const home = env.home ?? "";
+  const pat = builtinDenyPatterns(root).find((p) => wildcardRegExp(p, { home, ignoreCase: ps, foldSeparators: false }).test(text.trim()));
+  return pat === undefined ? null : hit("builtin-deny", `This command (matching '${pat}') reads or prints a credential. Use the tool's own configured login instead; ask the user when a token is needed.`, text);
+}
+
+/**
+ * The built-in deny for a line of the powershell tool: the line is split into the units the old layer matched its `bash.deny` patterns against
+ * (psunits.ts: the PowerShell lexer, with the `pwsh -c` / `cmd /c` scripts, `$( )` substitutions, `.exe` and path prefix handled there).
+ * A statement that only mentions the words in a string (`Write-Output "gh auth token"`) starts with its own program and does not match.
+ */
+function psBuiltinDeny(line: string, env: FloorEnv): FloorHit | null {
+  for (const text of psUnitTexts(line)) {
+    const bd = builtinDeny(text, env, true);
+    if (bd) return bd;
+  }
+  return null;
+}
+
 const PATTERN_PROGS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "gawk", "mawk", "nawk"]);
 
 /**
  * Indexes into `seg.argv` of the pattern operands of the search programs (A4): the grep/rg pattern and `-e` values, and the sed script or awk
- * program when it can only read (permoverlay's operand logic). `-f`/`--file` values and every other operand stay paths.
+ * program when it can only read. `-f`/`--file` values and every other operand stay paths.
  */
 function searchPatterns(seg: ShellSegment, prog: string): Set<number> {
   if (!PATTERN_PROGS.has(prog)) return new Set();
@@ -653,8 +855,10 @@ function loadSecretGlobs(): string[] {
 export const SECRET_GLOBS: readonly string[] = loadSecretGlobs();
 const SECRET_FILE = new RegExp(`(^|/)(${SECRET_GLOBS.map((g) => g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})$`, "i");
 
-/** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
-const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|credentials(\.[^/]*)?)(\/|$)/i;
+/** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here. */
+const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|\.claude\/\.credentials\.json|credentials(\.[^/]*)?)(\/|$)/i;
+/** Every literal name `SECRET_DIRS`, `SECRET_EXTRA`, `.git/config` and the auth file compare a segment with (the win32 8.3 short-name fold reads a short name as one of these). */
+const SECRET_NAMES = [".ssh", ".gnupg", ".aws", ".azure", ".config", "gcloud", "gh", "hub", "glab-cli", ".kube", "config", ".docker", "config.json", ".git-credentials", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git", "auth.json", ".claude", ".credentials.json", "credentials", ".pi", "agent", "extensions", "pi-permission-system"];
 const ENV_FILE = /(^|\/)([^/]*\.env|\.env\.[^/]+)$/i;
 /** A bare (separator-free) word is a secret only when it is a dotenv name itself, so `process.env` or `app.env` as an argument is not judged. `.envrc` is not a secret. */
 const ENV_BARE = /^\.env(\.[^/]+)?$/i;
@@ -676,7 +880,7 @@ export function sshPublicKey(word: string, env: FloorEnv): boolean {
   try {
     const win = (env.platform ?? process.platform) === "win32";
     let x = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
-    // the Windows spellings of the profile (the overlay's `$env:USERPROFILE` form, permoverlay.ts expandWord) are the home dir
+    // the Windows spellings of the profile (the `$env:USERPROFILE` form) are the home dir
     if (win && env.home) x = x.replace(/^(?:%USERPROFILE%|\$env:USERPROFILE|\$\{env:USERPROFILE\})(?=\/|$)/i, () => slash(env.home!));
     if (!env.home || /[$`*?[{%]/.test(x.replace(/^\$\{?HOME\}?/, ""))) return false;
     const abs = resolveWord(x, env.cwd, env);
@@ -714,11 +918,15 @@ export function secretPath(word: string, env: FloorEnv, read = false): FloorHit 
   const bareEnv = !pathLike && ENV_BARE.test(x) && !ENV_EXEMPT.test(x);
   if (pathLike && read && /\.pub$/.test(x) && sshPublicKey(x, env)) return null;
   let bad = bareEnv || (pathLike && (GIT_CONFIG_FILE.test(x) || SECRET_DIRS.test(x) || SECRET_FILE.test(x) || SECRET_EXTRA.test(x) || (ENV_FILE.test(x) && !ENV_EXEMPT.test(x))));
+  // win32: a short-name segment (`.ssh` as `SSH~1`) that fits a secret name is judged as that name
+  const shorts = pathLike ? shortNameSpellings(env.platform ?? process.platform, x, SECRET_NAMES) : [];
+  if (!bad) bad = shorts.some((s) => GIT_CONFIG_FILE.test(s) || SECRET_DIRS.test(s) || SECRET_EXTRA.test(s));
   if (!bad && pathLike) {
-    const abs = expandWord(x, env);
-    if (abs !== null) {
+    for (const v of [x, ...shorts]) {
+      const abs = expandWord(v, env);
+      if (abs === null) continue;
       const mine = formsOf(abs, env);
-      bad = authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)));
+      if (authFiles(env).some((a) => formsOf(a, env).some((f) => mine.includes(f)))) bad = true;
     }
   }
   if (!bad) return null;
@@ -878,7 +1086,7 @@ function maskHeredocs(text: string): string {
 }
 
 /** The line has a here-document or here-string and every one feeds `cat`/`tee` or a bare redirect: `maskLine` blanks the bodies. */
-function dataBodies(segments: ShellSegment[]): boolean {
+export function dataBodies(segments: ShellSegment[]): boolean {
   const bodies = segments.filter((s) => s.heredoc);
   const data = bodies.every((s) => (s.program === "" || ["cat", "tee"].includes(base(s.program))) && s.opaque !== "stdin_fed");
   return bodies.length > 0 && data && !segments.some((s) => s.opaque === "stdin_fed");
@@ -938,9 +1146,14 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   let pending: FloorHit | null = null;
   if (segments.some((s) => s.opaque !== null)) {
     const anywhere = segments.some((s) => runsText(s) || /^[$`]/.test(s.program));
-    const o = opaqueTextFloorsAt(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true));
+    const o = opaqueTextFloorsAt(scan, env, anywhere) ?? (readLooking(segments) ? null : opaqueProtected(text, env, env.child === true, segments));
     if (o?.kind === "deny") return o;
     pending = o;
+  }
+  // the powershell tool is one opaque segment (gate.ts powershellSegment): its command line is matched whole
+  if (segments.length === 1 && segments[0].program === "powershell" && segments[0].argv.length === 0 && segments[0].opaque === "foreign_shell") {
+    const bd = psBuiltinDeny(text, env);
+    if (bd) return bd;
   }
   for (const s of segments) {
     const h = segmentFloors(s, env, segments);
@@ -949,11 +1162,52 @@ export function lineFloors(text: string, segments: ShellSegment[], env: FloorEnv
   return pending;
 }
 
+/**
+ * The text floors of one command line read from a payload field (gate.ts leafFloors), no path or policy floor: the raw-text rules and the opaque-text rules (a push, a git
+ * config key, a remote change, a package publish, the removal of the root). The whole line is scanned as a shell line is (`lineFloors`), and then each parsed segment
+ * (the inner commands of `bash -c`, `eval` and backticks included) by its own words, so a floor anchored at a command position meets a program and never a word of
+ * prose or an argument (a quoted word is data). A quoted program word is the program (`'sudo' ls`), and is no assignment when it holds an `=`.
+ */
+export function fieldLineFloors(line: string, segments: ShellSegment[], env: FloorEnv): FloorHit | null {
+  const scan = maskLine(line, segments);
+  const whole = rawScan(scan, cleanLine(segments));
+  if (whole) return whole;
+  let ask: FloorHit | null = null;
+  if (segments.some((s) => s.opaque !== null)) {
+    const o = opaqueTextFloorsAt(scan, env, segments.some((s) => runsText(s) || /^[$`]/.test(s.program)));
+    if (o?.kind === "deny") return o;
+    ask = o;
+  }
+  // a function body is only defined here, so its quoted text is not parsed: each quote-delimited piece of it is scanned
+  if (segments.some((s) => s.opaque === "function_def")) {
+    for (const piece of line.split(/[\n'"`]/).map((p) => p.trim()).filter(Boolean)) {
+      const h = rawScan(piece, false) ?? opaqueTextFloors(piece, env);
+      if (h?.kind === "deny") return h;
+      ask = ask ?? h;
+    }
+  }
+  for (const s of segments) {
+    // a download piped into a shell or interpreter, read from the segments (the program of the download may be a quoted word)
+    if (SHELL_LIKE.has(base(s.program)) && s.opaque === "stdin_fed" && segments.some((o) => o !== s && DOWNLOAD.has(base(o.program)))) {
+      const dl = RAW.find((r) => r.name === "download-shell");
+      if (dl) return hit(dl.name, dl.reason);
+    }
+    const prog = /^\$'([^']*)'$/.exec(s.program)?.[1] ?? (/[=\s]/.test(s.program) ? "''" : s.program);
+    const text = [prog, ...s.argv.map((w) => (/[\s;&|()<>`]/.test(w) ? "''" : w))].join(" ");
+    let h = rawScan(text, false) ?? opaqueTextFloors(text, env);
+    // the unanchored publish word counts only as the segment's program
+    if (h?.rule === "floor-publish" && !text.toLowerCase().startsWith((h.fragment ?? "").toLowerCase().split(/\s/)[0])) h = null;
+    if (h?.kind === "deny") return h;
+    ask = ask ?? h;
+  }
+  return ask;
+}
+
 /** The input keys a path tool call is floored on (the path keys are also what the gate reads for the public-key rule id). */
 export const PATH_KEYS = ["path", "file_path", "filePath"];
 export const PATH_TOOL_KEYS = [...PATH_KEYS, "src", "dst", "glob", "pattern"];
 
-/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (sshPublicKey). One set for the floors, the gate and the overlay. */
+/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (sshPublicKey). One set for the floors and the gate. */
 export const READ_PATH_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
 
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
@@ -985,16 +1239,19 @@ export function realDeep(abs: string): string | null {
   const tail: string[] = [];
   let cur = abs;
   for (let n = 0; n < 64; n++) {
-    try {
-      // win32: the native realpath expands 8.3 short names (RUNNER~1), so a floored path in short form still meets its long-form floor
-      const real = process.platform === "win32" ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
-      return tail.length ? path.join(real, ...tail.reverse()) : real;
-    } catch {
-      const parent = path.dirname(cur);
-      if (parent === cur) return null;
-      tail.push(path.basename(cur));
-      cur = parent;
-    }
+    // win32: the native realpath expands 8.3 short names (RUNNER~1), so a floored path in short form still meets its long-form floor
+    const real = memoLookup<string | null>(`d:${cur}`, () => {
+      try {
+        return process.platform === "win32" ? fs.realpathSync.native(cur) : fs.realpathSync(cur);
+      } catch {
+        return null;
+      }
+    });
+    if (real !== null) return tail.length ? path.join(real, ...tail.reverse()) : real;
+    const parent = path.dirname(cur);
+    if (parent === cur) return null;
+    tail.push(path.basename(cur));
+    cur = parent;
   }
   return null;
 }
@@ -1058,10 +1315,22 @@ function protectedWord(word: string, cwd: string, env: FloorEnv, entries: Protec
   return null;
 }
 
-const BRACE_LIMIT = 64;
+/** Whether any of `words` names a policy or state file or folder of the harness (the check the write floors use; no write is implied). */
+export function harnessFolderWord(words: string[], cwd: string, env: FloorEnv): boolean {
+  const entries = protectedEntries(env);
+  return words.some((w) => protectedWord(w, cwd, env, entries) !== null);
+}
+
+/** The absolute spellings of the words that name the harness folder `<agent dir>/pi-foreman` itself or a path below it (the policy and state files too). */
+export function harnessFolderPaths(words: string[], cwd: string, env: FloorEnv): string[] {
+  const entries = agentDirs(env).map((a) => ({ p: path.join(a, "pi-foreman"), tree: true }));
+  return words.flatMap((w) => braceVariants(w).flatMap((v) => protectedAt(v, cwd, env, entries)?.abs ?? []));
+}
+
+export const BRACE_LIMIT = 64;
 
 /** `word` with its first top-level `{a,b}` group expanded (not `${..}`), recursively, at most BRACE_LIMIT variants; the word itself when it has none. */
-function braceVariants(word: string): string[] {
+export function braceVariants(word: string): string[] {
   const out: string[] = [];
   const walk = (w: string): void => {
     if (out.length >= BRACE_LIMIT) return;
@@ -1088,7 +1357,10 @@ function braceVariants(word: string): string[] {
   return out.length ? out : [word];
 }
 
-function protectedOne(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
+const protectedOne = (word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null => protectedAt(word, cwd, env, entries)?.p ?? null;
+
+/** The entry a word names and the absolute spelling the word resolved to, or null. */
+function protectedAt(word: string, cwd: string, env: FloorEnv, entries: Protected[]): { p: string; abs: string } | null {
   const w = slash(word.replace(/^(['"])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w) ?? /^[A-Za-z_]\w*=(.+)$/.exec(w);
   for (const x of m ? [w, m[1]] : [w]) {
@@ -1107,13 +1379,13 @@ function protectedOne(word: string, cwd: string, env: FloorEnv, entries: Protect
       const lit = abs.slice(0, abs.search(/[*?[]/));
       const dir = formsOf(lit.endsWith("/") ? lit.slice(0, -1) : path.posix.dirname(lit), env);
       const found = entries.find((e) => formsOf(e.p, env).some((g) => (e.ext !== undefined ? (abs.endsWith(e.ext) || /[*?\]]$/.test(abs)) && dir.some((f) => (e.flat ? f === g : f === g || f.startsWith(`${g}/`))) : globMatch(abs, g, fold) || (e.tree && dir.some((f) => f === g || f.startsWith(`${g}/`))))));
-      if (found) return found.p;
+      if (found) return { p: found.p, abs };
       continue;
     }
     const mine = formsOf(abs, env);
     const found = entries.find((e) => formsOf(e.p, env).some((g) => mine.some((f) => covers(e, g, f))));
-    if (found) return found.p;
-    if (mine.some((f) => PERMS_BASENAME.test(f))) return abs;
+    if (found) return { p: found.p, abs };
+    if (mine.some((f) => PERMS_BASENAME.test(f))) return { p: abs, abs };
   }
   return null;
 }
@@ -1121,7 +1393,7 @@ function protectedOne(word: string, cwd: string, env: FloorEnv, entries: Protect
 const protHit = (what: string, word: string): FloorHit => hit("policy-file", `${what} '${word.slice(0, 120)}', a permissions file (permissions.json of the user, the project's .workflow or the tracked .pi), a harness state file (managed.json, state/round-parents.json, state/bridge-trust.json, state/approvals, state/gate, state/child-asks) or a Pi session file (*.jsonl under the sessions dir). Ask the user to change it.`, word);
 const configHit = (what: string, word: string): FloorHit => hit("config-keys", `${what} the safety.permissions*, safety.policy* or gate.* keys of the foreman config file '${word.slice(0, 120)}'. The agent never changes these keys. Ask the user to change them.`, word);
 
-const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
+export const READ_PROGS = new Set(["cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "grep", "egrep", "fgrep", "rg", "diff", "cmp", "echo", "printf", "cd", "pushd", "popd", "pwd", "test", "[", "realpath", "readlink", "basename", "dirname", "md5sum", "shasum", "sha256sum", "nl", "od", "hexdump", "strings", "tree", "du", "df", "which", "type", "true", "false", "jq", "sort", "uniq", "cut", "tr"]);
 const GIT_NONWRITE = new Set(["diff", "log", "show", "status", "blame", "ls-files", "grep", "cat-file", "rev-parse", "check-ignore", "add", "commit", "rev-list", "describe", "shortlog"]);
 
 /** Whether the segment only reads (or stages) its path operands. */
@@ -1167,35 +1439,9 @@ export function homeSpelling(s: ShellSegment): boolean {
   return s.opaque === "unresolved_var" && [s.program, ...s.argv, ...s.redirects.map((r) => r.target)].every((w) => !/[$`()]/.test(w.replace(/^\$\{?HOME\}?(?=\/|$)/, "")));
 }
 
-/** The programs that read a file in PowerShell and cmd (`Get-Content`, `gc`, `cat`, `type`). */
-const PS_READ_PROGS = new Set(["get-content", "gc", "cat", "type"]);
-
-/**
- * The public-key words of a PowerShell / cmd line (`Get-Content $env:USERPROFILE\.ssh\k.pub`, `type %USERPROFILE%\.ssh\k.pub`): one plain read command
- * (no pipe, redirect, separator, substitution or subexpression), its non-flag operands that are `sshPublicKey`. Empty for anything else.
- */
-export function psPubKeyReadWords(command: string, env: FloorEnv): Set<string> {
-  const out = new Set<string>();
-  if (/[;&|<>`(){}\n\r]|\$\(|\*\*/.test(command.replace(/\$\{env:USERPROFILE\}/gi, ""))) return out;
-  const words = command.trim().split(/\s+/);
-  if (!PS_READ_PROGS.has(words[0].toLowerCase().replace(/\.exe$/, ""))) return out;
-  const ops: string[] = [];
-  const rest = words.slice(1);
-  for (let i = 0; i < rest.length; i++) {
-    // a value-taking flag's value (`-TotalCount 5`) is no operand
-    if (/^-(?:totalcount|head|tail|encoding)$/i.test(rest[i]) && i + 1 < rest.length) i++;
-    else if (!rest[i].startsWith("-")) ops.push(rest[i]);
-  }
-  const keys = ops.filter((w) => sshPublicKey(w, env));
-  // an operand that is no key (or any `-Path`-style flag value that is not a plain word) keeps the whole line out
-  if (keys.length === 0 || keys.length !== ops.length || rest.some((w) => /^-(?!path$|literalpath$|totalcount$|head$|tail$|raw$|encoding$)/i.test(w))) return out;
-  for (const w of keys) out.add(w);
-  return out;
-}
-
 /**
  * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, `<`
- * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out. For the overlay's path rules.
+ * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out.
  */
 export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv, bound?: ReadonlySet<string>): Set<string> {
   const out = new Set<string>();
@@ -1254,8 +1500,26 @@ function protectedWrite(seg: ShellSegment, prog: string, env: FloorEnv, line: Sh
   return null;
 }
 
-/** Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1). */
-function opaqueProtected(text: string, env: FloorEnv, deny = false): FloorHit | null {
+/**
+ * A segment that parsed cleanly and only reads: a read-class program (a `find` with no action) or `git status|log|diff|show` with no program or output option,
+ * and no redirect but a read, an fd dup or the null device. A config file it names is read, not written.
+ */
+function cleanReadSegment(seg: ShellSegment, env: FloorEnv): boolean {
+  if (seg.opaque !== null || seg.heredoc || runsText(seg)) return false;
+  if (!seg.redirects.every((r) => r.op === "<" || r.op === "dup" || NULL_TARGET.test(r.target))) return false;
+  const p = base(seg.program);
+  if (p === "git") {
+    const call = gitCall(seg, env);
+    return call !== null && call.overrides.length === 0 && GIT_READ.has(call.sub) && !gitReadWrites(call.rest);
+  }
+  return READ_CLASS.has(p) && !(p === "find" && seg.argv.some((a) => FIND_BAD.has(a)));
+}
+
+/**
+ * Raw-text scan of an opaque line: a protected path, or a config file beside a floored key, in any word is an ASK (r79 item 4, Addendum S1).
+ * A config file word that only a cleanly parsed read segment of `line` carries is a read: it is no config-keys hit (the segments judge the writes).
+ */
+function opaqueProtected(text: string, env: FloorEnv, deny = false, line: ShellSegment[] = []): FloorHit | null {
   const flag = deny ? opaqueDeny : askHit;
   const entries = protectedEntries(env);
   // both spellings: split on braces and commas (the pieces of a brace group) and whole (a brace group inside one word is expanded by protectedWord)
@@ -1264,7 +1528,9 @@ function opaqueProtected(text: string, env: FloorEnv, deny = false): FloorHit | 
   const w = words.find((x) => protectedWord(x, env.cwd, env, entries));
   if (w !== undefined) return flag("policy-file", `The unparsed line names '${w.slice(0, 120)}', a permissions file or a harness state file.`, w);
   if (FLOOR_KEYS.test(text)) {
-    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env));
+    const reads = new Set(line.filter((s) => cleanReadSegment(s, env)).flatMap((s) => s.argv));
+    const others = new Set(line.filter((s) => !cleanReadSegment(s, env)).flatMap((s) => [s.program, ...s.argv, ...s.redirects.map((r) => r.target)]));
+    const c = words.find((x) => CONFIG_FILE.test(x) && !inOwnTemp([path.resolve(env.cwd, x)], env) && !(reads.has(x) && !others.has(x)));
     if (c !== undefined) return flag("config-keys", `The unparsed line names the foreman config file '${c.slice(0, 120)}' next to a safety.permissions*, safety.policy* or gate.* key.`, c);
   }
   return null;

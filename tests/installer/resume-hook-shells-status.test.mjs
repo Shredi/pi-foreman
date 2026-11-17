@@ -1,6 +1,7 @@
 // The resume block keeps `$?` for what runs after it: a later PROMPT_COMMAND entry (bash) or precmd hook (zsh), or a later fish_prompt handler,
 // still sees the status of the user's last command, with no pane note and with one. The foreman command is a stub; everything stays in a temp dir.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

@@ -14,7 +14,7 @@ const NOT = "not refused";
 /** The verdict each opaque or runner form had before the change, restart / privilege / disk. A form refused by the word match alone stays refused because its line is not clean. */
 const OPAQUE_PIN: Record<string, [string, string, string]> = {
   "function body": [NOT, NOT, NOT],
-  exec: [NOT, NOT, NOT],
+  exec: ["refused (structure)", "refused (structure)", "refused (structure)"],
   "! negation": ["refused (structure)", "refused (structure)", "refused (structure)"],
   coproc: [NOT, NOT, NOT],
   "substitution in an assignment value": ["refused (structure)", "refused (both)", "refused (both)"],

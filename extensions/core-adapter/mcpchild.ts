@@ -8,6 +8,7 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as sdk from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { hidesDeclaredTools } from "./childtools.ts";
 import { piAgentDir } from "./env.ts";
 import type { Env } from "./env.ts";
 import { allowedMcpNamed, directMaxTools, directProviders, filterMcpConfig, mcpCallAllowed, mcpEmpty, namedEntries, serverKey, splitEntry } from "./mcpscope.ts";
@@ -396,8 +397,10 @@ export class McpChild {
       }
     }
     // The search stays on when the child has something besides MCP to find: searchable tools or hidden skills.
+    // A child never removes an allowlisted tool from its request (childtools.ts): setup allowlists `tool_search` for every child role and
+    // pi-subagents 0.89 aborts a child whose registered allowlisted tool is missing, so this switch-off is gated off for a child.
     const findable = searchableOf(configRoles, binding?.role).length > 0 || (this.opts.hiddenSkills?.() ?? 0) > 0;
-    if ((mcpEmpty(this.allowed) || this.unsupported) && !findable) {
+    if (hidesDeclaredTools(true) && (mcpEmpty(this.allowed) || this.unsupported) && !findable) {
       try {
         const active = this.pi.getActiveTools();
         if (active.includes(TOOL_SEARCH)) this.pi.setActiveTools(active.filter((name) => name !== TOOL_SEARCH));

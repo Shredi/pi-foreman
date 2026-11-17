@@ -51,14 +51,15 @@ const harmlessRedirect = (r: ShellSegment["redirects"][number]): boolean => r.op
  * The entry condition of the read question: tool `bash` under a bash shell; `danger-opaque` the only dangerous-class entry; no secret-path word
  * among the raw whitespace- or quote-separated tokens and no split-literal hit on the raw line; no segment with a redirect that can write or the
  * unreadable reason `writing_wrapper`; a length bound. It is no safety boundary: whether the line only reads is the judge's to say.
+ * `writeOk` (the role question only): a segment it accepts may keep its writing redirects.
  */
-export function readClearEntry(c: ReadEntryCall, env: FloorEnv): boolean {
+export function readClearEntry(c: ReadEntryCall, env: FloorEnv, writeOk?: (seg: ShellSegment) => boolean): boolean {
   if (c.tool !== "bash") return false;
   if (c.dangers.length !== 1 || c.dangers[0] !== "danger-opaque") return false;
   if (c.text.length > READ_CLEAR_MAX_LINE) return false;
   for (const s of c.segments) {
     if (s.opaque === "writing_wrapper") return false;
-    if (s.redirects.some((r) => !harmlessRedirect(r))) return false;
+    if (s.redirects.some((r) => !harmlessRedirect(r)) && !writeOk?.(s)) return false;
   }
   for (const tok of c.text.split(/[\s"'`]+/)) if (tok && secretPath(tok, env)) return false;
   if (probeFileHit(c.text)) return false;
@@ -121,7 +122,7 @@ const READ_SYSTEM = [
   "- Anything reaches the network, installs, publishes, pushes, or starts another program the line names, also through a subcommand or switch of an interpreter (e.g. a package manager subcommand, a --require or preload option, a shell started from a program).",
   "- Code is fetched, generated or loaded from a file and then run, or an inline program runs after a change of directory (a cd before it), imports a local module or file, or loads code from a file (e.g. a module a file in the directory it runs in could shadow).",
   "An inline program that runs in the session's own working directory (no cd before it) and imports only its language's standard library is no reason to escalate: the session could write a script file there and run it unasked anyway, so a possible shadowing file adds no risk the line creates. Keep the two cases apart: after a cd, with a local import or with code loaded from a file, escalate.",
-  "- A secret or credential file could be read (e.g. private keys, tokens, cloud credentials, environment files, written with a glob or from pieces), or a path could lie outside the listed directories (e.g. .., an absolute path elsewhere, a home directory shortcut, a variable or brace list that could expand there).",
+  "- A secret or credential file could be read (e.g. private keys, tokens, cloud credentials, environment files, written with a glob or from pieces), or a path could lie outside the listed directories (e.g. .., an absolute path elsewhere, a home directory shortcut, a variable or brace list that could expand there). Showing a secrets file by any route, a git revision included (e.g. git show HEAD:.env), is not cleared.",
   "- The line sets or changes a variable that steers program lookup or configuration (e.g. the search path, the home directory, a preload or external-helper variable). Every way of giving such a variable a value counts (e.g. an assignment before a command, an export, a loop variable, a read into it), because the commands that follow then run with that value.",
   "- A variable, glob, brace list or substitution could expand to an option, to a path outside, or to something not visible on the line (an unquoted variable is split into words and expanded again).",
   "- The effect of any part cannot be seen from the line itself.",

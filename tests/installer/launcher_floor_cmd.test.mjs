@@ -1,6 +1,7 @@
 // Windows launchers (bin/ledger.cmd, bin/foreman.cmd) refuse Python below 3.13 and name what they found.
 // win32 only. PATH holds a fake old py.cmd or python.cmd and System32 (cmd, where), so no real interpreter is reachable.
 import { spawnSync } from "node:child_process";
+import "./_sandbox-home.mjs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

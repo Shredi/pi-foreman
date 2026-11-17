@@ -10,7 +10,7 @@ const { sess, treeOf } = await import("./fixtures.mjs");
 
 const dot = (n, state) => ({ n, state, label: `#${n}`, src: "pr", name: "ci" });
 
-function render(root) {
+function render(root, hover = false) {
   stubs.world.agents = [{ address: "t5", pane: "p1", space: 1, space_name: "s", status: "idle", focused: false, program: { name: "pi" } }];
   stubs.world.terminals = [{ address: "t5", state: "live", foreground: { pid: 7 } }];
   const mod = Object.create(Mod.prototype);
@@ -18,7 +18,15 @@ function render(root) {
   mod.radar = new Map([["local", { ok: true, tree: [root], openPrs: [], tried: Date.now() }]]);
   mod.busy = new Map(); mod.recs = new Map(); mod.childPi = new Set();
   mod.poll = () => {};
-  return mod.render({});
+  const out = mod.render({});
+  if (!hover) return out;
+  // A card is built when the pointer rests on its chip: rest on every chip in turn, as onMove does.
+  const seen = [];
+  for (const h of cards(out).map((e) => e.props.trigger.props.on_mouse_move)) {
+    h({}, { notify() {} });
+    seen.push(...cards(mod.render({})));
+  }
+  return { kind: "div", props: {}, kids: seen };
 }
 const walk = (el, out = []) => {
   if (!el || typeof el !== "object") return out;
@@ -65,6 +73,6 @@ test("the hover card names the dot's state and the PR number", () => {
     assert.equal(prStateText(pr), text, state);
     assert.equal(prCard(pr).state, `#16 · ${text}`, state);
   }
-  const out = render(tree([dot(16, "fail")], []));
+  const out = render(tree([dot(16, "fail")], []), true);
   assert.ok(cards(out).some((c) => texts(c.contentEl ?? c).includes("#16 · CI failing")), "the card shows it");
 });

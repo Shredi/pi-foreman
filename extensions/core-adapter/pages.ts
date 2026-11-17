@@ -198,6 +198,22 @@ export interface MarkdownOpts {
 export const foldPlanSection = (heading: string): boolean => !["for the owner", "open questions"].includes(heading.trim().toLowerCase());
 
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}([`~]+)[ \t]*$/;
+
+/** A top-level fenced code block starting at `lines[at]`: its indent, marker run, info string, the line index of its closing fence (`lines.length` when unclosed) and the first line after it; null when no fence opens there. */
+export function scanFence(lines: readonly string[], at: number): { indent: string; mark: string; info: string; close: number; next: number } | null {
+  const open = FENCE_OPEN.exec(lines[at] ?? "");
+  if (!open || (open[2][0] === "`" && open[3].includes("`"))) return null;
+  const [, indent, mark, info] = open;
+  let close = at + 1;
+  while (close < lines.length) {
+    const run = FENCE_CLOSE.exec(lines[close]);
+    if (run && run[1][0] === mark[0] && run[1].length >= mark.length) break;
+    close++;
+  }
+  return { indent, mark, info, close, next: Math.min(close + 1, lines.length) };
+}
+
 const HEADING_OPEN = /^ {0,3}(#{1,6})(?=[ \t])/;
 const isBlank = (c: string): boolean => c === " " || c === "\t";
 
@@ -243,16 +259,10 @@ export function renderMarkdown(markdown: string, opts: MarkdownOpts = {}): strin
     if (end <= start) return;
     parts.push(heading !== null && fold(heading) ? `<details><summary>${inline(heading)}</summary>\n${blocks(lines.slice(start + 1, end), opts, false, 0)}\n</details>` : blocks(lines.slice(start, end), opts, false, 0));
   };
-  let mark: string | null = null; // the open fence's marker run
   for (let i = 0; i < lines.length; i++) {
-    if (mark !== null) {
-      const run = /^ {0,3}([`~]+)[ \t]*$/.exec(lines[i]);
-      if (run && run[1][0] === mark[0] && run[1].length >= mark.length) mark = null;
-      continue;
-    }
-    const fence = FENCE_OPEN.exec(lines[i]);
-    if (fence && !(fence[2][0] === "`" && fence[3].includes("`"))) {
-      mark = fence[2];
+    const fence = scanFence(lines, i);
+    if (fence) {
+      i = fence.next - 1;
       continue;
     }
     const h = headingOf(lines[i]);
@@ -276,18 +286,11 @@ function blocks(lines: string[], opts: MarkdownOpts, tight: boolean, depth: numb
       i++;
       continue;
     }
-    const fence = FENCE_OPEN.exec(line);
-    if (fence && !(fence[2][0] === "`" && fence[3].includes("`"))) {
-      const [, indent, mark, info] = fence;
-      const body: string[] = [];
-      i++;
-      while (i < lines.length) {
-        const run = /^ {0,3}([`~]+)[ \t]*$/.exec(lines[i]);
-        if (run && run[1][0] === mark[0] && run[1].length >= mark.length) break;
-        body.push(lines[i].replace(new RegExp(`^ {0,${indent.length}}`), ""));
-        i++;
-      }
-      i++; // the closing line (or the end)
+    const fence = scanFence(lines, i);
+    if (fence) {
+      const { indent, info } = fence;
+      const body = lines.slice(i + 1, fence.close).map((l) => l.replace(new RegExp(`^ {0,${indent.length}}`), ""));
+      i = fence.next;
       const lang = info.trim().split(/\s+/)[0] ?? "";
       const text = body.join("\n");
       const diagram = lang === "mermaid" ? opts.mermaid?.(text) : null;

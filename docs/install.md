@@ -38,7 +38,7 @@ npm install -g @earendil-works/pi-coding-agent@1.5
 
 On another Linux distribution, install Node 22.19+, Python 3.13+ and git with its package manager, then the Pi line.
 
-Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
+Needs Node 22.19+, Pi 1.5.x on `PATH` and Python 3.13+. npm 11.9 to 11.12 cannot install pi-foreman (see [npm stops with EALLOWGIT](#npm-stops-with-eallowgit)); use npm 10, npm 11.8 or older, or npm 11.13 and later. CI tests the minimum, Node 22, on Linux, macOS and Windows, and Node 26 on Linux. pi-foreman is a [Pi package](https://pi.dev/docs/latest/packages):
 
 ```sh
 pi install git:github.com/Shredi/pi-foreman            # global; pin with @<tag-or-commit>
@@ -91,6 +91,16 @@ ranges are refused, see [overlays](overlays.md)), `--no-intercom` (see below), `
 `--profile <name>`, `--enable <id>[,<id>]`, `--disable <id>[,<id>]`, `--addon <id>`, `--no-addons`, `--skip-addon <id>[,<id>]`, `--no-env`, `--github-hosts <host>[,<host>]`, `--pick` and `--mods` (see
 [Profiles, features and add-ons](#profiles-features-and-add-ons), and [herdr](herdr.md#herdr-app-and-herdr-core) for `--mods`).
 If pi-foreman is not installed as a Pi package, setup stops and prints the `pi install` line above.
+
+### npm stops with EALLOWGIT
+
+The install fails with `EALLOWGIT` ("Fetching non-root packages of type "git" have been disabled"), naming `pi-intercom` or `@juicesharp/rpiv-ask-user-question`. npm prints an `EBADENGINE` warning for pi-foreman just before it.
+
+Cause: npm 11.9 to 11.12 has a bug. The `.npmrc` line `allow-git=root` should allow git dependencies that this package names itself, and these two forks are such dependencies, but those npm versions refuse them anyway. npm 11.8 and older, and npm 11.13 and later (also npm 12), work.
+
+Node releases that ship an affected npm: 24.14 to 24.15, 25.6.1 to 25.9 and 26.0. Node 24.16+ and 26.1+ ship npm 11.13.
+
+Fix: update npm with `npm install -g npm@latest` (npm 11.13 or later), or use Node 24.16+ / 26.1+, then install again. In a checkout, `bin/foreman setup` checks the npm version before it runs `npm ci` and stops with this advice.
 
 ## Profiles, features and add-ons
 
@@ -204,13 +214,13 @@ nothing for them.
 
 ### The resume hook
 
-Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<`, under the same guard (default agent dir or
-`PI_FOREMAN_HOME`; nothing is written in a dry run or with `--no-env`). It restarts a Pi session in its pane after a crash
+Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<` (nothing is written in a dry run or with `--no-env`). With a custom agent dir (`--agent-dir` or `PI_CODING_AGENT_DIR`, not `~/.pi/agent`) the block carries that dir as the
+fallback of its note lookup (a `PI_CODING_AGENT_DIR` set in the shell still wins) and gives it to the restarted Pi for that one call, without exporting it. It restarts a Pi session in its pane after a crash
 (see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). The block removes its marker when the check should repeat at the next prompt: Pi is still ending after a signal (exit code 75), or `node` was not found yet (exit code 127, for example a lazy-loaded nvm). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
 `~/.bash_login`, `~/.profile`; fish `~/.config/fish/conf.d/pi-foreman-resume.fish`. The block calls this checkout's `bin/foreman` by its absolute path, so
 re-run `foreman setup` after the package moved (an nvm switch that moves the global npm root, a `pi update` into a new folder). Run setup on a remote machine too
 if sessions there should come back. `--no-resume-hook` writes no block and removes an existing one; `foreman setup --remove` removes it too. With `--no-env`
-or a custom agent dir setup prints one line instead; to add it by hand, copy the block from `~/.zshrc` of a machine where setup wrote it, or write
+setup prints one line instead; to add it by hand, copy the block from `~/.zshrc` of a machine where setup wrote it, or write
 (bash; replace `<foreman>` with the absolute path of `bin/foreman`):
 
 ```sh

@@ -92,7 +92,7 @@ test("a fixed plan launches again", async (t) => {
   assert.equal((await a.reviewLaunch()).blocked, null);
 });
 
-test("the two headings are required only in a plan-first session opened by a parent", async (t) => {
+test("the two headings are not checked, in a plan-first session opened by a parent or elsewhere", async (t) => {
   const bare = world(t);
   process.env.PI_FOREMAN_PLAN_PHASE = "1";
   fs.writeFileSync(bare.planFile, clean);
@@ -102,9 +102,7 @@ test("the two headings are required only in a plan-first session opened by a par
   fs.writeFileSync(parented.planFile, clean);
   const a = await parented.adapter("startup");
   const r = await a.reviewLaunch();
-  assert.ok(refused(r), r.blocked ?? "started");
-  assert.match(r.blocked ?? "", /Decisions and assumptions/);
-  assert.match(r.blocked ?? "", /Open questions/);
+  assert.equal(r.blocked, null, "no refusal for the missing headings");
   fs.writeFileSync(parented.planFile, `${clean}\n${HEADINGS}`);
   assert.equal((await a.reviewLaunch()).blocked, null);
   const outside = world(t, { handoff: true });

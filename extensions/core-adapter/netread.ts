@@ -8,7 +8,6 @@
 // Stop tokens (env prefixes, wrappers, `sh -c`, `xargs`, ...) never reach this module: the callers refuse them first (effects.ts refusedProgram).
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { splitChain } from "./shellchain.ts";
 import type { Redirect } from "./shellchain.ts";
 
 export type NetRole = "orchestrator" | "child";
@@ -211,28 +210,6 @@ export function netReadSegment(seg: { words: string[]; redirects: Redirect[] }, 
   if (prog === "npm") return npmOk(w);
   if (prog === "curl") return curlOk(w, outOk);
   return role === "orchestrator" && wgetOk(w);
-}
-
-/** Pure readers that may follow a network read in a pipe; no output option, no file writing. */
-const PIPE_READERS = new Set(["head", "tail", "grep", "egrep", "fgrep", "cut", "wc", "tr"]);
-
-/**
- * The child overlay's check (permoverlay.ts): the whole command is a chain whose every segment is a net-read segment or a pure reader of a pipe, with at
- * least one net-read segment. The same predicate as the link's, so one grammar.
- */
-export function netReadCommand(command: string, role: NetRole | undefined, outDirs: string[], cwd: string | null): boolean {
-  const chain = splitChain(command);
-  if (!chain) return false;
-  let net = false;
-  for (const seg of chain.segments) {
-    if (netReadSegment(seg, role, outDirs, cwd)) {
-      net = true;
-      continue;
-    }
-    const readerOk = PIPE_READERS.has(seg.words[0]) && !seg.words.some((x) => /^-[A-Za-z]*[of]|^--(output|file|pre)/.test(x)) && seg.redirects.every((r) => r.op === "dup" || r.target === "/dev/null");
-    if (!readerOk) return false;
-  }
-  return net;
 }
 
 /**

@@ -1,6 +1,7 @@
 // The resume block (setup/resume-hook.mjs, docs/install.md): written per shell and file rule under the guard of the env block, replaced on a
-// re-run, taken out by --no-resume-hook and --remove; a dry run, a custom agent dir, win32 and --no-env write none. Temp homes only.
+// re-run, taken out by --no-resume-hook and --remove; a dry run, win32 and --no-env write none (a custom agent dir: resume-hook-custom-dir.test.mjs). Temp homes only.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -135,7 +136,7 @@ test("--no-resume-hook writes no block and removes an existing one; --remove rem
   assert.equal(fs.existsSync(FISH(f.home)), false, "a fish file that held only the block is deleted");
 });
 
-test("a dry run, a custom agent dir and --no-env write no block; --no-env prints the hand-add line", () => {
+test("a dry run and --no-env write no block; --no-env prints the hand-add line", () => {
   const dry = fresh();
   const r = run(dry, ["--dry-run", "--no-addons"]);
   assert.equal(r.code, 0, r.out);
@@ -143,8 +144,8 @@ test("a dry run, a custom agent dir and --no-env write no block; --no-env prints
   assert.deepEqual(fs.readdirSync(dry.home), []);
   const custom = fresh();
   const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home });
-  assert.match(c.out, /resume hook: custom agent dir, your shell startup files are left alone/);
-  assert.deepEqual(fs.readdirSync(custom.home), []);
+  assert.match(c.out, /wrote the pi-foreman resume block to .*\.zshrc/, "a custom agent dir writes the block now (D34)");
+  assert.ok(read(path.join(custom.home, ".zshrc")).includes(`'${custom.agentDir.replace(/'/g, "'\\''")}'`));
   const noEnv = fresh();
   const n = run(noEnv, ["--no-addons", "--no-env"]);
   assert.match(n.out, /resume hook: not written \(--no-env\); .*docs\/install\.md/);

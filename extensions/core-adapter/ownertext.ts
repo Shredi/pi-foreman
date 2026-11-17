@@ -1,20 +1,33 @@
 // Owner-readable text (docs/ceremony.md "Owner summary"): the `## For the owner` section every plan opens with, the
-// deterministic jargon rule shared by the plan-review facts, the question hint and the foreman_show hint, the
-// context prefix of ask_user_question questions, and the foreman_show opening check. Jargon is advice only; the plan form
-// (planFormIssues: presence, position, required headings) is what a `[plan-review]` launch is refused for (index.ts).
+// deterministic jargon rule shared by the plan-review facts and the question hint, and the context prefix of
+// ask_user_question questions. Jargon is advice only; the plan form (planFormIssues: presence, position) is what a
+// `[plan-review]` launch is refused for (index.ts).
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { clean, planBody } from "./checkpoint.ts";
+import { scanFence } from "./pages.ts";
 import { workspaceOf } from "./python.ts";
-
-/** The checkpoint dialog shows at most this many lines of the owner section (ownerSummary); the plan page shows all. */
-export const OWNER_LINES = 10;
 
 const OWNER_HEADING = /^##[ \t]+for the owner[ \t]*$/i;
 const LEVEL2 = /^##[ \t]+\S/;
 const LEVEL12 = /^#{1,2}[ \t]+\S/;
-const FENCE = /^[ \t]*(```|~~~)/;
+
+/** The lines without their indent, so a fence nested in a list item (4+ spaces or a tab, which `blocks` in pages.ts renders) is found by the same scanner. */
+const flat = (lines: readonly string[]): string[] => lines.map((l) => l.trimStart());
+
+/** Per line: whether it belongs to a fenced block, nested ones included (its opening and closing lines included). */
+function fencedMask(lines: readonly string[]): boolean[] {
+  const mask: boolean[] = new Array(lines.length).fill(false);
+  const flatLines = flat(lines);
+  for (let i = 0; i < lines.length; i++) {
+    const f = scanFence(flatLines, i);
+    if (!f) continue;
+    mask.fill(true, i, f.next);
+    i = f.next - 1;
+  }
+  return mask;
+}
 
 export interface OwnerSection {
   /** The body lines, without leading and trailing blank lines. */
@@ -26,12 +39,11 @@ export interface OwnerSection {
 /** The first `## For the owner` section of the plan body above any appendix (planBody), or null. */
 export function ownerSection(text: string): OwnerSection | null {
   const all = planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/);
-  let fenced = false;
+  const fenced = fencedMask(all);
   let at = -1;
   let firstLevel2 = -1;
   for (let i = 0; i < all.length; i++) {
-    if (FENCE.test(all[i])) fenced = !fenced;
-    if (fenced) continue;
+    if (fenced[i]) continue;
     if (firstLevel2 < 0 && LEVEL2.test(all[i])) firstLevel2 = i;
     if (OWNER_HEADING.test(all[i])) {
       at = i;
@@ -40,11 +52,9 @@ export function ownerSection(text: string): OwnerSection | null {
   }
   if (at < 0) return null;
   const lines: string[] = [];
-  fenced = false;
-  for (const l of all.slice(at + 1)) {
-    if (FENCE.test(l)) fenced = !fenced;
-    if (!fenced && LEVEL12.test(l)) break;
-    lines.push(l);
+  for (let i = at + 1; i < all.length; i++) {
+    if (!fenced[i] && LEVEL12.test(all[i])) break;
+    lines.push(all[i]);
   }
   while (lines.length && !lines[0].trim()) lines.shift();
   while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
@@ -66,13 +76,10 @@ export function jargonHits(text: string, max = 3): string[] {
   const add = (s: string): void => {
     if (!hits.includes(s) && hits.length < max) hits.push(s);
   };
-  let fenced = false;
-  for (const line of text.split(/\r?\n/)) {
-    if (FENCE.test(line)) {
-      fenced = !fenced;
-      continue;
-    }
-    if (fenced) continue;
+  const all = text.split(/\r?\n/);
+  const fenced = fencedMask(all);
+  for (const [n, line] of all.entries()) {
+    if (fenced[n]) continue;
     for (const m of line.matchAll(/`[^`\n]+`/g)) add(m[0]);
     for (const tok of line.split(/\s+/)) if (tok && pathLike(tok)) add(tok.replace(/^[("'<\[]+|[)"'>\],.;:!?]+$/g, ""));
     for (const m of line.matchAll(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g)) add(m[0]);
@@ -84,17 +91,15 @@ export function jargonHits(text: string, max = 3): string[] {
   return hits;
 }
 
-const MERMAID_OPEN = /^[ \t]*(?:```|~~~)[ \t]*mermaid\b/;
-
 /** The first and last line index of each mermaid fence in a section (an unclosed one runs to the end). */
 function diagramSpans(lines: string[]): [number, number][] {
   const spans: [number, number][] = [];
+  const flatLines = flat(lines);
   for (let i = 0; i < lines.length; i++) {
-    if (!MERMAID_OPEN.test(lines[i])) continue;
-    let j = i + 1;
-    while (j < lines.length && !FENCE.test(lines[j])) j++;
-    spans.push([i, Math.min(j, lines.length - 1)]);
-    i = j;
+    const f = scanFence(flatLines, i);
+    if (!f) continue;
+    if (f.info.trim().split(/\s+/)[0] === "mermaid") spans.push([i, f.next - 1]);
+    i = f.next - 1;
   }
   return spans;
 }
@@ -106,25 +111,17 @@ export function ownerSectionIssues(text: string): string[] {
   const issues: string[] = [];
   if (!sec.first) issues.push("not the first ## section");
   if (!sec.lines.some((l) => l.trim())) issues.push("empty");
-  if (diagramSpans(sec.lines).length > 1) issues.push("more than one diagram (one mermaid fence is allowed)");
   const jargon = jargonHits(sec.lines.join("\n"));
   if (jargon.length) issues.push(`jargon: ${jargon.join(" ")}`);
   return issues;
 }
 
-/** The headings a plan-first session's brief asks for (scripts/foreman_session.py), checked only in a session opened plan-first by a parent. */
-export const PLAN_FIRST_HEADINGS = ["Decisions and assumptions", "Open questions"] as const;
-
 /** The form faults a `[plan-review]` launch is refused for: the owner section's presence and position (not jargon), and each missing `opts.requiredHeadings` heading. */
 export function planFormIssues(text: string, opts: { requiredHeadings?: readonly string[] }): string[] {
   const issues = ownerSectionIssues(text).filter((i) => !i.startsWith("jargon:"));
-  let fenced = false;
-  const headings = new Set(
-    planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/).flatMap((l) => {
-      if (FENCE.test(l)) fenced = !fenced;
-      return fenced ? [] : ((/^##[ \t]+(\S.*?)[ \t]*$/.exec(l) ?? [])[1]?.toLowerCase() ?? []);
-    }),
-  );
+  const lines = planBody(Buffer.from(text, "utf8")).toString("utf8").split(/\r?\n/);
+  const fenced = fencedMask(lines);
+  const headings = new Set(lines.flatMap((l, i) => (fenced[i] ? [] : ((/^##[ \t]+(\S.*?)[ \t]*$/.exec(l) ?? [])[1]?.toLowerCase() ?? []))));
   for (const h of opts.requiredHeadings ?? []) if (!headings.has(h.toLowerCase())) issues.push(`missing heading: ${h}`);
   return issues;
 }
@@ -149,7 +146,7 @@ function ownerFactLine(p: string, cwd: string): string {
   return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
 }
 
-/** The owner section for the checkpoint dialog (control characters stripped, 200 characters a line), or the warning line. */
+/** The whole owner section for the checkpoint dialog (control characters stripped, 200 characters a line, a diagram as a pointer), or the warning line. */
 export function ownerSummary(text: string): string {
   const sec = ownerSection(text);
   if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "For the owner" summary in this plan.';
@@ -159,7 +156,7 @@ export function ownerSummary(text: string): string {
     return span ? (i === span[0] ? ["(diagram: see the plan page)"] : []) : [l];
   });
   const lines = shown.filter((l) => l.trim());
-  return ["For the owner", ...lines.slice(0, OWNER_LINES).map((l) => `  ${clean(l)}`), ...(lines.length > OWNER_LINES ? ["  …"] : [])].join("\n");
+  return ["For the owner", ...lines.map((l) => `  ${clean(l)}`)].join("\n");
 }
 
 /** The project name for question prefixes: the folder above the git common dir (so a worktree shows the repository), else the workspace folder. */
@@ -210,18 +207,4 @@ export function questionHint(input: unknown, prefix: string): string | null {
   }
   const hits = jargonHits(texts.join("\n"), 4);
   return hits.length ? `pi-foreman: the question text reads like jargon (${hits.join(" ")}). The owner reads it cold: write it as owner text (plain, no jargon): say what is decided and why, no paths, identifiers or ids, recommended option first with a one-line consequence.` : null;
-}
-
-/** The hint for a foreman_show reply when the note does not open with a short plain paragraph, else null. */
-export function showHint(markdown: string): string | null {
-  const lines = markdown.split(/\r?\n/);
-  let i = 0;
-  while (i < lines.length && (!lines[i].trim() || /^#{1,6}[ \t]/.test(lines[i]))) i++;
-  const para: string[] = [];
-  for (; i < lines.length && lines[i].trim(); i++) para.push(lines[i]);
-  const text = para.join(" ").trim();
-  const plain = text !== "" && !FENCE.test(para[0] ?? "") && !/^[|>#]/.test(text) && !/^(?:[-*+]|\d+[.)])[ \t]/.test(text);
-  const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim()).length;
-  if (plain && sentences <= 3) return null;
-  return "pi-foreman hint: write it as owner text and open the note with a plain 2-3 sentence summary (what it is about and the answer), before tables, code or diagrams; the owner may open it cold.";
 }

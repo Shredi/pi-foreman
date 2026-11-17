@@ -84,11 +84,17 @@ test("enrichPrs gives a session dot the real job names of its feed twin", () => 
 });
 
 test("Open PRs section and session chips render; the card shows real job names", () => {
-  const r = mod().render({});
+  const m = mod();
+  const r = m.render({});
   const t = texts(r);
   assert.ok(t.includes("Open PRs"), "section");
   assert.ok(t.some((s) => s.includes("#51")), "open PR chip");
-  const all = cards(r).flatMap((c) => texts(c));
+  // A card is built when the pointer rests on its chip: rest on each chip in turn, as onMove does.
+  const all = [];
+  for (const h of walk(r).filter((e) => e.kind === "HoverCard").map((e) => e.props.trigger.props.on_mouse_move)) {
+    h({}, { notify() {} });
+    all.push(...cards(m.render({})).flatMap((c) => texts(c)));
+  }
   assert.ok(all.includes("lint"), "failed job name");
   assert.ok(all.includes("test (macos-latest)"), "running job name");
   assert.ok(all.includes("test (ubuntu-latest)"), "passed job name");

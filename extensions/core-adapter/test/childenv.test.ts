@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CHILD_UNSET, patchChildGitEnv, stripChildIntercomEnv } from "../childenv.ts";
+import { CHILD_UNSET, patchChildGitEnv, stripChildCdEnv, stripChildIntercomEnv } from "../childenv.ts";
 import type { Env } from "../env.ts";
 
 test("child env drops push credentials and injects the git config", () => {
@@ -41,4 +41,10 @@ test("child env drops the intercom identity (review S6), also without the git pa
   const env2: Env = { PI_FOREMAN_PARENT_INTERCOM: "parent-x", PI_INTERCOM_STABLE_ID: "fixed", PI_INTERCOM_SESSION_ID: "s-1" };
   patchChildGitEnv(env2);
   assert.ok(!("PI_FOREMAN_PARENT_INTERCOM" in env2) && !("PI_INTERCOM_STABLE_ID" in env2) && !("PI_INTERCOM_SESSION_ID" in env2));
+});
+
+test("child cd: CDPATH is removed from the child env (review D-B2)", () => {
+  const env: Record<string, string> = { PATH: "/usr/bin", CDPATH: "/" };
+  stripChildCdEnv(env);
+  assert.deepEqual(env, { PATH: "/usr/bin" });
 });

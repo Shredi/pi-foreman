@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { applyVariants } from "../ledgercall.ts";
-import { OWNER_TEXT_POINTS, ownerFactsLines, questionHint, showHint } from "../ownertext.ts";
+import { OWNER_TEXT_POINTS, ownerFactsLines, questionHint } from "../ownertext.ts";
 
 const root = path.join(import.meta.dirname, "..", "..", "..");
 const rules = fs.readFileSync(path.join(root, "instructions", "foreman.md"), "utf8").replace(/\r\n/g, "\n");
@@ -32,11 +32,8 @@ test("the facts line carries the points, also for a plan that cannot be read", (
   }
 });
 
-test("both hints name owner text and keep their pinned words", () => {
+test("the question hint names owner text and keeps its pinned words", () => {
   const q = questionHint({ questions: [{ question: "Change `index.ts`?" }] }, "") ?? "";
   assert.match(q, /owner text.*plain|plain.*owner text/s);
   assert.match(q, /jargon/);
-  const h = showHint("") ?? "";
-  assert.match(h, /owner text/);
-  assert.match(h, /plain 2-3 sentence/);
 });

@@ -63,7 +63,7 @@ test("gitpack: a child keeps the tools only with env and config on", () => {
   assert.deepEqual(keep.state.active, ["bash", ...GIT_PACK_TOOL_NAMES]);
   const drop = fakePi(["bash", ...GIT_PACK_TOOL_NAMES]);
   applyGitPack(drop.pi, false, true, {});
-  assert.deepEqual(drop.state.active, ["bash"]);
+  assert.deepEqual(drop.state.active, ["bash", ...GIT_PACK_TOOL_NAMES]); // an off pack stays declared in a child (childtools.ts); its calls are refused
   const env2: Record<string, string | undefined> = {};
   applyGitPack(drop.pi, true, true, env2);
   assert.equal(env2[PACK_ENV], undefined);

@@ -8,7 +8,7 @@
 //
 // An approval comes back only when the plan file's version hash still equals the recorded one (an Addendum below the body keeps
 // it) and it came from the owner's dialog; no file from a parent approves a plan. The session file is write-protected for the
-// foreman and its children (permoverlay.ts), so only the adapter writes this entry. `planPhase` is the plan phase (index.ts);
+// foreman and its children (the gate), so only the adapter writes this entry. `planPhase` is the plan phase (index.ts);
 // `planPhaseOrigin` is `parent` when a parent's launch started it, absent (the owner's origin) otherwise and in an older entry.
 import { isTier } from "./ceremony.ts";
 import type { Tier, TierSource } from "./ceremony.ts";

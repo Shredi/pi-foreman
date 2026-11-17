@@ -1,7 +1,7 @@
 // MCP tools on demand in a child (round 68): the real child session factory of pi-subagents loads core-adapter with a
 // launch binding in the env, a role config in the agent dir and the fixture MCP server in mcp.json. No model call.
-// core-adapter registers Pi's tool_search, hands Pi's MCP extension a config filtered to the role's scope and drops
-// tool_search from the active set when nothing is allowed.
+// core-adapter registers Pi's tool_search, hands Pi's MCP extension a config filtered to the role's scope and keeps
+// tool_search in the active set even when nothing is allowed (a child never removes an allowlisted tool, childtools.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -59,7 +59,7 @@ async function withChild(setup: Setup, use: (c: { api: Api; startMarker: string;
   const role = setup.role ?? "builder";
   const binding = { foremanSession: "fs-1", workspace: project, role, launchId: "L1", kind: "first", model: null, ...(setup.launchMcp ? { mcp: setup.launchMcp } : {}) };
   const saved = { dir: process.env.PI_CODING_AGENT_DIR, child: process.env.PI_SUBAGENT_CHILD, bindings: process.env.PI_SUBAGENT_EXTENSION_BINDINGS };
-  const factory = createDefaultChildSessionFactory({ builtinMcpToolWaitMs: 10_000 });
+  const factory = createDefaultChildSessionFactory();
   const hook: { api?: Api } = {};
   let session: { dispose(): Promise<void> } | undefined;
   try {
@@ -128,23 +128,23 @@ test("an fx/echo entry leaves mcp__fx__shout hidden", async () => {
   });
 });
 
-test("a launch mcp list narrows the ceiling: [] starts no server and leaves tool_search inactive", async () => {
+test("a launch mcp list narrows the ceiling: [] starts no server and keeps tool_search declared", async () => {
   await withChild({ roles: { builder: { mcp: ["fx"], searchable: [] } }, launchMcp: [] }, async ({ api, startMarker }) => {
     await quiet();
     assert.equal(fs.existsSync(startMarker), false, "the server started");
     assert.deepEqual(mcpTools(api), []);
-    assert.equal(api.getActiveTools().includes("tool_search"), false);
+    assert.equal(api.getActiveTools().includes("tool_search"), true); // a child never removes an allowlisted tool (childtools.ts)
   });
 });
 
-test("a role without mcp starts no server and has tool_search registered but inactive", async () => {
-  // the builder default has searchable names, which keep tool_search on: this case needs none
+test("a role without mcp starts no server and has tool_search registered and active", async () => {
+  // a child keeps tool_search declared whether or not it has anything to find (childtools.ts)
   await withChild({ roles: { builder: { searchable: [] } } }, async ({ api, startMarker }) => {
     await quiet();
     assert.equal(fs.existsSync(startMarker), false, "the server started");
     assert.deepEqual(mcpTools(api), []);
     assert.ok(api.getAllTools().some(({ name }) => name === "tool_search"), "tool_search is not registered");
-    assert.equal(api.getActiveTools().includes("tool_search"), false);
+    assert.equal(api.getActiveTools().includes("tool_search"), true);
   });
 });
 
@@ -153,7 +153,7 @@ test("a child without a launch binding fails closed even when its role would be 
     await quiet();
     assert.equal(fs.existsSync(startMarker), false, "the server started");
     assert.deepEqual(mcpTools(api), []);
-    assert.equal(api.getActiveTools().includes("tool_search"), false);
+    assert.equal(api.getActiveTools().includes("tool_search"), true);
   });
 });
 
@@ -162,7 +162,7 @@ test("a reviewer (denies mcp__*) with mcp in config starts nothing", async () =>
     await quiet();
     assert.equal(fs.existsSync(startMarker), false, "the server started");
     assert.deepEqual(mcpTools(api), []);
-    assert.equal(api.getActiveTools().includes("tool_search"), false);
+    assert.equal(api.getActiveTools().includes("tool_search"), true);
   });
 });
 

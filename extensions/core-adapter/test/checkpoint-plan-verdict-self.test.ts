@@ -8,7 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { pathDecide, type GateRoots } from "../pathrules.ts";
-import { parentApproval, SelfRulings, selfRulingAsk, selfRulingRefusal, SELF_RULING_REASON, snapshotRulings } from "../ruling.ts";
+import { parentApproval, SelfRulings, selfRulingRefusal, SELF_RULING_REASON, snapshotRulings } from "../ruling.ts";
 import { SteerWatch } from "../steerwatch.ts";
 
 const await_ = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -22,12 +22,11 @@ function rig(t: { after(fn: () => void): void }): { d: string; plan: string } {
   return { d, plan };
 }
 
-test("a shell line writing ruling.md in the own handoff dir is refused; one writing ruling-plan.md still asks and the path rules refuse its write", async (t) => {
+test("a shell line writing ruling.md in the own handoff dir is refused; one writing ruling-plan.md is not refused and the path rules refuse its write", async (t) => {
   const { d } = rig(t);
   assert.equal(await selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, "ruling.md")}` }, d, [d]), SELF_RULING_REASON);
   // ruling-plan.md left the tracked names with the parent's plan approval: no literal-path refusal for it any more
   assert.equal(await selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, "ruling-plan.md")}` }, d, [d]), undefined);
-  for (const name of ["ruling.md", "ruling-plan.md"]) assert.ok(await selfRulingAsk("bash", { command: `printf APPROVED > ${path.join(d, name)}` }, [d]), name);
   // the write protection of the handoff dir stays: a child's write tool gets no allow for either name in its own handoff dir
   const roots: GateRoots = { worktree: path.join(d, "wt"), scratch: [], tmp: [], owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false, ownHandoff: d };
   assert.equal(pathDecide("write", { path: path.join(d, "plan.md") }, roots.worktree, roots)?.rule, "path-write-handoff", "the child's own plan.md is allowed in these roots");

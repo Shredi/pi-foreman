@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import "./_sandbox-home.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
@@ -66,7 +67,7 @@ const SESSION = lines("1", "y", "1", "", "", "", "", "", "", "", "", "n", "y", "
 
 test("the picker takes a profile, a flipped toggle and an add-on, then applies on confirm", () => {
   const env = fresh();
-  const r = run(env, [], SESSION);
+  const r = run(env, [], SESSION, { PI_FOREMAN_HOME: undefined, HOME: env.base, USERPROFILE: env.base, PI_FOREMAN_TEST_PS_DOCUMENTS: path.join(env.base, "Documents") });
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /Profiles:\n {2}1\) orchestration/);
   assert.match(r.out, /\[x\] 1\) codemode|1\) \[x\] codemode/);
