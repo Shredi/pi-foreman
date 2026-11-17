@@ -98,8 +98,8 @@ Child reads per launch: `ceremony.childReads.<role>.perFile` (builder 5, reviewe
 
 Plan publication (see [sessions](sessions.md#presence-files)): each observed save of the plan refreshes `plan.json` in the session's show dir, and the
 snapshots `plan.ruled.md` / `plan.prev.md` roll only at ruling points: a `foreman_checkpoint`, a `[plan-review]` launch that passed the guards
-(for the plan its task text names), and a child's `Plan from <label>: ` message to its parent. A plain save never rolls them, so the herdr-app
-[plan panel](herdr.md#plan-panel) can mark what changed since the version you reviewed, and an appended ruling or addendum is never marked.
+(for the plan its task text names), and a child's `Plan from <label>: ` message to its parent. A plain save never rolls them. The herdr-app
+[plan panel](herdr.md#plan-panel) lists the plan page with its state and opens it in the browser; the snapshots are kept as before.
 
 ## Pushed branches at finish
 

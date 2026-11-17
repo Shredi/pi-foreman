@@ -7,15 +7,13 @@ const stubs = await import("../pi-foreman/stubs.mjs");
 const { default: Mod } = await import("./main.js");
 const { world } = stubs;
 
-const PA = "/w/plan-a.md";
-const PB = "/w/plan-b.md";
-const meta = (path, v = 1) => JSON.stringify({ path, title: "P", v, at: "2026-11-06T10:00:00Z", hash: "h", ruledPath: null, prevHash: null, fences: [] });
-const note = (v = 1) => JSON.stringify({ title: "Why", v, at: "2026-11-06T10:00:00Z", hash: "n" + v, fences: [], diagrams: [] });
+const index = (...titles) => JSON.stringify({ v: 1, pages: titles.map((title, i) => ({ id: i ? `note-${i}` : "plan", kind: i ? "note" : "plan", title, state: "shown", version: 1, at: `2026-11-06T10:0${i}:00Z`, file: i ? `note-${i}.html` : "plan.html" })), events: [] });
 const sess = (key, hc, show, parent = "") => ({ key, kind: "session", name: key, hcTerminal: hc, pid: null, parent, state: "working", ...(show ? { show } : {}), children: [] });
-const radar = ({ nonly = 1, both = 1 } = {}) => ({ machines: { local: [
-  sess("fm", "t1", { dir: "/s/fm", plan: 1, note: 1 }),
-  sess("nonly", "tc1", { dir: "/s/n", note: nonly }, "fm"),
-  sess("both", "tc2", { dir: "/s/b", plan: 1, note: both }, "fm"),
+const radar = () => ({ machines: { local: [
+  sess("fm", "t1", { dir: "/s/fm" }),
+  sess("kid", "tc1", { dir: "/s/n" }, "fm"),
+  sess("grand", "tc2", { dir: "/s/g" }, "kid"),
+  sess("nodir", "tc3", { plan: 1 }, "fm"),
 ] } });
 
 // A Map whose read of a path can be held until released, as in render.held.test.mjs.
@@ -33,9 +31,9 @@ class Gated extends Map {
 
 function reset() {
   world.files = new Gated([
-    ["/s/fm/plan.json", meta(PA)], [PA, "# Plan A\n\nAlpha body.\n"], ["/s/fm/note.json", note()], ["/s/fm/note.md", "# Root note\n\nRootNote.\n"],
-    ["/s/n/note.json", note()], ["/s/n/note.md", "# Child note\n\nNoteOnlyBody.\n"],
-    ["/s/b/plan.json", meta(PB)], [PB, "# Plan B\n\nBothPlan.\n"], ["/s/b/note.json", note()], ["/s/b/note.md", "# Both note\n\nBothNote.\n"],
+    ["/s/fm/pages/pages.json", index("Root plan")],
+    ["/s/n/pages/pages.json", index("Kid plan", "Kid note")],
+    ["/s/g/pages/pages.json", index("Grand plan")],
   ]);
   world.reads = []; world.writes = []; world.runCalls = []; world.notices = []; world.layout = null; world.execCalls = [];
   world.shared = { "pi-foreman.radar": radar() };
@@ -53,85 +51,42 @@ const boot = () => {
 };
 const walk = (el, out = []) => { if (el && typeof el === "object") { out.push(el); for (const k of el.kids ?? []) walk(k, out); } return out; };
 const strings = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
-const mds = (el) => walk(el).filter((e) => e.kind === "TextView").map((v) => v.md);
 const byId = (el, id) => walk(el).find((e) => e.props?.id === id);
-const tabLabel = (el, id) => strings(byId(el, id) ?? { kids: [] }).join("");
 
-test("a child with only a note gets a tab that shows its note", async () => {
+test("children join by the radar parent, nested ones too; a session without a show folder gets no tab", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
-  m.render(cx);
-  m.tab = "c:nonly"; m.render(cx); await settle();
   const tree = m.render(cx);
-  assert.ok(byId(tree, "tab-c:nonly"), "the note-only child has a tab");
-  assert.ok(mds(tree).some((t) => t.includes("NoteOnlyBody")), "its body is the note");
-  assert.ok(strings(tree).includes("Note"), "the header says Note");
-  assert.equal(byId(tree, "part-plan"), undefined, "no Plan | Note switch on a note-only child");
+  assert.deepEqual(m.cur.tabs.map((t) => t.id), ["foreman", "c:kid", "c:grand"]);
+  assert.ok(byId(tree, "tab-c:kid") && byId(tree, "tab-c:grand"));
+  assert.equal(byId(tree, "tab-c:nodir"), undefined);
 });
 
-test("a child with a plan and a note switches between them; Diff is not offered on the note", async () => {
+test("a child's tab lists all of its pages, newest first, and no switch between plan and note is offered", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
   m.render(cx);
-  m.tab = "c:both"; m.render(cx); await settle();
-  let tree = m.render(cx);
-  assert.ok(mds(tree).some((t) => t.includes("BothPlan")), "the plan is the default part");
-  assert.ok(byId(tree, "t-d"), "Diff is offered on the plan");
-  assert.ok(byId(tree, "part-plan") && byId(tree, "part-note"), "the switch shows");
-  byId(tree, "part-note").props.on_click(null, cx);
-  tree = m.render(cx);
-  assert.ok(mds(tree).some((t) => t.includes("BothNote")), "the note is shown after the switch");
-  assert.ok(!mds(tree).some((t) => t.includes("BothPlan")));
-  assert.equal(byId(tree, "t-d"), undefined, "no Diff on the note");
-  assert.ok(!strings(tree).includes("Loading…"), "the note was already read: no loading");
+  m.tab = "c:kid"; m.render(cx); await settle();
+  const tree = m.render(cx);
+  const s = strings(tree);
+  assert.ok(s.includes("Kid plan") && s.includes("Kid note"));
+  assert.ok(s.indexOf("Kid note") < s.indexOf("Kid plan"));
+  assert.equal(byId(tree, "part-plan"), undefined);
+  assert.ok(!s.includes("Root plan"));
 });
 
-test("the unseen dot is set on a child's label until its version is rendered, and comes back on a newer version", async () => {
+test("a click on a child whose read is pending shows Loading, then the child's pages", async () => {
   reset();
-  const { m, cx, settle } = boot(); await settle();
-  m.render(cx);
-  m.tick(cx); await settle(); // first sight of the radar versions
-  let tree = m.render(cx);
-  assert.ok(tabLabel(tree, "tab-c:nonly").endsWith("●"), "first sight of a child's note: unseen");
-  assert.ok(tabLabel(tree, "tab-c:both").endsWith("●"));
-  m.tab = "c:nonly"; m.render(cx); await settle();
-  tree = m.render(cx);
-  assert.ok(!tabLabel(tree, "tab-c:nonly").endsWith("●"), "rendered: the dot clears");
-  assert.ok(tabLabel(tree, "tab-c:both").endsWith("●"), "the other child keeps its dot");
-  world.shared = { "pi-foreman.radar": radar({ nonly: 2 }) };
-  m.tick(cx); await settle();
-  m.tab = "plan"; m.render(cx); await settle(); // the dot is off while the tab is on screen
-  tree = m.render(cx);
-  assert.ok(tabLabel(tree, "tab-c:nonly").endsWith("●"), "a newer note sets the dot again");
-});
-
-test("a child's note that is new on the radar opens the panel on its tab; the first sight does not", async () => {
-  reset();
-  const { m, cx, settle } = boot(); await settle();
-  m.tick(cx); await settle();
-  assert.equal(world.runCalls.length, 0, "the first sight of the children's notes does not open the panel");
-  assert.notEqual(m.tab, "c:nonly");
-  world.shared = { "pi-foreman.radar": radar({ nonly: 2 }) };
-  m.tick(cx); await settle();
-  assert.equal(m.tab, "c:nonly", "the child's tab is selected");
-  assert.equal(m.childPart.get("nonly"), "note", "on its note part");
-  assert.ok(world.runCalls.some((c) => c[0] === "layout.show"), "the panel is shown");
-  m.tick(cx); assert.equal(world.runCalls.filter((c) => c[0] === "layout.show").length, 1, "an unchanged version does not open it again");
-});
-
-test("a click on a child whose read is pending keeps the previous body with a Loading header, then shows the child", async () => {
-  reset();
-  world.files.hold("/s/n/note.json");
+  world.files.hold("/s/n/pages/pages.json");
   const { m, cx, settle } = boot(); await settle();
   m.render(cx); await settle();
   assert.ok(!m.recs.get("local|/s/n")?.ready, "the child's read is pending");
-  m.tab = "c:nonly";
+  m.tab = "c:kid";
   let tree = m.render(cx);
-  assert.ok(strings(tree).includes("Loading…"), "the header says Loading while the body shows the previous part");
-  assert.ok(mds(tree).some((t) => t.includes("RootNote") || t.includes("Alpha body")), "the previous body stays");
-  assert.ok(!mds(tree).some((t) => t.includes("NoteOnlyBody")), "the child is not shown before it is read");
-  world.files.flush("/s/n/note.json"); await settle();
+  assert.ok(strings(tree).includes("Loading pages…"));
+  assert.ok(!strings(tree).includes("Kid note"), "the child is not shown before it is read");
+  world.files.flush("/s/n/pages/pages.json"); await settle();
   tree = m.render(cx);
-  assert.ok(!strings(tree).includes("Loading…"), "the indicator goes once the child is ready");
-  assert.ok(mds(tree).some((t) => t.includes("NoteOnlyBody")));
+  assert.ok(!strings(tree).includes("Loading pages…"), "the indicator goes once the child is ready");
+  assert.ok(strings(tree).includes("Kid note"));
 });

@@ -28,11 +28,11 @@ function boot() {
 }
 const setPin = (n) => { world.shared["pi-foreman.show"] = { n, key: "dead", kind: "plan" }; };
 
-test("a pin present before the first sync is ignored: own session, Note tab present", () => {
+test("a pin present before the first sync is ignored: own session, its tab present", () => {
   reset({ n: 5, key: "dead", kind: "plan" });
   const m = boot(); m.sync();
   assert.equal(m.cur.root.key, "fm");
-  assert.deepEqual(m.cur.tabs.map((t) => t.id), ["plan", "note"]);
+  assert.deepEqual(m.cur.tabs.map((t) => t.id), ["foreman"]);
 });
 
 test("a pin whose n changes after the first sync is applied", () => {

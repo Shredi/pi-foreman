@@ -781,7 +781,7 @@ test("foreman_show: registered for the foreman, with a description that names it
   const d = tools.get("foreman_show")!;
   assert.ok(d);
   assert.match(d.description, /explain/);
-  assert.match(d.description, /replaces the previous note/);
+  assert.match(d.description, /adds a page to the panel's list/);
   assert.match(d.description, /mermaid/);
   assert.match(d.description, /never a file path/);
   const child = await showTool(t, true);

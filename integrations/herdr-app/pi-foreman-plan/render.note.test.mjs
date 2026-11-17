@@ -5,25 +5,18 @@ import { register } from "node:module";
 register("../pi-foreman/stubs-hooks.mjs", import.meta.url);
 const stubs = await import("../pi-foreman/stubs.mjs");
 const { default: Mod } = await import("./main.js");
-const { sha256 } = await import("./model.js");
 const { world } = stubs;
 
-const SVG = '<svg width="120" height="60"><rect x="0" y="0" width="120" height="60" fill="#111"/><text>A</text></svg>';
-const FENCE = "A-->B";
-const SHA = sha256(FENCE);
-const NOTE_MD = `# Note\n\n\`\`\`mermaid\n${FENCE}\n\`\`\`\n\n\`\`\`js\nlet a = 1;\n\`\`\`\n`;
-const node = (note) => ({ key: "fm", kind: "session", name: "foreman", hcTerminal: "t1", pid: null, parent: "", state: "working", show: { dir: "/s/fm", plan: 1, note }, children: [] });
-const diag = (sha) => ({ sha, dark: `diagrams/${sha}-dark.svg`, light: `diagrams/${sha}-light.svg` });
-const noteJson = (o = {}) => JSON.stringify({ title: "Why", v: 1, at: "2026-11-06T10:00:00Z", hash: "n", fences: [SHA], diagrams: [diag(SHA)], ...o });
+const sess = (key, hc, dir, parent = "") => ({ key, kind: "session", name: key, hcTerminal: hc, pid: null, parent, state: "working", show: { dir }, children: [] });
+const entry = (id, o = {}) => ({ id, kind: id === "plan" ? "plan" : "note", title: id, state: "shown", version: 1, at: "2026-11-06T10:00:00Z", file: `${id}.html`, ...o });
+const put = (dir, pages) => world.files.set(`${dir}/pages/pages.json`, JSON.stringify({ v: 1, pages, events: [] }));
 
-function reset(note = 1) {
-  world.files = new Map([
-    ["/s/fm/plan.json", JSON.stringify({ path: "/w/plan-x.md", title: "P", v: 1, at: "2026-11-06T10:00:00Z", hash: "h", ruledPath: null, ruledHash: "", prevHash: "", fences: [] })],
-    ["/w/plan-x.md", "# Plan\n"], ["/s/fm/note.json", noteJson()], ["/s/fm/note.md", NOTE_MD],
-    [`/s/fm/diagrams/${SHA}-dark.svg`, SVG], [`/s/fm/diagrams/${SHA}-light.svg`, SVG],
-  ]);
+function reset() {
+  world.files = new Map();
+  put("/s/fm", [entry("plan", { state: "draft" })]);
+  put("/s/c1", [entry("note-1")]);
   world.reads = []; world.writes = []; world.runCalls = []; world.notices = []; world.layout = null;
-  world.shared = { "pi-foreman.radar": { machines: { local: [node(note)] } } };
+  world.shared = { "pi-foreman.radar": { machines: { local: [sess("fm", "t1", "/s/fm"), sess("c1", "tc1", "/s/c1", "fm")] } } };
   world.agents = [{ address: "t1", tab: "tabA", pane: "p1" }];
   world.panes = [{ pane: "p1", tab: "tabA", terminal: "t1" }];
   world.terminals = [];
@@ -37,74 +30,52 @@ function boot() {
   const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
   return { m, cx, settle };
 }
-const walk = (el, out = []) => { if (el && typeof el === "object") { out.push(el); for (const k of el.kids ?? []) walk(k, out); } return out; };
-const bump = (n) => { world.shared = { "pi-foreman.radar": { machines: { local: [node(n)] } } }; };
+const SHOW = [["layout.select", { stack: "panel-body", child: "plan" }], ["layout.show", { id: "panel" }]];
 
-test("a mermaid fence listed by the harness shows its picture, copied under the app home by sha and theme", async () => {
+test("a new page opens the panel on the foreman's tab; the first sight, an unchanged index and a state change do not", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
-  m.tab = "note"; m.sync(); m.reload(cx); await settle();
-  const els = walk(m.render(cx));
-  assert.deepEqual(els.filter((e) => e.kind === "svg").map((e) => e.src), [`mods/pi-foreman-plan/cache/${SHA}-dark.svg`]);
-  assert.deepEqual(world.writes.map((w) => w[0]).sort(), [`/app/mods/pi-foreman-plan/cache/${SHA}-dark.svg`, `/app/mods/pi-foreman-plan/cache/${SHA}-light.svg`]);
+  m.tab = "c:c1";
+  m.tick(cx); await settle();
+  assert.equal(world.runCalls.length, 0, "the first sight records only");
+  put("/s/fm", [entry("plan", { state: "waits for you" })]);
+  m.tick(cx); m.reload(cx); await settle();
+  assert.equal(world.runCalls.length, 0, "a new state of a known page opens nothing");
+  assert.equal(m.tab, "c:c1");
+  put("/s/fm", [entry("plan", { state: "waits for you" }), entry("note-2")]);
+  m.reload(cx); await settle();
+  assert.equal(m.tab, "foreman");
+  assert.deepEqual(world.runCalls, SHOW);
+  m.reload(cx); await settle();
+  assert.equal(world.runCalls.length, 2, "an unchanged index does not open it again");
 });
 
-test("a fence whose hash the harness did not list stays a mermaid code block", async () => {
-  reset();
-  world.files.set("/s/fm/note.json", noteJson({ fences: [], diagrams: [] }));
-  const { m, cx, settle } = boot(); await settle();
-  m.tab = "note"; m.sync(); m.reload(cx); await settle();
-  const els = walk(m.render(cx));
-  assert.equal(els.filter((e) => e.kind === "svg").length, 0);
-  assert.ok(els.filter((e) => e.kind === "Editor").some((e) => e.state.options.language === "mermaid" && e.state.options.value === FENCE));
-  assert.equal(world.writes.length, 0);
-});
-
-test("an SVG that fails the allow-list is not cached and the fence falls back to code", async () => {
-  reset();
-  world.files.set(`/s/fm/diagrams/${SHA}-light.svg`, '<svg><script>x</script></svg>');
-  const { m, cx, settle } = boot(); await settle();
-  m.tab = "note"; m.sync(); m.reload(cx); await settle();
-  const els = walk(m.render(cx));
-  assert.equal(els.filter((e) => e.kind === "svg").length, 0);
-  assert.ok(els.some((e) => e.kind === "Editor" && e.state.options.language === "mermaid"));
-});
-
-test("a diagram entry with a path outside diagrams/<sha>-<theme>.svg is ignored", async () => {
-  reset();
-  world.files.set("/s/fm/note.json", noteJson({ diagrams: [{ sha: SHA, dark: "../../etc/x.svg", light: `diagrams/${SHA}-light.svg` }] }));
-  const { m, cx, settle } = boot(); await settle();
-  m.tab = "note"; m.sync(); m.reload(cx); await settle();
-  assert.equal(walk(m.render(cx)).filter((e) => e.kind === "svg").length, 0);
-  assert.equal(world.writes.length, 0);
-});
-
-test("code fences render in a read-only highlighted editor with the fence language", async () => {
+test("a higher plan version is a new page", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
-  m.tab = "note"; m.sync(); m.reload(cx); await settle();
-  const ed = walk(m.render(cx)).filter((e) => e.kind === "Editor");
-  assert.equal(ed.length, 1);
-  assert.deepEqual([ed[0].state.options.language, ed[0].state.options.value, ed[0].state.options.readonly], ["javascript", "let a = 1;", true]);
+  put("/s/fm", [entry("plan", { version: 2 })]);
+  m.reload(cx); await settle();
+  assert.deepEqual(world.runCalls, SHOW);
 });
 
-test("a new note on the radar opens the panel on the Note tab; the first sight and an unchanged version do not", async () => {
-  reset(1);
+test("a page that arrives in a child opens the panel on the child's tab; the first sight of the child does not", async () => {
+  reset();
   const { m, cx, settle } = boot(); await settle();
-  m.tick(cx);
+  m.tick(cx); await settle();
   assert.equal(world.runCalls.length, 0);
-  bump(2); m.tick(cx); await settle();
-  assert.equal(m.tab, "note");
-  assert.deepEqual(world.runCalls, [["layout.select", { stack: "panel-body", child: "plan" }], ["layout.show", { id: "panel" }]]);
-  m.tick(cx);
-  assert.equal(world.runCalls.length, 2);
+  assert.notEqual(m.tab, "c:c1");
+  put("/s/c1", [entry("note-1"), entry("result", { kind: "result" })]);
+  m.reload(cx); await settle(); // the poll of the children follows each read of the tab's own session
+  assert.equal(m.tab, "c:c1");
+  assert.deepEqual(world.runCalls, SHOW);
 });
 
 test("the ids come from the shown layout when it has the block", async () => {
-  reset(1);
+  reset();
   world.layout = { id: "root", type: "column", children: [{ id: "side", type: "column", hidden: true, children: [{ id: "tabs", type: "stack", children: [{ id: "pp", type: "block", content: { mod: "pi-foreman-plan" } }] }] }] };
-  let b = boot(); await b.settle();
-  b.m.tick(b.cx);
-  bump(2); b.m.tick(b.cx);
+  const { m, cx, settle } = boot(); await settle();
+  m.tick(cx);
+  put("/s/fm", [entry("plan", { state: "draft" }), entry("note-2")]);
+  m.reload(cx); await settle();
   assert.deepEqual(world.runCalls, [["layout.select", { stack: "tabs", child: "pp" }], ["layout.show", { id: "side" }]]);
 });

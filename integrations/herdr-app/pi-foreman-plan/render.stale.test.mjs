@@ -7,12 +7,8 @@ const stubs = await import("../pi-foreman/stubs.mjs");
 const { default: Mod } = await import("./main.js");
 const { world } = stubs;
 
-const A = "/w/plan-a.md";
-const B = "/w/plan-b.md";
-const C = "/w/plan-c.md";
 const node = (key, hc, show, parent = "") => ({ key, kind: "session", name: key, hcTerminal: hc, pid: null, parent, state: "working", ...(show ? { show } : {}), children: [] });
-const meta = (path, o = {}) => JSON.stringify({ path, title: "P", v: 1, at: "2026-11-06T10:00:00Z", hash: "h1", ruledPath: null, prevHash: null, fences: [], ...o });
-const NOTE = JSON.stringify({ title: "Why", v: 1, at: "2026-11-06T10:00:00Z", hash: "n1", fences: [] });
+const index = (title) => JSON.stringify({ v: 1, pages: [{ id: "plan", kind: "plan", title, state: "draft", version: 1, at: "2026-11-06T10:00:00Z", file: "plan.html" }], events: [] });
 
 // A Map whose reads can be held: a held path answers a promise, and next(path) releases its oldest read with the text that
 // was there when that read started. readTextFile returns whatever get() answers, so the shared stubs stay as they are.
@@ -31,17 +27,16 @@ class Gated extends Map {
 
 function reset() {
   world.files = new Gated([
-    ["/s/fm/plan.json", meta(A)], [A, "# Plan A\n\nAlpha body.\n"],
-    ["/s/fm/note.json", NOTE], ["/s/fm/note.md", "# Note\n\nnote body\n"],
-    ["/s/c1/plan.json", meta(C)], [C, "# Plan C\n\nGamma body.\n"],
-    ["/s/dead/plan.json", meta(B)], [B, "# Plan B\n\nBeta body.\n"],
+    ["/s/fm/pages/pages.json", index("Alpha page")],
+    ["/s/c1/pages/pages.json", index("Gamma page")],
+    ["/s/dead/pages/pages.json", index("Beta page")],
   ]);
   world.reads = []; world.runCalls = []; world.execCalls = [];
   world.shared = {
     "pi-foreman.radar": { machines: { local: [
-      node("fm", "t1", { dir: "/s/fm", plan: 1, note: 1 }),
-      node("c1", "tc1", { dir: "/s/c1", plan: 1 }, "fm"),
-      node("dead", "t9", { dir: "/s/dead", plan: 1 }),
+      node("fm", "t1", { dir: "/s/fm" }),
+      node("c1", "tc1", { dir: "/s/c1" }, "fm"),
+      node("dead", "t9", { dir: "/s/dead" }),
     ] } },
   };
   world.agents = [{ address: "t1", tab: "tabA", pane: "p1" }];
@@ -58,13 +53,10 @@ const boot = () => {
 };
 const walk = (el, out = []) => { if (el && typeof el === "object") { out.push(el); for (const k of el.kids ?? []) walk(k, out); } return out; };
 const strings = (el) => walk(el).flatMap((e) => (e.kids ?? []).filter((k) => typeof k === "string"));
-const kinds = (el, kind) => walk(el).filter((e) => e.kind === kind);
-const mds = (el) => kinds(el, "TextView").map((v) => v.md);
-const tabIds = (el) => walk(el).filter((e) => String(e.props?.id ?? "").startsWith("tab-")).map((e) => e.props.id);
 let n = 0;
 const click = (key) => { world.shared["pi-foreman.show"] = { n: ++n, key, kind: "plan" }; };
 
-test("a switch to a plan already read renders it in the first frame, with no Loading text", async () => {
+test("a switch to a session already read renders it in the first frame, with no Loading text", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
   m.render(cx);
@@ -72,66 +64,57 @@ test("a switch to a plan already read renders it in the first frame, with no Loa
   click("fm"); m.render(cx); await settle();
   click("dead");
   const first = m.render(cx);
-  assert.ok(mds(first).some((t) => t.includes("Beta body")), "the target is in the first render");
-  assert.ok(!strings(first).includes("Loading plan\u2026"));
+  assert.ok(strings(first).includes("Beta page"), "the target is in the first render");
+  assert.ok(!strings(first).includes("Loading pages…"));
 });
 
-test("an uncached switch keeps the previous body and the same tab labels and header until the next plan is parsed", async () => {
+test("a switch to a session not read yet shows Loading until its index is read", async () => {
   reset();
-  world.files.hold(C);
+  world.files.hold("/s/dead/pages/pages.json");
   const { m, cx, settle } = boot(); await settle();
-  const before = m.render(cx);
-  const beforeMd = mds(before), beforeTabs = tabIds(before), beforeStrings = strings(before);
-  assert.ok(beforeMd.some((t) => t.includes("Alpha body")));
-  assert.ok(beforeStrings.includes("Note: Why"), "the Note tab carries the note title");
-
-  click("c1");
-  const during = m.render(cx); // c1 is not read yet: its plan is held back
-  assert.deepEqual(mds(during), beforeMd, "the body is the previous plan");
-  assert.deepEqual(tabIds(during), beforeTabs, "the tab row keeps its tabs");
-  assert.ok(strings(during).includes("Note: Why"), "the Note label does not drop to Note");
-  assert.ok(strings(during).includes("v1"), "the header version stays");
-  assert.ok(!strings(during).includes("Loading plan\u2026"));
-
+  m.render(cx);
+  click("dead");
+  const during = m.render(cx);
+  assert.ok(strings(during).includes("Loading pages…"));
+  assert.ok(!strings(during).includes("Alpha page"), "the previous list is not held");
   await settle();
-  world.files.flush(C); await settle();
+  world.files.flush("/s/dead/pages/pages.json"); await settle();
   const done = m.render(cx);
-  assert.ok(mds(done).some((t) => t.includes("Gamma body")), "once read, the next plan shows");
+  assert.ok(strings(done).includes("Beta page"));
+  assert.ok(!strings(done).includes("Loading pages…"));
 });
 
-test("background prefetch reads the other tabs after the first paint, so a switch to one needs no read", async () => {
+test("background read-ahead reads the other tabs after the first paint, so a switch to one renders at once", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
   m.render(cx);
   const c1 = m.recs.get("local|/s/c1");
   assert.ok(c1?.ready, "the child tab was read without a click");
-  const readsBefore = world.reads.filter(([p]) => p === C).length;
-  click("c1");
-  const first = m.render(cx);
-  assert.ok(mds(first).some((t) => t.includes("Gamma body")));
-  assert.equal(world.reads.filter(([p]) => p === C).length, readsBefore, "no document was read for the switch");
+  m.tab = "c:c1";
+  const first = m.render(cx); // before any read of the switch ends
+  assert.ok(strings(first).includes("Gamma page"));
+  assert.ok(!strings(first).includes("Loading pages…"));
 });
 
-test("a read of a plan that is superseded by a newer read of the same session is dropped", async () => {
+test("a read of an index that is superseded by a newer read of the same session is dropped", async () => {
   reset();
   const { m, cx, settle } = boot(); await settle();
-  const job = { key: "local|/s/c1", machine: null, show: { dir: "/s/c1" } };
-  // the old version: its document read is held with the old text
-  world.files.set("/s/c1/plan.json", meta(C, { hash: "h1" }));
-  world.files.hold(C);
-  const old = m.refresh(job, true, cx);
+  const job = { key: "local|/s/c1", machine: null, show: { dir: "/s/c1" }, tabId: "c:c1" };
+  const path = "/s/c1/pages/pages.json";
+  // the old read is held with the old text
+  world.files.set(path, index("Old page"));
+  world.files.hold(path);
+  const old = m.refresh(job, cx);
   await settle(); // the old read has started: it holds the old text
-  // a new version starts while the old read is still pending
-  world.files.set(C, "# Plan C\n\nNew body.\n");
-  world.files.set("/s/c1/plan.json", meta(C, { hash: "h2" }));
-  const fresh = m.refresh(job, true, cx);
+  // a new index is written while the old read is still pending
+  world.files.set(path, index("New page"));
+  const fresh = m.refresh(job, cx);
   await settle();
-  world.files.next(C); // the old read answers now
+  world.files.next(path); // the old read answers now
   assert.equal(await old, false, "the stale result commits nothing");
-  assert.equal(m.recs.get("local|/s/c1").planDoc.meta.hash, "h1", "the record still holds what it had");
-  world.files.next(C); // the new read answers
+  assert.equal(m.recs.get("local|/s/c1").pages[0].title, "Gamma page", "the record still holds what it had");
+  world.files.next(path); // the new read answers
   assert.equal(await fresh, true);
   await settle();
-  assert.equal(m.recs.get("local|/s/c1").planDoc.meta.hash, "h2");
-  assert.ok(m.recs.get("local|/s/c1").plan.blocks.some((b) => b.text?.includes("New body")));
+  assert.equal(m.recs.get("local|/s/c1").pages[0].title, "New page");
 });

@@ -329,7 +329,7 @@
       "id": "foreman-show",
       "area": "tools",
       "title": "Notes for the side panel",
-      "purpose": "The foreman-only `foreman_show` tool publishes a markdown note (text, tables, code fences, mermaid diagrams) that the Herdr plan panel shows on its Note tab; each call replaces the previous note.",
+      "purpose": "The foreman-only `foreman_show` tool publishes a markdown or HTML note as a page (text, tables, code fences, mermaid diagrams) that the Herdr plan panel lists and opens in the browser; each call adds a page.",
       "doc": "docs/herdr.md#notes",
       "keys": [],
       "commands": [],

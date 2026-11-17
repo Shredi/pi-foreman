@@ -807,15 +807,10 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 ## Plan panel
 
 **Experimental.** Two more herdr-app mods show what a session wants you to read, rendered, next to the Files and Changes panels:
-`integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel shows the plan of the foreman that owns the tab, rendered natively (headings, tables, code, task lists, links)
-with the blocks added or changed since the last ruling tinted and labelled NEW or CHANGED, a Diff view with the exact +/- lines, and one
-tab per child session that published a plan or a note. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
+`integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel is a list. It shows, for the foreman that owns the tab and for each of its child sessions (one tab each), the session's pages newest first, each with a state chip ("plan v3 · waits for you") and its age, and below them the milestones (plan review PASS/FAIL, checkpoint answered, PR opened, PR ready, PR merged, result written), newest first; a milestone that holds an `https://` link opens it. A click on a page opens it in the system browser (see Data). The panel does not render markdown, diagrams or diffs itself; the pages (see [Pages](#pages)) do. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
-click opens the panel on it, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
-panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A plan already read shows at once; a plan
-not read yet keeps the previous body, the tab labels and the header on screen until it is parsed ("Loading plan…" only when nothing is shown
-yet), so a switch does not blank or reflow the panel. A child with a plan and a note has a Plan | Note switch on its tab (Plan by default; Note when it has only a note). A child tab that is not on screen shows a ● on its label while its plan or note version is above the one last rendered there; showing the tab clears it, and on the Plan | Note switch the button of a part with unseen content carries its own ● until that part is shown. A sidebar pin of kind plan or note on a child selects that part when the child has it. The header says Loading while the body still shows another tab or part. The other tabs' plans are read in the background after the first paint. A document with
-code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
+click opens the panel on that session's tab, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
+panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A tab already read lists at once; a tab not read yet says "Loading pages…". A new page (a new id, or a higher version of a page) opens the panel by itself on the session's tab, as a new note did; the first good read of a session's index only records its pages (a session with no index yet counts as empty, so its first page opens the panel; a read that fails is not a first read, the next good one only records). A page not opened yet at its current state carries a ● on its entry, and a tab that is not on screen shows a ● on its label while one of its pages is unseen; opening the page clears the entry's dot. All sessions of the tab are read in the background after the first paint and again every 5 s. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
 in the same render. Install the panel together with the Agents mod; the two are one install.
 
 Install:
@@ -828,8 +823,8 @@ Install:
    { "id": "plan", "type": "block", "content": { "mod": "pi-foreman-plan" } }
    ```
 
-3. The "📄 Plan" button in the Agents header brings the panel forward on its Plan child; the plan and note rows under a session do the same
-   and pin it to that document. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
+3. The "📄 Plan" button in the Agents header selects the `plan` block (the page list) in the panel's body stack and shows the panel; the plan and note rows
+   under a session do the same and also pin the list to that session's tab. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
    `tabs` mod has no slot for a third panel button, so the button lives in the Agents header.)
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman-plan`, then switch to the layout.
 
@@ -838,19 +833,25 @@ Updating: `foreman setup --mods` refreshes both installed mods from the package,
 **Anchor.** The panel belongs to the tab it sits in: it shows the foreman of the agent terminal that owns the tab's pane, joined to its radar
 session like the Agents mod does, not the terminal that has keyboard focus. A floating or peek child window (a child session opened with
 `hc run` has no tab labels and shows over the parent's tab) never switches the panel away; focusing it at most selects that child's tab
-inside the panel. Child plans are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
-focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session and document until the tab's
+inside the panel. Child sessions are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
+focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session until the tab's
 foreman changes; a pin already stored when the panel copy starts (herdr persists shared values) is stale and ignored.
 
 **Data.** The panel reads `shared("pi-foreman.radar")` (published by the Agents mod after each radar poll, only when the sessions changed;
-herdr-app persists shared values in `shared.json`), and for the session on screen the two files `plan.json` and `note.json` in the `show.dir`
-that radar carries from the session's presence file, then the plan the JSON names and its two snapshots `plan.ruled.md` and `plan.prev.md`.
-Every 5 s it re-reads only the two JSON files and re-reads the documents only when those bytes changed or the watch on the plan's folder
-fired (`watchFolder`, local only; remote spaces poll). It writes nothing. Marks compare the plan with `plan.ruled.md` while it was edited after
-the last ruling, otherwise with `plan.prev.md`; only the body above the first appendix heading (`## Ruling`, `## Addendum`, `## Decision log`) is
-compared, and without a snapshot, or when the snapshot belongs to another plan path, there are no marks and no badge. The markdown is
-sanitised before it renders: `![` is escaped everywhere, code spans and fences included (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
-only when it is `https://`, through the platform opener (never a shell).
+herdr-app persists shared values in `shared.json`), and for each session of the tab `<show.dir>/pages/pages.json`, with `show.dir` from the
+session's presence file as radar carries it. Every 5 s it re-reads those index files (local sessions also through `watchFolder`; remote spaces
+poll). An index entry counts only when its `file` is `plan.html`, `result.html` or `note-<n>.html`; any other entry is dropped before a path is built, and the
+id and kind come from that name. The panel writes only its page copies (below) and the clearing of `pi-foreman.show-pending`.
+
+**Opening a page.** A click reads the page (local or remote, at most 1 MiB), writes a copy into one of eight fixed files
+`mods/pi-foreman-plan/cache/pages/slot-<0-7>.html` in the app home (round robin, overwritten, never deleted)
+and starts the platform opener on that copy and nothing else: `open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on
+Windows, no shell, only the exact slot path accepted. The opener runs the handler of the file type, so opening only our own `.html` copy keeps it to
+the browser, also when the source file is a symlink. For a local session the copy has its relative `src` and `poster` values (no scheme, not starting with `/`
+or `#`) made absolute against the `pages/` folder, so relative pictures and videos load; remote pages are copied as they are. Known limits: the
+rewrite does not touch `srcset`, `<link href>` or CSS `url()`, links and `#` anchors stay as written, and a `result.md` written by `cp` or a heredoc gets
+no page; the unseen dots are kept in memory only, so they return when the panel is hidden and shown again or the app restarts. An opener that fails raises an error notice ("Could not open the page"; "Could not open the link" for a milestone link) with the exit code and the first error line.
+The page itself runs in the browser as written, with no script or network restriction.
 
 ### Pages
 
@@ -859,35 +860,32 @@ Besides `plan.json` and `note.json`, the harness writes standalone HTML pages in
 ### Notes
 
 The foreman can put a document in front of you with the `foreman_show({title, markdown | html})` tool: a design, a comparison, a report. It is for
-things you should read rendered, not for status or questions, and it takes the text itself, never a path. Each call replaces the previous
-note (title up to 120 characters, text up to 256 KiB, larger input is refused with the limit named). The harness writes `note.md`, `note.json`
+things you should read rendered, not for status or questions, and it takes the text itself, never a path. Each call writes a new note and its page (the last 20 pages stay; `note.md` and `note.json` hold the latest
+note; title up to 120 characters, text up to 256 KiB, larger input is refused with the limit named). The harness writes `note.md`, `note.json`
 (`v`, `title`, `at`, `hash`, `prevHash`, `fences`, `diagrams`) and, only while the title stays the same, the previous text as `note.prev.md`; the
-panel shows it on a Note tab and bumps the `note` row's version. A new title drops the previous version, so there is nothing to compare.
+panel lists its page and bumps the `note` row's version. A new title drops the previous version, so there is nothing to compare.
 
 **Contract for the mod.** `note.json` is written last, atomically, and its `v` rises by one with every call (it continues across a reload of the
-session), with `at` the ISO time of the write. A mod that sees a `v` or `at` it has not shown yet has a new note and can switch to the Note tab
-by itself. Code fence info strings (`ts`, `python title=x`, ...) are kept exactly as written in `note.md`; the mod highlights by language. The
+session), with `at` the ISO time of the write. Code fence info strings (`ts`, `python title=x`, ...) are kept exactly as written in `note.md`. The
 harness cannot see the Herdr layout, only the pane (`HERDR_PANE_ID` or `HC_TERMINAL_ID`): the `foreman_show` result says so when no pane is
 detected, and otherwise only that the note shows if the layout has a `pi-foreman-plan` block.
 
 **Diagrams.** A fence whose first info word is `mermaid` (opening fence at column 0, closing fence of the same character and at least the same length)
 is rendered by the harness after the document is published, never on the tool-result path: a `worker_threads` worker with a 2 s limit per
 fence, in the dark and the light theme, into `show/<session>/diagrams/<sha256 of the fence text>-dark.svg` and `-light.svg`. `plan.json` and
-`note.json` list the finished ones under `diagrams` (`{sha, dark, light}`, paths relative to the show dir) and their shas under `fences`; the mod
-swaps a fence for its SVG only when its own hash of the fence text is in that list. Limits: 16 KiB per fence, 200 nodes plus edges, 32 fences per
+`note.json` list the finished ones under `diagrams` (`{sha, dark, light}`, paths relative to the show dir) and their shas under `fences`; the page
+builder embeds a fence's SVG only for a sidecar that is listed there. Limits: 16 KiB per fence, 200 nodes plus edges, 32 fences per
 document, 512 KiB per SVG. The SVG is flattened (no `<style>`, no remote font, literal colours) and checked against an element allow-list; anything
 refused, over a limit, timed out, or rendered without the optional `beautiful-mermaid` package stays a code block. The package is an optional
 dependency; a missing one is traced once per session (`show_diagram`, `module_missing`).
 
 Limits: a plan written through the shell is not observed; remote child sessions have no live file on this computer, so a parent shows no tab
-for them; marks stop above 4000 lines per side or 1500 changed lines (the header says so); sidecars of older versions stay in the session's show
-dir until the session's live file is gone and the dir is pruned; the mod copies each checked SVG to
-`mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home (the host reads images only from there) and, with no delete API, never prunes it.
+for them; sidecars of older versions stay in the session's show dir until the session's live file is gone and the dir is pruned; the panel's
+`mods/pi-foreman-plan/cache/pages/` holds at most the eight slot copies (older versions of the mod also left `cache/<sha>-<theme>.svg` files, which are no longer used and can be deleted).
 
-**What the mod does.** A new note (radar `show.note` above the last seen value; a first sight only records it) selects the panel block and shows
-its hidden panel, then switches to the Note tab; a child's note opens the panel on that child's tab, on its Note part. Block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
-layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached). Fences render in a read-only highlighted editor; a listed mermaid fence
-shows its SVG after the mod's own allow-list check, else a `mermaid` code block.
+**What the mod does.** A new page (a new id, or a higher version of a page; the first good read of a session's index only records the pages there; a missing index counts as empty) selects the panel block and shows
+its hidden panel, on the tab of the session that wrote it. Block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
+layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached).
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.
 

@@ -57,10 +57,10 @@ test("a click while the panel is open still applies through the change, and clea
   assert.equal(mount().cur.root.key, "fm", "a later mount does not replay it");
 });
 
-test("a click on a note row while closed opens the Note tab", () => {
+test("a click on a child's note row while closed opens that child's tab", () => {
   reset();
-  world.shared["pi-foreman.radar"].machines.local[0].show = { dir: "/s/fm", plan: 1, note: 2 };
-  click("fm", "note");
+  world.shared["pi-foreman.radar"].machines.local.push({ ...sess("kid", { dir: "/s/kid", note: 2 }), parent: "fm", hcTerminal: "t8" });
+  click("kid", "note");
   const m = mount();
-  assert.equal(m.tab, "note");
+  assert.equal(m.tab, "c:kid");
 });
