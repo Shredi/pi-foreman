@@ -228,14 +228,14 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
   async function snapshot(): Promise<Snapshot> {
     await settle();
     const dir = `${root}-snap`;
-    fs.rmSync(dir, { recursive: true, force: true });
+    rmTestTmp(dir);
     fs.cpSync(root, dir, { recursive: true, preserveTimestamps: true });
     return { dir, entries: JSON.parse(JSON.stringify(entries)) as Entry[], notes: [...notes], answer: state.answer };
   }
   /** Puts `snap` back at the same paths (the instances of the case before are shut down first) and sets the env again. */
   async function reset(snap: Snapshot) {
     await settle();
-    for (const name of fs.readdirSync(root)) fs.rmSync(path.join(root, name), { recursive: true, force: true });
+    for (const name of fs.readdirSync(root)) rmTestTmp(path.join(root, name));
     fs.cpSync(snap.dir, root, { recursive: true, preserveTimestamps: true });
     entries.splice(0, entries.length, ...(JSON.parse(JSON.stringify(snap.entries)) as Entry[]));
     notes.splice(0, notes.length, ...snap.notes);
