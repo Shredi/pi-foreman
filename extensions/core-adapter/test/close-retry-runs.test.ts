@@ -144,3 +144,36 @@ test("registerClose: onRunsDone with an unknown id does nothing and does not thr
   await w.close.onRunsDone("nope");
   assert.deepEqual(w.sent, []);
 });
+
+test("a retry accepted after idle-wait and refused at closeTurn is final: no tried-again text, nothing re-armed", async () => {
+  const r = rig([1]);
+  await r.flow.request(merged, { isIdle: () => true });
+  r.set(0);
+  await r.flow.onRunsDone({ isIdle: () => false });
+  assert.equal(r.flow.active, true, "the retry is accepted (idle-wait)");
+  r.set(1);
+  await r.flow.onSettled({ isIdle: () => true, shutdown: () => undefined });
+  assert.equal(r.refusals().length, 2);
+  assert.doesNotMatch(r.refusals()[1], AGAIN);
+  r.set(0);
+  await r.flow.onRunsDone({ isIdle: () => true });
+  assert.equal(r.prompts(), 0);
+  assert.equal(r.refusals().length, 2);
+});
+
+test("a retry accepted and refused at finishing is final: no tried-again text, nothing re-armed", async () => {
+  const r = rig([1]);
+  await r.flow.request(merged, { isIdle: () => true });
+  r.set(0);
+  await r.flow.onRunsDone({ isIdle: () => true });
+  assert.equal(r.prompts(), 1);
+  assert.equal(r.flow.onInput("MERGED-PROMPT", "extension"), false);
+  r.flow.onModelReply("stop");
+  r.set(1);
+  await r.flow.onSettled({ isIdle: () => true, shutdown: () => undefined });
+  assert.equal(r.refusals().length, 2);
+  assert.doesNotMatch(r.refusals()[1], AGAIN);
+  r.set(0);
+  await r.flow.onRunsDone({ isIdle: () => true });
+  assert.equal(r.prompts(), 1);
+});

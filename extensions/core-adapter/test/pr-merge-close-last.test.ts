@@ -2,7 +2,7 @@
 // onMerged / onLastEnded over the real PrWatches and mergeCloseRequest.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CloseFlow, mergeCloseRequest } from "../close.ts";
+import { CloseFlow, mergeCloseRequest, mergeCloseStarter } from "../close.ts";
 import type { CloseDeps, CloseRequest } from "../close.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { Timers, WatchSnapshot } from "../prwatch.ts";
@@ -18,11 +18,17 @@ function rig() {
   const timers: { fn: () => void; live: boolean }[] = [];
   const fake: Timers = { set: (fn) => (timers.push({ fn, live: true }), timers.length - 1), clear: (h) => void (timers[h as number] && (timers[h as number].live = false)) };
   const started: CloseRequest[] = [];
+  // the real index.ts helper over an async start that only becomes active (closing) a few ticks later, as close.start does after awaiting the session
+  let closing = false;
+  const startMerge = mergeCloseStarter(async (_ctx, req) => {
+    started.push(req);
+    await new Promise((r) => setTimeout(r, 20));
+    closing = true;
+  }, () => closing);
   const mergeClose = (n: number | null): void => {
     const req = mergeCloseRequest({ handoff: HANDOFF, watched: w.numbers(), n, parent: "parent-1" });
-    // index.ts skips the start while this session's close runs (close.closing); a started close is active here at once
-    if (!req || started.length > 0) return;
-    started.push(req);
+    if (!req) return;
+    startMerge({} as never, req);
   };
   const w: PrWatches = new PrWatches({
     storeEntry: storeFromPoll(async (k) => ({ snap: snap(states.get(k.n) ?? "open") })),

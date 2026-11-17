@@ -300,7 +300,7 @@ export interface CloseRequest {
 /** Who hears a refusal of `req`: its requester; for the adapter's own `pr-merged` close, the parent named in `pr`. */
 const answerTo = (req: CloseRequest): string | undefined => req.replyTo ?? (req.source === "pr-merged" ? req.pr?.parent : undefined);
 
-/** The `pr-merged` close prompt: the result file asks for the PR numbers, the merge commit and what is left open. */
+/** The `pr-merged` close prompt: the result file asks for the PR numbers, the merge commits and what is left open. */
 export function prMergedPrompt(file: string, n: number): string {
   return `pi-foreman close: PR #${n} was merged and this session closes now. Write your result file at ${file} (the PR numbers, the merge commits, anything left open; link the PR and the commits). Do not start new work.`;
 }
@@ -315,6 +315,19 @@ export function mergeCloseRequest(o: { handoff: string | undefined; watched: rea
   const label = path.basename(handoff).replace(/^\d{8}-\d{6}-/, "");
   const file = path.join(handoff, "result.md");
   return { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, o.n), pr: { n: o.n, parent: o.parent, label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } };
+}
+
+/**
+ * The merge-close starter of one session: a close is started once at a time. `closing` only turns true after `start` has awaited the session,
+ * so a synchronous in-flight flag, set before `start` runs and cleared when its promise settles, skips a second merge on the same tick.
+ */
+export function mergeCloseStarter(start: (ctx: ExtensionContext, req: CloseRequest) => Promise<void>, closing: () => boolean): (ctx: ExtensionContext, req: CloseRequest) => void {
+  let inFlight = false;
+  return (ctx, req) => {
+    if (inFlight || closing()) return;
+    inFlight = true;
+    void start(ctx, req).catch(() => undefined).finally(() => { inFlight = false; });
+  };
 }
 
 type Phase = "refreshing" | "idle-wait" | "result-turn" | "finishing";
@@ -417,7 +430,7 @@ export class CloseFlow {
       return;
     }
     this.pending = null;
-    this.retried = null;
+    if (req !== this.retried) this.retried = null;
     this.req = req;
     this.wakePending = viaIntercomWake;
     this.d.trace({ event: "close", cause: req.source, decision: "accepted" });
