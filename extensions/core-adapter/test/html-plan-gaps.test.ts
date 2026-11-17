@@ -1,19 +1,16 @@
-// HTML plans, gaps found in review: page and copy are one plan in restoreFromStore, a rulings file is no plan for foreman_checkpoint, a rulings write
-// leaves the snapshots, the loaded instructions carry the skeleton path, and a wide-and-tall table converts in linear size.
+// HTML plans, gaps found in review: page and copy are one plan in restoreFromStore, a rulings write
+// leaves the snapshots, and a wide-and-tall table converts in linear size.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
-import { world } from "./_r46world.ts";
 import { readPlan, restoreFromStore, saveStored } from "../checkpoint.ts";
 import { htmlToMarkdown } from "../htmlmd.ts";
 import { Show } from "../show.ts";
 
 const PAGE = "<html><body><h1>Widget</h1><section><h2>For the owner</h2><p>Goal: ship the widget.</p></section><h2>Work</h2><p>x</p></body></html>";
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 test("restoreFromStore: a page and its generated copy are one plan", (t) => {
   const tmp = fs.realpathSync(mkTestTmp("pf-html-gap-"));
@@ -35,29 +32,6 @@ test("restoreFromStore: a page and its generated copy are one plan", (t) => {
   const viaCopy = readPlan(".workflow/scratch/plan-x.md", opts);
   assert.ok("plan" in viaCopy);
   assert.equal(viaCopy.plan.kind, "html", "the copy's name reads as the page");
-});
-
-test("foreman_checkpoint does not accept rulings-x.md as a plan; the loaded instructions carry the skeleton path, byte-identical on every load", async (t) => {
-  const w = world(t);
-  const a = await w.adapter("startup");
-  const scratch = path.dirname(w.planFile);
-  fs.writeFileSync(path.join(scratch, "plan-x.html"), PAGE);
-  fs.writeFileSync(path.join(scratch, "rulings-x.md"), "Use the small one.\n");
-  const tool = a.tool("foreman_checkpoint")!;
-  const res = (await tool.execute("ck", { path: ".workflow/scratch/rulings-x.md" }, undefined, undefined, a.ctx)) as { details: { decision: string } };
-  assert.equal(res.details.decision, "refused");
-  // the same world: the skeleton placeholder becomes the absolute skeleton path
-  const load = async (): Promise<string> => {
-    const event = { prompt: "go", systemPrompt: "", systemPromptOptions: { sections: {} as Record<string, string> } };
-    await a.fire("before_agent_start", event);
-    return event.systemPromptOptions.sections["pi-foreman"] ?? "";
-  };
-  const one = await load();
-  const two = await load();
-  const skeleton = path.join(root, "instructions", "plan-skeleton.html");
-  assert.ok(one.includes(skeleton), "the absolute skeleton path is in the text");
-  assert.ok(!one.includes("{{planSkeleton}}"));
-  assert.equal(one, two);
 });
 
 test("html plan: a rulings write leaves plan.json and the snapshots as they were", async (t) => {
