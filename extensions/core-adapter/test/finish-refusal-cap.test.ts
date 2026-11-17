@@ -23,6 +23,8 @@ async function rig(t: { after(fn: () => void | Promise<void>): void }) {
 
 test("text-only turn ends: two refusals, the third goes through with the notice and a transcript message, no more refusals", async (t) => {
   const { w, a } = await rig(t);
+  const notes: string[] = [];
+  (a.ctx as { ui: { notify: (m: string) => void } }).ui.notify = (m: string) => void notes.push(m);
   const first = await settle(a);
   assert.equal(first?.continue, true);
   assert.deepEqual(types(first), ["pi-foreman-ceremony-gate"]);
@@ -34,7 +36,16 @@ test("text-only turn ends: two refusals, the third goes through with the notice 
   assert.equal(await settle(a), undefined, "the message is appended once per state");
   assert.equal(await count(w, "finish_refused"), 2);
   assert.ok((await count(w, "ceremony_incomplete")) >= 1);
-  assert.ok((a.ctx as { ui: { notify: unknown } }).ui.notify);
+  assert.ok(notes.some((n) => /finished with ceremony incomplete: missing builder, reviewer/.test(n)), notes.join("\n"));
+});
+
+test("a restore after the notice does not append the message again", async (t) => {
+  const { a, w } = await rig(t);
+  await settle(a);
+  await settle(a);
+  assert.deepEqual(types(await settle(a)), ["pi-foreman-ceremony-incomplete"]);
+  const b = await w.adapter("resume");
+  assert.equal(await settle(b), undefined);
 });
 
 test("an interactive input between refusals does not reset the count", async (t) => {

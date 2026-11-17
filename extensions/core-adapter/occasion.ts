@@ -145,6 +145,16 @@ export function reviewResultsOfRunEnd(data: unknown, launch?: ReviewLaunch | nul
   return out;
 }
 
+/** The children of a run-end event in result order (the event itself when it has no results). */
+export const runEndChildren = childrenOf;
+
+/** The original result positions `countingView` keeps, in order (the view re-indexes them). */
+export function keptIndices(data: unknown, results: readonly ReviewResult[]): number[] {
+  if (!isObj(data)) return [];
+  const drop = new Set(results.filter((r) => !r.counts).map((r) => r.index));
+  return childrenOf(data).map((_, i) => i).filter((i) => !drop.has(i));
+}
+
 /**
  * The run-end event as the verdict consumers (item marks, review gate, ReviewerFails, PR gate)
  * see it: review children that do not count are dropped. With none left the

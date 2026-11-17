@@ -62,7 +62,8 @@ export interface WorkCount {
 export interface PersistedWork {
   work: WorkCount;
   atPrompt: WorkCount;
-  refusals: { n: number; key: string } | null;
+  /** `done`: the "ceremony incomplete" message of the state `key` is in the transcript. */
+  refusals: { n: number; key: string; done?: boolean } | null;
 }
 
 export interface CeremonyStateEntry {
@@ -211,7 +212,7 @@ function pauseOfEntry(v: unknown): PersistedWork | null {
   if (!work || !atPrompt) return null;
   const r = p.refusals as Record<string, unknown> | null | undefined;
   const n = count(r?.n);
-  return { work, atPrompt, refusals: r && typeof r === "object" && n !== null && typeof r.key === "string" ? { n, key: r.key } : null };
+  return { work, atPrompt, refusals: r && typeof r === "object" && n !== null && typeof r.key === "string" ? { n, key: r.key, ...(r.done === true ? { done: true } : {}) } : null };
 }
 
 const nullable = (v: unknown): v is string | null => v === null || typeof v === "string";

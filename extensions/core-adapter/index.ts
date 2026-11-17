@@ -230,7 +230,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, entryOccasions, keptIndices, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, runEndChildren, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -292,6 +292,12 @@ function releaseLedgerHold(toolCallId: string): void {
   if (!h) return;
   ledgerHolds.delete(toolCallId);
   h.gate.release(h.key);
+}
+
+/** The ledger path and cited items of each agent entry of a launch, in the result order of pi-subagents (parallel groups flattened). */
+interface LedgerRoute {
+  paths: (string | null)[];
+  cited: string[][];
 }
 
 interface Session {
@@ -461,9 +467,9 @@ interface Session {
   reviewSync: Promise<void>;
   /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
   reviewMarked: Set<string>;
-  /** Foreman only: the ledger a launch's task named by path (ledgerpath.ts), by tool call, then by run id; absent = the bound ledger. */
-  ledgerByCall: Map<string, (string | null)[]>;
-  ledgerByRun: Map<string, (string | null)[]>;
+  /** Foreman only: the ledger each agent entry of a launch named by path (ledgerpath.ts; null = none, the bound ledger) with the items it cites, by tool call, then by run id; absent after a reload. */
+  ledgerByCall: Map<string, LedgerRoute>;
+  ledgerByRun: Map<string, LedgerRoute>;
   /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
   passSnap: TreeSnap | null;
   /** Foreman only: builder runs, HEAD, tree and ledger at the latest review PASS; a reviewer launch is no repeat once one of them changed (bound.ts repeatSignals). */
@@ -1450,7 +1456,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** Records the work counters and the refusal count in the session entry; called at an owner input and at a settle only, never per edit. */
   function savePause(s: Session): void {
-    s.pauseSaved = { work: { ...s.work }, atPrompt: { ...s.workAtPrompt }, refusals: s.finishKey ? { n: s.finishRefusals, key: s.finishKey } : null };
+    s.pauseSaved = { work: { ...s.work }, atPrompt: { ...s.workAtPrompt }, refusals: s.finishKey ? { n: s.finishRefusals, key: s.finishKey, ...(s.incompleteKey === s.finishKey ? { done: true } : {}) } : null };
     persistCeremonyState(s);
   }
 
@@ -1473,6 +1479,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.workAtPrompt = { ...e.pause.atPrompt };
       s.finishRefusals = e.pause.refusals?.n ?? 0;
       s.finishKey = e.pause.refusals?.key ?? "";
+      s.incompleteKey = e.pause.refusals?.done ? s.finishKey : "";
       s.pauseSaved = e.pause;
     }
     if (e.tier && e.tierSource && e.tierSource !== "default") {
@@ -2677,10 +2684,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const verdicts = reviewVerdictsOfRunEnd(counted);
           s.reviewGate = onReviewVerdicts(s.reviewGate, verdicts, Date.now(), runId);
           persistCeremonyState(s);
-          if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
+          if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0, { data, kept: keptIndices(data, reviewResults) });
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
-          if (!s.isChild && verdicts.length) for (const f of hintLedgers(s, runId)) writeHint(f, cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
+          if (!s.isChild && verdicts.length) for (const [f, items] of hintTargets(s, runId, cited)) writeHint(f, items, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
         }
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
@@ -4144,9 +4151,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const text = t.path === lf ? lg : (() => { try { return t.path ? fs.readFileSync(t.path, "utf8") : null; } catch { return null; } })();
           return { text, path: t.path, ...(t.notice ? { notice: t.notice } : {}), named: t.named };
         };
-        // one named path per entry index (launchEntries order); null = the bound ledger
-        const perEntry = launchEntries(input).map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
-        if (perEntry.some((p) => p !== null)) capSet(s.ledgerByCall, event.toolCallId, perEntry);
+        // one named path per agent entry (a parallel group is flattened, its own object is no entry); null = the bound ledger
+        const agentEntries = launchEntries(input).filter((e) => typeof e.agent === "string");
+        const perEntry = agentEntries.map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
+        capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
@@ -4456,15 +4464,21 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const passed = reviewerPassOfNotice(text);
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
-    if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, [{ text: passed.text }]);
+    if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, [{ text: passed.text }], 0);
     s.round = onReviewDone(s.round, verdict);
     persistRounds(s);
   }
 
   /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
-  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean): void {
-    const pass = reviewerPassesOfRunEnd(data);
-    if (pass.length > 0) markByReview(s, runId, pass);
+  function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean, whole: { data: unknown; kept: number[] }): void {
+    // the counting view re-indexes its results: map each back to its position in the event and the launch entries
+    const kids = whole.data && typeof whole.data === "object" ? runEndChildren(whole.data as Record<string, unknown>) : [];
+    const pass = reviewerPassesOfRunEnd(data).map((p) => {
+      const index = whole.kept[p.index] ?? -1;
+      const task = (kids[index] as { task?: unknown } | undefined)?.task;
+      return { index, text: p.text, ...(typeof task === "string" ? { task } : {}) };
+    });
+    if (pass.length > 0) markByReview(s, runId, pass, kids.length);
     if (verdict) {
       const passed = s.reviewGate.last === "pass";
       const cwd = reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd;
@@ -4489,27 +4503,51 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
-  /** The ledgers a run's hints go to: each named path of its entries, and the bound ledger when an entry names none (D31). */
-  function hintLedgers(s: Session, runId: string): string[] {
+  /** The ledgers a run's hints go to, each with the items of the entries that named it (the bound ledger for an entry that names none; `whole` when no entry named one) (D31). */
+  function hintTargets(s: Session, runId: string, whole: string[]): Map<string, string[]> {
     const bound = boundLedger(s.markerDir, s.id);
-    const per = s.ledgerByRun.get(runId);
-    const all = per ? (per.some((p) => p === null) ? [...per, bound] : per) : [bound];
-    return [...new Set(all.filter((p): p is string => p !== null))];
+    const route = s.ledgerByRun.get(runId);
+    const out = new Map<string, string[]>();
+    if (!route || route.paths.every((p) => p === null)) {
+      if (bound) out.set(bound, whole);
+      return out;
+    }
+    route.paths.forEach((p, i) => {
+      const f = p ?? bound;
+      if (f) out.set(f, [...new Set([...(out.get(f) ?? []), ...(route.cited[i] ?? [])])]);
+    });
+    return out;
   }
 
-  /** Mark the `N. PASS` items of a reviewer PASS in the ledger the reviewer's task named, else the bound ledger, once per review run (reviewmarks.ts). */
-  function markByReview(s: Session, runId: string, parts: { index?: number; text: string }[]): void {
+  /**
+   * Mark the `N. PASS` items of a reviewer PASS in the ledger the reviewer's task named, else the bound ledger, once per review run (reviewmarks.ts).
+   * `total` is the result count of the event (0 for a notice, which has no result index). A mark never lands in a ledger the entry did not name:
+   * when the result cannot be tied to its entry (misaligned, or no launch record after a reload and no task text), nothing is marked.
+   */
+  function markByReview(s: Session, runId: string, parts: { index?: number; text: string; task?: string }[], total: number): void {
     if (s.reviewMarked.has(runId) || s.hs.ownerOf(runId) !== null) return; // a high-stakes run marks nothing
     s.reviewMarked.add(runId);
-    const per = s.ledgerByRun.get(runId) ?? [];
-    const named = per.filter((p): p is string => p !== null);
-    const sole = named.length > 0 && named.every((p) => p === named[0]) ? named[0] : null;
+    const route = s.ledgerByRun.get(runId);
     const bound = boundLedger(s.markerDir, s.id);
-    // a result's ledger is the one its entry named (entry index = result index); without an index the one ledger all entries named
+    const launch = s.reviewRuns.byRun.get(runId);
+    const fileOf = (p: { index?: number; task?: string }): string | null => {
+      if (route) {
+        const per = route.paths;
+        if (per.every((x) => x === null)) return bound;
+        if (p.index !== undefined) return p.index >= 0 && per.length === total ? per[p.index] ?? bound : null;
+        // a notice has no result index: the one ledger all review entries resolve to
+        const reviewers = launch && launch.entries.length === per.length ? per.filter((_, i) => REVIEW_ROLES.includes(launch.entries[i].role)) : per;
+        const files = new Set(reviewers.map((x) => x ?? bound));
+        return files.size === 1 ? [...files][0] : null;
+      }
+      // no launch record (a reload or resume): the ledger the result's own task names, else none
+      return p.task ? taskLedger(p.task, s.cwd, bound, [s.cwd]).path : null;
+    };
     const byFile = new Map<string, string[]>();
     for (const p of parts) {
-      const file = (p.index !== undefined && per.length > 1 ? per[p.index] ?? null : sole) ?? bound;
+      const file = fileOf(p);
       if (file) byFile.set(file, [...(byFile.get(file) ?? []), p.text]);
+      else s.trace?.emit({ event: "ledger_mark_skipped", run: runId.slice(0, 8), reason: "ledger of the reviewed entry unknown" });
     }
     for (const [file, texts] of byFile) s.reviewSync = s.reviewSync.then(async () => {
       const r = await markPassItems(texts.join("\n"), file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
@@ -5074,7 +5112,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const cited = hsCited.get(event.toolCallId) ?? citedItems(subagentTaskText(event.input as Record<string, unknown>));
             hsCited.delete(event.toolCallId);
             s.retro.launchItems.set(runId, cited);
-            for (const f of hintLedgers(s, runId)) writeHint(f, cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
+            for (const [f, items] of hintTargets(s, runId, cited)) writeHint(f, items, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
             s.budget.onLaunch();
             if (roles.includes("builder")) {
               for (const d of builderDirs(ctx, event.input as Record<string, unknown>)) await hsRevised(s, d); // a builder run is a revision of its checkout
@@ -5323,7 +5361,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
     }
     // Ladder (e): after a FAIL with the builder still on its bottom rung, the revision climbs; this
-    // refusal does not count toward the two-refusal valve (at most 2 per user prompt).
+    // refusal does not count toward the two-refusal valve of an unchanged state (it has its own count, at most 2 per user prompt).
     if (missing.includes("reviewer") && gate.last === "fail" && s.climbRefusals < 2 && (await builderClimbOpen(s, ctx))) {
       s.climbRefusals++;
       s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(","), climb_available: true });
@@ -5341,6 +5379,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       ctx.ui.notify(text, "warning");
       if (s.incompleteKey === stateKey) return undefined;
       s.incompleteKey = stateKey;
+      savePause(s);
       return { entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-incomplete", content: text, display: true }] };
     }
     s.finishRefusals++;

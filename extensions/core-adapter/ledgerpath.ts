@@ -41,6 +41,8 @@ export function taskLedger(task: string, cwd: string, bound: string | null, chec
   if (!isLedgerTarget(abs)) return fallback(`${path.basename(abs)} is not a ledger in a .workflow directory`);
   const boundReal = bound ? real(bound) : null;
   const dirs = [...checkouts, ...(bound ? [path.dirname(path.dirname(bound))] : [])].map((d) => real(path.join(d, ".workflow"))).filter((d): d is string => d !== null);
-  if (r === boundReal || dirs.includes(path.dirname(r))) return { path: abs, named: true };
+  // the resolved path, so a symlink swapped after this check cannot redirect a later write
+  if (r === boundReal) return { path: bound, named: true };
+  if (dirs.includes(path.dirname(r))) return { path: r, named: true };
   return fallback("it is not in the .workflow directory of this checkout or of the bound ledger");
 }
