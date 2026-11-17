@@ -3,6 +3,7 @@
 // real profile is touched, no PowerShell is started (PI_FOREMAN_HOME is set, the editions and policy come from the test seams). Also pins that the
 // POSIX blocks are byte-identical to the render of before this change.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";

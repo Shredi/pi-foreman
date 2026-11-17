@@ -3,6 +3,7 @@
 // foreman for that one call, and the shell's own environment must stay without PI_CODING_AGENT_DIR. The gitbash block runs in plain bash here (no cygpath:
 // the lookup falls back to the baked path); the Windows run in Git Bash itself is in resume-hook-gitbash.test.mjs. The PowerShell block runs only on Windows.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

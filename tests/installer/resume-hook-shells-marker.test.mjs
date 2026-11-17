@@ -2,6 +2,7 @@
 // next prompt, also in shells where `[ note -nt missing ]` is false (zsh). The marker lives in $XDG_RUNTIME_DIR when set, else $TMPDIR; both
 // point into the test's temp dir here. The foreman command is a stub that records its arguments.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

@@ -1,5 +1,6 @@
 // scripts/foreman_test_run.mjs: the machine-wide test lock and the --test-concurrency cap.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";

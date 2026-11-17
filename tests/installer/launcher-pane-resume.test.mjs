@@ -1,6 +1,7 @@
 // `foreman pane-resume` through the Windows launchers (bin/foreman.ps1, bin/foreman.cmd): with no HC_TERMINAL_ID the command is silent and exits 0; bad
 // arguments exit 2; a PATH without node exits 127 (the shell hook checks again at a later prompt). Windows only; skipped elsewhere.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";

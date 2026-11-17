@@ -1,5 +1,6 @@
 // Every relative module setup.mjs imports statically ships in the npm package (a packed install must not lack bridgelogin.mjs, profiles.mjs or a later one).
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";

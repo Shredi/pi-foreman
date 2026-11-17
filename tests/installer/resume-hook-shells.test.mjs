@@ -2,6 +2,7 @@
 // first prompt it runs `foreman pane-resume --shell-pid <pid>` only with HC_TERMINAL_ID set, a pane note and an executable bin/foreman.
 // The foreman command here is a stub that records its arguments; no node process starts.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
