@@ -27,6 +27,7 @@ import { resolveToolPath } from "./payload.ts";
 import { underTask } from "./recheckexempt.ts";
 import { workspaceOf } from "./python.ts";
 import { realDeep, under } from "./triage.ts";
+import { resolveBin, resolveGh } from "./ghbin.ts";
 import { pressureOutcome } from "./pressure.ts";
 import { WAKE_MESSAGE_TYPE } from "./usage.ts";
 import { WAITS_ENTRY, latestWaits, lostWaitsMessage, waitsEntry } from "./waitstate.ts";
@@ -520,32 +521,8 @@ export function wakeMessage(outcomes: Outcome[]): { customType: string; content:
   return { customType: WAKE_MESSAGE_TYPE, content, display: true, details: { kinds: outcomes.map((o) => o.kind), ids: outcomes.map((o) => o.id) } };
 }
 
-/**
- * Absolute path of `name` from PATH entries that are absolute and outside the workspace (S8): an empty,
- * `.` or relative entry, or one inside the workspace, is skipped, so a planted binary is never run.
- */
-export function resolveBin(name: string, workspace: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform, pathExt?: string): string | null {
-  const win = platform === "win32";
-  const pathVar = (win ? Object.entries(env).find(([k]) => k.toLowerCase() === "path")?.[1] : env.PATH) ?? "";
-  const exts = win ? (pathExt ?? (env.PATHEXT || ".COM;.EXE")).split(";").filter(Boolean) : [""];
-  const ws = realDeep(workspace);
-  for (const entry of pathVar.split(win ? ";" : ":")) {
-    const dir = entry.trim().replace(/^"(.*)"$/, "$1");
-    if (!dir || dir === "." || !path.isAbsolute(dir)) continue;
-    if (under(ws, realDeep(dir), platform)) continue;
-    for (const ext of exts) {
-      const cand = path.join(dir, `${name}${ext}`);
-      try {
-        if (fs.statSync(cand).isFile()) return cand;
-      } catch {
-        // next candidate
-      }
-    }
-  }
-  return null;
-}
-
-export const resolveGh = (workspace: string, env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string | null => resolveBin("gh", workspace, env, platform);
+// resolveBin and resolveGh live in ghbin.ts (no Pi import there); re-exported for the importers of this module.
+export { resolveBin, resolveGh };
 
 /** `gh run view <id> --json status,conclusion,url` (no shell; gh resolved by resolveGh, cwd = workspace). */
 export function ghRunView(runId: string, cwd: string): Promise<CiStatus> {

@@ -368,8 +368,8 @@ export function readAddonTasks(cwd: string, now: number = Date.now()): AddonTask
   return out.sort((a, b) => b.start - a.start).slice(0, MAX_ADDON_TASKS).map(({ start: _s, ...t }) => t);
 }
 
-/** Running add-on tasks of one Pi session only: the directories `<sessionId>-<pid>` under `<cwd>/.pi/tasks`; no log tails (`tail` is always empty). */
-export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = Date.now()): AddonTask[] {
+/** Every running add-on task of one Pi session, newest first, not capped: the directories `<sessionId>-<pid>` under `<cwd>/.pi/tasks`; no log tails (`tail` is always empty). */
+export function readAllOwnAddonTasks(cwd: string, sessionId: string, now: number = Date.now()): AddonTask[] {
   const root = path.join(cwd, ".pi", "tasks");
   const own = new RegExp(`^${sessionId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d+$`);
   const out: (AddonTask & { start: number })[] = [];
@@ -397,7 +397,12 @@ export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = 
       }
     }
   }
-  return out.sort((a, b) => b.start - a.start).slice(0, MAX_ADDON_TASKS).map(({ start: _s, ...t }) => t);
+  return out.sort((a, b) => b.start - a.start).map(({ start: _s, ...t }) => t);
+}
+
+/** Running add-on tasks of one Pi session only, the newest `MAX_ADDON_TASKS`; no log tails (`tail` is always empty). */
+export function readOwnAddonTasks(cwd: string, sessionId: string, now: number = Date.now()): AddonTask[] {
+  return readAllOwnAddonTasks(cwd, sessionId, now).slice(0, MAX_ADDON_TASKS);
 }
 
 /** Ids of running bg_run tasks of this pi process (`<sessionId>-<pid>` dir) that notify and trigger on completion: only those can wake the session. */

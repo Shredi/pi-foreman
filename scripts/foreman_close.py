@@ -751,18 +751,7 @@ def remote_branch(ws, branch):
 
 def is_default_branch(ws, branch, configured):
     """True when `branch` is the repository's default (base) branch; False when the base does not resolve."""
-    try:
-        base_ref, _ = safe_ops.resolve_base(ws, configured)
-    except safe_ops.Precondition:
-        return False
-    for pre in ("refs/heads/", "refs/remotes/"):
-        if base_ref.startswith(pre):
-            base_ref = base_ref[len(pre):]
-            break
-    names = {base_ref}
-    if "/" in base_ref:  # `origin/main` (a remote ref): the short name too
-        names.add(base_ref.split("/", 1)[1])
-    return branch in names
+    return safe_ops.is_default_branch(ws, branch, configured)
 
 
 def selfclean_check(ws, branch, state, sid, ops_cfg, verified=None, exempt_workflow=False, info=None):

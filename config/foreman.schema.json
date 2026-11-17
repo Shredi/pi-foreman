@@ -324,10 +324,10 @@
           "pre-pr": { "type": "object", "additionalProperties": false, "properties": { "thinking": { "type": "string", "enum": ["low", "medium", "high"] }, "model": { "type": "string", "minLength": 1 } } },
           "second-opinion": { "type": "object", "additionalProperties": false, "properties": { "thinking": { "type": "string", "enum": ["low", "medium", "high"] }, "model": { "type": "string", "minLength": 1 } } }
         } },
-        "highStakes": { "type": "object", "additionalProperties": false, "description": "The high-stakes review (docs/review.md#high-stakes): one extra reviewer pass with [high-stakes] on the whole change, after the normal review passed, only for a large change (modules or lines, measured by the adapter) or after a builder launch with risk tag design, and only with model set. The pass runs on the model as set (no pair, no different-model move, no rank-policy refusal, no climb). User or overlay config only.", "properties": {
-          "model": { "type": ["string", "null"], "description": "<provider>/<model>[:<level>] of the [high-stakes] review, used exactly as set (no pair, no different-model move, no rank refusal, no climb); null = no high-stakes review (nothing is measured or required). It replaces the model of no other review." },
-          "modules": { "type": "integer", "minimum": 0, "description": "The change counts as large at this many modules (distinct first two directory levels of the changed files, without docs, *.md, test directories and root files); 0 = off." },
-          "lines": { "type": "integer", "minimum": 0, "description": "The change counts as large at this many added plus removed lines of those files; 0 = off." },
+        "highStakes": { "type": "object", "additionalProperties": false, "description": "The high-stakes review (docs/review.md#high-stakes): one extra reviewer pass with [high-stakes] on the whole change, after the normal review passed, only for a risky change (a builder launch with risk tag security, permission, guard, concurrency or design; a heavy task that built something; the foreman's own request), one per session, and only with model set. The pass runs on the model as set (no pair, no different-model move, no rank-policy refusal, no climb). User or overlay config only.", "properties": {
+          "model": { "type": ["string", "null"], "description": "<provider>/<model>[:<level>] of the [high-stakes] review, used exactly as set (no pair, no different-model move, no rank refusal, no climb); null = no high-stakes review (nothing is required). It replaces the model of no other review." },
+          "modules": { "description": "Retired: accepted and ignored (the review no longer depends on the size of the change)." },
+          "lines": { "description": "Retired: accepted and ignored (the review no longer depends on the size of the change)." },
           "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Retired: accepted and ignored (the sensitive-path rule no longer selects a model)." }
         } },
         "planReview": {
@@ -384,7 +384,7 @@
     "radar": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
+      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file. A presence file that a pane note (state/panes) names is kept while its last activity is within 14 days, so a crash restart can read it." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
         "openPrs": {
           "type": "object",
           "additionalProperties": false,
@@ -474,7 +474,8 @@
           "additionalProperties": false,
           "description": "herdr-core settings of `foreman session open`. User or overlay config only.",
           "properties": {
-            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." }
+            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." },
+            "resume": { "type": "string", "enum": ["auto", "off"], "description": "Restart of a Pi session in its kept terminal after a crash (default `auto`): Pi writes a pane note while it runs in an `hc` terminal, and a shell hook restarts the session after a 5 s countdown. `off` writes no note and the hook does nothing. User or overlay config only." }
           }
         },
         "machines": {
@@ -606,7 +607,7 @@
           "description": "Precondition-checked operations (foreman_move, foreman_copy, foreman_worktree_remove).",
           "properties": {
             "copyMaxBytes": { "type": "integer", "minimum": 0, "description": "Size cap for foreman_copy. A project can only lower it." },
-            "worktreeDisposable": { "type": "array", "items": { "type": "string" }, "description": "Path components whose ignored files foreman_worktree_remove may delete (fnmatch globs matched against one path component, never across a '/'; 'name/' = a directory at any depth, an entry without a trailing '/' matches a file only, so write folder entries with a trailing '/'); a pattern with an inner '/' (for example '.pi/tasks/') is anchored at the worktree's top level. A project cannot set it." },
+            "worktreeDisposable": { "type": "array", "items": { "type": "string" }, "description": "Path components whose ignored files foreman_worktree_remove may delete, and whose untracked files and folders it deletes before the removal (links are never followed) (fnmatch globs matched against one path component, never across a '/'; 'name/' = a directory at any depth, an entry without a trailing '/' matches a file only, so write folder entries with a trailing '/'); a pattern with an inner '/' (for example '.pi/tasks/') is anchored at the worktree's top level. A project cannot set it." },
             "baseBranch": { "type": ["string", "null"], "description": "Base branch for the merged check of foreman_worktree_remove; null = origin HEAD, else main, else master. A project cannot set it." }
           }
         },

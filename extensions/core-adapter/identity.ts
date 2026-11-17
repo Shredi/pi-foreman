@@ -9,12 +9,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { HANDOFF_DIR_ENV, PARENT_INTERCOM_ENV, REMOTE_PARENT_ENV } from "./close.ts";
+import { BG_NAME_RE, BG_VALUE_RE } from "./paneresume-core.ts";
 
 export const IDENTITY_ENTRY = "pi-foreman-identity";
 export const LIVE_FILE = "live.json";
 const STABLE_ID_ENV = "PI_INTERCOM_STABLE_ID";
 const PARENT_LABEL_ENV = "PI_FOREMAN_PARENT_LABEL";
 const SESSION_MODEL_ENV = "PI_FOREMAN_SESSION_MODEL";
+const PERMS_PROFILE_ENV = "PI_FOREMAN_PERMS_PROFILE";
+const PLAN_PHASE_ENV = "PI_FOREMAN_PLAN_PHASE";
+const BG_PREFIX = "PI_BG_";
 
 type Env = Record<string, string | undefined>;
 
@@ -27,6 +31,10 @@ export interface IdentityEntry {
   model: string | null;
   remoteParent: string | null;
   sessionName: string | null;
+  /** The launch keys a crash restart needs again (`foreman pane-resume` sets them before Pi starts); each is written only when set. */
+  permsProfile?: string;
+  planPhase?: "1";
+  bgEnv?: Record<string, string>;
 }
 
 export type IdentityRestore = { status: "none" } | { status: "restored"; entry: IdentityEntry } | { status: "skipped"; reason: string };
@@ -38,7 +46,16 @@ export function captureIdentity(env: Env, piSessionId: string, sessionName: stri
   const handoff = text(env[HANDOFF_DIR_ENV]);
   const child = text(env[STABLE_ID_ENV]);
   if (!handoff || !child) return null;
-  return { v: 1, piSessionId, child, parentLabel: text(env[PARENT_LABEL_ENV]), handoff, model: text(env[SESSION_MODEL_ENV]), remoteParent: text(env[REMOTE_PARENT_ENV]), sessionName: text(sessionName) };
+  const permsProfile = text(env[PERMS_PROFILE_ENV]);
+  const bgEnv = process.platform === "win32" ? undefined : bgKeys(Object.entries(env));
+  return { v: 1, piSessionId, child, parentLabel: text(env[PARENT_LABEL_ENV]), handoff, model: text(env[SESSION_MODEL_ENV]), remoteParent: text(env[REMOTE_PARENT_ENV]), sessionName: text(sessionName), ...(permsProfile ? { permsProfile } : {}), ...(env[PLAN_PHASE_ENV] === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) };
+}
+
+/** The `PI_BG_*` pairs whose name and value pass the launcher's patterns, sorted by name (a stable JSON); undefined when there are none. */
+function bgKeys(pairs: [string, unknown][]): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const [k, v] of pairs.filter(([k]) => k.startsWith(BG_PREFIX)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) if (BG_NAME_RE.test(k) && typeof v === "string" && BG_VALUE_RE.test(v)) out[k] = v;
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** The newest identity entry of a branch, validated field by field, or null. */
@@ -52,7 +69,9 @@ export function latestIdentity(entries: unknown[]): IdentityEntry | null {
     const child = text(d.child);
     const handoff = text(d.handoff);
     if (!piSessionId || !child || !handoff) return null;
-    return { v: 1, piSessionId, child, parentLabel: text(d.parentLabel), handoff, model: text(d.model), remoteParent: text(d.remoteParent), sessionName: text(d.sessionName) }; // key order as captureIdentity (compared as JSON)
+    const permsProfile = text(d.permsProfile);
+    const bgEnv = d.bgEnv && typeof d.bgEnv === "object" && !Array.isArray(d.bgEnv) ? bgKeys(Object.entries(d.bgEnv)) : undefined;
+    return { v: 1, piSessionId, child, parentLabel: text(d.parentLabel), handoff, model: text(d.model), remoteParent: text(d.remoteParent), sessionName: text(d.sessionName), ...(permsProfile ? { permsProfile } : {}), ...(d.planPhase === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) }; // key order as captureIdentity (compared as JSON)
   }
   return null;
 }

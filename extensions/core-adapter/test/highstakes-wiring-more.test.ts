@@ -24,7 +24,7 @@ const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c
 const lines = (n: number) => "x\n".repeat(n);
 
 async function setup(t: Parameters<typeof world>[0], ceremony: Record<string, unknown> = {}, ledger = "# Ledger: x\nTier: standard\n\n- [x] 1. item\n- [x] V. fresh-eyes verification passed\n", seedFiles: Record<string, string> = {}) {
-  const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL, modules: 0, lines: 50 }, ...ceremony } });
+  const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL }, ...ceremony } });
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
   git(w.project, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(w.project, ".gitignore"), ".workflow/\n");
@@ -71,8 +71,10 @@ const settle = async (a: Rig): Promise<string> => {
 };
 const pr = async (a: Rig): Promise<string> => (await a.checkCall("create_pull_request", {}))?.reason ?? "";
 const traces = async (w: World, event: string) => (await w.traceEvents()).filter((e) => e.event === event);
-const buildAndPass = async (a: Rig) => {
-  await end(a, await launch(a, "builder", "build the widget"), "builder", "done");
+/** A builder tagged `design` fires the review (the size is the sizing field the launch needs when sizing is on). */
+const TAGGED = { size: { files: ["src/a/big.ts"] }, risk: ["design"] };
+const buildAndPass = async (a: Rig, extra: Record<string, unknown> = {}) => {
+  await end(a, await launch(a, "builder", "build the widget", extra), "builder", "done");
   await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
 };
 
@@ -96,9 +98,8 @@ test("item 2: the facts block of a [high-stakes] launch is collected against the
   assert.deepEqual((await traces(w, "review_high_stakes")).map((e) => e.verdict), ["pass"]);
 });
 
-test("item 3: a builder launch with risk tag design fires the trigger of its checkout, with the bounds off; without the tag nothing fires", async (t) => {
-  const off = { model: MODEL, modules: 0, lines: 0 };
-  const { w, a } = await setup(t, { highStakes: off });
+test("item 3: a builder launch with risk tag design fires the review; without the tag nothing fires, whatever the size", async (t) => {
+  const { w, a } = await setup(t);
   work(w, "src/a/one.ts", lines(5));
   await launch(a, "builder", "build it", { size: { files: ["src/a/one.ts"] } });
   assert.deepEqual(await traces(w, "review_stakes"), []);
@@ -109,14 +110,15 @@ test("item 3: a builder launch with risk tag design fires the trigger of its che
   await end(a, b, "builder", "done");
   await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
   assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
-  // sticky: a smaller later measurement does not unfire it
+  // sticky: a later untagged builder does not unfire it
+  await end(a, await launch(a, "builder", "build more"), "builder", "done");
   assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
 });
 
 test("item 4/6: the finish gate does not ask for the pass while a ledger item other than V is open, asks once all are marked (V open does not matter); reviewGate: verdict mode: the FAIL entry holds after a high-stakes FAIL, and ends with the normal PASS after the revision", async (t) => {
   const { w, a } = await setup(t, { reviewGate: "verdict" }, "# Ledger: x\nTier: standard\n\n- [x] 1. item\n- [ ] 2. other\n- [ ] V. fresh-eyes verification passed\n");
   work(w, "src/a/big.ts", lines(100));
-  await buildAndPass(a);
+  await buildAndPass(a, TAGGED);
   assert.doesNotMatch(await settle(a), /high-stakes/);
   await a.writeLedger("# Ledger: x\nTier: standard\n\n- [x] 1. item\n- [x] 2. other\n- [ ] V. fresh-eyes verification passed\n");
   assert.match(await settle(a), /a high-stakes review must run/);
