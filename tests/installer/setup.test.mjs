@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import "./_sandbox-home.mjs";
 import { writeFakePython } from "./fixtures/fake-python.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1158,7 +1159,7 @@ test("setup refuses a python3 3.12 on PATH with the 3.13 message", posix, () => 
   const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
-    env: { PATH: fake, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+    env: { PATH: fake, PI_FOREMAN_HOME: process.env.PI_FOREMAN_HOME, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
   });
   const out = `${r.stdout}${r.stderr}`;
   assert.notEqual(r.status, 0, out);
@@ -1175,7 +1176,7 @@ test("setup accepts a 3.13 interpreter named by PI_FOREMAN_PYTHON, with no pytho
   const r = spawnSync(process.execPath, [SETUP, "--agent-dir", env.agentDir], {
     cwd: env.cwd,
     encoding: "utf8",
-    env: { PATH: empty, PI_FOREMAN_PYTHON: py, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
+    env: { PATH: empty, PI_FOREMAN_HOME: process.env.PI_FOREMAN_HOME, PI_FOREMAN_PYTHON: py, PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log },
   });
   const out = `${r.stdout}${r.stderr}`;
   assert.match(out, /python 3\.13 via PI_FOREMAN_PYTHON/);
@@ -1346,7 +1347,7 @@ test("a recorded unknown profile warns and skips the picker", () => {
 test("--addon background-tasks runs the exact pi install, records managed.addons and prints the shell-profile env hint", () => {
   const env = fresh();
   seed(env);
-  const r = run(env, ["--addon", "background-tasks"], NO_PICKER);
+  const r = run(env, ["--addon", "background-tasks"], { ...NO_PICKER, PI_FOREMAN_HOME: undefined, HOME: env.base, USERPROFILE: env.base });
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
   assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself, Pi reads it when it starts/);

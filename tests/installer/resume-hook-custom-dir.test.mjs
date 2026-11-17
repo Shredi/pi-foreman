@@ -8,6 +8,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import "./_sandbox-home.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
@@ -120,6 +121,22 @@ test("setup with a custom agent dir and HOME (no PI_FOREMAN_HOME) writes the blo
   assert.ok(read(file).includes(`set -l dir '${env.agentDir}'`));
 });
 
+test("guard: the setup child env of these tests points PI_FOREMAN_HOME at a temp dir, never the real home", () => {
+  const tmp = fs.realpathSync(os.tmpdir());
+  const home = process.env.PI_FOREMAN_HOME;
+  assert.ok(home, "PI_FOREMAN_HOME is set by the preload or the shared sandbox module");
+  assert.ok(path.resolve(home).startsWith(tmp + path.sep), home);
+  assert.notEqual(path.resolve(home), path.resolve(os.homedir()));
+  const env = fresh();
+  const r = spawnSync(process.execPath, [SETUP, "--no-addons", "--agent-dir", env.agentDir], {
+    cwd: env.cwd, encoding: "utf8", input: "",
+    env: { ...process.env, HOME: env.home, USERPROFILE: env.home, CI: "1", PI_FOREMAN_PICKER: "off", PI_CODING_AGENT_DIR: env.agentDir, PI_FOREMAN_PI_BIN: FAKE_PI, FAKE_PI_LOG: env.log, PI_FOREMAN_PI_AI_DATA: path.join(env.base, "no-models"), SHELL: "/bin/zsh", PI_FOREMAN_PLATFORM: "linux", PI_BG_FEATURES: undefined },
+  });
+  assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+  assert.deepEqual(fs.readdirSync(env.home), [], "nothing lands in HOME while PI_FOREMAN_HOME is set");
+  assert.equal(count(read(path.join(home, ".zshrc"))), 1);
+});
+
 test("the zsh and bash blocks: the fallback dir and the call-only assignment, paths with spaces and a single quote quoted", () => {
   for (const flavor of ["zsh", "bash"]) {
     const block = renderResumeBlock({ bin: "/opt/f oo/foreman", flavor, agentDir: ODD });
@@ -161,6 +178,15 @@ test("the powershell block: the baked dir is the fallback, $env:PI_CODING_AGENT_
 test("without agentDir every flavor renders exactly as before; the powershell profile with a custom dir is written and removed", () => {
   for (const flavor of ["zsh", "bash", "fish", "gitbash", "powershell"]) {
     assert.equal(renderResumeBlock({ bin: "/o/foreman", flavor, cli: "/o/cli.ts" }), renderResumeBlock({ bin: "/o/foreman", flavor, cli: "/o/cli.ts", agentDir: null }), flavor);
+    const old = renderResumeBlock({ bin: "/o/foreman", flavor, cli: "/o/cli.ts" });
+    const lines = {
+      zsh: ['__pi_foreman_note="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json"', `'/o/foreman' pane-resume --shell-pid "$$"`],
+      bash: ['__pi_foreman_note="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json"', `'/o/foreman' pane-resume --shell-pid "$$"`],
+      fish: ["set -l dir $HOME/.pi/agent", "'/o/foreman' pane-resume --shell-pid $fish_pid"],
+      gitbash: ['${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}/pi-foreman/state/panes/$HC_TERMINAL_ID.json"', `'/o/foreman' pane-resume --shell-pid "$(cat /proc/$$/winpid 2>/dev/null || echo $$)"`],
+      powershell: ["Join-Path $HOME '.pi\\agent'", `'--no-warnings --experimental-strip-types "' + $cli + '" --shell-pid ' + $PID`],
+    }[flavor];
+    for (const line of lines) assert.ok(old.includes(line), `${flavor}: ${line}`);
     assert.doesNotMatch(renderResumeBlock({ bin: "/o/foreman", flavor, cli: "/o/cli.ts" }), /prevDir|__pi_foreman_agent|env PI_CODING_AGENT_DIR=/, flavor);
   }
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "pf-resume-custom-unit-"));
