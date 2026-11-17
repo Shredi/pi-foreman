@@ -309,7 +309,7 @@ test("setup on win32: a dry run and --no-env write nothing; --no-resume-hook and
   const custom = fresh();
   const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home, PI_FOREMAN_TEST_PS_DOCUMENTS: path.join(custom.home, "Documents"), PI_FOREMAN_TEST_PS_POLICY: "pwsh=RemoteSigned,powershell=RemoteSigned" });
   assert.match(c.out, /wrote the pi-foreman resume block to .*Microsoft\.PowerShell_profile\.ps1/, "a custom agent dir writes the block now (D34)");
-  assert.ok(fs.readFileSync(profile(custom.home, "pwsh"), "utf8").includes(`'${custom.agentDir}'`));
+  assert.ok(fs.readFileSync(profile(custom.home, "pwsh"), "utf8").includes(`'${custom.agentDir.replace(/'/g, "''")}'`));
   const noEnv = fresh();
   const n = run(noEnv, ["--no-addons", "--no-env"]);
   assert.match(n.out, /resume hook: not written \(--no-env\)/);

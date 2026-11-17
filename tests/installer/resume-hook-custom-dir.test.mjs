@@ -44,6 +44,9 @@ function run(env, args, extra = {}) {
 }
 const count = (text) => text.split(RESUME_START).length - 1;
 const read = (f) => fs.readFileSync(f, "utf8");
+// The literals the product writes: POSIX single quotes (`'` -> `'\''`), and fish single quotes where `\` is escaped too (fq in setup/resume-hook.mjs).
+const sh = (v) => `'${String(v).replace(/'/g, "'\\''")}'`;
+const fish = (v) => `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 
 test("setup with a custom agent dir writes the block into ~/.zshrc, once, with the dir as the fallback and for the call only", () => {
   const env = fresh();
@@ -53,7 +56,7 @@ test("setup with a custom agent dir writes the block into ~/.zshrc, once, with t
   assert.match(r.out, /wrote the pi-foreman resume block to .*\.zshrc/);
   const text = read(path.join(env.home, ".zshrc"));
   assert.equal(count(text), 1);
-  assert.ok(text.includes(`'${env.agentDir}'`), "the dir is baked in");
+  assert.ok(text.includes(sh(env.agentDir)), "the dir is baked in");
   assert.ok(text.includes(`PI_CODING_AGENT_DIR="$__pi_foreman_agent" '${BIN}' pane-resume`), "a prefix assignment on the call");
   assert.doesNotMatch(text, /export PI_CODING_AGENT_DIR/);
   const again = run(env, ["--no-addons"]);
@@ -80,7 +83,7 @@ test("a rerun replaces a hand-written block with the same markers: exactly one b
   const text = read(rc);
   assert.equal(count(text), 1);
   assert.equal(text.includes("# hand-written"), false);
-  assert.ok(text.includes(`'${env.agentDir}'`));
+  assert.ok(text.includes(sh(env.agentDir)));
   assert.ok(text.startsWith("alias x=y\n") && text.trimEnd().endsWith("alias z=w"));
 });
 
@@ -118,7 +121,7 @@ test("setup with a custom agent dir and HOME (no PI_FOREMAN_HOME) writes the blo
   assert.equal(r.code, 0, r.out);
   const file = path.join(env.home, ".config", "fish", "conf.d", "pi-foreman-resume.fish");
   assert.equal(count(read(file)), 1);
-  assert.ok(read(file).includes(`set -l dir '${env.agentDir}'`));
+  assert.ok(read(file).includes(`set -l dir ${fish(env.agentDir)}`));
 });
 
 test("guard: the setup child env of these tests points PI_FOREMAN_HOME at a temp dir, never the real home", () => {
@@ -150,6 +153,8 @@ test("the zsh and bash blocks: the fallback dir and the call-only assignment, pa
 test("the fish block: single-quoted dir with fish escapes, a shell value still wins, env sets the variable for the call only", () => {
   const block = renderResumeBlock({ bin: "/opt/f oo/foreman", flavor: "fish", agentDir: "/tmp/my agent/it's\\here" });
   assert.ok(block.includes("set -l dir '/tmp/my agent/it\\'s\\\\here'"));
+  const win = renderResumeBlock({ bin: "/opt/f oo/foreman", flavor: "fish", agentDir: "C:\\Users\\me\\my agent" });
+  assert.ok(win.includes("set -l dir 'C:\\\\Users\\\\me\\\\my agent'"), "a Windows dir: each backslash doubled");
   assert.ok(block.includes("test -n \"$PI_CODING_AGENT_DIR\"; and set dir $PI_CODING_AGENT_DIR"));
   assert.ok(block.includes("env PI_CODING_AGENT_DIR=$dir '/opt/f oo/foreman' pane-resume --shell-pid $fish_pid"));
   assert.doesNotMatch(block, /set -[gx]+ PI_CODING_AGENT_DIR/);

@@ -15,6 +15,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
 const PTY = path.join(HERE, "fixtures", "pty_run.py");
 const { renderResumeBlock } = await import(pathToFileURL(path.join(ROOT, "setup", "resume-hook.mjs")).href);
+// A POSIX single-quoted literal (`'` -> `'\''`) for a path that may hold a quote, such as a tmpdir.
+const sh = (v) => `'${String(v).replace(/'/g, "'\\''")}'`;
 const NEUTRAL = { bash: "PS1='> '\n", zsh: "PROMPT='> '\nRPROMPT=''\n", fish: "function fish_prompt; echo -n '> '; end\nfunction fish_right_prompt; end\n" };
 
 const has = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).status === 0;
@@ -26,7 +28,7 @@ function world(flavor, blockFlavor = flavor) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "pf-hook-custom-")));
   const marker = path.join(base, "marker");
   const stub = path.join(base, "foreman");
-  fs.writeFileSync(stub, `#!/bin/sh\necho "dir=$PI_CODING_AGENT_DIR args=$@" >> '${marker}'\n`, { mode: 0o755 });
+  fs.writeFileSync(stub, `#!/bin/sh\necho "dir=$PI_CODING_AGENT_DIR args=$@" >> ${sh(marker)}\n`, { mode: 0o755 });
   const agentDir = path.join(base, "my agent", "it's here");
   fs.mkdirSync(path.join(agentDir, "pi-foreman", "state", "panes"), { recursive: true });
   fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "panes", "t1.json"), "{}");

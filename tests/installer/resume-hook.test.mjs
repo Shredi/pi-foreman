@@ -145,7 +145,7 @@ test("a dry run and --no-env write no block; --no-env prints the hand-add line",
   const custom = fresh();
   const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home });
   assert.match(c.out, /wrote the pi-foreman resume block to .*\.zshrc/, "a custom agent dir writes the block now (D34)");
-  assert.ok(read(path.join(custom.home, ".zshrc")).includes(`'${custom.agentDir}'`));
+  assert.ok(read(path.join(custom.home, ".zshrc")).includes(`'${custom.agentDir.replace(/'/g, "'\\''")}'`));
   const noEnv = fresh();
   const n = run(noEnv, ["--no-addons", "--no-env"]);
   assert.match(n.out, /resume hook: not written \(--no-env\); .*docs\/install\.md/);
