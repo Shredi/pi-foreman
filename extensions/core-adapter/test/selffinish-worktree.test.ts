@@ -65,7 +65,14 @@ function relink(file: string, from: string, to: string): void {
   const slash = (p: string): string => p.replace(/\\/g, "/");
   let text = fs.readFileSync(file, "utf8");
   for (const [a, b] of [[from, to], [slash(from), slash(to)]]) text = text.split(a).join(b);
-  fs.writeFileSync(file, text);
+  // Rewrite in place: on Windows git hides the worktree's `.git`, and writeFileSync's CREATE_ALWAYS open then fails with EPERM.
+  const fd = fs.openSync(file, "r+");
+  try {
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, text, 0, "utf8");
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /** main checkout `repo` on `main`, a second worktree `feat` whose branch was squash-merged into main: a copy of the template at its own paths. */
