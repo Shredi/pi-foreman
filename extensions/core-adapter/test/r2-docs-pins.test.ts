@@ -42,6 +42,28 @@ test("find <harness folder> is labelled danger-harness-folder for every role; re
   assert.equal(show(line, "explorer"), 'undecided  ["danger-harness-folder","danger-readonly-run"]');
 });
 
+test("a child reads another session's subagent-artifacts and the agent-dir foreman.json: no rule refuses the read for any role", { skip: !posix }, () => {
+  const cfg = path.join(agent, "foreman.json");
+  const sub = path.join(agent, "sessions", "x", "subagent-artifacts");
+  const file = path.join(sub, "a.md");
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(cfg, "{}\n");
+  fs.writeFileSync(file, "x\n");
+  const decide = (tool: string, input: unknown, role: Role): string => {
+    const o = gateEvaluate(tool, input, wt, { env: (c) => ({ ...baseFloorEnv(c, role === "main" ? {} : { child: true }), home, agentDir: agent }), roots: () => roots(role) });
+    const r = o.result as { block?: boolean; allow?: boolean; ask?: boolean; rule?: string } | undefined;
+    return `${r ? (r.block ? "block" : r.allow ? "allow" : r.ask ? "ask" : "other") : "undecided"} ${r?.rule ?? ""} ${JSON.stringify([...(o.dangers ?? [])].sort())}`;
+  };
+  const RO = '["danger-readonly-run"]';
+  for (const [role, shellLabels] of [["builder", "[]"], ["reviewer", RO], ["explorer", RO]] as const) {
+    assert.equal(show(`cat ${cfg}`, role), `undecided  ${shellLabels}`, `${role} cat foreman.json`);
+    assert.equal(decide("read", { path: cfg }, role), "undecided  []", `${role} read foreman.json`);
+    assert.equal(show(`cat ${file}`, role), `undecided  ${shellLabels}`, `${role} cat subagent-artifacts`);
+    assert.equal(decide("read", { path: file }, role), "undecided  []", `${role} read subagent-artifacts`);
+    assert.equal(show(`grep -r x ${sub}`, role), `undecided  ${shellLabels}`, `${role} grep subagent-artifacts`);
+  }
+});
+
 test("git log|diff --output=<f> and --output <f>: refused when f lands in the worktree, or with the cwd in the worktree; free from a scratch clone into scratch", { skip: !posix }, () => {
   const REFUSED = "block child-readonly-write []";
   const FREE = "undecided  []";
