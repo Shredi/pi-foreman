@@ -475,16 +475,16 @@ A production note example: `{"host": "prod-db", "note": "production: reads and d
   | 6 | the same, otherwise (a session with UI that is not a child, any presence) | allow |
   | 7 | `allow`, effect `unknown` | ask (`unknown_effect`) |
   | 8 | `deny` citing an existing `D` entry | deny |
-  | 9 | anything else (verdict `ask`, `deny` without an entry) | ask (`judge_ask`) |
+  | 9 | anything else (verdict `ask`) | ask (`judge_ask`) |
 
-  A failure of the check (an invalid or extra-field reply, a timeout, a provider error, no model) asks with its own cause (`invalid_verdict`, `timeout`, `provider_error`, `no_model`). A remote segment the harness sees as a write always asks, even when the judge says write, you are present and the mode is `model`; local writes keep the older behaviour.
+  A failure of the check (an invalid or extra-field reply, an `allow` or `ask` that cites an entry, a `deny` with no entry or citing an entry that is not a `D` entry, a timeout, a provider error, no model) asks with its own cause (`invalid_verdict`, `wrong_entry`, `timeout`, `provider_error`, `no_model`). A remote segment the harness sees as a write always asks, even when the judge says write, you are present and the mode is `model`; local writes keep the older behaviour.
 - **The remote command of `ssh <host> <cmd>`.** The harness parses the remote command and classes each segment. The judge decides everything it cannot class; the harness only adds asks for what it can see is a write or cannot see at all:
 
   | Remote segment | Class | Read verdict, high confidence |
   |---|---|---|
   | an output redirect (`>`, `>>`, `&>`, `&>>`, `<>`, `>\|`) whose target is not the literal `/dev/null` (a non-literal target counts as not `/dev/null`); an fd dup (`2>&1`, `>&2`, `2>&-`) never counts | write-out | ask |
   | `tee`, `script`, `flock <file>` and the other writing wrappers | write-out | ask |
-  | the direct write classes `cp`, `mv`, `rm` (with literal paths), `touch`, `mkdir`, in the plain forms the harness knows (ask as `remote_write`) | write-in | ask |
+  | the direct write classes `cp`, `mv`, `rm` (with literal paths), `touch`, `mkdir`, in the plain forms the harness knows (ask as `remote_write`) | write-in or write-out (by path) | ask |
   | the effect classes write-in, write-out, build-test | as classed | ask |
   | the effect classes read, net-read | as classed | allow |
   | effect class unknown (for example an unknown program) | unknown | the judge decides |
