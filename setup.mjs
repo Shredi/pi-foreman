@@ -1119,7 +1119,7 @@ async function main(argv) {
   const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "packages.lock.json"), "utf8"));
   const agentDir = resolveAgentDir(opts.agentDir);
   guardRealHome(writeTargets({
-    home: process.env.PI_FOREMAN_HOME || os.homedir(), agentDir, platform: process.env.PI_FOREMAN_PLATFORM || process.platform,
+    home: process.env.PI_FOREMAN_HOME || os.homedir(), agentDir, platform: process.env.PI_FOREMAN_PLATFORM || process.platform, pathPlatform: process.platform,
     appHome: pickerState().allowed ? appHome() : null,
   }));
   const projectDir = process.cwd();

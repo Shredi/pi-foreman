@@ -21,14 +21,15 @@ const guard = (targets, extra = {}, home = "/fake/real-home", platform = "linux"
 test("a target in each protected place is refused under the signal", () => {
   const home = tmp("pf-rh-");
   try {
-    for (const place of protectedPlaces(home, "linux")) {
-      assert.equal(guard([place], {}, home), place);
-      assert.equal(guard([path.join(place, "x", "y")], {}, home), path.join(place, "x", "y"));
+    const host = process.platform; // real temp dirs carry the host's path flavour
+    for (const place of protectedPlaces(home, host)) {
+      assert.equal(guard([place], {}, home, host), place);
+      assert.equal(guard([path.join(place, "x", "y")], {}, home, host), path.join(place, "x", "y"));
     }
-    assert.ok(protectedPlaces(home, "linux").includes(path.join(home, ".zshrc")));
-    assert.ok(protectedPlaces(home, "linux").includes(path.join(home, "Documents", "PowerShell")));
-    assert.ok(protectedPlaces(home, "linux").includes(path.join(home, ".pi", "agent")));
-    assert.ok(protectedPlaces(home, "linux").includes(path.join(home, ".config", "herdr-app")));
+    assert.ok(protectedPlaces(home, host).includes(path.join(home, ".zshrc")));
+    assert.ok(protectedPlaces(home, host).includes(path.join(home, "Documents", "PowerShell")));
+    assert.ok(protectedPlaces(home, host).includes(path.join(home, ".pi", "agent")));
+    assert.ok(protectedPlaces(home, host).includes(path.join(home, ".config", "herdr-app")));
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -37,14 +38,14 @@ test("a target in each protected place is refused under the signal", () => {
 test("a target elsewhere is not refused, also a temp dir inside the real home outside the places", () => {
   const home = tmp("pf-rh-");
   try {
-    assert.equal(guard([path.join(os.tmpdir(), "pf-else", ".zshrc"), path.join(home, "scratch", ".zshrc"), path.join(home, ".pi", "other")], {}, home), null);
+    assert.equal(guard([path.join(os.tmpdir(), "pf-else", ".zshrc"), path.join(home, "scratch", ".zshrc"), path.join(home, ".pi", "other")], {}, home, process.platform), null);
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
 
 test("the override and a missing signal let every target through", () => {
-  const targets = [path.join("/fake/real-home", ".zshrc"), path.join("/fake/real-home", ".pi", "agent")];
+  const targets = ["/fake/real-home/.zshrc", "/fake/real-home/.pi/agent"];
   assert.equal(guard(targets, { PI_FOREMAN_ALLOW_REAL_HOME: "1" }), null);
   assert.equal(realHomeGuard({ env: {}, targets, realHome: "/fake/real-home", platform: "linux" }), null);
   assert.equal(realHomeGuard({ env: { NODE_TEST_CONTEXT: "" }, targets, realHome: "/fake/real-home", platform: "linux" }), null);
@@ -62,13 +63,19 @@ test("remove targets are guarded like write targets", () => {
   const targets = writeTargets({ env: SIGNAL, home: "/fake/real-home", agentDir: "/fake/real-home/.pi/agent", platform: "linux" });
   assert.ok(targets.includes("/fake/real-home/.zshrc"));
   assert.equal(guard(targets), "/fake/real-home/.zshrc");
-  assert.equal(guard(writeTargets({ env: SIGNAL, agentDir: "/fake/real-home/.pi/agent" })), "/fake/real-home/.pi/agent");
-  assert.equal(guard(writeTargets({ env: SIGNAL, appHome: "/fake/real-home/.config/herdr-app" })), "/fake/real-home/.config/herdr-app");
+  assert.equal(guard(writeTargets({ env: SIGNAL, agentDir: "/fake/real-home/.pi/agent", platform: "linux" })), "/fake/real-home/.pi/agent");
+  assert.equal(guard(writeTargets({ env: SIGNAL, appHome: "/fake/real-home/.config/herdr-app", platform: "linux" })), "/fake/real-home/.config/herdr-app");
+  // win32 targets use backslashes whatever the host is
+  const win = writeTargets({ env: SIGNAL, home: "C:\\Users\\real", agentDir: "C:\\Users\\real\\.pi\\agent", platform: "win32", pathPlatform: "win32" });
+  assert.ok(win.includes("C:\\Users\\real\\.zshrc"));
+  assert.equal(guard(win, {}, "C:\\Users\\real", "win32"), "C:\\Users\\real\\.zshrc");
+  assert.equal(guard(["c:\\users\\REAL\\.pi\\agent\\x"], {}, "C:\\Users\\real", "win32"), "c:\\users\\REAL\\.pi\\agent\\x");
+  assert.equal(guard(["C:\\Users\\real\\.pi\\other"], {}, "C:\\Users\\real", "win32"), null);
 });
 
 test("the PowerShell Documents query is a protected target on win32 without PI_FOREMAN_HOME and PI_FOREMAN_TEST_PS_DOCUMENTS", () => {
   const targets = writeTargets({ env: SIGNAL, home: "/fake/real-home", platform: "win32" });
-  const refused = guard(targets.filter((t) => !t.startsWith("/fake")));
+  const refused = guard(targets.filter((t) => /query/.test(t)), {}, "/fake/real-home", "win32");
   assert.match(refused, /PowerShell Documents folder query/);
   // not on another platform, and not with the home or the documents seam
   assert.ok(!writeTargets({ env: SIGNAL, home: "/fake/real-home", platform: "linux" }).some((t) => /query/.test(t)));
@@ -76,18 +83,17 @@ test("the PowerShell Documents query is a protected target on win32 without PI_F
 });
 
 test("with PI_FOREMAN_TEST_PS_DOCUMENTS the target is that path, not refused for a temp folder", () => {
-  const docs = tmp("pf-rh-docs-");
-  try {
-    const env = { ...SIGNAL, PI_FOREMAN_TEST_PS_DOCUMENTS: docs };
-    const targets = writeTargets({ env, home: "/fake/real-home", platform: "win32" });
-    assert.ok(targets.includes(path.join(docs, "PowerShell")));
-    assert.ok(!targets.some((t) => /query/.test(t)));
-    assert.equal(guard(targets.filter((t) => t.startsWith(docs)), { PI_FOREMAN_TEST_PS_DOCUMENTS: docs }), null);
-    // a Documents seam that names the real profile folder is refused
-    assert.equal(guard(writeTargets({ env: { ...SIGNAL, PI_FOREMAN_TEST_PS_DOCUMENTS: "/fake/real-home/Documents" }, platform: "win32", home: "/x" }).filter((t) => t.startsWith("/fake")), {}), "/fake/real-home/Documents/PowerShell");
-  } finally {
-    fs.rmSync(docs, { recursive: true, force: true });
-  }
+  // win32 paths are spelled out: the guard resolves them with path.win32 on any host
+  const docs = "C:\\Temp\\pf-rh-docs";
+  const home = "C:\\Users\\real";
+  const env = { ...SIGNAL, PI_FOREMAN_TEST_PS_DOCUMENTS: docs };
+  const targets = writeTargets({ env, home, platform: "win32" });
+  assert.ok(targets.includes(path.win32.join(docs, "PowerShell")));
+  assert.ok(!targets.some((t) => /query/.test(t)));
+  assert.equal(guard(targets.filter((t) => t.startsWith(docs)), {}, home, "win32"), null);
+  // a Documents seam that names the real profile folder is refused
+  const seam = writeTargets({ env: { ...SIGNAL, PI_FOREMAN_TEST_PS_DOCUMENTS: `${home}\\Documents` }, platform: "win32", home: "C:\\x" }).filter((t) => t.startsWith(home));
+  assert.equal(guard(seam, {}, home, "win32"), `${home}\\Documents\\PowerShell`);
 });
 
 test("realHomeDir uses os.userInfo, and os.homedir when userInfo throws", () => {
