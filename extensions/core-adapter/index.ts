@@ -90,7 +90,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { dueReasons, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -445,6 +445,10 @@ interface Session {
   reviewFailOpen: boolean;
   /** The session-wide high-stakes state (highstakes.ts); persisted with the ceremony state. */
   hs: HighStakes;
+  /** The sorted reason set the finish gate last held once for with the due-review reminder (persisted; not restored in a fork). */
+  hsReminded: string[] | null;
+  /** Reason sets the finish let go with the review still due (memory; one owner notice each). */
+  hsSkipped: Set<string>;
   /** Real path of the session's own checkout root (read once). */
   hsOwn: string | null;
   /** Pending HEAD reads of `reviews`; the PR gate waits for it. */
@@ -1047,6 +1051,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       reviews: [],
       reviewFailOpen: false,
       hs: new HighStakes(),
+      hsReminded: null,
+      hsSkipped: new Set(),
       hsOwn: null,
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
@@ -1231,6 +1237,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       sentBackHeads: s.sentBackHeads,
       reworkSeen: s.reworkSeen,
       highStakes: s.hs.snapshot(),
+      hsReminded: s.hsReminded,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1448,7 +1455,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The finish gate's high-stakes entries and hint (the pass only once every ledger item but V is marked). */
-  async function hsFinish(s: Session): Promise<{ missing: string[]; hint: string }> {
+  async function hsFinish(s: Session): Promise<ReturnType<typeof finishNeeds>> {
     if (!hsModel(s)) return { missing: [], hint: "" };
     hsRefresh(s);
     const file = boundLedger(s.markerDir, s.id);
@@ -1503,6 +1510,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (e.highStakes && s.hs.isEmpty()) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
+    if (reason !== "fork") s.hsReminded = e.hsReminded ?? null;
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
@@ -4987,11 +4995,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const to = deliveredSendTo(event);
       if (to) onSendDelivered(owner, to);
     }
+    // A PR tool the review gate covers: while a high-stakes review is due, its answer carries the same reminder as the receipts (never a refusal).
+    const prNote = owner && !owner.isChild && !event.isError && isPrToolName(event.toolName) && get(owner.config.config, "ceremony.reviewBeforePr") !== false && hsRequired(owner) ? `pi-foreman: ${dueReminder(hsDue(owner))}.` : "";
     const readNote = owner?.readNotices.get(event.toolCallId);
     owner?.readNotices.delete(event.toolCallId);
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
-    const withNote = () => (readNote || qHint || planFormNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : [])] } : undefined);
+    const withNote = () => (readNote || qHint || planFormNote || prNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : []), ...(prNote ? [{ type: "text" as const, text: prNote }] : [])] } : undefined);
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
     if (owner && !owner.isChild && !event.isError && owner.hs.hasRuns() && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
@@ -5302,9 +5312,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const rejected = s.ceremony.tier === "heavy" && s.plan?.status === "rejected";
     if (rejected) missing.push("plan");
     // High stakes (highstakes.ts): the pass that must run and the FAIL not yet cleared, for standard and heavy sessions.
-    const hsNeeds = s.ceremony.tier === "standard" || s.ceremony.tier === "heavy" ? await hsFinish(s) : { missing: [] as string[], hint: "" };
+    const hsNeeds: ReturnType<typeof finishNeeds> = s.ceremony.tier === "standard" || s.ceremony.tier === "heavy" ? await hsFinish(s) : { missing: [], hint: "" };
     missing.push(...hsNeeds.missing);
-    if (missing.length === 0) return undefined;
+    if (missing.length === 0) return hsNeeds.remind ? await hsReminderHold(s, ctx, entries, hsNeeds.remind, hsNeeds.reasons ?? []) : undefined;
     // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
     if (!rejected && s.steps.builder === 0 && s.tally.files.length === 0) {
       const porcelain = await git(ctx.cwd, ["status", "--porcelain"]);
@@ -5332,9 +5342,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.finishRefusals++;
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
-      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(s.reviewGates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
+      entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? openHint(s.reviewGates, { cwd: s.cwd, own: await hsOwnRoot(s) }) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + (hsNeeds.remind ? ` ${hsNeeds.remind}.` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],
       continue: true,
     };
+  }
+
+  /**
+   * The finish with every other step done and a high-stakes review still due: held once per reason set with the reminder (not a refusal: it is not counted),
+   * then let go with an owner notice. A session that changed nothing is never held.
+   */
+  async function hsReminderHold<E>(s: Session, ctx: ExtensionContext, entries: E[], remind: string, reasons: string[]) {
+    if (s.steps.builder === 0 && s.tally.files.length === 0 && noChange(s.steps, s.tally.files.length, await git(ctx.cwd, ["status", "--porcelain"]))) return undefined;
+    const key = reasons.join(",");
+    if (s.hsReminded?.join(",") !== key) {
+      s.hsReminded = reasons;
+      persistCeremonyState(s);
+      s.trace?.emit({ event: "high_stakes_reminded", reasons: key });
+      return { entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: `pi-foreman: ${remind}; otherwise finish again.`, display: true }], continue: true };
+    }
+    if (!s.hsSkipped.has(key)) {
+      s.hsSkipped.add(key);
+      s.trace?.emit({ event: "high_stakes_skipped", reasons: key });
+      ctx.ui.notify(`pi-foreman: finished while a high-stakes review is due (${key})`, "info");
+    }
+    return undefined;
   }
 
   /** Pushed branches without a PR: evaluated in the background, one display-only warning each (pushnotice.ts). */

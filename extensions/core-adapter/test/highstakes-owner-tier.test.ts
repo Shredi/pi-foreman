@@ -1,10 +1,9 @@
 // The heavy reason is dropped by the owner's /ceremony tier below heavy, not by whichever source set the tier last.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { build, commitIn, pr, setup, settle, stakes } from "./_hsrig.ts";
+import { build, commitIn, prNote, REMINDER, setup, settle, stakes, traces } from "./_hsrig.ts";
 
-const NOT_DUE = /high_stakes/;
-const FINISH = /a high-stakes review must run/;
+const FINISH = /a \[high-stakes\] review is due/;
 const finishLedger = () => "# Ledger: x\n\n- [x] 1. item\n- [x] V. fresh-eyes verification passed\n";
 
 // One session walks the owner's tiers in turn: each step is judged on the gates after it.
@@ -13,24 +12,25 @@ test("the owner's /ceremony standard after heavy fired drops the reason at both 
   commitIn(w.project, "src/a/x.ts");
   await build(a);
   assert.deepEqual(await stakes(w), ["heavy"]);
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/, "the PR gate asks while heavy");
-  assert.match(await settle(a), FINISH, "the finish gate asks while heavy");
+  assert.match(await prNote(a), REMINDER, "the PR tool reminds while heavy");
+  assert.match(await settle(a), FINISH, "the finish gate holds once while heavy");
 
   await a.command("ceremony", "standard");
   await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
   await a.writeLedger(finishLedger());
-  assert.doesNotMatch(await pr(a), NOT_DUE, "the PR gate no longer asks");
-  assert.doesNotMatch(await settle(a), FINISH, "the finish gate no longer asks");
+  assert.equal(await prNote(a), "", "the PR tool no longer reminds");
+  assert.doesNotMatch(await settle(a), FINISH, "the finish gate no longer holds");
 
   await a.command("ceremony", "heavy");
   const triage = await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
   assert.match(JSON.stringify(triage), /foreman_triage never lowers a recorded or escalated tier/);
-  assert.match(await pr(a), NOT_DUE);
-  assert.match(await settle(a), FINISH);
+  assert.match(await prNote(a), REMINDER);
+  assert.equal(await settle(a), "", "the same reason set was held once already: the finish goes through");
+  assert.equal((await traces(w, "high_stakes_skipped")).length, 1);
 
   await a.command("ceremony", "trivial");
   await build(a);
   await build(a);
-  assert.doesNotMatch(await pr(a), NOT_DUE);
+  assert.equal(await prNote(a), "");
   assert.doesNotMatch(await settle(a), FINISH);
 });

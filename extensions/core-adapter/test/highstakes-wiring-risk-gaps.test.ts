@@ -5,14 +5,15 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { build, commitIn, end, git, hsPass, hsRun, launch, pr, setup, settle, stakes, worktree } from "./_hsrig.ts";
+import { build, commitIn, end, git, hsPass, hsRun, launch, pr, prNote, REMINDER, setup, settle, stakes, traces, worktree } from "./_hsrig.ts";
 import type { SetupOpts } from "./_hsrig.ts";
 
 const SIZING_OFF: SetupOpts = { cfg: { ladder: { sizing: { enabled: false } } } };
 const sized = (risk: string[]) => ({ size: { files: ["src/a/x.ts"] }, risk });
 /** The launch fields of a risk tag: with sizing on a size field is needed too, with sizing off the tag alone is read. */
 const tagged = (risk: string[], sizing: boolean) => (sizing ? sized(risk) : { risk });
-const refused = (text: string) => assert.match(text, /\[pr_refused:high_stakes_required\]/);
+/** A due review: the PR tool result carries the reminder (`text` is `prNote`'s); the gate itself refuses nothing. */
+const refused = (text: string) => assert.match(text, REMINDER);
 
 const TAGS = ["security", "permission", "guard", "concurrency", "design"];
 
@@ -38,7 +39,8 @@ for (const sizing of [true, false]) {
       assert.equal(await settle(a), "");
       // a heavy builder launch needs an approved plan; the tier is raised after the build (the gates read it)
       await a.command("ceremony", "heavy");
-      const heavy = await pr(a);
+      assert.equal(await pr(a), "", "a due review refuses nothing");
+      const heavy = await prNote(a);
       refused(heavy);
       assert.match(heavy, /the task is heavy/);
       await a.command("ceremony", "standard");
@@ -56,25 +58,25 @@ for (const sizing of [true, false]) {
     const fired = await stakes(w);
     assert.equal(fired.length, sizing ? 2 : 1, "the tags fire once, after the heavy tier of the sizing-on session");
     assert.deepEqual(String(fired.at(-1)).split(",").sort(), [...TAGS].sort(), "every tag is a reason");
-    const text = await pr(a);
+    const text = await prNote(a);
     refused(text);
     for (const tag of TAGS) assert.match(text, new RegExp(`\\b${tag}\\b`));
     assert.match(text, /risk tag /);
     if (sizing) {
       // tier heavy joins the tags, then the owner's /ceremony standard drops only the heavy reason
       await a.command("ceremony", "heavy");
-      assert.match(await pr(a), /risk tag .*; the task is heavy/);
+      assert.match(await prNote(a), /risk tag .*; the task is heavy/);
       await a.command("ceremony", "standard");
-      const lowered = await pr(a);
+      const lowered = await prNote(a);
       refused(lowered);
       assert.match(lowered, /risk tag /);
       assert.doesNotMatch(lowered, /the task is heavy/, "only the heavy reason is dropped");
-      assert.match(await settle(a), /a high-stakes review must run/);
+      assert.match(await settle(a), /a \[high-stakes\] review is due/, "the finish holds once");
       await hsPass(a);
       git(w.project, "checkout", "-q", "main");
       git(w.project, "merge", "-q", "--ff-only", "feature");
       assert.doesNotMatch(await pr(a), /high_stakes/, "main holds the reviewed head");
-      assert.doesNotMatch(await settle(a), /high-stakes review must run/);
+      assert.doesNotMatch(await settle(a), /review is due/);
     }
   });
 }
@@ -98,7 +100,7 @@ test("heavy with no builder and no change asks for none; a builder launched whil
     await build(a, {}, dir);
   }
   assert.deepEqual(await stakes(w), ["heavy"]);
-  const text = await pr(a, { head: "w1" });
+  const text = await prNote(a, { head: "w1" });
   refused(text);
   assert.match(text, /the task is heavy/);
   await hsPass(a, wts[1]);
@@ -120,14 +122,14 @@ for (const remote of [true, false]) {
     const wt = worktree(w, "wbr");
     commitIn(wt, "src/a/x.ts");
     await build(a, sized(["design"]), wt);
-    refused(await pr(a, { head: "wbr" }));
+    refused(await prNote(a, { head: "wbr" }));
     await hsPass(a, wt);
     assert.doesNotMatch(await pr(a, { head: "wbr" }), /high_stakes/);
 
     git(w.project, "merge", "-q", "--ff-only", "wbr");
     const none = async (what: string) => {
       assert.doesNotMatch(await pr(a), /high_stakes/, `PR from main: ${what}`);
-      assert.doesNotMatch(await settle(a), /high-stakes review must run|high-stakes FAIL/, `finish gate: ${what}`);
+      assert.doesNotMatch(await settle(a), /review is due|high-stakes FAIL/, `finish gate: ${what}`);
     };
     await none("main holds the reviewed head");
     commitIn(w.project, "src/a/more.ts");
@@ -167,7 +169,7 @@ test("a FAIL whose worktree was removed keeps the PR gate and the finish gate cl
 // ---------------------------------------------------------------- only the owner lowers the heavy reason
 
 const NOT_DUE = /high_stakes/;
-const FINISH = /a high-stakes review must run/;
+const FINISH = /a \[high-stakes\] review is due/;
 /** A complete ledger (every item but V marked) for the finish gate; `tier` adds a header line. */
 const finishLedger = (tier?: string) => `# Ledger: x\n${tier ? `Tier: ${tier}\n` : ""}\n- [x] 1. item\n- [x] V. fresh-eyes verification passed\n`;
 
@@ -176,21 +178,23 @@ async function defaultHeavy(t: Parameters<typeof setup>[0]) {
   commitIn(r.w.project, "src/a/x.ts");
   await build(r.a);
   assert.deepEqual(await stakes(r.w), ["heavy"]);
-  refused(await pr(r.a));
+  refused(await prNote(r.a));
   return r;
 }
 
 test("default-heavy: neither the foreman's own foreman_triage standard nor a ledger Tier: standard line drops the heavy reason; the owner's /ceremony standard does", async (t) => {
-  const { a } = await defaultHeavy(t);
+  const { a, w } = await defaultHeavy(t);
   await a.tool("foreman_triage")!.execute("tr", { tier: "standard", reason: "test" }, undefined, undefined, a.ctx);
   await a.writeLedger(finishLedger());
-  refused(await pr(a));
-  assert.match(await settle(a), FINISH);
+  refused(await prNote(a));
+  assert.match(await settle(a), FINISH, "the first check of the reason set holds once");
   await a.writeLedger(finishLedger("standard"));
-  refused(await pr(a));
-  assert.match(await settle(a), FINISH);
+  refused(await prNote(a));
+  assert.equal(await settle(a), "", "the same reason set: the finish goes through");
+  assert.equal((await traces(w, "high_stakes_skipped")).length, 1, "and the owner is told once");
   await a.command("ceremony", "standard");
   await a.writeLedger(finishLedger());
   assert.doesNotMatch(await pr(a), NOT_DUE);
+  assert.equal(await prNote(a), "", "no reminder once the owner lowered the tier");
   assert.doesNotMatch(await settle(a), FINISH);
 });

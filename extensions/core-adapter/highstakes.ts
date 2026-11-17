@@ -412,8 +412,8 @@ export function unrevisedRefusal(s: HsState, o: { resume: boolean; builder: bool
 export type HsPrReason = "high_stakes_required" | "high_stakes_failed";
 
 /**
- * The PR gate over the session: `high_stakes_failed` while a FAIL stands uncleared or a head is the head of a high-stakes FAIL, `high_stakes_required`
- * while a pass is due (`due`: the counting reasons). Any PASS of the session satisfies it for every PR. Null when the PR may open.
+ * The PR gate over the session: `high_stakes_failed` while a FAIL stands uncleared or a head is the head of a high-stakes FAIL. A due pass (`due`: the
+ * counting reasons) is no refusal: it only reminds (`dueReminder`). Null when the PR may open.
  */
 export function prRefusal(s: HsState, due: readonly string[], heads: readonly string[], own: string): { reason: HsPrReason; message: string } | null {
   const refuse = (reason: HsPrReason, why: string): { reason: HsPrReason; message: string } => ({ reason, message: `pi-foreman: pull request creation refused [pr_refused:${reason}]: ${why}` });
@@ -421,25 +421,30 @@ export function prRefusal(s: HsState, due: readonly string[], heads: readonly st
   if (r && uncleared(s)) return refuse("high_stakes_failed", `the high-stakes review${whereOf(r.cwd, own)} FAILED and no normal reviewer PASS after the revision has cleared it${goneNote(r.cwd)}. Revise, pass the normal reviewer (it gets the findings), then retry.`);
   const bad = s.runs.find((x) => x.verdict === "fail" && x.head !== null && heads.includes(x.head));
   if (bad) return refuse("high_stakes_failed", `the head ${bad.head!.slice(0, 12)} is the head of a high-stakes FAIL${whereOf(bad.cwd, own)}; it never opens the gate. Revise, pass the normal reviewer on the new head, then retry.`);
-  if (required(s, due)) return refuse("high_stakes_required", `this change needs the${passNo(s)} high-stakes review (${reasonsText(due)}) and it has not run. Launch one reviewer with ${HS_TAG} on the whole change, in the checkout that holds it, then retry.`);
-  return null;
+  return null; // a due review only reminds (dueReminder), it never refuses
 }
 
-/** The finish-gate entries: the pass that must run (only once every ledger item but V is marked) and the FAIL not yet cleared. */
-export function finishNeeds(s: HsState, o: { due: readonly string[]; ledgerDone: boolean; own: string }): { missing: string[]; hint: string } {
+/** The reminder for a due pass (receipts, PR tool results, the finish gate): the reasons and that the foreman judges whether the change warrants it. */
+export const dueReminder = (due: readonly string[]): string => `a ${HS_TAG} review is due (${reasonsText(due)}); launch it if the change warrants it`;
+
+/**
+ * The finish-gate entries: the FAIL not yet cleared. A due pass (only once every ledger item but V is marked) is no entry: `remind` carries its reminder, `reasons`
+ * the sorted reason set it is for (the finish holds once per set).
+ */
+export function finishNeeds(s: HsState, o: { due: readonly string[]; ledgerDone: boolean; own: string }): { missing: string[]; hint: string; remind?: string; reasons?: string[] } {
   const r = lastRun(s);
   if (r && uncleared(s)) return { missing: [FAIL_ENTRY], hint: `(the high-stakes review${whereOf(r.cwd, o.own)} FAILED${goneNote(r.cwd)}: revise, then pass the normal reviewer; it gets the findings)` };
-  if (required(s, o.due) && o.ledgerDone) return { missing: [RUN_ENTRY], hint: `(${LAUNCH}; ${reasonsText(o.due)})` };
+  if (required(s, o.due) && o.ledgerDone) return { missing: [], hint: "", remind: dueReminder(o.due), reasons: [...o.due].sort() };
   return { missing: [], hint: "" };
 }
 
 export const RUN_ENTRY = "a high-stakes review must run";
 export const FAIL_ENTRY = "revise after the high-stakes FAIL, then pass the normal reviewer";
 
-/** An open PR's readiness: `wip` while a FAIL stands or the head failed, `unreviewed` while a pass is due, else null (the normal rule decides). */
-export function readyOverride(s: HsState, due: readonly string[], head: string): "wip" | "unreviewed" | null {
+/** An open PR's readiness: `wip` while a FAIL stands or the head failed, else null (the normal rule decides; a due pass holds nothing). */
+export function readyOverride(s: HsState, _due: readonly string[], head: string): "wip" | "unreviewed" | null {
   if (uncleared(s) || s.runs.some((r) => r.verdict === "fail" && r.head !== null && r.head === head)) return "wip";
-  return required(s, due) ? "unreviewed" : null;
+  return null;
 }
 
 /** An open PR's review facts with the high-stakes hold of readyOverride: `wip` wins; `unreviewed` replaces any answer but `wip`. */

@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import {
-  dueReasons, emptyState, findingsBlock, finishNeeds, HighStakes, highStakesConfig, hsEmpty, hsStateOfEntry, HS_RISKS, launchRefusal, mergeBaseOf, prRefusal, readyOverride,
+  dueReasons, dueReminder, emptyState, findingsBlock, finishNeeds, HighStakes, highStakesConfig, hsEmpty, hsStateOfEntry, HS_RISKS, launchRefusal, mergeBaseOf, prRefusal, readyOverride,
   reasonsText, repoKeyOf, required, reviewBaseOf, stakesTrace, taskLine, uncleared, unrevisedRefusal, used, FAIL_ENTRY, RUN_ENTRY, type HsLaunchInput, type HsRun, type HsState,
 } from "../highstakes.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
@@ -326,10 +326,9 @@ test("unrevisedRefusal: a normal reviewer in the FAIL's checkout waits for the r
 
 // ---------------------------------------------------------------- PR gate, finish gate, readiness
 
-test("prRefusal: required while the pass is due; silent with no reason; any pass opens it", () => {
-  const r = prRefusal(st(), DUE, [H1], OWN);
-  assert.equal(r?.reason, "high_stakes_required");
-  assert.match(r?.message ?? "", /this change needs the high-stakes review \(risk tag security\) and it has not run\. Launch one reviewer with \[high-stakes\] on the whole change, in the checkout that holds it, then retry\./);
+test("prRefusal: a due pass refuses nothing (it only reminds); silent with no reason; any pass opens it", () => {
+  assert.equal(prRefusal(st(), DUE, [H1], OWN), null, "due and not run: the PR may open");
+  assert.equal(dueReminder(DUE), "a [high-stakes] review is due (risk tag security); launch it if the change warrants it");
   assert.equal(prRefusal(emptyState(), [], [H1], OWN), null);
   assert.equal(prRefusal(st({ runs: [run("pass", { cwd: "/w/wt" })] }), DUE, [H1], OWN), null, "a pass in another checkout opens every PR");
   assert.equal(prRefusal(st({ runs: [run("pass")] }), DUE, ["c".repeat(40), H2], "/elsewhere"), null);
@@ -339,8 +338,7 @@ test("prRefusal: an uncleared FAIL, or a head that is a FAIL head, is refused; t
   assert.equal(prRefusal(st({ runs: [run("fail")] }), DUE, [H2], OWN)?.reason, "high_stakes_failed");
   const cleared = st({ runs: [run("fail", { revised: true, cleared: true })] });
   assert.equal(prRefusal(cleared, DUE, [H1], OWN)?.reason, "high_stakes_failed", "the FAIL head never opens, even cleared");
-  assert.equal(prRefusal(cleared, DUE, [H2], OWN)?.reason, "high_stakes_required", "the second pass is required at the PR gate");
-  assert.match(prRefusal(cleared, DUE, [H2], OWN)?.message ?? "", /second high-stakes review/);
+  assert.equal(prRefusal(cleared, DUE, [H2], OWN), null, "the second pass is only a reminder at the PR gate");
   const second = st({ runs: [run("fail", { revised: true, cleared: true }), run("fail", { head: H2 })] });
   assert.equal(prRefusal(second, DUE, [H2], OWN)?.reason, "high_stakes_failed");
   const secondCleared = st({ runs: [run("fail", { revised: true, cleared: true }), run("fail", { head: H2, revised: true, cleared: true })] });
@@ -366,16 +364,19 @@ test("finishNeeds: the pass is asked only once the ledger is done; the FAIL entr
   const o = { own: OWN, due: DUE };
   assert.deepEqual(finishNeeds(st(), { ...o, ledgerDone: false }), { missing: [], hint: "" });
   const asked = finishNeeds(st(), { ...o, ledgerDone: true });
-  assert.deepEqual(asked.missing, [RUN_ENTRY]);
-  assert.match(asked.hint, /launch one reviewer with \[high-stakes\] on the whole change, in the checkout that holds it/);
-  assert.match(asked.hint, /risk tag security/);
-  const named = finishNeeds(st(), { own: OWN, due: ["design", "heavy"], ledgerDone: true });
-  assert.match(named.hint, /risk tag design/);
-  assert.match(named.hint, /the task is heavy/);
+  assert.deepEqual(asked.missing, [], "a due pass is no finish entry");
+  assert.equal(asked.remind, dueReminder(DUE));
+  assert.deepEqual(asked.reasons, ["security"]);
+  const named = finishNeeds(st(), { own: OWN, due: ["heavy", "design"], ledgerDone: true });
+  assert.match(named.remind ?? "", /risk tag design/);
+  assert.match(named.remind ?? "", /the task is heavy/);
+  assert.deepEqual(named.reasons, ["design", "heavy"], "the reason set is sorted");
+  assert.equal(finishNeeds(st(), { ...o, ledgerDone: false }).remind, undefined, "no reminder before the ledger is done");
   const failed = finishNeeds(st({ runs: [run("fail")] }), { ...o, ledgerDone: false });
   assert.deepEqual(failed.missing, [FAIL_ENTRY]);
   const second = finishNeeds(st({ runs: [run("fail", { revised: true, cleared: true })] }), { ...o, ledgerDone: true });
-  assert.deepEqual(second.missing, [RUN_ENTRY], "the second pass is asked once the ledger is done");
+  assert.deepEqual(second.missing, [], "the second pass is a reminder only");
+  assert.equal(second.remind, dueReminder(DUE));
   const sib = finishNeeds(st({ runs: [run("fail", { cwd: "/w/removed/s2" })] }), { ...o, ledgerDone: true });
   assert.deepEqual(sib.missing, [FAIL_ENTRY]);
   assert.match(sib.hint, /checkout \/w\/removed\/s2/);
@@ -385,13 +386,13 @@ test("finishNeeds: the pass is asked only once the ledger is done; the FAIL entr
   assert.deepEqual(finishNeeds(st(), { own: OWN, due: [], ledgerDone: true }).missing, [], "no counting reason: nothing is asked");
 });
 
-test("readyOverride: wip while a FAIL stands or on a FAIL head, unreviewed while a pass is due, else the normal rule", () => {
+test("readyOverride: wip while a FAIL stands or on a FAIL head, a due pass holds nothing, else the normal rule", () => {
   assert.equal(readyOverride(st({ runs: [run("pass")] }), DUE, H1), null);
-  assert.equal(readyOverride(st(), DUE, H1), "unreviewed");
+  assert.equal(readyOverride(st(), DUE, H1), null);
   assert.equal(readyOverride(st({ runs: [run("fail")] }), DUE, H2), "wip");
   const cleared = st({ runs: [run("fail", { revised: true, cleared: true })] });
   assert.equal(readyOverride(cleared, DUE, H1), "wip", "never on the head of a high-stakes FAIL");
-  assert.equal(readyOverride(cleared, DUE, H2), "unreviewed", "the second pass is due");
+  assert.equal(readyOverride(cleared, DUE, H2), null, "the second pass is due: no hold");
   assert.equal(readyOverride(st(), [], H1), null);
   assert.equal(readyOverride(emptyState(), [], H1), null);
 });

@@ -42,7 +42,7 @@ The ledger is the scope source. The adapter prepends the ledger text to every `r
 
 The review record in the session keeps the occasion of the review (`item`, `pre-pr` and so on). A record from an older session entry has none and never counts as a `[pre-pr]` PASS.
 
-A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), except that a risky change also needs its [high-stakes review](#high-stakes) first, and an open PR is held while that pass is due.
+A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), and a due [high-stakes review](#high-stakes) only reminds (the PR tool's answer carries the reminder); an uncleared high-stakes FAIL still holds.
 
 ## Verdict file
 
@@ -272,17 +272,19 @@ Once the normal PASS cleared the FAIL, a second and last high-stakes pass is req
 revised change. If the second pass fails too, the same steps follow, but no third pass: the normal PASS after the revision
 opens the gate, and the foreman tells the owner in one line that the second high-stakes review failed and on what.
 
-**Gates.** Once the normal head test passed, `pr_create` is refused with `pr_refused:high_stakes_required` while a pass is
-due (a reason counts and no pass yet, or one cleared FAIL), through the pack's `pr_create` and foreign PR tools alike. The
-state is the session's: any high-stakes PASS of the session satisfies the requirement for every PR, so a pull request from an
-unrelated branch or a second repository opens too, and an uncleared FAIL in one checkout also refuses `pr_create {cwd}` for
-a sibling. The refusal names the reasons and the checkout of a FAIL when it is not the session's own. With `ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish
-gate adds "a high-stakes review must run" for standard and heavy sessions, for the first and the second pass, but asks only
-once every ledger item except V is marked (no bound ledger, or an unreadable one, counts as marked); the FAIL entry does
-not depend on the ledger. A session that changed nothing is not asked. A PR that is already open is held session-wide:
-its readiness answers `unreviewed` while a pass is due and `wip` while a FAIL stands uncleared or
-when the PR head is the head of a high-stakes FAIL. Under the draft flow the PR then goes back to draft until the pass ran
-and passed, or the FAIL was cleared and the head moved; a PR from one checkout is held by the state of the session. A PR opened from the shell is not refused; the rules text carries the duty.
+**Gates.** A due pass (a reason counts and no pass yet, or one cleared FAIL) refuses nothing: the answer of the pack's
+`pr_create` and of foreign PR tools carries "a [high-stakes] review is due (<reasons>); launch it if the change warrants
+it", and so does the finish message. The state is the session's: any high-stakes PASS of the session satisfies the
+requirement for every PR. An uncleared FAIL in one checkout still refuses `pr_create` (`pr_refused:high_stakes_failed`),
+also `pr_create {cwd}` for a sibling; the refusal names the checkout of the FAIL when it is not the session's own. With
+`ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish gate holds a standard or heavy
+session once per set of reasons (once every ledger item except V is marked; no bound ledger, or an unreadable one, counts
+as marked) with the reminder, then lets the next finish go with a one-line owner notice and the trace
+`high_stakes_skipped`; a new reason holds once more. The hold is no refusal and does not count toward the two per prompt.
+The FAIL entry of the finish gate does not depend on the ledger. A session that changed nothing is not held. A PR that is
+already open is held session-wide only by a FAIL: its readiness answers `wip` while a FAIL stands uncleared or when the PR
+head is the head of a high-stakes FAIL; a due pass never changes it. Under the draft flow the PR then goes back to draft until
+the FAIL was cleared and the head moved; a PR from one checkout is held by the state of the session. A PR opened from the shell is not refused; the rules text carries the duty.
 
 **Traces and the PR body.** `review_stakes {level: high, reasons}` is written when a reason fires for the first time in the
 session (a risk tag, `heavy`, `foreman`): the pass is then required. `role_launch` and

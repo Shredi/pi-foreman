@@ -92,6 +92,8 @@ export interface CeremonyStateEntry {
   reworkSeen?: number;
   /** The session-wide high-stakes state (highstakes.ts); absent in an older entry (loads as empty); an array of per-checkout records is migrated on load. */
   highStakes?: HsState;
+  /** The sorted reason set the finish gate held once for with a high-stakes reminder (index.ts ceremonyFinishGate); absent: none. */
+  hsReminded?: string[];
 }
 
 /** Heads whose newest code verdict is a `[pre-pr]` PASS. */
@@ -121,7 +123,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; hsReminded?: readonly string[] | null }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -139,6 +141,7 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.sentBackHeads && (o.sentBackHeads.length > 0 || o.sentBack) ? { sentBackHeads: [...o.sentBackHeads] } : {}),
     ...(o.reworkSeen ? { reworkSeen: o.reworkSeen } : {}),
     ...(o.highStakes && !hsEmpty(o.highStakes) ? { highStakes: JSON.parse(JSON.stringify(o.highStakes)) as HsState } : {}),
+    ...(o.hsReminded && o.hsReminded.length > 0 ? { hsReminded: [...o.hsReminded] } : {}),
   };
 }
 
@@ -184,6 +187,10 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     if (rw) out.reworkSeen = rw;
     const hs = hsStateOfEntry(d.highStakes);
     if (hs && !hsEmpty(hs)) out.highStakes = hs;
+    if (Array.isArray(d.hsReminded)) {
+      const r = (d.hsReminded as unknown[]).filter((x): x is string => typeof x === "string" && x !== "");
+      if (r.length > 0) out.hsReminded = r;
+    }
     return out;
   }
   return null;

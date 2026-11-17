@@ -69,6 +69,11 @@ const settle = async (a: Rig): Promise<string> => {
   return (r?.entries ?? []).find((e) => e.customType === "pi-foreman-ceremony-gate")?.content ?? "";
 };
 const pr = async (a: Rig): Promise<string> => (await a.checkCall(PR_TOOL, {}))?.reason ?? "";
+/** What the adapter adds to a successful PR tool result: the due-review reminder, "" when none. */
+const prNote = async (a: Rig): Promise<string> => {
+  const r = (await a.fire("tool_result", { toolName: PR_TOOL, toolCallId: `pn${Math.random()}`, input: {}, details: {}, content: [{ type: "text", text: "created" }], isError: false })) as { content?: { text?: string }[] } | undefined;
+  return (r?.content ?? []).map((c) => c.text ?? "").filter((x) => x !== "created").join("\n");
+};
 const builder = async (a: Rig, extra: Record<string, unknown> = {}) => end(a, await launch(a, "builder", "build the widget", extra), "builder", "done");
 const normal = async (a: Rig, verdict: "PASS" | "FAIL", task = "[pre-pr] review the branch") => {
   const s = await launch(a, "reviewer", task);
@@ -174,13 +179,13 @@ test("item 1: highStakes.model replaces the model of no other reviewer launch (i
 test("item 4/8: a risky change: the PR gate refuses until the pass ran; the trigger is traced once; the PASS opens the gate and writes no normal review record", async (t) => {
   const { w, a } = await setup(t);
   await built(w, a);
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
-  assert.match(await pr(a), /Launch one reviewer with \[high-stakes\] on the whole change, in the checkout that holds it/);
+  assert.equal(await pr(a), "", "a due review refuses nothing");
+  assert.match(await prNote(a), /a \[high-stakes\] review is due \(risk tag design\); launch it if the change warrants it/);
   const fired = await traces(w, "review_stakes");
   assert.equal(fired.length, 1, "traced once");
   assert.deepEqual(fired[0], { ...fired[0], level: "high", reasons: "design" });
   assert.equal("lines" in fired[0] || "modules" in fired[0] || "files" in fired[0] || "base" in fired[0], false, "no size facts");
-  assert.match(await settle(a), /a high-stakes review must run/, "the finish gate asks for the pass too");
+  assert.match(await settle(a), /a \[high-stakes\] review is due \(risk tag design\); launch it if the change warrants it; otherwise finish again/, "the finish gate holds once with the reminder");
   // the record of the normal PASS is written by an async chain (git calls); wait for it so a late write is not counted as the pass's
   const stop = Date.now() + 15000;
   while ((await traces(w, "review_recorded")).length < 1 && Date.now() < stop) await tick(100);
@@ -233,9 +238,9 @@ test("item 6: a FAIL: the PR gate and the finish gate hold, a normal reviewer wa
   const later = await launch(a, "reviewer", "[second-opinion] ok");
   assert.doesNotMatch(String(later.input.task), /high-stakes findings/);
   await end(a, later, "reviewer", "Overall verdict: PASS");
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/);
-  assert.match(await pr(a), /second high-stakes review/);
-  assert.match(await settle(a), /a high-stakes review must run/);
+  assert.equal(await pr(a), "", "the second pass is due: no refusal");
+  assert.match(await prNote(a), /a \[high-stakes\] review is due/);
+  assert.match(await settle(a), /a \[high-stakes\] review is due/, "the finish holds once for the second pass");
   const pass = await hsPass(a, "PASS");
   assert.equal(pass.blocked, null, String(pass.blocked));
   assert.equal(await pr(a), "");
