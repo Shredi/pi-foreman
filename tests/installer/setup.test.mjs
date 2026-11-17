@@ -1347,7 +1347,7 @@ test("a recorded unknown profile warns and skips the picker", () => {
 test("--addon background-tasks runs the exact pi install, records managed.addons and prints the shell-profile env hint", () => {
   const env = fresh();
   seed(env);
-  const r = run(env, ["--addon", "background-tasks"], { ...NO_PICKER, PI_FOREMAN_HOME: undefined, HOME: env.base, USERPROFILE: env.base });
+  const r = run(env, ["--addon", "background-tasks"], { ...NO_PICKER, PI_FOREMAN_HOME: undefined, HOME: env.base, USERPROFILE: env.base, PI_FOREMAN_TEST_PS_DOCUMENTS: path.join(env.base, "Documents") });
   assert.equal(r.code, 0, r.out);
   assert.deepEqual(installs(env), [["install", "npm:pi-background-tasks@2.6.10"]]);
   assert.match(r.out, /custom agent dir, your shell profile is left alone; set PI_BG_FEATURES=process permanently yourself, Pi reads it when it starts/);

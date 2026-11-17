@@ -307,7 +307,7 @@ test("setup on win32: a dry run and --no-env write nothing; --no-resume-hook and
   assert.match(d.out, /resume hook: not written to .*PowerShell.*: PowerShell 7 blocks profile scripts \(policy Restricted\); to enable: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then run foreman setup again/);
   assert.deepEqual(fs.readdirSync(dry.home), []);
   const custom = fresh();
-  const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home });
+  const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home, PI_FOREMAN_TEST_PS_DOCUMENTS: path.join(custom.home, "Documents"), PI_FOREMAN_TEST_PS_POLICY: "pwsh=RemoteSigned,powershell=RemoteSigned" });
   assert.match(c.out, /wrote the pi-foreman resume block to .*Microsoft\.PowerShell_profile\.ps1/, "a custom agent dir writes the block now (D34)");
   assert.ok(fs.readFileSync(profile(custom.home, "pwsh"), "utf8").includes(`'${custom.agentDir}'`));
   const noEnv = fresh();
