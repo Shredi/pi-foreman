@@ -1564,7 +1564,7 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-forge", reason: "changes something on the code forge (merge, close, comment, create or delete, a non-GET API call)", test: segs(forgeSeg) },
   { name: "danger-publish", reason: "publishes a package, image or release", test: segs(publishSeg) },
   { name: "danger-net-write", reason: "sends data over the network (a method other than GET or HEAD, a body, an upload, a raw socket, or a download with credentials or an unsafe target)", test: (c, e) => segs(netWriteSeg)(c, e) || webNotRead(c, e) },
-  { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: segs(installSeg) },
+  { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: (c, e) => segs(installSeg)(c, e) || (c.segments ?? []).some((s) => s.opaque === "assignment" && s.program !== "" && installSeg(s)) },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, push to a URL, rebase, amend of published work, stash drop, worktree removal, history rewrite)", test: segs(gitSeg) },
   { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
