@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import "./_sandbox-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 

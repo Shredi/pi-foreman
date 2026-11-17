@@ -1,5 +1,6 @@
 // scripts/replay_run.mjs on fake replay modules: pool bound, serial order, exit codes and failure tails.
 import { spawnSync } from "node:child_process";
+import "./_sandbox-home.mjs";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";

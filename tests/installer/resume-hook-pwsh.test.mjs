@@ -3,6 +3,7 @@
 // The test redefines `__PiForemanResume` after dot-sourcing (it is looked up by name when the prompt runs), because a test process has redirected input and the
 // real one returns at once then; one case keeps the real one and asserts no call.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

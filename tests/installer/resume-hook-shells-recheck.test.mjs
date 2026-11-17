@@ -2,6 +2,7 @@
 // (a Pi started later in the shell that crashed) is checked at the next prompt, a kept note that did not change is not checked again, and
 // no note means no call. The foreman command is a stub that records its arguments.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

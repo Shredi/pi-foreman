@@ -49,12 +49,25 @@ export function resumeTargets({ home, shell = "", platform = "", documents, edit
 // Pi is still ending) or could not run (exit 127: no node yet), so the next prompt checks again. `>|` keeps the touch working under noclobber.
 // Git Bash (win32) differs in two places: the agent dir may be a Windows path (`cygpath -u`), and the shell pid handed to the command is the Windows pid of this
 // shell (`/proc/$$/winpid`), the one `hc get` and the process table know; the marker keeps `$$`.
-const POSIX_BODY = (bin, gitBash = false) => [
+// With `agentDir` (a custom agent dir baked in by setup) the note lookup falls back to it instead of ~/.pi/agent, and the pane-resume call gets
+// PI_CODING_AGENT_DIR for that one command (a prefix assignment, no export), so the restarted Pi reads the same dir.
+const POSIX_BODY = (bin, gitBash = false, agentDir = null) => [
   "__pi_foreman_resume() {",
   "  __pi_foreman_rc=$?",
   "  [ -n \"${HC_TERMINAL_ID:-}\" ] || return \"$__pi_foreman_rc\"",
   "  [ -t 0 ] || return \"$__pi_foreman_rc\"",
-  ...(gitBash
+  ...(agentDir !== null
+    ? [
+        "  __pi_foreman_agent=\"${PI_CODING_AGENT_DIR:-}\"",
+        `  [ -n "$__pi_foreman_agent" ] || __pi_foreman_agent=${q(agentDir)}`,
+        ...(gitBash
+          ? [
+              "  __pi_foreman_dir=\"$(cygpath -u \"$__pi_foreman_agent\" 2>/dev/null)\"",
+              "  __pi_foreman_note=\"${__pi_foreman_dir:-$__pi_foreman_agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
+            ]
+          : ["  __pi_foreman_note=\"$__pi_foreman_agent/pi-foreman/state/panes/$HC_TERMINAL_ID.json\""]),
+      ]
+    : gitBash
     ? [
         "  __pi_foreman_dir=\"${PI_CODING_AGENT_DIR:+$(cygpath -u \"$PI_CODING_AGENT_DIR\" 2>/dev/null)}\"",
         "  __pi_foreman_note=\"${__pi_foreman_dir:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}}/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
@@ -66,22 +79,25 @@ const POSIX_BODY = (bin, gitBash = false) => [
   `  [ -x ${q(bin)} ] || return "$__pi_foreman_rc"`,
   "  __pi_foreman_resume_seen=1",
   "  : >| \"$__pi_foreman_mark\" 2>/dev/null",
-  gitBash ? `  ${q(bin)} pane-resume --shell-pid "$(cat /proc/$$/winpid 2>/dev/null || echo $$)"` : `  ${q(bin)} pane-resume --shell-pid "$$"`,
+  `  ${agentDir !== null ? 'PI_CODING_AGENT_DIR="$__pi_foreman_agent" ' : ""}${q(bin)} pane-resume --shell-pid ${gitBash ? '"$(cat /proc/$$/winpid 2>/dev/null || echo $$)"' : '"$$"'}`,
   "  case $? in 75|127) rm -f \"$__pi_foreman_mark\" ;; esac",
   "  return \"$__pi_foreman_rc\"",
   "}",
 ];
 
+// fish single quotes: only \\ and \' are escapes
+const fq = (v) => `'${String(v).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
 const pq = (v) => `'${String(v).replace(/'/g, "''")}'`;
 
 // PowerShell (5.1 and 7): the prompt function present when the profile loads is wrapped once per session. The wrapper keeps `$?` and `$LASTEXITCODE` for the
 // prompt of a theme and never fails. A note is checked when this session has not checked one yet or the note is newer than the session's marker file (as the
 // POSIX body). `node` runs through Start-Process without -Wait: -Wait would also wait for Pi's detached children; the handle is read first so ExitCode is kept.
 // The test seam is `__PiForemanResume` (the redirected-input guard), which `__PiForemanResumeCheck` follows.
-const POWERSHELL_BODY = (cli) => [
+// With `agentDir` the fallback dir is the baked one, and $env:PI_CODING_AGENT_DIR is set only around Start-Process (restored in `finally`).
+const POWERSHELL_BODY = (cli, agentDir = null) => [
   "function __PiForemanResumeCheck {",
   "  if (-not $env:HC_TERMINAL_ID) { return }",
-  "  $dir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $HOME '.pi\\agent' }",
+  `  $dir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { ${agentDir !== null ? pq(agentDir) : "Join-Path $HOME '.pi\\agent'"} }`,
   "  $note = Join-Path $dir ('pi-foreman\\state\\panes\\' + $env:HC_TERMINAL_ID + '.json')",
   "  if (-not (Test-Path -LiteralPath $note -PathType Leaf)) { return }",
   "  $mark = Join-Path $env:TEMP ('pi-foreman-resume.' + $PID)",
@@ -95,8 +111,21 @@ const POWERSHELL_BODY = (cli) => [
   "  $ver = $null",
   "  try { $ver = [version]((& $node.Source --version) -replace '^v', '') } catch { }",
   "  if (-not $ver -or $ver -lt [version]'22.6') { return }",
-  "  $p = Start-Process -NoNewWindow -PassThru -FilePath $node.Source -ArgumentList ('--no-warnings --experimental-strip-types \"' + $cli + '\" --shell-pid ' + $PID)",
-  "  $null = $p.Handle",
+  ...(agentDir !== null
+    ? [
+        "  $prevDir = $env:PI_CODING_AGENT_DIR",
+        "  $env:PI_CODING_AGENT_DIR = $dir",
+        "  try {",
+        "    $p = Start-Process -NoNewWindow -PassThru -FilePath $node.Source -ArgumentList ('--no-warnings --experimental-strip-types \"' + $cli + '\" --shell-pid ' + $PID)",
+        "    $null = $p.Handle",
+        "  } finally {",
+        "    if ($null -eq $prevDir) { Remove-Item Env:PI_CODING_AGENT_DIR -ErrorAction SilentlyContinue } else { $env:PI_CODING_AGENT_DIR = $prevDir }",
+        "  }",
+      ]
+    : [
+        "  $p = Start-Process -NoNewWindow -PassThru -FilePath $node.Source -ArgumentList ('--no-warnings --experimental-strip-types \"' + $cli + '\" --shell-pid ' + $PID)",
+        "  $null = $p.Handle",
+      ]),
   "  $p.WaitForExit()",
   "  if ($p.ExitCode -eq 75) { Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue }",
   "}",
@@ -124,11 +153,11 @@ const POWERSHELL_BODY = (cli) => [
  * The marked block for one shell flavor ("zsh", "bash", "fish", "gitbash", "powershell") running the foreman command `bin` (an absolute path).
  * The PowerShell block runs `cli` (the path of paneresume-cli.ts; default: next to `bin`'s package) through node itself.
  */
-export function renderResumeBlock({ bin, flavor, cli }) {
+export function renderResumeBlock({ bin, flavor, cli, agentDir = null }) {
   const head = [RESUME_START, "# restarts the Pi session of this pane after a crash; remove with: foreman setup --no-resume-hook"];
   if (flavor === "powershell") {
     const P = String(bin).includes("\\") ? path.win32 : path;
-    return [...head, ...POWERSHELL_BODY(cli || P.join(P.dirname(P.dirname(String(bin))), "extensions", "core-adapter", "paneresume-cli.ts")), RESUME_END].join("\n");
+    return [...head, ...POWERSHELL_BODY(cli || P.join(P.dirname(P.dirname(String(bin))), "extensions", "core-adapter", "paneresume-cli.ts"), agentDir), RESUME_END].join("\n");
   }
   if (flavor === "gitbash") bin = String(bin).replace(/\\/g, "/");
   if (flavor === "fish") {
@@ -137,7 +166,7 @@ export function renderResumeBlock({ bin, flavor, cli }) {
       "function __pi_foreman_resume --on-event fish_prompt",
       "    set -l last $status",
       "    test -n \"$HC_TERMINAL_ID\"; or return $last",
-      "    set -l dir $HOME/.pi/agent",
+      agentDir !== null ? `    set -l dir ${fq(agentDir)}` : "    set -l dir $HOME/.pi/agent",
       "    test -n \"$PI_CODING_AGENT_DIR\"; and set dir $PI_CODING_AGENT_DIR",
       "    set -l note \"$dir/pi-foreman/state/panes/$HC_TERMINAL_ID.json\"",
       "    test -f \"$note\"; or return $last",
@@ -151,7 +180,7 @@ export function renderResumeBlock({ bin, flavor, cli }) {
       `    test -x ${q(bin)}; or return $last`,
       "    set -g __pi_foreman_resume_seen 1",
       "    : > \"$mark\" 2>/dev/null",
-      `    ${q(bin)} pane-resume --shell-pid $fish_pid`,
+      `    ${agentDir !== null ? "env PI_CODING_AGENT_DIR=$dir " : ""}${q(bin)} pane-resume --shell-pid $fish_pid`,
       "    set -l rc $status",
       "    if test $rc -eq 75; or test $rc -eq 127; rm -f \"$mark\"; end",
       "    return $last",
@@ -160,13 +189,13 @@ export function renderResumeBlock({ bin, flavor, cli }) {
     ].join("\n");
   }
   if (flavor === "zsh") {
-    return [...head, "if [ -n \"${ZSH_VERSION:-}\" ]; then", ...POSIX_BODY(bin).map((l) => `  ${l}`), "  autoload -Uz add-zsh-hook && add-zsh-hook precmd __pi_foreman_resume", "fi", RESUME_END].join("\n");
+    return [...head, "if [ -n \"${ZSH_VERSION:-}\" ]; then", ...POSIX_BODY(bin, false, agentDir).map((l) => `  ${l}`), "  autoload -Uz add-zsh-hook && add-zsh-hook precmd __pi_foreman_resume", "fi", RESUME_END].join("\n");
   }
   // bash: sh and dash read ~/.profile too, so the body runs only under bash; PROMPT_COMMAND gets the function once, by content
   return [
     ...head,
     "if [ -n \"${BASH_VERSION:-}\" ]; then",
-    ...POSIX_BODY(bin, flavor === "gitbash").map((l) => `  ${l}`),
+    ...POSIX_BODY(bin, flavor === "gitbash", agentDir).map((l) => `  ${l}`),
     "  case \"${PROMPT_COMMAND:-}\" in",
     "    *__pi_foreman_resume*) ;;",
     "    *) PROMPT_COMMAND=\"__pi_foreman_resume${PROMPT_COMMAND:+;$PROMPT_COMMAND}\" ;;",
@@ -194,7 +223,7 @@ export function stripResumeBlock(text) {
  * Writes (or with `remove` takes out) the resume block in the target files. Returns the lines to print. Nothing is written on `dry`.
  * A file that holds only the block (fish) is deleted by a removal.
  */
-export function applyResumeHook({ home, shell = "", bin, dry = false, remove = false, platform = "", documents, editions = [], policy = {}, gitBash = false, cli }) {
+export function applyResumeHook({ home, shell = "", bin, dry = false, remove = false, platform = "", documents, editions = [], policy = {}, gitBash = false, cli, agentDir = null }) {
   const out = [];
   const targets = resumeTargets({ home, shell, platform, documents, editions, gitBash });
   if (targets.length === 0) {
@@ -205,7 +234,7 @@ export function applyResumeHook({ home, shell = "", bin, dry = false, remove = f
   }
   for (const t of targets) {
     if (t.flavor === "powershell") {
-      out.push(...applyPowerShell(t, { bin, cli, dry, remove, policy: policy[t.edition] }));
+      out.push(...applyPowerShell(t, { bin, cli, dry, remove, policy: policy[t.edition], agentDir }));
       continue;
     }
     let cur = null;
@@ -226,7 +255,7 @@ export function applyResumeHook({ home, shell = "", bin, dry = false, remove = f
         }
         continue;
       }
-      const block = renderResumeBlock({ bin, flavor: t.flavor });
+      const block = renderResumeBlock({ bin, flavor: t.flavor, agentDir });
       const next = mergeBlockWith(cur ?? "", block);
       if (next === cur) out.push(`resume hook: already in ${t.file}`);
       else if (dry) out.push(`resume hook: would write the pi-foreman resume block to ${t.file}`);
@@ -263,7 +292,7 @@ const NO_PROFILE_POLICY = new Set(["Restricted", "AllSigned", "Undefined"]);
  * file only for PowerShell 7 (reads BOM-less as UTF-8) and only when the file is valid UTF-8; Windows PowerShell 5.1 reads BOM-less as ANSI, so it is skipped.
  * A removal never needs the block text, so it round-trips any BOM-less file byte for byte.
  */
-function applyPowerShell(t, { bin, cli, dry, remove, policy }) {
+function applyPowerShell(t, { bin, cli, dry, remove, policy, agentDir }) {
   const label = EDITIONS[t.edition].label;
   let buf = null;
   try {
@@ -291,7 +320,7 @@ function applyPowerShell(t, { bin, cli, dry, remove, policy }) {
     if (!buf && policy && NO_PROFILE_POLICY.has(policy)) {
       return [`resume hook: not written to ${t.file}: ${label} blocks profile scripts (policy ${policy === "Undefined" ? "Restricted" : policy}); to enable: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then run foreman setup again`];
     }
-    let block = renderResumeBlock({ bin, flavor: "powershell", cli });
+    let block = renderResumeBlock({ bin, flavor: "powershell", cli, agentDir });
     if (buf && enc === "latin1" && !isAscii(block)) {
       let valid = null;
       try {

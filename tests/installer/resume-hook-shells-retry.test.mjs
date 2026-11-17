@@ -2,6 +2,7 @@
 // exit 127 (no node yet) from the foreman command remove the marker, so the next prompt checks again; any other code keeps the marker.
 // The foreman command is a stub that records its arguments and exits with the code in the file `code` next to it.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
