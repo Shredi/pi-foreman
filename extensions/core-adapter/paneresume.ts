@@ -235,11 +235,11 @@ export class PaneResume {
   private readonly uptimeS: () => number;
   private readonly resumedMs: number | null;
 
-  /** Null outside a tui session on a POSIX host. Reads and removes `PI_FOREMAN_RESUMED` from the env (children never inherit it). */
+  /** Null outside a tui session. Reads and removes `PI_FOREMAN_RESUMED` from the env (children never inherit it). */
   static start(init: PaneResumeInit): PaneResume | null {
     const raw = init.env.PI_FOREMAN_RESUMED;
     delete init.env.PI_FOREMAN_RESUMED;
-    if (init.mode !== "tui" || init.platform === "win32" || init.env.PI_SUBAGENT_CHILD === "1") return null;
+    if (init.mode !== "tui" || init.env.PI_SUBAGENT_CHILD === "1") return null;
     const p = new PaneResume(init, raw !== undefined && /^\d{1,16}$/.test(raw.trim()) ? Number(raw.trim()) : null);
     p.begin();
     return p;
@@ -261,7 +261,9 @@ export class PaneResume {
     if (terminal) {
       if (i.setting === "off") deleteNote(i.agentDir, terminal);
       else {
-        installSignalListeners();
+        // win32: Pi has no SIGHUP handler there and console close, logoff and shutdown end the process without a signal, so the note simply stays
+        // on every end but a normal quit; no listeners, `signalled` stays false
+        if (i.platform !== "win32") installSignalListeners();
         void this.writeNote(terminal);
       }
     }

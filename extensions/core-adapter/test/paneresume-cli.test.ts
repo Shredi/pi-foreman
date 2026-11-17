@@ -188,7 +188,7 @@ test("launch keys: opened-session keys are dropped, the identity entry's plan ph
   await d2;
 });
 
-test("an invalid HC_TERMINAL_ID exits silently without touching any file; usage errors exit 2; win32 prints one line", async (t) => {
+test("an invalid HC_TERMINAL_ID exits silently without touching any file; usage errors exit 2", async (t) => {
   const r = rig(t);
   const decoy = path.join(r.agentDir, "pi-foreman", "state", "x.json");
   fs.writeFileSync(decoy, "keep");
@@ -204,10 +204,6 @@ test("an invalid HC_TERMINAL_ID exits silently without touching any file; usage 
   assert.deepEqual(r.out, []);
   for (const bad of [[], ["--shell-pid"], ["--shell-pid", "x"], ["--shell-pid", "0"], ["--shell-pid", "5", "extra"]]) assert.equal(await runPaneResume(bad, r.deps()), 2, bad.join(" "));
   assert.match(r.out.at(-1) as string, /^usage: foreman pane-resume --shell-pid <pid>$/);
-  const w = rig(t);
-  assert.equal(await runPaneResume(w.argv, w.deps({ platform: "win32" })), 0);
-  assert.deepEqual(w.out, ["foreman pane-resume: not supported on Windows"]);
-  assert.ok(readNoteRaw(w.agentDir, "t1"), "win32 touches nothing");
 });
 
 test("a sessionId outside the pattern clears the note without building a lock path", async (t) => {

@@ -3,13 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const WIN = process.platform === "win32";
+import { shimScript } from "./pi-shim.mjs";
 
-/** The JS entry a Windows `pi.cmd` shim in `dir` launches, or null. */
-function shimScript(cmd, dir) {
-  const m = /%dp0%[\\/]+([^"\r\n]+?\.(?:c|m)?js)"/i.exec(fs.readFileSync(cmd, "utf8"));
-  return m ? path.resolve(dir, m[1]) : null;
-}
+export { shimScript };
+
+const WIN = process.platform === "win32";
 
 /** The @earendil-works/pi-coding-agent folder `file` (after symlinks) lies in, or null. */
 function piPackageOf(file) {

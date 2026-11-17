@@ -114,8 +114,9 @@ export type NoteCheck = { ok: true; note: PaneNote } | { ok: false; reason: stri
  * A note as read from disk, field by field, before any check of the decision: the session id is a plain token (it names the lock file),
  * `terminal` is the hook's terminal, `cwd` is absolute, and the session file is an absolute `.jsonl` under `<agent dir>/sessions` that
  * exists and whose header id is the note's session id. A file elsewhere (Pi's --session-dir) is `customDir`: it is not restarted.
+ * On win32 the session folder prefix is compared without regard to case (drive letter and folder case).
  */
-export function validateNote(raw: unknown, agentDir: string, terminal: string): NoteCheck {
+export function validateNote(raw: unknown, agentDir: string, terminal: string, platform: string = process.platform): NoteCheck {
   const d = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
   if (!d || d.v !== 1) return { ok: false, reason: "note_unreadable" };
   const sessionId = str(d.sessionId);
@@ -127,7 +128,8 @@ export function validateNote(raw: unknown, agentDir: string, terminal: string): 
   if (!sessionFile || !path.isAbsolute(sessionFile) || !sessionFile.endsWith(".jsonl")) return { ok: false, reason: "session_file_invalid" };
   const sessions = path.resolve(agentDir, "sessions");
   const resolved = path.resolve(sessionFile);
-  if (!resolved.startsWith(sessions + path.sep)) return { ok: false, reason: "custom_session_dir", customDir: true, sessionId, sessionFile: resolved };
+  const prefix = sessions + path.sep;
+  if (!(platform === "win32" ? resolved.toLowerCase().startsWith(prefix.toLowerCase()) : resolved.startsWith(prefix))) return { ok: false, reason: "custom_session_dir", customDir: true, sessionId, sessionFile: resolved };
   if (sessionHeaderId(resolved) !== sessionId) return { ok: false, reason: "session_file_mismatch", sessionId };
   const createdMs = num(d.createdMs);
   const rootPid = num(d.rootPid);
@@ -156,6 +158,18 @@ export function readLiveRecord(agentDir: string, sessionId: string): LiveRecord 
     if (!d || typeof d !== "object") return null;
     const hb = typeof d.heartbeatAt === "string" ? Date.parse(d.heartbeatAt) : NaN;
     return { state: typeof d.state === "string" ? d.state : "", endedBy: str(d.endedBy), hcTerminal: str(d.hcTerminal), pid: num(d.pid), heartbeatMs: Number.isFinite(hb) ? hb : null, cwd: str(d.cwd) };
+  } catch {
+    return null;
+  }
+}
+
+/** The live record's `startedAt` in ms (a plain-token id), or null when it is missing or unreadable. */
+export function readLiveStartedMs(agentDir: string, sessionId: string): number | null {
+  if (!SESSION_ID_RE.test(sessionId)) return null;
+  try {
+    const d = JSON.parse(fs.readFileSync(path.join(liveDir(agentDir), `${sessionId}.json`), "utf8")) as Record<string, unknown>;
+    const ms = d && typeof d.startedAt === "string" ? Date.parse(d.startedAt) : NaN;
+    return Number.isFinite(ms) ? ms : null;
   } catch {
     return null;
   }
@@ -246,8 +260,9 @@ const OPENED_PREFIXES = ["PI_INTERCOM_", "PI_FOREMAN_PARENT_"];
 /**
  * The env of the restarted Pi: the shell's env without the opened-session keys, then the identity entry's plan phase, and its profile and
  * `PI_BG_*` only when it supplies them (a plain session keeps the shell's). `PI_FOREMAN_RESUMED` is the last heartbeat in ms.
+ * On win32 the shell's own `PI_BG_SHELL` and `PI_BG_SHELL_PATH` stay when `PI_BG_*` is replaced (the identity never carries them there).
  */
-export function buildSpawnEnv(base: Env, launch: LaunchKeys | null, heartbeatMs: number): Record<string, string> {
+export function buildSpawnEnv(base: Env, launch: LaunchKeys | null, heartbeatMs: number, platform: string = process.platform): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v === undefined || OPENED_KEYS.includes(k) || OPENED_PREFIXES.some((p) => k.startsWith(p))) continue;
@@ -256,7 +271,7 @@ export function buildSpawnEnv(base: Env, launch: LaunchKeys | null, heartbeatMs:
   if (launch?.planPhase) env.PI_FOREMAN_PLAN_PHASE = launch.planPhase;
   if (launch?.permsProfile) env.PI_FOREMAN_PERMS_PROFILE = launch.permsProfile;
   if (launch?.bgEnv) {
-    for (const k of Object.keys(env)) if (k.startsWith("PI_BG_")) delete env[k];
+    for (const k of Object.keys(env)) if (k.startsWith("PI_BG_") && !(platform === "win32" && (k === "PI_BG_SHELL" || k === "PI_BG_SHELL_PATH"))) delete env[k];
     Object.assign(env, launch.bgEnv);
   }
   env.PI_FOREMAN_RESUMED = String(Math.round(heartbeatMs));
