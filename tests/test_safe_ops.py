@@ -332,6 +332,20 @@ class NonGitWorkspaceTest(SafeOpsCase):
     def test_the_other_ops_still_need_git(self):
         self.failed(self.op("status", cwd=self.plain), "not_a_git_repo")
 
+    def test_a_git_dir_as_the_folder_keeps_the_refusal(self):
+        self.git("init", "-q", self.repo)
+        gitdir = os.path.join(self.repo, ".git")
+        hook = os.path.join(gitdir, "hooks", "pre-commit.sample")
+        self.assertTrue(os.path.isfile(hook))
+        self.failed(self.op("copy", cwd=gitdir, src="hooks/pre-commit.sample", dst="hooks/pc-x"), "not_a_git_repo")
+        self.assertFalse(os.path.exists(os.path.join(gitdir, "hooks", "pc-x")))
+
+    def test_a_bare_repo_as_the_folder_keeps_the_refusal(self):
+        bare = os.path.join(self.tmp, "bare.git")
+        self.git("init", "-q", "--bare", bare, cwd=self.tmp)
+        self.failed(self.op("move", cwd=bare, src="HEAD", dst="HEAD.moved"), "not_a_git_repo")
+        self.assertTrue(os.path.isfile(os.path.join(bare, "HEAD")))
+
 
 class OpsConfigTest(unittest.TestCase):
     """safety.ops in the project layer: copyMaxBytes may only go down; the loosening keys are ignored."""

@@ -238,9 +238,8 @@ export function sweepKept(agentDir: string, now: number = Date.now(), deps: Scra
   return removed;
 }
 
-export function scratchPromptBlock(dir: string, out?: string): string {
-  const keep = out ? ` Logs and results that must outlive the run go to ${out} (env $${OUT_ENV}); the harness keeps it for 7 days.` : "";
-  return `[pi-foreman scratch] Your scratch dir: ${dir} (env $${SCRATCH_ENV}). Put copies, mutation checks and temp files there, never in the repo or .workflow/. The harness deletes it when you finish; use the literal path for rm -r.${keep}`;
+export function scratchPromptBlock(dir: string): string {
+  return `[pi-foreman scratch] Your scratch dir: ${dir} (env $${SCRATCH_ENV}). Put copies, mutation checks and temp files there, never in the repo or .workflow/. The harness deletes it when you finish; use the literal path for rm -r.`;
 }
 
 /** The pi-foreman launch id bound into a subagent call's input (usage.ts bindLaunch), or null. */
@@ -328,6 +327,8 @@ export function expandScratchVar(command: string, dir0: string, platform: string
  * `${FOREMAN_OUT:-x}`, `'$FOREMAN_OUT'`, `\$FOREMAN_OUT`): the variable may then not hold `dir`, and the call stays unresolved as before.
  */
 export function expandOutVar(command: string, dir: string, platform: string = process.platform): string {
+  // the text pass tracks quotes without reading heredoc bodies or comments, where an apostrophe is no quote: with both, it refuses
+  if (command.includes("'") && (command.includes("<<") || command.includes("#"))) return command;
   const r = substVar(command, OUT_ENV, dir, platform);
   const mentions = command.match(/(?<![A-Za-z0-9_])FOREMAN_OUT(?![A-Za-z0-9_])/g)?.length ?? 0;
   return r && r.hits === mentions ? r.text : command;
@@ -493,7 +494,8 @@ export function launchScratch(h: ScratchHost, input: Record<string, unknown>, b:
   h.scratch.add(b.launchId, dir, b.role);
   const out = h.agentDir ? createKept(h.agentDir, h.id, b.launchId, deps) : null;
   if (out) b.out = out;
-  if (typeof input.task === "string") input.task = `${input.task}\n\n${scratchPromptBlock(dir, out ?? undefined)}`;
+  const keep = out ? ` Logs and results that must outlive the run go to ${out} (env $${OUT_ENV}); the harness keeps it for 7 days.` : "";
+  if (typeof input.task === "string") input.task = `${input.task}\n\n${scratchPromptBlock(dir)}${keep}`;
 }
 
 /**

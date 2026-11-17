@@ -99,6 +99,18 @@ test("expandOutVar reads only plain references", () => {
   assert.equal(expandOutVar("ls $FOREMAN_OUT", "/o p"), "ls $FOREMAN_OUT", "a dir with a shell character is never put in");
 });
 
+test("an apostrophe in a heredoc body or a comment never lets a quoted $FOREMAN_OUT through", { skip: !posix }, () => {
+  const outside = path.join(base, "elsewhere");
+  for (const command of [
+    `cat <<EOF > /dev/null\nit's\nEOF\ncd ${outside} && echo x > '$FOREMAN_OUT/y'`,
+    `# it's a comment\ncd ${outside} && echo x > '$FOREMAN_OUT/y'`,
+  ]) {
+    assert.equal(expandOutVar(command, "/o"), command, command);
+    assert.equal(allowed("bash", { command }), false, command);
+  }
+  assert.equal(expandOutVar('cat > "$FOREMAN_OUT/a" <<EOF\nplain\nEOF', "/o"), 'cat > "/o/a" <<EOF\nplain\nEOF', "a heredoc without an apostrophe still resolves");
+});
+
 // ----------------------------------------------------------------------------------------------------------------- the sweep
 const DAY = 86400000;
 const root = path.join(agentDir, "pi-foreman", "child-out");

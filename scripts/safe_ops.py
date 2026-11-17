@@ -203,7 +203,11 @@ class Paths(object):
         except Precondition as exc:
             if exc.name != "not_a_git_repo":
                 raise
-            self.root = os.path.realpath(cwd)  # no git: the session working folder (any folder) is the root; every other limit stays
+            # no git at all: the session working folder (any folder) is the root; every other limit stays. A folder git does know (inside `.git`, a bare repo,
+            # a refused owner) keeps the refusal: its `.git` checks would see nothing relative to the folder itself.
+            if git(["rev-parse", "--git-dir"], cwd)[0] == 0:
+                raise
+            self.root = os.path.realpath(cwd)
         src_full, src_parent, src_name = resolve_arg(cwd, args.get("src"), "src")
         dst_full, dst_parent, dst_name = resolve_arg(cwd, args.get("dst"), "dst")
         if has_git_component(args["src"]) or has_git_component(args["dst"]):
