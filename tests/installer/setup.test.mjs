@@ -86,7 +86,7 @@ test("dry run writes nothing and runs no install", () => {
   assert.deepEqual(snapshot(env.base), before);
   assert.deepEqual(installs(env), []);
   assert.doesNotMatch(r.out, /would run: pi (install|remove)/);
-  assert.match(r.out, /package pi-subagents@0\.78\.0: bundled with pi-foreman/);
+  assert.match(r.out, /package pi-subagents@0\.89\.0: bundled with pi-foreman/);
   assert.match(r.out, /^\+\+\+ b\/settings\.json/m);
   assert.doesNotMatch(r.out, /permission-system config|gate migration/);
   assert.equal(fs.existsSync(path.join(env.agentDir, "extensions")), false);

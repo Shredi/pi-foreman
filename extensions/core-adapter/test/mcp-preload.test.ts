@@ -95,7 +95,7 @@ test("only deferred tools are declared: codemode and already direct tools stay a
 
 test("a child without a ceiling declares nothing", async () => {
   const c = await child({}, TOOLS, "p1", ["p1"]);
-  assert.deepEqual(c.active, ["read"]); // start drops tool_search; no mcp__ tool is added
+  assert.deepEqual(c.active, ["read", "tool_search"]); // start keeps tool_search (childtools.ts); no mcp__ tool is added
   assert.deepEqual(c.trace, []);
 });
 

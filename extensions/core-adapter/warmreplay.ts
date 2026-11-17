@@ -104,6 +104,57 @@ export function forcedProjection(messages: unknown[], live: unknown): unknown[] 
   return [head, ...messages.filter((m) => !(isObj(m) && m.role === "system"))];
 }
 
+/**
+ * The custom message types pi-subagents 0.89 wraps in `<pi_subagents_notice>` (src/extension/index.js markedMessageTypes:
+ * SUBAGENT_MESSAGE_TYPES of src/tui/subagent-messages.js plus the compaction resume, the slash results and the admin message).
+ * A test compares this list with the installed package.
+ */
+export const SUBAGENT_NOTICE_TYPES = [
+  "subagent_supervisor_request",
+  "subagent-supervisor-unanswered",
+  "subagent-supervisor-blocked",
+  "subagent-notify",
+  "subagent-completion-unanswered",
+  "subagent-completion-unhandled",
+  "subagent-wait-subscription",
+  "subagent-incremental-child-notify",
+  "subagent-workflow-result-write-failed",
+  "subagent-auto-resume",
+  "subagent_control_notice",
+  "subagent_steering_notice",
+  "subagent_watchdog_warning",
+  "subagent_watchdog_clarification",
+  "subagent-compaction-resume",
+  "subagent-slash-result",
+  "subagent-slash-text-result",
+  "subagents-admin",
+];
+
+/**
+ * pi-subagents' `context_with_system` handler (0.89, src/extension/index.js): it wraps each of its custom messages in a marker and
+ * drops a view-only slash text result. Pi runs the handlers in load order and this adapter loads first, so the capture would hold the
+ * unwrapped messages and the warm would replay a request that differs from the sent one at the first notice. The same wrap, byte for
+ * byte, is applied to the capture of a main session (a child does not load the extension's handler). The input is never mutated.
+ */
+export function subagentNoticeWrap(messages: unknown[]): unknown[] {
+  const out: unknown[] = [];
+  for (const m of messages) {
+    if (!isObj(m) || m.role !== "custom" || typeof m.customType !== "string" || !SUBAGENT_NOTICE_TYPES.includes(m.customType)) {
+      out.push(m);
+      continue;
+    }
+    if (m.customType === "subagent-slash-text-result" && isObj(m.details) && m.details.viewOnly === true) continue;
+    const open = `<pi_subagents_notice type="${m.customType}" origin="automated message from the pi-subagents extension, not typed by the user">`;
+    const close = "</pi_subagents_notice>";
+    const content = m.content;
+    out.push({
+      ...m,
+      content: typeof content === "string" ? `${open}\n${content}\n${close}` : [{ type: "text", text: `${open}\n` }, ...(Array.isArray(content) ? content : []), { type: "text", text: `\n${close}` }],
+    });
+  }
+  return out;
+}
+
 export async function replayWarm(model: unknown, messages: unknown[], signal: AbortSignal, api: ReplayApi): Promise<WarmReply | null> {
   const context = { messages: api.convertToLlm(withoutHidden(messages, api.hidden?.() ?? [])) };
   const cacheRetention = api.cacheRetention();

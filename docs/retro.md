@@ -84,9 +84,12 @@ With at least 20 sessions (and at least 20 in the role being judged) the retro p
 it applies nothing and files no backlog entry:
 
 - A tool or skill declared (listed) but used (read) in under 10% of the sessions that declared it: make it searchable
-  (`tools.deferred` add, `roles.<x>.searchable` add for a child role, `skills.hidden` add).
+  (`tools.deferred` add, `skills.hidden` add). A child role gets no such line for a tool: a child declares every
+  allowlisted tool, so `roles.<x>.searchable` saves it no tokens.
 - Searchable but found in 25% or more of the sessions that hid it: make it always on again (remove it from
-  `tools.deferred`, `roles.<x>.searchable` or `skills.hidden`).
+  `tools.deferred` or `skills.hidden`). A child hides no tool, so a child role gets no such line for a tool.
+- A tool never used in a child role: remove it from the key it is in, `roles.<x>.searchable` when the role's
+  config lists it there, else `roles.<x>.tools` (both keys when the retro cannot read the config).
 - A tool never used is printed with its package: `never used (foreman, 24 sessions): doc_to_md (example-package) ->
   pi remove npm:example-package` when none of the package's tools was used, `PI_BG_FEATURES=process` for the
   add-on's optional tools (`fusion_*`, `bg_delegate`, `bg_run_pi_attested`), else `tools.deferred`. A
