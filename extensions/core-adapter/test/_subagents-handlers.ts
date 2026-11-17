@@ -1,7 +1,7 @@
 // The handlers the installed pi-subagents registers in a main session, collected by running its extension against a pi that accepts every call.
 // Pi runs them after the adapter's (the adapter loads first), so a test of a request that crosses both runs `context_with_system` in that order.
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 type Msg = { role: string } & Record<string, unknown>;
 export type SubagentsHandler = (event: unknown, ctx: unknown) => Promise<{ messages?: Msg[] } | undefined> | { messages?: Msg[] } | undefined;
@@ -21,7 +21,7 @@ export async function subagentsHandlers(): Promise<Record<string, SubagentsHandl
         return () => undefined;
       },
     });
-    const mod = (await import(path.join(SUBAGENTS_PKG, "index.js"))) as { default: (pi: unknown) => void };
+    const mod = (await import(pathToFileURL(path.join(SUBAGENTS_PKG, "index.js")).href)) as { default: (pi: unknown) => void };
     mod.default(pi);
     return handlers;
   } finally {

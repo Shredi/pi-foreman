@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { normalizeContext } from "@earendil-works/pi-ai";
 import { SUBAGENT_NOTICE_TYPES, subagentNoticeWrap } from "../warmreplay.ts";
@@ -21,7 +22,7 @@ test("the wrap list equals the types the installed pi-subagents wraps", async ()
   const out = (await handlers.context_with_system![0]({ messages: [...probe, stranger] }, {}))!.messages!;
   assert.deepEqual(out.filter((m) => !String((m.content as string)).includes("pi_subagents_notice")).map((m) => m.customType), ["foreman_wake"], "every listed type is wrapped, a foreign type is not");
   // and every type the package shows in the chat is in the list
-  const { SUBAGENT_MESSAGE_TYPES } = (await import(path.join(PKG, "src", "tui", "subagent-messages.js"))) as { SUBAGENT_MESSAGE_TYPES: string[] };
+  const { SUBAGENT_MESSAGE_TYPES } = (await import(pathToFileURL(path.join(PKG, "src", "tui", "subagent-messages.js")).href)) as { SUBAGENT_MESSAGE_TYPES: string[] };
   for (const t of SUBAGENT_MESSAGE_TYPES) assert.ok(SUBAGENT_NOTICE_TYPES.includes(t), `${t} is wrapped by pi-subagents but missing from SUBAGENT_NOTICE_TYPES`);
 });
 
