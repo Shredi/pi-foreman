@@ -30,7 +30,7 @@ import { liveDir } from "./livestate.ts";
 import type { LiveShow } from "./livestate.ts";
 import { createEngine, DIAGRAMS_DIR, diagramName, renderSidecars, scanFences, sidecarOnDisk, SVG_MAX_BYTES, validateSvg } from "./mermaid.ts";
 import type { Diagram, Engine, Fence } from "./mermaid.ts";
-import { EVENTS_MAX, fileOfId, NOTES_KEPT, noteId, PAGES_DIR, PAGES_JSON, parsePagesJson, renderPage } from "./pages.ts";
+import { EVENTS_MAX, fileOfId, foldPlanSection, NOTES_KEPT, noteId, PAGES_DIR, PAGES_JSON, parsePagesJson, renderPage } from "./pages.ts";
 import type { PageEntry, PageEvent, PagesIndex, Svgs } from "./pages.ts";
 import { resolveToolPath } from "./payload.ts";
 import { planPathsOf } from "./planreview.ts";
@@ -646,7 +646,7 @@ export class Show {
     if (!cur || !meta) return { reason: "plan not readable" };
     const state: PlanState = this.pstate && this.pstate.hash === cur.hash ? this.pstate.state : "draft";
     const title = titleOf(cur.bytes);
-    const html = renderPage({ title, kicker: `Plan v${meta.v} · ${state} · ${cur.hash.slice(0, 8)}`, markdown: cur.bytes.toString("utf8"), svgs: meta.hash === cur.hash ? this.svgsFor(meta.diagrams) : undefined, source: path.basename(cur.path) });
+    const html = renderPage({ title, kicker: `Plan v${meta.v} · ${state} · ${cur.hash.slice(0, 8)}`, markdown: cur.bytes.toString("utf8"), svgs: meta.hash === cur.hash ? this.svgsFor(meta.diagrams) : undefined, fold: foldPlanSection, source: path.basename(cur.path) });
     return { path: await this.putPage({ id: "plan", kind: "plan", title, state, version: meta.v }, html, event) };
   }
 

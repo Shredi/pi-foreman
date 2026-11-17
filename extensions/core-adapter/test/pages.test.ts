@@ -10,7 +10,7 @@ import { planVersionHash } from "../checkpoint.ts";
 import { PROSE_FIELDS } from "../gate.ts";
 import { fenceSha } from "../mermaid.ts";
 import type { Engine } from "../mermaid.ts";
-import { fileOfId, NOTES_KEPT, PAGE_MAX_BYTES, parsePagesJson, renderMarkdown, renderPage } from "../pages.ts";
+import { fileOfId, NOTES_KEPT, PAGE_MAX_BYTES, foldPlanSection, parsePagesJson, renderMarkdown, renderPage } from "../pages.ts";
 import type { PagesIndex } from "../pages.ts";
 import { ownerSectionIssues, ownerSummary, planFormIssues } from "../ownertext.ts";
 import { PrWatches } from "../prwatch.ts";
@@ -448,10 +448,10 @@ test("milestones: PR opened, ready and merged come from the PR watch", async () 
 const OWNER = (extra: string) => `# P\n\n## For the owner\nWe make it faster.\n${extra}\n## Goal\nx\n`;
 const FENCE_LINES = "```mermaid\ngraph TD\nA-->B\n```\n";
 
-test("owner diagram: one mermaid fence is allowed and not counted; a second is a plan-form issue", () => {
+test("owner diagram: one mermaid fence is allowed; a second is a plan-form issue", () => {
   const manyLines = Array.from({ length: 9 }, (_, i) => `Line ${i} in plain words.`).join("\n");
-  assert.deepEqual(ownerSectionIssues(OWNER(`${manyLines}\n${FENCE_LINES}`)), [], "9 text lines plus the diagram stay within 10 lines");
-  assert.ok(ownerSectionIssues(OWNER(`${manyLines}\nTen.\nEleven.\n${FENCE_LINES}`)).some((i) => /too long/.test(i)));
+  assert.deepEqual(ownerSectionIssues(OWNER(`${manyLines}\n${FENCE_LINES}`)), []);
+  assert.deepEqual(ownerSectionIssues(OWNER(`${manyLines}\nTen.\nEleven.\n${FENCE_LINES}`)), [], "no length limit");
   const long = `${"graph TD\n"}${Array.from({ length: 200 }, (_, i) => `N${i}-->N${i + 1}`).join("\n")}`;
   assert.deepEqual(ownerSectionIssues(OWNER(`\`\`\`mermaid\n${long}\n\`\`\`\n`)), [], "the diagram's characters do not count");
   const two = ownerSectionIssues(OWNER(`${FENCE_LINES}${FENCE_LINES}`));
@@ -464,4 +464,41 @@ test("owner diagram: the dialog summary points at the plan page in its place", (
   const s = ownerSummary(OWNER(`${FENCE_LINES}Then we test it.\n`));
   assert.match(s, /We make it faster\.\n {2}\(diagram: see the plan page\)\n {2}Then we test it\./);
   assert.doesNotMatch(s, /graph TD|```/);
+});
+
+// ---------------------------------------------------------------- folded sections
+
+const FOLDED = "# P\n\nIntro text.\n\n## For the owner\n- Goal: x.\n\n## Plan\n1. One.\n\n```md\n## Not a heading\n```\n\n## Open questions\n- none.\n";
+
+test("fold: a folded section sits in details with its heading visible; the owner and open questions sections stay open", () => {
+  const html = renderMarkdown(FOLDED, { fold: foldPlanSection });
+  assert.match(html, /<details><summary>Plan<\/summary>\n<ol>/);
+  assert.equal((html.match(/<details>/g) ?? []).length, 1);
+  assert.match(html, /<h2>For the owner<\/h2>/);
+  assert.match(html, /<h2>Open questions<\/h2>/);
+  assert.match(html, /^<h1>P<\/h1>\n<p>Intro text\.<\/p>\n<h2>For the owner/);
+  assert.equal(foldPlanSection("  FOR THE OWNER "), false);
+  assert.equal(foldPlanSection("open QUESTIONS"), false);
+  assert.equal(foldPlanSection("Decisions and assumptions"), true);
+});
+
+test("fold: a `## ` line inside a fence does not split a section", () => {
+  const html = renderMarkdown(FOLDED, { fold: foldPlanSection });
+  assert.match(html, /<details><summary>Plan<\/summary>[\s\S]*## Not a heading[\s\S]*<\/details>/);
+  assert.equal((html.match(/<summary>/g) ?? []).length, 1);
+  const tilde = renderMarkdown("## A\n~~~\n## B\n~~~\n", { fold: () => true });
+  assert.equal((tilde.match(/<summary>/g) ?? []).length, 1);
+});
+
+test("fold: without it the output is unchanged, and a folded body equals the unfolded rendering of the section", () => {
+  assert.equal(renderMarkdown(FOLDED), renderMarkdown(FOLDED, { fold: () => false }));
+  const body = "1. One.\n\n```md\n## Not a heading\n```\n";
+  const folded = renderMarkdown(`## Plan\n${body}`, { fold: () => true });
+  assert.equal(folded, `<details><summary>Plan</summary>\n${renderMarkdown(body)}\n</details>`);
+});
+
+test("fold: a ## heading indented inside a list item does not start a folded section", () => {
+  const html = renderMarkdown("## Plan\n- item\n  ## inner\n\n## Goal\nx\n", { fold: () => true });
+  assert.equal((html.match(/<details>/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /<summary>inner<\/summary>/);
 });

@@ -22,9 +22,9 @@ test("a link target with a backslash renders as plain text", () => {
   assert.match(renderMarkdown("[x](https://example.com/a)"), /<a href="https:\/\/example\.com\/a"/);
 });
 
-test("an unclosed mermaid fence in the owner section counts in full; a closed one is skipped", () => {
+test("a long mermaid fence in the owner section, closed or not, is no length issue", () => {
   const body = Array.from({ length: 40 }, (_v, i) => `node${i}-->n${i + 1}`).join("\n");
   const plan = (fence: string) => `# P\n\n## For the owner\nWe ship it.\n\n${fence}\n\n## Goal\nShip.\n`;
-  assert.ok(!ownerSectionIssues(plan(`\`\`\`mermaid\n${body}\n\`\`\``)).some((i) => i.startsWith("too long")));
-  assert.ok(ownerSectionIssues(plan(`\`\`\`mermaid\n${body}`)).some((i) => i.startsWith("too long")));
+  assert.deepEqual(ownerSectionIssues(plan(`\`\`\`mermaid\n${body}\n\`\`\``)), []);
+  assert.deepEqual(ownerSectionIssues(plan(`\`\`\`mermaid\n${body}`)), []);
 });
