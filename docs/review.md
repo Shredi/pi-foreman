@@ -247,29 +247,33 @@ base. The base triggers nothing.
 | `high_stakes_single` | The launch is inside a `tasks` or `chain` launch. |
 | `high_stakes_resume` | The call resumes a run. A run that ended without a verdict is launched fresh. |
 | `high_stakes_done` | The passes of the session are used up (the last pass was a PASS, or two ran) or one is still running (kept in memory only: after a reload nothing counts as running). |
-| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass is a FAIL that no normal PASS has cleared. |
+| `high_stakes_early` | No normal PASS stands (none yet, or work was revised after it), or the session's last high-stakes pass is a FAIL that no normal PASS that got its findings has cleared. |
+| `high_stakes_unrevised` | A reviewer `resume` while a high-stakes FAIL of its checkout is uncleared (a resume gets no findings). A fresh normal reviewer is never refused for it. |
 
 After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.
 
 **After a FAIL.** The FAIL is recorded with its head and findings, and the review gate is set to a failed verdict. It is
-cleared by a normal PASS (item or `[pre-pr]`) after a revision in the checkout the FAIL ran in; a revision or PASS in another
-checkout clears nothing. Meanwhile:
+cleared by a normal PASS (item or `[pre-pr]`) of a run that got the findings: in the checkout the FAIL ran in at any head
+(revised or not), in any other checkout when the PASS head is the FAIL head or builds on it (git ancestry); a FAIL recorded
+with no head is cleared by such a PASS in any checkout of the same repository. A FAIL whose checkout was removed is cleared the
+same way. The clear also sets the FAIL checkout's review gate entry to PASS when no work happened there since the FAIL. Work
+done there afterwards keeps it open until a review there passes. Meanwhile:
 
-- A normal reviewer launch for the checkout is refused (`high_stakes_unrevised`) until a revision happened (a builder run, a
-  project edit or a send-back marker; a launch with a builder before the reviewer counts). `[second-opinion]` and
-  `[plan-review]` launches stay allowed. Any reviewer `resume` is refused until the FAIL is cleared, since a resume gets no
-  findings block.
-- The next normal reviewer task of that checkout gets the findings prepended once, fenced and marked as data from an
-  earlier review, with review tags defused.
-- The finish gate carries its own entry "revise after the high-stakes FAIL, then pass the normal reviewer", whatever
+- A fresh normal reviewer launch (item or `[pre-pr]`) is never refused for a missing revision: while the FAIL is uncleared,
+  every one of them, in any checkout, gets the findings prepended, fenced and marked as data from an earlier review, with
+  review tags defused, and it is never refused as a repeat of a standing PASS. `[second-opinion]` and `[plan-review]`
+  launches stay allowed. Any reviewer `resume` in the FAIL's checkout is refused (`high_stakes_unrevised`) until the FAIL is
+  cleared, since a resume gets no findings block.
+- A PASS from a run that got no findings (launched before the FAIL) clears nothing.
+- The finish gate carries its own entry "revise or answer the high-stakes findings, then pass the normal reviewer", whatever
   `ceremony.reviewGate` says.
 - The head of a high-stakes FAIL never opens the PR gate (`pr_refused:high_stakes_failed`), nor does any head of the
-  session, from any checkout, while the FAIL is uncleared.
-- A FAIL whose checkout was removed can no longer be cleared: the gates stay closed until the owner unsets the model. The
-  refusal and the finish hint say that the checkout is gone.
+  session, from any checkout, while the FAIL is uncleared. After the clear the FAIL head stays blocked, unless the clearing
+  PASS was on that very head.
+- The refusal and the finish hint say when the FAIL's checkout is gone, and what clears it.
 
-Once the normal PASS cleared the FAIL, a second and last high-stakes pass is required like the first and reviews the whole
-revised change. If the second pass fails too, the same steps follow, but no third pass: the normal PASS after the revision
+Once a normal PASS cleared the FAIL, a second and last high-stakes pass is due like the first and reviews the whole
+revised change. If the second pass fails too, the same steps follow, but no third pass: the normal PASS that got the findings
 opens the gate, and the foreman tells the owner in one line that the second high-stakes review failed and on what.
 
 **Gates.** A due pass (a reason counts and no pass yet, or one cleared FAIL) refuses nothing: the answer of the pack's
@@ -298,6 +302,9 @@ foreman to add one line per pass to the PR body, `High-stakes review: <verdict> 
   checkout the harness cannot resolve reads the session-wide entry.
 - One pass per session, wherever the work lands: work from a second worktree, branch or repository after the pass is not
   reviewed again, and any pass opens every PR of the session.
+- A high-stakes launch needs a normal PASS in its own checkout first (a pass in another checkout is not enough).
+- A PASS in one checkout survives work in another: if B's work changes code that A's PR depends on, A ships without a new review (the finish still asks for B's own review). A checkout that got work and was deleted before its review keeps blocking the finish (after two refusals it ends with a notice) and the ledger V mark.
+- A high-stakes FAIL can be cleared by a normal reviewer without a code change, or by a fix in another checkout that does not touch the finding; the findings go to that reviewer, who judges them.
 - A malformed `size` with sizing off drops the launch's tags.
 - Migrating an old per-checkout entry keeps the runs of one checkout only, so an old FAIL in another checkout is dropped.
 - A pass that ran is the one pass. Work built after it reaches the pull request with the normal review only; the finish

@@ -58,6 +58,19 @@ export function gatesVerdict(g: ReviewGates, roots: readonly string[] | null, ve
   return next;
 }
 
+/**
+ * A high-stakes FAIL (set at `failAt` on `keys`, null = every entry; no `failAt`: an old run, any FAIL entry) was cleared by a normal PASS: each of those entries still holding that FAIL (last verdict FAIL at `failAt`, no work since)
+ * passes too. An entry that took a later verdict or a revision is left as it is.
+ */
+export function gatesClearFail(g: ReviewGates, keys: string | null, failAt: number | undefined, now: number, runId?: string): ReviewGates {
+  const next: ReviewGates = { ...g };
+  for (const k of keys === null ? Object.keys(g) : [keys]) {
+    const e = g[k];
+    if (e && e.last === "fail" && !e.revised && (failAt === undefined || e.failAt === failAt)) next[k] = onReviewVerdicts(e, ["pass"], now, runId);
+  }
+  return next;
+}
+
 /** The keys of the entries that do not stand. */
 export function openRoots(g: ReviewGates): string[] {
   return Object.entries(g).filter(([, e]) => !stands(e)).map(([k]) => k);

@@ -49,7 +49,7 @@ import type { Registration } from "./childext.ts";
 import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
-import { combined, gateOf, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
+import { combined, gateOf, gatesClearFail, gatesRevise, gatesVerdict, openHint, SESSION_WIDE, standsFor, stands, type ReviewGates } from "./reviewgates.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd } from "./bound.ts";
 import { isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingAsk, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
@@ -90,7 +90,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { descendsFrom, dueReasons, dueReminder, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -1355,11 +1355,28 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (root && s.hs.revision(root)) persistCeremonyState(s);
   }
 
-  /** A normal PASS (item or [pre-pr]) was recorded in `cwd`: after the revision it clears an uncleared high-stakes FAIL that ran there. */
-  async function hsNormalPass(s: Session, cwd: string): Promise<void> {
-    if (!hsModel(s) || !s.hs.hasRuns()) return;
-    const root = await toplevelOf(cwd);
-    if (root && s.hs.normalPass(root)) persistCeremonyState(s);
+  /** The checkout key of a directory outside git (and of a launch's root there): its realpath, else the resolved path; both sides of a same-directory compare use it. */
+  const realDir = (d: string): string => {
+    try {
+      return fs.realpathSync.native(d);
+    } catch {
+      return path.resolve(d);
+    }
+  };
+
+  /**
+   * A normal PASS (item or [pre-pr]) of run `runId` was recorded in `cwd` at `head`: when the run got the findings of the uncleared high-stakes FAIL it clears it, in the FAIL's
+   * checkout at any head, elsewhere when the PASS head descends from the FAIL head (highstakes.ts descendsFrom). The FAIL's review gate entry then passes too, when no work happened there since.
+   */
+  async function hsNormalPass(s: Session, cwd: string, runId: string, head: string | null): Promise<void> {
+    if (!hsModel(s)) return;
+    const fail = s.hs.openFail();
+    if (!fail) return;
+    const root = (await toplevelOf(cwd)) ?? realDir(cwd);
+    const descends = root !== fail.cwd && (await descendsFrom(fail, root, head));
+    if (!s.hs.clearBy(root, { runId, head, descends })) return;
+    s.reviewGates = gatesClearFail(s.reviewGates, fail.gateKey === undefined ? SESSION_WIDE : fail.gateKey, fail.failAt, Date.now(), runId); // an old run without gateKey: the session-wide entry
+    persistCeremonyState(s);
   }
 
   /** The directory a launch entry runs in. */
@@ -1372,8 +1389,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /**
-   * The guards of the `[high-stakes]` launch (highstakes.ts launchRefusal, in the plan's order), of a normal reviewer launch while a high-stakes FAIL awaits its
-   * revision and of a reviewer resume while it is not cleared. Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
+   * The guards of the `[high-stakes]` launch (highstakes.ts launchRefusal, in the plan's order) and of a reviewer resume while a high-stakes FAIL is not cleared
+   * (a fresh normal reviewer is never refused: it gets the findings). Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
    * and the base its facts are collected against; null otherwise.
    */
   async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; gateKey: string; base: string | null } | null> {
@@ -1400,21 +1417,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (action !== null) return null;
     const reviews = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent));
     const marked = reviews.filter(([, o]) => o === "high-stakes").map(([e]) => e);
-    if (model && reviews.length > 0) {
-      await s.reviewSync; // a review round still being recorded (a high-stakes FAIL) lands before the checkout's state is read
-      const builder = launchRoles(s, input).includes("builder");
-      for (const [e, o] of reviews) {
-        if (o !== "item" && o !== "pre-pr") continue;
-        const root = await toplevelOf(hsDirOf(ctx, input, e));
-        const r = root ? unrevisedRefusal(s.hs.state(), { resume: false, builder, cwd: root }) : null;
-        if (r) return refused(r);
-      }
-    }
     if (marked.length === 0) return null;
     await s.reviewSync; // a review round still being recorded lands before the gate is read
     const dir = hsDirOf(ctx, input, marked[0]);
     const top = await toplevelOf(dir);
-    const root = top ?? dir;
+    const root = top ?? realDir(dir);
     const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top) }); // an unresolved checkout reads every entry
     if (r) return refused(r);
     // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
@@ -1440,14 +1447,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const r = reviewResultsOfRun(s, runId, data).find((x) => x.verdict !== null);
     const verdict = r?.verdict;
     if (!r || !verdict) return;
-    if (verdict === "fail") {
-      const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
-      s.reviewGates = gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], Date.now(), runId);
-    }
+    const failAt = Date.now();
+    const key = s.hs.gateKeyOf(runId); // the checkout resolved at the launch; none known: every entry
+    if (verdict === "fail") s.reviewGates = gatesVerdict(s.reviewGates, key ? [key] : null, ["fail"], failAt, runId);
     s.reviewSync = s.reviewSync.then(async () => {
       const dir = r.cwd ?? root;
       const h = await reviewedHeadVia(start, trees, dir, await headOf(dir));
-      const n = s.hs.record(root, verdict, h.head, r.text);
+      const n = verdict === "fail" ? s.hs.recordFail(root, h.head, r.text, { repoKey: await repoKeyOf(root), gateKey: key || null, failAt }) : s.hs.record(root, verdict, h.head, r.text);
       if (n === 0) return;
       s.trace?.emit({ event: "review_high_stakes", verdict, head: h.head, count: n });
       persistCeremonyState(s);
@@ -2741,7 +2747,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const top = await toplevelOf(cwd);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
-              if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd).catch(() => undefined); // clears a high-stakes FAIL after its revision
+              if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
               s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
               s.live?.flush(); // the pill's review facts
@@ -3774,7 +3780,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return { block: true, reason: shadow.message };
         }
         if (shadow.kind === "launch") input.task = shadow.task;
-        // High stakes (highstakes.ts): the `[high-stakes]` launch's refusals, a normal reviewer launch or resume while a high-stakes FAIL awaits its revision.
+        // High stakes (highstakes.ts): the `[high-stakes]` launch's refusals, a reviewer resume while a high-stakes FAIL is uncleared (a fresh normal reviewer gets the findings).
         if (!s.isChild && shadow.kind !== "launch") {
           const hs = await hsLaunchGuard(s, ctx, input, occasions, hsEntries);
           if (typeof hs === "string") return { block: true, reason: hs };
@@ -4211,12 +4217,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         if (actionOf(input) === null) for (const [e, o] of occasions) {
           if ((o !== "item" && o !== "pre-pr") || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent) || typeof e.task !== "string") continue;
-          const root = await toplevelOf(hsDirOf(ctx, input, e));
-          const found = root ? s.hs.pendingFindings(root) : null;
-          if (!root || !found) continue;
+          const found = s.hs.findingsFor();
+          if (!found) continue;
           if (!hsCited.has(event.toolCallId)) capSet(hsCited, event.toolCallId, citedItems(subagentTaskText(input)));
           e.task = findingsBlock(found) + e.task;
-          s.hs.handed(root);
+          s.hs.markHanded(event.toolCallId);
           persistCeremonyState(s);
         }
       }
@@ -5064,6 +5069,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         askLine = closeChildAsk(s, launched ?? resumedLaunch);
         s.ladder.onLaunched(event.toolCallId, runId);
         // a `[high-stakes]` launch: the run id is kept in the state (persisted); a failed launch drops the running mark
+        if (!s.isChild) s.hs.settleHanded(event.toolCallId, runId, event.isError);
         if (!s.isChild && s.hs.settle(event.toolCallId, runId, event.isError) !== null && runId) persistCeremonyState(s);
         if (runId && !s.isChild) {
           const rowRoles = s.launchedRoles.get(runId) ?? [];

@@ -132,11 +132,11 @@ test("item 4/6: the finish gate does not ask for the pass while a ledger item ot
   const h = await launch(a, "reviewer", "[high-stakes] review");
   assert.equal(h.blocked, null, String(h.blocked));
   await end(a, h, "reviewer", "1. FAIL src/a/big.ts:1 broken\nOverall verdict: FAIL");
-  assert.match(await settle(a), /revise after the high-stakes FAIL, then pass the normal reviewer/);
+  assert.match(await settle(a), /revise or answer the high-stakes findings, then pass the normal reviewer/);
   work(w, "src/a/fix.ts", lines(2));
   await end(a, await launch(a, "builder", "fix it"), "builder", "done");
   await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
-  assert.doesNotMatch(await settle(a), /revise after the high-stakes FAIL/);
+  assert.doesNotMatch(await settle(a), /revise or answer the high-stakes findings/);
 });
 
 test("item 2: a child with a [high-stakes] launch binding has its ledger V mark refused", async (t) => {

@@ -220,9 +220,11 @@ test("item 6: a FAIL: the PR gate and the finish gate hold, a normal reviewer wa
   const first = await hsPass(a, "FAIL", "1. FAIL src/a/big.ts:1 broken");
   assert.equal(first.blocked, null);
   assert.match(await pr(a), /\[pr_refused:high_stakes_failed\]/);
-  assert.match(await settle(a), /revise after the high-stakes FAIL, then pass the normal reviewer/);
+  assert.match(await settle(a), /revise or answer the high-stakes findings, then pass the normal reviewer/);
   const early = await launch(a, "reviewer", "[pre-pr] review the branch");
-  assert.match(early.blocked ?? "", /\[high_stakes_unrevised\]/, "a normal reviewer waits for the revision");
+  assert.equal(early.blocked, null, "a fresh normal reviewer is never refused for a missing revision");
+  assert.match(String(early.input.task), /\[pi-foreman high-stakes findings\]/, "it gets the findings");
+  await end(a, early, "reviewer", "no verdict"); // a run that ends without a verdict clears nothing
   const resumeEarly = await launch(a, "reviewer", "x", { action: "resume", id: "run-other" });
   assert.equal(resumeEarly.blocked === null || /unrevised|resume/.test(resumeEarly.blocked), true);
   const second = await launch(a, "reviewer", "[high-stakes] again");
@@ -273,7 +275,7 @@ test("item 7: after a reload the state holds: a FAIL still gates, no deadlock, a
   await hsPass(a, "FAIL", "1. FAIL a");
   const b = await w.adapter("reload");
   assert.match(await pr(b), /high_stakes_failed/);
-  assert.match(await settle(b), /revise after the high-stakes FAIL/);
+  assert.match(await settle(b), /revise or answer the high-stakes findings/);
 });
 
 test("item 7: a high-stakes run whose completion notice arrives after a reload is recognised by its persisted run id and marks no item (a run of another id does)", async (t) => {

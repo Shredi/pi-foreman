@@ -162,7 +162,7 @@ test("a FAIL whose worktree was removed keeps the PR gate and the finish gate cl
   assert.match(text, /\[pr_refused:high_stakes_failed\]/);
   assert.match(text, /that checkout is gone/);
   const fin = await settle(a);
-  assert.match(fin, /revise after the high-stakes FAIL/);
+  assert.match(fin, /revise or answer the high-stakes findings/);
   assert.match(fin, /that checkout is gone/);
 });
 

@@ -310,16 +310,17 @@ test("the done text says this session", () => {
   assert.match(launchRefusal(input({ state: st({ runs: [run("pass")] }) }))?.text ?? "", /of this session are used up/);
 });
 
-test("unrevisedRefusal: a normal reviewer in the FAIL's checkout waits for the revision; a builder in the launch counts; a resume is refused until cleared", () => {
+test("unrevisedRefusal: a fresh normal reviewer is never refused (it gets the findings); a resume in the FAIL's checkout is refused until cleared", () => {
   const o = (resume: boolean, builder: boolean, cwd = OWN) => ({ resume, builder, cwd });
   const failed = st({ runs: [run("fail")] });
   assert.equal(unrevisedRefusal(emptyState(), o(false, false)), null);
   assert.equal(unrevisedRefusal(st(), o(false, false)), null);
-  assert.equal(unrevisedRefusal(failed, o(false, false))?.reason, "high_stakes_unrevised");
-  assert.equal(unrevisedRefusal(failed, o(false, false, "/w/other")), null, "another checkout is not held");
+  assert.equal(unrevisedRefusal(failed, o(false, false)), null, "a fresh launch is never refused");
+  assert.equal(unrevisedRefusal(failed, o(true, false, "/w/other")), null, "another checkout is not held");
   assert.equal(unrevisedRefusal(failed, o(false, true)), null);
   const revised = st({ runs: [run("fail", { revised: true })] });
   assert.equal(unrevisedRefusal(revised, o(false, false)), null);
+  assert.equal(unrevisedRefusal(failed, o(true, false))?.reason, "high_stakes_unrevised");
   assert.equal(unrevisedRefusal(revised, o(true, false))?.reason, "high_stakes_unrevised");
   assert.equal(unrevisedRefusal(st({ runs: [run("fail", { revised: true, cleared: true })] }), o(true, false)), null);
 });
@@ -346,7 +347,7 @@ test("prRefusal: an uncleared FAIL, or a head that is a FAIL head, is refused; t
   assert.equal(prRefusal(secondCleared, DUE, [H2], OWN)?.reason, "high_stakes_failed");
 });
 
-test("prRefusal: a FAIL in another checkout is named; a gone checkout says only unsetting the model lifts it", () => {
+test("prRefusal: a FAIL in another checkout is named; a gone checkout says a normal reviewer clears it", () => {
   const live = fs.mkdtempSync(path.join(os.tmpdir(), "pf-hs-live-"));
   try {
     const a = prRefusal(st({ runs: [run("fail", { cwd: live })] }), DUE, [H2], OWN);
@@ -357,7 +358,7 @@ test("prRefusal: a FAIL in another checkout is named; a gone checkout says only 
   }
   const gone = prRefusal(st({ runs: [run("fail", { cwd: "/w/removed/worktree" })] }), DUE, [H2], OWN);
   assert.equal(gone?.reason, "high_stakes_failed");
-  assert.match(gone?.message ?? "", /that checkout is gone: only the owner unsetting ceremony\.highStakes\.model lifts it/);
+  assert.match(gone?.message ?? "", /that checkout is gone: a normal reviewer in any checkout at that commit or a later one clears it/);
 });
 
 test("finishNeeds: the pass is asked only once the ledger is done; the FAIL entry whatever the ledger; the FAIL names its checkout", () => {
