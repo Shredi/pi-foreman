@@ -91,7 +91,10 @@ test("(c) git reads are free: the seven added reads, pager and lock options, lis
 
 test("(c) unchanged: a short -o or -c, a global -c, an env prefix, and git subcommands the gate does not know are not refused by this rule", () => {
   // each answer is the one of before this step (not child-readonly-write: the call goes on to the judge or the parent); only the read table grew
-  mustFree(["git ls-files -o", "git grep -o foo", "git -c k=v log", "GIT_TRACE=f git log", "git cat-file -p HEAD", "git symbolic-ref HEAD", "git archive -o x.tar HEAD", "git log -c", `git --git-dir=${W}/.git log`]);
+  mustFree(["git ls-files -o", "git grep -o foo", "git -c k=v log", "GIT_TRACE=f git log", "git cat-file -p HEAD", "git symbolic-ref HEAD", "git log -c", `git --git-dir=${W}/.git log`]);
+  // `git archive -o x.tar HEAD` in the worktree: refused for the read-only roles since the output-option step (r2-readonly-git-output.test.ts), free for a builder
+  for (const role of ROLES) assert.ok(refused(verdict("git archive -o x.tar HEAD", role, "ro")), role);
+  assert.ok(!refused(verdict("git archive -o x.tar HEAD", "builder", "child")));
 });
 
 test("(c) long output options and downloads into the worktree are refused, into the scratch dir free", () => {

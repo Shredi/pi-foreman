@@ -1028,6 +1028,21 @@ function optValues(a: string[], short: string[], long: string[]): string[] {
   return out;
 }
 
+/**
+ * The words a read-only role's git segment writes a file to, for `git archive -o`, `format-patch`, `bundle create` and `checkout-index`: the named target, or "."
+ * (the cwd) when the form names none and writes there by default. Used only by the read-only fence; no other rule sees these subcommands.
+ */
+export function gitOutputWords(seg: ShellSegment): string[] {
+  if (progOf(seg) !== "git") return [];
+  const { sub, rest } = gitParts(seg.argv);
+  if (sub === "archive") return optValues(rest, ["-o"], []);
+  if (sub === "bundle") return rest[0] === "create" ? operands(rest.slice(1)).slice(0, 1).filter((w) => w !== "-") : [];
+  if (rest.includes("--stdout")) return [];
+  if (sub === "format-patch") return optValues(rest, ["-o"], ["--output-directory"]).concat(rest.some((w) => w === "-o" || w === "--output-directory" || /^-o.|^--output-directory=/.test(w)) ? [] : ["."]);
+  if (sub === "checkout-index") return optValues(rest, [], ["--prefix"]).concat(rest.some((w) => w === "--prefix" || w.startsWith("--prefix=")) ? [] : ["."]);
+  return [];
+}
+
 const GIT_WRITE_SUBS = new Set(["commit", "add", "rm", "mv", "merge", "rebase", "reset", "checkout", "switch", "restore", "stash", "tag", "cherry-pick", "revert", "apply", "am", "pull", "fetch", "clone", "init", "clean", "worktree", "branch", "submodule", "config", "gc", "prune", "update-index", "update-ref", "notes", "bisect"]);
 const PKG_READ_VERBS = new Set(["ls", "list", "ll", "la", "view", "info", "show", "search", "help", "config", "root", "prefix", "bin", "whoami", "outdated", "why", "explain", "docs", "licenses", "version", "-v", "--version"]);
 const CODE_FLAG: Record<string, RegExp> = { python: /^-[A-Za-z]*c(?:.+)?$/, node: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, nodejs: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, bun: /^(?:-e|--eval(?:=.*)?|--print(?:=.*)?)$/, perl: /^-[A-Za-z]*[eE]$/, ruby: /^-[A-Za-z]*e$/, php: /^-[A-Za-z]*r$/, lua: /^-[A-Za-z]*e$/, rscript: /^-e$/ };

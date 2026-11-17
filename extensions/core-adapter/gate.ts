@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitOutputWords, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
@@ -142,6 +142,14 @@ function readonlyWrite(tool: string, input: unknown, segments: ShellSegment[] | 
         if (abs && inside(abs)) return { path: abs, gitAny: false };
         // a root that does not resolve (relative under an unknown cwd) may be the worktree
         if (!abs) return { path: d, gitAny: false, what: `the find root ${d} cannot be resolved, so it may lie in ${roots.worktree}` };
+      }
+    }
+    if (prog === "git") {
+      // a git output option, or a default output into the cwd (`archive -o`, `format-patch`, `bundle create`, `checkout-index`)
+      const dir = seg.cwd ?? roots.worktree;
+      for (const w of gitOutputWords(seg)) {
+        const abs = resolveWord(platform, dir, w);
+        if (abs === null ? inside(dir) : inside(abs)) return { path: abs ?? w, gitAny: false };
       }
     }
     if (prog === "git" && gitWriteForm(seg) && inside(seg.cwd ?? roots.worktree)) {

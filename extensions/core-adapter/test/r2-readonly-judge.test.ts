@@ -63,7 +63,11 @@ test("rule 2: a write whose every target is named and inside scratch or the hand
 
 test("rule 4: every other segment gets the label (an unknown program, a script, inline code, an unknown git form, a build run no rule accepts, code from a writable folder)", () => {
   mustLabel(["echo hello", "pwd", "sort a.txt", "chmod +x a.txt", "bsdtar -xf a.tar", "gfind . -name x", "foo --bar", "bash x.sh", "./x.sh", "python3 x.py", "bash -c 'ls'", "python3 -c 'print(1)'", "node -e 'console.log(1)'", "env ls", "FOO=1 ls", "FOO=1 npm test", "make", "make foo", "npm run foo", "cargo build", "pnpm test", "node src/a.ts"]);
-  mustLabel(["git grep foo", "git cat-file -p HEAD", "git shortlog -sn", "git symbolic-ref HEAD", "git replace -l", "git archive HEAD", "git bundle list-heads x", "git format-patch -1", "git -c k=v log", "GIT_TRACE=1 git log", "git ls-files -o", "git grep -o foo", "git log -o"]);
+  mustLabel(["git grep foo", "git cat-file -p HEAD", "git shortlog -sn", "git symbolic-ref HEAD", "git replace -l", "git archive HEAD", "git bundle list-heads x", "git -c k=v log", "GIT_TRACE=1 git log", "git ls-files -o", "git grep -o foo", "git log -o"]);
+  // `git format-patch -1` writes patch files into the worktree cwd: refused for the read-only roles (r2-readonly-git-output.test.ts), never labelled for a builder or main
+  for (const role of ROLES) assert.equal((outcome("git format-patch -1", role, "ro").result as { rule?: string } | undefined)?.rule, "child-readonly-write", role);
+  assert.ok(!labelled("git format-patch -1", "builder", "child"));
+  assert.ok(!labelled("git format-patch -1", "foreman", "main"));
   mustLabel([`node ${S}/probe.mts`, `node --test ${S}/x.test.mjs`, `bash ${S}/x.sh`, `${S}/x.sh`, `python3 ${S}/x.py > ${S}/out`, `cd ${S} && ./x.sh`, `make -C ${S} test`, `cd ${S} && npm test`]);
   mustLabel([`git -C ${C} -c k=v log`, `git -C ${C} log -o`, `git -C ${C} archive -o x.tar HEAD`, `git -C ${C} grep -o foo`, `GIT_DIR=x git -C ${C} log`, `git --git-dir=${W}/.git status`]);
   // one labelled segment labels the line
