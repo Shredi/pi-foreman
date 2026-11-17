@@ -870,6 +870,8 @@ export interface PrWatchesDeps {
   child?(): boolean;
   /** The watched PR was merged (the watch has ended and its message is sent). */
   onMerged?(info: MergedInfo): void;
+  /** A milestone of a PR for the owner's page list: a PR this session created (pr_create) was armed, a child's PR got its ready line, a watched PR was merged. */
+  milestone?(kind: "pr_opened" | "pr_ready" | "pr_merged", n: number): void;
   /**
    * The merged PR's checkout goes back to the base branch (returntobase.ts mergedReturn): the line for the merged message and the outcome; null: nothing to say (the key is off).
    * Not called in a child session. `cwd` is the watch's directory. A throw is reported in the line; it never stops the ending.
@@ -965,7 +967,7 @@ export class PrWatches {
   }
 
   /** Arm a watch from a stored snap (taken at `okAt`): what the PR shows now counts as reported. */
-  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false): void {
+  start(key: PrKey, snap: WatchSnapshot, okAt: number | null = null, owned = false, created = false): void {
     const state = baselineOf(snap);
     const passed = this.passedSet();
     // the head the watch is armed on, when the session passed it (pr_create arms right after the gate passed), is the last PASS
@@ -977,18 +979,28 @@ export class PrWatches {
     this.arm(w);
     this.persist();
     this.deps.changed?.();
+    if (created) this.milestone("pr_opened", key.n);
+  }
+
+  private milestone(kind: "pr_opened" | "pr_ready" | "pr_merged", n: number): void {
+    try {
+      this.deps.milestone?.(kind, n);
+    } catch {
+      // the page list must not break the watch
+    }
   }
 
   /**
    * Arm a watch the store has no snap for yet: an empty baseline (`last` "arming"); the first stored snap seeds comments and
    * mergeable, and reports CI like any other.
    */
-  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false): void {
+  startPending(key: PrKey, _error?: string, reviewedHead?: string, owned = false, created = false): void {
     const empty: WatchSnapshot = { state: "open", mergeable: "unknown", head: "", base: "", updatedAt: "", runs: [] };
     const w = this.register({ key, cwd: this.deps.cwd?.() ?? "", startedAt: this.deps.now(), state: { ...baselineOf(empty), noCi: 0, last: "arming", ...(reviewedHead ? { reviewedHead } : {}) }, ...(owned ? { owned: true } : {}) });
     this.arm(w);
     this.persist();
     this.deps.changed?.();
+    if (created) this.milestone("pr_opened", key.n);
   }
 
   /** The session's PASS heads, null when the watch does not judge reviews (no dep, or it threw). */
@@ -1303,6 +1315,7 @@ export class PrWatches {
     if (delta) {
       this.deps.send(prMessage(w.key.n, leaving ? this.leavingDelta(delta, child) : delta), this.idle());
       this.deps.trace({ event: "pr_watch", outcome: "event" });
+      if (delta.ready || delta.readyNoChecks) this.milestone("pr_ready", w.key.n);
     }
     if (changed || delta) this.deps.changed?.();
     this.arm(w);
@@ -1517,6 +1530,7 @@ export class PrWatches {
     this.deps.send(prMessage(w.key.n, d), this.idle());
     this.deps.trace({ event: "pr_watch", outcome: d.final });
     if (d.final === "merged") {
+      this.milestone("pr_merged", w.key.n);
       try {
         this.deps.onMerged?.({ key: w.key, head: d.head, base: d.base });
       } catch {

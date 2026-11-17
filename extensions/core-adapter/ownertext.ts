@@ -86,11 +86,31 @@ export function jargonHits(text: string, max = 3): string[] {
   return hits;
 }
 
-/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. */
-const measure = (sec: OwnerSection): { wrapped: number; chars: number } => ({
-  wrapped: sec.lines.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0),
-  chars: sec.lines.join("\n").length,
-});
+const MERMAID_OPEN = /^[ \t]*(?:```|~~~)[ \t]*mermaid\b/;
+
+/** The first and last line index of each mermaid fence in a section (an unclosed one runs to the end). */
+function diagramSpans(lines: string[]): [number, number][] {
+  const spans: [number, number][] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!MERMAID_OPEN.test(lines[i])) continue;
+    let j = i + 1;
+    while (j < lines.length && !FENCE.test(lines[j])) j++;
+    spans.push([i, Math.min(j, lines.length - 1)]);
+    i = j;
+  }
+  return spans;
+}
+
+/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. The first mermaid fence is the section's diagram and does not count when it is closed; an unclosed one counts in full. */
+const measure = (sec: OwnerSection): { wrapped: number; chars: number } => {
+  const span = diagramSpans(sec.lines)[0];
+  const first = span && span[1] > span[0] && FENCE.test(sec.lines[span[1]]) ? span : undefined;
+  const kept = first ? sec.lines.filter((_l, i) => i < first[0] || i > first[1]) : sec.lines;
+  return {
+    wrapped: kept.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0),
+    chars: kept.join("\n").length,
+  };
+};
 
 /** The rule violations of a plan's owner section; empty when it is fine. */
 export function ownerSectionIssues(text: string): string[] {
@@ -101,6 +121,7 @@ export function ownerSectionIssues(text: string): string[] {
   const { wrapped, chars } = measure(sec);
   if (wrapped > OWNER_LINES || chars > OWNER_CHARS) issues.push(`too long (${wrapped} lines wrapped at ${OWNER_COLS} columns, ${chars} characters; at most ${OWNER_LINES} lines and ${OWNER_CHARS} characters)`);
   if (!sec.lines.some((l) => l.trim())) issues.push("empty");
+  if (diagramSpans(sec.lines).length > 1) issues.push("more than one diagram (one mermaid fence is allowed)");
   const jargon = jargonHits(sec.lines.join("\n"));
   if (jargon.length) issues.push(`jargon: ${jargon.join(" ")}`);
   return issues;
@@ -147,7 +168,12 @@ function ownerFactLine(p: string, cwd: string): string {
 export function ownerSummary(text: string): string {
   const sec = ownerSection(text);
   if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "For the owner" summary in this plan.';
-  const lines = sec.lines.filter((l) => l.trim());
+  const spans = diagramSpans(sec.lines);
+  const shown = sec.lines.flatMap((l, i) => {
+    const span = spans.find(([a, b]) => i >= a && i <= b);
+    return span ? (i === span[0] ? ["(diagram: see the plan page)"] : []) : [l];
+  });
+  const lines = shown.filter((l) => l.trim());
   return ["For the owner", ...lines.slice(0, OWNER_LINES).map((l) => `  ${clean(l)}`), ...(lines.length > OWNER_LINES ? ["  …"] : [])].join("\n");
 }
 
