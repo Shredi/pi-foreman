@@ -178,15 +178,24 @@ test("revision: a scratch path held in a variable is substituted only when the v
   const inPath = "mine";
   const absent = ["PFQ", "PFR", "PFS"].find((n) => !S.includes(n))!;
   assert.ok(new RegExp(`(?<![A-Za-z0-9_])${inPath}(?![A-Za-z0-9_])`).test(S), "the path holds the name");
+  const winDrive = process.platform === "win32" && /^[A-Za-z]:/.test(S);
   const held = (name: string): string => `${name}=${S}/x; echo y > "$${name}" 2>&1 | head`;
   const literal = `echo y > ${S}/x 2>&1 | head`;
   for (const role of ROLES) {
     // (a) name in the path: unresolved target, refused by the read-only rule
     assert.deepEqual([verdict(held(inPath), role, "ro")?.block, verdict(held(inPath), role, "ro")?.rule], [true, RO], held(inPath));
-    // (b) name nowhere else: resolves into the scratch dir, the verdict of the literal-path line
-    assert.deepEqual(verdict(held(absent), role, "ro"), verdict(literal, role, "ro"), held(absent));
+    if (winDrive) {
+      // win32 drive path: the pipeline form goes through childAssignValues, whose CHILD_ASSIGN accepts only a value starting with `/` (shellvars.ts), so
+      // `C:/...` is never substituted and the target stays unresolved: refused, fail closed (the plain form resolves through the closed grammar)
+      assert.deepEqual([verdict(held(absent), role, "ro")?.block, verdict(held(absent), role, "ro")?.rule], [true, RO], held(absent));
+    } else {
+      // (b) name nowhere else: resolves into the scratch dir, the verdict of the literal-path line
+      assert.deepEqual(verdict(held(absent), role, "ro"), verdict(literal, role, "ro"), held(absent));
+    }
     assert.deepEqual(verdict(literal, role, "ro"), undefined, literal);
   }
   mustRefuse([held(inPath)]);
-  mustFree([held(absent), literal]);
+  if (winDrive) mustRefuse([held(absent)]);
+  else mustFree([held(absent)]);
+  mustFree([literal]);
 });
