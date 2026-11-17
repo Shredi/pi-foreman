@@ -130,7 +130,7 @@ export default class ForemanAgents extends View {
     this.failed = new Set(); // keys of runs whose last try failed: one error notice per failure, not per retry
     this.pressed = new Map(); // element id -> when it was clicked: the next render shows it pending (visible feedback, same frame)
     this.seenChips = new Set();
-    this.hotCard = null; // id of the PR chip the pointer rests on: the only chip whose hover card is built
+    this.hotCard = null; // id of the PR chip the pointer last rested on, cleared when that chip is no longer drawn: the only chip whose hover card is built
     this.poll(cx);
     this.pollPrs(cx, Date.now());
     cx.timer.every(1000, (cx) => { this.poll(cx); this.pollPrs(cx, Date.now()); this.unpress(cx); });
