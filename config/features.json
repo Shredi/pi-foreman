@@ -438,7 +438,7 @@
       "id": "protected-targets",
       "area": "safety",
       "title": "Protected targets with a context check",
-      "purpose": "`protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run in a session with UI that is not a child (whatever the owner's presence) except remote writes the harness itself sees, which always ask, everything else asks with the reasoning (`gate.protected.check`; a protected entry's own `check` can tighten it, and its note is the judge's policy for that target). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.",
+      "purpose": "`protected` entries in permissions.json (user and trusted project file) name hosts, paths and commands. A call that acts on one goes to a short model check on the `review` rung that sees the command, its effect classes and the session's task; read-rated calls run, on-task non-reads run in a session with UI that is not a child (whatever the owner's presence) except remote writes the harness itself sees (a redirect or writing wrapper in a segment it reads directly, not behind `sudo`, another shell's `-c` string, a function body or an assignment prefix), which always ask, everything else asks with the reasoning (`gate.protected.check`; a protected entry's own `check` can tighten it, and its note is the judge's policy for that target). The foreman adds entries on request with `foreman_protect` behind a confirm dialog.",
       "doc": "docs/permissions.md#protected-targets",
       "keys": [
         "gate.protected.check"

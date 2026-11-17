@@ -151,3 +151,14 @@ test("the judge prompt: note is policy, reads pass off-task, secrets ask, unknow
   ]) assert.ok(p.includes(phrase), phrase);
   assert.equal(p.includes("prod-db"), false, "nothing per call in the system text");
 });
+
+test("the limit, pinned: a write behind sudo or another shell's string is judge-only; a direct redirect asks", async () => {
+  for (const away of [false, true]) {
+    for (const line of [`ssh prod-db 'sudo tee /etc/app.conf'`, `ssh prod-db 'sudo sh -c "echo a > /etc/app.conf"'`]) {
+      const r = await check(line, [V({})], { away });
+      assert.equal(r.accepted, "allow", `${line} away=${away}`);
+    }
+    const direct = await check(`ssh prod-db 'echo a > /etc/app.conf'`, [V({})], { away });
+    assert.deepEqual([direct.accepted, direct.cause], ["ask", "remote_write"], `direct away=${away}`);
+  }
+});
