@@ -1263,16 +1263,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The checkouts of `dirs` (toplevelOf each); null when there is none or one does not resolve (an unknown checkout acts on every gate entry). */
   const rootMemo = new Map<string, string>(); // a resolved checkout of a directory (a miss is not kept: the directory may appear later)
+  async function rootOf(d: string): Promise<string | null> {
+    const known = rootMemo.get(d);
+    if (known !== undefined) return known;
+    const r = await toplevelOf(d);
+    if (r !== null) rootMemo.set(d, r);
+    return r;
+  }
   async function rootsOf(dirs: readonly string[]): Promise<string[] | null> {
-    const roots = await Promise.all(
-      dirs.map(async (d) => {
-        const known = rootMemo.get(d);
-        if (known !== undefined) return known;
-        const r = await toplevelOf(d);
-        if (r !== null) rootMemo.set(d, r);
-        return r;
-      }),
-    );
+    const roots = await Promise.all(dirs.map(rootOf));
     return roots.length > 0 && roots.every((r): r is string => r !== null) ? [...new Set(roots)] : null;
   }
 
@@ -1303,7 +1302,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The checkout `dir` belongs to, its repository noted as seen (the first HEAD is the review base when no merge-base resolves); null outside git. */
   async function hsSee(s: Session, dir: string): Promise<string | null> {
-    const root = await toplevelOf(dir);
+    const root = await rootOf(dir);
     if (!root) return null;
     const key = await repoKeyOf(root);
     const head = key && !s.hs.base(key) ? await headOf(root) : null;
@@ -1351,7 +1350,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** A revision happened in the checkout of `dir` (a builder run, a project edit): an uncleared high-stakes FAIL that ran there counts as revised. */
   async function hsRevised(s: Session, dir: string | null): Promise<void> {
     if (!hsModel(s) || !s.hs.hasRuns()) return;
-    const root = await toplevelOf(dir ?? s.cwd);
+    const root = await rootOf(dir ?? s.cwd);
     if (root && s.hs.revision(root)) persistCeremonyState(s);
   }
 
@@ -1372,7 +1371,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (!hsModel(s)) return;
     const fail = s.hs.openFail();
     if (!fail) return;
-    const root = (await toplevelOf(cwd)) ?? realDir(cwd);
+    const root = (await rootOf(cwd)) ?? realDir(cwd);
     const descends = root !== fail.cwd && (await descendsFrom(fail, root, head));
     if (!s.hs.clearBy(root, { runId, head, descends })) return;
     s.reviewGates = gatesClearFail(s.reviewGates, fail.gateKey === undefined ? SESSION_WIDE : fail.gateKey, fail.failAt, Date.now(), runId); // an old run without gateKey: the session-wide entry
@@ -1407,7 +1406,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (model && launchRoles(s, input).some((r) => REVIEW_ROLES.includes(r))) {
         await s.reviewSync; // a FAIL still being recorded lands before it is read
         for (const d of launchCwds(input, ctx.cwd)) {
-          const root = await toplevelOf(d);
+          const root = await rootOf(d);
           const r = root ? unrevisedRefusal(s.hs.state(), { resume: true, builder: false, cwd: root }) : null;
           if (r) return refused(r);
         }
@@ -1420,7 +1419,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (marked.length === 0) return null;
     await s.reviewSync; // a review round still being recorded lands before the gate is read
     const dir = hsDirOf(ctx, input, marked[0]);
-    const top = await toplevelOf(dir);
+    const top = await rootOf(dir);
     const root = top ?? realDir(dir);
     const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: gateOf(s.reviewGates, top) }); // an unresolved checkout reads every entry
     if (r) return refused(r);
@@ -2744,7 +2743,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const cwd = r.cwd ?? s.cwd;
               const h = await reviewedHeadVia(start, startTrees, cwd, await headOf(cwd));
               const prev = s.reviews.findLast((x) => x.kind === "code");
-              const top = await toplevelOf(cwd);
+              const top = await rootOf(cwd);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
               if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd, runId, rec.head).catch(() => undefined); // clears a high-stakes FAIL when this run got its findings
@@ -3797,7 +3796,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the checkouts the reviewers run in (a resumed one: those of its target run; none recorded or one unresolved: null, which reads every entry)
         let dupRoots: (string | null)[] = [];
         if (dupOn && actionOf(input) === "resume") dupRoots = (s.reviewRoots.get(resumeTarget(input) ?? "") ?? [null]).slice();
-        else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => toplevelOf(d)));
+        else if (dupOn && actionOf(input) === null) dupRoots = await Promise.all(reviewDirs(ctx, input).map((d) => rootOf(d)));
         const dup = dupOn ? dupReview(standsFor(s.reviewGates, dupRoots) ? { last: "pass", revised: false } : initialReviewGate(), launchRoles(s, input), input) : null;
         if (dup) {
           const agent = [...new Set(launchRoles(s, input).filter((r) => REVIEW_ROLES.includes(r)))].join(",");

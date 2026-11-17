@@ -8,31 +8,33 @@ const design = { size: { files: ["src/a/x.ts"] }, risk: ["design"] };
 const security = { size: { files: ["src/a/x.ts"] }, risk: ["security"] };
 const skipped = (w: Parameters<typeof traces>[0]) => traces(w, "high_stakes_skipped");
 
-test("PR tools: a due review refuses nothing and its reminder is in the answer of every gated PR tool, not when reviewBeforePr is off", async (t) => {
-  const { w, a } = await setup(t);
-  commitIn(w.project, "src/a/x.ts");
-  await build(a, design);
-  assert.equal(await pr(a), "");
-  assert.match(await prNote(a), REMINDER);
-  const other = (await a.fire("tool_result", { toolName: "open_merge_request", toolCallId: "o1", input: {}, details: {}, content: [{ type: "text", text: "ok" }], isError: false })) as { content?: { text?: string }[] } | undefined;
-  assert.match((other?.content ?? []).map((c) => c.text).join("\n"), REMINDER);
-  const failed = (await a.fire("tool_result", { toolName: "create_pull_request", toolCallId: "o2", input: {}, details: {}, content: [{ type: "text", text: "no" }], isError: true })) as unknown;
-  assert.equal(failed, undefined, "an error result gets no reminder");
-
+test("PR tools: no reminder when reviewBeforePr is off", async (t) => {
   const off = await setup(t, { ceremony: { reviewBeforePr: false } });
   await launch(off.a, "builder", "build it", design);
   assert.equal(await prNote(off.a), "", "the PR gate is off: no reminder");
 });
 
-test("finish: held once per reason set (not counted as a refusal), then let go with an owner notice; a new reason holds again; a reload keeps the held set; the second pass after a cleared FAIL only reminds", async (t) => {
+test("a due review only reminds: PR tool answers, a refusal for another step (no hold spent), the finish held once per reason set (not counted as a refusal), then let go with an owner notice; a new reason holds again; a reload keeps the held set; the second pass after a cleared FAIL only reminds", async (t) => {
   const { w, a } = await setup(t);
   commitIn(w.project, "src/a/x.ts");
-  await build(a, design);
+  const bld = await launch(a, "builder", "build it", design);
+  await end(a, bld, "builder", "done");
+  const early = await settle(a);
+  assert.match(early, /requires reviewer/, "a refusal for another step carries the reminder");
+  assert.match(early, REMINDER);
+  assert.equal((await traces(w, "high_stakes_reminded")).length, 0, "no hold was spent");
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
   const first = await settle(a);
   assert.match(first, REMINDER);
   assert.match(first, /otherwise finish again/);
-  assert.equal((await traces(w, "finish_refused")).length, 0, "a hold is no refusal");
+  assert.equal((await traces(w, "finish_refused")).length, 1, "a hold is no refusal: only the refusal for the missing review counted");
   assert.equal((await traces(w, "high_stakes_reminded")).length, 1);
+  const other = (await a.fire("tool_result", { toolName: "open_merge_request", toolCallId: "o1", input: {}, details: {}, content: [{ type: "text", text: "ok" }], isError: false })) as { content?: { text?: string }[] } | undefined;
+  assert.match((other?.content ?? []).map((c) => c.text).join("\n"), REMINDER, "every gated PR tool carries the reminder, and a due review refuses nothing");
+  assert.equal(await pr(a), "");
+  assert.match(await prNote(a), REMINDER);
+  const failed = (await a.fire("tool_result", { toolName: "create_pull_request", toolCallId: "o2", input: {}, details: {}, content: [{ type: "text", text: "no" }], isError: true })) as unknown;
+  assert.equal(failed, undefined, "an error result gets no reminder");
   assert.equal(await settle(a), "", "the second try goes through");
   assert.equal((await skipped(w)).length, 1);
   assert.ok(w.notes.some((n) => /finished while a high-stakes review is due \(design\)/.test(n)), "the owner is told");
@@ -55,17 +57,4 @@ test("finish: held once per reason set (not counted as a refusal), then let go w
   assert.match(await settle(b), /requested by the foreman/, "the foreman's own launch added a reason: held once more");
   assert.equal(await settle(b), "", "the second pass after a cleared FAIL only reminds: the next try goes through");
   assert.ok(w.notes.filter((n) => /finished while a high-stakes review is due \(design,foreman,security\)/.test(n)).length === 1);
-});
-
-test("finish: a refusal for another step carries the reminder and does not use up the hold", async (t) => {
-  const { w, a } = await setup(t);
-  commitIn(w.project, "src/a/x.ts");
-  const b = await launch(a, "builder", "build it", design);
-  await end(a, b, "builder", "done");
-  const text = await settle(a);
-  assert.match(text, /requires reviewer/);
-  assert.match(text, REMINDER);
-  assert.equal((await traces(w, "high_stakes_reminded")).length, 0, "no hold was spent");
-  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
-  assert.match(await settle(a), /otherwise finish again/, "the hold still comes once the review passed");
 });
