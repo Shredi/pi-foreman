@@ -89,7 +89,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { dueReasons, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { dueReasons, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -1260,6 +1260,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The reasons that count now (empty: no pass is due). */
   const hsDue = (s: Session): string[] => dueReasons(s.hs.state(), hsHeavyOn(s));
+  const hsRequired = (s: Session): boolean => hsRequiredOf(s.hs.state(), hsDue(s));
 
   /** A gate asks: the heavy reason is recorded when it applies. */
   function hsRefresh(s: Session): void {
@@ -4974,7 +4975,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       bottomNotes.delete(event.toolCallId);
       climbNotes.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(event.input as Record<string, unknown>) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(event.input as Record<string, unknown>, hsRequired(s)) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;

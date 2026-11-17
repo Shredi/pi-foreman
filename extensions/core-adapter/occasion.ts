@@ -50,9 +50,10 @@ const OCCASION_LINES: Partial<Record<Occasion, string>> = {
 };
 
 /** The launch-result line of each non-item occasion a review child of the launch names (a misclassified review is visible before it runs). */
-export function occasionLinesOf(input: Json): string[] {
+export function occasionLinesOf(input: Json, hsRequired = false): string[] {
   const named = new Set([...entryOccasions(input)].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o));
-  return [...named].flatMap((o) => OCCASION_LINES[o] ?? []);
+  // `hsRequired`: a high-stakes review is still due, so a `[pre-pr]` PASS does not open the PR gate by itself.
+  return [...named].flatMap((o) => (o === "pre-pr" && hsRequired ? `${OCCASION_LINES[o]}; a [high-stakes] review is necessary after this PASS` : OCCASION_LINES[o] ?? []));
 }
 
 /** One launched child, in launch order (launchEntries entries that name an agent). */
