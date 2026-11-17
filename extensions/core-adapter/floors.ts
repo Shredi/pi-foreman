@@ -1321,6 +1321,12 @@ export function harnessFolderWord(words: string[], cwd: string, env: FloorEnv): 
   return words.some((w) => protectedWord(w, cwd, env, entries) !== null);
 }
 
+/** The absolute spellings of the words that name the harness folder `<agent dir>/pi-foreman` itself or a path below it (the policy and state files too). */
+export function harnessFolderPaths(words: string[], cwd: string, env: FloorEnv): string[] {
+  const entries = agentDirs(env).map((a) => ({ p: path.join(a, "pi-foreman"), tree: true }));
+  return words.flatMap((w) => braceVariants(w).flatMap((v) => protectedAt(v, cwd, env, entries)?.abs ?? []));
+}
+
 export const BRACE_LIMIT = 64;
 
 /** `word` with its first top-level `{a,b}` group expanded (not `${..}`), recursively, at most BRACE_LIMIT variants; the word itself when it has none. */
@@ -1351,7 +1357,10 @@ export function braceVariants(word: string): string[] {
   return out.length ? out : [word];
 }
 
-function protectedOne(word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null {
+const protectedOne = (word: string, cwd: string, env: FloorEnv, entries: Protected[]): string | null => protectedAt(word, cwd, env, entries)?.p ?? null;
+
+/** The entry a word names and the absolute spelling the word resolved to, or null. */
+function protectedAt(word: string, cwd: string, env: FloorEnv, entries: Protected[]): { p: string; abs: string } | null {
   const w = slash(word.replace(/^(['"])(.*)\1$/, "$2"));
   const m = /^-{1,2}[\w-]+=(.+)$/.exec(w) ?? /^[A-Za-z_]\w*=(.+)$/.exec(w);
   for (const x of m ? [w, m[1]] : [w]) {
@@ -1370,13 +1379,13 @@ function protectedOne(word: string, cwd: string, env: FloorEnv, entries: Protect
       const lit = abs.slice(0, abs.search(/[*?[]/));
       const dir = formsOf(lit.endsWith("/") ? lit.slice(0, -1) : path.posix.dirname(lit), env);
       const found = entries.find((e) => formsOf(e.p, env).some((g) => (e.ext !== undefined ? (abs.endsWith(e.ext) || /[*?\]]$/.test(abs)) && dir.some((f) => (e.flat ? f === g : f === g || f.startsWith(`${g}/`))) : globMatch(abs, g, fold) || (e.tree && dir.some((f) => f === g || f.startsWith(`${g}/`))))));
-      if (found) return found.p;
+      if (found) return { p: found.p, abs };
       continue;
     }
     const mine = formsOf(abs, env);
     const found = entries.find((e) => formsOf(e.p, env).some((g) => mine.some((f) => covers(e, g, f))));
-    if (found) return found.p;
-    if (mine.some((f) => PERMS_BASENAME.test(f))) return abs;
+    if (found) return { p: found.p, abs };
+    if (mine.some((f) => PERMS_BASENAME.test(f))) return { p: abs, abs };
   }
   return null;
 }

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderWord, injection, secretPath } from "./floors.ts";
+import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, secretPath } from "./floors.ts";
 import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
@@ -944,7 +944,20 @@ function harnessFolderSeg(s: ShellSegment, env: DangerEnv): boolean {
   const chain = toChain(s);
   // a child's reads stay open (owner ruling brief-16): the read question is asked as for a session that is not a child
   if (chain && segmentEffect(effectCtxOf({ ...env, roots: { ...env.roots, child: false } }), s.cwd, chain).cls === "read") return false;
-  return harnessFolderWord([...s.argv, ...s.redirects.map((r) => r.target)], s.cwd ?? env.cwd, env.floor);
+  const words = [...s.argv, ...s.redirects.map((r) => r.target)];
+  const cwd = s.cwd ?? env.cwd;
+  if (harnessFolderWord(words, cwd, env.floor)) return true;
+  // the folder itself: a known read program that writes nothing (a redirect) is skipped, whether or not its path is a read root
+  if (READ_PROGS.has(progOf(s)) && !s.redirects.some((r) => r.op !== "<" && r.op !== "dup")) return false;
+  return harnessFolderPaths(words, cwd, env.floor).some((abs) => !sanctionedHarnessPath(abs, env));
+}
+
+/** A path below the harness folder the session itself works in: its handoff dirs, its scratch dirs, and the wait folder `<agent dir>/pi-foreman/state/wait` (wait.ts). */
+function sanctionedHarnessPath(abs: string, env: DangerEnv): boolean {
+  const r = env.roots;
+  const wait = [env.floor?.agentDir, env.floor?.home ? path.join(env.floor.home, ".pi", "agent") : undefined].filter((x): x is string => !!x).map((a) => path.join(a, "pi-foreman", "state", "wait"));
+  const dirs = [...r.handoffs, ...(r.openedHandoffs ?? []), ...(r.childHandoff ? [r.childHandoff] : []), ...(r.ownHandoff ? [r.ownHandoff] : []), ...(r.childHandoffs ?? []), ...r.scratch, ...wait];
+  return dirs.some((d) => rootHolds(d, abs, env.platform, r.realpath, r.worktree));
 }
 
 const DETACH = new Set(["nohup", "setsid", "disown"]);
@@ -1572,7 +1585,7 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
   { name: "danger-git-secret", reason: "shows a secret or key file through a git revision (git show HEAD:<path>)", test: segs(gitSecretSeg) },
-  { name: "danger-harness-folder", reason: "a program that is no known read names a policy or state file of the harness", test: segs(harnessFolderSeg) },
+  { name: "danger-harness-folder", reason: "a program that is no known read names a policy or state file of the harness, or the harness folder itself or a path below it outside the session's own handoff, scratch and wait folders", test: segs(harnessFolderSeg) },
   { name: "danger-readonly-run", reason: "a read-only role runs something the gate cannot see into (an unknown program or git form, code from a writable folder, a build run it does not know)", test: (c, e) => readonlyRunLine(c, e) },
 ];
 
