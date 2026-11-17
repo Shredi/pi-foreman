@@ -1,5 +1,5 @@
 // Self-finish of a round that worked in a second worktree: the session's cwd is the main checkout, the PR head branch lives in another worktree.
-import { test } from "node:test";
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -8,6 +8,7 @@ import * as path from "node:path";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { isInside, parseWorktrees, samePath, selfFinish } from "../selffinish.ts";
 import type { SelfFinishDeps } from "../selffinish.ts";
+import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -23,30 +24,64 @@ const py = (args: string[]): Promise<{ code: number; out: string }> => new Promi
 const ran = (result: Record<string, unknown>): SafeOpOutcome => ({ kind: "ran", result });
 const fwd = (s: string): string => s.replace(/\\/g, "/").toLowerCase();
 
-/** main checkout `repo` on `main`, a second worktree `feat` whose branch was squash-merged into main. */
+// The git part of every world is the same: it is built once per test process (the template) and copied into each world. The template's
+// git calls run with housekeeping off (cleanEnv drops the preload's settings; a detached `git maintenance run --auto` would race the copy),
+// and its bare origin does not auto-gc on receive.
+const HOUSEKEEPING = GIT_HOUSEKEEPING_OFF.flatMap(([k, v]) => ["-c", `${k}=${v}`]);
+let template: { root: string; tip: string } | undefined;
+after(() => {
+  if (template) fs.rmSync(template.root, { recursive: true, force: true });
+});
+
+/** The template: a bare origin, a clone `repo` on `main`, and a second worktree `feat` whose branch was squash-merged into main and pushed. */
+function buildTemplate(): { root: string; tip: string } {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-selffinish-tpl-")));
+  const origin = path.join(root, "origin.git");
+  run("git", [...HOUSEKEEPING, "init", "-q", "--bare", "-b", "main", origin], root);
+  run("git", [...HOUSEKEEPING, "--git-dir", origin, "config", "receive.autogc", "false"], root);
+  const repo = path.join(root, "repo");
+  run("git", [...HOUSEKEEPING, "clone", "-q", origin, repo], root);
+  const g = (cwd: string, ...args: string[]): string => git(cwd, ...HOUSEKEEPING, ...args);
+  g(repo, "checkout", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "README"), "x\n");
+  fs.writeFileSync(path.join(repo, ".gitignore"), ".workflow/\n");
+  g(repo, "add", ".");
+  g(repo, "commit", "-q", "-m", "init");
+  g(repo, "push", "-q", "-u", "origin", "main");
+  const wt = path.join(root, "repo.worktrees", "feat");
+  g(repo, "worktree", "add", "-q", "-b", "feat", wt);
+  fs.writeFileSync(path.join(wt, "f.txt"), "feature\n");
+  g(wt, "add", "f.txt");
+  g(wt, "commit", "-q", "-m", "feature");
+  const tip = g(wt, "rev-parse", "HEAD");
+  g(repo, "merge", "--squash", "feat");
+  g(repo, "commit", "-q", "-m", "feature (squash)");
+  g(repo, "push", "-q", "origin", "main");
+  return { root, tip };
+}
+
+/** Rewrites the template root to the copy's root in a git file that names an absolute path, in its native and its forward-slash spelling. */
+function relink(file: string, from: string, to: string): void {
+  const slash = (p: string): string => p.replace(/\\/g, "/");
+  let text = fs.readFileSync(file, "utf8");
+  for (const [a, b] of [[from, to], [slash(from), slash(to)]]) text = text.split(a).join(b);
+  fs.writeFileSync(file, text);
+}
+
+/** main checkout `repo` on `main`, a second worktree `feat` whose branch was squash-merged into main: a copy of the template at its own paths. */
 function world() {
+  const t = (template ??= buildTemplate());
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-selffinish-wt-")));
+  fs.cpSync(t.root, root, { recursive: true, preserveTimestamps: true });
   const state = path.join(root, "agent", "pi-foreman", "state");
   fs.mkdirSync(state, { recursive: true });
   const origin = path.join(root, "origin.git");
-  run("git", ["init", "-q", "--bare", "-b", "main", origin], root);
   const repo = path.join(root, "repo");
-  run("git", ["clone", "-q", origin, repo], root);
-  git(repo, "checkout", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repo, "README"), "x\n");
-  fs.writeFileSync(path.join(repo, ".gitignore"), ".workflow/\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-q", "-m", "init");
-  git(repo, "push", "-q", "-u", "origin", "main");
   const wt = path.join(root, "repo.worktrees", "feat");
-  git(repo, "worktree", "add", "-q", "-b", "feat", wt);
-  fs.writeFileSync(path.join(wt, "f.txt"), "feature\n");
-  git(wt, "add", "f.txt");
-  git(wt, "commit", "-q", "-m", "feature");
-  const tip = git(wt, "rev-parse", "HEAD");
-  git(repo, "merge", "--squash", "feat");
-  git(repo, "commit", "-q", "-m", "feature (squash)");
-  git(repo, "push", "-q", "origin", "main");
+  relink(path.join(repo, ".git", "worktrees", "feat", "gitdir"), t.root, root);
+  relink(path.join(wt, ".git"), t.root, root);
+  git(repo, "remote", "set-url", "origin", origin);
+  const tip = t.tip;
   fs.mkdirSync(path.join(wt, ".workflow"), { recursive: true });
   fs.writeFileSync(path.join(wt, ".workflow", "LEDGER-x.md"), "# ledger\n");
   const handoff = path.join(root, "handoffs", "20261102-120000-demo");
@@ -573,6 +608,20 @@ test("no returned line advises git worktree remove or git branch -D; each not-st
     git(w.repo, "worktree", "add", "-q", "--orphan", "-b", "newb", orphan);
     const r2 = await selfFinish(w.deps({ cwd: orphan, status: noStatus, git: gitIn(orphan) }), 7);
     mustName(r2, orphan, "branch newb");
+  } finally {
+    w.cleanup();
+  }
+});
+
+test("a copied world works like a freshly built one: its worktree list, feat head, origin and status are the copy's", () => {
+  const w = world();
+  try {
+    const listed = git(w.repo, "worktree", "list", "--porcelain").split(/\r?\n/).filter((l) => l.startsWith("worktree ")).map((l) => l.slice("worktree ".length));
+    assert.ok(listed.some((p) => samePath(p, w.wt) && fwd(p) === fwd(w.wt)), listed.join("\n"));
+    assert.equal(git(w.wt, "rev-parse", "HEAD"), w.tip);
+    assert.equal(fwd(git(w.repo, "remote", "get-url", "origin")), fwd(path.join(w.root, "origin.git")));
+    assert.equal(git(w.wt, "status", "--porcelain"), "");
+    assert.equal(git(w.repo, "status", "--porcelain"), "");
   } finally {
     w.cleanup();
   }
