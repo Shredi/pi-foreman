@@ -611,7 +611,7 @@ class PackageFilesTest(unittest.TestCase):
              "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
             # html plans: the standard line names the HTML plan form
             ("then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it)",
-             "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it)"),
+             "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it), the HTML from `{{planSkeleton}}`"),
             # the SECURITY: revision-cap rule lost its removed `planner` tag, so it renders in every variant (eee843d never had it)
             ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
             # rules diet: prohibitions with exceptions or plain preferences read as the wanted behaviour

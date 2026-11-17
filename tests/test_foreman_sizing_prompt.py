@@ -49,7 +49,7 @@ ROLE_PAIRS = [
      "on the current head. The PR tool `pr_create` refuses without it; a PR opened from the shell is not refused, but the rule stays: review before the PR. After you open a PR from the shell, start a watch on it with `pr_watch`. Start"),
     # html plans: the standard line names the HTML plan form
     ("then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it)",
-     "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it)"),
+     "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it), the HTML from `{{planSkeleton}}`"),
     # html plans: an HTML plan keeps rulings in a sidecar and any page change is a new version
     ("a body edit is a new version. After a FAIL",
      "a body edit is a new version. An HTML plan (`plan-<topic>.html`) has no such heading: write its rulings to `rulings-<topic>.md` next to it, never into the page, and any change to the page, style included, is a new version; the reviewer reads the markdown copy `plan-<topic>.md` the harness generates from the page, which you never edit. After a FAIL"),
