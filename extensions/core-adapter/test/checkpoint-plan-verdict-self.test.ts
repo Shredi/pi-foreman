@@ -6,7 +6,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp } from "./_tmpbase.ts";
 import { readPlanVerdict } from "../checkpoint.ts";
-import { SelfRulings, selfRulingAsk, selfRulingRefusal, SELF_RULING_REASON, snapshotRulings } from "../ruling.ts";
+import { SelfRulings, selfRulingRefusal, SELF_RULING_REASON, snapshotRulings } from "../ruling.ts";
 import { SteerWatch } from "../steerwatch.ts";
 
 const await_ = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -20,11 +20,10 @@ function rig(t: { after(fn: () => void): void }): { d: string; plan: string } {
   return { d, plan };
 }
 
-test("a shell line writing ruling-plan.md in the own handoff dir is refused like one writing ruling.md", async (t) => {
+test("selfRulingRefusal: a shell line writing ruling-plan.md in the own handoff dir is refused like one writing ruling.md", async (t) => {
   const { d } = rig(t);
   for (const name of ["ruling.md", "ruling-plan.md"]) {
     assert.equal(await selfRulingRefusal("bash", { command: `printf APPROVED > ${path.join(d, name)}` }, d, [d]), SELF_RULING_REASON, name);
-    assert.ok(await selfRulingAsk("bash", { command: `printf APPROVED > ${path.join(d, name)}` }, [d]), name);
   }
 });
 

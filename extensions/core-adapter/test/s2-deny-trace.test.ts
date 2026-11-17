@@ -1,34 +1,17 @@
 // R5 P2 S2 (ledger 11, 8f-trace + R3 + R4): a silent deny traces its reason with the matched rule; home paths stay hidden.
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { denyFields, sanitizeTrace, scrubReason } from "../trace.ts";
 import { SELF_RULING_REASON, selfRulingRefusal } from "../ruling.ts";
 import { childHandoffDirs } from "../owned.ts";
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const baseline = readBaseline(pkgRoot)!;
-const posix = process.platform !== "win32";
-const repo = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-s2-tr-")));
 // A child on Windows writes a path into a bash line with forward slashes; native backslashes would be bash escapes.
 const inBash = (p: string): string => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
-after(() => fs.rmSync(repo, { recursive: true, force: true }));
-fs.mkdirSync(path.join(repo, "config"), { recursive: true });
-const rules = buildOverlayRules(baseline, {}, {}, path.join(repo, "agent"), repo, undefined, true);
-
-test("a write-protection deny of a shell command traces the rule as <repo>/… and no home path", { skip: !posix }, () => {
-  const command = "echo x > config/foreman.defaults.json";
-  const d = checkToolCall(rules, "bash", { command }, { cwd: repo, home: os.homedir(), platform: process.platform, role: "child" });
-  assert.equal(d?.kind, "deny");
-  const row = sanitizeTrace({ event: "overlay", toolFamily: "bash", decision: "deny", ...denyFields(d!.reason, "bash", { command }, "builder", [pkgRoot, repo]) });
-  assert.ok(String(row.reason).includes("rule '<repo>/config/foreman.defaults.json'"), String(row.reason));
-  assert.ok(!String(row.reason).includes(os.homedir()) && !String(row.reason).includes(repo));
-  assert.match(String(row.command), /^echo x > /);
-});
 
 test("scrubReason keeps rule ids and hides home paths", () => {
   const home = os.homedir();

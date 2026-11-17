@@ -122,11 +122,11 @@ const ALLOWING: Record<string, Expect> = {
   own_bg_output_cat: ["allowed:default-read", 0, 0],
   own_async_results_python_read: [CLASSIFIED, 0, 1], // r79 revision (finding C): an interpreter one-liner is danger-opaque, the classifier decides
   handoff_ruling_for_cat: [CLASSIFIED, 0, 1],
-  cp_ruling_into_scratch: [OK, 0, 0, true],
+  cp_ruling_into_scratch: [OK, 0, 0],
   usage_ls_grep_node_version: [OK, 0, 0],
   pi_scratch_read: ["allowed:default-read", 0, 0],
   own_bg_output_chain: [OK, 0, 0],
-  r16_f1_ruling_append_and_cp: [OK, 0, 0, true],
+  r16_f1_ruling_append_and_cp: [OK, 0, 0],
   toolchain_probe_pipe: [CLASSIFIED, 0, 1],
   project_settings_read_mention: [OK, 0, 0],
   other_session_state_read: [OK, 0, 0],

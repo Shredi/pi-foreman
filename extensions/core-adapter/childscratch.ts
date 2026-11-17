@@ -8,7 +8,6 @@
 // keeps them. Harness code only: no model turn and no guard sees the removal.
 //
 // What the guards allow inside a scratch dir (never outside it):
-//   - permoverlay.ts: a child may cd into its own dir (`$FOREMAN_SCRATCH` is expanded);
 //   - timeoutallow.ts: a command that only copies into, makes, removes inside or cds into a live
 //     scratch dir of the asking role, or whose write path lies inside one, composes as `child-scratch`.
 //     POSIX shell forms only, like `tmp-scratch`; a path from the write/edit tools works everywhere.

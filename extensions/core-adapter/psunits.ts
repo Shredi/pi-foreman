@@ -1,6 +1,5 @@
-// The lexer of the permission overlay (permoverlay.ts): a shell line split into pipelines, units and words, the command variants of a unit, and the
-// script a shell unit carries. Moved out of permoverlay.ts (round 2, step 2) without a change of behaviour so that floors.ts can split a line of the
-// powershell tool into the units the old layer matched its `bash.deny` patterns against (psUnitTexts). The overlay imports it back from here.
+// The shell lexer: a shell line split into pipelines, units and words, the command variants of a unit, and the
+// script a shell unit carries. floors.ts splits a line of the powershell tool into the units its `bash.deny` patterns are matched against (psUnitTexts).
 
 import { baseName } from "./patternargs.ts";
 
@@ -308,7 +307,7 @@ export function psDashes(s: string): string {
 export const psProfile = (s: string): string => s.replace(/\$\{env:USERPROFILE\}(?=[\\/])/gi, "$env:USERPROFILE");
 
 /**
- * The texts the old layer matched its `bash.deny` patterns against for a line of the powershell tool (collect() in permoverlay.ts, its text part):
+ * The texts the old layer matched its `bash.deny` patterns against for a line of the powershell tool (its text part):
  * the line as written and whitespace-collapsed, every pipeline joined, every unit (a leading keyword kept, then the variants: env assignments,
  * wrappers and the path prefix and `.exe` stripped), the units of each `$( )` substitution, the script of each `pwsh -c` / `cmd /c` unit, and
  * the command of a `-exec`.

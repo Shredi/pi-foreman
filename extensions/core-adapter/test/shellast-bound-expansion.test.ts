@@ -3,7 +3,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { boundNames } from "../shellast.ts";
-import { boundNames as overlayBoundNames } from "../permoverlay.ts";
 
 const U = "cat $HOME/.ssh/k.pub";
 const bound = (line: string, name = "HOME"): boolean => {
@@ -21,10 +20,6 @@ const G = [
 ];
 for (const line of G) {
   test(`${line} [revision 4]`, () => {
-    assert.ok(bound(line));
-  });
-  test(`${line} [revision 4, overlay agrees]`, () => {
-    assert.ok(overlayBoundNames(line).has("HOME"));
     assert.ok(bound(line));
   });
 }

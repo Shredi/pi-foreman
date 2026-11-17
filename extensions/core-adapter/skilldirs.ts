@@ -1,5 +1,4 @@
 // The skill paths a child's role names (roles.<role>.skills), resolved the way pi-subagents resolves them, as realpaths and, for a linked skill, as the link spelling.
-// permoverlay.ts (MatchCtx.skillDirs) lets a read-only shell word below one of them skip the childDeny `.agents` rules.
 // Fail-closed: any error gives an empty list.
 import * as fs from "node:fs";
 import { createRequire } from "node:module";

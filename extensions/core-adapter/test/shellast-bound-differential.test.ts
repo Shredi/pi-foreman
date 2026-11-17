@@ -1,9 +1,8 @@
-// NOTE: this file imports the overlay (permoverlay.ts) and is deleted together with it in round 2, step 6.
-// A fixed table of posix lines: shellast.ts's `boundNames` must never answer "HOME not bound" where the overlay's `boundNames` says HOME is bound.
+// A fixed table of posix lines: shellast.ts's `boundNames` once had to answer "HOME bound" wherever the old overlay's `boundNames` did. The overlay is gone;
+// what stays is the table size and the literal answers of `boundNames` for the lines the overlay was compared on.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { boundNames } from "../shellast.ts";
-import { boundNames as overlayBoundNames } from "../permoverlay.ts";
 
 const U = "cat $HOME/.ssh/k.pub";
 const q = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -139,14 +138,10 @@ test("the differential table holds at least 80 lines", () => {
   assert.ok(LINES.length >= 80, String(LINES.length));
 });
 
-for (const line of LINES) {
-  test(`new boundNames is never looser for HOME than the overlay's: ${JSON.stringify(line)}`, () => {
-    const old = overlayBoundNames(line).has("HOME");
+for (const line of KEPT) {
+  test(`a here-document body binds nothing in this shell (the lines the overlay read as code): ${JSON.stringify(line)}`, () => {
     const b = boundNames(line);
-    if (KEPT.has(line)) {
-      assert.ok(old);
-      assert.equal(b.any || b.names.has("HOME"), false);
-    } else if (old) assert.ok(b.any || b.names.has("HOME"), "the overlay says HOME is bound, the new function says it is not");
+    assert.equal(b.any || b.names.has("HOME"), false);
   });
 }
 
@@ -160,15 +155,41 @@ const LINES2: string[] = [
   `declare "a[HOME=1]"=x; ${U}`,
 ];
 
-for (const line of LINES2) {
-  test(`new boundNames is never looser for HOME than the overlay's (revision 2): ${JSON.stringify(line)}`, () => {
-    const old = overlayBoundNames(line).has("HOME");
-    const b = boundNames(line);
-    if (old) assert.ok(b.any || b.names.has("HOME"), "the overlay says HOME is bound, the new function says it is not");
-  });
-}
+// The literal answer of `boundNames` for each line of LINES and LINES2, by index: "+" = `any` (every name may be bound), "-" = not, then the sorted bound names.
+// Wherever the old overlay said HOME is bound (all but the two KEPT lines), HOME is bound here too: `any` is set or HOME is in the list.
+const ANSWERS: string[] = [
+  "-HOME,p", "-HOME,n,p", "-HOME,fp,p", "-HOME,p", "+", "+", "+", "+", "+a", "+",
+  "+x", "+x", "+HOME", "+HOME", "+", "+", "-", "-", "+y", "+y",
+  "+i,n", "+i,n", "+", "+", "+", "+", "+x", "+a", "+", "+",
+  "+", "-i", "+HOME", "+HOME", "+HOME", "+HOME", "+HOME", "+HOME", "+HOME", "+HOME",
+  "+HOME", "+HOME", "+HOME", "+HOME,r", "+HOME,t", "+HOME,o", "+HOME,v", "+HOME", "+HOME", "+",
+  "+HOME", "+n,r", "+n,r", "+n,r", "+n,r", "+HOME,cat", "+HOME,PATH,cat,u", "+HOME,X,Y,cat,u", "+HOME,cat,i", "+HOME,cat",
+  "+C,HOME,cat", "+HOME,PATH,bash,c,u", "+HOME,bash,c", "+HOME,S", "+HOME,c", "+HOME,c,e", "+HOME,c,e", "+HOME,c,ec", "+HOME,c", "+HOME,c,f",
+  "+HOME,c", "+HOME,c", "+HOME,c", "+HOME,c", "+HOME,c", "+c", "+c", "+HOME,c", "+HOME,c", "+c",
+  "+c", "+x", "+", "+x", "+x", "+x", "+", "+", "+", "+",
+  "+", "+", "+", "+c", "+x", "-", "+HOME", "-", "+HOME", "+HOME",
+  "+HOME", "+HOME", "+HOME", "+HOME", "+HOME", "-fd", "+EXIT", "+DEBUG", "+BASH_ENV,c", "+",
+  "+HOME", "+", "+", "+", "-ok", "-x", "+", "+",
+  // LINES2
+  "+v", "+v", "+", "-HOME,V,W,x", "+", "+", "+",
+];
 
-// Revision 3: for these lines the overlay must say bound too, so the table cannot pass by the overlay saying nothing.
+const encode = (line: string): string => {
+  const b = boundNames(line);
+  return (b.any ? "+" : "-") + [...b.names].sort().join(",");
+};
+
+test("the answer table covers every line of LINES and LINES2", () => {
+  assert.equal(ANSWERS.length, LINES.length + LINES2.length);
+});
+
+[...LINES, ...LINES2].forEach((line, i) => {
+  test(`boundNames gives the literal answer ${JSON.stringify(ANSWERS[i])} for ${JSON.stringify(line)}`, () => {
+    assert.equal(encode(line), ANSWERS[i]);
+  });
+});
+
+// Revision 3: for these lines HOME is bound.
 const LINES3: string[] = [
   `test -v 'a[$(cat f)]'; ${U}`,
   "test -v 'a[`cat f`]'; " + U,
@@ -186,8 +207,7 @@ const LINES3: string[] = [
 ];
 
 for (const line of LINES3) {
-  test(`the overlay and the new boundNames both say HOME is bound (revision 3): ${JSON.stringify(line)}`, () => {
-    assert.ok(overlayBoundNames(line).has("HOME"), "the overlay says HOME is not bound");
+  test(`boundNames says HOME is bound (revision 3): ${JSON.stringify(line)}`, () => {
     const b = boundNames(line);
     assert.ok(b.any || b.names.has("HOME"), "the new function says HOME is not bound");
   });

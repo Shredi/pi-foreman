@@ -6,12 +6,9 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { GitDriftWatch } from "../gitdrift.ts";
 import { ClaudeConfigWatch } from "../claudedrift.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const HOME = os.tmpdir();
 const PRINT = { mode: "print", hasUI: false };
 const noTrace = () => undefined;
@@ -90,29 +87,3 @@ for (const [name, damage] of [
     assert.deepEqual(new ClaudeConfigWatch().bind(state, dir), []);
   });
 }
-
-test("R2-M1: the pi-foreman state folder is protected (foreman asked, child denied; file tools and shell words)", (t) => {
-  const root = tmp(t, "pf-r2p-");
-  const cwd = path.join(root, "proj");
-  const home = path.join(root, "home");
-  const agentDir = path.join(home, ".pi", "agent");
-  const state = path.join(agentDir, "pi-foreman", "state");
-  fs.mkdirSync(state, { recursive: true });
-  fs.mkdirSync(cwd);
-  const snap = path.join(state, "claudecfg-abc.json");
-  fs.writeFileSync(snap, "{}");
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, path.join(root, "pkg"));
-  const kind = (tool: string, input: Record<string, unknown>, role: "main" | "child"): string => checkToolCall(r, tool, input, { cwd, home, platform: process.platform, role })?.kind ?? "pass";
-  for (const [tool, input] of [
-    ["write", { path: snap, content: "{}" }],
-    ["edit", { path: snap, edits: [] }],
-    ["bash", { command: `echo x > ${snap}` }],
-    ["bash", { command: "trash ~/.pi/agent/pi-foreman/state/claudecfg-abc.seen" }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "ask", `main ${tool} ${JSON.stringify(input)}`);
-    assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
-  }
-  // the state folder holds floored files: removing it is a floor deny (no dialog), was ask for the main agent
-  assert.equal(kind("bash", { command: `trash ${state}` }, "main"), "deny");
-  assert.equal(kind("bash", { command: `trash ${state}` }, "child"), "deny");
-});

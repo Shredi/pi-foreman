@@ -1,4 +1,4 @@
-// The permission baseline file (config/permissions.baseline.json) as typed lists. Moved out of permoverlay.ts (round 2, step 1).
+// The permission baseline file (config/permissions.baseline.json) as typed lists.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Json } from "./config.ts";

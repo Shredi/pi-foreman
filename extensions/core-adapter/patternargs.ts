@@ -1,5 +1,5 @@
 // The pattern and script operands of the read commands (grep, rg, sed, awk, find, echo, printf, git grep / log): the words that are text, never paths.
-// Moved out of permoverlay.ts (round 2, step 1) so that floors.ts and gate.ts no longer import the overlay.
+// Shared by floors.ts and gate.ts.
 
 export const GREP_FAMILY = new Set(["grep", "egrep", "fgrep", "rg"]);
 

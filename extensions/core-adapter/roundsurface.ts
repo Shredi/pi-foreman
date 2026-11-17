@@ -90,7 +90,7 @@ export function childSurface(worktrees: string[], cwd: string, role: string | un
 }
 
 /**
- * The path patterns a child may READ although the child block names them (permoverlay.ts `MatchCtx.readable`): the ledger bound to the session and
+ * The path patterns a child may READ although the child block names them: the ledger bound to the session and
  * its `LEDGER-*.md` siblings, the session's own handoff dirs and its round worktrees, each dir with its subtree. Writes stay closed.
  */
 export function childReadable(ledger: string | null, handoffDirs: string[], worktrees: string[], platform: string = process.platform): string[] {
@@ -162,7 +162,7 @@ export function recordBashOutputLog(logs: Set<string>, details: unknown, platfor
 /**
  * Read patterns for the foreman's own state records (R10 item 1, R12 item 2, R14 item 1): `<agentDir>/pi-foreman/state/usage` and everything below,
  * the session's own presence file `state/live/<session>.json` and its own trace file (trace.ts traceFile: `trace.dir` when set, else the state
- * dir). A read-only shell command of the foreman (permoverlay.ts ownRead: ownStateRead alone)
+ * dir). A read-only shell command of the foreman (ownStateRead alone)
  * may name them although the protect rule `{agentDir}/pi-foreman/state/*` covers state/; a write there and another session's files stay
  * protected. Never given to a child.
  */

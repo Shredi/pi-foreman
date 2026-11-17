@@ -1,5 +1,5 @@
 // sessionOpen's worktree refusals (resolver error, reserved label), the launch-wait worktree line under a custom absolute root, and the
-// glob compilation of worktreeroot.ts pinned to permoverlay.ts wildcardRegExp. Temp trees only.
+// glob compilation of worktreeroot.ts pinned to glob.ts wildcardRegExp. Temp trees only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -84,7 +84,7 @@ test("a changed remote.origin.url (what a submodule sync would write) is reporte
   assert.ok(diffGitSnapshots(before, takeGitSnapshot(dir, tmp)).length > 0);
 });
 
-test("globRegExp matches like permoverlay wildcardRegExp", () => {
+test("globRegExp matches like glob.ts wildcardRegExp", () => {
   const patterns = ["/a/trees/*/*", "/a/b?/x", "/a/*.wt/*", "/a/trees/repo/*"];
   const samples = ["/a/trees/r/round", "/a/trees/r/round/deep/f", "/a/bx/x", "/a/by/x/y", "/a/r.wt/round", "/a/trees/repo/x", "/a/other"];
   for (const p of patterns) {

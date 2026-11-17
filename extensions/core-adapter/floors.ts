@@ -565,7 +565,7 @@ function segmentFloorsOf(seg: ShellSegment, env: FloorEnv, line: ShellSegment[])
   return null;
 }
 
-// ------------------------------------------------------------------ whole-filesystem scan (moved from permoverlay.ts, round 2 step 2)
+// ------------------------------------------------------------------ whole-filesystem scan
 
 const SCAN_VALUE_FLAGS: Record<string, Set<string>> = {
   grep: new Set(["-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "--regexp", "--file", "--max-count"]),
@@ -632,7 +632,7 @@ function scanRoots(seg: ShellSegment): string[] | null {
 
 const MAX_GLOB = 200;
 
-/** Every existing path a glob in any segment of `abs` expands to, at most MAX_GLOB (moved from permoverlay.ts: dot entries match too). */
+/** Every existing path a glob in any segment of `abs` expands to, at most MAX_GLOB (dot entries match too). */
 function expandGlob(abs: string, p: typeof path.posix, win: boolean): string[] {
   const root = p.parse(abs).root;
   let cur = [root];
@@ -749,7 +749,7 @@ function builtinDeny(text: string, env: FloorEnv, ps: boolean): FloorHit | null 
 
 /**
  * The built-in deny for a line of the powershell tool: the line is split into the units the old layer matched its `bash.deny` patterns against
- * (psunits.ts: the PowerShell lexer of the overlay, with the `pwsh -c` / `cmd /c` scripts, `$( )` substitutions, `.exe` and path prefix handled there).
+ * (psunits.ts: the PowerShell lexer, with the `pwsh -c` / `cmd /c` scripts, `$( )` substitutions, `.exe` and path prefix handled there).
  * A statement that only mentions the words in a string (`Write-Output "gh auth token"`) starts with its own program and does not match.
  */
 function psBuiltinDeny(line: string, env: FloorEnv): FloorHit | null {
@@ -764,7 +764,7 @@ const PATTERN_PROGS = new Set(["grep", "egrep", "fgrep", "rg", "sed", "awk", "ga
 
 /**
  * Indexes into `seg.argv` of the pattern operands of the search programs (A4): the grep/rg pattern and `-e` values, and the sed script or awk
- * program when it can only read (permoverlay's operand logic). `-f`/`--file` values and every other operand stay paths.
+ * program when it can only read. `-f`/`--file` values and every other operand stay paths.
  */
 function searchPatterns(seg: ShellSegment, prog: string): Set<number> {
   if (!PATTERN_PROGS.has(prog)) return new Set();
@@ -855,7 +855,7 @@ function loadSecretGlobs(): string[] {
 export const SECRET_GLOBS: readonly string[] = loadSecretGlobs();
 const SECRET_FILE = new RegExp(`(^|/)(${SECRET_GLOBS.map((g) => g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*")).join("|")})$`, "i");
 
-/** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here; the overlay's path rules cover those. */
+/** A secret or key path (read or write), by the path alone. Bare names (no separator, no `~`) are not judged here. */
 const SECRET_EXTRA = /(^|\/)(\.config\/hub|\.config\/glab-cli|\.pi\/extensions\/pi-permission-system|\.claude\/\.credentials\.json|credentials(\.[^/]*)?)(\/|$)/i;
 /** Every literal name `SECRET_DIRS`, `SECRET_EXTRA`, `.git/config` and the auth file compare a segment with (the win32 8.3 short-name fold reads a short name as one of these). */
 const SECRET_NAMES = [".ssh", ".gnupg", ".aws", ".azure", ".config", "gcloud", "gh", "hub", "glab-cli", ".kube", "config", ".docker", "config.json", ".git-credentials", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git", "auth.json", ".claude", ".credentials.json", "credentials", ".pi", "agent", "extensions", "pi-permission-system"];
@@ -880,7 +880,7 @@ export function sshPublicKey(word: string, env: FloorEnv): boolean {
   try {
     const win = (env.platform ?? process.platform) === "win32";
     let x = slash(word.replace(/^(["'])(.*)\1$/, "$2"));
-    // the Windows spellings of the profile (the overlay's `$env:USERPROFILE` form, permoverlay.ts expandWord) are the home dir
+    // the Windows spellings of the profile (the `$env:USERPROFILE` form) are the home dir
     if (win && env.home) x = x.replace(/^(?:%USERPROFILE%|\$env:USERPROFILE|\$\{env:USERPROFILE\})(?=\/|$)/i, () => slash(env.home!));
     if (!env.home || /[$`*?[{%]/.test(x.replace(/^\$\{?HOME\}?/, ""))) return false;
     const abs = resolveWord(x, env.cwd, env);
@@ -1207,7 +1207,7 @@ export function fieldLineFloors(line: string, segments: ShellSegment[], env: Flo
 export const PATH_KEYS = ["path", "file_path", "filePath"];
 export const PATH_TOOL_KEYS = [...PATH_KEYS, "src", "dst", "glob", "pattern"];
 
-/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (sshPublicKey). One set for the floors, the gate and the overlay. */
+/** The path tools that only read: an SSH public key in ~/.ssh is no secret for them (sshPublicKey). One set for the floors and the gate. */
 export const READ_PATH_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "find", "ls"]);
 
 /** The floors of a path tool call (read, write, edit, grep, find, ls, foreman_move, foreman_copy): a secret or key path. */
@@ -1439,35 +1439,9 @@ export function homeSpelling(s: ShellSegment): boolean {
   return s.opaque === "unresolved_var" && [s.program, ...s.argv, ...s.redirects.map((r) => r.target)].every((w) => !/[$`()]/.test(w.replace(/^\$\{?HOME\}?(?=\/|$)/, "")));
 }
 
-/** The programs that read a file in PowerShell and cmd (`Get-Content`, `gc`, `cat`, `type`). */
-const PS_READ_PROGS = new Set(["get-content", "gc", "cat", "type"]);
-
-/**
- * The public-key words of a PowerShell / cmd line (`Get-Content $env:USERPROFILE\.ssh\k.pub`, `type %USERPROFILE%\.ssh\k.pub`): one plain read command
- * (no pipe, redirect, separator, substitution or subexpression), its non-flag operands that are `sshPublicKey`. Empty for anything else.
- */
-export function psPubKeyReadWords(command: string, env: FloorEnv): Set<string> {
-  const out = new Set<string>();
-  if (/[;&|<>`(){}\n\r]|\$\(|\*\*/.test(command.replace(/\$\{env:USERPROFILE\}/gi, ""))) return out;
-  const words = command.trim().split(/\s+/);
-  if (!PS_READ_PROGS.has(words[0].toLowerCase().replace(/\.exe$/, ""))) return out;
-  const ops: string[] = [];
-  const rest = words.slice(1);
-  for (let i = 0; i < rest.length; i++) {
-    // a value-taking flag's value (`-TotalCount 5`) is no operand
-    if (/^-(?:totalcount|head|tail|encoding)$/i.test(rest[i]) && i + 1 < rest.length) i++;
-    else if (!rest[i].startsWith("-")) ops.push(rest[i]);
-  }
-  const keys = ops.filter((w) => sshPublicKey(w, env));
-  // an operand that is no key (or any `-Path`-style flag value that is not a plain word) keeps the whole line out
-  if (keys.length === 0 || keys.length !== ops.length || rest.some((w) => /^-(?!path$|literalpath$|totalcount$|head$|tail$|raw$|encoding$)/i.test(w))) return out;
-  for (const w of keys) out.add(w);
-  return out;
-}
-
 /**
  * The words of a shell line that are SSH public keys in `~/.ssh` (`sshPublicKey`) and are only read: operands of a read-only program, `<`
- * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out. For the overlay's path rules.
+ * redirects. Empty for a line with an opaque segment, and a word that is also written anywhere on the line is left out.
  */
 export function pubKeyReadWords(segments: ShellSegment[], env: FloorEnv, bound?: ReadonlySet<string>): Set<string> {
   const out = new Set<string>();

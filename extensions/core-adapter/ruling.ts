@@ -7,8 +7,6 @@ import * as path from "node:path";
 import { forEachChild, parse } from "unbash";
 import type { Command, Redirected, SyntaxNode } from "unbash";
 import { inlineCode, shellWriteTargets, unresolvedWriteWords } from "./defaults.ts";
-import { shellWrites } from "./permoverlay.ts";
-import type { Decision } from "./permoverlay.ts";
 import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits.ts";
 import { braceVariants } from "./floors.ts";
 import { isRulingName, RULING_RE } from "./rulingname.ts";
@@ -396,7 +394,7 @@ function opaqueBodies(cmd: string): string[] {
 /**
  * Refusal reason when `toolName` writes a `ruling*.md` or `brief-*.md` inside one of `childDirs` (the dirs where this session is the child) at a
  * literal path, else undefined: write/edit `path`, foreman_copy/foreman_move `dst`, or a shell line (shellNamesRuling: the gate's parse of its write
- * surfaces), resolved against `cwd`. What a literal path does not show is selfRulingAsk's. `*.ack` files are never ruling names; a copy source is a read.
+ * surfaces), resolved against `cwd`. `*.ack` files are never ruling names; a copy source is a read.
  */
 export function selfRulingRefusal(toolName: string, input: Record<string, unknown>, cwd: string, childDirs: string[]): string | undefined {
   if (childDirs.length === 0) return undefined;
@@ -406,60 +404,6 @@ export function selfRulingRefusal(toolName: string, input: Record<string, unknow
   const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
   if (cmd && shellNamesRuling(toolName, cmd, cwd, dirs, childDirs, inChild)) return SELF_RULING_REASON;
   return words.some((p) => p && inChild(p)) ? SELF_RULING_REASON : undefined;
-}
-
-/**
- * R16 item 4a (ruling D1): a FLAT ask trigger on the lexed line, no resolution. A shell line with a write surface anywhere
- * (shellWrites), the token `ruling` or `brief` anywhere and a handoff-dir path anywhere (one of `childDirs`, or `handoffs/<its name>` in any
- * spelling: `~`, `$HOME`, relative) is an overlay ask: the auto reviewer judges it under the rules' hard_deny, the human on defer.
- * A pure read of a ruling never asks; a dir where this session is the parent (its child's rulings) is no trigger.
- */
-export function selfRulingAsk(toolName: string, input: Record<string, unknown>, childDirs: string[], lift?: { cwd: string; orchestrator: boolean }): Decision | undefined {
-  const cmd = SHELL_TOOLS.has(toolName) ? str(input.command) : null;
-  if (!cmd || childDirs.length === 0 || !/ruling|brief/i.test(cmd)) return undefined;
-  const fold = (s: string): string => s.replace(/\\/g, "/").toLowerCase();
-  const line = fold(cmd);
-  if (!childDirs.some((d) => [`handoffs/${path.basename(d)}`, d, realDir(d)].some((p) => line.includes(fold(p))))) return undefined;
-  // R31c R6: an orchestrator's own heredoc into a child-role file of its own handoff dir (the body may say "ruling")
-  if (lift?.orchestrator && ownHandoffHeredoc(toolName, cmd, childDirs, lift.cwd)) return undefined;
-  const w = shellWrites(cmd, shellOf(toolName));
-  if (w.words.length === 0 && !w.unnamed) return undefined;
-  return { kind: "ask", reason: "pi-foreman: this line writes, names a ruling and a handoff dir; a session never writes its own parent's ruling, so it needs approval.", rule: "self-ruling" };
-}
-
-/** The handoff files a session writes in a dir where it is the child (the child-role names; a broader pattern for another purpose, not the shell guard's allow-list `HANDOFF_CHILD_NAMES` in pathrules.ts; `ruling*`, `brief*`, `steer*`, `parent` and `child` are never among them). */
-const CHILD_ROLE_NAME = /^(?:plan|result)\.md$|^(?:update|ask)[A-Za-z0-9_-]*\.md$/;
-const HEREDOC_TARGET = "[A-Za-z0-9._/@%+,-][A-Za-z0-9._/@%+=,-]*";
-const HEREDOC_A = new RegExp(`^cat[ \\t]+(>>?)[ \\t]*(${HEREDOC_TARGET})[ \\t]+<<'([A-Za-z_][A-Za-z0-9_]*)'[ \\t]*$`);
-const HEREDOC_B = new RegExp(`^cat[ \\t]+<<'([A-Za-z_][A-Za-z0-9_]*)'[ \\t]+(>>?)[ \\t]*(${HEREDOC_TARGET})[ \\t]*$`);
-
-/**
- * R31c R6: the command is exactly one `cat > T <<'D'` / `cat >> T <<'D'` / `cat <<'D' > T` / `cat <<'D' >> T` heredoc (POSIX shell tools only) whose
- * body runs to the one terminator line `D`, which is the last line (one trailing newline allowed). The body is never lexed. `T` has no `..`,
- * lies directly in one of `childDirs` (the lexical parent is that dir, no symlinked spelling), is not a symlink, has a single link when it exists, and is
- * named like a child-role file (CHILD_ROLE_NAME).
- */
-export function ownHandoffHeredoc(toolName: string, cmd: string, childDirs: string[], cwd: string): boolean {
-  if (toolName === "powershell" || !SHELL_TOOLS.has(toolName) || /[\r\0]/.test(cmd)) return false;
-  const lines = cmd.split("\n");
-  const a = HEREDOC_A.exec(lines[0]);
-  const b = a ? null : HEREDOC_B.exec(lines[0]);
-  const target = a ? a[2] : b?.[3];
-  const delim = a ? a[3] : b?.[1];
-  if (!target || !delim) return false;
-  const end = lines.indexOf(delim, 1);
-  if (end < 0 || !(lines.length === end + 1 || (lines.length === end + 2 && lines[end + 1] === ""))) return false;
-  if (target.split("/").includes("..") || !CHILD_ROLE_NAME.test(path.basename(target))) return false;
-  const abs = path.resolve(cwd, target);
-  const parent = path.dirname(abs);
-  if (!childDirs.some((d) => [path.resolve(d), realDir(d)].includes(parent))) return false;
-  try {
-    const st = fs.lstatSync(abs);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1) return false;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") return false;
-  }
-  return true;
 }
 
 /** What `/foreman close` adds when the ceremony is incomplete: what the parent must still rule. */
