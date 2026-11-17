@@ -1365,7 +1365,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /**
    * A normal PASS (item or [pre-pr]) of run `runId` was recorded in `cwd` at `head`: when the run got the findings of the uncleared high-stakes FAIL it clears it, in the FAIL's
-   * checkout at any head, elsewhere when the PASS head descends from the FAIL head (highstakes.ts descendsFrom). The FAIL's review gate entry then passes too, when no work happened there since.
+   * checkout at any head, elsewhere when the PASS head descends from the FAIL head (highstakes.ts descendsFrom). The FAIL's review gate entry then passes too, when its PASS stood just before the FAIL and no work happened there since (work during the high-stakes run keeps it open).
    */
   async function hsNormalPass(s: Session, cwd: string, runId: string, head: string | null): Promise<void> {
     if (!hsModel(s)) return;

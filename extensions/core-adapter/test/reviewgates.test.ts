@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { initialReviewGate, onRevision, onReviewVerdicts, reviewHint } from "../bound.ts";
-import { combined, gateOf, gatesRevise, gatesVerdict, openHint, openRoots, standsFor } from "../reviewgates.ts";
+import { combined, gateOf, gatesClearFail, gatesMarkStood, gatesRevise, gatesVerdict, openHint, openRoots, standsFor } from "../reviewgates.ts";
 
 const passed = (runId = "r1") => onReviewVerdicts(initialReviewGate(), ["pass"], 1, runId);
 const own = { cwd: "/w/main", own: "/w/main" };
@@ -93,4 +93,11 @@ test("openRoots and openHint: today's text for the session's own checkout or the
   assert.equal(openHint(gatesRevise({ "": passed() }, null), own).includes("unknown"), false, "the session-wide entry alone: today's text");
   assert.equal(openHint({ "": onRevision(passed()), "/w/x": initialReviewGate(), "/w/y": { last: null, revised: true } }, own), "(re-review needed: unknown checkout: revised after the last PASS; /w/x: no review yet; /w/y: built, no review yet)");
   assert.equal(openHint({ "/w/main": passed() }, own), "", "nothing open: no hint");
+});
+
+test("mark stood: a FAIL checkout with no own entry, covered by a standing session-wide entry, is passed by the clear", () => {
+  const before = { "": passed() };
+  const failed = gatesMarkStood(before, gatesVerdict(before, ["/w/a"], ["fail"], 7, "r1"));
+  assert.equal(failed["/w/a"]!.stoodAtFail, true);
+  assert.equal(gatesClearFail(failed, "/w/a", 7, 9, "r2")["/w/a"]!.last, "pass");
 });

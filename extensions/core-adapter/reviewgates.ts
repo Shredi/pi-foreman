@@ -62,7 +62,7 @@ export function gatesVerdict(g: ReviewGates, roots: readonly string[] | null, ve
 export function gatesMarkStood(before: ReviewGates, after: ReviewGates): ReviewGates {
   const next: ReviewGates = { ...after };
   for (const [k, e] of Object.entries(after)) {
-    if (e !== before[k] && e.last === "fail" && before[k] && stands(before[k])) next[k] = { ...e, stoodAtFail: true };
+    if (e !== before[k] && e.last === "fail" && stands(gateOf(before, k))) next[k] = { ...e, stoodAtFail: true };
   }
   return next;
 }

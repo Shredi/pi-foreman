@@ -256,8 +256,8 @@ After a second FAIL the answer is `high_stakes_done`, never `high_stakes_early`.
 cleared by a normal PASS (item or `[pre-pr]`) of a run that got the findings: in the checkout the FAIL ran in at any head
 (revised or not), in any other checkout when the PASS head is the FAIL head or builds on it (git ancestry); a FAIL recorded
 with no head is cleared by such a PASS in any checkout of the same repository. A FAIL whose checkout was removed is cleared the
-same way. The clear also sets the FAIL checkout's review gate entry to PASS when no work happened there since the FAIL. Work
-done there afterwards keeps it open until a review there passes. Meanwhile:
+same way. The clear also sets the FAIL checkout's review gate entry to PASS when its PASS stood just before the FAIL and no work happened there since. Work
+done there during the high-stakes run or afterwards keeps it open until a review there passes. Meanwhile:
 
 - A fresh normal reviewer launch (item or `[pre-pr]`) is never refused for a missing revision: while the FAIL is uncleared,
   every one of them, in any checkout, gets the findings prepended, fenced and marked as data from an earlier review, with
