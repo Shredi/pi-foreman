@@ -1641,7 +1641,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
 
   /** The floor environment of a session: the permission gate and the PR tool's push check build it the same way. */
   function floorEnvOf(s: Session | undefined, cwd: string, sessionDir?: string): FloorEnv {
-    return baseFloorEnv(cwd, { ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
+    // the session's own scratch dirs, as gateRootsOf has them: the one source of the floors' inside scratch roots (the process env is never read)
+    const scratch = s ? (s.isChild ? (launchBinding?.scratch ? [launchBinding.scratch] : []) : s.scratch.live(null)) : [];
+    return baseFloorEnv(cwd, { scratch, ...(s?.agentDir ? { agentDir: s.agentDir } : {}), ...(sessionDir ? { sessionDir } : {}), pkgRoot: PKG_ROOT, protectedBranches: configuredProtected(s), ...(s?.isChild ? { child: true } : {}) });
   }
 
   async function run(s: Session, ctx: ExtensionContext, guard: GuardName, payload: unknown, toolFamily: string | null) {

@@ -39,7 +39,7 @@ export interface FloorEnv {
   protectedBranches?: string[];
   /** Roots a delete or a recursive overwrite may reach: the worktree, scratch dirs, the OS temp dir, owned write roots. */
   writeRoots?: string[];
-  /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: `$FOREMAN_SCRATCH`. */
+  /** The session's own scratch dirs (its FOREMAN_SCRATCH root); counted as inside for the delete and overwrite floors. Default: none (the process environment is never read for it). */
   scratch?: string[];
   /** The Pi agent dir (its auth.json is a secret path; its pi-foreman policy and state files are floored writes). */
   agentDir?: string;
@@ -323,11 +323,11 @@ function configTargets(call: GitCall): string[] {
   return dirs ? [path.join(dirs.common, "config"), path.join(dirs.gitDir, "config.worktree")] : [];
 }
 
-/** Every path is below the child's scratch root (`env.scratch`, `$FOREMAN_SCRATCH`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
+/** Every path is below the child's scratch root (`env.scratch`) or the scratch base `<OS temp dir>/pi-foreman-scratch`, in any spelling; at least one path. */
 function inOwnTemp(paths: string[], env: FloorEnv): boolean {
   if (!paths.length) return false;
   const plat = env.platform ?? process.platform;
-  const roots = [...(env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : [])), path.join(os.tmpdir(), "pi-foreman-scratch")].filter(Boolean);
+  const roots = [...(env.scratch ?? []), path.join(os.tmpdir(), "pi-foreman-scratch")].filter(Boolean);
   const rootForms = roots.flatMap((r) => formsOf(r, env));
   return paths.every((p) => formsOf(p, env).every((f) => rootForms.some((r) => lexUnder(plat, r, f))));
 }
@@ -501,7 +501,7 @@ function outside(word: string, cwd: string | null, env: FloorEnv): boolean {
   if (abs === null) return false; // unknown: the walker cannot say, the gate's other steps decide
   // r79 item 4: the session's own scratch root (`<tmp>/pi-foreman-scratch/<session>/<run>`, FOREMAN_SCRATCH) is inside, also under another spelling of
   // the temp dir (macOS /var vs /private/var)
-  const own = env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : []);
+  const own = env.scratch ?? [];
   const roots = [...(env.writeRoots ?? []), ...own];
   if (roots.some((r) => insideRoot(abs, r, env.platform))) return false;
   const mine = formsOf(abs, env);
@@ -702,7 +702,7 @@ export function scanToolFloor(tool: string, input: Record<string, unknown>, cwd:
 
 function scanHit(roots: string[], cwd: string, program: string, env: FloorEnv): FloorHit | null {
   const ws = workspaceOf(env.cwd).root;
-  const own = env.scratch ?? (process.env.FOREMAN_SCRATCH ? [process.env.FOREMAN_SCRATCH] : []);
+  const own = env.scratch ?? [];
   const bad = roots.find((r) => scanRootBad(r, cwd, env, ws, own));
   if (bad === undefined) return null;
   const named = [`the worktree ${ws}`, own[0] && `your scratch dir ${own[0]}`, "/tmp", "the Pi install root", "the global npm root", env.pkgRoot ? `the bundled package roots (${env.pkgRoot})` : "the bundled package roots"].filter(Boolean);

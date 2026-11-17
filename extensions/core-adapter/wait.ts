@@ -121,7 +121,7 @@ export function checkWaitPath(raw: unknown, o: PathBoundOpts): { path: string } 
   if (inside(rootsOf(workspaceOf(o.cwd).root))) {
     const roots = o.roots;
     if (!roots) return { error: `pi-foreman: ${WAIT_TOOL} on '${shown}' refused: the gate roots are unavailable, so the write protection cannot be checked. Run /foreman doctor.` };
-    const env = baseFloorEnv(o.cwd, { home: o.home, platform: o.platform, agentDir: o.agentDir, ...(roots.pkgRoot ? { pkgRoot: roots.pkgRoot } : {}), ...(roots.sessionDir ? { sessionDir: roots.sessionDir } : {}), ...(roots.child ? { child: true } : {}) });
+    const env = baseFloorEnv(o.cwd, { home: o.home, platform: o.platform, agentDir: o.agentDir, scratch: roots.scratch, ...(roots.pkgRoot ? { pkgRoot: roots.pkgRoot } : {}), ...(roots.sessionDir ? { sessionDir: roots.sessionDir } : {}), ...(roots.child ? { child: true } : {}) });
     // `<worktree>/.pi/tasks/`: only the session's own task dirs pass (path as given and resolved); another session's output is refused
     const taskRoots = [o.cwd, workspaceOf(o.cwd).root].flatMap((r) => rootsOf(path.join(r, ".pi", "tasks")));
     const inTasks = (p: string): boolean => taskRoots.some((r) => under(r, p, o.platform));
