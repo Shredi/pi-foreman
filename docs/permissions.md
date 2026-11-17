@@ -216,7 +216,7 @@ The key is user or overlay config only; a project value is dropped with the usua
 
 Path tools (`read`, `write`, `edit`, `grep`, `find`, `ls`, `foreman_move`, `foreman_copy`) go through `pathrules.ts`. The allowed places are computed at runtime from the session's roots:
 
-- the worktree, the session's scratch dir and the OS temp dirs (`gate.tmpAccess`; for a child only its own `$FOREMAN_SCRATCH`);
+- the worktree, the session's scratch dir and the OS temp dirs (`gate.tmpAccess`; for a child only its own `$FOREMAN_SCRATCH` and its kept output folder `$FOREMAN_OUT`, `<agent dir>/pi-foreman/child-out/<session>/<launch>`, which the harness keeps 7 days; [safety](safety.md#kept-output-folder));
 - reads of the Pi install dir, the global npm root, the bundled package roots and the owned roots (state dirs, handoffs, sibling worktrees, your `additionalDirectories`);
 - the registered parent's `.workflow` dir, read-only, for a session opened by another session;
 - the session's own handoff dir: through the path tools the session may write `plan.md` and `result.md`; a session that is the child side of a handoff dir (and a subagent child) may also write `ask.md`/`ask-<n>.md`, `.steer-last-read.json` and anything below `work/` in its launch's handoff dir; everything else there (the bare `work` entry included) belongs to the parent. The session's own shell guard (`shell_write_guard.py`) applies the longer list to the handoff dir where that session is the child side (its `PI_FOREMAN_HANDOFF_DIR`), when it has one. On Windows names are compared case-folded; streams and 8.3 names are refused;
