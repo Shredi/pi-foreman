@@ -181,7 +181,7 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
     const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md only when intercom cannot reach the parent, ask-<n>.md and anything below work/)` : "no handoff dir is set";
-    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.`);
+    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}. For another worktree, the foreman launches a child with cwd set to it.`);
   }
   if (env.roots.roundReadOnly) {
     const target = readonlyWrite(tool, input, segments, cmd, env);
