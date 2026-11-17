@@ -17,7 +17,7 @@ const refused = (text: string) => assert.match(text, /\[pr_refused:high_stakes_r
 const TAGS = ["security", "permission", "guard", "concurrency", "design"];
 
 for (const sizing of [true, false]) {
-  test(`risk tags ${TAGS.join(", ")} on a one-line change each fire the review with sizing ${sizing ? "on" : "off"}${sizing ? "; the pass stays valid after a fast-forward into the base branch" : ""}`, async (t) => {
+  test(`risk tags ${TAGS.join(", ")} fire the review with sizing ${sizing ? "on (on the large change)" : "off (on a one-line change)"}${sizing ? "; the pass stays valid after a fast-forward into the base branch" : ""}`, async (t) => {
     const { w, a } = await setup(t, sizing ? {} : SIZING_OFF);
     for (const m of ["a", "b", "c", "d", "e", "f"]) {
       fs.mkdirSync(path.join(w.project, "src", m), { recursive: true });
@@ -48,6 +48,9 @@ for (const sizing of [true, false]) {
       assert.equal(large.blocked, null, String(large.blocked));
       assert.deepEqual(await stakes(w), [], "an untagged large change fires nothing with sizing off");
       await end(a, large, "builder", "done");
+      // the big files now sit on main: the change against the merge-base is one line again
+      git(w.project, "branch", "-f", "main", "HEAD");
+      commitIn(w.project, "src/a/y.ts");
     }
     await build(a, tagged(TAGS, sizing));
     const fired = await stakes(w);
