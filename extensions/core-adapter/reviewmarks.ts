@@ -99,18 +99,23 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 
 /** The output of the completed `reviewer` results with an overall PASS in a run-end event ("" = none). */
 export function reviewerPassOfRunEnd(data: unknown): string {
-  if (!isObj(data)) return "";
+  return reviewerPassesOfRunEnd(data).map((p) => p.text).join("\n");
+}
+
+/** Each completed `reviewer` result with an overall PASS: its index in `results` (0 for a single result) and output. */
+export function reviewerPassesOfRunEnd(data: unknown): { index: number; text: string }[] {
+  if (!isObj(data)) return [];
   const results = Array.isArray(data.results) && data.results.length > 0 ? data.results : [data];
-  const out: string[] = [];
-  for (const r of results) {
+  const out: { index: number; text: string }[] = [];
+  for (const [index, r] of results.entries()) {
     if (!isObj(r)) continue;
     const role = typeof r.agent === "string" ? r.agent : typeof data.agent === "string" ? data.agent : "";
     if (role !== "reviewer") continue;
     const completed = (r.status === undefined ? r.success === true : r.status === "completed") && r.success !== false && r.timedOut !== true && r.stopped !== true && !r.error;
     const text = [r.output, r.summary].filter((t): t is string => typeof t === "string").join("\n");
-    if (completed && verdictOf(text) === "pass") out.push(text);
+    if (completed && verdictOf(text) === "pass") out.push({ index, text });
   }
-  return out.join("\n");
+  return out;
 }
 
 /** A completion notice of exactly one `reviewer` run with an overall PASS: its run id and text, else null. */

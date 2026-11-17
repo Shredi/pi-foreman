@@ -16,14 +16,14 @@ export function rootsBlock(roots: PiRoots, files: { plan?: string | null; ledger
 }
 
 /** Append the roots block to the task of every step of a fresh `subagent` input (single, tasks, chain, parallel). Returns the trace records. */
-export function applyRootsBlock(input: Record<string, unknown>, roots: PiRoots, files: { plan: string | null; ledger: string | null }): Record<string, unknown>[] {
+export function applyRootsBlock(input: Record<string, unknown>, roots: PiRoots, files: { plan: string | null; ledger: string | null; ledgerFor?: (task: string) => string | null }): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
   if (typeof input.action === "string") return out;
   const visit = (e: unknown, inherited = false): void => {
     if (!isObj(e)) return;
     const worktree = e.worktree === true || inherited;
     if (typeof e.agent === "string" && typeof e.task === "string") {
-      const block = rootsBlock(roots, { ...(e.agent === "builder" ? files : {}), worktree });
+      const block = rootsBlock(roots, { ...(e.agent === "builder" ? { plan: files.plan, ledger: files.ledgerFor ? files.ledgerFor(e.task) : files.ledger } : {}), worktree });
       e.task = `${e.task}\n\n${block}`;
       out.push({ event: "roots_block", role: e.agent, chars: block.length });
     }

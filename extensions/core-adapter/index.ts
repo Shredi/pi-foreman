@@ -131,7 +131,7 @@ import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf,
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
-import { hasOpenLedgerLine, markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
+import { hasOpenLedgerLine, markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassesOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
@@ -173,6 +173,7 @@ import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
 import { applyLedgerItems, criticOf } from "./ledgerblock.ts";
+import { taskLedger } from "./ledgerpath.ts";
 import { citedItems, hintFailTrace, ledgerHint, renameRetry, writeHint as writeHintNow, type HintWriteOpts, type HintLog } from "./hints.ts";
 import { ledgerGate, type LedgerGate } from "./ledgerlock.ts";
 import { appendCompactionRetro, appendModelRetro, appendStateRetro, RetroState, retroEnabled, sessionTrace, withDigest } from "./retro.ts";
@@ -460,6 +461,9 @@ interface Session {
   reviewSync: Promise<void>;
   /** Foreman only: review runs whose `N. PASS` items were marked (reviewmarks.ts), so each run marks once. */
   reviewMarked: Set<string>;
+  /** Foreman only: the ledger a launch's task named by path (ledgerpath.ts), by tool call, then by run id; absent = the bound ledger. */
+  ledgerByCall: Map<string, (string | null)[]>;
+  ledgerByRun: Map<string, (string | null)[]>;
   /** Foreman only: the working tree at the latest review PASS (commentonly.ts); null without one. */
   passSnap: TreeSnap | null;
   /** Foreman only: builder runs, HEAD, tree and ledger at the latest review PASS; a reviewer launch is no repeat once one of them changed (bound.ts repeatSignals). */
@@ -1057,6 +1061,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       hsOwn: null,
       reviewSync: Promise.resolve(),
       reviewMarked: new Set(),
+      ledgerByCall: new Map(),
+      ledgerByRun: new Map(),
       passSnap: null,
       passMark: null,
       touchUps: new Set(),
@@ -2673,7 +2679,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) onRunEndReview(s, runId, counted, verdicts.length > 0);
           const cited = s.retro.launchItems.get(runId) ?? [];
           s.retro.launchItems.delete(runId);
-          if (!s.isChild && verdicts.length) writeHint(boundLedger(s.markerDir, s.id), cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
+          if (!s.isChild && verdicts.length) for (const f of hintLedgers(s, runId)) writeHint(f, cited, `review ${verdicts.map((v) => (v ?? "no verdict").toUpperCase()).join(", ")} (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
         }
         if (!s.isChild && typeof runId === "string" && s.launchedRoles.has(runId)) {
           // PR gate: the verdict is recorded with HEAD of the run's cwd if unchanged since launch (reviews.ts).
@@ -4098,20 +4104,29 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
+        // D31: the ledger a task names by path drives its block, roots block, marks and hints
+        const pickLedger = (task: string) => {
+          const t = taskLedger(task, ctx.cwd, lf, [s.cwd, ctx.cwd]);
+          const text = t.path === lf ? lg : (() => { try { return t.path ? fs.readFileSync(t.path, "utf8") : null; } catch { return null; } })();
+          return { text, path: t.path, ...(t.notice ? { notice: t.notice } : {}), named: t.named };
+        };
+        // one named path per entry index (launchEntries order); null = the bound ledger
+        const perEntry = launchEntries(input).map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
+        if (perEntry.some((p) => p !== null)) capSet(s.ledgerByCall, event.toolCallId, perEntry);
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
-        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview)) s.trace?.emit(r);
+        for (const r of applyLedgerItems(input, lg, new Set(climbs.filter((c) => c.handoff).map((c) => c.entry)), lf, criticOf(get(s.config.config, "review.critic")), reReview, pickLedger)) s.trace?.emit(r);
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
-      if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id) })) s.trace?.emit(r);
+      if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id), ledgerFor: (task) => taskLedger(task, ctx.cwd, boundLedger(s.markerDir, s.id), [s.cwd, ctx.cwd]).path })) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
-        const ledger = (() => { try { return ledgerFile ? fs.readFileSync(ledgerFile, "utf8") : null; } catch { return null; } })();
+        const readLedger = (f: string | null) => { try { return f ? fs.readFileSync(f, "utf8") : null; } catch { return null; } };
         if (climbs.some((c) => c.handoff && !c.handoffFor) && !kind) kind = "strong-relaunch";
         if (kind === "strong-relaunch" && climbs.every((c) => c.skipped)) kind = "revision"; // every climb was capped by the rank policy: no strong launch
-        for (const r of s.ladder.apply(climbs, (task) => ledgerLines(ledger, task))) s.trace?.emit(r);
+        for (const r of s.ladder.apply(climbs, (task) => ledgerLines(readLedger(taskLedger(task, ctx.cwd, ledgerFile, [s.cwd, ctx.cwd]).path), task))) s.trace?.emit(r);
         const was = s.ceremony.tier;
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));
         if (s.ceremony.tier !== was) s.trace?.emit({ event: "triage_escalated", from: was, to: s.ceremony.tier, reason: "strong" });
@@ -4407,15 +4422,15 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const passed = reviewerPassOfNotice(text);
     // a second opinion, plan review or panel never marks items (occasion.ts); the run end marks the counting primary
     const launch = passed ? s.reviewRuns.byRun.get(passed.runId) : undefined;
-    if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, passed.text);
+    if (passed && !(launch && (launch.panel || launch.entries.some((e) => REVIEW_ROLES.includes(e.role) && (e.occasion === "second-opinion" || e.occasion === "plan-review"))))) markByReview(s, passed.runId, [{ text: passed.text }]);
     s.round = onReviewDone(s.round, verdict);
     persistRounds(s);
   }
 
   /** Retro-harvest 1/6 at a run end: a reviewer PASS marks its items; a verdict sets or clears the PASS snapshot; a touch-up builder is checked. */
   function onRunEndReview(s: Session, runId: string, data: unknown, verdict: boolean): void {
-    const pass = reviewerPassOfRunEnd(data);
-    if (pass) markByReview(s, runId, pass);
+    const pass = reviewerPassesOfRunEnd(data);
+    if (pass.length > 0) markByReview(s, runId, pass);
     if (verdict) {
       const passed = s.reviewGate.last === "pass";
       const cwd = reviewsOfRunEnd(data)[0]?.cwd ?? s.cwd;
@@ -4440,14 +4455,30 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
-  /** Mark the `N. PASS` items of a reviewer PASS in the bound ledger, once per review run (reviewmarks.ts). */
-  function markByReview(s: Session, runId: string, text: string): void {
+  /** The ledgers a run's hints go to: each named path of its entries, and the bound ledger when an entry names none (D31). */
+  function hintLedgers(s: Session, runId: string): string[] {
+    const bound = boundLedger(s.markerDir, s.id);
+    const per = s.ledgerByRun.get(runId);
+    const all = per ? (per.some((p) => p === null) ? [...per, bound] : per) : [bound];
+    return [...new Set(all.filter((p): p is string => p !== null))];
+  }
+
+  /** Mark the `N. PASS` items of a reviewer PASS in the ledger the reviewer's task named, else the bound ledger, once per review run (reviewmarks.ts). */
+  function markByReview(s: Session, runId: string, parts: { index?: number; text: string }[]): void {
     if (s.reviewMarked.has(runId) || s.hs.ownerOf(runId) !== null) return; // a high-stakes run marks nothing
     s.reviewMarked.add(runId);
-    const file = boundLedger(s.markerDir, s.id);
-    if (!file) return;
-    s.reviewSync = s.reviewSync.then(async () => {
-      const r = await markPassItems(text, file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
+    const per = s.ledgerByRun.get(runId) ?? [];
+    const named = per.filter((p): p is string => p !== null);
+    const sole = named.length > 0 && named.every((p) => p === named[0]) ? named[0] : null;
+    const bound = boundLedger(s.markerDir, s.id);
+    // a result's ledger is the one its entry named (entry index = result index); without an index the one ledger all entries named
+    const byFile = new Map<string, string[]>();
+    for (const p of parts) {
+      const file = (p.index !== undefined && per.length > 1 ? per[p.index] ?? null : sole) ?? bound;
+      if (file) byFile.set(file, [...(byFile.get(file) ?? []), p.text]);
+    }
+    for (const [file, texts] of byFile) s.reviewSync = s.reviewSync.then(async () => {
+      const r = await markPassItems(texts.join("\n"), file, async (n) => (await runLedger(s, ["mark", n, MARK_NOTE], file)).ok, async (n, t) => (await runLedger(s, ["note", n, `reviewer: ${t}`], file)).ok);
       if (r) s.trace?.emit({ event: "ledger_mark_by_review", items: r.items.join(","), skipped: r.skipped.join(","), noted: r.noted.join(",") });
     });
   }
@@ -4996,6 +5027,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (trees && runId) capSet(s.launchTrees, runId, trees);
         const rl = s.reviewRuns.byCall.get(event.toolCallId);
         s.reviewRuns.byCall.delete(event.toolCallId);
+        const namedLedger = s.ledgerByCall.get(event.toolCallId);
+        s.ledgerByCall.delete(event.toolCallId);
+        if (namedLedger && runId) capSet(s.ledgerByRun, runId, namedLedger);
         if (rl && runId) capSet(s.reviewRuns.byRun, runId, rl);
         trackActive(s.activeRuns, event.input, event.details, event.isError);
         if (!s.isChild) {
@@ -5006,7 +5040,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             const cited = hsCited.get(event.toolCallId) ?? citedItems(subagentTaskText(event.input as Record<string, unknown>));
             hsCited.delete(event.toolCallId);
             s.retro.launchItems.set(runId, cited);
-            writeHint(boundLedger(s.markerDir, s.id), cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
+            for (const f of hintLedgers(s, runId)) writeHint(f, cited, `${roles.join("+") || "child"} launched (run ${runId.slice(0, 8)})`, s.retro.hints, hintOpts(s));
             s.budget.onLaunch();
             if (roles.includes("builder")) {
               for (const d of builderDirs(ctx, event.input as Record<string, unknown>)) await hsRevised(s, d); // a builder run is a revision of its checkout
