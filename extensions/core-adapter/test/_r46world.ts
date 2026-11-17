@@ -136,14 +136,14 @@ export function world(t: { after(fn: () => void | Promise<void>): void }, o: Wor
       recordedReviews: async (): Promise<number> => (await traceEvents()).filter((e) => e.event === "review_recorded").length,
       tool: (name: string) => tools.get(name),
       /** The `[plan-review]` launch: a block reason, or null once started (then `end` ends the run). */
-      async reviewLaunch(task = "[plan-review] review .workflow/scratch/plan-widget.md"): Promise<{ blocked: string | null; id: string }> {
+      async reviewLaunch(task = "[plan-review] review .workflow/scratch/plan-widget.md"): Promise<{ blocked: string | null; id: string; task: string }> {
         const id = `c${++calls}`;
         const input = { agent: "reviewer", task };
         await handlers.get("message_end")!({ message: { role: "assistant", content: [{ type: "toolCall", id, name: "subagent", arguments: input }] } }, ctx);
         const blocked = (await handlers.get("tool_call")!({ toolName: "subagent", toolCallId: id, input }, ctx)) as Block;
-        if (blocked) return { blocked: blocked.reason ?? "blocked", id };
+        if (blocked) return { blocked: blocked.reason ?? "blocked", id, task: input.task };
         await handlers.get("tool_result")!({ toolName: "subagent", toolCallId: id, input, details: { runId: `run-${id}` }, content: [{ type: "text", text: "started" }], isError: false }, ctx);
-        return { blocked: null, id };
+        return { blocked: null, id, task: input.task }; // the task as launched, facts block included
       },
       /** A full `[plan-review]` run ending with `verdict`; returns the block reason when the launch was refused. */
       async review(verdict: "PASS" | "FAIL"): Promise<string | null> {
