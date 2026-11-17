@@ -172,7 +172,7 @@ test("readLiveRecord reads endedBy and refuses an id that is not a token", (t) =
 });
 
 test("the TS BG and id patterns equal the Python ones in foreman_session.py", () => {
-  const py = fs.readFileSync(path.join(HERE, "..", "..", "..", "scripts", "foreman_session.py"), "utf8");
+  const py = fs.readFileSync(path.join(HERE, "..", "..", "..", "scripts", "foreman_session.py"), "utf8").replace(/\r\n/g, "\n"); // a Windows checkout may use CRLF
   const grab = (n: string): string => (py.match(new RegExp(`^${n} = re\\.compile\\(r"(.*)"\\)$`, "m")) as RegExpMatchArray)[1];
   assert.equal(BG_NAME_RE.source, grab("BG_NAME_RE"));
   assert.equal(BG_VALUE_RE.source, grab("BG_VALUE_RE").replace(/\\\//g, "/"));

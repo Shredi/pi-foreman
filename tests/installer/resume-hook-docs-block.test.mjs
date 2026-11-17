@@ -10,7 +10,7 @@ const ROOT = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta
 const { renderResumeBlock } = await import(pathToFileURL(path.join(ROOT, "setup", "resume-hook.mjs")).href);
 
 test("docs/install.md hand block equals the generated bash resume block", () => {
-  const doc = fs.readFileSync(path.join(ROOT, "docs", "install.md"), "utf8");
+  const doc = fs.readFileSync(path.join(ROOT, "docs", "install.md"), "utf8").replace(/\r\n/g, "\n"); // a Windows checkout may use CRLF
   const m = doc.match(/replace `<foreman>`[^\n]*\n\n```sh\n([\s\S]*?)\n```/);
   assert.ok(m, "hand block not found in docs/install.md");
   const generated = renderResumeBlock({ bin: "<foreman>", flavor: "bash" }).split("\n").slice(2, -1).join("\n");
