@@ -1209,13 +1209,14 @@ async function main(argv) {
   return opts.remove ? removeAll() : install();
 
   // ------------------------------------------------------------ resume hook
-  // The shell block that restarts a Pi session in its pane after a crash (setup/resume-hook.mjs). Written under the guard of the env block (the
-  // default agent dir or PI_FOREMAN_HOME; nothing is written in a dry run or with --no-env); --no-resume-hook and --remove take it out. On win32 it writes the
-  // PowerShell profile block of each edition and the Git Bash block instead of the block of $SHELL.
+  // The shell block that restarts a Pi session in its pane after a crash (setup/resume-hook.mjs). Written unless --no-env is given (nothing
+  // is written in a dry run); --no-resume-hook and --remove take it out. A custom agent dir (not <home>/.pi/agent) is baked into the block as the fallback
+  // dir of the note lookup, and handed to pane-resume for that one call. On win32 it writes the PowerShell profile block of each edition and the Git Bash
+  // block instead of the block of $SHELL.
   async function resumeHookStep({ remove = false } = {}) {
     const platform = process.env.PI_FOREMAN_PLATFORM || process.platform;
     const home = process.env.PI_FOREMAN_HOME || os.homedir();
-    const sandboxed = !process.env.PI_FOREMAN_HOME && agentDir !== path.join(os.homedir(), ".pi", "agent");
+    const customDir = agentDir !== path.join(home, ".pi", "agent") ? { agentDir } : {};
     const bin = path.join(ROOT, "bin", "foreman");
     const userShellPath = () => {
       try {
@@ -1226,17 +1227,15 @@ async function main(argv) {
     };
     const lines = async () => {
       const gone = remove || opts.noResumeHook;
-      const base = { home, shell: process.env.SHELL ?? "", bin, dry, remove: gone };
+      const base = { home, shell: process.env.SHELL ?? "", bin, dry, remove: gone, ...customDir };
       const win = platform === "win32" ? { platform, cli: path.join(ROOT, "extensions", "core-adapter", "paneresume-cli.ts"), ...windowsResumeContext(home, { query: !gone, shellPath: userShellPath() }) } : {};
       return (await import("./setup/resume-hook.mjs")).applyResumeHook({ ...base, ...win });
     };
     if (remove || opts.noResumeHook) {
-      if (sandboxed) return;
       for (const l of await lines()) say(`  ${l}`);
       return;
     }
     if (opts.noEnv) say("resume hook: not written (--no-env); to restart a crashed session in its pane, add the block shown in docs/install.md to your shell startup file.");
-    else if (sandboxed) say("resume hook: custom agent dir, your shell startup files are left alone; see docs/install.md to add the block by hand.");
     else for (const l of await lines()) say(`  ${l}`);
   }
 

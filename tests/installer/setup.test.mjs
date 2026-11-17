@@ -433,6 +433,7 @@ test("--develop writes <checkout>/.pi/settings.json (override of the installed p
   fs.mkdirSync(checkout);
   for (const f of ["setup.mjs", "packages.lock.json", "package.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(checkout, f));
   fs.cpSync(path.join(ROOT, "scripts"), path.join(checkout, "scripts"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "setup"), path.join(checkout, "setup"), { recursive: true }); // the resume block module runs for a custom agent dir too
   fs.cpSync(path.join(ROOT, "config"), path.join(checkout, "config"), { recursive: true });
   fs.mkdirSync(path.join(checkout, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(checkout, "extensions", "core-adapter", "profiles.mjs"));
@@ -1131,7 +1132,7 @@ test("setup keeps the top-level bundled copies when a manifest entry does not re
   const root = path.join(env.base, "pkg");
   fs.mkdirSync(root);
   for (const f of ["setup.mjs", "package.json", "packages.lock.json"]) fs.copyFileSync(path.join(ROOT, f), path.join(root, f));
-  for (const d of ["scripts", "config", "core", "agents"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
+  for (const d of ["scripts", "config", "core", "agents", "setup"]) fs.symlinkSync(path.join(ROOT, d), path.join(root, d));
   fs.mkdirSync(path.join(root, "extensions", "core-adapter"), { recursive: true });
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "profiles.mjs"), path.join(root, "extensions", "core-adapter", "profiles.mjs"));
   fs.copyFileSync(path.join(ROOT, "extensions", "core-adapter", "bridgelogin.mjs"), path.join(root, "extensions", "core-adapter", "bridgelogin.mjs"));

@@ -299,7 +299,7 @@ test("setup on win32 writes the PowerShell block of each edition and the Git Bas
   assert.equal(fs.readFileSync(profile(env.home, "pwsh"), "utf8"), ps);
 });
 
-test("setup on win32: a dry run, a custom agent dir and --no-env write nothing; --no-resume-hook and --remove take the blocks out", () => {
+test("setup on win32: a dry run and --no-env write nothing; --no-resume-hook and --remove take the blocks out", () => {
   const dry = fresh();
   const d = run(dry, ["--dry-run", "--no-addons"], { PI_FOREMAN_TEST_PS_POLICY: "pwsh=Restricted" });
   assert.equal(d.code, 0, d.out);
@@ -307,8 +307,8 @@ test("setup on win32: a dry run, a custom agent dir and --no-env write nothing; 
   assert.deepEqual(fs.readdirSync(dry.home), []);
   const custom = fresh();
   const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home });
-  assert.match(c.out, /resume hook: custom agent dir, your shell startup files are left alone/);
-  assert.deepEqual(fs.readdirSync(custom.home), []);
+  assert.match(c.out, /wrote the pi-foreman resume block to .*Microsoft\.PowerShell_profile\.ps1/, "a custom agent dir writes the block now (D34)");
+  assert.ok(fs.readFileSync(profile(custom.home, "pwsh"), "utf8").includes(`'${custom.agentDir}'`));
   const noEnv = fresh();
   const n = run(noEnv, ["--no-addons", "--no-env"]);
   assert.match(n.out, /resume hook: not written \(--no-env\)/);

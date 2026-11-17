@@ -136,7 +136,8 @@ test("background-tasks writes PI_BG_FEATURES=process once into the shell profile
   const sandboxed = fresh();
   const s = run(sandboxed, ["--addon", "background-tasks"], { PI_FOREMAN_HOME: undefined, HOME: sandboxed.home, USERPROFILE: sandboxed.home });
   assert.match(s.out, /custom agent dir, your shell profile is left alone/);
-  assert.equal(fs.existsSync(path.join(sandboxed.home, ".zshrc")), false);
+  const rc = path.join(sandboxed.home, ".zshrc"); // the resume block is written for a custom dir now (D34); the env block is not
+  assert.equal(fs.existsSync(rc) && fs.readFileSync(rc, "utf8").includes(BLOCK_START), false);
 });
 
 test("on Windows the variable goes through the injected setx runner", () => {
