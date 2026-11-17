@@ -48,3 +48,15 @@ test("neither, and no .bashrc: no Git Bash", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a shellPath naming an existing file that is not bash.exe is not Git Bash", () => {
+  const { dir, home, bash } = setup();
+  try {
+    const pwsh = path.join(dir, "git", "bin", "pwsh.exe");
+    fs.writeFileSync(pwsh, "");
+    assert.equal(windowsResumeContext(home, { env: base, shellPath: pwsh }).gitBash, false);
+    assert.equal(windowsResumeContext(home, { env: base, shellPath: bash }).gitBash, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

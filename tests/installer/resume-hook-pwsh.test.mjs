@@ -147,6 +147,28 @@ for (const exe of EXES) {
       w.cleanup();
     }
   });
+
+  // strict mode set before the block (a profile line above ours), and turned on after the load; LASTEXITCODE is unset in a fresh -File run
+  const STRICT_HEAD = ["$ErrorActionPreference = 'Stop'", "function prompt { 'ORIG> ' }", "function Count { if (Test-Path $env:PF_LOG) { @(Get-Content $env:PF_LOG).Count } else { 0 } }"];
+  const STRICT_CASES = [
+    ["strict mode set before the block", ["Set-StrictMode -Version Latest", ...STRICT_HEAD, ". $env:PF_BLOCK", "function __PiForemanResume { __PiForemanResumeCheck }"]],
+    ["strict mode turned on after the load", [...STRICT_HEAD, ". $env:PF_BLOCK", "function __PiForemanResume { __PiForemanResumeCheck }", "Set-StrictMode -Version Latest"]],
+  ];
+  for (const [name, setup] of STRICT_CASES) {
+    test(`${exe}: ${name}: no error, the original prompt string, the hook runs once, LASTEXITCODE stays unset`, () => {
+      const w = world(exe);
+      try {
+        const r = w.run([...setup, NOTE, "$text = prompt", "Write-Output ('text=' + $text)", "Write-Output ('calls=' + (Count))", "$text = prompt", "Write-Output ('again=' + (Count))",
+          "Write-Output ('rc=' + [bool](Get-Variable -Name LASTEXITCODE -Scope Global -ValueOnly -ErrorAction Ignore))"]);
+        assert.equal(r.status, 0, r.out);
+        assert.equal(r.kv.text, "ORIG> ", r.out);
+        assert.deepEqual([r.kv.calls, r.kv.again, r.kv.rc], ["1", "1", "False"], r.out);
+        assert.ok(!/error|exception/i.test(r.out.replace("fake-node-output", "")), r.out);
+      } finally {
+        w.cleanup();
+      }
+    });
+  }
 }
 
 test("a PowerShell edition was found on the Windows runner", { skip: !win }, () => {

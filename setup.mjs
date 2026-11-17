@@ -125,13 +125,13 @@ function queryPowerShell(exe) {
  * `PI_FOREMAN_TEST_PS_EDITIONS` ("pwsh,powershell") and `PI_FOREMAN_TEST_PS_POLICY` ("pwsh=Restricted,powershell=RemoteSigned") are test seams, read only when set.
  * `query` false (a removal) reads no policy and takes both editions, so a block is stripped wherever it is; Documents is resolved the same way as for the write.
  * `PI_FOREMAN_TEST_PS_DOCUMENTS` is a third test seam: it replaces the Documents folder.
- * Git Bash counts as present when `findGitBash` finds it, `~/.bashrc` exists, `<GIT_INSTALL_ROOT>\bin\bash.exe` exists (a scoop install) or `shellPath` (the user setting) names an existing file.
+ * Git Bash counts as present when `findGitBash` finds it, `~/.bashrc` exists, `<GIT_INSTALL_ROOT>\bin\bash.exe` exists (a scoop install) or `shellPath` (the user setting) names an existing `bash.exe`.
  */
 export function windowsResumeContext(home, { env = process.env, query = true, shellPath = "", exists = fs.existsSync, pathApi = process.platform === "win32" ? path.win32 : path } = {}) {
   const installRoot = envGet(env, "GIT_INSTALL_ROOT");
   const gitBash = Boolean(findGitBash({ env })) || exists(path.join(home, ".bashrc"))
     || Boolean(installRoot && exists(pathApi.join(installRoot, "bin", "bash.exe")))
-    || (isSetting(shellPath) && exists(shellPath));
+    || (isSetting(shellPath) && path.win32.basename(shellPath).toLowerCase() === "bash.exe" && exists(shellPath));
   const pwsh = findPwsh({ env });
   let editions = [...(pwsh ? ["pwsh"] : []), "powershell"];
   let documents = path.join(home, "Documents");
