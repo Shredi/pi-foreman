@@ -5,9 +5,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { forEachChild, parse } from "unbash";
 import type { Command, Redirected, SyntaxNode, Word } from "unbash";
-import { inlineCode, shellWriteTargets, unresolvedShellWriteWords, unresolvedWriteWords } from "./defaults.ts";
+import { inlineCode, segWriteWords, shellWriteTargets, unresolvedShellWriteWords, unresolvedWriteWords } from "./defaults.ts";
 import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits.ts";
-import { braceVariants } from "./floors.ts";
+import { READ_PROGS, braceVariants } from "./floors.ts";
 import { realDefault, realSpelling } from "./pathrules.ts";
 import { isRulingName, RULING_RE } from "./rulingname.ts";
 import { MAX_DEPTH as SH_DEPTH, parseShell, SHELLS } from "./shellast.ts";
@@ -308,35 +308,39 @@ function shellNamesRuling(toolName: string, cmd: string, cwd: string, dirs: Set<
     const isDir = (w: string): boolean => dirs.has(realKey(path.resolve(cwd, fold(w))));
     return words.some((w) => isTrackedRulingName(w)) && words.some(isDir);
   }
-  return posixNames(cmd, cwd, cwd, childDirs, forms, inChild, 0, { left: VARIANT_CAP }) || (platform === "win32" && nativeNames(cmd, [...forms, ...childDirs], inChild));
+  return posixNames(cmd, cwd, cwd, childDirs, forms, inChild, 0, { left: VARIANT_CAP }) || (platform === "win32" && nativeNames(cmd, cwd, [...forms, ...childDirs], inChild));
 }
 
-/** The programs whose operands nativeNames reads as write targets. */
-const NATIVE_WRITERS = new Set(["tee", "cp", "mv", "install", "ln"]);
-
 /**
- * win32 only: a write word (a redirect target, an operand of tee or a copier) written as a native drive path with backslashes that names a ruling or brief file of a
- * child dir. Bash drops an unquoted backslash, so the parse sees another word; a quoted spelling or a Windows shell reaches the native path, so the quote-stripped
- * source text of the word counts too (fail closed). Words with an expansion are left to the parse.
+ * win32 only: a write word of the gate's parse (segWriteWords: redirects, tee, copiers, sed -i, download and output options, dd, wrappers and `bash -c` payloads
+ * unwrapped) written as a native drive path with backslashes that names a ruling or brief file of a child dir. Bash drops an unquoted backslash, so the parse sees
+ * another word; the quoted spelling is the native path itself, and the unquoted one is found in the source text (a `C:\` word whose backslash-less form is the parsed
+ * word), so the raw spelling counts (fail closed). A ruling-named native argument of a program that is no reader or copier counts too (it may write it), and the
+ * output operand of `uniq`. Words with an expansion are left to the parse.
  */
-function nativeNames(cmd: string, forms: string[], inChild: (p: string) => boolean): boolean {
-  let hit = false;
-  const word = (w: { text: string } | undefined): void => {
-    if (!w || !w.text.includes("\\") || /[$`]/.test(w.text)) return;
-    const raw = w.text.replace(/["']/g, "");
-    if (namesFileIn(raw, forms) || inChild(raw)) hit = true;
-  };
-  const walk = (n: SyntaxNode): void => {
-    if (n.type === "Redirect" && !n.operator.startsWith("<")) word(n.target);
-    if (n.type === "Command" && NATIVE_WRITERS.has(path.basename(n.name?.value ?? ""))) {
-      const ops = n.suffix.filter((s): s is Word => s.type === "Word" && !s.value.startsWith("-"));
-      // a copier's last operand is its destination (a source is a read); every operand of tee is a file it writes
-      for (const w of path.basename(n.name!.value) === "tee" ? ops : ops.slice(-1)) word(w);
+function nativeNames(cmd: string, cwd: string, forms: string[], inChild: (p: string) => boolean): boolean {
+  const raws = new Map<string, string>();
+  for (const r of cmd.match(/[A-Za-z]:\\[^\s"'`$|&;<>()]*/g) ?? []) raws.set(r.replace(/\\/g, ""), r);
+  const names = (raw: string): boolean => namesFileIn(raw, forms) || inChild(raw);
+  // the native spelling of a parsed word: the word itself when it kept its backslashes (quoted), else the source word it came from
+  const native = (w: string): string | undefined => (/[$`]/.test(w) ? undefined : w.includes("\\") ? w : raws.get(w));
+  for (const s of parseShell(cmd, { cwd })) {
+    if (s.program === "") continue;
+    const p = path.basename(s.program);
+    const operands = s.argv.filter((a) => !a.startsWith("-"));
+    // a copier's last operand is its destination; its other operands are reads (`mv` lists them as sources)
+    for (const t of segWriteWords(s)) {
+      const raw = native(t.w);
+      if (raw !== undefined && (!COPIERS.has(p) || t.w === operands[operands.length - 1]) && names(raw)) return true;
     }
-    forEachChild(n, walk);
-  };
-  walk(parse(cmd));
-  return hit;
+    // a program that is no reader or copier may write a ruling-named argument; `uniq`'s second operand is its output file
+    const args = p === "uniq" ? operands.slice(1) : READ_PROGS.has(p) || COPIERS.has(p) || p === "tee" ? [] : s.argv.map((a) => (a.startsWith("-") ? a.slice(a.indexOf("=") + 1) : a));
+    for (const a of args) {
+      const raw = native(a);
+      if (raw !== undefined && isTrackedRulingName(path.win32.basename(raw)) && names(raw)) return true;
+    }
+  }
+  return false;
 }
 
 /** The own-ruling check of one POSIX script (the line, or the body of a shell it feeds): every word judged by its literal path and resolved against the cwd of its segment. */

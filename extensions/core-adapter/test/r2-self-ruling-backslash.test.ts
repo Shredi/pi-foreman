@@ -43,3 +43,43 @@ test("the unquoted native spelling adds a refusal on win32 only: a posix platfor
   assert.equal(selfRulingRefusal("bash", { command: line }, CWD, [H], "linux"), undefined);
   assert.equal(selfRulingRefusal("bash", { command: line }, CWD, [H], "win32"), SELF_RULING_REASON);
 });
+
+// every other write shape of the gate's parse, built on the parsed segments (wrappers and `bash -c` payloads unwrapped), with the raw unquoted word as the file
+const NF = `${H}\\ruling.md`;
+const DD = ["d", "d"].join("");
+const DL = ["cu", "rl"].join("");
+const GT = ["wg", "et"].join("");
+const SHAPES = [
+  `sed -i s/a/b/ ${NF}`,
+  `perl -pi -e s/a/b/ ${NF}`,
+  `sort -o ${NF} x`,
+  `${DL} -o ${NF} u`,
+  `${GT} -O ${NF} u`,
+  `rsync x ${NF}`,
+  `touch ${NF}`,
+  `truncate -s0 ${NF}`,
+  `env tee ${NF}`,
+  `command cp x ${NF}`,
+  `bash -c "echo A > ${NF}"`,
+  `${DD} if=x of=${NF}`,
+  `uniq x ${NF}`,
+  `node w.js ${NF}`,
+];
+
+test("win32: every write shape of the gate's parse (sed -i, perl -pi, sort -o, download output, rsync, touch, truncate, wrappers, bash -c, dd, uniq, a ruling-named argument) is refused for the unquoted native path", () => {
+  for (const line of SHAPES) assert.equal(win(line), SELF_RULING_REASON, line);
+});
+
+test("win32 controls: reads and mention-only text of the unquoted native path, and other names, dirs and drives, are not refused", () => {
+  const F = NF;
+  for (const line of [`cat ${F}`, `cp ${F} x`, `grep x ${F}`, `head ${F} > y`, `mv ${F} y`, `ln -s ${F} y`, `tee y < ${F}`, `uniq ${F}`, `echo "see ${F}"`, `echo see ${F}`]) assert.equal(win(line), undefined, line);
+  for (const f of [`${H}\\notes.md`, `${H}\\ruling-plan.md`, `${H}\\ruling.md.bak`, `${H}\\sub\\ruling.md`, "C:\\Users\\r\\other\\ruling.md", "D:\\Users\\r\\H\\ruling.md"]) {
+    for (const line of [`touch ${f}`, `sed -i s/a/b/ ${f}`, `env tee ${f}`, `bash -c "echo A > ${f}"`, `node w.js ${f}`]) assert.equal(win(line), undefined, line);
+  }
+});
+
+test("the write shapes of the unquoted native path add a refusal on win32 only: a posix platform reads each line as the parse does", () => {
+  for (const line of SHAPES) {
+    for (const platform of ["linux", "darwin"]) assert.equal(selfRulingRefusal("bash", { command: line }, CWD, [H], platform), undefined, `${platform}: ${line}`);
+  }
+});

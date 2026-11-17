@@ -1296,7 +1296,7 @@ export function braceWriteTargets(segments: ShellSegment[], platform: string): S
 }
 
 /** The write words of one segment: its `taggedWriteTargets`, its write redirects and a `tee`'s operands. */
-function segWriteWords(seg: ShellSegment): WriteTarget[] {
+export function segWriteWords(seg: ShellSegment): WriteTarget[] {
   const words: WriteTarget[] = [...taggedWriteTargets(seg), ...named(seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup").map((r) => r.target))];
   if (progOf(seg) === "tee") words.push(...named(operands(seg.argv)));
   return words;

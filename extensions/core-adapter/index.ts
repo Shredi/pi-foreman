@@ -3441,7 +3441,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // the path of write and edit as the tool reads it (`@`, `~`, `file://`)
       const rin = event.input as Record<string, unknown>;
       const rpath = (event.toolName === "write" || event.toolName === "edit") && typeof rin?.path === "string" ? toolPath(rin.path, ctx.cwd, os.homedir(), platform) : null;
-      const why = rs && selfRulingRefusal(event.toolName, rpath !== null ? { ...rin, path: rpath } : rin, ctx.cwd, childDirsOf(rs));
+      const why = rs && selfRulingRefusal(event.toolName, rpath !== null ? { ...rin, path: rpath } : rin, ctx.cwd, childDirsOf(rs), platform);
       if (why) {
         rs.trace?.emit({ event: "guard", guard: "self_ruling", toolFamily: event.toolName, decision: "blocked", ...denyFields(`self_ruling: ${why}`, event.toolName, event.input, rs.isChild ? rs.usage.line.role : "foreman", [PKG_ROOT, ctx.cwd]) });
         return repeatedDeny(rs, ctx, why) ?? { block: true, reason: `pi-foreman: ${why}.` };
