@@ -32,6 +32,8 @@ for (const d of [path.join(agentDir, "extensions"), path.join(wt, ".git", "hooks
 fs.writeFileSync(path.join(wt, "a.txt"), "x\n");
 after(() => fs.rmSync(base, { recursive: true, force: true }));
 const posix = process.platform !== "win32";
+/** A host path as bash text: unquoted backslashes of a native path are shell escapes there. */
+const fwd = (p: string): string => p.replace(/\\/g, "/");
 
 // ---------------------------------------------------------------- the word split
 
@@ -207,8 +209,8 @@ test("B: a word in the harness config folder or the agent extensions folder asks
   for (const line of [`Set-Content ${agentDir}/settings.json x`, `Set-Content ~/.pi/agent/settings.json x`, `Set-Content $HOME\\.pi\\agent\\settings.json x`, `& { Set-Content ${agentDir}/settings.json x }`]) assert.deepEqual(four(line), settings, line);
   for (const line of [`Set-Content ${agentDir}/extensions/x.ts x`, `Remove-Item $env:USERPROFILE\\.pi\\agent\\extensions\\x.ts`, `"x" > ${agentDir}/extensions/y.ts`]) assert.deepEqual(four(line), harness, line);
   // the same words as a bash write answer the same (the reference)
-  assert.equal(ans("foreman", `echo x > ${agentDir}/settings.json`, "bash"), settings[0]);
-  assert.equal(ans("builder", `echo x > ${agentDir}/extensions/x.ts`, "bash"), harness[1]);
+  assert.equal(ans("foreman", `echo x > ${fwd(agentDir)}/settings.json`, "bash"), settings[0]);
+  assert.equal(ans("builder", `echo x > ${fwd(agentDir)}/extensions/x.ts`, "bash"), harness[1]);
 });
 
 test("B: a word in an install folder or a package folder is install-root-write: main is asked; a child is refused (the rig tests below check headless, mode deny and every child mode)", () => {
@@ -226,8 +228,8 @@ test("B: the session's own worktree is exempt from install-root-write; a sibling
   assert.equal(name(outcome("foreman", `Set-Content ${inst}/f x`, "powershell", under).result), "ask:install-root-write");
   assert.equal(name(outcome("builder", `Set-Content ${inst}/f x`, "powershell", under).result), "block:install-root-write");
   // the bash line behaves the same (the reference)
-  assert.ok(!/install-root-write/.test(name(outcome("foreman", `echo x > ${wt}/f`, "bash", under).result)));
-  assert.equal(name(outcome("foreman", `echo x > ${inst}/f`, "bash", under).result), "ask:install-root-write");
+  assert.ok(!/install-root-write/.test(name(outcome("foreman", `echo x > ${fwd(wt)}/f`, "bash", under).result)));
+  assert.equal(name(outcome("foreman", `echo x > ${fwd(inst)}/f`, "bash", under).result), "ask:install-root-write");
 });
 
 test("B: the own ruling or brief file is refused by the check the old layer keeps (ruling.ts), for the powershell tool", { skip: !posix }, () => {
@@ -416,17 +418,22 @@ test("the child's own handoff files, a session folder file, .pi/scratch and .pi/
     }
   }
   // the bash write of the handoff files and of .pi/scratch is no verdict either (the reference)
-  for (const line of [`echo x > ${hand}/result.md`, `echo x > ${hand}/plan.md`, `echo x > ${hand}/work/x`]) {
+  for (const line of [`echo x > ${fwd(hand)}/result.md`, `echo x > ${fwd(hand)}/plan.md`, `echo x > ${fwd(hand)}/work/x`]) {
     for (const r of ROLES) assert.equal(ans(r, line, "bash", handRoots), "none", `${r}: ${line}`);
   }
   for (const r of ["foreman", "builder"] as const) assert.equal(ans(r, "echo x > .pi/scratch/x", "bash", handRoots), "none", r);
 });
 
 test("a .pi word that is not a scratch or tasks path gets what a bash write there gets: the self-modification ask for main, the refusal for a child; no protected-folder-write", () => {
-  for (const line of ["Set-Content .pi/ext/x y", "Get-Content .pi", `Set-Content ${wt}/.Pi/x y`]) {
+  // `.Pi` is the same folder only where the file system folds case (segmentAlias: not on linux); linux has its own row below
+  for (const line of ["Set-Content .pi/ext/x y", "Get-Content .pi", ...(process.platform === "linux" ? [] : [`Set-Content ${wt}/.Pi/x y`])]) {
     assert.deepEqual(four(line), ["ask:selfmod-project-pi", ...Array(3).fill("block:selfmod-project-pi")], line);
   }
   assert.deepEqual(["foreman", "builder", "reviewer", "explorer"].map((r) => ans(r as Role, "echo x > .pi/ext/x", "bash")), ["ask:selfmod-project-pi", ...Array(3).fill("block:selfmod-project-pi")]);
+});
+
+test("a .Pi word is another folder than .pi on linux: no self-modification verdict for any role", { skip: process.platform !== "linux" }, () => {
+  assert.deepEqual(four(`Set-Content ${wt}/.Pi/x y`), Array(4).fill("none"));
 });
 
 test(".git words: a bare .git, .git/config and .git/hooks/x get what a bash write target there gets, role by role", () => {
@@ -511,9 +518,9 @@ test("withLookupCache is per call: a lookup made inside the scope is not served 
   // a bash call on a path whose state changed after a powershell call is answered from the fresh state
   const fresh = path.join(wt, "new_z");
   assert.equal(ans("foreman", `Set-Content ${fresh}/x y`), "none");
-  assert.equal(ans("builder", `echo x > ${fresh}/x`, "bash"), "none");
+  assert.equal(ans("builder", `echo x > ${fwd(fresh)}/x`, "bash"), "none");
   fs.symlinkSync(inst, fresh);
-  assert.equal(ans("builder", `echo x > ${fresh}/x`, "bash"), "block:child-write-outside", "bash after the powershell call: fresh state");
+  assert.equal(ans("builder", `echo x > ${fwd(fresh)}/x`, "bash"), "block:child-write-outside", "bash after the powershell call: fresh state");
 });
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");

@@ -27,7 +27,7 @@ const roots = (who: "builder" | "reviewer" | "main"): GateRoots => ({
   child: who !== "main", role: who === "main" ? "foreman" : who, tmpAccess: false, ...(who === "reviewer" ? { roundReadOnly: true } : {}),
 });
 const verdict = (command: string, who: "builder" | "reviewer" | "main", cwd = wt): Verdict =>
-  gateEvaluate("bash", { command }, cwd, { env: (c) => baseFloorEnv(c, who === "main" ? {} : { child: true }), roots: () => roots(who) }).result as Verdict;
+  gateEvaluate("bash", { command }, cwd, { env: (c) => baseFloorEnv(c, who === "main" ? { scratch: [scr] } : { child: true, scratch: [scr] }), roots: () => roots(who) }).result as Verdict;
 const what = (v: Verdict): string => (v?.block ? `block:${v.rule}` : v?.ask ? `ask:${v.rule}` : v ? `allow:${(v as { rule?: string }).rule}` : "none");
 const CHILDREN = ["builder", "reviewer"] as const;
 const OK = ["allow:default-write-in"];

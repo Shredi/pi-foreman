@@ -18,7 +18,7 @@ const scr = path.join(base, "scr");
 for (const d of [home, work, scr, path.join(home, ".claude")]) fs.mkdirSync(d, { recursive: true });
 const CRED = path.join(home, ".claude", ".credentials.json");
 
-const roots = (role: string) => ({ worktree: work, scratch: [scr], tmp: [fs.realpathSync.native(os.tmpdir()), "/tmp"], scratchBase: path.join(base, "scrbase"), owned: [], install: [], roundFlow: [], handoffs: [], child: role !== "foreman", role, tmpAccess: true }) as never;
+const roots = (role: string) => ({ worktree: work, scratch: [scr], tmp: [base, fs.realpathSync.native(os.tmpdir()), "/tmp"], scratchBase: path.join(base, "scrbase"), owned: [], install: [], roundFlow: [], handoffs: [], child: role !== "foreman", role, tmpAccess: true }) as never;
 const envOf = (child: boolean): FloorEnv => ({ cwd: work, home, agentDir: path.join(home, ".pi", "agent"), writeRoots: [work, scr], scratch: [scr], child });
 const decide = (role: string, tool: string, input: Record<string, unknown>): GateResult => gateDecide(tool, input, work, { env: () => envOf(role !== "foreman"), roots: () => roots(role) });
 const rule = (r: GateResult): string | null => (r && "block" in r && r.block ? (r.rule ?? null) : null);
@@ -28,9 +28,9 @@ test("the read tool, cat and a write refuse the Claude credentials file for main
   for (const role of ROLES) {
     for (const p of [CRED, "~/.claude/.credentials.json"]) {
       assert.equal(rule(decide(role, "read", { path: p })), "floor-secret-path", `${role} read ${p}`);
-      assert.equal(rule(decide(role, "bash", { command: `cat ${p}` })), "floor-secret-path", `${role} cat ${p}`);
+      assert.equal(rule(decide(role, "bash", { command: `cat ${fwd(p)}` })), "floor-secret-path", `${role} cat ${p}`);
       assert.equal(rule(decide(role, "write", { path: p, content: "x" })), "floor-secret-path", `${role} write ${p}`);
-      assert.equal(rule(decide(role, "bash", { command: `echo x > ${p}` })), "floor-secret-path", `${role} redirect ${p}`);
+      assert.equal(rule(decide(role, "bash", { command: `echo x > ${fwd(p)}` })), "floor-secret-path", `${role} redirect ${p}`);
     }
   }
 });
@@ -53,8 +53,10 @@ test("near misses: other files of the folder and other dirs' dot-credentials fil
 });
 
 // ------------------------------------------------------------------ S3 and S5 labels (round 2, step 2, rows 16 and 24)
-const POLICY = path.join(home, ".pi", "agent", "pi-foreman", "permissions.json");
-const STATE = path.join(home, ".pi", "agent", "pi-foreman", "state", "approvals");
+// both only ever stand in bash text, where unquoted backslashes of a native path are shell escapes
+const fwd = (p: string): string => p.replace(/\\/g, "/");
+const POLICY = fwd(path.join(home, ".pi", "agent", "pi-foreman", "permissions.json"));
+const STATE = fwd(path.join(home, ".pi", "agent", "pi-foreman", "state", "approvals"));
 const facts = { currentBranch: () => "feature/x", protectedBranches: () => ["main"], pushConfigured: () => false, hasUpstream: () => false };
 const outcome = (role: string, line: string) => gateEvaluate("bash", { command: line }, work, { env: () => envOf(role !== "foreman"), roots: () => roots(role), facts });
 const ROLES2 = ["foreman", "builder"];

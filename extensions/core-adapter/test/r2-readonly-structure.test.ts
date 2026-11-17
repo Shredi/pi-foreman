@@ -172,7 +172,21 @@ test("revision: a brace list whose every variant lies in the scratch dir is free
   mustFree(["touch {a,b}", "touch d/{a,b}"], clone);
 });
 
-test("revision: known limit (the parser substitutes an assignment only outside a pipeline): a scratch path held in a variable and written in a pipeline is refused, without the pipe free", () => {
+test("revision: a scratch path held in a variable is substituted only when the variable's name occurs nowhere else in the line (shellvars.ts childAssignValues)", () => {
   mustFree([`T=${S}/x; echo y > "$T"`]);
-  mustRefuse([`T=${S}/x; echo y > "$T" 2>&1 | head`]);
+  // the rule is the NAME, not a pipeline: a name that is also a word of the path (here a path component) is another mention, so the target stays unresolved
+  const inPath = "mine";
+  const absent = ["PFQ", "PFR", "PFS"].find((n) => !S.includes(n))!;
+  assert.ok(new RegExp(`(?<![A-Za-z0-9_])${inPath}(?![A-Za-z0-9_])`).test(S), "the path holds the name");
+  const held = (name: string): string => `${name}=${S}/x; echo y > "$${name}" 2>&1 | head`;
+  const literal = `echo y > ${S}/x 2>&1 | head`;
+  for (const role of ROLES) {
+    // (a) name in the path: unresolved target, refused by the read-only rule
+    assert.deepEqual([verdict(held(inPath), role, "ro")?.block, verdict(held(inPath), role, "ro")?.rule], [true, RO], held(inPath));
+    // (b) name nowhere else: resolves into the scratch dir, the verdict of the literal-path line
+    assert.deepEqual(verdict(held(absent), role, "ro"), verdict(literal, role, "ro"), held(absent));
+    assert.deepEqual(verdict(literal, role, "ro"), undefined, literal);
+  }
+  mustRefuse([held(inPath)]);
+  mustFree([held(absent), literal]);
 });
