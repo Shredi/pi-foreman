@@ -9,13 +9,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { ClaudeConfigWatch, takeClaudeSnapshot } from "../claudedrift.ts";
 import { bridgeLoadOrder, projectBridgeConfigRisks, userBridgeConfigRisks } from "../bridgeiso.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const PRINT = { mode: "print", hasUI: false };
 const noTrace = () => undefined;
 
@@ -67,20 +64,7 @@ test("R3-H1: projectBridgeConfigRisks flags executable paths, AskClaude and stri
   assert.deepEqual(projectBridgeConfigRisks(proj), [".pi/claude-bridge.json (unreadable; the bridge ignores it)"]);
 });
 
-test("R3-H1: bridgeLoadOrder reads project then user packages", () => {
-  const root = "/opt/pi-foreman";
-  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-subagents@0.75.0"], root), "no-bridge");
-  assert.equal(bridgeLoadOrder(undefined, [root, "npm:pi-claude-bridge@0.9.1"], root), "foreman-first");
-  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge@0.9.1", root], root), "bridge-first");
-  assert.equal(bridgeLoadOrder([{ source: "npm:pi-foreman@1.0.0" }], ["npm:pi-claude-bridge@0.9.1"], root), "foreman-first");
-  assert.equal(bridgeLoadOrder(["npm:pi-claude-bridge@0.9.1"], [root], root), "bridge-first");
-  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge"], root), "unknown");
-  // Pi stores a local checkout relative to the settings folder
-  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge@0.9.1", "../../opt/pi-foreman"], root, "/p/.pi", "/a/b"), "bridge-first");
-  assert.equal(bridgeLoadOrder(undefined, ["../../opt/pi-foreman", "npm:pi-claude-bridge@0.9.1"], root, "/p/.pi", "/a/b"), "foreman-first");
-});
-
-test("user-level <agentDir>/claude-bridge.json: drift-checked (the bridge's own startupNoticeShown ignored), protected, judged with a WARN for an executable path", async (t) => {
+test("user-level <agentDir>/claude-bridge.json: drift-checked (the bridge's own startupNoticeShown ignored), judged with a WARN for an executable path", async (t) => {
   const root = tmp(t, "pf-r3u-");
   const state = path.join(root, "state");
   const proj = path.join(root, "proj");
@@ -106,64 +90,19 @@ test("user-level <agentDir>/claude-bridge.json: drift-checked (the bridge's own 
   fs.writeFileSync(userCfg, JSON.stringify({ askClaude: { enabled: true }, provider: { strictMcpConfig: false } }));
   assert.deepEqual(userBridgeConfigRisks(agentDir), { fail: ["askClaude.enabled", "provider.strictMcpConfig false"], warn: [] });
   assert.deepEqual(userBridgeConfigRisks(path.join(root, "none")), { fail: [], warn: [] });
-
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, path.join(root, "pkg"));
-  for (const [tool, input] of [
-    ["write", { path: userCfg, content: "{}" }],
-    ["bash", { command: "echo '{}' > ~/.pi/agent/claude-bridge.json" }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    for (const [role, want] of [["main", "ask"], ["child", "deny"]] as const) {
-      assert.equal(checkToolCall(r, tool, input, { cwd: proj, home, platform: process.platform, role })?.kind, want, `${role} ${tool}`);
-    }
-  }
 });
 
-test("R3-H1 / round 3: protect set covers .pi/claude-bridge.json and remove/rename of the state folder's ancestors", (t) => {
-  const root = tmp(t, "pf-r3p-");
-  const cwd = path.join(root, "proj");
-  const home = path.join(root, "home");
-  const agentDir = path.join(home, ".pi", "agent");
-  const pf = path.join(agentDir, "pi-foreman");
-  fs.mkdirSync(path.join(pf, "state"), { recursive: true });
-  fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, path.join(root, "pkg"));
-  const kind = (tool: string, input: Record<string, unknown>, role: "main" | "child"): string => checkToolCall(r, tool, input, { cwd, home, platform: process.platform, role })?.kind ?? "pass";
-  const bridgeCfg = path.join(cwd, ".pi", "claude-bridge.json");
-  for (const [tool, input] of [
-    ["write", { path: bridgeCfg, content: "{}" }],
-    ["edit", { path: ".pi/claude-bridge.json", edits: [] }],
-    ["bash", { command: "echo '{}' > .pi/claude-bridge.json" }],
-    ["foreman_move", { src: "x.json", dst: ".pi/claude-bridge.json" }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "ask", `main ${tool} ${JSON.stringify(input)}`);
-    assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
-  }
-  // the state folder and its parent hold floored files: removing or renaming them is a floor deny (no dialog), was ask for the main agent
-  for (const [tool, input] of [
-    ["bash", { command: "trash ~/.pi/agent/pi-foreman" }],
-    ["bash", { command: "mv ~/.pi/agent/pi-foreman ~/.pi/agent/pf-old" }],
-    ["bash", { command: `rm -r "$HOME/.pi/agent/pi-foreman/"` }],
-    ["bash", { command: "rmdir ~/.pi/agent/pi-foreman" }],
-    ["bash", { command: "trash ~/.pi/agent" }],
-    ["bash", { command: `mv ${agentDir} ${path.join(root, "elsewhere")}` }],
-    ["bash", { command: `python3 -c "import shutil; shutil.rmtree('${pf}')"` }],
-    ["powershell", { command: `Remove-Item -Recurse ${pf}` }],
-    ["foreman_move", { src: pf, dst: path.join(root, "pf") }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "deny", `main ${tool} ${JSON.stringify(input)}`);
-    assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
-  }
-  assert.equal(kind("write", { path: path.join(cwd, "sub", ".pi", "claude-bridge.json"), content: "{}" }, "child"), "deny", "nested project bridge config: children denied");
-  for (const [tool, input] of [
-    ["bash", { command: "ls ~/.pi/agent/pi-foreman" }],
-    ["bash", { command: "ls -la ~/.pi/agent" }],
-    ["read", { path: pf }],
-    ["ls", { path: agentDir }],
-    ["foreman_copy", { src: pf, dst: path.join(root, "copy") }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "pass", `main ${tool} ${JSON.stringify(input)}`);
-    assert.equal(kind(tool, input, "child"), "pass", `child ${tool} ${JSON.stringify(input)}`);
-  }
+test("R3-H1: bridgeLoadOrder reads project then user packages", () => {
+  const root = "/opt/pi-foreman";
+  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-subagents@0.75.0"], root), "no-bridge");
+  assert.equal(bridgeLoadOrder(undefined, [root, "npm:pi-claude-bridge@0.9.1"], root), "foreman-first");
+  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge@0.9.1", root], root), "bridge-first");
+  assert.equal(bridgeLoadOrder([{ source: "npm:pi-foreman@1.0.0" }], ["npm:pi-claude-bridge@0.9.1"], root), "foreman-first");
+  assert.equal(bridgeLoadOrder(["npm:pi-claude-bridge@0.9.1"], [root], root), "bridge-first");
+  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge"], root), "unknown");
+  // Pi stores a local checkout relative to the settings folder
+  assert.equal(bridgeLoadOrder(undefined, ["npm:pi-claude-bridge@0.9.1", "../../opt/pi-foreman"], root, "/p/.pi", "/a/b"), "bridge-first");
+  assert.equal(bridgeLoadOrder(undefined, ["../../opt/pi-foreman", "npm:pi-claude-bridge@0.9.1"], root, "/p/.pi", "/a/b"), "foreman-first");
 });
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
@@ -215,18 +154,4 @@ test("R3-H1: session_before_compact / session_before_tree cancel on claude-bridg
   answer = true;
   assert.equal(await tree({}, ctx("claude-bridge", true)), undefined, "approved: re-baselined");
   assert.equal(await compact({ reason: "threshold" }, ctx("claude-bridge", false)), undefined, "approved state is the new baseline");
-});
-
-test("win32 (simulated): a Windows path in inline code is seen with single, doubled or raw-string backslashes", () => {
-  const home = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\pf\\home";
-  const agentDir = `${home}\\.pi\\agent`;
-  const pf = `${agentDir}\\pi-foreman`;
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, "C:\\pkg");
-  const kind = (command: string, role: "main" | "child"): string =>
-    checkToolCall(r, "bash", { command }, { cwd: "C:\\proj", home, platform: "win32", role, exists: () => false, isDir: () => false, realpath: () => null, list: () => [] })?.kind ?? "pass";
-  for (const lit of [`'${pf}'`, `r'${pf}'`, `'${pf.replace(/\\/g, "\\\\")}'`]) {
-    const command = `python3 -c "import shutil; shutil.rmtree(${lit})"`;
-    assert.equal(kind(command, "main"), "deny", command);
-    assert.equal(kind(command, "child"), "deny", command);
-  }
 });

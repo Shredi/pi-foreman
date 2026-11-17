@@ -1,17 +1,14 @@
 // A narrow read-only exception for SSH public keys directly in <home>/.ssh (floors.ts sshPublicKey): lexical + realpath + content, fail closed.
-// Real files in a temp HOME; both layers (the floors and the overlay's path rules) are checked.
+// Real files in a temp HOME; the floors and the gate are checked.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { lineFloors, pathFloors, secretPath, sshPublicKey, type FloorEnv } from "../floors.ts";
 import { parseShell } from "../shellast.ts";
 import { gateDecide } from "../gate.ts";
-import { buildOverlayRules, checkToolCall, readBaseline, type MatchCtx } from "../permoverlay.ts";
 import { mkTestTmp } from "./_tmpbase.ts";
 
-const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const base = fs.realpathSync(mkTestTmp("pubkey-read-"));
 test.after(() => fs.rmSync(base, { recursive: true, force: true }));
 
@@ -47,10 +44,6 @@ const line = (cmd: string, e: FloorEnv = env): string | null => {
   const r = lineFloors(cmd, parseShell(cmd, { cwd: e.cwd, platform: e.platform }), e);
   return r?.kind === "deny" ? r.rule : r ? `ask:${r.rule}` : null;
 };
-const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, agent);
-const octx = (over: Partial<MatchCtx> = {}): MatchCtx => ({ cwd: work, home, platform: process.platform, role: "main", ...over });
-const ov = (tool: string, input: Record<string, unknown>, over: Partial<MatchCtx> = {}): string => checkToolCall(rules, tool, input, octx(over))?.kind ?? "pass";
-const sh = (cmd: string): string => ov("bash", { command: cmd });
 
 // item 1: the predicate
 test("sshPublicKey: a regular key file directly in ~/.ssh", () => {
@@ -104,45 +97,6 @@ test("floors: everything else under ~/.ssh stays denied for a read", () => {
   assert.equal(line("cat ~/.aws/x.pub"), "floor-secret-path");
 });
 
-// item 3: the overlay's path rules
-test("overlay: path tools read a public key, never write it", () => {
-  assert.equal(ov("read", { path: K }), "pass");
-  assert.equal(ov("read", { path: path.join(ssh, "k.pub") }), "pass");
-  assert.equal(ov("write", { path: K, content: "x" }), "deny");
-  assert.equal(ov("edit", { path: K, oldText: "a", newText: "b" }), "deny");
-});
-
-test("overlay: shell reads a public key, never writes it", () => {
-  assert.equal(sh(`cat ${K}`), "pass");
-  assert.equal(sh(`ssh-keygen -l -f ${K}`), "pass");
-  for (const c of [`echo x > ${K}`, `cp /tmp/x ${K}`, `cp ${K} /tmp/x`, `rsync ${K} /tmp/x`, `mv /tmp/x ${K}`, `rm ${K}`, `echo x | tee ${K}`, `cat ${K} > ${K}`, `cat ${K} ${K}.bak > ${K}`]) {
-    assert.equal(sh(c), "deny", c);
-  }
-});
-
-test("overlay: every non-key file in ~/.ssh stays denied", () => {
-  for (const f of ["id_ed25519", "config", "known_hosts", "authorized_keys", "link.pub", "hard.pub", "notakey.pub", "missing.pub", "sub/k.pub"]) {
-    assert.equal(ov("read", { path: `~/.ssh/${f}` }), "deny", `read ${f}`);
-    assert.equal(sh(`cat ~/.ssh/${f}`), "deny", `cat ${f}`);
-  }
-  assert.equal(ov("read", { path: "~/.aws/x.pub" }), "deny");
-  assert.equal(sh("cat ~/.aws/x.pub"), "deny");
-});
-
-test("overlay: an owner path rule that names .pub still denies", () => {
-  // owner path denies are read from the merged `paths.deny` (permoverlay.ts buildOverlayRules)
-  for (const pattern of ["*/.ssh/*.pub", "*.pub"]) {
-    const strict = buildOverlayRules(readBaseline(PKG)!, { paths: { deny: [pattern] } }, {}, agent);
-    assert.ok(strict.pathRules.some((r) => r.pattern === pattern && r.action === "deny"), `rule ${pattern} loaded`);
-    const kind = (tool: string, input: Record<string, unknown>): string => checkToolCall(strict, tool, input, octx())?.kind ?? "pass";
-    assert.equal(kind("read", { path: K }), "deny", `${pattern} read`);
-    assert.equal(kind("bash", { command: `cat ${K}` }), "deny", `${pattern} cat`);
-  }
-  // a rule that does not name `.pub` (the baseline `*/.ssh/*`) is the one the exemption skips
-  assert.ok(rules.pathRules.some((r) => r.pattern === "*/.ssh/*" && r.action === "deny"));
-  assert.equal(ov("read", { path: K }), "pass");
-});
-
 // item 4: the gate allows with the rule id floor-pubkey-read, a write or another file stays blocked
 test("the gate: a public key read is allowed as floor-pubkey-read, a write is blocked", () => {
   const roots = { worktree: work, scratch: [], tmp: [], scratchBase: path.join(base, "scr"), owned: [], install: [], roundFlow: [], handoffs: [], child: false, role: "foreman", tmpAccess: false } as never;
@@ -171,7 +125,7 @@ test("win32: the Windows spellings of the profile all name the key, a write stay
 });
 
 // item 4: %USERPROFILE%, $env:USERPROFILE and ${env:USERPROFILE} are the home dir like `~`
-test("win32: the profile variables read the key, the private key and writes stay denied", () => {
+test("win32: the profile variables read the key, the private key and writes stay denied (secretPath)", () => {
   const wenv: FloorEnv = { ...env, platform: "win32" };
   const spellings = ["%USERPROFILE%\\.ssh\\", "%userprofile%/.ssh/", "$env:USERPROFILE\\.ssh\\", "${env:USERPROFILE}\\.ssh\\"];
   for (const s of spellings) {
@@ -179,32 +133,15 @@ test("win32: the profile variables read the key, the private key and writes stay
     assert.equal(secretPath(`${s}k.pub`, wenv, false)?.rule, "floor-secret-path", `write ${s}k.pub`);
     for (const f of ["id_ed25519", "config", "known_hosts", "authorized_keys", "notakey.pub"]) assert.equal(secretPath(`${s}${f}`, wenv, true)?.rule, "floor-secret-path", `${s}${f}`);
   }
-  // the overlay: powershell and cmd read commands
-  const ps = (command: string): string => ov("powershell", { command }, { platform: "win32", shell: "powershell" });
-  for (const s of spellings) {
-    for (const cmd of ["Get-Content", "gc", "cat", "type"]) {
-      assert.equal(ps(`${cmd} ${s}k.pub`), "pass", `${cmd} ${s}k.pub`);
-      assert.equal(ps(`${cmd} ${s}id_ed25519`), "deny", `${cmd} ${s}id_ed25519`);
-    }
-    assert.equal(ps(`Set-Content ${s}k.pub x`), "deny", `Set-Content ${s}k.pub`);
-    assert.equal(ps(`Copy-Item ${s}k.pub C:\\x`), "deny", `Copy-Item ${s}k.pub`);
-    assert.equal(ps(`Get-Content ${s}k.pub > ${s}k.pub`), "deny", `redirect ${s}k.pub`);
-  }
-  // the path tools take the same spellings
-  assert.equal(ov("read", { path: "%USERPROFILE%\\.ssh\\k.pub" }, { platform: "win32" }), "pass");
-  assert.equal(ov("read", { path: "%USERPROFILE%\\.ssh\\id_ed25519" }, { platform: "win32" }), "deny");
 });
 
-// item 3: every copy of a key stays denied, at the floors, the overlay and the path tools
-test("a copy of a public key is denied: cp, rsync, foreman_copy", () => {
+// item 3: every copy of a key stays denied at the floors
+test("a copy of a public key is denied at the floors: cp, rsync, foreman_copy", () => {
   for (const c of [`cp ${K} /tmp/x`, `rsync ${K} /tmp/x`, `rsync -a ${K} /tmp/x`, `cp --remove-source-files ${K} /tmp/x`]) {
     assert.ok(line(c) !== null, c);
-    assert.equal(sh(c), "deny", c);
   }
   assert.equal(line(`cp ${K} /tmp/x`), "floor-secret-path");
   assert.equal(pathFloors({ src: K, dst: "/tmp/x" }, env, "foreman_copy", undefined, false)?.rule, "floor-secret-path");
-  assert.equal(ov("foreman_copy", { src: K, dst: "/tmp/x" }), "deny");
-  assert.equal(ov("foreman_move", { src: K, dst: "/tmp/x" }), "deny");
 });
 
 // item 5: the trace names the rule also for the `~` / `$HOME` spellings
@@ -248,14 +185,4 @@ test("a line that binds HOME gets no pubkey rule", () => {
   for (const c of ["HOME=/x cat $HOME/.ssh/k.pub", `export HOME=/x; cat ${K}`, `HOME=/x; cat ${K}`]) {
     assert.notEqual(gateRule(c), "floor-pubkey-read", c);
   }
-});
-
-test("win32 powershell: every operand must be a verified key", () => {
-  const ps = (command: string): string => ov("powershell", { command }, { platform: "win32", shell: "powershell" });
-  assert.equal(ps("Get-Content ${env:USERPROFILE}\\.ssh\\k.pub \\.ssh\\k.pub"), "deny");
-  assert.equal(ps("Get-Content $env:USERPROFILE\\.ssh\\k.pub \\.ssh\\k.pub"), "deny");
-  assert.equal(ps("Get-Content %USERPROFILE%\\.ssh\\k.pub \\.ssh\\k.pub"), "deny");
-  assert.equal(ps("Get-Content \\.ssh\\k.pub"), "deny");
-  for (const w of ["${env:USERPROFILE}\\.ssh\\k.pub", "$env:USERPROFILE\\.ssh\\k.pub", "%USERPROFILE%\\.ssh\\k.pub"]) assert.equal(ps(`Get-Content ${w}`), "pass", w);
-  assert.equal(ps("Get-Content ${env:USERPROFILE}\\.ssh\\k.pub -TotalCount 1"), "pass");
 });

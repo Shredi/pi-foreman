@@ -50,9 +50,8 @@ test("a reviewer's read lines pass the gate; the write forms beside them are ref
   }
 });
 
-test("open gap, verdict of today: a git subcommand outside the write set that rewrites history is not refused by the read-only fence", () => {
-  // `git reflog expire --all` is in no write set of the gate and names no path: it goes on to the judge or the parent as before (docs/safety.md, read-only roles, known limit)
-  assert.equal(reviewer("git reflog expire --all"), undefined);
+test("a git reflog expire is refused by the read-only fence since step 3a (a read-table subcommand in a write form)", () => {
+  assert.equal(reviewer("git reflog expire --all")?.rule, "child-readonly-write");
   // beside it: the write set the gate does know is refused
   assert.equal(reviewer("git reset --hard")?.rule, "child-readonly-write");
 });

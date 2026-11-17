@@ -5,21 +5,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
-import { bashPath } from "./_bashpath.ts";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import coreAdapter from "../index.ts";
 import { LOAD_ORDER_NOTICE } from "../bridgeiso.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-
-function tmp(t: { after(fn: () => void): void }, prefix: string): string {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => rmTestTmp(dir));
-  return dir;
-}
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
@@ -65,44 +57,4 @@ test("session_start warns in the main session when pi-claude-bridge loads before
   assert.match(LOAD_ORDER_NOTICE, /re-run the installer \(node setup\.mjs\), which moves pi-foreman first/);
   const foremanFirst = await run("lo-2", [PKG, "npm:pi-claude-bridge@0.9.1"]);
   assert.ok(!foremanFirst.some(([m]) => m === LOAD_ORDER_NOTICE), "foreman first: no warning");
-});
-
-test("remove/rename of the agent dir's parent is asked in the foreman, denied in children; reads pass", (t) => {
-  const root = tmp(t, "pf-adp-");
-  const cwd = path.join(root, "proj");
-  const home = path.join(root, "home");
-  const dotPi = path.join(home, ".pi");
-  const agentDir = path.join(dotPi, "agent");
-  fs.mkdirSync(path.join(agentDir, "pi-foreman", "state"), { recursive: true });
-  fs.mkdirSync(cwd, { recursive: true });
-  const r = buildOverlayRules(readBaseline(PKG)!, {}, {}, agentDir, path.join(root, "pkg"));
-  const kind = (tool: string, input: Record<string, unknown>, role: "main" | "child"): string => checkToolCall(r, tool, input, { cwd, home, platform: process.platform, role })?.kind ?? "pass";
-  for (const [tool, input] of [
-    ["bash", { command: "trash ~/.pi" }],
-    ["bash", { command: "mv ~/.pi ~/.pi-old" }],
-    ["bash", { command: `rm -r "$HOME/.pi/"` }],
-    ["bash", { command: `rmdir ${bashPath(dotPi)}` }],
-    ["bash", { command: `python3 -c "import shutil; shutil.rmtree('${dotPi}')"` }],
-    ["foreman_move", { src: dotPi, dst: path.join(root, "pi-old") }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    // R41 rev4: an ancestor of the agent dir as a shell removal or rename destination is a floor deny (ledger item 23); the interpreter and path-tool forms stay an ask
-    const floored = tool === "bash" && !/python3/.test(JSON.stringify(input));
-    assert.equal(kind(tool, input, "main"), floored ? "deny" : "ask", `main ${tool} ${JSON.stringify(input)}`);
-    if (floored) assert.equal(checkToolCall(r, tool, input, { cwd, home, platform: process.platform, role: "main" })?.rule, "floor", `main ${tool} ${JSON.stringify(input)}`);
-    assert.equal(kind(tool, input, "child"), "deny", `child ${tool} ${JSON.stringify(input)}`);
-  }
-  for (const [tool, input] of [
-    ["bash", { command: "ls ~/.pi" }],
-    ["bash", { command: `ls -la ${bashPath(dotPi)}` }],
-    ["ls", { path: dotPi }],
-    ["bash", { command: "trash ~/.pi/other-file" }],
-  ] as Array<[string, Record<string, unknown>]>) {
-    assert.equal(kind(tool, input, "main"), "pass", `main ${tool} ${JSON.stringify(input)}`);
-    assert.equal(kind(tool, input, "child"), "pass", `child ${tool} ${JSON.stringify(input)}`);
-  }
-  // Derived from the agent dir, not hard-coded: another agent dir protects its own parent.
-  const other = path.join(root, "custom", "agent-x");
-  const r2 = buildOverlayRules(readBaseline(PKG)!, {}, {}, other, path.join(root, "pkg"));
-  assert.equal(checkToolCall(r2, "bash", { command: `trash ${bashPath(path.join(root, "custom"))}` }, { cwd, home, platform: process.platform, role: "child" })?.kind, "deny");
-  assert.equal(checkToolCall(r2, "bash", { command: "trash ~/.pi" }, { cwd, home, platform: process.platform, role: "child" })?.kind ?? "pass", "pass");
 });

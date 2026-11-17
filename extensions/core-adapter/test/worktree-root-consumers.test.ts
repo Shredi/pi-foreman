@@ -6,10 +6,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ownedRoots } from "../owned.ts";
-import { buildOverlayRules, checkToolCall, readBaseline } from "../permoverlay.ts";
 import { mainWorkflowReadable, roundRoots } from "../roundsurface.ts";
 import { ownWorktreeCheck } from "../ownworktree.ts";
-import { sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor, inNestedCheckout, rootTemplateGlobs, resolveWorktreeRoot } from "../worktreeroot.ts";
+import { sessionRootInputs, treeCeilingOf, treeRootOf, worktreeRootDoctor, inNestedCheckout, } from "../worktreeroot.ts";
 import { buildSubmoduleRig } from "./_submodules.ts";
 import { mkTestTmp, rmTestTmp } from "./_tmpbase.ts";
 
@@ -36,17 +35,6 @@ for (const [name, spelled] of [["absolute", customRoot], ["symlinked", linkRoot]
     assert.ok(o.readWrite.includes(path.resolve(spelled)));
     assert.ok(o.readWrite.includes(customRoot));
     assert.ok(!o.readWrite.some((r) => r.endsWith("repo.worktrees")));
-  });
-
-  test(`overlay (${name} root): a child blocks sibling rounds under the root, keeps its own`, { skip }, () => {
-    const globs = rootTemplateGlobs(resolveWorktreeRoot(repoDir, setting(spelled), { home: tmp, agentDir: path.join(tmp, "agent"), tmpRoot: path.join(tmp, "t"), pkgRoot, superproject: null }));
-    assert.ok(globs.length > 0);
-    const owned = ownedRoots({ agentDir: path.join(tmp, "agent"), workspaceRoot: repoDir, tmpRoot: path.join(tmp, "t"), worktreeRoot: [spelled, real(spelled)], worktreeGlobs: globs });
-    const rules = buildOverlayRules(readBaseline(pkgRoot)!, {}, {}, path.join(tmp, "agent"), pkgRoot, undefined, false, owned);
-    const own = path.join(customRoot, "round");
-    const run = (file: string): string => checkToolCall(rules, "write", { path: file }, { cwd: own, home: tmp, platform: process.platform, role: "child", roundRoots: [own], roundReadRoots: [own] })?.kind ?? "pass";
-    assert.equal(run(path.join(own, "x.ts")), "pass");
-    assert.equal(run(path.join(path.dirname(spelled), "other", "round", "x.ts")), "deny");
   });
 }
 

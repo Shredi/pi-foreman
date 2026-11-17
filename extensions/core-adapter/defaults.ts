@@ -3,14 +3,15 @@
 // returns null and falls through to the review. Rule names: `default-<name>`.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
+import { contained, effectCtx, WRITE_FLAGS, gitReadWrites, gitWriteOption, GIT_READ, handoffRedirect, redirectOk, segmentEffect } from "./effects.ts";
 import type { EffectCtx } from "./effects.ts";
-import { gitGlobalWidth, gitOptSpellings, injection } from "./floors.ts";
+import { BRACE_LIMIT, READ_PROGS, braceVariants, gitGlobalWidth, gitOptSpellings, harnessFolderPaths, harnessFolderWord, injection, secretPath } from "./floors.ts";
+import type { FloorEnv } from "./floors.ts";
 import { protectedMatch } from "./protectedmatch.ts";
 import { childHandoffWrite, folderProtected, inOneAutoFolder, opsOf, PATH_TOOL_NAMES, pathDecide, realDefault, realSpelling, resolveWord, rootHolds, under, workFolderOf } from "./pathrules.ts";
 import type { GateRoots } from "./pathrules.ts";
+import { scratchScriptRun } from "./childscratch.ts";
 import { nullDevice } from "./pathnorm.ts";
-import { gitConfigRead } from "./permoverlay.ts";
 import { webReadAllow } from "./webread.ts";
 import type { ShellSegment } from "./shellast.ts";
 import type { Redirect, Segment } from "./shellchain.ts";
@@ -37,6 +38,8 @@ export interface DefaultCtx {
   facts: GitFacts;
   platform: string;
   cwd: string;
+  /** The gate's floor env (home, agent dir); the `danger-harness-folder` label fires only when it is set. */
+  floor?: FloorEnv;
 }
 
 /** pi-foreman's own tools that carry no file path and no shell or message payload (plan Addendum 2, "B, own-tools default"). */
@@ -102,6 +105,7 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
   const ec = effectCtx(c.cwd, r.scratch, c.platform);
   ec.root = r.worktree;
   ec.noTmp = r.child || !r.tmpAccess;
+  ec.child = r.child;
   if (!ec.noTmp && c.platform === "win32") ec.tmpWrite = r.tmp;
   if (r.realpath) {
     const real = r.realpath;
@@ -133,7 +137,7 @@ function folderCtxOf(c: DefaultCtx): EffectCtx | null {
 /** The folder-aware context when every live segment of the call is a built-in default under it (decision 9 rule), else null. */
 function folderAware(c: DangerCall, env: DangerEnv): { ctx: DefaultCtx; ec: EffectCtx } | null {
   if (!env.facts || env.roots.child) return null;
-  const ctx: DefaultCtx = { roots: env.roots, facts: env.facts, platform: env.platform, cwd: env.cwd };
+  const ctx: DefaultCtx = { roots: env.roots, facts: env.facts, platform: env.platform, cwd: env.cwd, floor: env.floor };
   const ec = folderCtxOf(ctx);
   const segs = (c.segments ?? []).filter((s) => s.opaque === null && s.program !== "");
   if (!ec || segs.length === 0) return null;
@@ -201,7 +205,22 @@ function commitOk(rest: string[]): boolean {
 }
 
 const BRANCH_LIST = new Set(["-a", "--all", "-r", "--remotes", "-v", "-vv", "--list", "--show-current"]);
-const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev"]);
+const GIT_READ_MORE = new Set(["rev-parse", "ls-files", "rev-list", "describe", "blame", "show-ref", "merge-base", "ls-tree", "name-rev", "reflog", "show-branch", "check-ignore", "var", "ls-remote", "whatchanged", "verify-commit"]);
+const REFLOG_WRITE = new Set(["expire", "delete", "drop"]);
+
+/**
+ * A read-table subcommand (`GIT_READ`, `GIT_READ_MORE`) in a form that writes or runs a program: a long output or program option (`gitWriteOption`: `--output*`, `--exec`,
+ * `--upload-pack`, `--ext-diff`, `--textconv`, by any prefix), `reflog expire|delete|drop`, `ls-remote -u`. A short `-o` or `-c` is no write here (`ls-files -o`, `log -c` mean other things).
+ */
+export function gitReadSubWrite(sub: string | undefined, rest: string[]): boolean {
+  if (sub === undefined || !(GIT_READ.has(sub) || GIT_READ_MORE.has(sub))) return false;
+  return (
+    gitReadWrites(rest.filter((w) => w !== "-c" && w !== "-o")) ||
+    (sub === "reflog" && rest.some((w) => REFLOG_WRITE.has(w))) ||
+    // `ls-remote -u <cmd>` is the short form of `--upload-pack`, as for `clone`
+    (sub === "ls-remote" && gitProgOpt(rest, "--upload-pack", "u"))
+  );
+}
 
 /** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */
 function pushOk(rest: string[], text: string, cwd: string, c: DefaultCtx): boolean {
@@ -261,7 +280,7 @@ function gitDefault(argv: string[], text: string, cwd: string, c: DefaultCtx, ec
   }
   if (!sub || sub.startsWith("-")) return null; // global options (-C, -c, --git-dir ...) are never a default
   if (GIT_READ.has(sub)) return segmentEffect(ec, cwd, chain).cls === "read" && !gitReadWrites(rest) ? "default-git-read" : null;
-  if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !rest.some((w) => /^--(?:output|exec|upload-pack)/.test(w)) ? "default-git-read" : null;
+  if (GIT_READ_MORE.has(sub)) return !gitReadWrites(rest) && !gitReadSubWrite(sub, rest) ? "default-git-read" : null;
   // work folders relax reads only: no git write by default in a repo that is not the worktree or scratch
   if (!GIT_READ_ONLY_SUBS.has(sub) && workFolderBarred(c, cwd)) return null;
   switch (sub) {
@@ -431,7 +450,7 @@ export function segmentDefault(seg: ShellSegment, text: string, c: DefaultCtx, e
   const chain = toChain(seg);
   if (cwd === null || !chain || /[\\/]/.test(seg.program)) return null;
   // r79 item 3: a segment of the dangerous class is never a built-in allow (the class is the question the classifier answers)
-  if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts }) !== null) return null;
+  if (dangerSegment(seg, { roots: c.roots, platform: c.platform, cwd: c.cwd, facts: c.facts, floor: c.floor }) !== null) return null;
   for (const r of chain.redirects) if (!redirectOk(r, ec, cwd, ec.scratch ?? [], c.platform) && !handoffRedirect(r, ec, cwd)) return null;
   if (seg.program === "cd" && cdIntoOwn(seg.argv, cwd, c)) return "default-read";
   if (seg.program === "git") return gitDefault(seg.argv, text, cwd, c, ec, chain);
@@ -466,6 +485,8 @@ export interface DangerEnv {
   platform: string;
   cwd: string;
   facts?: GitFacts;
+  /** The gate's floor env; the `danger-harness-folder` label fires only when it is set. */
+  floor?: FloorEnv;
 }
 
 /** What the dangerous class sees of a call. `segments` is the parse of a shell tool's line; `text` its raw text. */
@@ -719,6 +740,23 @@ function gitParts(a: string[]): { sub: string | undefined; rest: string[] } {
   return { sub: a[i], rest: a.slice(i + 1) };
 }
 
+/**
+ * A git segment whose subcommand the gate knows writes (or runs a program): a `GIT_WRITE_SUBS` form that is no list or read form (the catch-all target of
+ * `taggedWriteTargets`, not the `list` one), or a read-table subcommand in a write form (`gitReadSubWrite`).
+ */
+export function gitWriteForm(seg: ShellSegment): boolean {
+  if (progOf(seg) !== "git") return false;
+  const { sub, rest } = gitParts(seg.argv);
+  return programTargets(seg).some((t) => t.any && !t.list) || gitReadSubWrite(sub, rest);
+}
+
+/** The git segment as the read rule sees it: `-C <dir>` (the segment's cwd already carries it), `--no-pager`, `-P` and `--no-optional-locks` dropped; null when another global option remains. */
+export function gitPlainSegment(seg: ShellSegment): ShellSegment | null {
+  let i = 0;
+  while (seg.argv[i] === "-C" || seg.argv[i] === "--no-pager" || seg.argv[i] === "-P" || seg.argv[i] === "--no-optional-locks") i += seg.argv[i] === "-C" ? 2 : 1;
+  return seg.argv[i]?.startsWith("-") ? null : { ...seg, argv: seg.argv.slice(i) };
+}
+
 /** `git worktree list` with only its read flags (`--expire` needs its `=value`): names no write target. */
 function gitWorktreeListRead(rest: string[]): boolean {
   return rest[0] === "list" && rest.slice(1).every((w) => w === "--porcelain" || w === "-v" || w === "--verbose" || w === "-z" || /^--expire=[^\s]+$/.test(w));
@@ -895,6 +933,38 @@ function gitSeg(s: ShellSegment, env: DangerEnv): boolean {
   }
 }
 
+/** `git <sub> <x>:<path>` where `<path>` is a secret path by the floors' matcher (`git show HEAD:.env` prints the file out of the object store). */
+function gitSecretSeg(s: ShellSegment, env: DangerEnv): boolean {
+  if (progOf(s) !== "git") return false;
+  const fenv: FloorEnv = env.floor ?? { cwd: env.cwd, platform: env.platform };
+  return s.argv.some((w) => {
+    const i = w.indexOf(":");
+    return i >= 0 && secretPath(w.slice(i + 1), fenv, true) !== null;
+  });
+}
+
+/** A segment that is no known read and names a policy or state file or folder of the harness; only with `env.floor`. Floors that refuse a write answer first. */
+function harnessFolderSeg(s: ShellSegment, env: DangerEnv): boolean {
+  if (!env.floor) return false;
+  const chain = toChain(s);
+  // a child's reads stay open (owner ruling brief-16): the read question is asked as for a session that is not a child
+  if (chain && segmentEffect(effectCtxOf({ ...env, roots: { ...env.roots, child: false } }), s.cwd, chain).cls === "read") return false;
+  const words = [...s.argv, ...s.redirects.map((r) => r.target)];
+  const cwd = s.cwd ?? env.cwd;
+  if (harnessFolderWord(words, cwd, env.floor)) return true;
+  // the folder itself: a known read program that writes nothing (a redirect) is skipped, whether or not its path is a read root
+  if (READ_PROGS.has(progOf(s)) && !s.redirects.some((r) => r.op !== "<" && r.op !== "dup")) return false;
+  return harnessFolderPaths(words, cwd, env.floor).some((abs) => !sanctionedHarnessPath(abs, env));
+}
+
+/** A path below the harness folder the session itself works in: its handoff dirs, its scratch dirs, and the wait folder `<agent dir>/pi-foreman/state/wait` (wait.ts). */
+function sanctionedHarnessPath(abs: string, env: DangerEnv): boolean {
+  const r = env.roots;
+  const wait = [env.floor?.agentDir, env.floor?.home ? path.join(env.floor.home, ".pi", "agent") : undefined].filter((x): x is string => !!x).map((a) => path.join(a, "pi-foreman", "state", "wait"));
+  const dirs = [...r.handoffs, ...(r.openedHandoffs ?? []), ...(r.childHandoff ? [r.childHandoff] : []), ...(r.ownHandoff ? [r.ownHandoff] : []), ...(r.childHandoffs ?? []), ...r.scratch, ...wait];
+  return dirs.some((d) => rootHolds(d, abs, env.platform, r.realpath, r.worktree));
+}
+
 const DETACH = new Set(["nohup", "setsid", "disown"]);
 const detachSeg = (s: ShellSegment): boolean => DETACH.has(progOf(s)) || s.wrappers.some((w) => DETACH.has(w));
 
@@ -963,12 +1033,27 @@ function optValues(a: string[], short: string[], long: string[]): string[] {
   return out;
 }
 
+/**
+ * The words a read-only role's git segment writes a file to, for `git archive -o`, `format-patch`, `bundle create` and `checkout-index`: the named target, or "."
+ * (the cwd) when the form names none and writes there by default. Used only by the read-only fence; no other rule sees these subcommands.
+ */
+export function gitOutputWords(seg: ShellSegment): string[] {
+  if (progOf(seg) !== "git") return [];
+  const { sub, rest } = gitParts(seg.argv);
+  if (sub === "archive") return optValues(rest, ["-o"], []);
+  if (sub === "bundle") return rest[0] === "create" ? operands(rest.slice(1)).slice(0, 1).filter((w) => w !== "-") : [];
+  if (rest.includes("--stdout")) return [];
+  if (sub === "format-patch") return optValues(rest, ["-o"], ["--output-directory"]).concat(rest.some((w) => w === "-o" || w === "--output-directory" || /^-o.|^--output-directory=/.test(w)) ? [] : ["."]);
+  if (sub === "checkout-index") return optValues(rest, [], ["--prefix"]).concat(rest.some((w) => w === "--prefix" || w.startsWith("--prefix=")) ? [] : ["."]);
+  return [];
+}
+
 const GIT_WRITE_SUBS = new Set(["commit", "add", "rm", "mv", "merge", "rebase", "reset", "checkout", "switch", "restore", "stash", "tag", "cherry-pick", "revert", "apply", "am", "pull", "fetch", "clone", "init", "clean", "worktree", "branch", "submodule", "config", "gc", "prune", "update-index", "update-ref", "notes", "bisect"]);
 const PKG_READ_VERBS = new Set(["ls", "list", "ll", "la", "view", "info", "show", "search", "help", "config", "root", "prefix", "bin", "whoami", "outdated", "why", "explain", "docs", "licenses", "version", "-v", "--version"]);
 const CODE_FLAG: Record<string, RegExp> = { python: /^-[A-Za-z]*c(?:.+)?$/, node: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, nodejs: /^(?:-[A-Za-z]*[ep]|--eval(?:=.*)?|--print(?:=.*)?)$/, bun: /^(?:-e|--eval(?:=.*)?|--print(?:=.*)?)$/, perl: /^-[A-Za-z]*[eE]$/, ruby: /^-[A-Za-z]*e$/, php: /^-[A-Za-z]*r$/, lua: /^-[A-Za-z]*e$/, rscript: /^-e$/ };
 
 /** An interpreter run with code on its command line (`python3 -c`, `node -e`, `perl -e` ...): the code is not read by the gate. */
-function inlineCode(s: ShellSegment): boolean {
+export function inlineCode(s: ShellSegment): boolean {
   const p = progOf(s);
   if (p === "deno") return s.argv[0] === "eval";
   const key = /^python/.test(p) ? "python" : p.replace(/[0-9.]+$/, "");
@@ -993,12 +1078,31 @@ interface WriteTarget {
   any: boolean;
   /** the catch-all of a `git branch` in list mode (`--contains HEAD`, `--merged`, `-l pat`): a read the read-only fence does not count */
   list?: true;
+  /** the catch-all of a file writer with no directory option (`tar -x`, `unzip`, `patch`): it writes the cwd; only the read-only fence counts it */
+  implicit?: true;
 }
 const named = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: false }));
 const anywhere = (ws: string[]): WriteTarget[] => ws.map((w) => ({ w, any: true }));
+const implicitCwd = (): WriteTarget[] => [{ w: ".", any: true, implicit: true }];
+
+/**
+ * The files an output option names: the value of a long git output option (`--output <f>`, `--output=<f>`, `--output-directory`) of any git subcommand
+ * (a short `-o` names no target: it means other things for `ls-files`, `grep`, `commit`), a download's `-o` / `--output` (curl, also in a cluster
+ * such as `-sSo f`) and `-O` / `--output-document` (wget).
+ */
+function outputTargets(s: ShellSegment): WriteTarget[] {
+  const p = progOf(s);
+  const a = s.argv;
+  if (p === "git") return named(optValues(gitParts(a).rest, [], ["--output", "--output-directory"]));
+  if (p === "curl") return named([...optValues(a, ["-o"], ["--output"]), ...a.flatMap((w, i) => (/^-[A-Za-z]+o$/.test(w) && a[i + 1] !== undefined ? [a[i + 1]] : []))]);
+  if (p === "wget") return named(optValues(a, ["-O"], ["--output-document"]));
+  return [];
+}
 
 /** `writeTargets` with the tag: set here, where the list is built, never read back from the word. */
-function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
+const taggedWriteTargets = (s: ShellSegment): WriteTarget[] => [...programTargets(s), ...outputTargets(s)];
+
+function programTargets(s: ShellSegment): WriteTarget[] {
   const p = progOf(s);
   const a = s.argv;
   switch (p) {
@@ -1006,7 +1110,8 @@ function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
       const scripts = optValues(a, ["-e"], ["--expression"]);
       const files = operands(a, new Set(["-e", "-f", "--expression", "--file"])).filter((w) => w !== "");
       if (scripts.length === 0 && optValues(a, ["-f"], ["--file"]).length === 0 && files.length > 0) scripts.push(files.shift() as string);
-      const inPlace = a.some((w) => w === "--in-place" || w.startsWith("--in-place=") || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
+      // sed takes any unambiguous prefix of a long option (`--in`, `--in-pl=.bak`): every prefix of `--in-place` from `--i` on is it
+      const inPlace = a.some((w) => (/^--i/.test(w) && "--in-place".startsWith(w.split("=")[0])) || (!w.startsWith("--") && /^-[A-Za-z]*i/.test(w)));
       const wfiles: string[] = [];
       for (const sc of scripts) for (const m of sc.matchAll(/(?:^|[;{}\n/])\s*w\s*([^\s;}]+)/g)) wfiles.push(m[1]);
       return named([...(inPlace ? files : []), ...wfiles]);
@@ -1049,16 +1154,24 @@ function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
       const dir = optValues(a, ["-d"], ["--directory"]);
       const out = optValues(a, ["-o"], ["--output"]);
       const files = operands(a, new Set(["-d", "--directory", "-o", "--output", "-i", "--input", "-r", "--reject-file", "-p", "--strip", "-B", "-V", "-Y", "-z", "-F"]));
-      return [...(dir.length ? named(dir) : anywhere(["."])), ...named([...out, ...files])];
+      // `--dry-run` (any prefix from `--dry`) changes no file: no implicit write of the cwd
+      const dry = a.some((w) => /^--dry/.test(w) && "--dry-run".startsWith(w));
+      return [...(dir.length ? named(dir) : dry ? [] : implicitCwd()), ...named([...out, ...files])];
     }
     case "rsync": {
       const ops = operands(a, new Set(["-e", "--rsh", "--exclude", "--include", "--exclude-from", "--include-from", "--files-from", "--filter", "-f"]));
       return named(ops.length >= 2 ? [ops[ops.length - 1]] : []);
     }
-    case "tar":
-      return a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? "") ? [...named(optValues(a, ["-C"], ["--directory"])), ...anywhere(["."])] : [];
-    case "unzip":
-      return [...named(optValues(a, ["-d"], [])), ...anywhere(["."])];
+    case "tar": {
+      if (!(a.some((w) => /^-[A-Za-z]*x|^--extract$|^--get$/.test(w)) || /^[A-Za-z]*x/.test(a[0] ?? ""))) return [];
+      const dir = optValues(a, ["-C"], ["--directory"]);
+      return [...named(dir), ...(dir.length ? anywhere(["."]) : implicitCwd())];
+    }
+    case "unzip": {
+      const dir = optValues(a, ["-d"], []);
+      // a listing, test or pipe form (`-l`, `-v`, `-t`, `-p`, `-Z`) extracts nothing to the cwd
+      return [...named(dir), ...(dir.length || a.some((w) => /^-[A-Za-z]*[lvtpZ]/.test(w)) ? anywhere(["."]) : implicitCwd())];
+    }
     case "git": {
       const { sub, rest } = gitParts(a);
       if (sub === undefined || !GIT_WRITE_SUBS.has(sub)) return [];
@@ -1071,6 +1184,11 @@ function taggedWriteTargets(s: ShellSegment): WriteTarget[] {
       const head = a.slice(0, a.indexOf(sub));
       const extra = [...optValues(head, [], ["--git-dir", "--work-tree"])];
       if ((sub === "clone" || sub === "init") && operands(rest).length >= (sub === "clone" ? 2 : 1)) extra.push(operands(rest)[operands(rest).length - 1]);
+      // the file of `git config --file <path>` is written unless the rest is a read form (the same `gitConfigRead` that clears the plain forms)
+      if (sub === "config") {
+        const bare = rest.filter((w, i) => !(w === "--file" || w === "-f" || /^--file=|^-f[^-]/.test(w) || rest[i - 1] === "--file" || rest[i - 1] === "-f"));
+        if (!gitConfigRead(bare)) extra.push(...optValues(rest, ["-f"], ["--file"]));
+      }
       const any = anywhere(["."]);
       if (sub === "branch" && gitBranchListMode(rest)) for (const t of any) t.list = true;
       return [...any, ...named(extra)];
@@ -1106,6 +1224,8 @@ export interface ShellWriteTarget {
   named: boolean;
   /** the catch-all of a `git branch` in list mode: the read-only role fence does not count it (`install-root-write` still does) */
   list?: true;
+  /** the implicit-cwd catch-all of `tar -x`, `unzip`, `patch` with no directory option: only the read-only role fence counts it */
+  implicit?: true;
   seg: ShellSegment;
 }
 
@@ -1118,14 +1238,79 @@ export function shellWriteTargets(segments: ShellSegment[], platform: string): S
   const out: ShellWriteTarget[] = [];
   for (const seg of segments) {
     if (seg.program === "") continue;
-    const words: WriteTarget[] = [...taggedWriteTargets(seg), ...named(seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup").map((r) => r.target))];
-    if (progOf(seg) === "tee") words.push(...named(operands(seg.argv)));
-    for (const t of words) {
+    for (const t of segWriteWords(seg)) {
       if (/[$`]/.test(t.w) || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
       if (seg.cwd === null && !path.isAbsolute(t.w) && !path.win32.isAbsolute(t.w)) continue;
       const abs = resolveWord(platform, seg.cwd ?? "/", t.w);
-      if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), seg });
+      if (abs) out.push({ path: abs, named: !t.any, ...(t.list ? { list: true as const } : {}), ...(t.implicit ? { implicit: true as const } : {}), seg });
     }
+  }
+  return out;
+}
+
+/**
+ * The named write words `shellWriteTargets` skips because they do not resolve: a `$` or backtick, a brace list, `~`, a drive-relative word, a relative word under an
+ * unknown cwd (after `cd "$X"`). A standard sink and a `$FOREMAN_SCRATCH` form never count; the catch-all targets are not words and are left to their own rules.
+ * A comma brace list counts only when a variant of it does not resolve (or the expansion is cut at the limit); `braceWriteTargets` names the paths the others reach.
+ */
+export function unresolvedShellWriteWords(segments: ShellSegment[], platform: string): string[] {
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    for (const t of segWriteWords(seg)) {
+      if (t.any || SINK.has(t.w) || nullDevice(platform, t.w)) continue;
+      const vs = braceVariants(t.w);
+      if (vs.length > 1 && vs.length < BRACE_LIMIT ? vs.some((v) => unresolvedWord(seg, platform, v)) : unresolvedWord(seg, platform, t.w)) out.push(t.w);
+    }
+  }
+  return out;
+}
+
+/** One write word that does not resolve (see `unresolvedShellWriteWords`); a `$FOREMAN_SCRATCH` form without another variable or brace counts as resolved. */
+function unresolvedWord(seg: ShellSegment, platform: string, word: string): boolean {
+  const w = word.replace(/\$\{?FOREMAN_SCRATCH\}?/g, "");
+  const open = /[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(w);
+  if (w !== word && !open) return false;
+  return open || (seg.cwd === null && !path.isAbsolute(w) && !path.win32.isAbsolute(w)) || resolveWord(platform, seg.cwd ?? "/", w) === null;
+}
+
+/**
+ * The paths the variants of a comma brace list in a named write word reach (`touch sub/{a,b}`, `{x,<scratch>}/f`), for the words `unresolvedShellWriteWords` does not
+ * report: `shellWriteTargets` sees such a word as one literal name. A `$FOREMAN_SCRATCH` variant is the scratch dir and is left out.
+ */
+export function braceWriteTargets(segments: ShellSegment[], platform: string): ShellWriteTarget[] {
+  const out: ShellWriteTarget[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    for (const t of segWriteWords(seg)) {
+      const vs = braceVariants(t.w);
+      if (t.any || vs.length < 2 || vs.length >= BRACE_LIMIT) continue;
+      for (const v of vs) {
+        if (/[$`{]/.test(v) || SINK.has(v) || nullDevice(platform, v) || (seg.cwd === null && !path.isAbsolute(v) && !path.win32.isAbsolute(v))) continue;
+        const abs = resolveWord(platform, seg.cwd ?? "/", v);
+        if (abs) out.push({ path: abs, named: true, seg });
+      }
+    }
+  }
+  return out;
+}
+
+/** The write words of one segment: its `taggedWriteTargets`, its write redirects and a `tee`'s operands. */
+export function segWriteWords(seg: ShellSegment): WriteTarget[] {
+  const words: WriteTarget[] = [...taggedWriteTargets(seg), ...named(seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup").map((r) => r.target))];
+  if (progOf(seg) === "tee") words.push(...named(operands(seg.argv)));
+  return words;
+}
+
+/**
+ * The write words `shellWriteTargets` skips because the parse cannot resolve them: a `$`, backtick or substitution, or a brace list (`f{,-1}`) in a redirect
+ * target or a named destination. `$FOREMAN_SCRATCH` (also `${FOREMAN_SCRATCH}`) is the one variable that does not count, rebound on the line or not.
+ */
+export function unresolvedWriteWords(segments: ShellSegment[]): string[] {
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg.program === "") continue;
+    for (const t of segWriteWords(seg)) if (/[$`]|\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(t.w.replace(/\$\{?FOREMAN_SCRATCH\}?/g, ""))) out.push(t.w);
   }
   return out;
 }
@@ -1273,6 +1458,137 @@ function webNotRead(c: DangerCall, env: DangerEnv): boolean {
   return v.candidate && !v.ok;
 }
 
+// ------------------------------------------------------------------ danger-readonly-run
+//
+// A read-only role (`roots.roundReadOnly`: reviewer, explorer) keeps a segment as it is when it is a read, a test run, a fetch or a git read, or when it writes
+// only the scratch dir or the handoff files and runs no code from there; a git segment whose repository is in the scratch dir is free too. Every other
+// segment is something the gate cannot see into and gets this label. Decided from the rule names and effect classes the gate already has, no program list.
+
+/** The built-in rules (and the web-read and public-key rules of gate.ts) that leave a segment of a read-only role as it is. */
+const READONLY_FREE: ReadonlySet<string> = new Set(["default-read", "default-git-read", "default-build-test", "default-git-fetch", "default-gh-read", "builtin-web-read", "floor-pubkey-read"]);
+
+interface ReadonlyCtx {
+  dctx: DefaultCtx;
+  ec: EffectCtx;
+  /** `abs` is a place the role may write: the scratch dir or the handoff files. */
+  sanctioned: (abs: string) => boolean;
+  inScratch: (abs: string) => boolean;
+}
+
+/** A git segment's global options: `sub` and `rest` after them, `other` when an option is none of `-C`, `--no-pager`, `-P`, `--no-optional-locks`, `--git-dir`, `--work-tree`, `dirs` the values of the last two. */
+function gitHead(a: string[]): { sub: string | undefined; rest: string[]; other: boolean; dirs: string[] } {
+  const dirs: string[] = [];
+  let other = false;
+  let i = 0;
+  while (i < a.length && a[i].startsWith("-")) {
+    const w = a[i];
+    const glued = /^--(?:git-dir|work-tree)=(.*)$/.exec(w);
+    if (w === "-C") i += 2;
+    else if (w === "--no-pager" || w === "-P" || w === "--no-optional-locks") i++;
+    else if (w === "--git-dir" || w === "--work-tree") {
+      if (a[i + 1] !== undefined) dirs.push(a[i + 1]);
+      i += 2;
+    } else if (glued) {
+      dirs.push(glued[1]);
+      i++;
+    } else {
+      other = true;
+      i += gitGlobalWidth(a, i);
+    }
+  }
+  return { sub: a[i], rest: a.slice(i + 1), other, dirs };
+}
+
+/** A git read: the read rule on the segment as the read rule sees it (`gitPlainSegment`), or a read form of a subcommand the write table lists (`stash list`, `tag -l`, `config --get`). */
+function gitReadForm(seg: ShellSegment, text: string, x: ReadonlyCtx): boolean {
+  if (seg.opaque !== null || !seg.wrappers.every((w) => w === "timeout")) return false;
+  const plain = gitPlainSegment(seg);
+  const sub = plain?.argv[0];
+  if (!plain || sub === undefined) return false;
+  return segmentDefault(plain, text, x.dctx, x.ec) === "default-git-read" || (GIT_WRITE_SUBS.has(sub) && !gitWriteForm(plain));
+}
+
+/** A git segment whose repository, `--git-dir`, `--work-tree` and every named write target lie in the scratch dir (or the handoff files), with no env prefix, no other global option and no short `-o`. */
+function gitScratchRepo(seg: ShellSegment, x: ReadonlyCtx): boolean {
+  if (seg.opaque !== null || !seg.wrappers.every((w) => w === "timeout") || seg.cwd === null) return false;
+  const h = gitHead(seg.argv);
+  const cwd = seg.cwd;
+  const platform = x.dctx.platform;
+  if (h.other || h.sub === undefined || !x.inScratch(cwd)) return false;
+  if (h.dirs.some((d) => { const abs = resolveWord(platform, cwd, d); return abs === null || !x.inScratch(abs); })) return false;
+  const stop = h.rest.indexOf("--");
+  if ((stop < 0 ? h.rest : h.rest.slice(0, stop)).some((w) => !w.startsWith("--") && /^-[A-Za-z]*o/.test(w))) return false;
+  return scratchTargets(seg, x, true);
+}
+
+/** Every write target of `seg` is resolved and inside the scratch dir or the handoff files (`catchAll`: the catch-all ones too); with no target at all, false unless `catchAll`. */
+function scratchTargets(seg: ShellSegment, x: Pick<ReadonlyCtx, "sanctioned" | "inScratch"> & { dctx: Pick<DefaultCtx, "platform"> }, catchAll: boolean): boolean {
+  const platform = x.dctx.platform;
+  const ts = shellWriteTargets([seg], platform);
+  if ((!catchAll && ts.length === 0) || unresolvedShellWriteWords([seg], platform).length > 0) return false;
+  const ok = (p: string): boolean => x.inScratch(p) || x.sanctioned(p);
+  return ts.every((t) => (catchAll || t.named) && ok(t.path)) && braceWriteTargets([seg], platform).every((t) => ok(t.path));
+}
+
+/** The segment runs code from a place the role may write: a test or build run that names a scratch or handoff path, or a script in the scratch dir (`scratchScriptRun`). */
+function codeFromWritable(seg: ShellSegment, rule: string | null, x: ReadonlyCtx): boolean {
+  if (rule !== "default-build-test") return scratchScriptRun([seg.program, ...seg.argv], x.dctx.roots.scratch, x.dctx.platform);
+  return seg.argv.some((w) => {
+    const v = w.startsWith("-") ? (w.includes("=") ? w.slice(w.indexOf("=") + 1) : "") : w;
+    const abs = v === "" ? null : resolveWord(x.dctx.platform, seg.cwd ?? x.dctx.cwd, v);
+    return abs !== null && x.sanctioned(abs);
+  });
+}
+
+/** One segment of a read-only role's line gets the label (true) or is left to the rest of the gate (false). `given`: the built-in rule the gate already found for it. */
+function readonlyRunSeg(seg: ShellSegment, text: string, x: ReadonlyCtx, given: string | null): boolean {
+  const rule = given ?? segmentDefault(seg.heredoc ? { ...seg, heredoc: false } : seg, text, x.dctx, x.ec);
+  const free = rule !== null && READONLY_FREE.has(rule);
+  // a line that does not parse (an opaque unit the gate could not read) fails closed, unless a rule above accepted it
+  if (seg.program === "") return seg.opaque !== null && !free;
+  if (progOf(seg) === "git") return !(free || gitReadForm(seg, text, x) || gitScratchRepo(seg, x));
+  const code = codeFromWritable(seg, rule, x);
+  if (free) return code;
+  // rule 2: a segment whose only writes are named targets in scratch or the handoff files is free when the write-in rule has it, when the same segment without its
+  // redirects is a rule-1 form (the read rule's own option checks apply), or when it is a plain reader with no option word at all; a redirect on an unknown or
+  // opaque program, a script, inline code, a reader whose option can run code (`rg --pre`, `sort --compress-program`) or a wrapper around them frees nothing
+  const bare = (): boolean => {
+    const r1 = segmentDefault({ ...seg, redirects: [], heredoc: false }, text, x.dctx, x.ec);
+    return r1 !== null && READONLY_FREE.has(r1);
+  };
+  const known = rule === "default-write-in" || bare() || (seg.opaque === null && seg.wrappers.length === 0 && READ_PROGS.has(seg.program) && !seg.argv.some((w) => w.startsWith("-")));
+  return code || !known || !scratchTargets(seg, x, false);
+}
+
+/**
+ * `danger-readonly-run`: some shell segment of a call of a read-only role is none of the free forms above. `ruleOf(i)`: the built-in rule the gate found for segment `i`
+ * (the web-read and public-key rules are not `segmentDefault`'s). False for every other role and for a call that is no shell line; a `powershell` line is always true.
+ */
+export function readonlyRunLine(c: DangerCall, env: DangerEnv, ruleOf?: (i: number) => string | null): boolean {
+  const { roots, platform } = env;
+  if (!roots.roundReadOnly || !env.facts || !c.segments || !BASH_TOOL_NAMES.has(c.tool)) return false;
+  // a powershell line is one opaque foreign-shell segment no rule of 1-3 settles: always labelled
+  if (c.tool === "powershell") return true;
+  const dctx: DefaultCtx = { roots, facts: env.facts, platform, cwd: env.cwd, floor: env.floor };
+  const x: ReadonlyCtx = {
+    dctx,
+    ec: effectCtxOf(dctx),
+    sanctioned: (abs) => pathDecide("write", { path: abs }, env.cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined,
+    inScratch: (abs) => roots.scratch.some((d) => rootHolds(d, abs, platform, roots.realpath, roots.worktree)),
+  };
+  return c.segments.some((seg, i) => readonlyRunSeg(seg, c.text ?? "", x, ruleOf?.(i) ?? null));
+}
+
+/** Every writing redirect of `seg` has a named, resolved target inside the scratch dir or the handoff files (the program's own writes are not looked at); with no such target at all, false. */
+export function redirectsInScratch(seg: ShellSegment, roots: GateRoots, platform: string, cwd: string): boolean {
+  const redirects = seg.redirects.filter((r) => r.op !== "<" && r.op !== "dup");
+  return scratchTargets({ ...seg, program: "true", argv: [], wrappers: [], opaque: null, heredoc: false, redirects }, {
+    dctx: { platform },
+    sanctioned: (abs) => pathDecide("write", { path: abs }, cwd, { ...roots, worktree: `${roots.worktree}\0` }, platform) !== undefined,
+    inScratch: (abs) => roots.scratch.some((d) => rootHolds(d, abs, platform, roots.realpath, roots.worktree)),
+  }, false);
+}
+
 const detached = (c: DangerCall): boolean => !!c.text && BASH_TOOL_NAMES.has(c.tool) && c.tool !== "bg_run" && c.tool !== "foreman_bg" && /(?:^|[^&\\])&\s*$/.test(c.text.trim());
 
 export const DANGER_RULES: readonly DangerRule[] = [
@@ -1281,13 +1597,16 @@ export const DANGER_RULES: readonly DangerRule[] = [
   { name: "danger-forge", reason: "changes something on the code forge (merge, close, comment, create or delete, a non-GET API call)", test: segs(forgeSeg) },
   { name: "danger-publish", reason: "publishes a package, image or release", test: segs(publishSeg) },
   { name: "danger-net-write", reason: "sends data over the network (a method other than GET or HEAD, a body, an upload, a raw socket, or a download with credentials or an unsafe target)", test: (c, e) => segs(netWriteSeg)(c, e) || webNotRead(c, e) },
-  { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: segs(installSeg) },
+  { name: "danger-install", reason: "installs, runs or removes software from a package registry", test: (c, e) => segs(installSeg)(c, e) || (c.segments ?? []).some((s) => s.opaque === "assignment" && s.program !== "" && installSeg(s)) },
   { name: "danger-git", reason: "changes git history or discards work (hard reset, clean, discarding checkout or restore, branch delete, push to a URL, rebase, amend of published work, stash drop, worktree removal, history rewrite)", test: segs(gitSeg) },
   { name: "danger-process", reason: "controls processes or system settings (kill, recursive chmod, chown, mount, defaults write, registry edits, detaching a process)", test: (c, e) => segs(processSeg)(c, e) || (c.tool !== "bg_run" && c.tool !== "foreman_bg" && segs(detachSeg)(c, e)) || detached(c) },
   { name: "danger-inject", reason: "types text into another terminal pane, which another session reads as its own input", test: segs(injectSeg) },
   { name: "danger-opaque", reason: "the shell line cannot be read exactly (substitution, eval, an unknown variable, an unparsed form or an interpreter one-liner such as python -c or node -e)", test: (c, e) => (c.segments ?? []).some((s) => s.opaque !== null) || segs(inlineCode)(c, e) },
   { name: "danger-mcp-act", reason: "an MCP tool that acts on an outside system (its name is not a read)", test: (c) => mcpAct(c) },
   { name: "danger-launch-outside", reason: "launches a session in a directory outside the owned roots, or a workflow script, tasks or chain", test: (c, e) => launchOutside(c, e) },
+  { name: "danger-git-secret", reason: "shows a secret or key file through a git revision (git show HEAD:<path>)", test: segs(gitSecretSeg) },
+  { name: "danger-harness-folder", reason: "a program that is no known read names a policy or state file of the harness, or the harness folder itself or a path below it outside the session's own handoff, scratch and wait folders", test: segs(harnessFolderSeg) },
+  { name: "danger-readonly-run", reason: "a read-only role runs something the gate cannot see into (an unknown program or git form, code from a writable folder, a build run it does not know)", test: (c, e) => readonlyRunLine(c, e) },
 ];
 
 /** The first target the call writes outside the worktree and the session's scratch (the `danger-write-outside` entry, plus a child's `tee`; gate.ts childDenied), or null. */
@@ -1309,18 +1628,61 @@ export function createsPullRequest(segments: ShellSegment[]): boolean {
   });
 }
 
+/** `gh pr merge`, `glab mr merge`, and a `gh api` / `glab api` PUT on `…/pulls/<n>/merge` or `…/merge_requests/<n>/merge`: merges a pull or merge request. GraphQL mutations are not looked at. */
+export function mergesPullRequest(segments: ShellSegment[]): boolean {
+  return segments.some((s) => {
+    const p = progOf(s);
+    const pos = positionals(s.argv, GH_VALUED);
+    if ((p === "gh" && pos[0] === "pr" && pos[1] === "merge") || (p === "glab" && pos[0] === "mr" && pos[1] === "merge")) return true;
+    if ((p !== "gh" && p !== "glab") || pos[0] !== "api") return false;
+    const f = apiFlags(s.argv);
+    return (f.method === "PUT" || f.override === "PUT") && pos.slice(1).some((w) => /(?:pulls|merge_requests)\/\d+\/merge(?:[/?#]|$)/.test(w));
+  });
+}
+
 /** The first dangerous-class entry a call falls into, or null. */
 export function dangerMatch(call: DangerCall, env: DangerEnv): DangerHit | null {
   for (const r of DANGER_RULES) if (r.test(call, env)) return { name: r.name, reason: r.reason };
   return null;
 }
 
-const SEGMENT_RULES = [deploySeg, forgeSeg, publishSeg, netWriteSeg, installSeg, gitSeg, (s: ShellSegment) => processSeg(s) || detachSeg(s), injectSeg] as const;
+const SEGMENT_RULES = [deploySeg, forgeSeg, publishSeg, netWriteSeg, installSeg, gitSeg, (s: ShellSegment) => processSeg(s) || detachSeg(s), injectSeg, gitSecretSeg, harnessFolderSeg] as const;
 
 /** The `danger-*` name of a single non-opaque segment (every entry that needs no path facts), or null. `segmentDefault` refuses such a segment. */
 export function dangerSegment(seg: ShellSegment, env: DangerEnv): string | null {
   if (seg.opaque !== null || seg.program === "") return null;
-  const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject"];
+  const names = ["danger-deploy", "danger-forge", "danger-publish", "danger-net-write", "danger-install", "danger-git", "danger-process", "danger-inject", "danger-git-secret", "danger-harness-folder"];
   const i = SEGMENT_RULES.findIndex((f) => f(seg, env));
   return i < 0 ? null : names[i];
+}
+
+const CONFIG_MODES = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"]);
+const CONFIG_MODS = new Set(["--local", "--worktree", "--global", "--system", "--includes", "--no-includes", "-z", "--null", "--show-origin", "--show-scope", "--name-only", "--bool", "--int", "--bool-or-int", "--path", "--expiry-date"]);
+
+/**
+ * `git config` args (after the subcommand) that only read: `<key>`, `get <key> [<re>]`, `list`, `--get|--get-all|--get-regexp <key> [<re>]`,
+ * `--get-urlmatch <name> <url>`, `--list`, with the modifiers above and `--default <v>` / `--type=<t>`. `--file`, `--blob`, `set`, `unset`,
+ * `--add`, `--replace-all`, `--edit`, any other flag, or a second operand without a --get mode is a write.
+ */
+export function gitConfigRead(rest: string[]): boolean {
+  let mode: string | undefined;
+  const ops: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--default") {
+      if (++i >= rest.length) return false;
+    } else if (a.startsWith("--type=") || CONFIG_MODS.has(a)) {
+      continue;
+    } else if (CONFIG_MODES.has(a)) {
+      if (mode !== undefined) return false;
+      mode = a === "-l" ? "--list" : a;
+    } else if (a.startsWith("-")) {
+      return false;
+    } else ops.push(a);
+  }
+  if (mode === undefined && (ops[0] === "get" || ops[0] === "list")) mode = `--${ops.shift()}`;
+  if (mode === "--list") return ops.length === 0;
+  if (mode === "--get-urlmatch") return ops.length === 2;
+  if (mode === undefined) return ops.length === 1;
+  return ops.length >= 1 && ops.length <= 2;
 }

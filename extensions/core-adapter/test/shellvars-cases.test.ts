@@ -4,12 +4,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildOverlayRules, checkToolCall, parseShell, readBaseline } from "../permoverlay.ts";
-import type { MatchCtx } from "../permoverlay.ts";
+import { parseShell } from "../psunits.ts";
+import { readBaseline } from "../baseline.ts";
 import { GRAMMAR, resolveVars } from "../shellvars.ts";
 import { effectCtx } from "../effects.ts";
 import { bashRules, deterministicAllow } from "../timeoutallow.ts";
-import { bashPath } from "./_bashpath.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const fx = JSON.parse(fs.readFileSync(path.join(PKG, "tests", "fixtures", "shellvars-cases.json"), "utf8")) as {
@@ -40,23 +39,6 @@ const home = path.join(w, "home");
 const ag = path.join(home, ".pi", "agent");
 const scratch = path.join(w, "tmp", "pi-foreman-scratch", "s1", "L1");
 for (const d of [ws, wt, path.join(scratch, "probe"), ag, path.join(home, ".ssh")]) fs.mkdirSync(d, { recursive: true });
-const rules = buildOverlayRules(readBaseline(PKG)!, {}, {}, ag, ws, undefined, false);
-const sh = (role: "main" | "child", command: string): string => checkToolCall(rules, "bash", { command }, { cwd: wt, home, platform: process.platform, role, scratch } as MatchCtx)?.kind ?? "pass";
-const ssh = path.join(home, ".ssh");
-
-test("R3b literal lines: cd, S=$FOREMAN_SCRATCH and a later $S operand or redirect never ask", () => {
-  for (const role of ["child", "main"] as const) {
-    assert.equal(sh(role, `cd ${bashPath(wt)}; S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > $S/tc.txt`), "pass", role);
-    assert.equal(sh(role, `S=$FOREMAN_SCRATCH; mkdir -p $S; npm test > "$S/tc.txt"`), "pass", role);
-  }
-});
-
-test("a heredoc line keeps its class: the $S line is decided like the same line with the literal scratch path", () => {
-  const body = "\nprint(1)\nEOF";
-  for (const role of ["child", "main"] as const) {
-    assert.equal(sh(role, `S=$FOREMAN_SCRATCH; python3 - "$S/probe.test.ts" <<EOF${body}`), sh(role, `python3 - "${scratch}/probe.test.ts" <<EOF${body}`), role);
-  }
-});
 
 // owner ruling (7d): the $S heredoc line still asks; the resolved variable buys no deterministic allow
 test("a heredoc line with a $S operand gets no deterministic allow, as its literal-path line does", () => {
@@ -66,11 +48,4 @@ test("a heredoc line with a $S operand gets no deterministic allow, as its liter
   const viaVar = `S=$FOREMAN_SCRATCH; python3 - "$S/probe.test.ts" <<EOF${body}`;
   assert.equal(allow(viaVar), null);
   assert.equal(allow(`python3 - "${scratch}/probe.test.ts" <<EOF${body}`), null);
-});
-
-test("cd <literal> and NAME=$PWD make a later protected path visible to the rules", () => {
-  assert.equal(sh("main", `cat ${ssh}/id_rsa`), "deny");
-  assert.equal(sh("main", `cd ${bashPath(ssh)}; H=$PWD; cat $H/id_rsa`), "deny");
-  assert.equal(sh("main", `cd ${bashPath(home)}; H=$PWD/.ssh; cat "$H/id_rsa"`), "deny");
-  assert.equal(sh("main", `cd ${bashPath(wt)}; H=$PWD; cat $H/id_rsa`), "pass", "a path under the worktree is not protected");
 });

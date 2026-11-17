@@ -9,10 +9,9 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { rmTestTmp, waitQuiet } from "./_tmpbase.ts";
 import coreAdapter from "../index.ts";
+import { mapTool, isShellTool } from "../toolmap.ts";
 import { addonPresent, bgLogPath, formatWaits, lastLines, readAddonTasks, shellFor, spawnDetached } from "../bg.ts";
 import { checkLogPath, parseStart, processAlive, registerWait } from "../wait.ts";
-import { mapTool, isShellTool } from "../toolmap.ts";
-import { isOverlayTool } from "../permoverlay.ts";
 import { LiveState, liveDir } from "../livestate.ts";
 
 const PKG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -56,7 +55,7 @@ function waitHarness(t: { after(fn: () => void): void }, opts: { toolNames?: str
     sendMessage: (m: { content: string }) => void wakes.push(m),
     getAllTools: () => (opts.toolNames ?? []).map((name) => ({ name })),
   };
-  const session = { id: "s1", isChild: opts.isChild === true, cwd, agentDir, overlay: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
+  const session = { id: "s1", isChild: opts.isChild === true, cwd, agentDir, roots: null, config: () => ({ wait: { batchWindowSeconds: 0 } }), trace: () => undefined };
   const handle = registerWait(pi as never, { session: async () => session as never, home: root, platform: process.platform });
   const ctx = { mode: "tui", cwd, isIdle: () => true, sessionManager: { getSessionId: () => "s1" } };
   shutdown = async () => handlers.get("session_shutdown")?.({}, ctx);
@@ -126,7 +125,7 @@ test("foreman_wait pid and ci accept log; a log outside the bound is refused", (
   const cwd = path.join(root, "proj");
   const agentDir = path.join(root, "agent");
   fs.mkdirSync(cwd, { recursive: true });
-  const bound = { cwd, home: root, agentDir, platform: process.platform, overlay: null };
+  const bound = { cwd, home: root, agentDir, platform: process.platform, roots: null };
   const limits = { batchWindowSeconds: 0, maxSeconds: 3600, maxActive: 4, ci: true };
   const scratchLog = path.join(agentDir, "pi-foreman", "state", "scratch", "s1", "wait-w1.log");
   const pid = parseStart({ kind: "pid", pid: 4242, note: "n", log: scratchLog }, limits, bound);
@@ -277,7 +276,7 @@ function adapter(t: { after(fn: () => void): void }, opts: { confirm?: () => Pro
   return { handlers, commands, tools, ctx, project, agentDir, notes, confirms, root };
 }
 
-test("guard parity: foreman_bg gets exactly the verdict a bash call with the same command gets (deny, ask, allow)", async (t) => {
+test("guard parity: foreman_bg gets exactly the verdict a bash call with the same command gets (deny, allow)", async (t) => {
   const a = adapter(t);
   await a.handlers.get("session_start")!({ reason: "startup" }, a.ctx);
   const parent = path.dirname(a.agentDir);
@@ -288,11 +287,10 @@ test("guard parity: foreman_bg gets exactly the verdict a bash call with the sam
     ["git guard", "git push --force origin main"],
     ["empty command", " "],
     ["floor: agent dir parent", `trash ${parent}`],
-    ["ask: agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
+    ["agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
     ["allow", "echo hi"],
   ];
   let denied = 0;
-  let asked = 0;
   for (const [what, command] of cases) {
     const before = a.confirms.length;
     const viaBash = await a.handlers.get("tool_call")!({ toolName: "bash", toolCallId: "b", input: { command } }, a.ctx);
@@ -303,20 +301,16 @@ test("guard parity: foreman_bg gets exactly the verdict a bash call with the sam
     const named = viaBg && typeof (viaBg as { reason?: unknown }).reason === "string" ? { ...(viaBg as object), reason: (viaBg as { reason: string }).reason.replace("the foreman_bg call", "the bash call") } : viaBg;
     assert.deepEqual(named, viaBash, `${what}: ${command}`);
     assert.equal(bgConfirms, bashConfirms, `${what}: asks`);
-    if (what.startsWith("ask")) assert.ok(bashConfirms > 0, "the ask case really asks");
     if (viaBash) denied++;
-    asked += bashConfirms;
   }
-  assert.ok(denied >= 5, `denials seen: ${denied}`);
-  assert.ok(asked >= 1);
+  assert.ok(denied >= 4, `denials seen: ${denied}`); // the python case is no denial now (HEAD: 5, when it was an overlay ask that the rig denied); only parity is checked on it
   const ok = await a.handlers.get("tool_call")!({ toolName: "foreman_bg", toolCallId: "g", input: { command: "echo hi" } }, a.ctx);
   assert.equal(ok, undefined);
 });
 
-test("foreman_bg is guarded by every shell tool table: toolmap, git-guard shell check, overlay", () => {
+test("foreman_bg is guarded by every shell tool table: toolmap and git-guard shell check", () => {
   assert.deepEqual(mapTool("foreman_bg"), mapTool("bash"));
   assert.equal(isShellTool("foreman_bg"), true);
-  assert.equal(isOverlayTool("foreman_bg"), true);
 });
 
 test("the permission baseline maps foreman_bg to the bash rules (shellTools alias, like powershell)", () => {
@@ -381,11 +375,10 @@ test("guard parity: the add-on's bg_run gets exactly the verdict a bash call get
     ["git guard", "git push --force origin main"],
     ["empty command", " "],
     ["floor: agent dir parent", `trash ${parent}`],
-    ["ask: agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
+    ["agent dir parent via python", `python3 -c "import shutil; shutil.rmtree('${parent}')"`],
     ["allow", "echo hi"],
   ];
   let denied = 0;
-  let asked = 0;
   for (const [what, command] of cases) {
     const before = a.confirms.length;
     const viaBash = await a.handlers.get("tool_call")!({ toolName: "bash", toolCallId: "b", input: { command } }, a.ctx);
@@ -395,12 +388,9 @@ test("guard parity: the add-on's bg_run gets exactly the verdict a bash call get
     const named = viaRun && typeof (viaRun as { reason?: unknown }).reason === "string" ? { ...(viaRun as object), reason: (viaRun as { reason: string }).reason.replace("the bg_run call", "the bash call") } : viaRun;
     assert.deepEqual(named, viaBash, `${what}: ${command}`);
     assert.equal(runConfirms, bashConfirms, `${what}: asks`);
-    if (what.startsWith("ask")) assert.ok(bashConfirms > 0, "the ask case really asks");
     if (viaBash) denied++;
-    asked += bashConfirms;
   }
-  assert.ok(denied >= 5, `denials seen: ${denied}`);
-  assert.ok(asked >= 1);
+  assert.ok(denied >= 4, `denials seen: ${denied}`); // the python case is no denial now (HEAD: 5, when it was an overlay ask that the rig denied); only parity is checked on it
   for (const command of [undefined, 42, ["echo", "hi"]]) {
     const d = (await a.handlers.get("tool_call")!({ toolName: "bg_run", toolCallId: "r", input: { command } }, a.ctx)) as { block?: boolean; reason?: string };
     assert.equal(d?.block, true, `command ${JSON.stringify(command)}`);
@@ -412,7 +402,6 @@ test("guard parity: the add-on's bg_run gets exactly the verdict a bash call get
 test("bg_run is guarded by every shell tool table; the baseline aliases it to the bash rules", () => {
   assert.deepEqual(mapTool("bg_run"), mapTool("bash"));
   assert.equal(isShellTool("bg_run"), true);
-  assert.equal(isOverlayTool("bg_run"), true);
   const base = JSON.parse(fs.readFileSync(path.join(PKG, "config", "permissions.baseline.json"), "utf8")) as { shellTools: Record<string, { commandArgument: string }>; tools: Record<string, string> };
   assert.deepEqual(base.shellTools.bg_run, { commandArgument: "command" });
   assert.equal(base.tools.bg_run, undefined);

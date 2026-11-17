@@ -101,15 +101,6 @@ async function childRig(t: { after(fn: () => void | Promise<void>): void }, repl
     project,
     sent,
     events: (name: string) => trace().filter((r) => r.event === name),
-    /** This session is the child side of a handoff dir (its parent rules there). */
-    handoff(name: string): string {
-      const dir = path.join(agentDir, "pi-foreman", "handoffs", name);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "child"), `${sessionId}\n`);
-      fs.writeFileSync(path.join(dir, "parent"), "other-session\n");
-      fs.writeFileSync(path.join(dir, "ask.md"), "ask\n");
-      return dir;
-    },
     bash: async (command: string): Promise<Block> => (await handlers.get("tool_call")!({ toolName: "bash", toolCallId: `b${++calls}`, input: { command } }, ctx)) as Block,
   };
 }
@@ -161,14 +152,4 @@ test("r18 child: the old verdict shape (defer, riskLevel) is an invalid verdict:
   assert.equal(r?.block, true);
   assert.match(r?.reason ?? "", /nobody is at this session/);
   assert.equal(c.sent.length, 1);
-});
-
-test("r18 child: its self-ruling ask never reaches the classifier", async (t) => {
-  const c = await childRig(t, V("allow", "A1"));
-  const dir = c.handoff("r18-own");
-  const r = await c.bash(`echo "handoffs/${path.basename(dir)} ruling" > notes.txt`);
-  assert.equal(r?.block, true, JSON.stringify(r));
-  // the self-ruling ask still resolves through the old path (index.ts overlayBlock): a child deny that says to ask the foreman
-  assert.match(r?.reason ?? "", /this line writes, names a ruling and a handoff dir/);
-  assert.match(r?.reason ?? "", /ask the foreman/);
 });

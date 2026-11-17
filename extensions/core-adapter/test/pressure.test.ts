@@ -181,7 +181,7 @@ function runtime(level: () => string, idle: () => boolean = () => true) {
 test("pressure is a wait kind but not one foreman_wait start accepts", () => {
   assert.ok((WAIT_KINDS as readonly string[]).includes("pressure"));
   assert.ok(!(TOOL_WAIT_KINDS as readonly string[]).includes("pressure"));
-  const r = parseStart({ kind: "pressure" }, LIMITS, { cwd: "/ws", home: "/h", agentDir: "/a", platform: process.platform, overlay: null });
+  const r = parseStart({ kind: "pressure" }, LIMITS, { cwd: "/ws", home: "/h", agentDir: "/a", platform: process.platform, roots: null });
   assert.ok("error" in r);
 });
 
