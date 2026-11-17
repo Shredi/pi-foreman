@@ -421,8 +421,6 @@ export async function reviewBaseOf(cwd: string, o: { baseBranch: string | null; 
 
 const whereOf = (cwd: string, own: string): string => (cwd === own ? "" : ` in the checkout ${cwd}`);
 const goneNote = (run: HsRun): string => (fs.existsSync(run.cwd) ? "" : ` (that checkout is gone: ${run.head === null ? "a normal reviewer in any checkout of the same repository clears it" : "a normal reviewer in any checkout at that commit or a later one clears it"})`);
-const passNo = (s: HsState): string => (s.runs.length === 0 ? "" : " second");
-const LAUNCH = `launch one reviewer with ${HS_TAG} on the whole change, in the checkout that holds it`;
 
 /** The reasons in words: `risk tag security, design`, `the task is heavy`, `requested by the foreman`. */
 export function reasonsText(reasons: readonly string[]): string {
