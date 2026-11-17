@@ -135,8 +135,12 @@ test("B1: a heredoc or pipe fed to a shell is labelled danger-opaque for every r
   }
 });
 
-test("B1: an unclosed heredoc fed to cat is cat's data: no label", () => {
+test("B1: a closed heredoc fed to cat is cat's data: no label", () => {
   for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`, "EOT"), "undecided", []);
+});
+
+test("B1: an unclosed heredoc fed to cat (no end line) gets no label either", () => {
+  for (const role of ["main", "builder", "reviewer", "explorer"] as const) row(role, nl("cat <<EOT", `cat ${SECRET}`), "undecided", []);
 });
 
 test("B2: an opaque line that is not an assignment prefix gets no install label; an env prefix does get it", () => {

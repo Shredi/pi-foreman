@@ -92,12 +92,34 @@ export function realDefault(p: string): string | null {
   return nativeResolver(p);
 }
 
+/** `longForm` of `abs`; a leaf that is a dangling link is followed by reading its target (at most 8 hops; the target read on the last hop is the answer, a loop ends at the bound). */
+function followDangling(platform: string, abs: string, real: (p: string) => string | null): string {
+  const x = px(platform);
+  // `real(cur)` is already null here: resolve only the directory and append the leaf (a not normalised spelling takes the full `longForm`)
+  const missing = (p: string): string => {
+    const dir = x.dirname(p);
+    return dir === p || x.join(dir, x.basename(p)) !== p ? longForm(platform, p, real) : x.join(longForm(platform, dir, real), x.basename(p));
+  };
+  let cur = abs;
+  for (let hop = 0; hop < 8; hop++) {
+    const r = real(cur);
+    if (r !== null) return r;
+    try {
+      if (!fs.lstatSync(cur).isSymbolicLink()) return missing(cur);
+      cur = x.resolve(longForm(platform, x.dirname(cur), real), fs.readlinkSync(cur));
+    } catch {
+      return missing(cur);
+    }
+  }
+  return longForm(platform, cur, real);
+}
+
 /**
  * The real spelling of `abs`: its deepest existing ancestor through realpath, the rest appended. `link`: the path names a link itself (a plain `rm link`
  * removes the link, not its target), so only the directory is resolved: `realpath(dirname) + basename`.
  */
 export function realSpelling(platform: string, abs: string, real: (p: string) => string | null, link = false): string {
-  if (!link) return longForm(platform, abs, real);
+  if (!link) return real === realDefault && platform === process.platform ? followDangling(platform, abs, real) : longForm(platform, abs, real);
   const x = px(platform);
   const dir = x.dirname(abs);
   return dir === abs ? abs : x.join(longForm(platform, dir, real), x.basename(abs));
@@ -220,7 +242,11 @@ function classOf(r: GateRoots, platform: string, abs: string, dir: Dir, link = f
   // win32: a root and a path may spell one dir differently (8.3 `RUNNER~1`, case, a drive-less `/tmp`): resolve both against the worktree and compare long forms too
   const longRoot = (root: string): string => realSpelling(platform, px(platform).resolve(r.worktree, root), real);
   const inside = (root: string): boolean => rootHolds(root, abs, platform, r.realpath, r.worktree, link);
-  const gitFree = (root: string): boolean => !px(platform).relative(root, abs).split(/[\\/]/).some((g) => (win ? winAlias(g, ".git") : g === ".git"));
+  const dotGit = (rel: string): boolean => rel.split(/[\\/]/).some((g) => (win ? winAlias(g, ".git") : g === ".git"));
+  // each spelling is compared with the root in its own spelling, so a real ancestor of the root named `.git` does not count; only segments below the root do
+  const gitFree = (root: string): boolean => {
+    return !dotGit(px(platform).relative(root, abs)) && !dotGit(px(platform).relative(longRoot(root), ra));
+  };
   const noWrite = dir === "write";
   if (inside(r.worktree) && (!noWrite || gitFree(r.worktree))) return "worktree";
   if (r.scratch.some((d) => inside(d) && (!noWrite || gitFree(d)))) return "scratch";
