@@ -230,7 +230,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, countsForItems, entryOccasions, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PlanPhaseOrigin, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -1276,7 +1276,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The directory of each reviewer entry of a fresh launch (not `launchCwds`, which always adds the session cwd). */
-  const reviewDirs = (ctx: ExtensionContext, input: Record<string, unknown>): string[] => launchEntries(input).filter((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map((e) => hsDirOf(ctx, input, e));
+  const reviewDirs = (ctx: ExtensionContext, input: Record<string, unknown>, countingOnly = false): string[] => launchEntries(input).filter((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && (!countingOnly || countsForItems(occasionOf(e.task, e.reason ?? input.reason)))).map((e) => hsDirOf(ctx, input, e));
 
   /** Work happened in `roots` (null: unknown): their gate entries go stale; a builder raises the builder count of each (an unknown root: of every counted one). */
   function reviseGates(s: Session, roots: readonly string[] | null, builder: boolean): void {
@@ -2716,7 +2716,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           if (!s.isChild) s.brief.onRunEnd(runEndOf(data), s.launchedRoles.get(runId), (id, text) => storeBrief(s, id, text));
           if (!shadowRun(reviewLaunch)) for (const step of stepsOfRunEnd(data)) s.steps[step]++;
           for (const f of frictionOfRunEnd(data)) s.trace?.emit({ event: "friction", role: f.role, runId: f.runId, kind: f.kind, note: f.note });
-          const verdicts = reviewVerdictsOfRunEnd(counted);
+          const got = reviewVerdictsOfRunEnd(counted);
+          // fewer counting results than counting entries: a PASS cannot be assigned to a checkout, so it is no verdict
+          const owed = reviewLaunch?.entries.filter((e) => REVIEW_ROLES.includes(e.role) && e.shadow === null && countsForItems(e.occasion)).length ?? 0;
+          const verdicts = got.length < owed && !got.includes("fail") ? [] : got;
           const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
           s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
           persistCeremonyState(s);
@@ -4138,7 +4141,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
           capSet(s.launchTreesByCall, event.toolCallId, trees);
           // the checkouts the verdict applies to (reviewgates.ts): each reviewer entry's own dir; a resume keeps its target's; one unresolved: unknown
-          if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input)));
+          if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, true)));
         }
       }
       // Kept for the tool result only once the launch passed every check.
