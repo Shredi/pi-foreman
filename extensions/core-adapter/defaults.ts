@@ -1595,6 +1595,18 @@ export function createsPullRequest(segments: ShellSegment[]): boolean {
   });
 }
 
+/** `gh pr merge`, `glab mr merge`, and a `gh api` / `glab api` PUT on `…/pulls/<n>/merge` or `…/merge_requests/<n>/merge`: merges a pull or merge request. GraphQL mutations are not looked at. */
+export function mergesPullRequest(segments: ShellSegment[]): boolean {
+  return segments.some((s) => {
+    const p = progOf(s);
+    const pos = positionals(s.argv, GH_VALUED);
+    if ((p === "gh" && pos[0] === "pr" && pos[1] === "merge") || (p === "glab" && pos[0] === "mr" && pos[1] === "merge")) return true;
+    if ((p !== "gh" && p !== "glab") || pos[0] !== "api") return false;
+    const f = apiFlags(s.argv);
+    return (f.method === "PUT" || f.override === "PUT") && pos.slice(1).some((w) => /(?:pulls|merge_requests)\/\d+\/merge(?:[/?#]|$)/.test(w));
+  });
+}
+
 /** The first dangerous-class entry a call falls into, or null. */
 export function dangerMatch(call: DangerCall, env: DangerEnv): DangerHit | null {
   for (const r of DANGER_RULES) if (r.test(call, env)) return { name: r.name, reason: r.reason };

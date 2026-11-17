@@ -28,6 +28,7 @@ The tool gate's floors (see [permissions](permissions.md#floors)) hold in every 
 | A child's git write into the foreman's checkout or another checkout (`git -C`, `--git-dir`, `--work-tree`, `cd <dir> && git ...`), a redirect or a heredoc there | `child-write-foreman-checkout`, `child-write-outside` |
 | `rm -rf` and recursive overwrites outside the worktree | `floor-delete-outside`, `floor-overwrite-outside` |
 | A child's `gh pr create`, `glab mr create` and the `pr_create` tool | `child-pr-create` |
+| A child's `gh pr merge`, `glab mr merge` and a `gh api` / `glab api` PUT on `.../pulls/<n>/merge` or `.../merge_requests/<n>/merge` (a GraphQL merge mutation is not looked at) | `child-pr-merge` |
 | A push, remote or protected-branch word in a line the parser cannot read | the text floors: a deny for a child, a question for the owner |
 | A floored command as a line of a string field of an MCP or unlisted tool (`rm -rf /`, `sudo ls`, `git push --force origin x`) | the same text floors, on the parsed line only: prose, a field the parser cannot read and `sh('rm -rf /')` are not floored; no secret-path or config-key check on a field's command words |
 

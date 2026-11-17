@@ -4,7 +4,7 @@
 // path and payload tools all pass through here. A handler failure denies (fail-safe).
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
+import { DANGER_RULES, OWN_TOOLS, braceWriteTargets, createsPullRequest, dangerMatch, mergesPullRequest, effectCtxOf, gitPlainSegment, gitWriteForm, outsideTarget, readonlyRunLine, segmentDefault, shellWriteTargets, toolDefault, unresolvedShellWriteWords, writesIntoCheckout, writesOutside } from "./defaults.ts";
 import { FIND_BAD, segmentAlias } from "./effects.ts";
 import { psWords } from "./pswords.ts";
 import { withLookupCache } from "./pathnorm.ts";
@@ -203,6 +203,7 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
   const deny = (rule: string, what: string): GateResult => ({ block: true, rule, layer: "floor", reason: `pi-foreman: denied for child sessions (${rule}): ${what} Report what you need to the foreman and continue with what you can.` });
   if (tool === "foreman_protect") return deny("child-protect", "Children never change the protected targets; the owner does, with /foreman perms protect.");
   if (tool === "pr_create" || (segments && createsPullRequest(segments))) return deny("child-pr-create", "Children never open a pull or merge request; the foreman does.");
+  if (segments && mergesPullRequest(segments)) return deny("child-pr-merge", "Children never merge a pull or merge request; the foreman or the owner does.");
   const call = segments ? { tool, input, segments, ...(cmd !== null ? { text: cmd } : {}) } : { tool, input };
   if (writesOutside(call, env) && writesIntoCheckout(call, env)) return deny("child-write-foreman-checkout", "Children never write the foreman's checkout or its .workflow/ (the foreman's files change through the foreman); write inside your own worktree and your scratch dir ($FOREMAN_SCRATCH).");
   const outside = outsideTarget(call, env);
