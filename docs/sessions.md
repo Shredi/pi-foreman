@@ -540,10 +540,10 @@ model ([ladder](ladder.md#idle-rung-foreman-downshift)). The glyphs live in `con
 
 ## Knowledge sources
 
-The bundled skills and design notes digest a few outside pages: skill-authoring guidance, per-model prompting guides and an article on folding subagents. `config/knowledge.json` lists them, one entry per source: `id`, `url`, `target` (the repo file that digests it), `sha256` (of the normalised page text), `checkedOn` (the day the digest was last read against it) and, for index pages, `discover: {pattern, label}`. The digests are written in our own words; the full text is never committed.
+The bundled skills and design notes digest a few outside pages: skill-authoring guidance, per-model prompting guides and an article on folding subagents. `config/knowledge.json` lists them, one entry per source: `id`, `url`, `target` (the repo file that digests it), `sha256` (of the normalised page text, or of the raw bytes for a PDF), `checkedOn` (the day the digest was last read against it) and, for index pages, `discover: {pattern, label}`. The digests are written in our own words; the full text is never committed.
 
 - `foreman knowledge check [--json] [--agent-dir D]` fetches each source (10 s timeout), reduces HTML to its main text (scripts, styles, navigation, header, footer, aside and comments dropped; Markdown is used as is), hashes it and compares with the manifest. Each source is `unchanged`, `changed`, `new` (no hash yet), `unreachable` or, for a discover entry, `discovered`. A discover entry also lists links that match its pattern and are not in the manifest, such as a new model page; these are reported and never added automatically. It exits 0 whatever it finds, and 2 when the manifest is unreadable.
-- The normalised text of every source is cached per user in `<agent dir>/pi-foreman/knowledge/<id>.md` (the full text for a skill to read when its digest needs a recheck), and the result of the run goes to `<agent dir>/pi-foreman/state/knowledge-check.json` (`checkedAt`, `results`).
+- The normalised text of every source is cached per user in `<agent dir>/pi-foreman/knowledge/<id>.md` (the full text for a skill to read when its digest needs a recheck; a PDF source is cached as `<id>.pdf`, the file as it was fetched), and the result of the run goes to `<agent dir>/pi-foreman/state/knowledge-check.json` (`checkedAt`, `results`).
 - `foreman knowledge accept <id>... | --all` copies the hash from the last check into the manifest and sets `checkedOn` to today. Run it after you reread the digest against the cache. An id without a usable result is refused with the reason.
 - `foreman knowledge nudge` prints one line when the last check is older than `knowledge.nudgeDays` (your `foreman.json` over the defaults, default 30) or never ran. `foreman update-check` prints it on stderr, and `/foreman update-check` and `/sync` append it to their output.
 
@@ -674,10 +674,11 @@ startup file runs `foreman pane-resume`, which shows a 5 s countdown and starts 
 [herdr](herdr.md#crash-restart); the hook: [install](install.md#the-resume-hook)).
 
 What comes back by itself: the history; the identity of an opened child (intercom id, parent, label, model); the permission profile, the plan phase and
-the `PI_BG_*` variables the session was opened with; the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
+the `PI_BG_*` variables the session was opened with (on Windows not `PI_BG_SHELL` and `PI_BG_SHELL_PATH`: pi-foreman sets those itself at every start, and the shell's own values stay); the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
 (`foreman_wait`), running child runs and background tasks. The restarted session gets one appended message with the time of the last sign of life, and
 once, ten seconds after the start, one message holding everything it found: the child runs that pi-subagents still lists as running although the machine restarted and the
 background tasks that are gone (on a start or resume only, not on /new or /reload). A session idle for more than 14 days is not restarted and its note is swept. `sessions.hc.resume` `off` turns it off.
+On Windows the hook is a block in the PowerShell profiles and in Git Bash; the one of `hc`'s configured shell runs (see [herdr](herdr.md#crash-restart)).
 
 ## pi-intercom
 

@@ -76,8 +76,21 @@ goto collectr
 node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\prs-cli.ts" %PF_ARGS%
 exit /b %ERRORLEVEL%
 :paneresume
-echo foreman pane-resume: not supported on Windows
-exit /b 0
+rem for hand use (the PowerShell hook runs node itself); a too-old Node is silent, no node exits 127, as bin/foreman
+where node >nul 2>nul
+if errorlevel 1 exit /b 127
+node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
+if errorlevel 1 exit /b 0
+shift
+set "PF_ARGS="
+:collectpr
+if "%~1"=="" goto runpr
+set PF_ARGS=%PF_ARGS% %1
+shift
+goto collectpr
+:runpr
+node --no-warnings --experimental-strip-types "%PF_HERE%..\extensions\core-adapter\paneresume-cli.ts" %PF_ARGS%
+exit /b %ERRORLEVEL%
 :perms
 node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=6)?0:1)" >nul 2>nul
 if errorlevel 1 (echo foreman perms needs Node ^>= 22.6 ^(--experimental-strip-types^) 1>&2 & exit /b 1)

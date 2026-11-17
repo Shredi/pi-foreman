@@ -205,7 +205,7 @@ nothing for them.
 ### The resume hook
 
 Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<`, under the same guard (default agent dir or
-`PI_FOREMAN_HOME`; never in a dry run, never on Windows, never with `--no-env`). It restarts a Pi session in its pane after a crash
+`PI_FOREMAN_HOME`; nothing is written in a dry run or with `--no-env`). It restarts a Pi session in its pane after a crash
 (see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). The block removes its marker when the check should repeat at the next prompt: Pi is still ending after a signal (exit code 75), or `node` was not found yet (exit code 127, for example a lazy-loaded nvm). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
 `~/.bash_login`, `~/.profile`; fish `~/.config/fish/conf.d/pi-foreman-resume.fish`. The block calls this checkout's `bin/foreman` by its absolute path, so
 re-run `foreman setup` after the package moved (an nvm switch that moves the global npm root, a `pi update` into a new folder). Run setup on a remote machine too
@@ -235,6 +235,58 @@ if [ -n "${BASH_VERSION:-}" ]; then
     *) PROMPT_COMMAND="__pi_foreman_resume${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
   esac
 fi
+```
+
+On Windows `$SHELL` is ignored and setup writes the block of each shell that can run it, one line per file: the current-user profile of PowerShell 7
+(`Documents\PowerShell\Microsoft.PowerShell_profile.ps1`, when `pwsh` is installed) and of Windows PowerShell 5.1 (`Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1`),
+and Git Bash (`~/.bashrc` and the first existing of `~/.bash_profile`, `~/.bash_login`, `~/.profile`; the Git Bash block passes the Windows pid from `/proc/$$/winpid`).
+The terminal app restores a pane with its configured `shell`, so only the block of that shell fires ([herdr](herdr.md#crash-restart)). The PowerShell block is appended at the end of the file, wraps the
+`prompt` function that exists at that point and starts `node` itself (Node 22.6 or newer), not `bin/foreman`; `foreman pane-resume` also runs from PowerShell and `cmd` by hand. Encodings: a new profile is UTF-8 with a byte order mark; a file with a UTF-8 or
+UTF-16LE mark keeps it; a UTF-16BE file is skipped with a line; a file without a mark is read and written byte for byte, so ANSI characters survive a write, a re-run and a removal. A block with
+non-ASCII characters (a user name in a path) goes into a file without a mark only for PowerShell 7 and only when the file is valid UTF-8; for 5.1 setup prints a line and you add the block by hand. Setup reads the execution policy and, under
+`Restricted` or `AllSigned` (or none set), creates no new profile for that edition: it prints that the profile was not written and the `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` command, then you run setup again. A profile that already exists still gets the block, with a line that it does not load. Setup never changes the policy. A prompt theme or `prompt` set after the block replaces the hook. To add it
+to a PowerShell profile by hand (replace `<cli>` with the absolute path of `extensions/core-adapter/paneresume-cli.ts`):
+
+```powershell
+function __PiForemanResumeCheck {
+  if (-not $env:HC_TERMINAL_ID) { return }
+  $dir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $HOME '.pi\agent' }
+  $note = Join-Path $dir ('pi-foreman\state\panes\' + $env:HC_TERMINAL_ID + '.json')
+  if (-not (Test-Path -LiteralPath $note -PathType Leaf)) { return }
+  $mark = Join-Path $env:TEMP ('pi-foreman-resume.' + $PID)
+  if ((Get-Variable -Name __PiForemanResumeSeen -Scope Global -ValueOnly -ErrorAction Ignore) -and (Test-Path -LiteralPath $mark) -and -not ((Get-Item -LiteralPath $note).LastWriteTimeUtc -gt (Get-Item -LiteralPath $mark).LastWriteTimeUtc)) { return }
+  $cli = '<cli>'
+  if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) { return }
+  $global:__PiForemanResumeSeen = $true
+  try { [IO.File]::WriteAllText($mark, '') } catch { }
+  $node = Get-Command node -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $node) { Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue; return }
+  $ver = $null
+  try { $ver = [version]((& $node.Source --version) -replace '^v', '') } catch { }
+  if (-not $ver -or $ver -lt [version]'22.6') { return }
+  $p = Start-Process -NoNewWindow -PassThru -FilePath $node.Source -ArgumentList ('--no-warnings --experimental-strip-types "' + $cli + '" --shell-pid ' + $PID)
+  $null = $p.Handle
+  $p.WaitForExit()
+  if ($p.ExitCode -eq 75) { Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue }
+}
+function __PiForemanResume {
+  if ([Console]::IsInputRedirected) { return }
+  __PiForemanResumeCheck
+}
+if (-not (Get-Variable -Name __PiForemanResumeWrapped -Scope Global -ValueOnly -ErrorAction Ignore)) {
+  $global:__PiForemanResumeWrapped = $true
+  $__fn = Get-Command prompt -CommandType Function -ErrorAction SilentlyContinue | Select-Object -First 1
+  $global:__PiForemanOriginalPrompt = if ($__fn) { $__fn.ScriptBlock } else { $null }
+  function prompt {
+    $__ok = $?
+    $__rc = Get-Variable -Name LASTEXITCODE -Scope Global -ValueOnly -ErrorAction Ignore
+    $__orig = Get-Variable -Name __PiForemanOriginalPrompt -Scope Global -ValueOnly -ErrorAction Ignore
+    try { $null = __PiForemanResume } catch { }
+    $global:LASTEXITCODE = $__rc
+    if (-not $__ok) { Write-Error '-' -ErrorAction Ignore }
+    if ($__orig) { & $__orig } else { 'PS ' + $executionContext.SessionState.Path.CurrentLocation + ('>' * ($nestedPromptLevel + 1)) + ' ' }
+  }
+}
 ```
 
 To remove it by hand, delete the lines between the two markers.
