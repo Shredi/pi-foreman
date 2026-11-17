@@ -238,7 +238,7 @@ test("realSpelling of an existing file makes exactly one native realpath call", 
   assert.equal(n, 1);
 });
 
-// A chain of links: 8 are followed to the end (the git folder); a longer chain whose end does not exist yet is followed for 8 links and gets the verdict of the place reached (known limit); a chain that ends at an existing file is followed to its end, whatever its length.
+// A chain of links: 8 are followed to the end (the git folder); a longer chain whose end does not exist yet is followed for 8 links and gets the verdict of the place reached (known limit); a chain that ends at an existing file is followed to its end as long as the system's real-path lookup resolves it; a longer chain is treated like one whose end does not exist, and the system refuses to open such a chain at all (too many links; checked on macOS only).
 const chain = (name: string, len: number, end: string): void => {
   for (let i = 1; i <= len; i++) fs.symlinkSync(i === len ? end : `${name}${i + 1}`, path.join(wt, `${name}${i}`));
 };
