@@ -4171,13 +4171,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
       if (hidden) return { message: hidden };
       // D18: the open-tool signal shows once per run and tool call; a repeat is hidden (the context filter drops it too)
-      const openEv = s && !s.isChild ? noticeEvent(event.message) : null;
-      if (s && openEv && isRepeatOpenNotice(s.attention, openEv)) {
-        s.trace?.emit({ event: "notify_deduped", reason: "tool_open_repeat", runId: openEv.runId });
+      const ev = s && !s.isChild ? noticeEvent(event.message) : null;
+      if (s && ev && isRepeatOpenNotice(s.attention, ev)) {
+        s.trace?.emit({ event: "notify_deduped", reason: "tool_open_repeat", runId: ev.runId });
         return { message: { ...(event.message as object), display: false } as typeof event.message };
       }
       // Open-command notices: a known long command (test runner) is hidden; a child without a command controller loses the `command.*` lines.
-      const ev = s && !s.isChild ? noticeEvent(event.message) : null;
       if (s && ev && ev.reason === "tool_open_threshold" && typeof ev.runId === "string") {
         const runId = ev.runId;
         const roles = s.launchedRoles.get(runId) ?? [];
@@ -4987,7 +4986,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
       launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, hsRequired(s)) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, recordedOccasions.includes("pre-pr") && hsRequired(s)) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
