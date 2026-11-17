@@ -26,11 +26,16 @@ export const PROSE_MAX = 300;
 export const PROTECTED_NOTE_MAX = 200;
 export const PROFILE_ENV = "PI_FOREMAN_PERMS_PROFILE";
 
-/** One `protected` entry as written: exactly one of host / path / command as a glob, with an optional note. */
+/** The check mode of one protected entry; it can only tighten `gate.protected.check` (model < read-only < ask). */
+export type ProtectedCheckMode = "model" | "read-only" | "ask";
+export const PROTECTED_CHECK_MODES: readonly ProtectedCheckMode[] = ["model", "read-only", "ask"];
+
+/** One `protected` entry as written: exactly one of host / path / command as a glob, with an optional note and an optional stricter check mode. */
 export interface ProtectedRaw {
   kind: "host" | "path" | "command";
   glob: string;
   note?: string;
+  check?: ProtectedCheckMode;
 }
 
 /** A protected-target entry after merging: `P1`.. in merged order (user file first, then the trusted project file). */
@@ -145,10 +150,10 @@ export function profileName(config: unknown, env: Record<string, string | undefi
 
 export const userFilePath = (agentDir: string): string => path.join(agentDir, "pi-foreman", "permissions.json");
 
-/** The "Protected" block of `/foreman perms list`: id, kind, glob, note and source of each entry. */
+/** The "Protected" block of `/foreman perms list`: id, kind, glob, note, check mode (when set) and source of each entry. */
 export function protectedBlock(r: Pick<Resolved, "protected">): string[] {
   if (r.protected.length === 0) return [];
-  return ["Protected:", ...r.protected.map((e) => `  ${e.id}: ${e.kind} ${e.glob}${e.note ? ` - ${e.note}` : ""} (${e.source})`)];
+  return ["Protected:", ...r.protected.map((e) => `  ${e.id}: ${e.kind} ${e.glob}${e.note ? ` - ${e.note}` : ""}${e.check ? ` [check: ${e.check}]` : ""} (${e.source})`)];
 }
 
 /** Doctor INFO lines: a `Bash(*<word>*)` ask rule whose word looks like a host or path fragment is a candidate for a `protected` entry (docs/permissions.md "Protected targets"). */
@@ -232,7 +237,16 @@ function protectedList(v: unknown, where: string, notices: string[]): ProtectedR
       notices.push(`${at} (${kind} '${clip(g)}') note must be a string of at most ${PROTECTED_NOTE_MAX} characters; skipped`);
       return;
     }
-    out.push({ kind, glob: g.trim(), ...(typeof n === "string" && n.trim() !== "" ? { note: n.trim() } : {}) });
+    for (const k of Object.keys(x)) if (k !== kind && k !== "note" && k !== "check") notices.push(`${at} (${kind} '${clip(g)}') has an unknown key '${clip(k)}'; ignored`);
+    let check: ProtectedCheckMode | undefined;
+    if (x.check !== undefined) {
+      if ((PROTECTED_CHECK_MODES as readonly unknown[]).includes(x.check)) check = x.check as ProtectedCheckMode;
+      else {
+        check = "ask";
+        notices.push(`${at} (${kind} '${clip(g)}') check '${clip(String(x.check))}' must be model, read-only or ask; treated as ask`);
+      }
+    }
+    out.push({ kind, glob: g.trim(), ...(typeof n === "string" && n.trim() !== "" ? { note: n.trim() } : {}), ...(check ? { check } : {}) });
   });
   return out;
 }
@@ -685,7 +699,7 @@ export class PermStore {
    * the user file, keeping the file's other keys and their order, with the symlink, trust and atomic-write checks of the other writers. The entry is
    * re-validated here; a duplicate add and a missing remove are refused. Reloads (a version bump that clears the gate caches) on success.
    */
-  writeProtected(file: "project" | "user", op: "add" | "remove", entry: { kind: string; glob: string; note?: string }): { ok: true; file: string } | { ok: false; reason: string } {
+  writeProtected(file: "project" | "user", op: "add" | "remove", entry: { kind: string; glob: string; note?: string; check?: string }): { ok: true; file: string } | { ok: false; reason: string } {
     const clean = cleanProtected(entry);
     if (typeof clean === "string") return { ok: false, reason: clean };
     const target = this.filePath(file);
@@ -709,8 +723,8 @@ export class PermStore {
     const same = (x: unknown): boolean => isObj(x) && x[clean.kind] === clean.glob && (Object.keys(x).filter((k) => k === "host" || k === "path" || k === "command").length === 1);
     const at = list.findIndex(same);
     if (op === "add") {
-      if (at >= 0) return { ok: false, reason: `not written: ${clean.kind} ${clean.glob} is already protected in ${target}` };
-      list.push({ [clean.kind]: clean.glob, ...(clean.note ? { note: clean.note } : {}) });
+      if (at >= 0) return { ok: false, reason: `not written: ${clean.kind} ${clean.glob} is already protected in ${target}; to change its note or check, remove it and add it again` };
+      list.push({ [clean.kind]: clean.glob, ...(clean.note ? { note: clean.note } : {}), ...(clean.check ? { check: clean.check } : {}) });
     } else {
       if (at < 0) return { ok: false, reason: `not written: ${clean.kind} ${clean.glob} is not in the protected list of ${target}` };
       list.splice(at, 1);
@@ -731,7 +745,7 @@ export class PermStore {
 }
 
 /** Validate one protected entry as foreman_protect and the slash command receive it: one kind, a glob of 1 to 300 characters, a note of at most 200; control characters are stripped from both. */
-export function cleanProtected(e: { kind: unknown; glob: unknown; note?: unknown }): ProtectedRaw | string {
+export function cleanProtected(e: { kind: unknown; glob: unknown; note?: unknown; check?: unknown }): ProtectedRaw | string {
   if (e.kind !== "host" && e.kind !== "path" && e.kind !== "command") return "kind must be host, path or command";
   const strip = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
   if (typeof e.glob !== "string") return "glob must be a string";
@@ -741,7 +755,8 @@ export function cleanProtected(e: { kind: unknown; glob: unknown; note?: unknown
   if (rawNote !== undefined && typeof rawNote !== "string") return "note must be a string";
   const note = typeof rawNote === "string" ? strip(rawNote) : "";
   if (note.length > PROTECTED_NOTE_MAX) return `note must be at most ${PROTECTED_NOTE_MAX} characters`;
-  return { kind: e.kind, glob, ...(note ? { note } : {}) };
+  const check = e.check === undefined ? undefined : (PROTECTED_CHECK_MODES as readonly unknown[]).includes(e.check) ? (e.check as ProtectedCheckMode) : "ask";
+  return { kind: e.kind, glob, ...(note ? { note } : {}), ...(check ? { check } : {}) };
 }
 
 /**

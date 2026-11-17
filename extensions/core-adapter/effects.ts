@@ -661,7 +661,7 @@ function buildTest(c: EffectCtx, cwd: string | null, prog: string, args: string[
 
 /** A redirect the deterministic allow accepts: an fd dup, /dev/null, output into a scratch dir or /tmp, input from a contained path. */
 export function redirectOk(r: Redirect, c: EffectCtx | null, cwd: string | null, scratch: string[], platform: string): boolean {
-  if (r.op === "dup") return /^\d+$/.test(r.target);
+  if (r.op === "dup") return /^(\d+|-)$/.test(r.target); // `2>&-` closes an fd; it writes nothing
   if (nullDevice(platform, r.target)) return true;
   if (r.op === "<") return c !== null && contained(c, cwd, r.target, false);
   if (scratch.length && insideScratch(r.target, scratch, platform)) return true;

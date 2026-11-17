@@ -40,8 +40,10 @@ test("ssh user@host and a non-matching host", () => {
   assert.equal(sh("ssh dev-1.example.net uptime"), null);
 });
 
-test("a remote command that cannot be stated is remoteOpaque", () => {
-  assert.equal(sh("ssh prod-1.example.net 'for i in $(x); do rm $i; done'")?.remoteOpaque, true);
+test("a remote loop is remote unknown (the judge decides), a remote command that cannot be stated is remoteOpaque", () => {
+  const loop = sh("ssh prod-1.example.net 'for i in $(x); do rm $i; done'");
+  assert.equal(loop?.remoteOpaque, false);
+  assert.ok(loop?.remoteClasses.includes("unknown"));
   assert.equal(sh("ssh prod-1.example.net")?.remoteOpaque, true);
 });
 

@@ -450,16 +450,53 @@ A protected target is a host, a path or a command glob that you want a small mod
 { "protected": [ { "host": "prod-*.example.net", "note": "production" }, { "path": "ops/playbooks/**" }, { "command": "deploy-*" } ] }
 ```
 
-Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) and an optional `note` (200 characters). Entries are numbered `P1..` in file order. A bad entry is skipped with a notice.
+Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters), an optional `note` (200 characters) and an optional `check` (`model`, `read-only` or `ask`). Entries are numbered `P1..` in file order. A bad entry is skipped with a notice. An invalid `check` keeps the entry and treats it as `ask` (it never removes the protection), with a notice; an unknown key in an entry gives a notice and is ignored.
 
-- **What the check sees.** The matched entries with their notes, the session task (the bound ledger's title and open items, else the first user message, cut to 800 characters), the effect classes of the call and the `deny` sentences (`D1..`). The command is fenced as data.
+A production note example: `{"host": "prod-db", "note": "production: reads and diagnostics are fine, anything that changes state asks", "check": "read-only"}`.
+
+- **The note is your policy.** The judge follows the note of a matched entry. On a note that marks the target as production, calls that only read or diagnose (logs, status, versions, listings, counts, queries that change nothing) pass even when the task does not name them. Reading secrets (key files, password or token files, credential stores) asks. Every call that changes state asks: config edits, restarts, deletes, queue operations, credential changes, installs. This is an instruction to the model, not a harness rule.
+- **Per-entry check.** `check` on an entry can only tighten `gate.protected.check`: the effective mode of a call is the strictest of the global value and the `check` of every matched entry (`model` < `read-only` < `ask`). It can never be looser than the global setting. To change the `check` or the note of an entry, remove the entry and add it again.
+- **What the check sees.** The matched entries with their notes and check modes, the session task (the bound ledger's title and open items, else the first user message, cut to 800 characters), the effect classes of the call and the `deny` sentences (`D1..`). The command is fenced as data.
 - **What it may answer.** `{"verdict": "allow"|"ask"|"deny", "effect": "read"|"write"|"deploy"|"network"|"unknown", "confidence": "high"|"low", "entry": "D1"|null, "reason": "..."}`. An accepted `allow` replaces your ask rules, the dangerous-class whitelist and the ask/deny mode for this call. Floors and `deny` rules still come first.
-- **What is accepted.** `allow` needs high confidence and a line the parser states exactly. A read verdict is accepted only when no segment writes; a write, deploy or network verdict only in a session with UI that is not a child (any presence) and with `gate.protected.check` as `model`. A `deny` is accepted only when it cites a `D` entry. Everything else asks: a low confidence, an `unknown` effect, an invalid or extra-field reply, a timeout, a provider error, no model.
+- **What is accepted.** In this order, the first row that applies wins; every `ask` has a cause that the trace names:
+
+  | Step | Condition | Result (cause) |
+  |---|---|---|
+  | 1 | effective mode `ask` | ask (`mode`) |
+  | 2 | no effect class computed | ask (`no_classes`) |
+  | 3 | verdict `allow`, confidence low | ask (`low_confidence`) |
+  | 3 | verdict `allow`, a local segment the harness cannot state (opaque) | ask (`local_opaque`) |
+  | 3 | verdict `allow`, remote command opaque (see the transport list) | ask (`remote_opaque`) |
+  | 4 | verdict `allow`, a remote segment classed as a write | ask (`remote_write`), for every effect |
+  | 5 | `allow`, effect `read`, a local segment classed as a write | ask (`local_write`) |
+  | 5 | `allow`, effect `read`, otherwise | allow |
+  | 6 | `allow`, effect `write`, `deploy` or `network`, mode `read-only` | ask (`read_only`) |
+  | 6 | the same, owner away (child or no UI) | ask (`away`) |
+  | 6 | the same, otherwise (a session with UI that is not a child, any presence) | allow |
+  | 7 | `allow`, effect `unknown` | ask (`unknown_effect`) |
+  | 8 | `deny` citing an existing `D` entry | deny |
+  | 9 | anything else (verdict `ask`, `deny` without an entry) | ask (`judge_ask`) |
+
+  A failure of the check (an invalid or extra-field reply, a timeout, a provider error, no model) asks with its own cause (`invalid_verdict`, `timeout`, `provider_error`, `no_model`). A remote segment the harness sees as a write always asks, even when the judge says write, you are present and the mode is `model`; local writes keep the older behaviour.
+- **The remote command of `ssh <host> <cmd>`.** The harness parses the remote command and classes each segment. The judge decides everything it cannot class; the harness only adds asks for what it can see is a write or cannot see at all:
+
+  | Remote segment | Class | Read verdict, high confidence |
+  |---|---|---|
+  | an output redirect (`>`, `>>`, `&>`, `&>>`, `<>`, `>\|`) whose target is not the literal `/dev/null` (a non-literal target counts as not `/dev/null`); an fd dup (`2>&1`, `>&2`, `2>&-`) never counts | write-out | ask |
+  | `tee`, `script`, `flock <file>` and the other writing wrappers | write-out | ask |
+  | the effect classes write-in, write-out, build-test | as classed | ask |
+  | the effect classes read, net-read | as classed | allow |
+  | effect class unknown (for example an unknown program) | unknown | the judge decides |
+  | loops, `$variables`, globs, `eval` or `source` of a script on the host, `zsh -c`, function definitions, `xargs` reading its arguments from input, wrapper options the harness does not know, `[[ ]]`, `exec`, process substitution | unknown | the judge decides |
+  | a shell on the host that reads its program from input (`sh < /opt/x.sh`), a remote command with a syntax error, any parser reason not listed here, a remote command with no segment | remote opaque | ask |
+
+- **Input into ssh.** What is sent into ssh is not in the call text, so any input always asks (remote opaque): a pipe in front of ssh, a heredoc or here-string, a `<` or `<>` from anything but `/dev/null`, and an fd dup onto stdin (`<&3`; `ssh x >&2` reads the same and also asks). An empty input (`< /dev/null`) and `ssh -n` send nothing and are exempt.
+- **Transport opacity.** These also always ask: ssh with no remote command, a command-running option (`-o ProxyCommand=`, `LocalCommand=`, `RemoteCommand=`, `-F`), rsync `-e` or `--rsh`, scp `-F` or `-S`.
 - **Owner away.** The judge treats a child or a session without UI as away; presence is not read. There only read-only verdicts allow; the rest asks (a child's ask goes to the parent pane per `gate.childAsk`; a session without UI has no pane and refuses). In a session with UI that is not a child the judge decides the same whatever presence says.
 - **The ask.** `P2 (production) is protected. The check rates this write with high confidence: <reason>.` There is no remember option.
 - **Cache.** A read-rated allow is cached for the session by tool, cwd, role, payload and entries; the owner-away rule is re-applied on every hit, the mode test comes before the cache, and a permissions change, `/foreman perms reload` or a protect change clears it.
-- **Editing.** The foreman calls `foreman_protect {action, kind, glob, note?, file?}` when you ask it to protect a target; you confirm in a dialog (a timeout, a cancel or no pane is a refusal) and the adapter writes the file. A child never has the tool. You can run `/foreman perms protect add|remove <kind> <glob> [--note <text>] [--user]` yourself. An untrusted project file, a duplicate add and a missing remove are refused.
-- **Log and trace.** Decision log layer `protected` (an accepted allow carries the model's reason); trace event `protected_check` for every verdict, with the redacted command, the matched rule (`protected:P<n>`), the entry and the matched globs. A guard block (`deny`, `blocked`) in the trace carries the redacted command, the guard name as `rule` and the matched rule text as `reason`.
+- **Editing.** The foreman calls `foreman_protect {action, kind, glob, note?, check?, file?}` when you ask it to protect a target; you confirm in a dialog (a timeout, a cancel or no pane is a refusal) and the adapter writes the file. A child never has the tool. You can run `/foreman perms protect add|remove <kind> <glob> [--check model|read-only|ask] [--note <text>] [--user]` yourself (`--check` is for add only; an invalid value or `--check` on remove prints the usage and writes nothing). An untrusted project file, a duplicate add (same kind and glob, whatever the mode) and a missing remove are refused; the refusal says to remove the entry and add it again. The confirm dialog names the entry's check mode.
+- **Log and trace.** Decision log layer `protected` (an accepted allow carries the model's reason); trace event `protected_check` for every verdict, with the redacted command, the matched rule (`protected:P<n>`), the entry, the matched globs, the effective check mode (`mode`) and, when the gate asks, the `cause` from the table above (`exception` when the check itself threw). A guard block (`deny`, `blocked`) in the trace carries the redacted command, the guard name as `rule` and the matched rule text as `reason`.
 - **Cost and latency.** An uncached check is one call to the small review model: about 1.2k to 2k input tokens, roughly 0.1 cent on a small model, 1 to 4 s, capped by `gate.reviewTimeoutMs` (a timeout asks). Read-rated allows are cached per entry set until the next permissions reload, so a repeated identical read costs nothing. Writes are never cached.
 - **What matches.**
 
@@ -470,7 +507,7 @@ Each entry has exactly one of `host`, `path`, `command` (1 to 300 characters) an
   | `command` | the program basename of any segment, regardless of effect class | those of the segment |
 
   A plain GET or HEAD never matches. A read-class segment (`cat`, `grep`, `git log`, ...) never touches a host or path entry. A command-running ssh option (`-o ProxyCommand=`, `LocalCommand=`, `RemoteCommand=`, `-F`) makes the remote command opaque, so only an ask is possible.
-- **Known limits.** A segment of class `unknown` (for example `sed -i`) rests on the model's own rating. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.
+- **Known limits.** The harness sees very few remote writes: a remote output redirect to a file and the writing wrappers. Most remote commands that change state class `unknown` (a service restart, `sed -i`, deleting files, flushing a queue), so only the judge stands between the call and the host. If it wrongly says read, the call runs: `ssh prod-db 'vendorctl status; vendorctl queue flush'` and `ssh prod-db 'for q in a b; do vendorctl purge "$q"; done'` run on a wrong read verdict. What still stops a call: high confidence, your deny rules and the floors (they run first), `D` entries the judge cites, a remote redirect to a file, the writing wrappers, the input rules above, any failure of the judge, and in a child or a session without UI only a read verdict. Remote commands are classed with the local effect context, so a remote relative path resolves against the local checkout. ssh port forwards (`-L`, `-R`, `-D`) are not seen by the remote classes. A future `gate.protected.*` sub-key needs its own tighten row. Exotic ssh layouts the parser does not read fall back to the older, stricter path (opaque remote), never toward allow.
 
 ## Decision log
 
@@ -502,7 +539,7 @@ The permission policy lives in `permissions.json`; these are the `foreman.json` 
 | `gate.childAsk` | `parent` (default) or `deny` | `deny` only |
 | `gate.readClear` | `true` (default): the classifier model may clear a line the gate could not read when it judges the line only reads inside the session's directories, see [The read question](#the-read-question); `false` restores the dialog; it does nothing when no classifier model is configured; only the boolean `true` or an absent key turns it on | `false` only |
 | `gate.readonlyClear` | `true` (default): the classifier model may clear a `danger-readonly-run` line of a reviewer or explorer when it answers no to the five questions of [The role question](#the-role-question); `false` asks the parent without a model call | `false` only |
-| `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks) | tighten only (`ask` < `read-only` < `model`) |
+| `gate.protected.check` | `model` (default: the check may allow reads and, in a session with UI that is not a child, writes, except remote writes the harness itself sees, which always ask), `read-only` (only a read-only verdict allows) or `ask` (every protected call asks); a protected entry's `check` can tighten it per entry | tighten only (`ask` < `read-only` < `model`) |
 | `gate.tmpAccess` | writes (the owner also reads) under the OS temp dirs (default true) | `false` only |
 | `gate.logMaxBytes` | log rotation size | user or overlay only |
 | `gate.readTools` | extension tool name to path field (or null), judged like read/grep, see [Read tools](#read-tools) (default `{}`) | user or overlay only |
