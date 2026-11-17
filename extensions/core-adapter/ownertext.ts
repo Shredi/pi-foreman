@@ -1,17 +1,15 @@
 // Owner-readable text (docs/ceremony.md "Owner summary"): the `## For the owner` section every plan opens with, the
 // deterministic jargon rule shared by the plan-review facts, the question hint and the foreman_show hint, the
 // context prefix of ask_user_question questions, and the foreman_show opening check. Jargon is advice only; the plan form
-// (planFormIssues: presence, position, length, required headings) is what a `[plan-review]` launch is refused for (index.ts).
+// (planFormIssues: presence, position, required headings) is what a `[plan-review]` launch is refused for (index.ts).
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { clean, planBody } from "./checkpoint.ts";
 import { workspaceOf } from "./python.ts";
 
-/** The owner section is at most this many lines (wrapped at OWNER_COLS) and OWNER_CHARS characters. */
+/** The checkpoint dialog shows at most this many lines of the owner section (ownerSummary); the plan page shows all. */
 export const OWNER_LINES = 10;
-export const OWNER_COLS = 100;
-export const OWNER_CHARS = 1000;
 
 const OWNER_HEADING = /^##[ \t]+for the owner[ \t]*$/i;
 const LEVEL2 = /^##[ \t]+\S/;
@@ -101,25 +99,12 @@ function diagramSpans(lines: string[]): [number, number][] {
   return spans;
 }
 
-/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. The first mermaid fence is the section's diagram and does not count when it is closed; an unclosed one counts in full. */
-const measure = (sec: OwnerSection): { wrapped: number; chars: number } => {
-  const span = diagramSpans(sec.lines)[0];
-  const first = span && span[1] > span[0] && FENCE.test(sec.lines[span[1]]) ? span : undefined;
-  const kept = first ? sec.lines.filter((_l, i) => i < first[0] || i > first[1]) : sec.lines;
-  return {
-    wrapped: kept.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0),
-    chars: kept.join("\n").length,
-  };
-};
-
 /** The rule violations of a plan's owner section; empty when it is fine. */
 export function ownerSectionIssues(text: string): string[] {
   const sec = ownerSection(text);
   if (!sec) return ["missing"];
   const issues: string[] = [];
   if (!sec.first) issues.push("not the first ## section");
-  const { wrapped, chars } = measure(sec);
-  if (wrapped > OWNER_LINES || chars > OWNER_CHARS) issues.push(`too long (${wrapped} lines wrapped at ${OWNER_COLS} columns, ${chars} characters; at most ${OWNER_LINES} lines and ${OWNER_CHARS} characters)`);
   if (!sec.lines.some((l) => l.trim())) issues.push("empty");
   if (diagramSpans(sec.lines).length > 1) issues.push("more than one diagram (one mermaid fence is allowed)");
   const jargon = jargonHits(sec.lines.join("\n"));
@@ -130,7 +115,7 @@ export function ownerSectionIssues(text: string): string[] {
 /** The headings a plan-first session's brief asks for (scripts/foreman_session.py), checked only in a session opened plan-first by a parent. */
 export const PLAN_FIRST_HEADINGS = ["Decisions and assumptions", "Open questions"] as const;
 
-/** The form faults a `[plan-review]` launch is refused for: the owner section's presence, position and length (not jargon), and each missing `opts.requiredHeadings` heading. */
+/** The form faults a `[plan-review]` launch is refused for: the owner section's presence and position (not jargon), and each missing `opts.requiredHeadings` heading. */
 export function planFormIssues(text: string, opts: { requiredHeadings?: readonly string[] }): string[] {
   const issues = ownerSectionIssues(text).filter((i) => !i.startsWith("jargon:"));
   let fenced = false;
@@ -161,7 +146,7 @@ function ownerFactLine(p: string, cwd: string): string {
   }
   const sec = ownerSection(text);
   const issues = ownerSectionIssues(text);
-  return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : `present (${measure(sec).wrapped} lines, ${measure(sec).chars} characters; checked by the harness)`}`;
+  return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
 }
 
 /** The owner section for the checkpoint dialog (control characters stripped, 200 characters a line), or the warning line. */

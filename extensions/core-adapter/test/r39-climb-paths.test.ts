@@ -112,7 +112,7 @@ test("(a) explicit strong with a reason launches on the strong rung and the rece
   const input: Record<string, unknown> = { agent: "builder", task: "[[small]] item 1", model: "strong", reason: "bottom rung cannot do it" };
   assert.equal(await a.launch("c1", input), undefined);
   assert.equal(input.model, "fake/strong");
-  assert.equal(await a.receipt("c1", input, "run-1"), "pi-foreman: launched builder on fake/strong.");
+  assert.equal(await a.receipt("c1", input, "run-1"), "pi-foreman: launched builder on fake/strong (strong rung: explicit strong).");
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "foreman"]]);
 });
 
@@ -126,7 +126,7 @@ test("(b) a RUNG_UP: context completion, then a relaunch with model strong and n
   const relaunch: Record<string, unknown> = { agent: "builder", task: "continue item 1", model: "strong" };
   assert.equal(await a.launch("b2", relaunch), undefined);
   assert.equal(relaunch.model, "fake/strong");
-  assert.equal(await a.receipt("b2", relaunch, "run-b2"), "pi-foreman: launched builder on fake/strong.");
+  assert.equal(await a.receipt("b2", relaunch, "run-b2"), "pi-foreman: launched builder on fake/strong (strong rung: context handoff).");
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "context"]]);
 });
 
@@ -143,7 +143,7 @@ test("(c) a counted reviewer FAIL, then a builder relaunch with no model, climbs
   const rev: Record<string, unknown> = { agent: "builder", task: "fix the finding" };
   assert.equal(await a.launch("b2", rev), undefined);
   assert.equal(rev.model, "fake/strong");
-  assert.equal(await a.receipt("b2", rev, "run-b2"), "pi-foreman: launched builder on fake/strong.");
+  assert.equal(await a.receipt("b2", rev, "run-b2"), "pi-foreman: launched builder on fake/strong (strong rung: revision after FAIL).");
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "review_fail"]]);
 });
 
@@ -153,7 +153,7 @@ test("(d) high pressure keeps an explicit strong climb: strong rung, receipt nam
   const input: Record<string, unknown> = { agent: "builder", task: "[[small]] item 1", model: "strong", reason: "bottom rung cannot do it" };
   assert.equal(await a.launch("c1", input), undefined);
   assert.equal(input.model, "fake/strong");
-  assert.equal(await a.receipt("c1", input, "run-1"), "pi-foreman: launched builder on fake/strong.");
+  assert.equal(await a.receipt("c1", input, "run-1"), "pi-foreman: launched builder on fake/strong (strong rung: explicit strong).");
   assert.deepEqual(events(a, "climb_suppressed"), []);
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "foreman"]]);
 });
@@ -168,7 +168,7 @@ test("(d2) high pressure keeps the RUNG_UP: context relaunch on the strong rung"
   const relaunch: Record<string, unknown> = { agent: "builder", task: "continue item 1", model: "strong" };
   assert.equal(await a.launch("b2", relaunch), undefined);
   assert.equal(relaunch.model, "fake/strong");
-  assert.equal(await a.receipt("b2", relaunch, "run-b2"), "pi-foreman: launched builder on fake/strong.");
+  assert.equal(await a.receipt("b2", relaunch, "run-b2"), "pi-foreman: launched builder on fake/strong (strong rung: context handoff).");
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "context"]]);
   assert.deepEqual(events(a, "climb_suppressed"), []);
 });
@@ -187,7 +187,7 @@ test("(d3) high pressure keeps the review-FAIL revision climb on the strong rung
   const rev: Record<string, unknown> = { agent: "builder", task: "fix the finding" };
   assert.equal(await a.launch("b2", rev), undefined);
   assert.equal(rev.model, "fake/strong");
-  assert.equal(await a.receipt("b2", rev, "run-b2"), "pi-foreman: launched builder on fake/strong.");
+  assert.equal(await a.receipt("b2", rev, "run-b2"), "pi-foreman: launched builder on fake/strong (strong rung: revision after FAIL).");
   assert.deepEqual(events(a, "rung_up").map((r) => [r.to, r.reason]), [["fake/strong", "review_fail"]]);
   assert.deepEqual(events(a, "climb_suppressed"), []);
 });

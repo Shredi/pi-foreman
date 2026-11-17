@@ -15,13 +15,9 @@ test("a good owner section has no issues and is found", () => {
   assert.equal(s.lines.length, 4);
 });
 
-test("missing, not first, too long and empty are reported", () => {
+test("missing, not first and empty are reported", () => {
   assert.deepEqual(ownerSectionIssues("# P\n\n## Goal\nx\n"), ["missing"]);
   assert.ok(ownerSectionIssues("# P\n\n## Goal\nx\n\n## For the owner\nPlain words here.\n").some((i) => /not the first/.test(i)));
-  const long = `# P\n\n## For the owner\n${Array.from({ length: 12 }, (_, i) => `Line number ${i} in plain words.`).join("\n")}\n\n## Goal\nx\n`;
-  assert.ok(ownerSectionIssues(long).some((i) => /too long/.test(i)));
-  const wide = `# P\n\n## For the owner\n${"word ".repeat(250)}\n`;
-  assert.ok(ownerSectionIssues(wide).some((i) => /too long/.test(i)), "wrapped at 100 columns and over 1000 characters");
   assert.ok(ownerSectionIssues("# P\n\n## For the owner\n\n## Goal\nx\n").some((i) => /empty/.test(i)));
 });
 

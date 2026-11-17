@@ -1310,6 +1310,25 @@ export function findPanelBlock(tree, mod) {
   return { block: hit.block.id, stack: stack?.id ?? null, show: show?.id ?? null };
 }
 
+/** Agents grouped by space id: one group per id, groups in first-appearance order, members in list order. The key is the id
+ *  (two spaces with the same name stay two groups); the label is the first member's space name. */
+export function spaceGroups(list) {
+  const out = [];
+  const byId = new Map();
+  for (const a of Array.isArray(list) ? list : []) {
+    if (!isObj(a)) continue;
+    const id = `sp-${a.space}`;
+    let g = byId.get(id);
+    if (!g) {
+      g = { id, space: a.space, label: a.space_name || "", members: [] };
+      byId.set(id, g);
+      out.push(g);
+    }
+    g.members.push(a);
+  }
+  return out;
+}
+
 /** Tab name of an agent as a row label: empty when absent or just the tab's number. */
 const tabNameOf = (a) => (typeof a?.tab_name === "string" && !/^\d+$/.test(a.tab_name) ? a.tab_name : "");
 const tabKey = (a) => `${a?.space ?? ""}\u0000${tabNameOf(a)}`;

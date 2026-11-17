@@ -9,7 +9,7 @@ import { agents, terminals, focused, spaces, run, theme, setAgentOrder, exec, pr
 import {
   parseRadarDoc, buildTree, joinAgents, joinChildren, nestedAgents, sessionTree, hcChildItems, bareChildren, displayStatus, urgentStatus, detailLine, statusLine, prDotState, chipPrs, prCard, prCardHeight, placeCardBox, prTones, enrichPrs, openPrGroups, openPrsAge, shownSet,
   radarBinary, parseRecords, parseAttachTarget, remoteClick, attachNests, agentStatus, glyphSpec, isSafeHttpsUrl, openerArgv, openFailure, prUrl, fmtSince, workerStatus, childTerminals,
-  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors,
+  slimRadar, joinPath, parseShowMeta, showRows, allSessions, findPanelBlock, clashingTabs, agentLabel, UNREVIEWED, remoteNodesOf, endedRemoteNodesOf, remoteTwins, remoteTarget, drawnRemoteTargets, dropDrawnEndedMirrors, spaceGroups,
 } from "./model.js";
 import { SAMPLE } from "./sample.mjs";
 
@@ -743,16 +743,6 @@ export default class ForemanAgents extends View {
         drawnTargets.add(key !== "local" && !n.hcTerminal.includes("/") ? `${key}/${n.hcTerminal}` : n.hcTerminal);
       }
     }
-    const groupsOf = (members) => {
-      const out = [];
-      for (const a of members) {
-        const id = `sp-${a.space}`;
-        const tail = out[out.length - 1];
-        if (tail && tail.id === id) tail.members.push(a);
-        else out.push({ id, space: a.space, label: a.space_name || "", members: [a] });
-      }
-      return out;
-    };
     const machineOf = (g) => spaceList.find((s) => s.id === g.space)?.machine ?? null;
     const header = (g) => {
       const machine = machineOf(g);
@@ -790,7 +780,7 @@ export default class ForemanAgents extends View {
     const drawnRemote = drawnRemoteTargets(drawnItems);
     const kept = candidates.filter((a) => !(twins.has(a.address) && drawnRemote.has(a.address)));
     for (const a of kept) if (!blocks.has(a.address)) blocks.set(a.address, withRows(a));
-    const rows = groupsOf(kept).flatMap((g) => [...header(g), ...g.members.flatMap((a) => blocks.get(a.address))]);
+    const rows = spaceGroups(kept).flatMap((g) => [...header(g), ...g.members.flatMap((a) => blocks.get(a.address))]);
     const openPrs = [...this.radar.values()].flatMap((r) => (r.ok ? r.openPrs : []));
     // A child node counts as shown only where it is drawn (drawnItems): an ended one with nothing live below leaves the tree, and its PRs stay in Open PRs.
     const orphanGroups = guard(() => openPrGroups(openPrs, tops, shownSet([...joined.values()], drawnItems))

@@ -27,6 +27,18 @@ export class AttentionNotices {
     this.ended.add(runId);
   }
 
+  /**
+   * Latch of the open-tool signal (`tool_open_threshold`): true the first time for a run and tool call, false for every repeat
+   * (the same event on a second channel, or delivered again). Without a toolCallId there is nothing to latch: always true.
+   */
+  openOnce(runId: string, toolCallId: unknown): boolean {
+    if (typeof toolCallId !== "string" || !toolCallId) return true;
+    const key = `${runId}:${toolCallId}:tool_open_threshold`;
+    if (this.seen.has(key)) return false;
+    this.seen.add(key);
+    return true;
+  }
+
   /** True when the notice should be shown; records it as shown. */
   admit(runId: string, state: string): boolean {
     if (this.ended.has(runId)) return false;
@@ -76,12 +88,12 @@ export function dropEndedRunNotices<M>(messages: readonly M[], endedRunIds: Read
  * Input filter (R26 item 2): the run ids of `messages` when every one is a `subagent_control_notice` for a run in `endedRunIds`
  * (a wake that carries only stale notices starts no useful turn). Null for no message, any other message, or a live run's notice.
  */
-export function staleNoticeRunIds<M>(messages: readonly M[], endedRunIds: ReadonlySet<string>, suppressed: ReadonlySet<string> = new Set()): string[] | null {
+export function staleNoticeRunIds<M>(messages: readonly M[], endedRunIds: ReadonlySet<string>, suppressed: ReadonlySet<string> = new Set(), repeat?: (ev: Record<string, unknown>) => boolean): string[] | null {
   if (messages.length === 0) return null;
   const runIds: string[] = [];
   for (const m of messages) {
     const ev = isObj(m) && m.role === "custom" && m.customType === "subagent_control_notice" && isObj(m.details) && isObj(m.details.event) ? m.details.event : null;
-    if (!ev || typeof ev.runId !== "string" || !(endedRunIds.has(ev.runId) || suppressed.has(`${ev.runId}:${ev.toolCallId}`))) return null;
+    if (!ev || typeof ev.runId !== "string" || !(endedRunIds.has(ev.runId) || suppressed.has(`${ev.runId}:${ev.toolCallId}`) || repeat?.(ev) === true)) return null;
     runIds.push(ev.runId);
   }
   return runIds;
@@ -130,6 +142,11 @@ export function trimNoticeMessage<M>(m: M, opts: { hasCommandController: boolean
   const noticeText = typeof details.noticeText === "string" ? trimAttentionNotice(details.noticeText, opts) : details.noticeText;
   if (content === msg.content && noticeText === details.noticeText) return null;
   return { ...msg, content, details: { ...details, noticeText } } as unknown as M;
+}
+
+/** True when the notice is a repeat of an open-tool signal already seen for its run and tool call (latches the first one). */
+export function isRepeatOpenNotice(att: AttentionNotices, ev: Record<string, unknown>): boolean {
+  return ev.reason === "tool_open_threshold" && typeof ev.runId === "string" && !att.openOnce(ev.runId, ev.toolCallId);
 }
 
 /**

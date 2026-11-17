@@ -190,7 +190,12 @@ function emphasis(s: string): string {
 export interface MarkdownOpts {
   /** The HTML for a mermaid fence's text, or null to keep it as a code block. */
   mermaid?: (text: string) => string | null;
+  /** When set, a level-2 section whose heading text this returns true for renders folded (`<details>`, the heading as its summary). */
+  fold?: (heading: string) => boolean;
 }
+
+/** The plan page's fold: every `##` section except `For the owner` and `Open questions` (case-insensitive, trimmed). */
+export const foldPlanSection = (heading: string): boolean => !["for the owner", "open questions"].includes(heading.trim().toLowerCase());
 
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const HEADING_OPEN = /^ {0,3}(#{1,6})(?=[ \t])/;
@@ -228,7 +233,36 @@ function splitRow(line: string): string[] {
 
 /** Markdown to an HTML fragment. */
 export function renderMarkdown(markdown: string, opts: MarkdownOpts = {}): string {
-  return blocks(markdown.replace(/\r\n?/g, "\n").split("\n"), opts, false, 0);
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const { fold } = opts;
+  if (!fold) return blocks(lines, opts, false, 0);
+  const parts: string[] = [];
+  let start = 0; // the first line of the part being collected
+  let heading: string | null = null; // the heading text of the part when it is a level-2 section
+  const flush = (end: number): void => {
+    if (end <= start) return;
+    parts.push(heading !== null && fold(heading) ? `<details><summary>${inline(heading)}</summary>\n${blocks(lines.slice(start + 1, end), opts, false, 0)}\n</details>` : blocks(lines.slice(start, end), opts, false, 0));
+  };
+  let mark: string | null = null; // the open fence's marker run
+  for (let i = 0; i < lines.length; i++) {
+    if (mark !== null) {
+      const run = /^ {0,3}([`~]+)[ \t]*$/.exec(lines[i]);
+      if (run && run[1][0] === mark[0] && run[1].length >= mark.length) mark = null;
+      continue;
+    }
+    const fence = FENCE_OPEN.exec(lines[i]);
+    if (fence && !(fence[2][0] === "`" && fence[3].includes("`"))) {
+      mark = fence[2];
+      continue;
+    }
+    const h = headingOf(lines[i]);
+    if (h?.level !== 2 || !lines[i].startsWith("##")) continue; // only a heading at column 0 is a top-level section
+    flush(i);
+    start = i;
+    heading = h.text;
+  }
+  flush(lines.length);
+  return parts.filter((p) => p !== "").join("\n");
 }
 
 const startsBlock = (l: string): boolean => FENCE_OPEN.test(l) || headingOf(l) !== null || RULE.test(l) || /^ {0,3}>/.test(l) || /^ {0,3}(?:[-*+]|1[.)])[ \t]+\S/.test(l);
@@ -353,6 +387,8 @@ export interface PageInput {
   markdown: string;
   /** Sidecar SVG text by fence sha; absent: every mermaid fence stays a code block. */
   svgs?: ReadonlyMap<string, Svgs>;
+  /** Level-2 sections folded in the page (see MarkdownOpts.fold). */
+  fold?: (heading: string) => boolean;
   /** The markdown file named when the page is too large. */
   source: string;
 }
@@ -366,6 +402,7 @@ h1,h2,h3,h4,h5,h6{line-height:1.25;margin:1.6em 0 .6em}h1{font-size:1.9rem}h2{fo
 pre{background:var(--code);padding:1rem;overflow:auto;border-radius:6px}code{background:var(--code);padding:.1em .3em;border-radius:4px;font:.9em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}pre code{padding:0;background:none}
 table{border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid var(--line);padding:.4em .8em}th{background:var(--code)}
 blockquote{margin:1em 0;padding:0 1em;color:var(--mute);border-left:4px solid var(--line)}hr{border:0;border-top:1px solid var(--line)}
+details{margin:1em 0}summary{cursor:pointer;font-size:1.45rem;font-weight:600;line-height:1.25;border-bottom:1px solid var(--line);padding-bottom:.3em}details[open]>summary{margin-bottom:.6em}
 picture{display:block;margin:1em 0;overflow:auto}img{max-width:100%;height:auto}`;
 
 const b64 = (s: string): string => Buffer.from(s, "utf8").toString("base64");
@@ -376,7 +413,7 @@ const shell = (title: string, body: string): string => `<!doctype html>\n<html l
 export function renderPage(p: PageInput): string {
   const head = `<h1>${escapeHtml(p.title)}</h1>\n<p class="kicker">${escapeHtml(p.kicker)}</p>`;
   const build = (svgs: ReadonlyMap<string, Svgs> | undefined): string =>
-    shell(p.title, `${head}\n${renderMarkdown(p.markdown, { mermaid: (text) => {
+    shell(p.title, `${head}\n${renderMarkdown(p.markdown, { fold: p.fold, mermaid: (text) => {
       const s = svgs?.get(fenceSha(text));
       return s ? `<picture><source media="(prefers-color-scheme: dark)" srcset="data:image/svg+xml;base64,${b64(s.dark)}"><img alt="diagram" src="data:image/svg+xml;base64,${b64(s.light)}"></picture>` : null;
     } })}`);

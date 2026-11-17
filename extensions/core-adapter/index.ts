@@ -89,7 +89,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { dueReasons, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
+import { dueReasons, required as hsRequiredOf, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -129,7 +129,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
-import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
+import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
@@ -236,6 +236,7 @@ import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyS
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
+import { climbNotesOf, rungNote } from "./launchreceipt.ts";
 import { liftSizing, mcpDescription, misplacedHint, subagentDescription, planSizing, prependProbe, rungOfModel, sizingConfig, sizingTrace, takeLaunchFlags, takeSizing, topModel as sizingTopModel, type EntryPlan, type RungContext } from "./sizing.ts";
 import { ManifestRecorder, manifestOwner, recordEntries } from "./manifest.ts";
 import { asyncResultReads, asyncRunDirs, bashOutputLogs, recordBashOutputLog, childReadable, childSurface, hubWorkflowDirs, hubWorkflowReadable, mainWorkflowReadable, ownTaskReadable, ownUsageReadable, piScratchReadable, roundWorktrees, sessionOwnedSplit } from "./roundsurface.ts";
@@ -686,6 +687,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const compactionGate = new CompactionGate();
   /** R39: per launch call, the roles that stayed on the bottom rung although a strong climb was asked or wanted, with the reason the receipt shows. */
   const bottomNotes = new Map<string, Map<string, string>>();
+  /** Per launch call, the roles' rung phrase from the ladder's climbs and the sizing plans (launchreceipt.ts); read and deleted with bottomNotes. */
+  const climbNotes = new Map<string, Map<string, string>>();
+  /** Per launch call, the occasions its review children were recorded with (taken before any rewrite); read and deleted at the tool result for the occasion lines. */
+  const launchOccasions = new Map<string, Occasion[]>();
   /** The ledger items a launch cited, taken before the high-stakes findings block went into its task (for the ledger notes at the tool result). */
   const hsCited = new Map<string, string[]>();
   /** Tool call ids of `subagent` launches that carried size/risk outside the top level (sizing.ts liftSizing); read at their tool_result. */
@@ -1262,6 +1267,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   function hsRefresh(s: Session): void {
     if (hsHeavyOn(s)) hsFire(s, ["heavy"]);
   }
+
+  /** Whether a high-stakes review is required now, computed as the PR gate does (feature on, heavy reason refreshed). */
+  const hsRequired = (s: Session): boolean => {
+    if (!hsModel(s)) return false;
+    hsRefresh(s);
+    return hsRequiredOf(s.hs.state(), hsDue(s));
+  };
 
   /** The high-stakes test of the PR gate (reviews.ts prGateRefusal): session-wide, `scope` does not narrow it. */
   const hsGate = (s: Session): HighStakesGate => async (_scope, heads) => {
@@ -3538,6 +3550,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let sizedPlans: EntryPlan[] = [];
       let sizingRecords: Record<string, unknown>[] = [];
       let pendingBottom: Map<string, string> | null = null;
+      let heavyDefault: Json[] = []; // builder entries the heavy tier put on the strong rung (launchModel's tier default; no Climb record)
       let sizingClimbs: ReadonlySet<Json> = new Set();
       let sizingTop: string | null = null;
       let occasions = new Map<Record<string, unknown>, Occasion>();
@@ -3807,11 +3820,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           reviewerTraces = rc.traces;
         }
         const foremanAt0 = foremanBaseModel(ctx);
+        const unmodelled = new Set(launchEntries(input).filter((e) => typeof (e.model ?? input.model) !== "string" || String(e.model ?? input.model).trim() === ""));
         const explicitReviewers = new Set<string>(); // base ids the launch call set explicitly and explicitModelAllowed honoured (a pair never replaces them)
         const launched = applyLaunchModels(input, resolution.roles, get(s.config.config, "maxThinking"), { tier: s.ceremony.tier, provider: resolution.provider, preferStrong, capped: new Set(climbs.filter((c) => c.skipped).map((c) => c.entry)), childMaxThinking: get(s.config.config, "childMaxThinking"), explicit: (role, m) => { const ok = explicitModelAllowed(s.config.config, foremanAt0, m, role); if (ok && role === "reviewer") explicitReviewers.add(m); return ok; } });
         // A capped climb (RANK_CAPPED_REASON: skipped, or only carrying the pending handoff) names the model the launch runs on: the entry as applyLaunchModels wrote it (an explicit model the policy rejects was replaced by the mapped rung). A real rung_up or an above-strong climb that carries a handoff keeps its own from/to.
         for (const c of climbs) if (c.reason === RANK_CAPPED_REASON && typeof c.entry.model === "string") c.from = c.to = splitLevel(c.entry.model).base;
         for (const n of launched.notices) bottomWhy.set(n.role, noStrong);
+        const strongB = (resolution.roles.builder as { strong?: { model?: unknown } } | undefined)?.strong?.model;
+        if (s.ceremony.tier === "heavy" && typeof strongB === "string") heavyDefault = launchEntries(input).filter((e) => e.agent === "builder" && unmodelled.has(e) && typeof e.model === "string" && splitLevel(e.model).base === splitLevel(strongB).base && !climbs.some((c) => c.entry === e));
         if (bottomWhy.size > 0) pendingBottom = bottomWhy;
         if (sizedPlans.length > 0) {
           // The top rung is written after the mapped models, like the research floor; its rung_up names it.
@@ -4018,6 +4034,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // Kept for the tool result only once the launch passed every check.
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
+      const reviewOccasions = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o);
+      if (reviewOccasions.length > 0) capSet(launchOccasions, event.toolCallId, reviewOccasions);
+      if (climbs.length > 0 || heavyDefault.length > 0) {
+        const cn = climbNotesOf(climbs, sizedPlans, sizingConfig(s.config.config), heavyDefault);
+        if (cn.size > 0) capSet(climbNotes, event.toolCallId, cn);
+      }
       for (const r of sizingRecords) s.trace?.emit(r);
       // Plan publication (show.ts): a `[plan-review]` launch is a ruling point for the plan its task names.
       for (const [e, o] of occasions) if (o === "plan-review" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)) s.show?.planReviewLaunched(String(e.task ?? ""));
@@ -4148,8 +4170,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
       if (hidden) return { message: hidden };
-      // Open-command notices: a known long command (test runner) is hidden; a child without a command controller loses the `command.*` lines.
+      // D18: the open-tool signal shows once per run and tool call; a repeat is hidden (the context filter drops it too)
       const ev = s && !s.isChild ? noticeEvent(event.message) : null;
+      if (s && ev && isRepeatOpenNotice(s.attention, ev)) {
+        s.trace?.emit({ event: "notify_deduped", reason: "tool_open_repeat", runId: ev.runId });
+        return { message: { ...(event.message as object), display: false } as typeof event.message };
+      }
+      // Open-command notices: a known long command (test runner) is hidden; a child without a command controller loses the `command.*` lines.
       if (s && ev && ev.reason === "tool_open_threshold" && typeof ev.runId === "string") {
         const runId = ev.runId;
         const roles = s.launchedRoles.get(runId) ?? [];
@@ -4272,9 +4299,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         idleCause = causeOfCustom(msg.customType) ?? idleCause;
       }
       // R26 item 2: a wake that carries only needs-attention notices for runs already ended starts no turn
-      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns, s.attention.suppressed) : null;
+      // a repeat of an open-tool signal (same run and tool call, delivered again or on a second channel) is stale too
+      const repeated = new Set<string>();
+      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns, s.attention.suppressed, (ev) => (isRepeatOpenNotice(s.attention, ev) ? (repeated.add(String(ev.runId)), true) : false)) : null;
       if (stale) {
-        for (const runId of stale) s.trace?.emit({ event: "notify_deduped", reason: "run_ended", runId });
+        for (const runId of stale) s.trace?.emit({ event: "notify_deduped", reason: repeated.has(runId) ? "tool_open_repeat" : "run_ended", runId });
         return { action: "handled" as const };
       }
     }
@@ -4951,10 +4980,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const launchedOn = roleModelsOf(event.input);
       for (const role of subagentAgents(event.input as Record<string, unknown>)) s?.trace?.emit({ event: "role_launched", role, exit: event.isError ? 1 : 0, pollBash: s.pollBash || undefined, ...(launchedOn.has(role) ? { model: launchedOn.get(role) } : {}) });
       if (s) s.pollBash = 0;
-      const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}${bottomNotes.get(event.toolCallId)?.has(role) ? ` (bottom rung: ${bottomNotes.get(event.toolCallId)!.get(role)})` : ""}`).join(", ")}.` : null;
+      const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}${rungNote(bottomNotes.get(event.toolCallId)?.get(role), climbNotes.get(event.toolCallId)?.get(role))}`).join(", ")}.` : null;
       bottomNotes.delete(event.toolCallId);
+      climbNotes.delete(event.toolCallId);
+      const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
+      launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(event.input as Record<string, unknown>) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, recordedOccasions.includes("pre-pr") && hsRequired(s)) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
