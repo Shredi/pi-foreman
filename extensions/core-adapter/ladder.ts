@@ -30,6 +30,11 @@
 //       explicit launch model, else the live rung): a model above the strong rung stays (rung_top,
 //       reason `already above strong rung`), an explicit model below it rises to the strong rung.
 //
+// An automatic climb the rank policy refuses (strongAllowed false) is skipped, not refused: review_fail/revision (above) and the
+// climbs the harness picks by itself, a sizing rule (opts.sizing) and the heavy-tier default. The entry keeps the model it would
+// have had (live rung, else bottom), the Climb has RANK_CAPPED_REASON, `skipped` and, for a harness pick, `source` (`sizing:<rule>`
+// or `heavy`). A foreman-written `strong` is never skipped; the rank loop (index.ts) still checks every launched model.
+//
 // The live rung: `live` holds each role's model of its latest launch (single, tasks, chain,
 // parallel). A climb starts from that model; when it already is the strong rung there is no
 // rung_up, the trace records `rung_top {role, model, reason}` and the launch proceeds unchanged.
@@ -224,6 +229,10 @@ export interface Climb {
   top?: boolean;
   /** RANK_CAPPED_REASON: the strong rung model the climb would have gone to. */
   skipped?: string;
+  /** With RANK_CAPPED_REASON, a climb the harness picked itself: `sizing:<rule>` or `heavy` (traced as `source`). */
+  source?: string;
+  /** With RANK_CAPPED_REASON on an automatic revision climb: the revision reason (`review_fail` or `revision`). */
+  revisionReason?: string;
   /** The strong rung model the rank policy refuses: the pending handoff went to this default-rung launch instead of a strong one. */
   handoffFor?: string;
 }
@@ -240,6 +249,8 @@ export interface LadderOptions {
   sizing?: ReadonlySet<Json>;
   /** Whether the rank loop lets this builder entry run on the strong rung model; false skips an automatic climb (RANK_CAPPED_REASON). */
   strongAllowed?: (entry: Json, strongModel: string) => boolean;
+  /** The sizing rule that rated a `sizing` entry, for the trace of a skipped climb (default `sizing`). */
+  sizingSource?: (entry: Json) => string | undefined;
   /** Whether applyLaunchModels passes this explicit builder model through (ranks.ts explicitModelAllowed); any other value of a capped entry (with no callback: a `/` model passes) runs on the live or bottom rung. */
   explicitAllowed?: (model: string) => boolean;
 }
@@ -329,6 +340,23 @@ export class LadderState {
       const from = lv ? splitLevel(lv).base : bottom;
       const to = splitLevel(strong).base;
       const top = from === to || undefined;
+      // a climb the harness picks by itself (a sizing rule, design falling to strong, the heavy-tier default) whose strong rung the rank policy refuses is skipped like an automatic climb below; the foreman's own `strong` is not in the sizing set and stays refused
+      const skipPicked = (source: string): void => {
+        delete e.model;
+        if (lv && from !== to) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
+        const stays = from === to ? bottom : from;
+        const pending = this.eligible.get(role);
+        if (pending) refused.push({ e, role, model: stays, strong, h: pending });
+        climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong, source });
+      };
+      if (role === "builder" && opts.sizing?.has(e) && bottom !== to && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
+        skipPicked(opts.sizingSource?.(e) ?? "sizing");
+        continue;
+      }
+      if (role === "builder" && keyword === "" && opts.tier === "heavy" && !opts.preferStrong && bottom !== to && opts.strongAllowed && !opts.strongAllowed(e, strong)) {
+        skipPicked("heavy");
+        continue;
+      }
       if (keyword !== "strong") {
         // the strong rung is refused by the rank policy: the pending handoff goes to this launch (a strong launch never happens)
         const pending = this.eligible.get(role);
@@ -338,7 +366,7 @@ export class LadderState {
           const kept = keyword.includes("/") && (opts.explicitAllowed?.(keyword) ?? true) ? keyword : null;
           if (!kept && lv && from !== to) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
           const stays = kept ?? (from === to ? bottom : from);
-          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
+          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong, revisionReason: opts.revisionReason ?? "revision" });
           continue;
         }
         // review_fail: the target is max(current, strong) by provider rank; current = the explicit launch model, else the live rung.
@@ -382,7 +410,7 @@ export class LadderState {
         c.entry.task = handoffBlock(c.handoff, ledgerOf(task)) + task;
         this.eligible.delete(c.role);
       }
-      out.push(c.top ? { event: "rung_top", role: c.role, model: c.to, reason: c.reason } : { event: "rung_up", role: c.role, from: c.from, to: c.to, reason: c.reason });
+      out.push(c.top ? { event: "rung_top", role: c.role, model: c.to, reason: c.reason, ...(c.source ? { source: c.source } : {}) } : { event: "rung_up", role: c.role, from: c.from, to: c.to, reason: c.reason });
     }
     return out;
   }

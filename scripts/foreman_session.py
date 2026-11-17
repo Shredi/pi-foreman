@@ -245,6 +245,17 @@ def check_path_text(p, what):
         raise Refused("%s has characters that cannot be passed safely: %s" % (what, p))
 
 
+def check_brief_file(name):
+    """Refuse a brief that is not a readable file (an over-long name raises OSError here); the echoed name is capped."""
+    try:
+        ok = Path(name).is_file()
+    except (OSError, ValueError):
+        ok = False
+    if not ok:
+        shown = re.sub(r"[\x00-\x1f\x7f-\x9f]+", " ", name).strip()[:100]
+        raise Refused("brief file not found: %s" % shown)
+
+
 def parent_from_config(adir):
     try:
         cfg = json.loads((Path(adir) / "intercom" / "config.json").read_text("utf-8"))
@@ -261,11 +272,19 @@ def opener_id(given, adir, env=None):
     return given or env.get(ENV_PUBLISHED, "").strip() or env.get(ENV_STABLE, "").strip() or parent_from_config(adir)
 
 
+# `%(to_parent)s` and `%(no_human)s` are filled by `plan_first_notes`: a local child asks its parent in a message, a remote one by file.
 PLAN_FIRST_NOTES = [
-    "   While you plan, change files only under `.workflow/` and use explorers; builders wait for the approval.",
-    "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent by file (`ask.md`). When unsure whether it is a decision, ask the parent. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).",
-    "   `plan.md` starts with a `## For the owner` section (its reader is the owner, who is in the middle of many other topics: explain it as to someone new to this one, in plain words, at most about 10 lines, no paths or ids: the goal, the essential steps, heads-ups, the implicit decisions; for example \"Goal: pages load faster. Steps: measure first, then cache the slowest query. Heads-up: cached data may be a minute old. Decided for you: the admin pages stay as they are.\"), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
+    "   While you plan, change files only under `.workflow/` and use explorers and plan reviewers; builders wait until the plan phase ends.",
+    "   Findings of your plan review that are defects or gaps are not questions: revise and have the plan reviewed again until it passes. A real decision of the owner's (scope, risk, a gate that loosens, a trade-off the plan cannot settle) goes to the owner with `ask_user_question`; everything else you cannot settle goes to the parent %(to_parent)s. When unsure whether it is a decision, ask the parent. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both. Ask until the plan is decision-complete (no guesses left): each question has a `header` chip and options that are objects with a `label` and a `description`; an answer may carry `user notes:` or a `global note:`, treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), %(no_human)s.",
+    "   `plan.md` starts with a `## For the owner` section (its reader is the owner, who reads it cold on the plan page between other topics and approves the plan from this section alone, so it must stand alone: explain it as to someone new to this topic, as owner text (your owner-text rule); form: a goal line, then the steps as a short list, then the heads-ups and the decisions you took for the owner, each as a list item; one fact per sentence; no paths or ids; for example \"Goal: pages load faster.\" then \"- Steps: measure first, then cache the slowest query.\" \"- Heads-up: cached data may be a minute old.\" \"- Decided for you: the admin pages stay as they are.\"), then has the sections `## Decisions and assumptions` and `## Open questions` (empty when none).",
 ]
+
+
+def plan_first_notes(local):
+    """`PLAN_FIRST_NOTES` for a footer; `local`: the parent is reached by intercom, else by file."""
+    fill = {"to_parent": "in a message whose first line starts with `Question` (by file, `ask.md`, when the parent is not a Pi session)", "no_human": "ask the parent in a message"} if local else \
+        {"to_parent": "by file (`ask.md`)", "no_human": "ask by file (`ask.md`) and end your turn: the answer comes as a brief"}
+    return [n % fill for n in PLAN_FIRST_NOTES]
 
 
 def footer(label, plan_first):
@@ -287,11 +306,17 @@ def footer(label, plan_first):
     n = 1
     if plan_first:
         lines += [
-            "%d. Plan first: write `plan.md` in the handoff dir, send `Plan from %s: <absolute path of plan.md>`," % (n, label),
-            "   then stop and wait for the parent's ruling. The parent writes `ruling.md` in the handoff dir (first",
-            "   line `APPROVED` = go ahead; anything else = revise `plan.md` and send `Plan from %s: <path>` again)" % label,
-            "   and wakes you with a brief naming `brief-<n>.md`, a copy of the ruling (`foreman session brief %s <ruling path>`)." % label,
-        ] + PLAN_FIRST_NOTES
+            "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
+            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir and send",
+            "   `Plan from %s: <absolute path of plan.md>`; it informs the parent, so do not wait for an answer to it." % label,
+            "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
+            "   - Tier heavy: send the parent the plain line `%s waits on the owner at its plan checkpoint`, then call" % label,
+            "     `foreman_checkpoint`; the owner answers in a dialog in this pane, and you build after the approval. The line",
+            "     tells the parent why you are quiet; send it exactly so, not as an `Update from` message, which is a report.",
+            "   The parent may send notes, corrections or owner decisions as a brief (`brief-<n>.md`); treat it as input. A brief",
+            "   that changes the plan makes a new plan version: have it reviewed again and, at heavy, take it to the checkpoint again.",
+            "   A `ruling.md` the parent writes is a note like any other file; it approves nothing.",
+        ] + plan_first_notes(True)
         n += 1
     lines += [
         "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines, written per the `handoff`" % n,
@@ -302,12 +327,19 @@ def footer(label, plan_first):
         "%d. Close: when the parent sends `foreman:close`, pi-foreman runs its close sequence and replies" % (n + 2),
         "   `foreman:closed <path>` (or `pi-foreman: close refused: <reason>`) by itself.",
         "",
-        "Ask by file: use this when the parent is not a Pi session or intercom to the parent says `Session not found`.",
+        "Ask once: a question goes to the parent or, when a human is at the pane and it is the owner's to decide, to the owner",
+        "as a dialog, never both.",
+        "Question to the parent: send it with the intercom tool (`send`) to the parent's id. Its first line starts with",
+        "`Question`, then the question; long detail goes into a file in the handoff dir that the message names. Then end your",
+        "turn: the answer arrives as a message and starts your next turn. Do not use the blocking `ask` action and do not",
+        "`foreman_wait` for the answer. A stop (a `[review_loop]` stop, the read budgets) is lifted by a brief from the parent,",
+        "never by a message.",
+        "Ask by file: use this only when the parent is not a Pi session or intercom to the parent says `Session not found`.",
         "On `Session not found`, do not retry intercom: no retry reaches a parent that never registers with the broker.",
-        "Write `ask.md` in the handoff dir; its first line is `# Ask <n>: <topic>` (n = 1, 2, ... in order). pi-foreman",
-        "then touches `.ask` there and shows you as blocked in Herdr. The parent answers in `ruling-<n>.md` (same n).",
-        "Wait with `foreman_wait` kind `file` on `ruling-<n>.md` in the handoff dir. When the wait wakes, the harness writes",
-        "`.seen` (the ruling file name) itself; writing it by hand is harmless. Never ask by `herdr agent prompt`.",
+        "A question that a human at your pane can answer goes to the owner as a dialog instead. Otherwise:",
+        "Write `ask.md` in the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), say at your pane that you",
+        "wait for the parent, and end your turn. The answer comes as a brief (`brief-<n>.md` in the handoff dir) and starts your",
+        "next turn; do not `foreman_wait` for it. Never ask by `herdr agent prompt`.",
         "",
         "PR watch: a PR watch message tells you about CI, comments and conflicts. Report to the parent only",
         "`PR #n green on <sha>, mergeable, ready to merge` (a PR that is green and still a draft: `PR #n green on <sha>,",
@@ -347,11 +379,18 @@ def remote_footer(label, plan_first):
     n = 1
     if plan_first:
         lines += [
-            "%d. Plan first: write `plan.md` in the handoff dir, then run" % n,
+            "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
+            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir and run",
             "       %s plan" % base,
-            "   and stop to wait for the parent's ruling: `foreman_wait` kind `file` on `ruling.md` in the handoff dir",
-            "   (first line `APPROVED` = go ahead; anything else = revise `plan.md` and run the command again).",
-        ] + PLAN_FIRST_NOTES
+            "   It informs the parent, so do not wait for an answer to it.",
+            "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
+            "   - Tier heavy: call `foreman_checkpoint`; the owner answers in a dialog in this pane (attaching to it from the",
+            "     other machine), and you build after the approval. Run no notice before it: the parent learns from its own check",
+            "     that you wait on the owner.",
+            "   The parent may send notes, corrections or owner decisions as a brief (`brief-<n>.md`); treat it as input. A brief",
+            "   that changes the plan makes a new plan version: have it reviewed again and, at heavy, take it to the checkpoint again.",
+            "   A `ruling.md` the parent delivers is a note like any other file; it approves nothing.",
+        ] + plan_first_notes(False)
         n += 1
     lines += [
         "%d. Done: write `result.md` in the handoff dir (self-contained, at most 40 lines, written per the `handoff`" % n,
@@ -361,10 +400,13 @@ def remote_footer(label, plan_first):
         "       %s update" % base,
         "%d. When your result is sent, stop. The parent closes the session." % (n + 2),
         "",
-        "Ask: write `ask.md` in the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), then run",
+        "Ask once: a question goes to the parent or, when a human is at the pane and it is the owner's to decide, to the owner",
+        "as a dialog, never both.",
+        "A question that a human at your pane can answer goes to the owner as a dialog. Otherwise ask by file: write `ask.md` in",
+        "the handoff dir (first line `# Ask <n>: <topic>`, n = 1, 2, ... in order), then run",
         "       %s ask" % base,
-        "The parent answers in `ruling-<n>.md` (same n). Wait with `foreman_wait` kind `file` on `ruling-<n>.md` in the",
-        "handoff dir. Never ask by `herdr agent prompt`.",
+        "Say at your pane that you wait for the parent and end your turn. The answer comes as a brief (`brief-<n>.md` in the",
+        "handoff dir) and starts your next turn; do not `foreman_wait` for it. Never ask by `herdr agent prompt`.",
         "",
         "PR: your work on a PR ends at ready (checks green, mergeable, a reviewer PASS on the head, out of draft). When the",
         "PR watch reports that, append the watch's line under `## Update` in `result.md` (create the file when there is",
@@ -829,7 +871,8 @@ def check_profile(adir, name):
         raise Refused("unknown permissions profile %r; known profiles: %s" % (name, ", ".join(known)))
 
 
-def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, profile=None):
+def child_env(handoff, parent, child, parent_slug, model=None, environ=None, remote=False, plan_phase=False, profile=None,
+              agent_dir=None):
     env = [(ENV_HANDOFF, str(handoff)), (ENV_PARENT, parent), (ENV_STABLE, child), (ENV_PARENT_LABEL, parent_slug)]
     if plan_phase:
         env.append((ENV_PLAN_PHASE, "1"))
@@ -841,7 +884,11 @@ def child_env(handoff, parent, child, parent_slug, model=None, environ=None, rem
     if model:
         env.append((ENV_MODEL, model))
     # the add-on reads its features at load: the child pane starts a fresh Pi, so pass the opener's along
-    return env + addon_env(environ)
+    # a local child keeps the opener's agent dir when the opener has the variable set (the handoff dir lives in it)
+    out = env + addon_env(environ)
+    if agent_dir is not None and not remote and "PI_CODING_AGENT_DIR" in (os.environ if environ is None else environ):
+        out.append(("PI_CODING_AGENT_DIR", str(agent_dir)))
+    return out
 
 
 def opener_slug(cwd, top):
@@ -1126,9 +1173,8 @@ def cmd_open(a):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
     first = first_commands(a.first_command or [], a.plan_mode)
     check_first_commands(first)
+    check_brief_file(a.brief)
     brief = Path(a.brief)
-    if not brief.is_file():
-        raise Refused("brief file not found: %s" % a.brief)
     cwd = Path(a.cwd) if a.cwd else Path.cwd()
     if not cwd.is_dir():
         raise Refused("--cwd is not a directory: %s" % cwd)
@@ -1190,7 +1236,7 @@ def open_session(p, remote=None):
         here = Path.cwd()  # the opener runs this command from its own cwd; the child may live elsewhere (--cwd)
         parent_slug = opener_slug(here, git_top(here))
     env = child_env(handoff, parent, child, parent_slug, model, remote=bool(remote), plan_phase=bool(p["plan_first"]),
-                    profile=p.get("profile"))
+                    profile=p.get("profile"), agent_dir=adir)
     prompt = prompt_text(handoff)
     first = p.get("first") or []
     banner = start_banner(label, model, short_hostname() if remote else None, handoff / "brief.md")
@@ -1982,9 +2028,8 @@ def cmd_open_remote(a):
     entry_cfg, argv = machine_entry(adir, name)
     if not LABEL_RE.match(a.label):
         raise Refused("label must be 1-40 characters of A-Z a-z 0-9 . _ - and start with a letter or digit")
+    check_brief_file(a.brief)
     brief = Path(a.brief)
-    if not brief.is_file():
-        raise Refused("brief file not found: %s" % a.brief)
     if not a.cwd or PATH_BAD.search(a.cwd):
         raise Refused("--machine needs --cwd: a directory on %s without characters that cannot be passed safely" % name, "cwd_required")
     first = first_commands(a.first_command or [], a.plan_mode)
@@ -2258,13 +2303,15 @@ def remote_brief(a, adir, entry):
             s["lastError"] = None
             s["lastDeliverAt"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             ruling = re.fullmatch(r"ruling-(\d+)\.md", file_name)
-            if kind == "ruling":
-                s["rulings"] = int(s.get("rulings") or 0) + 1  # the watcher clears an ask on a ruling, not on a plain brief
+            # the answer to a remote ask is a brief (or a `ruling-<n>.md` from a parent on the old footer); the watcher clears an ask on `answers`
+            # going up. A plan ruling (`ruling.md`, `ruling-plan.md`) and a steer never answer it.
+            if kind == "brief" or ruling:
+                s["answers"] = int(s.get("answers") or 0) + 1
             ask = s.get("ask")
-            if kind == "ruling" and isinstance(ask, dict):
+            if isinstance(ask, dict):
                 known = isinstance(ask.get("n"), int) and not isinstance(ask["n"], bool)
-                # a delivered ruling answers the ask: its number reaches the ask's, or the ask's number is unknown
-                if not known or (ruling and int(ruling.group(1)) >= ask["n"]):
+                # a delivered brief answers the ask; so does a ruling whose number reaches the ask's, or when the ask's number is unknown
+                if kind == "brief" or (ruling and (not known or int(ruling.group(1)) >= ask["n"])):
                     s["ask"] = None
     write_registry(adir, reg)
     print("pi-foreman session: %s delivered to %s@%s (%s bytes%s)." % (

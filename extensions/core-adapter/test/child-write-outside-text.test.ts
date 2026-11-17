@@ -23,7 +23,7 @@ type Res = { block?: boolean; allow?: boolean; rule?: string; reason?: string } 
 const call = (tool: string, input: Record<string, unknown>, cwd = wt, o: Partial<GateRoots> = {}): Res =>
   gateEvaluate(tool, input, cwd, { env: (c) => baseFloorEnv(c, { child: true }), roots: () => roots(o) }).result as Res;
 
-const NAMES = ["plan.md", "result.md", "ask.md", ".seen", "work/"];
+const NAMES = ["plan.md", "result.md", "ask.md", "ask-<n>.md", "work/"];
 function named(r: Res, offender: string): void {
   assert.equal(r?.block, true);
   assert.equal(r?.rule, "child-write-outside");

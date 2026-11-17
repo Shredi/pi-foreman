@@ -1295,7 +1295,7 @@ function protectedEntries(env: FloorEnv): Protected[] {
   for (const a of agentDirs(env)) {
     const s = path.join(a, "pi-foreman");
     for (const f of ["permissions.json", "managed.json", "state/round-parents.json", "state/bridge-trust.json"]) out.push({ p: path.join(s, f), tree: false });
-    for (const d of ["state/approvals", "state/gate", "state/child-asks"]) out.push({ p: path.join(s, d), tree: true });
+    for (const d of ["state/approvals", "state/gate", "state/child-asks", "state/panes"]) out.push({ p: path.join(s, d), tree: true });
     out.push({ p: path.join(a, "sessions"), tree: true, ext: ".jsonl" });
   }
   if (env.sessionDir) out.push({ p: env.sessionDir, tree: false, ext: ".jsonl", flat: true });

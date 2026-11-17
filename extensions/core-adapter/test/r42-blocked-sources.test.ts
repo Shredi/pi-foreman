@@ -191,7 +191,7 @@ test("the parent's dialog about a child's ask is an owner wait (approval)", asyn
   assert.deepEqual(pairs(r), [1, 1]);
 });
 
-test("a session waiting on its parent through ask.md (the ask contract) is a parent wait: blockedOn parent, no owner fields", async (t) => {
+test("a session waiting on its parent through ask.md (OwnAsk) is a parent wait: blockedOn parent, no owner fields", async (t) => {
   const r = await ownerRig(t);
   const dir = r.handoff("up", "child");
   fs.writeFileSync(path.join(dir, "ask.md"), "# Ask 1: q\nneeds_ruling: yes\n");
@@ -200,8 +200,8 @@ test("a session waiting on its parent through ask.md (the ask contract) is a par
   assert.equal(f.blockedKind, "parent-ask");
   assert.equal("ownerBlockedSince" in f, false);
   assert.equal(f.state, "blocked", "the sidebar state is unchanged");
-  fs.writeFileSync(path.join(dir, "ruling-1.md"), "A\n");
-  await r.fire("tool_result", { toolName: "read", toolCallId: "r1", input: { path: path.join(dir, "ruling-1.md") }, content: [{ type: "text", text: "A" }], isError: false });
+  fs.writeFileSync(path.join(dir, "brief-1.md"), "A\n");
+  await r.fire("tool_result", { toolName: "bash", toolCallId: "r1", input: { command: "cp brief.md brief-1.md" }, details: { exitCode: 0 }, content: [{ type: "text", text: "" }], isError: false });
   await liveBlocked(r, undefined);
   assert.deepEqual(r.events("blocked_open").map((x) => [x.on, x.kind]), [["parent", "parent-ask"]]);
   assert.deepEqual(pairs(r), [1, 1]);

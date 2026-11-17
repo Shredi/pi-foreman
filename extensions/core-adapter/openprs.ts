@@ -8,10 +8,11 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { GithubHosts } from "./prhost.ts";
+import { globMatch, parseGlobs } from "./prwake.ts";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
-import { resolveGh } from "./wait.ts";
+import { resolveGh } from "./ghbin.ts";
 import { redactCommand } from "./trace.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };
@@ -41,6 +42,8 @@ export interface OpenPr {
   mergeable?: OpenPrMergeable;
   /** The GitHub host the PR was found on; written only for a host other than github.com (absent: github.com). */
   host?: string;
+  /** Set by the PR tracker when the repository matches `radar.openPrs.hideRepos`: the sidebar skips the row (display only). */
+  hiddenRepo?: true;
 }
 export type OpenPrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 export interface OpenPrsFile {
@@ -59,6 +62,10 @@ export interface OpenPrsConfig {
   mine: boolean;
   authors: string[];
   scope: string[];
+  /** Globs over the lowercased `owner/name` of repositories the sidebar hides; empty hides nothing. */
+  hideRepos: string[];
+  /** Why a given `hideRepos` value was dropped; absent when it was usable. */
+  hideError?: string;
 }
 
 export const DEFAULT_REFRESH_S = 120;
@@ -95,13 +102,54 @@ export function openPrsConfig(raw: unknown): OpenPrsConfig {
   const o = isObj(raw) ? raw : {};
   const list = (v: unknown, re: RegExp): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && re.test(x)) : []);
   const r = o.refreshSeconds;
+  let hideRepos: string[] = [];
+  let hideError: string | undefined;
+  if (o.hideRepos !== undefined && !(Array.isArray(o.hideRepos) && o.hideRepos.length === 0)) {
+    const g = parseGlobs(o.hideRepos, "value");
+    if (typeof g === "string") hideError = `radar.openPrs.hideRepos: ${g}`;
+    else hideRepos = g.map((x) => x.toLowerCase());
+  }
   return {
     enabled: o.enabled !== false,
     refreshSeconds: typeof r === "number" && Number.isFinite(r) ? Math.min(86400, Math.max(MIN_REFRESH_S, Math.floor(r))) : DEFAULT_REFRESH_S,
     mine: o.mine !== false,
     authors: list(o.authors, LOGIN),
     scope: list(o.scope, SCOPE),
+    hideRepos,
+    ...(hideError ? { hideError } : {}),
   };
+}
+
+/** True when `repo` (any case) matches one of the `hideRepos` globs (the matcher of `tools.prSources.<name>.repos`). */
+export function hiddenRepo(globs: string[], repo: string): boolean {
+  const r = repo.toLowerCase();
+  return globs.some((g) => globMatch(g, r));
+}
+
+/** Marks the entries of open-prs.json whose repo matches `globs` and unmarks the others, under the refresh lock; rewrites the file only when a mark changed. Never throws; busy: the next poll retries. */
+export function remarkOpenPrs(file: string, globs: string[], now: number): void {
+  try {
+    const lock = `${file}.lock`;
+    const token = takeLock(lock, now, LOCK_STALE_MS);
+    if (!token) return;
+    try {
+      const cur = readFile(file);
+      if (!cur) return;
+      let changed = false;
+      const openPrs = cur.openPrs.map((p) => {
+        const want = hiddenRepo(globs, p.repo);
+        if (want === (p.hiddenRepo === true)) return p;
+        changed = true;
+        const { hiddenRepo: _drop, ...rest } = p;
+        return want ? { ...rest, hiddenRepo: true as const } : rest;
+      });
+      if (changed) writeAtomic(file, { ...cur, openPrs });
+    } finally {
+      dropLock(lock, token);
+    }
+  } catch {
+    // unwritable: the next poll retries
+  }
 }
 
 /** The search strings: mine (author and review requested), and each bot author inside each scope entry (never unscoped). */
@@ -228,12 +276,16 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
     const token = takeLock(lock, now(), LOCK_STALE_MS);
     if (!token) return "locked";
     try {
+      // The file as it is under the lock (the tracker may have re-marked it since the read above): the marks are copied from it per repo.
+      const cur = readFile(o.file);
+      const marked = new Set((cur?.openPrs ?? []).filter((p) => p.hiddenRepo === true && typeof p.repo === "string").map((p) => p.repo.toLowerCase()));
+      const keep = (p: OpenPr): OpenPr => (marked.has(p.repo.toLowerCase()) ? { ...p, hiddenRepo: true } : p);
       const stamp = (): string => new Date(now()).toISOString();
       try {
         if ("error" in hostSet) {
           // tools.prGithubHosts is unset or invalid: no search, the previous entries stay
           const t = stamp();
-          writeAtomic(o.file, { v: 1, ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), checkedAt: t, openPrs: prev?.openPrs ?? [], error: clean(hostSet.error, 200), errorAt: t });
+          writeAtomic(o.file, { v: 1, ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), checkedAt: t, openPrs: cur?.openPrs ?? [], error: clean(hostSet.error, 200), errorAt: t });
           return "failed";
         }
         const hosts = hostSet.hosts;
@@ -267,17 +319,17 @@ export async function refreshOpenPrs(o: RefreshOptions): Promise<RefreshResult> 
         const error = failed > 0 ? clean(`${failed} of ${jobs.length} queries failed: ${firstError}`, 200) : undefined;
         if (failed === jobs.length) {
           // Every query failed: keep the previous entries (and its fetchedAt, if any).
-          writeAtomic(o.file, { v: 1, ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), checkedAt: t, openPrs: prev?.openPrs ?? [], error, errorAt: t });
+          writeAtomic(o.file, { v: 1, ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), checkedAt: t, openPrs: cur?.openPrs ?? [], error, errorAt: t });
           return "failed";
         }
         // A host whose every query failed keeps its previous entries; the other hosts' results are not hidden.
         const lost = new Set([...tried].filter(([h, n]) => missed.get(h) === n).map(([h]) => h));
-        for (const p of prev?.openPrs ?? []) {
+        for (const p of cur?.openPrs ?? []) {
           if (!lost.has(p.host ?? "github.com") || seen.has(p.url)) continue;
           seen.add(p.url);
           all.push(p);
         }
-        writeAtomic(o.file, { v: 1, fetchedAt: t, checkedAt: t, openPrs: all.slice(0, MAX_OPEN_PRS), ...(error ? { error, errorAt: t } : {}) });
+        writeAtomic(o.file, { v: 1, fetchedAt: t, checkedAt: t, openPrs: all.map(keep).slice(0, MAX_OPEN_PRS), ...(error ? { error, errorAt: t } : {}) });
         return "refreshed";
       } catch {
         return "failed";

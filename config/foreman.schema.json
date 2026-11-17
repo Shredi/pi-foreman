@@ -324,10 +324,10 @@
           "pre-pr": { "type": "object", "additionalProperties": false, "properties": { "thinking": { "type": "string", "enum": ["low", "medium", "high"] }, "model": { "type": "string", "minLength": 1 } } },
           "second-opinion": { "type": "object", "additionalProperties": false, "properties": { "thinking": { "type": "string", "enum": ["low", "medium", "high"] }, "model": { "type": "string", "minLength": 1 } } }
         } },
-        "highStakes": { "type": "object", "additionalProperties": false, "description": "The high-stakes review (docs/review.md#high-stakes): one extra reviewer pass with [high-stakes] on the whole change, after the normal review passed, only for a large change (modules or lines, measured by the adapter) or after a builder launch with risk tag design, and only with model set. The pass runs on the model as set (no pair, no different-model move, no rank-policy refusal, no climb). User or overlay config only.", "properties": {
-          "model": { "type": ["string", "null"], "description": "<provider>/<model>[:<level>] of the [high-stakes] review, used exactly as set (no pair, no different-model move, no rank refusal, no climb); null = no high-stakes review (nothing is measured or required). It replaces the model of no other review." },
-          "modules": { "type": "integer", "minimum": 0, "description": "The change counts as large at this many modules (distinct first two directory levels of the changed files, without docs, *.md, test directories and root files); 0 = off." },
-          "lines": { "type": "integer", "minimum": 0, "description": "The change counts as large at this many added plus removed lines of those files; 0 = off." },
+        "highStakes": { "type": "object", "additionalProperties": false, "description": "The high-stakes review (docs/review.md#high-stakes): one extra reviewer pass with [high-stakes] on the whole change, after the normal review passed, only for a risky change (a builder launch with risk tag security, permission, guard, concurrency or design; a heavy task that built something; the foreman's own request), one per session, and only with model set. The pass runs on the model as set (no pair, no different-model move, no rank-policy refusal, no climb). User or overlay config only.", "properties": {
+          "model": { "type": ["string", "null"], "description": "<provider>/<model>[:<level>] of the [high-stakes] review, used exactly as set (no pair, no different-model move, no rank refusal, no climb); null = no high-stakes review (nothing is required). It replaces the model of no other review." },
+          "modules": { "description": "Retired: accepted and ignored (the review no longer depends on the size of the change)." },
+          "lines": { "description": "Retired: accepted and ignored (the review no longer depends on the size of the change)." },
           "paths": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Retired: accepted and ignored (the sensitive-path rule no longer selects a model)." }
         } },
         "planReview": {
@@ -336,7 +336,7 @@
           "description": "Per tier: the checkpoint needs a [plan-review] verdict for the current plan first (L1: heavy only). A project or session can only set true.",
           "properties": { "trivial": { "type": "boolean" }, "standard": { "type": "boolean" }, "heavy": { "type": "boolean" } }
         },
-        "checkpoint": { "type": "string", "enum": ["parent", "human"], "description": "Who answers foreman_checkpoint. parent: the verdict comes from the parent-written ruling-plan.md in the session's handoff dir (first line APPROVED, REVISE <text> or REJECT, written after the last plan edit); no dialog. human: the dialog, only when attended. Unset: parent for a session opened with a parent (handoff dir and parent intercom id set), else human. User or overlay config only." },
+        "checkpoint": { "type": "string", "enum": ["parent", "human"], "description": "Who answers foreman_checkpoint. human is the only mode: the owner's dialog in the session's own pane, also in a session opened by a parent, only when attended (otherwise pending). Unset is human. parent is no longer supported: the value still loads, and foreman_checkpoint refuses with [checkpoint_parent] until it is removed or set to human; no file from a parent approves a plan. User or overlay config only." },
         "planReviewRounds": { "type": "integer", "minimum": 1, "description": "Plan-review rounds per plan before the checkpoint opens with the open findings visible (a FAIL below the cap goes back for a revision; a FAIL at the cap opens the checkpoint). Counted per plan version: an appended ruling, decision log or addendum is not a new version. Default 2. Free per layer." },
         "childTimeoutSeconds": { "type": "integer", "minimum": 1, "description": "Per-tool-call timeout of builder and reviewer runs (pi-subagents toolTimeoutMs); a run deadline timeoutMs below it is raised to it. Default 1800. A project or session can only lower it." },
         "launchTimeoutCapMinutes": { "type": "integer", "minimum": 1, "description": "The only hard ceiling on a child run deadline, in minutes: the role timeoutMinutes is the default and a launch timeoutMs wins, but no written deadline exceeds this. Default 120. A project or session can only lower it." },
@@ -384,7 +384,7 @@
     "radar": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
+      "properties": { "doneTtlMinutes": { "type": "number", "minimum": 0, "description": "Minutes after which radar hides a finished session and deletes its presence file. A presence file that a pane note (state/panes) names is kept while its last activity is within 14 days, so a crash restart can read it." }, "recentRunSeconds": { "type": "integer", "minimum": 0, "description": "Seconds a finished subagent run stays on the Herdr sidebar's children line (as done glyph + role) before it joins the done count." },
         "openPrs": {
           "type": "object",
           "additionalProperties": false,
@@ -394,7 +394,8 @@
             "refreshSeconds": { "type": "integer", "minimum": 60, "maximum": 86400, "description": "Seconds between two searches (default 120); the radar polls read the cache only." },
             "mine": { "type": "boolean", "description": "List the open PRs you authored and those with your review requested (default true)." },
             "authors": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(\\[bot\\])?$" }, "description": "Other authors whose open PRs are listed, for example renovate[bot] (a GitHub App is searched as author:app/<name>). Searched only inside scope." },
-            "scope": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(/[A-Za-z0-9._-]+)?$" }, "description": "Owners or owner/repo that authors are searched in; without scope no author is searched." }
+            "scope": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9-]*(/[A-Za-z0-9._-]+)?$" }, "description": "Owners or owner/repo that authors are searched in; without scope no author is searched." },
+            "hideRepos": { "type": "array", "items": { "type": "string", "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]{1,200}$" }, "description": "Globs (* and ?, case-insensitive, the matcher of tools.prSources.<name>.repos) over owner/name of repositories whose PRs the herdr-app mod leaves out of its Open PRs list (default empty: hides nothing). Marked by the PR tracker (foreman prs poll), at most 50 globs; display only, the PRs are still polled and watched. User or overlay config only." }
           }
         }
       }
@@ -466,14 +467,15 @@
       "additionalProperties": false,
       "properties": {
         "backend": { "type": "string", "enum": ["auto", "herdr", "hc", "terminal"], "description": "Where a local `foreman session open` runs the child (default `auto`): `herdr` when HERDR_PANE_ID is set and herdr is found, else herdr-core (`hc run`) when HC_TERMINAL_ID is set and hc is found, else the printed command. `herdr`, `hc` and `terminal` force one; a forced backend that cannot run is refused. Experimental for hc. User or overlay config only." },
-        "blockedNoticeSeconds": { "type": "number", "minimum": 0, "maximum": 86400, "description": "Seconds a child session of this session may wait on its owner (an approval dialog, an owner question, a checkpoint or a confirm dialog) before this session gets one information-only message about it (default 600; 0 turns the notice off). Once per wait; one quiet note when the dialog is answered. User or overlay config only." },
+        "blockedNoticeSeconds": { "type": "number", "minimum": 0, "maximum": 86400, "description": "Seconds before this session gets one information-only message about a child session: the child waits on its owner (an approval dialog, an owner question, a checkpoint or a confirm dialog), or has waited for this session's answer to its question (a message whose first line starts with Question). Default 600; 0 turns both off. Once per wait or question; one quiet note when a dialog is answered. For a remote child the reminder is for its ask (`ask.md`): it comes once while the ask is unanswered and older than this (once more after a reload of this session), starts a turn, and a new ask is reminded again; a brief (`foreman session brief`) answers it. User or overlay config only." },
         "confirmWaitSeconds": { "type": "number", "minimum": 0, "maximum": 3600, "description": "Seconds `foreman_session_open` waits for the owner's confirm dialog (default 20) before it returns \"pending owner confirmation\"; the dialog stays and the owner's answer is reported to the foreman by a wake message. 0 waits without limit." },
         "hc": {
           "type": "object",
           "additionalProperties": false,
           "description": "herdr-core settings of `foreman session open`. User or overlay config only.",
           "properties": {
-            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." }
+            "outliveParent": { "type": "boolean", "description": "Pass `--outlive-parent` to `hc run`, so a child survives the end of the parent terminal (default true: a parent crash never kills a child with uncommitted work). false lets hc end the child with its parent." },
+            "resume": { "type": "string", "enum": ["auto", "off"], "description": "Restart of a Pi session in its kept terminal after a crash (default `auto`): Pi writes a pane note while it runs in an `hc` terminal, and a shell hook restarts the session after a 5 s countdown. `off` writes no note and the hook does nothing. User or overlay config only." }
           }
         },
         "machines": {
@@ -606,7 +608,7 @@
           "description": "Precondition-checked operations (foreman_move, foreman_copy, foreman_worktree_remove).",
           "properties": {
             "copyMaxBytes": { "type": "integer", "minimum": 0, "description": "Size cap for foreman_copy. A project can only lower it." },
-            "worktreeDisposable": { "type": "array", "items": { "type": "string" }, "description": "Path components whose ignored files foreman_worktree_remove may delete (fnmatch globs matched against one path component, never across a '/'; 'name/' = a directory at any depth, an entry without a trailing '/' matches a file only, so write folder entries with a trailing '/'); a pattern with an inner '/' (for example '.pi/tasks/') is anchored at the worktree's top level. A project cannot set it." },
+            "worktreeDisposable": { "type": "array", "items": { "type": "string" }, "description": "Path components whose ignored files foreman_worktree_remove may delete, and whose untracked files and folders it deletes before the removal (links are never followed) (fnmatch globs matched against one path component, never across a '/'; 'name/' = a directory at any depth, an entry without a trailing '/' matches a file only, so write folder entries with a trailing '/'); a pattern with an inner '/' (for example '.pi/tasks/') is anchored at the worktree's top level. A project cannot set it." },
             "baseBranch": { "type": ["string", "null"], "description": "Base branch for the merged check of foreman_worktree_remove; null = origin HEAD, else main, else master. A project cannot set it." }
           }
         },

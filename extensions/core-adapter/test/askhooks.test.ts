@@ -1,12 +1,12 @@
 // ask_user_question bookkeeping as hooks on the tool name (askhooks.ts), on the result shape captured from the bundled
-// @juicesharp/rpiv-ask-user-question 2.15.0 (fixtures/ask-user-question-2.15.0.json): ruling-<n>.md for an open ask.md,
+// @juicesharp/rpiv-ask-user-question 2.15.0 (fixtures/ask-user-question-2.15.0.json): no ruling-<n>.md for an open ask.md,
 // the dialogs counter, and no ask_user_question registered by the harness.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { askAnswered, writeAskRuling } from "../askhooks.ts";
+import { askAnswered } from "../askhooks.ts";
 import { ownerAnswered } from "../idlemodel.ts";
 import { r11Rig } from "./_r11rig.ts";
 
@@ -24,7 +24,6 @@ async function openRig(t: T) {
   const rig = await r11Rig(t, {}, { piExtra: { registerTool: (d: { name: string }) => void registered.push(d.name) } });
   const dir = rig.handoff("h1", "child");
   fs.writeFileSync(path.join(dir, "ask.md"), "# Ask 3: db choice\nWhich?\n");
-  fs.writeFileSync(path.join(dir, ".ask"), "ask-3\n");
   return { rig, dir, registered };
 }
 
@@ -39,34 +38,7 @@ test("askAnswered: answered with or without notes; not on cancel, no UI or an er
   assert.equal(askAnswered(undefined, false), false);
 });
 
-test("writeAskRuling writes the answer text with its notes into ruling-<n>.md of an open ask, once", async (t) => {
-  const { dir } = await openRig(t);
-  const file = writeAskRuling([dir], notes.content, notes.details, false);
-  assert.equal(file, path.join(dir, "ruling-3.md"));
-  const text = fs.readFileSync(file!, "utf8");
-  assert.match(text, /"Which database\?"="pg"\. user notes: keep it boring\./);
-  assert.match(text, /global note: ship it Monday\./);
-  assert.equal(writeAskRuling([dir], plain.content, plain.details, false), undefined); // wx: an existing ruling stays
-});
-
-test("writeAskRuling without notes writes the plain answer; nothing without an open ask", async (t) => {
-  const { dir } = await openRig(t);
-  assert.equal(writeAskRuling([path.join(dir, "missing")], plain.content, plain.details, false), undefined);
-  const file = writeAskRuling([dir], plain.content, plain.details, false);
-  const text = fs.readFileSync(file!, "utf8");
-  assert.match(text, /"Which database\?"="pg"/);
-  assert.doesNotMatch(text, /user notes:|global note:/);
-});
-
-test("writeAskRuling writes nothing for cancelled, no-UI and error results", async (t) => {
-  const { dir } = await openRig(t);
-  assert.equal(writeAskRuling([dir], cancelled.content, cancelled.details, false), undefined);
-  assert.equal(writeAskRuling([dir], noUi.content, noUi.details, false), undefined);
-  assert.equal(writeAskRuling([dir], plain.content, plain.details, true), undefined);
-  assert.equal(fs.existsSync(path.join(dir, "ruling-3.md")), false);
-});
-
-test("hooks: tool_result writes the ruling and leaves details alone; Esc writes nothing", async (t) => {
+test("hooks: tool_result leaves details alone and writes no ruling, answered or Esc", async (t) => {
   const { rig, dir } = await openRig(t);
   const before = JSON.stringify(notes.details);
   const out = await result(rig, cancelled);
@@ -74,7 +46,7 @@ test("hooks: tool_result writes the ruling and leaves details alone; Esc writes 
   assert.equal(fs.existsSync(path.join(dir, "ruling-3.md")), false);
   assert.equal(await result(rig, notes), undefined); // R2: no rewritten details
   assert.equal(JSON.stringify(notes.details), before);
-  assert.match(fs.readFileSync(path.join(dir, "ruling-3.md"), "utf8"), /user notes: keep it boring/);
+  assert.equal(fs.existsSync(path.join(dir, "ruling-3.md")), false, "an answered dialog files no ruling-<n>.md");
 });
 
 test("hooks: tool_call counts one ask_user_question dialog; other tools are not counted", async (t) => {
@@ -93,19 +65,12 @@ test("the harness registers no ask_user_question tool", async (t) => {
   assert.ok(!registered.includes("ask_user_question"), registered.join(","));
 });
 
-test("an open ask in a dir where the session is the parent is never answered", async (t) => {
+test("an answered owner dialog writes no ruling-<n>.md into any handoff dir, child side or parent side", async (t) => {
   const { rig, dir: asChild } = await openRig(t);
   const asParent = rig.handoff("kid", "parent");
-  fs.writeFileSync(path.join(asParent, ".ask"), "ask-2\n");
-  await result(rig, plain);
-  assert.equal(fs.existsSync(path.join(asParent, "ruling-2.md")), false);
-  assert.equal(fs.existsSync(path.join(asChild, "ruling-3.md")), true);
-  // only the parent-side dir is open: no ruling is written at all
-  fs.rmSync(path.join(asChild, "ruling-3.md"));
-  fs.rmSync(path.join(asChild, ".ask"));
-  await result(rig, plain);
-  assert.equal(fs.existsSync(path.join(asParent, "ruling-2.md")), false);
-  assert.equal(fs.existsSync(path.join(asChild, "ruling-3.md")), false);
+  fs.writeFileSync(path.join(asParent, "ask.md"), "# Ask 2: other\n");
+  for (const r of [plain, notes]) assert.equal(await result(rig, r), undefined);
+  for (const dir of [asChild, asParent]) assert.deepEqual(fs.readdirSync(dir).filter((f) => /^ruling/.test(f)), [], dir);
 });
 
 test("ownerAnswered reads the package's shape next to the old decision", () => {

@@ -1,60 +1,50 @@
-// pi-foreman-plan mod for herdr-app: the plan of the foreman that owns the tab, and the plans of its child sessions, rendered
-// natively in the panel. Reads radar from shared("pi-foreman.radar") (published by the pi-foreman Agents mod), the two JSON files
-// of the session on screen and its markdown documents; writes nothing but the clearing of the sidebar's pending open request
-// (shared "pi-foreman.show-pending"); the only process it starts is the platform opener, for https links.
+// pi-foreman-plan mod for herdr-app: the pages and milestones of the foreman that owns the tab, and of its child sessions, as a list in
+// the panel. Reads radar from shared("pi-foreman.radar") (published by the pi-foreman Agents mod) and, per session on screen,
+// <show dir>/pages/pages.json (the index the foreman writes). A page opens in the system browser through a copy this mod writes
+// into one of eight fixed slots under its own cache folder; writes nothing else but the clearing of the sidebar's pending open request
+// (shared "pi-foreman.show-pending"); the only process it starts is the platform opener, for https links and for those page copies.
 
-import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, TextView, Editor, EditorState } from "gpui-base";
-import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, settings, notify } from "herdr";
+import { View, div } from "gpui-kit";
+import { v_flex, h_flex } from "gpui-base";
+import { readTextFile, writeTextFile, watchFolder, theme, shared, setShared, agents, panes, terminals, focused, exec, window, run, layout, appHome, notify } from "herdr";
 import {
-  buildTree, joinAgents, allSessions, childPlans, planHint, noteHint, partFor, tabDot, partDot, anchorAgent, joinPath, dirOf, parseMeta, isReadablePath,
-  compareTarget, markBlocks, diffHunks, sanitize, isSafeHttpsUrl, openerArgv, openFailure, fmtSince, isLight,
-  fenceInfo, validateSvg, svgSize, cachePath, findPanelBlock,
+  buildTree, joinAgents, allSessions, childPlans, tabDot, pageUnseen, pageStamp, chipText, parsePages, newPage, anchorAgent, joinPath,
+  isSafeHttpsUrl, openerArgv, pageOpenerArgv, slotPath, dirFileUrl, rewriteRelative, openFailure, fmtSince, findPanelBlock, PAGE_FILE, MAX_PAGE_CHARS, SLOTS,
 } from "./model.js";
 
 const TICK_MS = 1000;
-const OPEN_TIMEOUT_MS = 10000; // exec `timeout` of the URL opener
+const OPEN_TIMEOUT_MS = 10000; // exec `timeout` of the platform opener
 const POLL_MS = 5000;
+const FAILED = Symbol("read failed");
 const MOD = "pi-foreman-plan";
+const PAGES_DIR = "pages";
 // the ids of layouts/foreman.json, used when the shown layout cannot be searched
 const DEFAULT_IDS = { stack: "panel-body", block: "plan", show: "panel" };
-const CODE_LINE_PX = 18;
-const CODE_MAX_LINES = 30;
-const DOC_CACHE_MAX = 16;
 
 const guard = (f, fallback) => { try { return f(); } catch { return fallback; } };
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-// FNV-1a of a string: the content half of the parsed-document cache key.
-const hashOf = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(36); };
-const topicOf = (path) => /^plan-(.+)\.md$/i.exec(String(path ?? "").split(/[\\/]/).pop())?.[1] ?? "";
+const osOf = () => { const p = guard(() => window().platform, ""); return p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux"; };
 
 export default class PlanPanel extends View {
   init(_props, cx) {
-    this.recs = new Map(); // `${machine}|${dir}` -> what was read of one session's show dir
+    this.recs = new Map(); // `${machine}|${dir}` -> what was read of one session's pages.json
     this.watched = new Set(); // local dirs with a running watch loop
-    this.tab = "plan";
-    this.diff = false;
+    this.tab = "foreman";
     this.rootKey = null;
     this.anchorAddr = null;
     this.pinSeen = null; // null until the first sync: a pin that predates this copy is stale
-    this.pin = null; // {key, anchorKey}: set by a sidebar click until the tab's foreman changes
+    this.pin = null; // {anchorKey, fresh, key}: set by a sidebar click until the tab's foreman changes
     this.lastTerm = null;
     this.loadedFor = null;
     this.loadedAt = 0;
-    this.dirty = false;
+    this.minute = 0; // the minute of the last paint, so the ages move
     this.busy = false;
     this.again = false;
     this.cur = { empty: "Waiting for foreman radar" };
-    this.held = null; // what the body shows: {tabId, part, key, rec}; kept while the selected tab's session is still being read
-    this.childPart = new Map(); // child session key -> the part its tab shows, as picked on its Plan | Note switch
-    this.seen = new Map(); // `${child key}|${part}` -> the version of that part last shown on its tab (the ● dot compares with it)
-    this.titles = new Map(); // planKey -> last Note title seen, so the Note tab label does not change while a note is read
+    this.seen = new Map(); // `${session key}|${page id}` -> the stamp of that page when it was last opened (the ● dot compares with it)
     this.prefetching = false;
-    this.noteSeen = new Map(); // session key -> last note version seen on the radar
+    this.slot = 0; // the next page-copy slot, round robin
     this.noTimeout = false; // true once this copy's exec rejected the `timeout` option itself (Herdr app 0.1.13)
-    this.parsed = new Map(); // `${path}|${hash of text}|${hash of base}|${fences}` -> {doc, hunks}: a document is parsed once per content
-    this.diagOk = new Map(); // app-home relative cache path -> true once written and checked
-    this.linksOn = guard(() => typeof TextView.markdown("probe", "").on_link_click === "function", false);
     this.sync();
     this.reload(cx);
     cx.timer.every(TICK_MS, (cx) => this.tick(cx));
@@ -92,8 +82,8 @@ export default class PlanPanel extends View {
     this.anchorAddr = anchor;
     const own = anchor ? this.nodeOf(trees, anchor, pidOf(anchor)) : null;
 
-    // A sidebar click pins a session and a document until the tab's foreman changes. Herdr persists the value, so one already
-    // present at the first sync is stale: its `n` is recorded as seen, never applied.
+    // A sidebar click pins a session until the tab's foreman changes. Herdr persists the value, so one already present at the
+    // first sync is stale: its `n` is recorded as seen, never applied.
     // While the panel is hidden this block is not mounted and never sees the change; the sidebar also leaves the request in
     // "pi-foreman.show-pending", which the first sync of a freshly mounted copy applies, once. Any copy clears it after reading it.
     const pin = guard(() => shared("pi-foreman.show"), null);
@@ -108,7 +98,7 @@ export default class PlanPanel extends View {
       req = valid(pin) ? pin : null;
       if (!req) this.pin = null;
     }
-    if (req) this.pin = { key: req.key, kind: req.kind === "note" ? "note" : "plan", anchorKey: own?.node.key ?? null, fresh: true };
+    if (req) this.pin = { key: req.key, anchorKey: own?.node.key ?? null, fresh: true };
     if (pending !== null && pending !== undefined) guard(() => setShared("pi-foreman.show-pending", null), null);
     if (this.pin && this.pin.anchorKey !== (own?.node.key ?? null)) this.pin = null;
     const pinned = this.pin ? this.find(trees, this.pin.key) : null;
@@ -116,17 +106,14 @@ export default class PlanPanel extends View {
     let root = own;
     if (pinned && !(own && allSessions([own.node]).includes(pinned.node))) root = { node: pinned.node, machine: pinned.machine };
     if (!root) { this.cur = { empty: "No agent session in this tab" }; this.rootKey = null; return; }
-    if (root.node.key !== this.rootKey) { this.rootKey = root.node.key; this.tab = "plan"; this.lastTerm = null; }
+    if (root.node.key !== this.rootKey) { this.rootKey = root.node.key; this.tab = "foreman"; this.lastTerm = null; }
 
-    const tabs = [{ id: "plan", label: "Plan", node: root.node }];
-    if (noteHint(root.node) !== null) tabs.push({ id: "note", label: "Note", node: root.node });
+    const tabs = [{ id: "foreman", label: "Foreman", node: root.node }];
     for (const c of childPlans(root.node)) tabs.push({ id: `c:${c.node.key}`, label: c.label, node: c.node });
 
     if (this.pin?.fresh && pinned) {
       this.pin.fresh = false;
-      const hit = tabs.find((t) => t.id.startsWith("c:") && t.node === pinned.node);
-      this.tab = hit ? hit.id : pinned.node === root.node && this.pin.kind === "note" && noteHint(root.node) !== null ? "note" : "plan";
-      if (hit && (this.pin.kind === "note" ? noteHint(hit.node) : planHint(hit.node)) !== null) this.childPart.set(hit.node.key, this.pin.kind);
+      this.tab = tabs.find((t) => t.id.startsWith("c:") && t.node === pinned.node)?.id ?? "foreman";
     }
     // Focus on a floating child window of this foreman selects that child's tab, once per focus change.
     const term = focus.pane ? null : focus.terminal ?? focus.agent ?? null;
@@ -136,13 +123,12 @@ export default class PlanPanel extends View {
       if (tab) this.tab = tab.id;
     }
     this.lastTerm = term;
-    if (!tabs.some((t) => t.id === this.tab)) this.tab = "plan";
+    if (!tabs.some((t) => t.id === this.tab)) this.tab = "foreman";
 
     const tab = tabs.find((t) => t.id === this.tab);
-    const show = tab.node.show;
-    const part = tab.id.startsWith("c:") ? partFor(tab.node, this.childPart.get(tab.node.key)) : tab.id;
+    const show = tab.node.show?.dir ? tab.node.show : null;
     const machine = root.machine === "local" ? null : root.machine;
-    this.cur = { tabs, tab, part, machine, raw: root.machine, planKey: root.node.show ? `${root.machine}|${root.node.show.dir}` : null, show, key: show ? `${root.machine}|${show.dir}` : null, root: root.node };
+    this.cur = { tabs, tab, machine, raw: root.machine, show, key: show ? `${root.machine}|${show.dir}` : null, root: root.node };
   }
 
   find(trees, key) {
@@ -151,6 +137,11 @@ export default class PlanPanel extends View {
       if (n) return { node: n, machine: t.key };
     }
     return null;
+  }
+
+  // The key of a tab's session record, null when it has no show folder.
+  keyOf(tab) {
+    return tab.node.show?.dir ? `${this.cur.raw}|${tab.node.show.dir}` : null;
   }
 
   // ---- reading --------------------------------------------------------------------------------------------------
@@ -162,31 +153,9 @@ export default class PlanPanel extends View {
   tick(cx) {
     const before = this.cur?.key;
     this.sync();
-    this.noteWatch(cx);
-    if (this.cur?.key !== before) cx.notify();
+    const minute = Math.floor(Date.now() / 60000);
+    if (this.cur?.key !== before || minute !== this.minute) { this.minute = minute; cx.notify(); }
     if (this.cur?.key !== this.loadedFor || Date.now() - this.loadedAt >= POLL_MS) this.reload(cx);
-  }
-
-  // A note newer than the one seen before on any session of the tab's tree opens the panel: the root's Note tab, or the child's tab on
-  // its Note part. The first sight of a session only records its version, so starting the app does not pop the panel.
-  noteWatch(cx) {
-    const root = this.cur?.root;
-    if (!root) return;
-    let fresh = null;
-    for (const n of allSessions([root])) {
-      const v = noteHint(n);
-      if (v === null) continue;
-      const seen = this.noteSeen.get(n.key);
-      this.noteSeen.set(n.key, v);
-      if (seen !== undefined && v > seen) fresh = n;
-    }
-    if (!fresh) return;
-    if (fresh === root) this.tab = "note";
-    else { this.childPart.set(fresh.key, "note"); this.tab = `c:${fresh.key}`; }
-    this.sync();
-    this.openPanel();
-    this.reload(cx);
-    cx.notify();
   }
 
   // Selects this mod's block in its stack and shows the (hidden) panel around it. The Agents mod says when the layout has no block.
@@ -199,13 +168,12 @@ export default class PlanPanel extends View {
     guard(() => run("layout.show", { id: ids.show }), null);
   }
 
-  watch(dir, plan, cx) {
+  watch(dir, cx) {
     if (this.watched.has(dir)) return;
     this.watched.add(dir);
     cx.spawn(async (cx) => {
       for (;;) {
         try { await watchFolder(dir); } catch { break; }
-        if (plan) this.dirty = true;
         this.reload(cx);
       }
       this.watched.delete(dir); // the 5 s timer remains; the next tick tries the watch again
@@ -219,10 +187,8 @@ export default class PlanPanel extends View {
     this.loadedAt = Date.now();
     if (!cur?.key) { this.prefetch(cx); return; }
     this.busy = true;
-    const force = this.dirty;
-    this.dirty = false;
     cx.spawn(async (cx) => {
-      const changed = await this.load(cur, force, cx);
+      const changed = await this.load({ key: cur.key, machine: cur.machine, show: cur.show, tabId: cur.tab.id }, cx);
       this.busy = false;
       if (changed) cx.notify();
       if (this.again) { this.again = false; this.reload(cx); return; }
@@ -230,10 +196,10 @@ export default class PlanPanel extends View {
     });
   }
 
-  // Reads one session's documents into its record; the record is ready after its first read, whatever that found.
-  async load(job, force, cx) {
+  // Reads one session's index into its record; the record is ready after its first read, whatever that found.
+  async load(job, cx) {
     let changed = false;
-    const run = this.refresh(job, force, cx);
+    const run = this.refresh(job, cx);
     const rec = this.recs.get(job.key); // refresh has created it and taken its seq before its first await
     const seq = rec?.seq;
     try { changed = await run; } catch { /* keep what was read */ }
@@ -242,154 +208,108 @@ export default class PlanPanel extends View {
     return changed;
   }
 
-  // The other tabs' sessions are read once, after the first paint, so a switch to one of them finds its record ready.
+  // The other tabs' sessions are read after the first paint and again on every poll, so a switch finds its record ready and a page
+  // that arrives in a child opens the panel.
   prefetch(cx) {
     const cur = this.cur;
     if (!cur?.tabs || this.prefetching) return;
-    const jobs = cur.tabs.filter((x) => x.node.show)
-      .map((x) => ({ key: `${cur.raw}|${x.node.show.dir}`, machine: cur.machine, show: x.node.show }))
-      .filter((j) => j.key !== cur.key && !this.recs.get(j.key)?.ready);
+    const jobs = cur.tabs.filter((x) => x.node.show?.dir)
+      .map((x) => ({ key: `${cur.raw}|${x.node.show.dir}`, machine: cur.machine, show: x.node.show, tabId: x.id }))
+      .filter((j) => j.key !== cur.key);
     if (!jobs.length) return;
     this.prefetching = true;
     cx.spawn(async (cx) => {
-      for (const j of jobs) if (!this.recs.get(j.key)?.ready && await this.load(j, false, cx)) cx.notify();
+      for (const j of jobs) if (await this.load(j, cx)) cx.notify();
       this.prefetching = false;
     });
   }
 
-  // Re-reads the two JSON files; the documents only when the JSON bytes changed or the plan folder's watch fired.
-  async refresh(cur, force, cx) {
-    const dir = cur.show.dir;
-    const rec = this.recs.get(cur.key) ?? { rev: 0, planJson: undefined, noteJson: undefined };
-    this.recs.set(cur.key, rec);
+  // Re-reads the page index of one session. A page that is new since the last read of it (a new id or a higher version of a page) opens the panel
+  // on that session's tab; the first read of a session only records what is there, so starting the app does not pop the panel.
+  async refresh(job, cx) {
+    const dir = job.show.dir;
+    const rec = this.recs.get(job.key) ?? { text: undefined, pages: [], events: [], known: null };
+    this.recs.set(job.key, rec);
     // a read that ends after a newer read of this session started commits nothing: the stale result is dropped
     const seq = rec.seq = (rec.seq ?? 0) + 1;
-    if (!cur.machine) this.watch(dir, false, cx);
-    const [pj, nj] = await Promise.all([this.read(joinPath(dir, "plan.json"), cur.machine), this.read(joinPath(dir, "note.json"), cur.machine)]);
+    const pages = joinPath(dir, PAGES_DIR);
+    if (!job.machine) { this.watch(pages, cx); this.watch(dir, cx); }
+    // null is a missing index (the readTextFile contract); a rejection is another failure and is told apart
+    const text = await readTextFile(joinPath(pages, "pages.json"), { on: job.machine }).catch(() => FAILED);
     if (rec.seq !== seq) return false;
-    let changed = false;
-    if (force || pj !== rec.planJson) {
-      const meta = pj === null ? null : parseMeta(pj);
-      const docPath = meta && isReadablePath(meta.path) ? meta.path : null;
-      const target = meta ? compareTarget(meta) : null;
-      const text = docPath ? await this.read(docPath, cur.machine) : null;
-      const base = text === null || !target ? null
-        : await this.read(joinPath(dir, target === "ruled" ? "plan.ruled.md" : "plan.prev.md"), cur.machine);
-      if (rec.seq !== seq) return false;
-      if (docPath && !cur.machine) this.watch(dirOf(docPath), true, cx);
-      const next = { meta, path: docPath, text, base, target };
-      if (pj !== rec.planJson || JSON.stringify(next) !== JSON.stringify(rec.planDoc)) {
-        rec.planJson = pj;
-        rec.planDoc = next;
-        const parsed = text === null ? null : this.parse(docPath, text, base, meta);
-        rec.plan = parsed?.doc ?? null;
-        rec.hunks = parsed?.hunks ?? null;
-        rec.rev++;
-        await this.decorateLater(parsed, meta, dir, cur.machine, cx);
-        rec.rev++;
-        changed = true;
-      }
-    }
-    if (force || nj !== rec.noteJson) {
-      const meta = nj === null ? null : parseMeta(nj);
-      const text = meta ? await this.read(joinPath(dir, "note.md"), cur.machine) : null;
-      if (rec.seq !== seq) return false;
-      if (nj !== rec.noteJson || text !== rec.noteText) {
-        rec.noteJson = nj;
-        rec.noteMeta = meta;
-        rec.noteText = text;
-        const parsed = text === null ? null : this.parse(joinPath(dir, "note.md"), text, null, meta);
-        rec.note = parsed?.doc ?? null;
-        rec.rev++;
-        await this.decorateLater(parsed, meta, dir, cur.machine, cx);
-        rec.rev++;
-        changed = true;
-      }
-    }
-    return changed;
+    if (text === FAILED) return false; // a failed read records nothing: with no known map yet, the next good read only records
+    if (text === rec.text) return false;
+    const idx = text === null ? null : parsePages(text);
+    const prev = rec.known;
+    rec.text = text;
+    if (!idx && prev) return false; // a failed or unreadable read keeps the pages and what is known of them
+    rec.pages = idx?.pages ?? [];
+    rec.events = idx?.events ?? [];
+    rec.known = new Map(rec.pages.map((p) => [p.id, p.version]));
+    if (prev && newPage(prev, rec.pages)) this.arrived(job, cx);
+    return true;
   }
 
-  // A document whose fences still need decorating is painted first as plain markdown (one notify), the editors and diagrams
-  // follow when decorate is done (the caller's notify).
-  async decorateLater(parsed, meta, dir, machine, cx) {
-    if (!parsed || parsed.decorated) return;
-    if (parsed.doc.blocks.some((b) => b.kind === "fence")) cx.notify();
-    await this.decorate(parsed.doc, meta, dir, machine);
-    parsed.decorated = true;
+  // A new page: select the session's tab and show the panel, when the session is still one of the tabs on screen.
+  arrived(job, cx) {
+    const tab = this.cur?.tabs?.find((t) => t.id === job.tabId);
+    if (!tab || tab.node.show?.dir !== job.show.dir) return;
+    this.tab = tab.id;
+    this.sync();
+    this.openPanel();
+    cx.notify();
   }
 
-  // The parsed document (blocks, diff hunks) of one path and content, kept per copy: a switch back to unchanged content, or a
-  // version bump over the same text, skips the parse. The fences' picture list is part of the key, since it decides the decoration.
-  parse(path, text, base, meta) {
-    const key = `${path}|${hashOf(text)}|${base === null ? "" : hashOf(base)}|${(meta?.fences ?? []).join(",")}`;
-    const hit = this.parsed.get(key);
-    if (hit) { this.parsed.delete(key); this.parsed.set(key, hit); return hit; }
-    const made = { doc: markBlocks(text, base), hunks: diffHunks(text, base), decorated: false };
-    this.parsed.set(key, made);
-    if (this.parsed.size > DOC_CACHE_MAX) this.parsed.delete(this.parsed.keys().next().value);
-    return made;
+  // ---- opening --------------------------------------------------------------------------------------------------
+
+  fail(title, body) {
+    guard(() => notify({ title, body, level: "error" }));
   }
 
-  // Fence blocks get what drawing needs, made here because host state objects belong in tasks, never in render: a code fence a
-  // read-only highlighted Editor; a mermaid fence whose hash the harness listed a picture (the checked SVG copied under the app
-  // home), or a `mermaid` code block when there is none.
-  async decorate(doc, meta, dir, machine) {
-    if (!doc) return;
-    const t = guard(() => theme(), {});
-    const font = guard(() => settings().font_family, undefined);
-    const syntax = { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 };
-    for (const b of doc.blocks) {
-      if (b.kind !== "fence") continue;
-      const f = fenceInfo(doc.lines, b);
-      b.fence = f;
-      const entry = f.sha && meta?.fences.includes(f.sha) ? meta.diagrams.find((d) => d.sha === f.sha) : null;
-      if (entry) b.diagram = await this.cacheDiagram(entry, dir, machine);
-      if (b.diagram) continue;
-      const language = f.mermaid ? "mermaid" : f.lang;
-      b.lines = Math.min(CODE_MAX_LINES, Math.max(1, f.text.split("\n").length));
-      b.editor = guard(() => EditorState.new({ ...(language ? { language } : {}), value: f.text, readonly: true, line_numbers: false, folding: false,
-        font_family: font, font_size: 12, syntax }), null);
-    }
+  // Starts the platform opener with argv (a checked url or one of our page copies) and raises one notice when it does not work.
+  async launch(argv, title) {
+    try {
+      const r = await this.execT(argv[0], argv.slice(1), {}, OPEN_TIMEOUT_MS);
+      const bad = openFailure(r);
+      if (bad) { this.fail(title, bad); return false; }
+      return true;
+    } catch (e) { this.fail(title, openFailure(e) || "the opener could not run"); return false; }
   }
-
-  // Copies the dark and light SVG of a diagram into mods/pi-foreman-plan/cache/ of the app home (named by sha and theme only) after
-  // the allow-list check; `{dark, light, w, h}` with app-home relative paths, or null when anything is wrong with it.
-  async cacheDiagram(entry, dir, machine) {
-    const out = {};
-    for (const th of ["dark", "light"]) {
-      const rel = cachePath(entry.sha, th);
-      if (!rel) return null;
-      const text = await this.read(joinPath(dir, entry[th]), machine);
-      if (text === null || validateSvg(text) !== null) return null;
-      if (!this.diagOk.get(rel)) {
-        const abs = joinPath(guard(() => appHome(), ""), rel);
-        if (!abs.startsWith("/") && !/^[A-Za-z]:/.test(abs)) return null;
-        const have = await this.read(abs, null);
-        if (have !== text) {
-          try { await writeTextFile(abs, text, have); } catch { return null; }
-        }
-        this.diagOk.set(rel, true);
-      }
-      out[th] = rel;
-      if (th === "dark") Object.assign(out, svgSize(text) ?? { w: 600, h: 400 });
-    }
-    return out;
-  }
-
-  // ---- links ----------------------------------------------------------------------------------------------------
 
   openUrl(url, cx) {
     if (!isSafeHttpsUrl(url)) return;
-    const p = guard(() => window().platform, "");
-    const argv = openerArgv(p === "macos" ? "darwin" : p === "windows" ? "win32" : "linux", url);
-    const fail = (body) => guard(() => notify({ title: "Could not open the link", body, level: "error" }));
-    if (!argv) { fail("no opener for this platform"); return; }
+    const argv = openerArgv(osOf(), url);
+    if (!argv) { this.fail("Could not open the link", "no opener for this platform"); return; }
+    cx.spawn(() => this.launch(argv, "Could not open the link"));
+  }
+
+  // Opens one page of a session: reads it (local or remote, up to 1 MiB), makes relative `src` and `poster` values absolute for a local
+  // session, writes the text into the next of eight slot files under the app home and opens only that copy. `p.file` was checked
+  // against PAGE_FILE when the index was read; it is checked again before it goes into a path.
+  openPage(tab, p, cx) {
+    const key = this.keyOf(tab);
+    if (!key || !PAGE_FILE.test(p.file)) return;
+    const dir = joinPath(tab.node.show.dir, PAGES_DIR);
+    const machine = this.cur.machine;
+    const title = "Could not open the page";
     cx.spawn(async () => {
+      let argv;
       try {
-        const r = await this.execT(argv[0], argv.slice(1), {}, OPEN_TIMEOUT_MS);
-        const bad = openFailure(r);
-        if (bad) fail(bad);
-      } catch (e) { fail(openFailure(e) || "the opener could not run"); }
+        const text = await this.read(joinPath(dir, p.file), machine);
+        if (text === null) { this.fail(title, "the page could not be read"); return; }
+        if (text.length > MAX_PAGE_CHARS) { this.fail(title, "the page is larger than 1 MiB"); return; }
+        const base = machine ? null : dirFileUrl(dir);
+        const body = base ? rewriteRelative(text, base) : text;
+        const home = guard(() => appHome(), "");
+        const copy = slotPath(home, this.slot);
+        argv = copy ? pageOpenerArgv(osOf(), home, copy) : null;
+        if (!argv) { this.fail(title, "no opener for this platform"); return; }
+        this.slot = (this.slot + 1) % SLOTS;
+        const have = await this.read(copy, null);
+        try { await writeTextFile(copy, body, have); } catch { this.fail(title, "the copy could not be written"); return; }
+      } catch { this.fail(title, "the page could not be prepared"); return; }
+      // seen only once the opener worked: a failed open keeps the dot
+      if (await this.launch(argv, title)) { this.seen.set(`${key}|${p.id}`, pageStamp(p)); cx.notify(); }
     });
   }
 
@@ -410,113 +330,66 @@ export default class PlanPanel extends View {
 
   // ---- drawing --------------------------------------------------------------------------------------------------
 
-  md(id, text) {
-    const el = TextView.markdown(id, this.linksOn ? sanitize(text) : sanitize(text, { links: false })).selectable(true);
-    return this.linksOn ? el.on_link_click((url, cx) => this.openUrl(url, cx)) : el;
-  }
-
-  // The body of one block: a picture, a highlighted code block, or the markdown of the text.
-  body(t, b, i, rec, tabId) {
-    if (b.diagram) {
-      const rel = b.diagram[isLight(t.background) ? "light" : "dark"];
-      return svg(rel).w_full().max_w(b.diagram.w).h(Math.min(b.diagram.h, 1200)).flex_none();
-    }
-    if (b.editor) return Editor.new(b.editor).w_full().h(b.lines * CODE_LINE_PX + 10).flex_none().rounded(4);
-    return this.md(`b-${rec.rev}-${tabId}-${i}`, b.text);
-  }
-
-  block(t, b, i, rec, tabId) {
-    const el = this.body(t, b, i, rec, tabId);
-    const card = v_flex().w_full().gap(4).px(10).py(6).rounded(6);
-    if (b.mark === "new") card.bg(t.ansi2 + "18").border_l(3).border_color(t.ansi2).child(div().text_size(10).text_color(t.ansi2).child("NEW"));
-    else if (b.mark === "changed") card.bg(t.ansi3 + "18").border_l(3).border_color(t.ansi3).child(div().text_size(10).text_color(t.ansi3).child("CHANGED"));
-    return card.child(el);
-  }
-
-  diffView(t, hunks, note) {
-    if (hunks === null || hunks === undefined) return div().p(6).text_size(12).text_color(t.dim).child(note || "No earlier version to compare");
-    if (hunks.length === 0) return div().p(6).text_size(12).text_color(t.dim).child("No changes against the compared version");
-    return v_flex().w_full().font_family("JetBrains Mono").text_size(11).children(hunks.flatMap((h, n) => [
-      div().id(`h-${n}`).w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(`@@ ${h.heading || "(top)"} @@`),
-      ...h.rows.map((r) => h_flex().w_full().h(20).flex_none().gap(10).px(12)
-        .when(r.k === "+", (e) => e.bg(t.ansi2 + "18")).when(r.k === "-", (e) => e.bg(t.ansi1 + "18"))
-        .child(div().w(10).text_color(t.dim).child(r.k)).child(div().flex_1().min_w(0).truncate().child(r.s))),
-    ]));
-  }
-
   message(t, text) {
     return div().p(14).text_size(12).text_color(t.dim).child(text);
+  }
+
+  // One page: the unseen dot, its title, the state chip and its age.
+  pageRow(t, tab, p, key, cx) {
+    const unseen = pageUnseen(p, (id) => this.seen.get(`${key}|${id}`));
+    return h_flex().id(`page-${p.id}`).w_full().flex_none().gap(8).px(10).py(6).items_center().rounded(6).cursor_pointer()
+      .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.openPage(tab, p, cx))
+      .child(div().flex_none().w(10).text_color(t.ansi4).child(unseen ? "●" : ""))
+      .child(div().flex_1().min_w(0).truncate().child(p.title || p.id))
+      .child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(chipText(p)))
+      .child(div().flex_none().text_size(11).text_color(t.dim).child(p.at === null ? "" : fmtSince(Date.now() - p.at)));
+  }
+
+  // One milestone, newest first; a row with an https link in its text opens it.
+  eventRow(t, e, i) {
+    const url = /https:\/\/\S+/.exec(e.text)?.[0];
+    const row = h_flex().id(`event-${i}`).w_full().flex_none().gap(8).px(10).py(2).text_size(12)
+      .child(div().flex_none().w(36).text_size(11).text_color(t.dim).child(e.at === null ? "" : fmtSince(Date.now() - e.at)))
+      .child(div().flex_1().min_w(0).child(e.text));
+    return isSafeHttpsUrl(url) ? row.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.openUrl(url, cx)) : row;
   }
 
   render(cx) {
     const t = theme();
     // A sidebar click (shared state) re-renders this mod at once: follow it here instead of waiting for the 1 s timer, and
-    // start reading a session not read yet. Until that read is done the frame keeps what it showed (see `shown`).
+    // start reading a session not read yet.
     this.sync();
     if (this.cur?.key && this.cur.key !== this.loadedFor) this.reload(cx);
     const cur = this.cur ?? { empty: "Waiting for foreman radar" };
     const frame = (...kids) => v_flex().id("plan-panel").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border)
       .text_color(t.foreground).text_size(13).children(kids);
     if (cur.empty) return frame(this.message(t, cur.empty));
-    // What the frame shows is the selected tab's document once it is read. Until then it keeps the document shown before, so a
-    // switch neither blanks the body nor moves the tab row or the header. The held document is released at once when the target
-    // has no document (nothing to read): then the real state shows, empty message included. "Loading" shows only when nothing
-    // was shown yet.
-    const want = cur.key ? this.recs.get(cur.key) : null;
-    if (want?.ready || !this.held?.key || !cur.key) this.held = { tabId: cur.tab.id, part: cur.part, key: cur.key, rec: want ?? null };
-    const shown = this.held;
-    const rec = shown.rec;
-    // the header says Loading while the body still shows another tab or part than the selected one
-    const pending = shown.tabId !== cur.tab.id || shown.part !== cur.part;
-    const doc = shown.part === "note" ? rec?.note : rec?.plan;
-    // the version recorded is the one of the document on screen, not the radar's: a newer radar version is still unseen
-    if (!pending && rec && doc && shown.tabId.startsWith("c:")) {
-      const v = shown.part === "note" ? rec.noteMeta?.v : rec.planDoc?.meta?.v;
-      if (Number.isInteger(v)) this.seen.set(`${cur.tab.node.key}|${shown.part}`, v);
-    }
-    const planRec = cur.planKey ? this.recs.get(cur.planKey) : null;
-    if (planRec?.noteMeta?.title) this.titles.set(cur.planKey, planRec.noteMeta.title);
-    const noteTitle = cur.planKey ? this.titles.get(cur.planKey) : undefined;
-    const isNote = shown.part === "note";
+    const key = cur.key;
+    const rec = key ? this.recs.get(key) : null;
     const tabBtn = (id, label, on, fn) => div().id(id).px(8).py(2).rounded(5).cursor_pointer().text_size(11).truncate().max_w(160)
       .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted).hover((s) => s.bg(t.hover)).on_click(fn).child(label);
-    // a child tab that is not on screen gets a dot on its label while a plan or note version of it is unseen
-    const seenOf = (n) => (part) => this.seen.get(`${n.key}|${part}`);
-    const unseen = (x) => x.id.startsWith("c:") && tabDot(x.node, x.id === shown.tabId, seenOf(x.node));
+    // a tab that is not on screen gets a dot on its label while one of its pages is unseen
+    const dotted = (x) => {
+      const k = this.keyOf(x);
+      return k !== null && tabDot(this.recs.get(k)?.pages, x.id === cur.tab.id, (id) => this.seen.get(`${k}|${id}`));
+    };
     const tabs = cur.tabs.length > 1 ? h_flex().flex_none().flex_wrap().px(10).py(4).gap(4).border_b(1).border_color(t.border)
-      .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, (x.id === "note" && noteTitle ? `Note: ${noteTitle}` : x.label) + (unseen(x) ? " \u25cf" : ""), x.id === this.tab, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
-    // a child with both a plan and a note switches between them on its own tab
-    const both = cur.tab.id.startsWith("c:") && planHint(cur.tab.node) !== null && noteHint(cur.tab.node) !== null;
-    const key = cur.tab.node.key;
-    const parts = both ? h_flex().flex_none().px(10).py(4).gap(4).border_b(1).border_color(t.border)
-      .children([["plan", "Plan"], ["note", "Note"]].map(([p, l]) => tabBtn(`part-${p}`, l + (partDot(cur.tab.node, p, shown.part, seenOf(cur.tab.node)) ? " \u25cf" : ""), cur.part === p, (_e, cx) => { this.childPart.set(key, p); cx.notify(); }))) : null;
-
-    const meta = isNote ? rec?.noteMeta : rec?.planDoc?.meta;
-    const adds = !isNote && doc ? doc.adds : 0;
-    const topic = isNote ? "" : topicOf(rec?.planDoc?.path) || (shown.tabId.startsWith("c:") ? (cur.tabs.find((x) => x.id === shown.tabId)?.label ?? "") : "");
+      .children(cur.tabs.map((x) => tabBtn(`tab-${x.id}`, x.label + (dotted(x) ? " ●" : ""), x.id === cur.tab.id, (_e, cx) => { this.tab = x.id; cx.notify(); }))) : null;
     const head = h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-      .child(div().font_semibold().truncate().min_w(0).child(isNote ? "Note" : "Plan"))
-      .when(Boolean(topic), (e) => e.child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(topic)))
-      .when(adds > 0, (e) => e.child(div().flex_none().px(5).py(1).rounded(4).bg(t.ansi2 + "30").text_size(10).text_color(t.ansi2).child(`${adds} ${adds === 1 ? "addition" : "additions"}`)))
-      .child(div().flex_1())
-      .when(!isNote, (e) => e.child(tabBtn("t-r", "Rendered", !this.diff, (_e, cx) => { this.diff = false; cx.notify(); }))
-        .child(tabBtn("t-d", "Diff", this.diff, (_e, cx) => { this.diff = true; cx.notify(); })))
-      .when(pending, (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child("Loading…")))
-      .when(Boolean(meta?.v), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(`v${meta.v}`)))
-      .when(Boolean(meta?.at), (e) => e.child(div().flex_none().text_size(11).text_color(t.dim).child(fmtSince(Date.now() - meta.at))));
+      .child(div().font_semibold().truncate().min_w(0).child("Pages"))
+      .when(cur.tab.id !== "foreman", (e) => e.child(div().flex_none().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(cur.tab.label)));
 
     let body;
-    if (!doc && shown.key && !rec?.ready) body = this.message(t, isNote ? "Loading note…" : "Loading plan…");
-    else if (!doc) body = this.message(t, isNote ? "No note published by this session" : "No plan published by this session");
-    else if (this.diff && !isNote) body = this.diffView(t, rec.hunks, doc.note);
-    else body = v_flex().w_full().gap(2)
-      .when(Boolean(doc.note), (e) => e.child(div().px(10).py(2).text_size(11).text_color(t.dim).child(doc.note)))
-      .children(doc.blocks.map((b, i) => this.block(t, b, i, rec, shown.tabId)));
-    return frame(
-      head,
-      ...(tabs ? [tabs] : []),
-      ...(parts ? [parts] : []),
-      div().id("plan-body").flex_1().min_h(0).overflow_y_scrollbar().p(10).child(body),
-    );
+    if (!key) body = this.message(t, "No pages published by this session");
+    else if (!rec?.ready) body = this.message(t, "Loading pages…");
+    else if (!rec.pages.length && !rec.events.length) body = this.message(t, "No pages published by this session");
+    else {
+      const events = [...rec.events].reverse();
+      body = v_flex().w_full().gap(2)
+        .children(rec.pages.map((p) => this.pageRow(t, cur.tab, p, key, cx)))
+        .when(events.length > 0, (e) => e.child(div().px(10).pt(8).pb(2).text_size(11).text_color(t.dim).child("Milestones"))
+          .children(events.map((ev, i) => this.eventRow(t, ev, i))));
+    }
+    return frame(head, ...(tabs ? [tabs] : []), div().id("plan-body").flex_1().min_h(0).overflow_y_scrollbar().p(10).child(body));
   }
 }

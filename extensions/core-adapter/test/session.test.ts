@@ -17,6 +17,7 @@ after(() => {
 });
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-")));
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 const seed = (agentDir: string) => writeRegistry(agentDir, { version: 1, sessions: [{ label: "demo", child: "fm-demo-abc123", status: "open", handoff: "/h" }] });
 
 function deps(agentDir: string, over: Partial<SessionDeps> = {}): SessionDeps & { sent: [string, string][]; spawned: string[][] } {

@@ -249,11 +249,14 @@ test("handoff-child-overlay", posixOnly, () => {
     [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/result.md","content":"x"},"b"],
     [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/ask.md","content":"x"},"b"],
     [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/ask-2.md","content":"x"},"b"],
-    [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/.ask","content":"x"},"b"],
-    [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/.seen","content":"x"},"b"],
     [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/.steer-last-read.json","content":"x"},"b"],
     [8,"write",{"path":"/Users/r2fx/agent/pi-foreman/handoffs/s1/work/a/b.txt","content":"x"},"b"],
   ]);
+  // #226 removed .ask and .seen from HANDOFF_CHILD_NAMES: a child's write to them is a block now
+  for (const n of [".ask", ".seen"]) {
+    const r = decide(CTX[8]!, "b", "write", { path: `/Users/r2fx/agent/pi-foreman/handoffs/s1/${n}`, content: "x" });
+    assert.equal(label(r), "block:child-write-outside", n);
+  }
 });
 
 test("handoff-parent-read", posixOnly, () => {

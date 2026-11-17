@@ -5,17 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Rung, RunState, RunView } from "./runs.ts";
 import { openerIntercomId } from "./session.ts";
-import { parseAskHeader, ASK_FILE } from "./askcontract.ts";
-import { readOwnAddonTasks } from "./bg.ts";
+import { readAllOwnAddonTasks } from "./bg.ts";
 import type { AddonTask } from "./bg.ts";
-import { askOpen } from "./ruling.ts";
-import { childHandoffDirs } from "./owned.ts";
 import { UNCLASSED, uiKeyAction } from "./herdr.ts";
 import type { BlockClass, BlockKind, BlockOn } from "./herdr.ts";
+import { HEARTBEAT_MS, LIVE_DEAD_MS, liveDir } from "./paneresume-core.ts";
 
-export const HEARTBEAT_MS = 30_000;
-/** A live file whose heartbeat is older than this is a dead or frozen session (three heartbeats). */
-export const LIVE_DEAD_MS = 3 * HEARTBEAT_MS;
+// the constants and the directory live in paneresume-core.ts (the pane-resume command reads live records without this module's imports)
+export { HEARTBEAT_MS, LIVE_DEAD_MS, liveDir };
 const WRITE_GAP_MS = 1000;
 const MAX_RUNS = 20;
 const MAX_WAITS = 20;
@@ -43,12 +40,6 @@ export interface LiveWait {
   unreviewed?: { n: number; repo: string; host: string }[];
   /** The `pr_watch` entry: the session's review facts of its owned PRs (the pill). `head` is the host head the fact is about; `noChecks` when the watch confirmed that the PR has no checks. Absent in an older live file. */
   review?: { n: number; repo: string; host: string; head: string; state: "ok" | "wip" | "unreviewed"; noChecks?: boolean }[];
-}
-
-/** An open ask of this session's own handoff (`# Ask <n>: <topic>` in ask.md). */
-export interface LiveAsk {
-  n: number;
-  topic: string;
 }
 
 /** One sidebar dot: a tracked PR (`src` pr, `n` its number) or an item of the external status hook (`src` ext, `n` null). */
@@ -94,13 +85,13 @@ export interface LiveFile {
   waits: LiveWait[];
   /** This session's running bg_run add-on tasks (no log tails); present only while one runs. */
   tasks?: AddonTask[];
-  /** Open asks of the own handoff; present only while one is open. */
-  asks?: LiveAsk[];
   /** Sidebar dots (PR states, external status items), at most 14; present only when there are any. */
   dots?: LiveDot[];
   /** `owner/name` of the origin remote and the checked-out branch; each present only when known. The radar and the herdr-app mod join a feed PR to this session by equal repo and head branch. */
   repo?: string;
   branch?: string;
+  /** Written only by the last write of a session that ended on SIGHUP/SIGTERM (`LiveInit.endedBy`): its pane note stays, so a crash restart can read the record. */
+  endedBy?: "signal";
   /** env HERDR_PANE_ID, else null. */
   paneId: string | null;
   /** env HC_TERMINAL_ID (the herdr-core terminal) when HERDR_PANE_ID is unset, else null: a herdr TUI inside an herdr-app pane would stamp every Pi with one terminal. */
@@ -141,14 +132,11 @@ export type OwnerState = "present" | "away" | "grace" | "unknown";
 export type PresenceName = "working" | "waiting-owner" | "waiting-external" | "idle" | "done" | "needs-you";
 
 /**
- * done > needs-you > working > waiting-external > idle. `owner` is an own dialog or hold, `asks` an open ask.md or a
- * forwarded child ask; either waits for the owner and beats the spinner states.
+ * done > needs-you > working > waiting-external > idle. `owner` is an own dialog or hold, `asks` a forwarded child ask; either waits for the owner and beats the spinner states.
  */
 export function presenceState(i: { done: boolean; owner: boolean; asks?: boolean; turn: boolean; children: boolean; externalWaits: boolean }): PresenceName {
   return i.done ? "done" : i.owner || i.asks ? "needs-you" : i.turn || i.children ? "working" : i.externalWaits ? "waiting-external" : "idle";
 }
-
-export const liveDir = (agentDir: string): string => path.join(agentDir, "pi-foreman", "state", "live");
 
 /** The synthetic `pr_watch` wait of a session's PR watches (numbers, `prRefs` with repository and host, `unreviewed` when any); null without a watch. */
 export function prWatchWait(watches: { n: number; key: { repo: string; host: string } }[], unreviewed: { n: number; repo: string; host: string }[], review: NonNullable<LiveWait["review"]> = []): LiveWait | null {
@@ -190,16 +178,23 @@ export interface LiveInit {
   mode: string | undefined;
   env: Record<string, string | undefined>;
   pid?: number;
+  /** Read by `stop()` for its last write: "signal" when the session ends on SIGHUP/SIGTERM. */
+  endedBy?: () => "signal" | undefined;
+  /** A running task that is not running any more (started before this boot, or its pid is gone): left out of the record's `tasks`. */
+  taskEnded?: (task: AddonTask) => boolean;
 }
 
 export class LiveState {
   private readonly file: string;
-  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "tasks" | "asks" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince" | "presence">;
+  private readonly base: Omit<LiveFile, "heartbeatAt" | "lastEventAt" | "state" | "runs" | "waits" | "tasks" | "intercomId" | "tokensIn" | "tokensOut" | "cost" | "blockedSince" | "presence">;
   private readonly idOf: () => string;
   private readonly startedMs = Date.now();
   private readonly cwd: string;
   private readonly sessionId: string;
   private readonly agentDir: string;
+  private readonly endedByOf: (() => "signal" | undefined) | undefined;
+  private readonly taskEnded: ((task: AddonTask) => boolean) | undefined;
+  private endedBy: "signal" | undefined;
   private lastEventMs = this.startedMs;
   private working = false;
   /** Open blocking sources: "ui" (Pi's ui_prompt_start..end, released by typed input) and own:<n> (own asks). */
@@ -257,6 +252,8 @@ export class LiveState {
     this.cwd = init.cwd;
     this.sessionId = init.sessionId;
     this.agentDir = init.agentDir;
+    this.endedByOf = init.endedBy;
+    this.taskEnded = init.taskEnded;
     this.file = path.join(liveDir(init.agentDir), `${init.sessionId}.json`);
     const handoff = (init.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null;
     // Re-read on each write: pi-intercom publishes PI_INTERCOM_SESSION_ID after session_start.
@@ -305,7 +302,7 @@ export class LiveState {
     return this.done ? "done" : this.blockers.size > 0 ? "blocked" : this.working || this.waitList().length > 0 ? "working" : "idle"; // a pending wait is work: never shown idle or done (R6 lane 7a)
   }
 
-  /** Presence state: an open dialog, ask or forwarded child ask (needs-you), a running turn or child, a pending external wait, else idle. */
+  /** Presence state: an open dialog or forwarded child ask (needs-you), a running turn or child, a pending external wait, else idle. */
   get presenceName(): PresenceName {
     let children = false;
     let asks = false;
@@ -316,7 +313,6 @@ export class LiveState {
     } catch {
       // runs are best effort
     }
-    if (!asks && !this.done) asks = this.askList().length > 0;
     return presenceState({ done: this.done, owner: this.blockers.size > 0, asks, turn: this.working, children, externalWaits: this.waitList().length > 0 });
   }
 
@@ -330,7 +326,8 @@ export class LiveState {
 
   private taskList(): AddonTask[] {
     try {
-      return readOwnAddonTasks(this.cwd, this.sessionId).slice(0, MAX_WAITS).map((t) => ({ ...t, tail: [] }));
+      const ended = this.taskEnded;
+      return readAllOwnAddonTasks(this.cwd, this.sessionId).filter((t) => !ended?.(t)).slice(0, MAX_WAITS).map((t) => ({ ...t, tail: [] }));
     } catch {
       return []; // tasks are best effort
     }
@@ -342,21 +339,6 @@ export class LiveState {
       return (this.dotsOf?.() ?? []).filter((d) => states.includes(d.state)).slice(0, MAX_DOTS).map((d) => ({ n: d.src === "pr" && Number.isInteger(d.n) ? d.n : null, state: d.state, label: short(String(d.label), 20), src: d.src === "pr" ? "pr" : "ext", ...(d.src === "pr" && typeof d.url === "string" && d.url.length <= 2048 && SAFE_DOT_URL.test(d.url) ? { url: d.url } : {}) }));
     } catch {
       return []; // dots are best effort
-    }
-  }
-
-  /** The open asks of the dirs where this session is the child (the ask signal's own source). */
-  private askList(): LiveAsk[] {
-    try {
-      const out: LiveAsk[] = [];
-      for (const dir of childHandoffDirs(path.join(this.agentDir, "pi-foreman", "handoffs"), this.idOf())) {
-        if (!askOpen(dir)) continue;
-        const head = parseAskHeader(fs.readFileSync(path.join(dir, ASK_FILE), "utf8"));
-        if (head) out.push({ n: head.n, topic: short(head.topic, 80) });
-      }
-      return out.slice(0, 4);
-    } catch {
-      return []; // asks are best effort
     }
   }
 
@@ -500,7 +482,6 @@ export class LiveState {
     } catch {
       // owner is best effort
     }
-    const asks = this.askList();
     const tasks = this.taskList();
     const dots = this.dotList();
     let where: { repo: string | null; branch: string | null } = { repo: null, branch: null };
@@ -517,7 +498,7 @@ export class LiveState {
     }
     const blockedOn: BlockOn | undefined = this.ownerKinds.size > 0 ? "owner" : this.parentKinds.size > 0 ? "parent" : undefined;
     const blockedKind = blockedOn === "owner" ? this.ownerKind : blockedOn === "parent" ? [...this.parentKinds.values()][0] : null;
-    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(asks.length ? { asks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}) };
+    return { v: this.base.v, sessionId: this.base.sessionId, intercomId: this.idOf(), ...this.base, cwd: short(this.base.cwd, 300), heartbeatAt: new Date(now).toISOString(), lastEventAt: new Date(this.lastEventMs).toISOString(), state, runs, waits: this.waitList(), ...(tasks.length ? { tasks } : {}), ...(dots.length ? { dots } : {}), ...(where.repo ? { repo: short(where.repo, 200) } : {}), ...(where.branch ? { branch: short(where.branch, 200) } : {}), tokensIn: Math.round(t?.tokensIn ?? 0), tokensOut: Math.round(t?.tokensOut ?? 0), cost: Math.round((t?.cost ?? 0) * 10000) / 10000, blockedSince: this.blockedSinceMs === null ? null : new Date(this.blockedSinceMs).toISOString(), presence: this.presenceName, ...(blockedOn ? { blockedOn } : {}), ...(blockedKind ? { blockedKind } : {}), ...(this.ownerSinceMs !== null ? { ownerBlockedSince: new Date(this.ownerSinceMs).toISOString() } : {}), ...(pressure ? { pressure } : {}), ...(away ? { away: true as const } : {}), ...(owner ? { owner } : {}), ...(show ? { show } : {}), ...(this.endedBy ? { endedBy: this.endedBy } : {}) };
   }
 
   private schedule(): void {
@@ -556,6 +537,11 @@ export class LiveState {
     if (this.timer) clearTimeout(this.timer);
     this.interval = this.timer = null;
     this.lastEventMs = Date.now();
+    try {
+      this.endedBy = this.endedByOf?.();
+    } catch {
+      // best effort: the record then reads as a normal end
+    }
     this.write();
   }
 }

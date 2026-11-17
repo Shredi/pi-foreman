@@ -1,5 +1,5 @@
 // Plan form by code (ownertext.ts planFormIssues, docs/ceremony.md): a `[plan-review]` launch on a plan whose owner section is
-// missing, empty, not first or too long is refused with `[plan_form]` (trace `launch_refused`, reason `plan_form`; no `role_launch`);
+// missing, empty or not first is refused with `[plan_form]` (trace `launch_refused`, reason `plan_form`; no `role_launch`);
 // a clean plan and a plan that cannot be read launch; the write result of a plan carries the same faults. The two headings of a
 // plan-first session are checked only when PI_FOREMAN_PLAN_PHASE is 1 and PI_FOREMAN_HANDOFF_DIR is set.
 import { test } from "node:test";
@@ -12,21 +12,34 @@ const OWNER = "## For the owner\n\nGoal: ship the widget.\nSteps: one small chan
 const REST = "## Goal\nShip it.\n";
 const HEADINGS = "## Decisions and assumptions\n1. none.\n\n## Open questions\n1. none.\n";
 const clean = `# Widget\n\n${OWNER}${REST}`;
-const longOwner = `## For the owner\n\n${Array.from({ length: 14 }, (_, i) => `Line ${i + 1} of the owner section.`).join("\n")}\n\n`;
+const longOwner = `## For the owner\n\n${Array.from({ length: 40 }, (_, i) => `- Line ${i + 1} of the owner section, with a few more plain words to make it wide.`).join("\n")}\n\n`;
 
 const refused = (r: { blocked: string | null }): boolean => /\[plan_form\]/.test(r.blocked ?? "");
 
-test("planFormIssues: missing, empty, not first, too long, headings; jargon is no issue", () => {
+test("planFormIssues: missing, empty, not first, headings; length and jargon are no issue", () => {
   assert.deepEqual(planFormIssues(clean, {}), []);
   assert.deepEqual(planFormIssues(`# W\n\n${REST}`, {}), ["missing"]);
   assert.deepEqual(planFormIssues(`# W\n\n## For the owner\n\n## Goal\nx\n`, {}), ["empty"]);
   assert.deepEqual(planFormIssues(`# W\n\n${REST}\n${OWNER}`, {}), ["not the first ## section"]);
-  const long = planFormIssues(`# W\n\n${longOwner}${REST}`, {});
-  assert.equal(long.length, 1);
-  assert.match(long[0], /^too long \(14 lines wrapped at 100 columns/);
   assert.deepEqual(planFormIssues(`# W\n\n## For the owner\n\nSee \`src/a.ts\` and foo_bar.\n\n${REST}`, {}), []);
   assert.deepEqual(planFormIssues(clean, { requiredHeadings: ["Decisions and assumptions", "Open questions"] }), ["missing heading: Decisions and assumptions", "missing heading: Open questions"]);
   assert.deepEqual(planFormIssues(`${clean}\n${HEADINGS}`, { requiredHeadings: ["Decisions and assumptions", "Open questions"] }), []);
+});
+
+test("a long owner section is no form fault; a missing or late one still is", async (t) => {
+  const longText = `# W\n\n${longOwner}${REST}`;
+  assert.ok(longOwner.length > 3000);
+  assert.deepEqual(planFormIssues(longText, {}), []);
+  assert.deepEqual(planFormIssues(`# W\n\n${REST}`, {}), ["missing"]);
+  assert.deepEqual(planFormIssues(`# W\n\n${REST}\n${longOwner}`, {}), ["not the first ## section"]);
+  const w = world(t);
+  fs.writeFileSync(w.planFile, longText);
+  assert.equal((await (await w.adapter("startup")).reviewLaunch()).blocked, null);
+  for (const text of [`# W\n\n${REST}`, `# W\n\n${REST}\n${longOwner}`]) {
+    const x = world(t);
+    fs.writeFileSync(x.planFile, text);
+    assert.ok(refused(await (await x.adapter("startup")).reviewLaunch()));
+  }
 });
 
 test("planFormIssues: required headings inside a fenced code block do not count", () => {
@@ -49,7 +62,6 @@ test("a [plan-review] launch is refused for each form fault, with a launch_refus
     ["missing", `# W\n\n${REST}`, /missing/],
     ["empty", `# W\n\n## For the owner\n\n${REST}`, /empty/],
     ["not first", `# W\n\n${REST}\n${OWNER}`, /not the first/],
-    ["too long", `# W\n\n${longOwner}${REST}`, /too long \(14 lines/],
   ];
   for (const [name, text, re] of faults) {
     const w = world(t);
@@ -104,9 +116,9 @@ test("the two headings are required only in a plan-first session opened by a par
 test("the write result of a plan carries the form faults; a clean plan adds nothing", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
-  fs.writeFileSync(w.planFile, `# W\n\n${longOwner}${REST}`);
+  fs.writeFileSync(w.planFile, `# W\n\n${REST}`);
   const bad = await a.call("write", { path: w.planFile, content: "x" });
-  assert.match(bad.note, /too long \(14 lines/);
+  assert.match(bad.note, /missing/);
   assert.match(bad.note, /plan form is wrong/);
   fs.writeFileSync(w.planFile, clean);
   const ok = await a.call("write", { path: w.planFile, content: "x" });

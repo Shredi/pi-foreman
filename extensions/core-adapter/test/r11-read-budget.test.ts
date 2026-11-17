@@ -10,10 +10,10 @@ const WARN = DEFAULT_READ_LIMITS.before.warn; // 8, the same for both phases
 const readDenied = (r: { block?: boolean; reason?: string } | undefined): boolean => r?.block === true && /\[read_budget_exceeded\]/.test(r.reason ?? "");
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
-/** `n` plain reads; returns the results. */
+/** `n` plain reads (through the grep tool: it counts for the budget like a shell read and starts no guard process); returns the results. */
 async function reads(a: Rig, n: number): Promise<({ block?: boolean; reason?: string } | undefined)[]> {
   const out = [];
-  for (let i = 0; i < n; i++) out.push(await a.call("bash", { command: `ls -la src${i}` }));
+  for (let i = 0; i < n; i++) out.push(await a.call("grep", { pattern: `src${i}`, path: "src" }));
   return out;
 }
 
@@ -31,10 +31,10 @@ test("ruling_read_budget_line_has_no_effect_but_ruling_file_resets", async (t) =
   writeAt(path.join(dir, "ruling.md"), "APPROVED\nread-budget: +3\n", now - 1000);
   assert.ok(!(await reads(a, 2)).some(readDenied));
   assert.equal(reminds(a), 1, "the ruling line changes nothing");
-  // a parent-written ruling-2.md resets the read budget: the count restarts, so WARN - 1 further reads raise no reminder
-  writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
+  // a parent-written brief-2.md resets the read budget: the count restarts, so WARN - 1 further reads raise no reminder
+  writeAt(path.join(dir, "brief-2.md"), "go on\n", Date.now());
   await a.turnStart(); // the reads above were tool_calls only: none is in flight on the next turn
   await reads(a, WARN - 1);
-  assert.equal(reminds(a), 1, "a parent ruling-<n>.md resets the read count");
+  assert.equal(reminds(a), 1, "a parent brief-<x>.md resets the read count");
   assert.equal(a.events("cap_reset").length, 1);
 });

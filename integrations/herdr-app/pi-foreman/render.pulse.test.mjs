@@ -56,13 +56,15 @@ test("the pulse loops the disc in the PR's colour: draft running violet, running
   assert.equal(running.props.bg, "#ansi3", "amber");
 });
 
-test("failed and passed PRs stay still; the colours are red and green", () => {
+test("a failed PR stays still and red; a ready PR gets a still green check mark", () => {
   const root = render();
-  for (const [n, colour] of [[63, "#blocked"], [64, "#ansi2"]]) {
-    const dot = dotOf(chipOf(root, n));
-    assert.equal(dot.props.loop, undefined, `#${n} does not pulse`);
-    assert.equal(dot.props.bg, colour, `#${n} colour`);
-  }
+  const dot = dotOf(chipOf(root, 63));
+  assert.equal(dot.props.loop, undefined, "#63 does not pulse");
+  assert.equal(dot.props.bg, "#blocked", "#63 colour");
+  const check = walk(chipOf(root, 64).props.trigger).find((e) => (e.kids ?? []).includes("✓"));
+  assert.ok(check, "#64 draws the check mark");
+  assert.equal(check.props.text_color, "#ansi2", "#64 colour");
+  assert.equal(check.props.loop, undefined, "#64 does not pulse");
 });
 
 test("no PR chip draws a spinner: the turning circle is for agents only", () => {

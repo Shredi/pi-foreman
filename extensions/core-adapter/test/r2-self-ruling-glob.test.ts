@@ -10,8 +10,7 @@ import * as path from "node:path";
 import { baseFloorEnv, gateEvaluate } from "../gate.ts";
 import type { GateRoots } from "../pathrules.ts";
 import { childHandoffDirs } from "../owned.ts";
-import { readPlanVerdict } from "../checkpoint.ts";
-import { SELF_RULING_REASON, SelfRulings, selfRulingRefusal, toolWriteRuling } from "../ruling.ts";
+import { SELF_RULING_REASON, SelfRulings, parentApproval, selfRulingRefusal, toolWriteRuling } from "../ruling.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-r2glob-")));
 after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -152,34 +151,34 @@ function afterToolWrite(self: SelfRulings, abs: string): void {
 }
 
 for (const tool of ["write", "edit"]) {
-  test(`${tool} tool onto a link to the ruling: recorded as self-written, no plan approval`, { skip: !posix }, () => {
-    const { d, plan } = rig();
+  test(`${tool} tool onto a link to the ruling: recorded as self-written, no parent ruling (#227: no file approves a plan; the finish note still reads it)`, { skip: !posix }, () => {
+    const { d } = rig();
     const link = path.join(d, "notes.md");
     fs.symlinkSync(path.join(d, "ruling.md"), link, "file");
     assert.equal(toolWriteRuling(link), path.join(d, "ruling.md"), "dangling link: resolved before the write");
     fs.writeFileSync(link, "APPROVED\n");
     const self = new SelfRulings();
     afterToolWrite(self, link);
-    assert.equal(readPlanVerdict(d, plan, self), null);
-    assert.deepEqual(readPlanVerdict(d, plan), { kind: "approve" }, "nothing recorded: the same file approves");
+    assert.equal(parentApproval([d], 0, self), null);
+    assert.equal(parentApproval([d], 0), path.join(d, "ruling.md"), "nothing recorded: the same file counts as a parent ruling");
   });
 }
 
-test("control: the parent writes the child's ruling directly: nothing recorded for the child, the child reads approve", { skip: !posix }, () => {
-  const { d, plan } = rig();
+test("control: the parent writes the child's ruling directly: nothing recorded for the child, the child reads the ruling", { skip: !posix }, () => {
+  const { d } = rig();
   fs.writeFileSync(path.join(d, "ruling.md"), "APPROVED\n");
   const self = new SelfRulings();
-  assert.deepEqual(readPlanVerdict(d, plan, self), { kind: "approve" });
+  assert.equal(parentApproval([d], 0, self), path.join(d, "ruling.md"));
 });
 
 test("control: a tool write onto a link to a file with no ruling name records nothing", { skip: !posix }, () => {
-  const { d, plan } = rig();
+  const { d } = rig();
   fs.writeFileSync(path.join(d, "other.md"), "APPROVED\n");
   const link = path.join(d, "notes.md");
   fs.symlinkSync(path.join(d, "other.md"), link);
   assert.equal(toolWriteRuling(link), null);
   assert.equal(toolWriteRuling(path.join(d, "plain.md")), null);
-  assert.equal(readPlanVerdict(d, plan, new SelfRulings()), null);
+  assert.equal(parentApproval([d], 0, new SelfRulings()), null);
 });
 
 test("a ruling name typed as such is still recorded", { skip: !posix }, () => {

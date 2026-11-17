@@ -4,8 +4,8 @@
 //   repeat:  the sig is non-empty and equal, or
 //   stalled: the state is unchanged (no diff) and the sig brings nothing new (a subset).
 // A PASS restarts the comparison; a FAIL with an empty sig fires nothing (there is nothing to compare). The stop
-// (`LoopStop`) refuses builder and reviewer launches (index.ts) until an owner prompt, a parent ruling or brief, or a
-// `/ceremony` tier change clears it.
+// (`LoopStop`) refuses builder and reviewer launches (index.ts) until an owner prompt, an answered ask_user_question, a parent brief,
+// or a `/ceremony` tier change clears it.
 // Plan reviews (`loopVerdictOf`): an equal set across two different plan versions is a repeat only when it holds an `at:` key; an
 // unknown state ("") equals only another unknown state. A session with a parent gets `loopRefusalParented` instead of `loopRefusal`.
 import { failedItemsOf } from "./costguard.ts";
@@ -53,7 +53,7 @@ export function loopVerdict(prev: LoopRound | null, cur: LoopRound): LoopRule | 
 export function loopRefusal(stop: LoopStop): string {
   const what = stop.kind === "plan" ? "plan" : "work";
   const why = stop.rule === "repeat" ? `the last two ${stop.kind} review rounds failed with the same findings` : `the last ${stop.kind} review failed again with no new finding and no change to the ${what} since the round before`;
-  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent ruling or brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.`;
+  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings, then ask the owner with ask_user_question (an answer lifts this stop) or wait for a new prompt. A parent brief, or a /ceremony tier change, also lifts this; a [second-opinion] review is still allowed.`;
 }
 
 /** `loopVerdict` per review kind. A plan review that fails again on a revised plan (a new plan version) with only `item:<N>` keys in common is not a repeat: new findings under the same ledger item are progress. A located key (`at:`) in the set still stops it. Code reviews and same-version plan rounds are `loopVerdict` unchanged. */
@@ -63,9 +63,13 @@ export function loopVerdictOf(kind: ReviewKind, prev: LoopRound | null, cur: Loo
   return rule;
 }
 
-/** The `[review_loop]` refusal text in a session a parent opened: the open findings go to the parent by file; the owner is asked only for a decision of theirs. */
-export function loopRefusalParented(stop: LoopStop): string {
+/**
+ * The `[review_loop]` refusal text in a session a parent opened: the open findings go to the parent in a message, and a brief lifts the stop; the owner is asked
+ * only for a decision of theirs. `byFile`: intercom cannot reach the parent (a remote parent, `PI_FOREMAN_REMOTE_PARENT=1`): the findings go in `ask.md` and the parent's brief answers.
+ */
+export function loopRefusalParented(stop: LoopStop, byFile = false): string {
   const what = stop.kind === "plan" ? "plan" : "work";
   const why = stop.rule === "repeat" ? `the last two ${stop.kind} review rounds failed with the same findings` : `the last ${stop.kind} review failed again with no new finding and no change to the ${what} since the round before`;
-  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings to the parent by file (ask.md in the handoff dir) and wait for its ruling, which lifts this stop. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A parent brief, a new owner prompt, or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.`;
+  if (byFile) return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop and report the open findings to the parent by file (ask.md in the handoff dir), say so at your pane and end your turn: the parent's brief answers it and lifts this stop; a ruling-<n>.md does not. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A new owner prompt or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.`;
+  return `pi-foreman: launch refused [review_loop]: ${why} (${stop.sig.join(", ")}). Stop, report the open findings to the parent in an intercom message whose first line starts with Question, and end your turn: the parent lifts this stop with a brief; a message does not, and neither does a ruling-<n>.md. If intercom cannot reach the parent (it is not a Pi session, or the send says Session not found), report by file (ask.md in the handoff dir), say so at your pane and end your turn: the parent's brief answers it and lifts the stop. Ask the owner with ask_user_question only when a finding needs the owner's decision (an answer lifts this stop too). A new owner prompt or a /ceremony tier change also lifts this; a [second-opinion] review is still allowed.`;
 }

@@ -36,8 +36,8 @@ function fakeClock() {
   return { timers, advance, now: () => now };
 }
 
-/** A runtime with a fake clock; `briefs`/`mtime` are injected only when `brief` is given. */
-function rig(brief?: { name: string; mtimeMs: number }, over: { mtime?: boolean } = {}) {
+/** A runtime with a fake clock and an mtime source that knows no file. */
+function rig() {
   const clock = fakeClock();
   const wakes: Outcome[][] = [];
   const changed = { n: 0 };
@@ -51,60 +51,22 @@ function rig(brief?: { name: string; mtimeMs: number }, over: { mtime?: boolean 
     wake: (o) => wakes.push(o),
     trace: () => {},
     changed: () => changed.n++,
-    ...(brief ? { briefs: () => [brief, { name: "notes.md", mtimeMs: 9e15 }] } : {}),
-    ...(brief && over.mtime !== false ? { mtime: () => null } : {}),
+    mtime: () => null,
   });
   return { rt, clock, wakes, changed };
 }
 
 const dir = "/w/.workflow/handoff";
 
-test("a ruling-named file wait resolves 'superseded by brief' when a newer brief lands beside it, and the wake carries it", () => {
-  const r = rig({ name: "brief-fix.md", mtimeMs: 1_000_001 });
-  r.rt.start({ kind: "file", path: `${dir}/ruling.md`, note: "ruling" });
-  r.clock.advance(2000);
-  assert.equal(r.wakes.length, 1);
-  assert.deepEqual(r.wakes[0].map((o) => [o.kind, o.outcome]), [["file", `superseded by brief ${path.join(dir, "brief-fix.md")}`]]);
-  assert.equal(r.rt.active, 0);
-  r.rt.dispose();
-});
-
-test("ruling-<n>.md is a ruling name too", () => {
-  const r = rig({ name: "brief-x.md", mtimeMs: 1_500_000 });
-  r.rt.start({ kind: "file", path: `${dir}/ruling-2.md`, note: "" });
-  r.clock.advance(2000);
-  assert.match(r.wakes[0][0].outcome, /^superseded by brief .*brief-x\.md$/);
-  r.rt.dispose();
-});
-
-test("a brief older than the wait does not supersede it", () => {
-  const r = rig({ name: "brief-fix.md", mtimeMs: 999_999 });
-  r.rt.start({ kind: "file", path: `${dir}/ruling.md`, note: "" });
+// PR 4 (the child owns its plan): the remote plan-first wait on ruling.md and its supersede by a newer brief are gone. A file wait on a
+// ruling name is a plain file wait: it ends when the file exists, never because a brief landed beside it.
+test("a ruling-named file wait is a plain file wait: no file, no wake", () => {
+  const r = rig();
+  for (const name of ["ruling.md", "ruling-2.md"]) r.rt.start({ kind: "file", path: `${dir}/${name}`, note: "" });
   r.clock.advance(10_000);
   assert.equal(r.wakes.length, 0);
-  assert.equal(r.rt.active, 1);
+  assert.equal(r.rt.active, 2);
   r.rt.dispose();
-});
-
-test("a non-ruling file wait is not superseded by a newer brief", () => {
-  const r = rig({ name: "brief-fix.md", mtimeMs: 2_000_000 });
-  r.rt.start({ kind: "file", path: `${dir}/done.flag`, note: "" });
-  r.clock.advance(10_000);
-  assert.equal(r.wakes.length, 0);
-  r.rt.dispose();
-});
-
-test("without briefs, or without mtime, nothing supersedes", () => {
-  const none = rig();
-  none.rt.start({ kind: "file", path: `${dir}/ruling.md`, note: "" });
-  none.clock.advance(10_000);
-  assert.equal(none.wakes.length, 0);
-  none.rt.dispose();
-  const noMtime = rig({ name: "brief-fix.md", mtimeMs: 2_000_000 }, { mtime: false });
-  noMtime.rt.start({ kind: "file", path: `${dir}/ruling.md`, note: "" });
-  noMtime.clock.advance(10_000);
-  assert.equal(noMtime.wakes.length, 0);
-  noMtime.rt.dispose();
 });
 
 test("regression: a resolved or cancelled wait fires changed once and the next presence file no longer lists it", async () => {

@@ -196,7 +196,7 @@ are additive: older readers ignore them, and each is present only when there is 
 | `unreviewed` | the `pr_watch` wait | `[{n, repo, host}]`, present only for watched PRs whose head moved past the session's last reviewer PASS (see [tools](tools.md#watch)); the herdr-app mod matches it to the PR chip by number, repository and host and shows `unreviewed head` on the chip and its hover card; the sidebar's `fm_a2` item reads `pr #<n> unreviewed head`. A PR the session only follows has no entry; a PASS on the head or the end of the PR removes it |
 | `review` | the `pr_watch` wait | `[{n, repo, host, head, state}]` for the PRs the session opened with its PR tool and manages as drafts (see [tools](tools.md#draft)): `head` is the host head the fact is about (the head the watch last evaluated; for `wip` and `unreviewed` it is not a reviewed head), `state` is `ok`, `wip` or `unreviewed`, with `noChecks` when no checks are confirmed. Additive; the pill uses it beside the host's facts. The radar copies it only when well-formed and also passes the host's head and merge state of each tracked PR (`head`, `mergeState`) into the feed |
 | `tasks` | live file, radar session node | this session's own `bg_run` add-on tasks: `id`, `label`, `pid`, `ageSeconds` |
-| `asks` | live file, radar session node | `[{n, topic}]` while the session's own handoff ask is open |
+| `asks` | radar session node | `[{n, topic}]` for a remote session's open ask; the live file has no `asks` field |
 | `dots` | live file, radar session node | the dots row: `[{n, state, label, src}]`, at most 14: the external status items (`src` `ext`); `n` is `null`, `state` one of `fail`, `run`, `ok`, `none`, `label` at most 20 characters. The extension writes no `pr` dots any more; the radar still reads one from an older live file (`url`) and the herdr-app mod draws one aggregate dot for it (the job list of the hover card comes from the `openPrs` feed). The radar copies the dots to the session node unless the live file is stale (heartbeat older than 90 s, the lost rule) or its session is done, so a finished session keeps no PR dot from before a merge; the herdr-app mod counts a PR seen twice once and skips a merged or closed one. The `prs` field of the `pr_watch` wait is separate and unchanged |
 | `repo`, `branch` | live file, radar session node | `owner/name` of the origin remote and the checked-out branch (each present only when known); the herdr-app mod attaches a feed PR to the session with equal repo and head branch, and also one the session watches (`prs`, see above) whose repo or head repo is the session's |
 
@@ -227,7 +227,7 @@ State and cell:
 
 | `sym` | Cell (`unicode`) | Animated |
 |---|---|---|
-| `needs-you` (an own dialog or ask, an open `ask.md` with no `ruling-<n>.md`, or a child's ask forwarded to this session) | ❓ (`?` in `ascii`) | no: beats the spinner |
+| `needs-you` (an own dialog or ask, an own `ask.md` that no answer file or typed input has closed, or a remote child's ask) | ❓ (`?` in `ascii`) | no: beats the spinner |
 | `working` (a turn or run; registry `starting` and `pending` too) | spinner frame | yes |
 | `waiting-external` or `idle` while the session has work of its own: a child run or live child session, a `bg_run` or `foreman_bg` task, a running `pr_watch` or `foreman_wait` | spinner frame | yes |
 | `waiting-external` with no local work | ↻ | no |
@@ -270,7 +270,7 @@ The presence file (`state/live/<session>.json`) carries `presence`, one of six n
 `config/symbols.json`. Precedence: `done` > `needs-you` > `working` > `waiting-external` > `idle` (a finished
 session is `done` whatever else is still open). The legacy `state` field is unchanged for older readers (`blocked` is
 an own dialog; `waiting-external` still reads `working`), and `presence` is absent from files written by older versions.
-The radar derives `needs-you` from the file too (an open `asks` entry, or a child run in state `ask`), so a parent whose
+The radar derives `needs-you` from the file too (an open `asks` entry of a remote session, or a child run in state `ask`), so a parent whose
 turn ended still shows ❓ while a forwarded child ask waits.
 
 **Away field.** The presence file gains the optional `away: true`, written only while a foreman warm window is open and
@@ -285,7 +285,7 @@ rule; `presence` and `away` are unchanged. The radar JSON carries `owner` when t
 | `presence` | `state_icon` glyph (unicode / nerd) | Meaning |
 |---|---|---|
 | `working` | ⏳ / `\uf252` | the foreman turn runs, or a child run is live, with nothing for you to do |
-| `needs-you` | ❓ / `\uf128` (`?` in `ascii`) | an own permission dialog, `ask_user_question`, guard or drift ask or checkpoint, an open `ask.md` with no `ruling-<n>.md`, or a child's ask forwarded to this session waits for you |
+| `needs-you` | ❓ / `\uf128` (`?` in `ascii`) | an own permission dialog, `ask_user_question`, guard or drift ask or checkpoint, an own `ask.md` that no answer file or typed input has closed, or a remote child's ask waits for you |
 | `waiting-owner` | ✋ / `\uf256` | older files only: an open ask or dialog (now `needs-you`) |
 | `waiting-external` | ↻ / `\uf017` | only external waits are pending: `foreman_wait`, `foreman_bg` pid waits, `pr_watch` |
 | `idle` | ⏸ / `\uf04c` | none of the above |
@@ -383,9 +383,8 @@ live file shows as idle. The opener id is `--parent-id`, `PI_INTERCOM_SESSION_ID
 config `stableId`; a child that closes marks its own entry `closed`. A remote child (`--machine`, see [remote child sessions](sessions.md#remote-child-sessions)) is shown as `label@machine · state · age`; its state is `ask` when an ask is set, else the hc terminal status the watcher stores in `remoteLive` (the registry status only before the first hc status), not a local live file.
 
 Ask signal: when a session opened by `foreman session open` writes `ask.md` (first line `# Ask <n>: <topic>`) in its own
-handoff dir, pi-foreman touches `<handoff>/.ask` and opens a blocked source, so Herdr shows `blocked` with the label
-`ask <n>: <topic>` (`herdr:blocked`, the same channel as a dialog; never `herdr agent prompt`). Writing `.seen` in that
-dir, or shutdown, releases it; a ruling wait that ends as `superseded by brief <path>` (see [sessions](sessions.md)) does not release it. A parent that is not a Pi session polls `*.md` and `.ask`; the file contract is in
+handoff dir, pi-foreman opens a blocked source (no marker file), so Herdr shows `blocked` with the label
+`ask <n>: <topic>` (`ask` when the first line is not that header; `herdr:blocked`, the same channel as a dialog; never `herdr agent prompt`). An answer file (a brief or an old-footer `ruling-<n>.md`, not older than `ask.md`), typed input at the pane, or shutdown releases it. The end of the turn releases only the `herdr:blocked` signal (Herdr shows the pane unblocked from then on, and a later check of the same still-open version of `ask.md` does not raise it again, except after a reload or a new session start, which check afresh, or when a new `ask.md` version is written); the live file keeps "needs you" until the ask is answered. That label is the child's own pane; the parent's radar shows no separate ask row for a local file ask, a remote ask keeps it. A parent that is not a Pi session reads `ask.md` in the handoff dir. What counts as an answer, and what a reload forgets, is in
 [sessions](sessions.md#ask-by-file-parent-that-is-not-a-pi-session).
 
 ## Remote clients and Pi pane status
@@ -417,7 +416,7 @@ folder and reapplied at startup, because Herdr forgets the view on a server rest
 Herdr marks an agent that needs you from its agent status, and it has no separate switch for the highlight in its
 config reference (`herdr --default-config`): the highlight follows the status. pi-foreman raises that status through the
 `herdr:blocked` event whenever the sidebar draws ✋ or `?` for a session: a dialog or permission prompt, a checkpoint,
-the ask-by-file `.ask` of a child session, and a forwarded child prompt that a child run is waiting on. See
+the ask-by-file `ask.md` of the session itself, and a forwarded child prompt that a child run is waiting on. See
 [blocked shim](sessions.md#blocked-shim), including when the shim steps aside (Herdr's own integration, version 10 or
 later, takes over) and the `herdr.blockedShim` switch.
 
@@ -593,9 +592,9 @@ terminal the open prints `attach: hc attach <machine>/<t>` to run by hand. See
 `launch.txt` keeps the usual shell line, so a relaunch is a copy. The final screen of a finished child stays readable (no `--rm`).
 
 **The `pi-foreman` mod.** `integrations/herdr-app/pi-foreman/` is an Agents view for herdr-app (own code on the public mod API;
-it replaces the shipped `agents` block of your cloned layout). Grouped by space, each agent that joins a top-most foreman session
+it replaces the shipped `agents` block of your cloned layout). The list has one heading per workspace in every sort mode; under the priority sort the strict order across workspaces gives way to the grouping (groups are ordered by their first agent, the order inside a group is kept). Grouped by space, each agent that joins a top-most foreman session
 gets: label · tier · cost of the session and every nested session (with "N sessions"); the open ask (red when blocked) or the
-waits; one dot per PR (see Open PRs below) in a chip on the right of the title row, the same place for the top-level row and every child row: up to two chips, with more PRs one chip of the most urgent PR reading "#n +k" (there is no separate PR line or "N PRs" summary). Resting on a chip shows a tooltip naming the state and the PR ("#16 · CI failing", "CI running", "CI passing", "no CI checks"; `.tooltip(text)`, Herdr 0.1.14) and opens its hover card (0.3 s delay), which adds the details and lists the other PRs of a "+k" chip. The host has no flip or offset for a HoverCard and only clamps it into the window, so the mod picks the card's `anchor` from the chip's window position (`on_mouse_move` bounds, the drawable size from the global `window.viewport_size()`, read as `globalThis.window` because main.js imports herdr's `window` under the same name, and read during `render` (where the host guarantees window measurements) and kept on the instance for the handler; `placeCard` in model.js). The card opens below the chip when it fits there, otherwise on the side with more room, otherwise beside the chip. It is never taller than the room on its side; long text is cut off. The card never covers the chip, which stays clickable. A chip click opens the PR without also focusing the pane (`cx.stop_propagation()`), and a chip with no known page shows a notice instead. Known limit: the mod sees only the Herdr window's size, not the screen's (the mod API has no display size). With the window dragged partly below the screen edge, the card can open below the chip off screen. Dot colours (the check part of the PR pill, see Open PRs): amber and pulsing while any check runs or is not settled (also when some have passed; a draft pulses in violet; the card says "CI running", never "CI passing"), amber and still when all checks passed but the merge is blocked or the branch is behind (the tooltip says "CI passing, merge blocked" or "CI passing, branch behind"), green only when all finished and passed, red a job failed (at once, settled or not, on a draft too; red never pulses), grey no CI data; merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
+waits; one dot per PR (see Open PRs below) in a chip on the right of the title row, the same place for the top-level row and every child row: up to two chips, with more PRs one chip of the most urgent PR reading "#n +k" (there is no separate PR line or "N PRs" summary). Resting on a chip shows a tooltip naming the state and the PR ("#16 · CI failing", "CI running", "CI passing", "no CI checks"; `.tooltip(text)`, Herdr 0.1.14) and opens its hover card (0.3 s delay), which adds the details and lists the other PRs of a "+k" chip. The host has no flip or offset for a HoverCard and only clamps it into the window, so the mod picks the card's `anchor` from the chip's window position (`on_mouse_move` bounds, the drawable size from the global `window.viewport_size()`, read as `globalThis.window` because main.js imports herdr's `window` under the same name, and read during `render` (where the host guarantees window measurements) and kept on the instance for the handler; `placeCard` in model.js). The card opens below the chip when it fits there, otherwise on the side with more room, otherwise beside the chip. It is never taller than the room on its side; long text is cut off. The card never covers the chip, which stays clickable. A chip click opens the PR without also focusing the pane (`cx.stop_propagation()`), and a chip with no known page shows a notice instead. Known limit: the mod sees only the Herdr window's size, not the screen's (the mod API has no display size). With the window dragged partly below the screen edge, the card can open below the chip off screen. Dot colours (the check part of the PR pill, see Open PRs): amber and pulsing while any check runs or is not settled (also when some have passed; a draft pulses in violet; the card says "CI running", never "CI passing"), amber and still when all checks passed but the merge is blocked or the branch is behind (the tooltip says "CI passing, merge blocked" or "CI passing, branch behind"), a check mark when ready to merge (see the pill below), green (a plain dot, the tooltip says "CI passing") when all finished and passed but nothing more is known (an older feed, or the merge is not known to be mergeable), red a job failed (at once, settled or not, on a draft too; red never pulses), grey no CI data; merged or closed PRs drop (feed-twin state, or absence from a fresh feed that covers the repo). Non-root sessions (any depth) are bordered cards holding their header, status lines, PR chips and their own agent rows; nested child cards sit outside the parent's card, the root is uncarded and the tree line is continuous. A selected card gets the raised background and an accent border; the root keeps its filled header row. Workers are one
 tree row "🤖 role model" (no status circle inside a card). An "Open PRs" section at the bottom lists the PRs of the `openPrs` radar field that no
 session shows. The mod is the only PR and run display: Pi itself draws no PR or run widget and no PR or run parts in its footer,
 and there is no fallback. Users without herdr-app keep `pr_status`, `pr_checks` and `foreman radar --json`; the feed is GitHub
@@ -625,6 +624,32 @@ spinner, red when blocked; `explorer · Running bash` from the hc record `msg`; 
 The copy is the first install only. To update an installed copy, run `foreman setup --mods` in a terminal (`--dry-run` lists the changed files and writes nothing first). It copies only the files that differ from the package into `mods/<mod>/` for each installed mod (never the test files, the app's `cache/`, or a file that exists only in the installed folder; a mod that is not installed is left alone) and prints the next step: save reloads a mod, or restart the app if it does not pick the change up, then `herdr-app check` the folder. `/foreman doctor` warns with the differing files and the fix command when an installed copy differs from the package, and `foreman setup` offers the refresh when it finds one. A session cannot write user config, so the refresh runs in a terminal (or the foreman proposes it as an owner script).
 
 Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"` (both are part of `npm run test:node`).
+
+### Crash restart
+
+Experimental. A Pi session that runs in a kept `hc` terminal (`HC_TERMINAL_ID` set, no `HERDR_PANE_ID`) comes back in its pane after a crash
+of the machine, the herdr core or the terminal. `hc keep` restores the terminal with a fresh shell; pi-foreman restarts Pi in it.
+
+- **Pane note.** While Pi runs in the tui, it keeps `<agent dir>/pi-foreman/state/panes/<terminal id>.json`: the session id and file, the folder, the
+  terminal's creation time and socket, and the terminal's root program pid. A normal quit (`/quit`, Ctrl+D) deletes it; Pi ending on SIGHUP or SIGTERM
+  keeps it and writes `endedBy: "signal"` into the presence file. Notes of sessions idle for more than 14 days are swept at each start, and
+  `foreman radar` keeps the presence file a note names for up to 14 days (`radar.doneTtlMinutes` does not delete it).
+- **Hook.** `foreman setup` writes a marked block (`# >>> pi-foreman resume >>>`) into your shell startup file ([install](install.md#the-resume-hook)).
+  At a prompt it runs `foreman pane-resume --shell-pid <pid>` only when `HC_TERMINAL_ID` is set, stdin is a terminal, the note exists and this shell has
+  not checked it yet (the note is new, or newer than the shell's marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, touched before each check; a missing marker means check again); otherwise it
+  starts no process and prints nothing. With no note a prompt costs only file tests. The hook removes its marker, so the next prompt checks again, when the command exits 75 (Pi wrote `done` after a signal but is still ending) or 127 (`node` not found yet, for example a lazy-loaded nvm); a suspended Pi (record not `done`) is a plain keep.
+- **Decision.** `foreman pane-resume` restarts the session only when all of these hold: `sessions.hc.resume` is not `off`; `hc get` answers; the terminal
+  is the one the note names (same creation time and socket); this shell is the terminal's root program; the presence file exists, names this terminal and
+  is not a normal end; its Pi process is gone (heartbeat before the last boot, or the pid is dead); the terminal's root pid differs from the note's (a lone
+  Pi crash with the shell still the same program is not restarted: the note is cleared and the hand-resume line printed); the session was active within 14 days and its folder exists; and no other run holds the
+  session's lock. Otherwise it keeps the note (a kept note is not decided again at every prompt: only in a new shell, or after the note changed, for example when Pi ran again in this shell) or clears it and, where you can resume by hand, prints `pi --session <id>` (the session id; for a session in a custom session dir, which is never restarted, the session file path).
+- **Restart.** A 5 s countdown (Enter starts now, any other key cancels and deletes the note), then `pi --session <file>` in the note's folder with the
+  session's permission profile, plan phase and `PI_BG_*` variables again. The session comes back with its history, identity (an opened child keeps its parent
+  link) and ceremony state. It gets one message (appended, never system text, no turn) with the time of the last sign of life; waits are lost.
+- **Limits.** One herdr core, one note per terminal. A lone Pi crash is not restarted, and neither is Pi ending on a signal in a shell that stays; the next prompt of that shell clears the note and prints the hand-resume line. No Windows.
+  Herdr TUI panes (`HERDR_PANE_ID`) are not covered. A custom session dir (not `<agent dir>/sessions`) clears the note and prints the hand-resume line.
+  Pi as a kept terminal's own program that exits with an error code is final for hc and is not restored.
+- **Off.** `sessions.hc.resume: "off"` (user or overlay config) writes no note and makes the hook do nothing; `foreman setup --no-resume-hook` writes no block.
 
 ### Versions
 
@@ -682,8 +707,9 @@ Every marker the herdr-app sidebar draws, with the one thing it means. The first
 | `pr-draft-failed` | disc (6 px), chip text and border | still | red | a draft or work-in-progress PR with a failed check: red like any failed PR |
 | `pr-merge-blocked` | disc (6 px) | still | amber | checks settled and passed, but the merge is blocked or the branch is behind; the tooltip says so |
 | `pr-not-reviewed` | disc (6 px) and the token "unreviewed head" | still | blue | checks green, the head is not reviewed |
-| `pr-ready` | disc (6 px) | still | green | checks settled green, mergeable (and reviewed when a session reviews) |
-| `pr-conflict` | small disc with "!" beside the dot | still | red | the PR conflicts with its base; the dot keeps the check colour |
+| `pr-ready` | check mark (bold ✓, 12 px, in the chip's 14 px box) | still | green | ready to merge: checks settled green, mergeable, merge state fine, and reviewed when a session reviews (the tooltip says "ready to merge") |
+| `pr-ci-passing` | disc (6 px) | still | green | checks settled green and nothing more known: an older feed, or the merge is not known to be mergeable (the tooltip says "CI passing") |
+| `pr-conflict` | small disc with "!" beside the dot | still | red | the PR conflicts with its base; the dot keeps its colour |
 | `pr-no-checks` | disc (6 px) | still | grey | no check data |
 
 A pulse is a native opacity loop of the disc (0.35 to 1, 1.2 s), drawn only while the PR is in a pulsing state; it adds no
@@ -694,7 +720,7 @@ timer and no redraw. The turning circle belongs to agents alone.
 The `openPrs` field of `foreman radar --json` is the shared open-PRs feed and the only source of PR data for the mod. It is on
 by default (`radar.openPrs.enabled: false` turns it off). It lists your open PRs (author), the open PRs with your review
 requested (`mine`), and the open PRs of configured bot authors inside a configured scope. The mod draws one dot per PR: a disc that is amber and pulsing while any check runs or is not settled (some may have passed), red once one has
-failed, green only when all finished and passed, and dim when unknown. The disc pulses (its opacity rises and falls, about once
+failed, a check mark when ready to merge (the pill below), a plain green dot when all finished and passed but nothing more is known, and dim when unknown. The disc pulses (its opacity rises and falls, about once
 in 1.2 s) while any job runs or the checks are not settled, unless a finished job failed; red never pulses. The turning circle is
 never used for a PR: it is the mark of an agent that works. For a PR with host facts these colours are the check part of the pill (below). Hovering the dot shows a card (title, the first
 ~200 characters of the description, the jobs grouped failed, running and passed, capped, and a CONFLICTING mark when the PR has
@@ -708,7 +734,9 @@ is shown under that session; fork PRs match through `headRepo` (the head reposit
 - merge blocked or behind: the checks are settled and passed, but the merge state is blocked or behind (amber and still; the tooltip reads "CI passing, merge blocked" or "CI passing, branch behind"; the summary and the sort count it as pending; a PR with no checks confirmed for the head and a blocked or behind merge gets the same still amber dot, and its tooltip reads "no CI checks, merge blocked" or "no CI checks, branch behind");
 - CI red: a check failed, on a draft or work-in-progress PR too (red and still, "CI failing", counted as failing);
 - green but not reviewed: the checks are green and the session's fact is missing for the host's head or says not reviewed;
-- ready: checks settled green (or no checks confirmed for a PR the session opened), mergeable, merge state not blocked, behind, in conflict or unknown, and the session's fact is `ok` on the host's head.
+- ready to merge: checks settled green (or no checks confirmed for a PR the session opened), mergeable, merge state not blocked, behind, in conflict or unknown, and the session's fact is `ok` on the host's head; a green check mark, bold, in the chip's box (it never pulses). A PR without a session fact is judged on host facts alone and gets the same check mark with no review claim.
+
+The still green dot says only "CI passing": checks passed, with nothing more known (an older feed without head and merge state, or a PR that is not mergeable).
 
 The session's review fact (the `review` field below) is used only when its head equals the host's current head, so a fact about an older head never shows ready on a newer one. A PR without a session fact (yours, a followed one, one in another repository, a session that ended) is judged on host facts alone: draft, running, red, or green and mergeable shown as ready with no review claim. An older live file without `review`, or an older feed without head and merge state, shows the dot as before. The rule behind "ready" is in [tools](tools.md#draft). An installed copy of the mod gets the pill with `foreman setup --mods`.
 
@@ -726,6 +754,9 @@ Owner and overlay config only (a project cannot change the GitHub search):
 | `radar.openPrs.mine` | `true` | list PRs you authored and PRs with your review requested |
 | `radar.openPrs.authors` | `[]` | other authors, for example `renovate[bot]` (a GitHub App `<name>[bot]` is searched as `author:app/<name>`) |
 | `radar.openPrs.scope` | `[]` | owners (`example-org`) or `owner/repo`; authors are searched only inside it, never unscoped |
+| `radar.openPrs.hideRepos` | `[]` | globs over the lowercased `owner/name` (`*`, `?`, case-insensitive; the matcher of `tools.prSources.<name>.repos`; at most 50 globs of 200 characters); the mod leaves the PRs of matching repositories out of the Open PRs list. Empty hides nothing; a malformed value hides nothing and is named by a manual `foreman prs poll` |
+
+`hideRepos` is display only: a hidden PR is still polled, watched and wakes its session, and its session chip stays. The PR tracker (`foreman prs poll`) marks entries `hiddenRepo: true` in `open-prs.json` and `tracked-prs-state.json` on every poll, so a change shows within about 30 s while the tracker runs; without it the marks stay as they were (a Pi session's refresh only copies them per repo, so a repo it sees first stays unmarked until the next poll). The mod hides a repository when any machine's feed marks it, so list the pattern on each machine whose feed has the repo. A session's PR of a repository the feed does not list at all stays listed (there is nothing to judge it by). The header shows no hidden count.
 
 A Pi session (not a child) or `foreman prs poll` refreshes `<agent dir>/pi-foreman/state/open-prs.json` in the background, at most once per
 `refreshSeconds` across all sessions on the machine: one refresher per machine (an exclusive lock file with a stale timeout, then an atomic rename). One
@@ -740,9 +771,9 @@ logged in or rate limited, the last file stays and carries `error` and `errorAt`
 
 | File | Writer |
 |---|---|
-| `open-prs.json` | `refreshOpenPrs` (a Pi session or `foreman prs poll`), under `open-prs.json.lock` |
+| `open-prs.json` (`hiddenRepo` per entry) | `refreshOpenPrs` (a Pi session or `foreman prs poll`) and the poll's re-mark of `hiddenRepo` (rewrites only when a mark changed), each under `open-prs.json.lock` |
 | `tracked-prs.json` `{v:1, prs:[{repo, number, addedAt, host?}]}` (at most 200 lines; `host` is absent for `github.com`) | Pi adds, the poll drops, each under `tracked-prs.json.lock` |
-| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt` per PR; `trackedAt`; `off`) | the poll only |
+| `tracked-prs-state.json` (snap, meta, `okAt`, `error`, `endedAt`, `hiddenRepo` per PR; `trackedAt`; `off`) | the poll only |
 | `tracked-prs-comments.json` | the poll only |
 
 The stored snap also carries the host's review decision as the optional field `reviewDecision` (`approved`, `changes_requested` or `review_required`; left out when the host gives none, and an entry without it still reads). The files stay version 1. Only the session's [ready label](tools.md#ready-label) reads the field; the radar feed, the pill and the child's blocked line do not.
@@ -776,15 +807,10 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 ## Plan panel
 
 **Experimental.** Two more herdr-app mods show what a session wants you to read, rendered, next to the Files and Changes panels:
-`integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel shows the plan of the foreman that owns the tab, rendered natively (headings, tables, code, task lists, links)
-with the blocks added or changed since the last ruling tinted and labelled NEW or CHANGED, a Diff view with the exact +/- lines, and one
-tab per child session that published a plan or a note. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
+`integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel is a list. It shows, for the foreman that owns the tab and for each of its child sessions (one tab each), the session's pages newest first, each with a state chip ("plan v3 · waits for you") and its age, and below them the milestones (plan review PASS/FAIL, checkpoint answered, PR opened, PR ready, PR merged, result written), newest first; a milestone that holds an `https://` link opens it. A click on a page opens it in the system browser (see Data). The panel does not render markdown, diagrams or diffs itself; the pages (see [Pages](#pages)) do. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
-click opens the panel on it, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
-panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A plan already read shows at once; a plan
-not read yet keeps the previous body, the tab labels and the header on screen until it is parsed ("Loading plan…" only when nothing is shown
-yet), so a switch does not blank or reflow the panel. A child with a plan and a note has a Plan | Note switch on its tab (Plan by default; Note when it has only a note). A child tab that is not on screen shows a ● on its label while its plan or note version is above the one last rendered there; showing the tab clears it, and on the Plan | Note switch the button of a part with unseen content carries its own ● until that part is shown. A sidebar pin of kind plan or note on a child selects that part when the child has it. The header says Loading while the body still shows another tab or part. The other tabs' plans are read in the background after the first paint. A document with
-code fences is painted as plain markdown first and the editors and diagrams follow. Parsed documents are cached per copy by path and content hash. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
+click opens the panel on that session's tab, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
+panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A tab already read lists at once; a tab not read yet says "Loading pages…". A new page (a new id, or a higher version of a page) opens the panel by itself on the session's tab, as a new note did; the first good read of a session's index only records its pages (a session with no index yet counts as empty, so its first page opens the panel; a read that fails is not a first read, the next good one only records). A page not opened yet at its current state carries a ● on its entry, and a tab that is not on screen shows a ● on its label while one of its pages is unseen; opening the page clears the entry's dot. All sessions of the tab are read in the background after the first paint and again every 5 s. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
 in the same render. Install the panel together with the Agents mod; the two are one install.
 
 Install:
@@ -797,8 +823,8 @@ Install:
    { "id": "plan", "type": "block", "content": { "mod": "pi-foreman-plan" } }
    ```
 
-3. The "📄 Plan" button in the Agents header brings the panel forward on its Plan child; the plan and note rows under a session do the same
-   and pin it to that document. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
+3. The "📄 Plan" button in the Agents header selects the `plan` block (the page list) in the panel's body stack and shows the panel; the plan and note rows
+   under a session do the same and also pin the list to that session's tab. (A floating button over the panel's tab strip covered the Changes tab in the live check, and the shipped
    `tabs` mod has no slot for a third panel button, so the button lives in the Agents header.)
 4. `herdr-app check ~/.config/herdr-app/mods/pi-foreman-plan`, then switch to the layout.
 
@@ -807,52 +833,59 @@ Updating: `foreman setup --mods` refreshes both installed mods from the package,
 **Anchor.** The panel belongs to the tab it sits in: it shows the foreman of the agent terminal that owns the tab's pane, joined to its radar
 session like the Agents mod does, not the terminal that has keyboard focus. A floating or peek child window (a child session opened with
 `hc run` has no tab labels and shows over the parent's tab) never switches the panel away; focusing it at most selects that child's tab
-inside the panel. Child plans are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
-focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session and document until the tab's
+inside the panel. Child sessions are tabs joined by the radar `parent` field, not by herdr tab membership. With two agent panes in one tab the
+focused pane's agent is the anchor. A click on a plan or note row in the sidebar pins the panel to that session until the tab's
 foreman changes; a pin already stored when the panel copy starts (herdr persists shared values) is stale and ignored.
 
 **Data.** The panel reads `shared("pi-foreman.radar")` (published by the Agents mod after each radar poll, only when the sessions changed;
-herdr-app persists shared values in `shared.json`), and for the session on screen the two files `plan.json` and `note.json` in the `show.dir`
-that radar carries from the session's presence file, then the plan the JSON names and its two snapshots `plan.ruled.md` and `plan.prev.md`.
-Every 5 s it re-reads only the two JSON files and re-reads the documents only when those bytes changed or the watch on the plan's folder
-fired (`watchFolder`, local only; remote spaces poll). It writes nothing. Marks compare the plan with `plan.ruled.md` while it was edited after
-the last ruling, otherwise with `plan.prev.md`; only the body above the first appendix heading (`## Ruling`, `## Addendum`, `## Decision log`) is
-compared, and without a snapshot, or when the snapshot belongs to another plan path, there are no marks and no badge. The markdown is
-sanitised before it renders: `![` is escaped everywhere, code spans and fences included (no images load), HTML tags go except `del`, `br`, `sub`, `sup`, `kbd` (`<mark>` renders as bold), and a link opens
-only when it is `https://`, through the platform opener (never a shell).
+herdr-app persists shared values in `shared.json`), and for each session of the tab `<show.dir>/pages/pages.json`, with `show.dir` from the
+session's presence file as radar carries it. Every 5 s it re-reads those index files (local sessions also through `watchFolder`; remote spaces
+poll). An index entry counts only when its `file` is `plan.html`, `result.html` or `note-<n>.html`; any other entry is dropped before a path is built, and the
+id and kind come from that name. The panel writes only its page copies (below) and the clearing of `pi-foreman.show-pending`.
+
+**Opening a page.** A click reads the page (local or remote, at most 1 MiB), writes a copy into one of eight fixed files
+`mods/pi-foreman-plan/cache/pages/slot-<0-7>.html` in the app home (round robin, overwritten, never deleted)
+and starts the platform opener on that copy and nothing else: `open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on
+Windows, no shell, only the exact slot path accepted. The opener runs the handler of the file type, so opening only our own `.html` copy keeps it to
+the browser, also when the source file is a symlink. For a local session the copy has its relative `src` and `poster` values (no scheme, not starting with `/`
+or `#`) made absolute against the `pages/` folder, so relative pictures and videos load; remote pages are copied as they are. Known limits: the
+rewrite does not touch `srcset`, `<link href>` or CSS `url()`, links and `#` anchors stay as written, and a `result.md` written by `cp` or a heredoc gets
+no page; the unseen dots are kept in memory only, so they return when the panel is hidden and shown again or the app restarts. An opener that fails raises an error notice ("Could not open the page"; "Could not open the link" for a milestone link) with the exit code and the first error line.
+The page itself runs in the browser as written, with no script or network restriction.
+
+### Pages
+
+Besides `plan.json` and `note.json`, the harness writes standalone HTML pages into `<show dir>/pages/` (made one level at a time and checked like `diagrams/`; never a link) and an index `pages.json` (`{v:1, pages, events}`). Pages are `plan.html` (title, version, hash prefix and a state: `draft`, `in review`, `waits for you`, `approved`, `revise`, `rejected`), `note-<n>.html` (one per `foreman_show` call, the last 20 kept) and `result.html` (a session's own `result.md`, read through the same guarded reader as a child's `plan.md`; no page when it is written some other way). The plan page is written on every plan write, `[plan-review]` launch, checkpoint call and plan notice, on the checkpoint answer and on a plan-review verdict, and again when its diagrams are ready. `file` of each entry is derived from its `id`, never taken from the file. `events` (at most 50) lists plan review PASS/FAIL, the checkpoint answer, PR opened, PR ready, PR merged and result written. Markdown is converted by `pages.ts` (raw HTML is escaped, links keep only http, https and relative targets); mermaid fences become a `<picture>` with both themes as data URIs, or stay a code block; a whole page over 900 KiB drops its diagrams, and still over it says it is too large and names the markdown file. An `html` note is stored as the model wrote it. A child's pages go with its worktree when its session closes. The checkpoint dialog shows `Plan page: <file URL>` (a path on that session's machine) or why there is none. `plan.json`, `note.json`, `note.md` and the snapshots are written as before.
 
 ### Notes
 
-The foreman can put a document in front of you with the `foreman_show({title, markdown})` tool: a design, a comparison, a report. It is for
-things you should read rendered, not for status or questions, and it takes the text itself, never a path. Each call replaces the previous
-note (title up to 120 characters, text up to 256 KiB, larger input is refused with the limit named). The harness writes `note.md`, `note.json`
+The foreman can put a document in front of you with the `foreman_show({title, markdown | html})` tool: a design, a comparison, a report. It is for
+things you should read rendered, not for status or questions, and it takes the text itself, never a path. Each call writes a new note and its page (the last 20 pages stay; `note.md` and `note.json` hold the latest
+note; title up to 120 characters, text up to 256 KiB, larger input is refused with the limit named). The harness writes `note.md`, `note.json`
 (`v`, `title`, `at`, `hash`, `prevHash`, `fences`, `diagrams`) and, only while the title stays the same, the previous text as `note.prev.md`; the
-panel shows it on a Note tab and bumps the `note` row's version. A new title drops the previous version, so there is nothing to compare.
+panel lists its page and bumps the `note` row's version. A new title drops the previous version, so there is nothing to compare.
 
 **Contract for the mod.** `note.json` is written last, atomically, and its `v` rises by one with every call (it continues across a reload of the
-session), with `at` the ISO time of the write. A mod that sees a `v` or `at` it has not shown yet has a new note and can switch to the Note tab
-by itself. Code fence info strings (`ts`, `python title=x`, ...) are kept exactly as written in `note.md`; the mod highlights by language. The
+session), with `at` the ISO time of the write. Code fence info strings (`ts`, `python title=x`, ...) are kept exactly as written in `note.md`. The
 harness cannot see the Herdr layout, only the pane (`HERDR_PANE_ID` or `HC_TERMINAL_ID`): the `foreman_show` result says so when no pane is
 detected, and otherwise only that the note shows if the layout has a `pi-foreman-plan` block.
 
 **Diagrams.** A fence whose first info word is `mermaid` (opening fence at column 0, closing fence of the same character and at least the same length)
 is rendered by the harness after the document is published, never on the tool-result path: a `worker_threads` worker with a 2 s limit per
 fence, in the dark and the light theme, into `show/<session>/diagrams/<sha256 of the fence text>-dark.svg` and `-light.svg`. `plan.json` and
-`note.json` list the finished ones under `diagrams` (`{sha, dark, light}`, paths relative to the show dir) and their shas under `fences`; the mod
-swaps a fence for its SVG only when its own hash of the fence text is in that list. Limits: 16 KiB per fence, 200 nodes plus edges, 32 fences per
+`note.json` list the finished ones under `diagrams` (`{sha, dark, light}`, paths relative to the show dir) and their shas under `fences`; the page
+builder embeds a fence's SVG only for a sidecar that is listed there. Limits: 16 KiB per fence, 200 nodes plus edges, 32 fences per
 document, 512 KiB per SVG. The SVG is flattened (no `<style>`, no remote font, literal colours) and checked against an element allow-list; anything
 refused, over a limit, timed out, or rendered without the optional `beautiful-mermaid` package stays a code block. The package is an optional
 dependency; a missing one is traced once per session (`show_diagram`, `module_missing`).
 
 Limits: a plan written through the shell is not observed; remote child sessions have no live file on this computer, so a parent shows no tab
-for them; marks stop above 4000 lines per side or 1500 changed lines (the header says so); sidecars of older versions stay in the session's show
-dir until the session's live file is gone and the dir is pruned; the mod copies each checked SVG to
-`mods/pi-foreman-plan/cache/<sha>-<theme>.svg` in the app home (the host reads images only from there) and, with no delete API, never prunes it.
+for them; sidecars of older versions stay in the session's show dir until the session's live file is gone and the dir is pruned; the panel's
+`mods/pi-foreman-plan/cache/pages/` holds at most the eight slot copies (older versions of the mod also left `cache/<sha>-<theme>.svg` files, which are no longer used and can be deleted).
 
-**What the mod does.** A new note (radar `show.note` above the last seen value; a first sight only records it) selects the panel block and shows
-its hidden panel, then switches to the Note tab; a child's note opens the panel on that child's tab, on its Note part. Block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
-layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached). Fences render in a read-only highlighted editor; a listed mermaid fence
-shows its SVG after the mod's own allow-list check, else a `mermaid` code block.
+**What the mod does.** A new page (a new id, or a higher version of a page; the first good read of a session's index only records the pages there; a missing index counts as empty) selects the panel block and shows
+its hidden panel, on the tab of the session that wrote it. Block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
+layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached).
 
 Tests: `node --test "integrations/herdr-app/pi-foreman-plan/*.test.mjs"`.
 

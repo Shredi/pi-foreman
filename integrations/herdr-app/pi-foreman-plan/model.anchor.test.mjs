@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { anchorAgent, childPlans, buildTree, joinAgents, planHint, noteHint, parseMeta, isReadablePath, dirOf, joinPath, isLight, isSafeHttpsUrl, openerArgv } from "./model.js";
+import { anchorAgent, childPlans, buildTree, joinAgents, dirOf, joinPath, isSafeHttpsUrl, openerArgv } from "./model.js";
 
 const agent = (address, tab, pane) => ({ address, tab, pane });
 const pane = (id, tab, terminal) => ({ pane: id, tab, terminal });
@@ -42,12 +42,9 @@ const radar = () => [
   { key: "c3", kind: "session", name: "perms-lean", parent: "fm", state: "working", show: { dir: "/s/c3", plan: 4 }, children: [] },
 ];
 
-test("child plans join by the radar parent field, nested or flat, in radar order, only those with a plan", () => {
+test("child plans join by the radar parent field, nested or flat, in radar order, only those with a show folder", () => {
   const [top] = buildTree(radar());
-  assert.deepEqual(childPlans(top).map((c) => c.label), ["guard-prefix", "grandchild", "perms-lean"]);
-  assert.equal(planHint(top), 3);
-  assert.equal(planHint({ show: { dir: "/x" } }), null);
-  assert.equal(noteHint(top.sessions[0].sessions[0]), 1);
+  assert.deepEqual(childPlans(top).map((c) => c.label), ["guard-prefix", "grandchild", "no-plan", "perms-lean"]);
   assert.deepEqual(childPlans(null), []);
 });
 
@@ -57,29 +54,11 @@ test("the tab's agent joins its radar node; the floating child joins its own, wh
   assert.equal(joined.get("t1").key, "fm");
 });
 
-test("plan.json: checked fields, capped strings, unreadable text is null", () => {
-  const m = parseMeta(JSON.stringify({ path: "/p/plan-x.md", title: "T", v: 3, at: "2026-11-06T10:00:00Z", hash: "h", ruledPath: "/p/plan-x.md", ruledHash: "r", prevHash: "p", fences: ["a", 1, "b"] }));
-  assert.deepEqual([m.path, m.title, m.v, m.hash, m.ruledPath, m.ruledHash, m.prevHash, m.fences], ["/p/plan-x.md", "T", 3, "h", "/p/plan-x.md", "r", "p", ["a", "b"]]);
-  assert.equal(m.at, Date.parse("2026-11-06T10:00:00Z"));
-  assert.equal(parseMeta("nope"), null);
-  assert.equal(parseMeta("[]"), null);
-  assert.equal(parseMeta(JSON.stringify({ path: null })).path, null);
-  assert.equal(parseMeta(JSON.stringify({ path: "x".repeat(5000) })).path, null);
-});
-
-test("a document path must be absolute, end in .md and hold no parent step", () => {
-  for (const ok of ["/a/b/plan-x.md", "C:\\a\\plan.md", "/a/plan.MD"]) assert.equal(isReadablePath(ok), true, ok);
-  for (const bad of ["plan.md", "/a/plan.txt", "/a/../b.md", "", null, 5, "/a/b.md/c"]) assert.equal(isReadablePath(bad), false, String(bad));
-});
-
-test("paths: either separator, theme by luminance, link rules reused", () => {
+test("paths: either separator, link rules reused", () => {
   assert.equal(dirOf("/a/b/c.md"), "/a/b");
   assert.equal(dirOf("C:\\a\\b.md"), "C:\\a");
   assert.equal(joinPath("/a/b/", "plan.json"), "/a/b/plan.json");
   assert.equal(joinPath("C:\\a\\b", "plan.json"), "C:\\a\\b\\plan.json");
-  assert.equal(isLight("#ffffff"), true);
-  assert.equal(isLight("#101418"), false);
-  assert.equal(isLight("nonsense"), false);
   assert.equal(isSafeHttpsUrl("https://example.org/x"), true);
   assert.equal(isSafeHttpsUrl("http://example.org/x"), false);
   assert.equal(isSafeHttpsUrl("javascript:alert(1)"), false);

@@ -219,8 +219,8 @@ function childDenied(tool: string, input: unknown, segments: ShellSegment[] | un
     const r = env.roots;
     const scratch = r.scratch.length ? `the scratch dir ${r.scratch.join(", ")}` : "no scratch dir is set";
     const tmpHint = [...r.tmp, "/tmp", ...(env.platform === "darwin" ? ["/private/tmp"] : [])].some((t) => under(env.platform, t, outside)) ? ` Use $FOREMAN_SCRATCH${r.scratch.length ? ` (${r.scratch[0]})` : ""}, not /tmp.` : "";
-    const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md, ask-<n>.md, .seen and anything below work/)` : "no handoff dir is set";
-    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.${tmpHint}`);
+    const handoff = r.childHandoff ? `the handoff files in ${r.childHandoff} (plan.md, result.md, ask.md only when intercom cannot reach the parent, ask-<n>.md and anything below work/)` : "no handoff dir is set";
+    return deny("child-write-outside", `Children write only inside their own worktree and their scratch dir ($FOREMAN_SCRATCH), never the parent's checkout, .workflow/ or other directories. Refused: ${outside}, compared with the worktree root ${r.worktree}. Sanctioned targets: the worktree ${r.worktree}; ${scratch}; ${handoff}.${tmpHint} For another worktree, the foreman launches a child with cwd set to it.`);
   }
   if (env.roots.roundReadOnly) {
     const target = readonlyWrite(tool, input, segments, cmd, env);
@@ -267,7 +267,7 @@ function stringLeaves(v: unknown, out: string[] = [], depth = 0, skipProse = fal
 }
 
 /** Free-text fields of pi-foreman's own tools (notes, plans, messages, PR text, dialog questions): quoting a floored command there is prose, not a command. */
-export const PROSE_FIELDS = new Set(["markdown", "brief", "text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
+export const PROSE_FIELDS = new Set(["markdown", "html", "brief", "text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
 /** Fields that name a file or directory: a secret path there is a floor deny. */
 const PATH_FIELD = /^(?:path|paths|cwd|worktree|file|files|dir|dirs|directory|target|dest|destination|src|source|from|to|root|repo|output|outputPath|output_path|outputFile)$/i;
 

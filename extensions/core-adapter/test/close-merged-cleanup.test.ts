@@ -16,6 +16,7 @@ import type { PrKey } from "../prhost.ts";
 import type { SafeOpOutcome } from "../safeops.ts";
 import { samePath, selfFinish } from "../selffinish.ts";
 import { storeFromPoll } from "./_storefake.ts";
+import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
 
 const SCRIPT = path.resolve(import.meta.dirname, "..", "..", "..", "scripts", "foreman_close.py");
 const PY = process.env.PI_FOREMAN_PYTHON || (process.platform === "win32" ? "python" : "python3");
@@ -26,7 +27,7 @@ const cleanEnv = (): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(proc
 const EMPTY_GITCONFIG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "pf-gitcfg-")), "gitconfig");
 fs.writeFileSync(EMPTY_GITCONFIG, "");
 // cleanEnv drops the preload's git housekeeping settings; the template is committed and then copied, so they are set again here (see _hermetic-env.mjs).
-const NO_HOUSEKEEPING = { GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "maintenance.auto", GIT_CONFIG_VALUE_0: "false", GIT_CONFIG_KEY_1: "gc.auto", GIT_CONFIG_VALUE_1: "0" };
+const NO_HOUSEKEEPING = Object.fromEntries([["GIT_CONFIG_COUNT", String(GIT_HOUSEKEEPING_OFF.length)], ...GIT_HOUSEKEEPING_OFF.flatMap(([k, v], i) => [[`GIT_CONFIG_KEY_${i}`, k], [`GIT_CONFIG_VALUE_${i}`, v]])]);
 const run = (cmd: string, args: string[], cwd: string): string => execFileSync(cmd, args, { cwd, encoding: "utf8", env: { ...cleanEnv(), ...NO_HOUSEKEEPING, GIT_CONFIG_GLOBAL: EMPTY_GITCONFIG, GIT_CONFIG_NOSYSTEM: "1" } }).trim();
 const git = (cwd: string, ...args: string[]): string => run("git", ["-c", "user.name=T", "-c", "user.email=t@example.invalid", ...args], cwd);
 const py = (args: string[]): Promise<string> => new Promise((resolve) => execFile(PY, ["-E", "-s", SCRIPT, ...args], { encoding: "utf8", env: { ...cleanEnv(), GIT_CONFIG_GLOBAL: EMPTY_GITCONFIG } }, (_err, stdout) => resolve(String(stdout))));

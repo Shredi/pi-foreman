@@ -67,7 +67,7 @@ test("failed: red and still, whatever else runs", () => {
 
 test("passed: green and still, ready to merge", () => {
   const p = pr({ checks: passed });
-  assert.deepEqual(prDotState(p), { pulse: false, fill: "green", conflict: false });
+  assert.deepEqual(prDotState(p), { pulse: false, fill: "green", mark: "check", conflict: false });
   assert.equal(prState(p), "ok");
   assert.equal(prCard(dotOnly(passed)).status, "checks passed");
 });

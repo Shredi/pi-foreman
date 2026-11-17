@@ -1,6 +1,5 @@
-// Ruling files of the ask contract (R6 lane 4): `ruling-<n>.md` / `ruling.md` next to an `ask.md` in a handoff dir.
-// Pure file-state helpers: the harness writes `.seen` when a ruling wait wakes, the blocked state is recomputed from
-// the files, a ruling older than its ask is ignored. A parent ruling never satisfies the finish gate (the chair runs
+// Ruling files (R6 lane 4): `ruling-<n>.md` / `ruling.md` next to an `ask.md` in a handoff dir.
+// Pure file-state helpers: a ruling older than its ask is ignored. A parent ruling never satisfies the finish gate (the chair runs
 // /ceremony); after a FAIL the refusal only names it.
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -15,21 +14,17 @@ import { MAX_DEPTH as SH_DEPTH, parseShell, SHELLS } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
 
 export { isRulingName };
-const ASK_N_RE = /^ask-(\d{1,6})\s*$/;
 
 const BRIEF_RE = /^brief-[A-Za-z0-9._-]{1,64}\.md$/;
 
-/** True for a `brief-<x>.md` file name (a parent's brief to the session; not a ruling name for the ask contract). */
+/** True for a `brief-<x>.md` file name (a parent's brief to the session; the answer to a child's `ask.md`). */
 export const isBriefName = (name: string): boolean => BRIEF_RE.test(name);
 
-/** A name for self-write tracking and refusals: `isRulingName`, the plan checkpoint's `ruling-plan.md` (checkpoint.ts) and `brief-<x>.md` (both lift the caps, index.ts capsReset). */
-export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || name === "ruling-plan.md" || isBriefName(name);
+/** A name for self-write tracking and refusals: `isRulingName` and `brief-<x>.md` (it lifts the caps, index.ts capsReset). */
+export const isTrackedRulingName = (name: string): boolean => isRulingName(name) || isBriefName(name);
 
-/** A parent file that lifts the review cap and the read budgets: `ruling-<n>.md` (n >= 1) or `brief-<x>.md`; never `ruling.md`, `ruling-plan.md`, `brief.md`. */
-export const isCapsResetName = (name: string): boolean => {
-  const n = RULING_RE.exec(name)?.[1];
-  return (n !== undefined && Number(n) >= 1) || isBriefName(name);
-};
+/** A parent file that lifts the review cap and the read budgets: `brief-<x>.md`; never `ruling-<n>.md`, `ruling.md`, `ruling-plan.md`, `brief.md`. */
+export const isCapsResetName = (name: string): boolean => isBriefName(name);
 
 const mtimeOf = (p: string): number | null => {
   try {
@@ -55,24 +50,39 @@ export function rulingFresh(file: string, mtime: (p: string) => number | null = 
   return ask === null || ruling === null || ruling >= ask;
 }
 
-/** `needs_ruling: no` line of an ask.md: an informational ask. */
-export const NEEDS_RULING_NO_RE = /^needs_ruling:[ \t]*no[ \t]*$/im;
-
 /**
- * The ask in `dir` is unanswered: `.ask` is present and `.seen` does not name its ruling (`ruling-<n>.md` for
- * `ask-<n>`, or `ruling.md`; with no number in `.ask`, any `.seen` ends it). Never a stored flag.
+ * A file in a handoff dir that answers a question: `brief-<x>.md`, or `ruling-<n>.md` from a parent on the old footer. Never `ruling.md`,
+ * `ruling-plan.md` or `steer-<n>.md`, and not a `brief-<x>.md` whose bytes equal the `ruling.md` or `ruling-plan.md` beside it (locally a plan
+ * ruling travels as such a copy).
  */
-export function askOpen(dir: string): boolean {
-  const ask = readText(path.join(dir, ".ask"));
-  if (ask === null) return false;
-  // an informational ask (`needs_ruling: no`) never holds the hand, whatever an older `.ask` says
-  if (NEEDS_RULING_NO_RE.test(readText(path.join(dir, "ask.md")) ?? "")) return false;
-  const seen = readText(path.join(dir, ".seen"));
-  if (seen === null) return true;
-  const named = seen.trim();
-  const n = ASK_N_RE.exec(ask.trim())?.[1];
-  if (n === undefined) return false;
-  return !(named === `ruling-${Number(n)}.md` || named === "ruling.md");
+export function isAnswerFile(dir: string, name: string): boolean {
+  const n = RULING_RE.exec(name)?.[1];
+  if (n !== undefined) return Number(n) >= 1;
+  if (!isBriefName(name)) return false;
+  const bytes = (p: string): Buffer | null => {
+    try {
+      return fs.readFileSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const brief = bytes(path.join(dir, name));
+  if (!brief) return false;
+  return !PLAN_RULING_NAMES.some((r) => bytes(path.join(dir, r))?.equals(brief));
+}
+
+const PLAN_RULING_NAMES = ["ruling.md", "ruling-plan.md"];
+
+/** `dir` holds an answer file (`isAnswerFile`) modified after `sinceMs` (`orAt`: or at `sinceMs`, so an equal mtime counts). */
+export function answerNewerThan(dir: string, sinceMs: number, orAt = false): boolean {
+  try {
+    return fs.readdirSync(dir).some((name) => {
+      const m = mtimeOf(path.join(dir, name));
+      return m !== null && (orAt ? m >= sinceMs : m > sinceMs) && isAnswerFile(dir, name);
+    });
+  } catch {
+    return false;
+  }
 }
 
 const realKey = (p: string): string => {
@@ -138,30 +148,20 @@ export class SelfRulings {
  * `afterMs` (the last FAIL verdict). Returns its path, or null. Only for naming it in the finish refusal: it is never a
  * verdict. `dirs` must be the dirs where this session is the child (owned.ts childHandoffDirs); `self` skips rulings
  * this session wrote.
- *
- * `restore` (reload, roundstate.ts): only `ruling.md` (never `ruling-<n>.md`), first line `APPROVED`, and its ctime
- * (which a session cannot set back) newer than `afterMs` (the ctime of both plan files). Such a ruling restores the
- * plan checkpoint approval after /reload, nothing else: the finish gate still needs a reviewer PASS.
  */
-export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings, restore = false): string | null {
+export function parentApproval(dirs: string[], afterMs: number, self?: SelfRulings): string | null {
   for (const dir of dirs) {
     let names: string[] = [];
     try {
-      names = fs.readdirSync(dir).filter(restore ? (n) => n === "ruling.md" : isRulingName);
+      names = fs.readdirSync(dir).filter(isRulingName);
     } catch {
       continue;
     }
     for (const n of names) {
       const m = mtimeOf(path.join(dir, n));
-      let c: number | null = null;
-      try {
-        c = fs.statSync(path.join(dir, n)).ctimeMs;
-      } catch {
-        // vanished
-      }
-      if (m === null || c === null || (restore ? c : m) <= afterMs || self?.has(path.join(dir, n), m)) continue;
+      if (m === null || m <= afterMs || self?.has(path.join(dir, n), m)) continue;
       const first = (readText(path.join(dir, n)) ?? "").split(/\r?\n/, 1)[0].trim();
-      if (first === "APPROVED" || (!restore && first === "SHIP")) return path.join(dir, n);
+      if (first === "APPROVED" || first === "SHIP") return path.join(dir, n);
     }
   }
   return null;

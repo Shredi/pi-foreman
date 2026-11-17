@@ -72,6 +72,8 @@ export interface StateEntry {
   gone?: true;
   /** Set with a merged or closed snap; the entry is pruned ENDED_KEEP_MS later. */
   endedAt?: number;
+  /** Set by the PR tracker when the repository matches `radar.openPrs.hideRepos`; display only (the sidebar's Open PRs list), nothing else reads it. */
+  hiddenRepo?: true;
   at: number;
 }
 /** The check names of the newest merged pull requests into one base, and when the host answered (epoch ms). */
@@ -264,6 +266,21 @@ export function readStoreEntry(agentDir: string, key: PrKey, now: number, feedOn
     for (const sc of Object.values(c.sources)) if (isObj(sc) && sc.head === snap.head && Array.isArray(sc.comments)) fromSources.push(...(sc.comments.filter(isObj) as unknown as CommentEntry[]));
   const full: WatchSnapshot = github || fromSources.length > 0 ? { ...snap, comments: [...(github ?? []), ...fromSources] } : snap;
   return { kind: "entry", snap: full, okAt };
+}
+
+/** Milliseconds since the poll CLI's last run (`trackedAt`), or null when the state file is missing, unreadable or marked `off`. No host call. */
+export function lastPollAgeMs(agentDir: string, now: number): number | null {
+  const state = readCached(trackedStateFile(agentDir));
+  if (!isObj(state) || state.v !== 1 || state.off === true || !finite(state.trackedAt)) return null;
+  return Math.max(0, now - state.trackedAt);
+}
+
+/** The `/foreman doctor` tracker line: feed off, hosts config error, live (age within the serve window) or down. `age` is `lastPollAgeMs`. */
+export function trackerDoctorLine(feedOn: boolean, hostsError: string | undefined, age: number | null): string {
+  if (!feedOn) return "INFO PR tracking is off (radar.openPrs.enabled or tools.prHost)";
+  if (hostsError !== undefined) return `WARN PR tracker not checked: ${hostsError}`;
+  if (age !== null && age <= SERVE_FRESH_MS) return `OK   PR tracker: last poll ${Math.round(age / 1000)}s ago`;
+  return "WARN no PR tracker running: PR watches get no reports and pr_create opens no draft; herdr-app belongs to the pi-foreman setup (without it not the whole feature set) — fix: run herdr-app, or foreman prs poll on a timer";
 }
 
 /** Tests only: forget the mtime cache. */

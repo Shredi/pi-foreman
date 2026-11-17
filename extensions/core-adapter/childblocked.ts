@@ -4,15 +4,16 @@
 // text). Information only; the text is fixed words plus the registry label, a time and a kind word from a fixed list: nothing a child wrote.
 // Once per episode (the sent keys live in a small file of this session's own state, so a reload sends nothing twice); one quiet "answered" note
 // when an announced dialog is answered. The module only reads the session registry and the children's files.
-// Also an open ask of a child session (the live file's `asks`, a handoff ask.md without a ruling) is reported once per child and ask number,
-// whatever `sessions.blockedNoticeSeconds` and `blockedOn` say: to a running `foreman_wait` child wait through `ask`, else as a message.
+// Beside it one reminder for a question that a child sent as an intercom message and this session has not answered (intercomcarry.ts records): the
+// label and the age, once per record, after `sessions.blockedNoticeSeconds`, in a message that starts a turn in an idle parent.
 import fs from "node:fs";
 import path from "node:path";
 import { cleanLabel } from "./herdr.ts";
 import { readLive } from "./identity.ts";
 import { HEARTBEAT_MS, liveDir } from "./livestate.ts";
 import { SLOW_POLL_MS } from "./remotewatch.ts";
-import { askOpen } from "./ruling.ts";
+import type { IntercomCarry } from "./intercomcarry.ts";
+import { answerNewerThan } from "./ruling.ts";
 import { readRegistry } from "./session.ts";
 import type { SessionEntry } from "./session.ts";
 
@@ -27,6 +28,9 @@ const STALE_CONTACT_MS = 3 * SLOW_POLL_MS;
 const KIND_WORDS = new Set(["approval", "question", "checkpoint", "script", "confirm", "dialog"]);
 const OPEN = new Set(["open", "pending", "closing"]);
 const SAFE_ID = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
+
+/** The registry entries `opener` opened that are still open (not closed or gone). */
+export const openChildren = (agentDir: string, opener: string): SessionEntry[] => readRegistry(agentDir).sessions.filter((e) => e.parent === opener && OPEN.has(String(e.status)));
 
 /** `sessions.blockedNoticeSeconds` as seconds: a non-negative finite number, else the default; 0 turns the notice off. */
 export function noticeSeconds(v: unknown): number {
@@ -48,25 +52,20 @@ export const noticeText = (label: string, sinceMs: number, kind: unknown): strin
   return `Child session ${label} has waited on its owner since ${stamp(sinceMs)} (${word}). Information only: the owner answers the dialog in that session's pane. Nothing for you to do: do not answer or approve for it, do not steer it, redo its work or work around it. Tell the owner if they are in this session.`;
 };
 
-/** Fixed words, the registry label, the ask number and the path the parent derived itself: nothing a child wrote. */
-// eslint-disable-next-line no-control-regex
-export const askText = (label: string, n: number, file: string): string => `Child session ${label} has an open ask ${n} for you; it is in ${file.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")}. Information only: this notice approves nothing. Answer through a ruling file as your handoff contract says.`;
+/** Fixed words, the registry label and the age: nothing the child wrote. */
+export const questionText = (label: string, ageMs: number): string => `Child session ${label} has waited ${duration(ageMs)} for your answer to its question. Answer it in your own words, or tell it when you will; a plain intercom message is enough. Information only: this notice approves nothing.`;
+
+/** The reminder for a remote child's registry ask (its answer is a brief): fixed words, the registry label and the age. */
+export const remoteQuestionText = (label: string, ageMs: number): string => `Remote child session ${label} has waited ${duration(ageMs)} for your answer to its ask. Answer it with a brief (foreman session brief <label> <file>). Information only: this notice approves nothing.`;
 
 export const clearedText = (label: string, waitedMs: number): string => `Child session ${label}: its dialog was answered after ${duration(waitedMs)}.`;
 
 type Obs = { blocked: false } | { blocked: true; since: number; kind: unknown };
-/** What one child's recorded state says: the owner block (undefined = unknown) and its open asks with the path of their ask.md. */
-interface Seen {
-  obs?: Obs;
-  asks: number[];
-  file: string;
-}
 interface Sent {
   child: string;
   label: string;
-  /** The start of the owner episode, or the number of an ask (`ask`). */
+  /** The start of the owner episode. */
   since: number;
-  ask?: true;
 }
 type Cancel = () => void;
 
@@ -78,12 +77,12 @@ export interface ChildBlockedDeps {
   opener: () => string;
   /** The configured `sessions.blockedNoticeSeconds`. */
   seconds: () => number;
+  /** The records of the questions children sent this session as intercom messages (reminded once, dropped when answered or closed). */
+  carry?: IntercomCarry;
   /** The remote watcher's last contact with a child (ms), undefined when none since this process started. */
   contact?: (child: string) => number | undefined;
   /** `wake`: a turn is started on an idle parent (queued as a follow-up during a run). The notice and the quiet note both send false: shown, appended, read at the next turn. */
   send: (text: string, wake: boolean) => void;
-  /** An open ask of a child was found: true when a running `foreman_wait` child wait took it (then no message goes out). */
-  ask?: (label: string, file: string) => boolean;
   trace?: (rec: Record<string, unknown>) => void;
   now?: () => number;
   timer?: (fn: () => void, ms: number) => Cancel;
@@ -93,6 +92,8 @@ export class ChildBlocked {
   private readonly d: ChildBlockedDeps;
   private sent = new Map<string, Sent>();
   private cancel: Cancel | null = null;
+  /** The remote children whose registry ask was seen: when first, and whether the reminder went out (memory only; it ends with the entry). */
+  private readonly remoteAsks = new Map<string, { seq: unknown; first: number; reminded: boolean }>();
 
   constructor(d: ChildBlockedDeps) {
     this.d = d;
@@ -120,16 +121,15 @@ export class ChildBlocked {
       const secs = this.d.seconds();
       const now = (this.d.now ?? Date.now)();
       const opener = this.d.opener();
-      const mine = readRegistry(this.d.agentDir).sessions.filter((e) => e.parent === opener && OPEN.has(String(e.status)));
+      const mine = openChildren(this.d.agentDir, opener);
       let dirty = false;
+      this.remind(mine, secs, now);
+      this.remindRemote(mine, secs, now);
       for (const e of mine) {
-        const seen = this.observe(e, now);
-        if (!seen) continue; // unreadable, stale or skipped: nothing is known, so nothing is said
-        for (const n of seen.asks) if (this.reportAsk(e, n, seen.file, true)) dirty = true;
-        const obs = seen.obs;
-        if (!(secs > 0) || !obs) continue; // 0 turns the waited-since notice off, not the asks
+        const obs = this.observe(e, now);
+        if (!(secs > 0) || !obs) continue; // unreadable, stale or skipped: nothing is known, so nothing is said
         for (const [key, rec] of [...this.sent]) {
-          if (rec.ask || rec.child !== e.child || (obs.blocked && obs.since === rec.since)) continue;
+          if (rec.child !== e.child || (obs.blocked && obs.since === rec.since)) continue;
           this.sent.delete(key); // the announced episode ended
           dirty = true;
           const waitedMs = now - rec.since;
@@ -157,50 +157,52 @@ export class ChildBlocked {
     }
   }
 
-  /**
-   * The unreported open ask of the child named `label` (or of any child for `any`), counted as reported: the lookup of a `foreman_wait` child wait
-   * at registration. Never throws.
-   */
-  takeAsk(label: string): { label: string; path: string } | null {
-    try {
-      const now = (this.d.now ?? Date.now)();
-      const opener = this.d.opener();
-      for (const e of readRegistry(this.d.agentDir).sessions) {
-        if (e.parent !== opener || !OPEN.has(String(e.status)) || (label !== "any" && cleanLabel(e.label) !== label)) continue;
-        const seen = this.observe(e, now);
-        for (const n of seen?.asks ?? []) {
-          if (!this.reportAsk(e, n, seen!.file, false)) continue;
-          this.save();
-          return { label: cleanLabel(e.label), path: seen!.file };
-        }
+  /** The question records: one for a child that closed or whose handoff dir holds an answer newer than the record goes; one older than `secs` is reminded once. */
+  private remind(mine: SessionEntry[], secs: number, now: number): void {
+    const records = this.d.carry?.records;
+    if (!records) return;
+    for (const r of [...records.values()]) {
+      const e = mine.find((x) => x.child === r.child);
+      if (!e || (typeof e.handoff === "string" && e.handoff && answerNewerThan(e.handoff, r.at))) {
+        records.delete(r.child);
+        continue;
       }
-    } catch {
-      // a lookup never breaks a wait
+      if (!(secs > 0) || r.reminded || now - r.at < secs * 1000) continue;
+      r.reminded = true;
+      this.d.trace?.({ event: "child_question_reminder", label: r.label, waitedMs: now - r.at });
+      this.d.send(questionText(r.label, now - r.at), true);
     }
-    return null;
   }
 
-  /** Marks ask `n` of `e` as reported; false when it already was. With `send` the wait or a message gets the notice. */
-  private reportAsk(e: SessionEntry, n: number, file: string, send: boolean): boolean {
-    const label = cleanLabel(e.label);
-    const key = `ask\n${e.child}\n${n}`;
-    if (this.sent.has(key)) return false;
-    this.sent.set(key, { child: e.child, label, since: n, ask: true });
-    this.d.trace?.({ event: "child_ask_notice", label, n });
-    if (send && !(this.d.ask?.(label, file) ?? false)) this.d.send(askText(label, n, file), true);
-    return true;
+  /** A remote child's registry `ask` is the question and its presence the answer state (a brief clears it): reminded once while it is present and older than `secs`. */
+  private remindRemote(mine: SessionEntry[], secs: number, now: number): void {
+    const present = new Set<string>();
+    for (const e of mine) {
+      const ask = typeof e.machine === "string" && e.ask && typeof e.ask === "object" ? (e.ask as { seq?: unknown; at?: unknown }) : undefined;
+      if (!ask) continue;
+      present.add(e.child);
+      let rec = this.remoteAsks.get(e.child);
+      if (!rec || rec.seq !== ask.seq) {
+        const at = typeof ask.at === "string" ? Date.parse(ask.at) : NaN;
+        rec = { seq: ask.seq, first: Number.isFinite(at) ? at : now, reminded: false };
+        this.remoteAsks.set(e.child, rec);
+      }
+      if (!(secs > 0) || rec.reminded || now - rec.first < secs * 1000) continue;
+      rec.reminded = true;
+      const label = cleanLabel(e.label);
+      this.d.trace?.({ event: "child_question_reminder", label, waitedMs: now - rec.first, remote: true });
+      this.d.send(remoteQuestionText(label, now - rec.first), true);
+    }
+    for (const child of [...this.remoteAsks.keys()]) if (!present.has(child)) this.remoteAsks.delete(child);
   }
 
   /** What the recorded state says about one child; undefined = not known now (no notice, no "answered" note). */
-  private observe(e: SessionEntry, now: number): Seen | undefined {
-    if (typeof e.machine === "string") {
-      const obs = this.observeRemote(e, now);
-      return obs ? { obs, asks: [], file: "" } : undefined;
-    }
+  private observe(e: SessionEntry, now: number): Obs | undefined {
+    if (typeof e.machine === "string") return this.observeRemote(e, now);
     if (typeof e.handoff !== "string" || !e.handoff) return undefined;
     const id = readLive(e.handoff)?.piSessionId;
     if (!id || !SAFE_ID.test(id)) return undefined;
-    let f: { heartbeatAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown; asks?: unknown };
+    let f: { heartbeatAt?: unknown; blockedOn?: unknown; ownerBlockedSince?: unknown; blockedKind?: unknown };
     try {
       f = JSON.parse(fs.readFileSync(path.join(liveDir(this.d.agentDir), `${id}.json`), "utf8"));
     } catch {
@@ -208,15 +210,13 @@ export class ChildBlocked {
     }
     const beat = typeof f.heartbeatAt === "string" ? Date.parse(f.heartbeatAt) : NaN;
     if (!Number.isFinite(beat) || now - beat > STALE_LIVE_MS) return undefined;
-    const file = path.join(e.handoff, "ask.md");
-    const asks = Array.isArray(f.asks) && askOpen(e.handoff) ? f.asks.map((a: { n?: unknown }) => a?.n).filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0) : [];
-    if (f.blockedOn !== "owner") return { obs: { blocked: false }, asks, file };
+    if (f.blockedOn !== "owner") return { blocked: false };
     const since = typeof f.ownerBlockedSince === "string" ? Date.parse(f.ownerBlockedSince) : NaN;
-    return { obs: Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind } : undefined, asks, file };
+    return Number.isFinite(since) ? { blocked: true, since, kind: f.blockedKind } : undefined;
   }
 
   private observeRemote(e: SessionEntry, now: number): Obs | undefined {
-    if (e.ask && typeof e.ask === "object") return undefined; // the remote state does not say owner or parent: an open ask is the parent's to answer
+    if (e.ask && typeof e.ask === "object") return undefined; // the remote state does not say owner or parent: an open ask is the parent's to answer, and remindRemote covers it
     const seen = this.d.contact?.(e.child);
     if (seen === undefined || now - seen > STALE_CONTACT_MS) return undefined;
     const rl = e.remoteLive as { state?: unknown; seenAt?: unknown } | undefined;
@@ -227,8 +227,9 @@ export class ChildBlocked {
 
   private load(): void {
     try {
-      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { sent?: Record<string, Partial<Sent>> };
-      for (const [k, r] of Object.entries(j.sent ?? {})) if (r && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since, ...(r.ask === true ? { ask: true as const } : {}) });
+      const j = JSON.parse(fs.readFileSync(childBlockedStateFile(this.d.agentDir, this.d.sessionId), "utf8")) as { sent?: Record<string, Partial<Sent> & { ask?: true }> };
+      // an `ask: true` record of an older state file is dropped: it is no owner episode
+      for (const [k, r] of Object.entries(j.sent ?? {})) if (r && r.ask !== true && typeof r.child === "string" && typeof r.label === "string" && typeof r.since === "number") this.sent.set(k, { child: r.child, label: r.label, since: r.since });
     } catch {
       // no file yet
     }

@@ -135,7 +135,7 @@ export function resolveWord(platform: string, cwd: string, w: unknown): string |
 type Dir = "read" | "write";
 
 /** The files of its handoff dir the child side writes (everything else there is the parent's: brief*, ruling*, steer*, close.json, parent, child). */
-export const HANDOFF_CHILD_NAMES: readonly string[] = ["plan.md", "result.md", "ask.md", ".ask", ".seen", ".steer-last-read.json"];
+export const HANDOFF_CHILD_NAMES: readonly string[] = ["plan.md", "result.md", "ask.md", ".steer-last-read.json"];
 
 /**
  * `abs` (and its real spelling `ra`) names a child-written file of the handoff dir `root`: a top-level allow-list name, `ask-<n>.md`, or anything below `work/`.

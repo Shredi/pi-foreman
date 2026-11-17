@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import "./_spawn-count.mjs";
+import { GIT_HOUSEKEEPING_OFF } from "./_git-housekeeping.mjs";
 
 const { keys, prefixes } = JSON.parse(fs.readFileSync(new URL("./session-env.json", import.meta.url), "utf8"));
 for (const k of keys) delete process.env[k];
@@ -15,7 +16,7 @@ for (const k of Object.keys(process.env)) if (prefixes.some((p) => k.startsWith(
 {
   const n = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10);
   let at = Number.isInteger(n) && n >= 0 ? n : 0;
-  for (const [k, v] of [["maintenance.auto", "false"], ["gc.auto", "0"]]) {
+  for (const [k, v] of GIT_HOUSEKEEPING_OFF) {
     process.env[`GIT_CONFIG_KEY_${at}`] = k;
     process.env[`GIT_CONFIG_VALUE_${at}`] = v;
     at++;

@@ -511,6 +511,17 @@ function openSummary(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>
   ].join("\n");
 }
 
+/** Why `file` is not a readable regular file (a short fixed phrase, never the error text with its path), or null when it is one. */
+function briefProblem(file: string): string | null {
+  try {
+    if (!fs.statSync(file).isFile()) return "not a regular file";
+    fs.accessSync(file, fs.constants.R_OK);
+    return null;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? "file not found" : "file not readable";
+  }
+}
+
 export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { sub: "open" }>): Promise<SessionResult> {
   if (!d.python) return { text: "foreman_session.py: no usable Python (run /foreman doctor).", ok: false };
   if (c.planMode && !c.machine && !d.commands?.includes("plan")) return { text: PLAN_MODE_UNAVAILABLE, ok: false };
@@ -527,6 +538,12 @@ export async function sessionOpen(d: SessionDeps, c: Extract<SessionCommand, { s
     const raw = (d.config as { close?: { worktreeDir?: unknown } } | undefined)?.close?.worktreeDir;
     const root = main ? resolveWorktreeRoot(main, raw, { installRoot: d.protectedRoots?.installRoot, npmRoot: d.protectedRoots?.npmRoot }) : null;
     if (root?.error) return { text: `session open refused [${root.error.code}]: ${root.error.message}`, ok: false };
+  }
+  const briefFile = path.resolve(d.cwd, c.brief);
+  const why = briefProblem(briefFile);
+  if (why) {
+    const shown = c.brief.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 100);
+    return { text: `session open refused [brief_unreadable]: ${why} (${shown}); pass the path of a brief file`, ok: false };
   }
   // a remote cwd is a path on the other machine: passed verbatim, never resolved here; the brief file is local
   const cwdArg = c.machine ? c.cwd! : path.resolve(d.cwd, c.cwd ?? ".");
@@ -965,7 +982,7 @@ const OPEN_PARAMS = {
     brief: { type: "string", description: "Path of the brief file the new session reads." },
     cwd: { type: "string", description: "Directory the new session runs in (default: this session's)." },
     model: { type: "string", description: "Model of the new session, <provider>/<id>." },
-    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks only for real decisions until the plan is decision-complete: the owner via ask_user_question, everything else the parent by file (ask.md)." },
+    planFirst: { type: "boolean", description: "Open the session in the plan phase: it writes a plan first, changes files only under .workflow/, launches no builder, and asks only for real decisions until the plan is decision-complete: the owner via ask_user_question, everything else the parent in an intercom message whose first line starts with Question (by file, ask.md, only where intercom cannot reach it)." },
     planMode: { type: "boolean", description: "Open the session in plan mode (the brief prompt runs as `/plan <brief prompt>`); for a local open, refused when this session has no /plan command (a remote open is checked on the remote machine)." },
     firstCommand: { type: "array", items: { type: "string" }, maxItems: 4, description: "Extension commands (each starting with /) the new session runs before the brief prompt." },
     focus: { type: "boolean", description: "Focus the new Herdr tab." },
@@ -990,7 +1007,7 @@ export function registerSessionOpenTool(
     name: SESSION_OPEN_TOOL,
     label: "Open a session",
     description:
-      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan is approved); a session with an approved plan: no planFirst. Refused in subagent children.",
+      "Open a new foreman session in a Herdr tab (or print the command for a new terminal) with a brief file: same as `/foreman session open`. Design or new-topic sessions: planFirst true (the new session starts in the plan phase: .workflow-only writes, explorers, no builders until its plan review passes; at tier heavy the owner then approves the plan at its checkpoint); a session with an approved plan: no planFirst. Refused in subagent children.",
     parameters: OPEN_PARAMS as never,
     async execute(_id: string, params: Record<string, unknown>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
       const s = await deps.session(ctx);

@@ -49,6 +49,38 @@ export async function verifyMerged(status: SelfFinishDeps["status"], n: number, 
   return { sha: tip };
 }
 
+/** Each host lookup of verifiedMergeFor gets this long, so a hung host does not stall the tool. */
+export const VERIFY_LOOKUP_TIMEOUT_MS = 20_000;
+
+export interface VerifyLookupDeps {
+  /** `pr_find` or `pr_status` for the worktree at the cwd the caller bound, with a timeout. */
+  run: (op: "pr_find" | "pr_status", args: Record<string, unknown>, timeoutMs: number) => Promise<SafeOpOutcome>;
+  /** `git <args>` in the worktree; stdout trimmed, null on any failure. */
+  git: (args: string[]) => Promise<string | null>;
+}
+
+/**
+ * The verified-merged fact for the worktree's branch (the same fact the session close uses): finds the branch's PRs and
+ * returns `{sha, branch}` for the first merged one that verifyMerged accepts; undefined when detached, no PR, or on any failure.
+ */
+export async function verifiedMergeFor(d: VerifyLookupDeps): Promise<{ sha: string; branch: string } | undefined> {
+  try {
+    const branch = await d.git(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    const tip = await d.git(["rev-parse", "--verify", "--quiet", "HEAD"]);
+    if (!branch || !tip) return undefined;
+    const found = await d.run("pr_find", { head: branch, state: "all" }, VERIFY_LOOKUP_TIMEOUT_MS);
+    if (found.kind !== "ran" || !Array.isArray(found.result.prs)) return undefined;
+    for (const pr of found.result.prs as Record<string, unknown>[]) {
+      if (pr.state !== "merged" || pr.headRefName !== branch || typeof pr.number !== "number") continue;
+      const fact = await verifyMerged((n) => d.run("pr_status", { number: n }, VERIFY_LOOKUP_TIMEOUT_MS), pr.number, branch, tip);
+      if ("sha" in fact) return { sha: fact.sha, branch };
+    }
+  } catch {
+    // no fact: the removal behaves as without it
+  }
+  return undefined;
+}
+
 export interface Worktree {
   path: string;
   /** Short branch name; null when detached. */

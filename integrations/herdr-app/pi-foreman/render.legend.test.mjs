@@ -91,7 +91,7 @@ test("the sample draws the marker of every agent and session key", () => {
   assert.ok(els(root).some((e) => hasText(e, "⏳ 1 pr watch · 1m")), "wait line");
 });
 
-test("the sample draws the marker of every PR key; only the two pulsing discs loop", () => {
+test("the sample draws the marker of every PR key; the pulsing discs loop, the check mark does not", () => {
   const root = view(true).render({});
   const pr = Object.fromEntries(ROWS.filter((r) => r.pr).map((r) => [r.key, chipOf(root, r.pr)]));
   const look = (k) => [pr[k].disc.props.bg, pr[k].disc.props.loop !== undefined];
@@ -100,7 +100,9 @@ test("the sample draws the marker of every PR key; only the two pulsing discs lo
   assert.deepEqual(look("pr-running"), ["#ansi3", true]);
   assert.deepEqual(look("pr-failed"), ["#blocked", false]);
   assert.deepEqual(look("pr-not-reviewed"), ["#ansi4", false]);
-  assert.deepEqual(look("pr-ready"), ["#ansi2", false]);
+  assert.deepEqual(look("pr-ci-passing"), ["#ansi2", false]);
+  assert.equal(pr["pr-ready"].disc, undefined, "ready draws no disc");
+  assert.equal(pr["pr-ready"].parts.find((e) => hasText(e, "✓")).props.text_color, "#ansi2", "ready: green check mark");
   assert.deepEqual(look("pr-conflict")[1], false);
   assert.deepEqual(look("pr-no-checks"), ["#dim", false]);
   assert.deepEqual(look("pr-draft-failed"), ["#blocked", false]);
@@ -109,7 +111,9 @@ test("the sample draws the marker of every PR key; only the two pulsing discs lo
   assert.ok(pr["pr-not-reviewed"].parts.some((e) => hasText(e, "unreviewed head")));
   assert.ok(pr["pr-conflict"].parts.some((e) => hasText(e, "!")));
   assert.equal(pr["pr-failed"].parts[0].props.border_color, "#blocked");
+  // the two pulsing PR discs; no green disc pulses
   assert.equal(els(root).filter((e) => e.props?.loop !== undefined).length, 2);
+  assert.equal(els(root).filter((e) => e.props?.loop !== undefined && e.props.bg === "#ansi2").length, 0, "no green pulse");
   for (const k of Object.keys(pr)) assert.equal(pr[k].parts.filter((e) => e.kind === "svg").length, 0, `${k}: no spinner in a chip`);
 });
 

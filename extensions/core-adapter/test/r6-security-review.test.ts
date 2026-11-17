@@ -5,10 +5,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { AskContract } from "../askcontract.ts";
 import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { BlockedTracker } from "../herdr.ts";
 import { childHandoffDirs, ownHandoffDirs } from "../owned.ts";
+import { OwnAsk } from "../ownask.ts";
 import { parentApproval, SelfRulings, snapshotRulings } from "../ruling.ts";
 import { redactCommand, sanitizeTrace } from "../trace.ts";
 
@@ -70,18 +70,18 @@ test("sec 1: a ruling this session wrote (write or shell) is not named; a later 
   assert.equal(parentApproval(dirs, FAIL_AT, self), g);
 });
 
-test("sec 3: a parent-side dir with .ask and no .seen does not block this session", () => {
+test("sec 3: a child's ask.md in a dir where this session is the parent never sets a blocked state in this session", () => {
   const r = rig();
-  fs.writeFileSync(path.join(r.down, ".ask"), "ask-1\n"); // a child of this session asks it
-  fs.writeFileSync(path.join(r.up, ".ask"), "ask-1\n");
   const tracker = new BlockedTracker({ emit: () => undefined, on: () => undefined });
-  const contract = new AskContract({ ownDirs: () => childHandoffDirs(r.handoffs, "me"), block: (label) => tracker.own(label) });
-  contract.recheck();
+  const own = new OwnAsk({ dirs: () => childHandoffDirs(r.handoffs, "me"), block: (label) => tracker.own(label) });
+  fs.writeFileSync(path.join(r.down, "ask.md"), "# Ask 1: q\n"); // a child of this session asks it
+  assert.equal(own.evaluate().open, false);
+  assert.equal(tracker.active, false, "the parent-side ask.md alone never blocks");
+  fs.writeFileSync(path.join(r.up, "ask.md"), "# Ask 1: q\n");
+  assert.equal(own.evaluate().open, true);
   assert.equal(tracker.active, true, "its own child-side ask blocks");
-  fs.writeFileSync(path.join(r.up, ".seen"), "ruling.md\n");
-  contract.recheck();
-  assert.equal(tracker.active, false, "the parent-side .ask alone never blocks");
-  contract.releaseAll();
+  own.releaseAll();
+  assert.equal(tracker.active, false);
 });
 
 test("sec 4: denied-command traces redact secret-shaped tokens", () => {

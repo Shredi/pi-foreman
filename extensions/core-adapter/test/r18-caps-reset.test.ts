@@ -1,4 +1,4 @@
-// R18 item 1: a parent-written ruling-<n>.md or brief-<x>.md in the session's handoff dir lifts the loop stop and resets the
+// R18 item 1: a parent-written brief-<x>.md in the session's handoff dir lifts the loop stop and resets the
 // read budget (index.ts capsReset, rounds.ts rulingReset strict). No text parser; ruling.md,
 // ruling-plan.md and brief.md never reset; a self-written, symlinked, ctime-only changed or older file does not; the
 // owner-prompt reset stays as it was.
@@ -38,39 +38,42 @@ async function reviewCapped(a: Rig): Promise<void> {
 }
 /** A shell read that runs to its tool_result (nothing stays in flight). */
 const bash = (a: Rig, command: string): Promise<Res> => a.toolDoing("bash", { command }, () => undefined);
+/** A read through the grep tool: it counts for the budget like a shell read and starts no guard process. */
+const grepRead = (a: Rig, pattern: string): Promise<Res> => a.toolDoing("grep", { pattern, path: "src" }, () => undefined);
 const reminds = (a: Rig): number => a.events("read_budget").filter((r) => r.action === "remind").length;
 /** Read budget used up (WARN + 3 reads, one reminder). */
 async function readsReminded(a: Rig): Promise<void> {
-  for (let i = 0; i < WARN + 3; i++) assert.equal(await bash(a, `ls -la src${i}`), undefined);
+  for (let i = 0; i < WARN + 3; i++) assert.equal(await grepRead(a, `src${i}`), undefined);
   assert.equal(reminds(a), 1, "reminded at the limit");
 }
 /** After a reset the count restarted: WARN - 1 reads raise no new reminder (without the reset the 16th read would). */
 async function readsFresh(a: Rig): Promise<void> {
-  for (let i = 0; i < WARN - 1; i++) assert.equal(await bash(a, `ls fresh${i}`), undefined);
+  for (let i = 0; i < WARN - 1; i++) assert.equal(await grepRead(a, `fresh${i}`), undefined);
   assert.equal(reminds(a), 1, "the count restarted");
 }
 
 test("caps_name_predicates", () => {
-  for (const n of ["ruling-1.md", "ruling-2.md", "brief-1.md", "brief-x.y_z-9.md"]) assert.ok(isCapsResetName(n), n);
-  for (const n of ["ruling.md", "ruling-0.md", "ruling-plan.md", "brief.md", "brief-.md", "brief-a b.md", "brief-x.md.ack", "ruling-1.md.ack"]) assert.ok(!isCapsResetName(n), n);
+  for (const n of ["brief-1.md", "brief-x.y_z-9.md"]) assert.ok(isCapsResetName(n), n);
+  for (const n of ["ruling-1.md", "ruling-2.md", "ruling.md", "ruling-0.md", "ruling-plan.md", "brief.md", "brief-.md", "brief-a b.md", "brief-x.md.ack", "ruling-1.md.ack"]) assert.ok(!isCapsResetName(n), n);
   assert.ok(isBriefName("brief-1.md") && !isBriefName("ruling-1.md"));
-  for (const n of ["brief-1.md", "ruling-2.md", "ruling-plan.md", "ruling.md"]) assert.ok(isTrackedRulingName(n), n);
+  for (const n of ["brief-1.md", "ruling-2.md", "ruling.md"]) assert.ok(isTrackedRulingName(n), n);
+  assert.ok(!isTrackedRulingName("ruling-plan.md"), "ruling-plan.md left the tracked names with the parent's plan approval (PR 4)");
 });
 
-test("parent_ruling_file_lifts_loop_stop", async (t) => {
+test("parent_brief_file_lifts_loop_stop", async (t) => {
   const a = await rig(t);
   const dir = a.handoff("round", "child");
   await reviewCapped(a);
-  writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
+  writeAt(path.join(dir, "brief-2.md"), "go on\n", Date.now());
   assert.equal((await a.launch(review(3))).res, undefined, "the stop is lifted");
-  assert.deepEqual(a.events("cap_reset").map((r) => [r.by, r.count]), [["ruling", 1]]);
+  assert.deepEqual(a.events("cap_reset").map((r) => [r.by, r.count]), [["brief", 1]]);
 });
 
-test("parent_ruling_file_resets_read_budget", async (t) => {
+test("parent_brief_file_resets_read_budget", async (t) => {
   const a = await rig(t);
   const dir = a.handoff("round", "child");
   await readsReminded(a);
-  writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
+  writeAt(path.join(dir, "brief-2.md"), "go on\n", Date.now());
   await readsFresh(a);
   assert.equal(a.events("cap_reset").length, 1);
 });
@@ -86,88 +89,81 @@ test("parent_brief_file_lifts_the_stop_and_budgets", async (t) => {
   assert.deepEqual(a.events("cap_reset").map((r) => [r.by, r.count]), [["brief", 1]]);
 });
 
-test("ruling_md_plan_and_plain_brief_do_not_reset", async (t) => {
+// The cases below leave the stop in place and reset nothing, so they share one capped session (each asserts the stop still refuses and no cap_reset).
+test("files that do not reset: the stop stays through all of them", async (t) => {
   const a = await rig(t);
   const dir = a.handoff("round", "child");
+  const mine = a.handoff("opened", "parent"); // this session is the parent there: its child writes there
   await reviewCapped(a);
-  for (const n of ["ruling.md", "ruling-plan.md", "brief.md", "ruling-0.md", "brief-x.md.ack"]) writeAt(path.join(dir, n), "APPROVED\n", Date.now());
-  assert.ok(capRefused((await a.launch(review(3))).res));
-  assert.deepEqual(a.events("cap_reset"), []);
-});
 
-test("self_written_files_do_not_reset", async (t) => {
-  const a = await rig(t);
-  const dir = a.handoff("round", "child");
-  await reviewCapped(a);
-  // a literal write to either name is refused outright
-  for (const n of ["brief-x.md", "ruling-2.md"]) {
-    const res = await a.call("write", { path: path.join(dir, n), content: "x" });
-    assert.equal(res?.block, true, `${n}: ${res?.reason}`);
-  }
-  // written by a shell command whose line does not show the name: the snapshot marks it
-  for (const n of ["brief-x.md", "ruling-2.md"]) {
-    await a.toolDoing("bash", { command: "./tools/fixup.sh" }, () => fs.writeFileSync(path.join(dir, n), "go on\n"));
-    assert.ok(capRefused((await a.launch(review(3))).res), `${n} written by the shell`);
-  }
-  // a write tool_result for a file (the tool wrote it): marked, brief names included
-  for (const n of ["brief-y.md", "ruling-3.md"]) {
-    const file = path.join(dir, n);
-    fs.writeFileSync(file, "go on\n");
-    await a.wrote(file);
-    assert.ok(capRefused((await a.launch(review(3))).res), `${n} written by the write tool`);
-  }
-  assert.deepEqual(a.events("cap_reset"), []);
-});
-
-test("file_written_while_a_shell_call_is_in_flight_waits", async (t) => {
-  const a = await rig(t);
-  const dir = a.handoff("round", "child");
-  await reviewCapped(a);
-  // a file lands while a bash call runs: a parallel call does not reset (it cannot tell the shell's write from the parent's)
-  let parallel: Res = { block: false };
-  await a.toolDoing("bash", { command: "./tools/slow.sh" }, async () => {
-    writeAt(path.join(dir, "brief-1.md"), "go on\n", Date.now());
-    parallel = (await a.launch(review(3))).res;
+  await t.test("ruling_md_plan_and_plain_brief_do_not_reset", async () => {
+    for (const n of ["ruling.md", "ruling-plan.md", "brief.md", "ruling-0.md", "brief-x.md.ack"]) writeAt(path.join(dir, n), "APPROVED\n", Date.now());
+    assert.ok(capRefused((await a.launch(review(3))).res));
+    assert.deepEqual(a.events("cap_reset"), []);
   });
-  assert.ok(capRefused(parallel), "no reset while a shell call is in flight");
-  // the result marks the file the shell call changed as self-written
-  assert.ok(capRefused((await a.launch(review(3))).res), "and not afterwards");
-  assert.deepEqual(a.events("cap_reset"), []);
-});
 
-test("symlinked_brief_does_not_reset", async (t) => {
-  const a = await rig(t);
-  const dir = a.handoff("round", "child");
-  await reviewCapped(a);
-  const target = path.join(a.project, ".workflow", "notes.md");
-  fs.writeFileSync(target, "go on\n");
-  fs.symlinkSync(target, path.join(dir, "brief-1.md"));
-  assert.ok(capRefused((await a.launch(review(3))).res));
-  assert.deepEqual(a.events("cap_reset"), []);
+  await t.test("self_written_files_do_not_reset", async () => {
+    // a literal write to either name is refused outright
+    for (const n of ["brief-x.md", "ruling-2.md"]) {
+      const res = await a.call("write", { path: path.join(dir, n), content: "x" });
+      assert.equal(res?.block, true, `${n}: ${res?.reason}`);
+    }
+    // written by a shell command whose line does not show the name: the snapshot marks it
+    for (const n of ["brief-x.md", "ruling-2.md"]) {
+      await a.toolDoing("bash", { command: "./tools/fixup.sh" }, () => fs.writeFileSync(path.join(dir, n), "go on\n"));
+      assert.ok(capRefused((await a.launch(review(3))).res), `${n} written by the shell`);
+    }
+    // a write tool_result for a file (the tool wrote it): marked, brief names included
+    for (const n of ["brief-y.md", "ruling-3.md"]) {
+      const file = path.join(dir, n);
+      fs.writeFileSync(file, "go on\n");
+      await a.wrote(file);
+      assert.ok(capRefused((await a.launch(review(3))).res), `${n} written by the write tool`);
+    }
+    assert.deepEqual(a.events("cap_reset"), []);
+  });
+
+  await t.test("file_written_while_a_shell_call_is_in_flight_waits", async () => {
+    // a file lands while a bash call runs: a parallel call does not reset (it cannot tell the shell's write from the parent's)
+    let parallel: Res = { block: false };
+    await a.toolDoing("bash", { command: "./tools/slow.sh" }, async () => {
+      writeAt(path.join(dir, "brief-1.md"), "go on\n", Date.now());
+      parallel = (await a.launch(review(3))).res;
+    });
+    assert.ok(capRefused(parallel), "no reset while a shell call is in flight");
+    // the result marks the file the shell call changed as self-written
+    assert.ok(capRefused((await a.launch(review(3))).res), "and not afterwards");
+    assert.deepEqual(a.events("cap_reset"), []);
+  });
+
+  await t.test("symlinked_brief_does_not_reset", async () => {
+    const target = path.join(a.project, ".workflow", "notes.md");
+    fs.writeFileSync(target, "go on\n");
+    fs.rmSync(path.join(dir, "brief-1.md")); // the in-flight case wrote a plain one
+    fs.symlinkSync(target, path.join(dir, "brief-1.md"));
+    assert.ok(capRefused((await a.launch(review(3))).res));
+    assert.deepEqual(a.events("cap_reset"), []);
+  });
+
+  await t.test("file_outside_child_dirs_does_not_reset", async () => {
+    writeAt(path.join(mine, "brief-2.md"), "go on\n", Date.now());
+    writeAt(path.join(a.project, "brief-3.md"), "go on\n", Date.now());
+    assert.ok(capRefused((await a.launch(review(3))).res));
+    assert.deepEqual(a.events("cap_reset"), []);
+  });
 });
 
 test("ctime_only_change_does_not_reset_again", async (t) => {
   const a = await rig(t);
   const dir = a.handoff("round", "child");
   await reviewCapped(a);
-  const file = path.join(dir, "ruling-2.md");
+  const file = path.join(dir, "brief-2.md");
   writeAt(file, "go on\n", Date.now());
   assert.equal((await a.launch(review(3))).res, undefined);
   await new Promise((r) => setTimeout(r, 20));
   fs.chmodSync(file, 0o600); // changes only the ctime
   await bash(a, "ls after");
   assert.equal(a.events("cap_reset").length, 1, "a chmod of the applied file does not reset");
-});
-
-test("file_outside_child_dirs_does_not_reset", async (t) => {
-  const a = await rig(t);
-  a.handoff("round", "child");
-  const mine = a.handoff("opened", "parent"); // this session is the parent there: its child writes there
-  await reviewCapped(a);
-  writeAt(path.join(mine, "ruling-2.md"), "go on\n", Date.now());
-  writeAt(path.join(a.project, "ruling-3.md"), "go on\n", Date.now());
-  assert.ok(capRefused((await a.launch(review(3))).res));
-  assert.deepEqual(a.events("cap_reset"), []);
 });
 
 test("watermark_persisted_and_restored", async (t) => {
@@ -177,15 +173,17 @@ test("watermark_persisted_and_restored", async (t) => {
   process.env.PI_FOREMAN_HANDOFF_DIR = dir;
   await reviewCapped(a);
   // a child dir that is not the round state dir does not count when PI_FOREMAN_HANDOFF_DIR is set
-  writeAt(path.join(other, "ruling-2.md"), "go on\n", Date.now());
+  writeAt(path.join(other, "brief-2.md"), "go on\n", Date.now());
   assert.ok(capRefused((await a.launch(review(3))).res), "not the round state dir");
   writeAt(path.join(dir, "ruling-2.md"), "go on\n", Date.now());
-  // the ruling pickup (a newer ruling in the round state dir) holds this one launch; the stop is lifted already
+  // the ruling pickup (a newer ruling in the round state dir) holds this one launch; a ruling-<n>.md does not lift the stop
   assert.match((await a.launch(review(3))).res?.reason ?? "", /a newer ruling arrived/);
-  assert.equal((await a.launch(review(3))).res, undefined);
+  assert.ok(capRefused((await a.launch(review(3))).res), "a ruling-<n>.md does not lift the stop");
+  writeAt(path.join(dir, "brief-2.md"), "go on\n", Date.now());
+  assert.equal((await a.launch(review(3))).res, undefined, "the brief lifts it");
   const stored = JSON.parse(fs.readFileSync(path.join(dir, ROUND_STATE_FILE), "utf8")) as Record<string, unknown>;
   assert.equal(typeof stored.capsResetAt, "number");
-  assert.ok((stored.capsResetAt as number) >= fs.statSync(path.join(dir, "ruling-2.md")).mtimeMs);
+  assert.ok((stored.capsResetAt as number) >= fs.statSync(path.join(dir, "brief-2.md")).mtimeMs);
   assert.equal(restoreRoundState(dir, () => null)!.capsResetAt, stored.capsResetAt);
   // a reload restores the watermark: a file older than it (the pre-restart self-written ones included) does not reset
   stored.capsResetAt = Date.now() + 60_000;

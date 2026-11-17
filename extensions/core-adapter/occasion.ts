@@ -1,7 +1,7 @@
 // Review occasions (docs/review.md): one launch path, climb rung, model rule and extractor for every
 // review, told apart by a marker in the reviewer's task text:
 //   [plan-review]    the plan before the checkpoint (ceremony.planReview),
-//   [high-stakes]    the extra whole-change pass of a large change (highstakes.ts; not config-facing, never counts),
+//   [high-stakes]    the extra whole-change pass of a risky change (highstakes.ts; not config-facing, never counts),
 //   [pre-pr]         the whole branch diff before a pull request,
 //   [second-opinion] optional advice on unchanged work (bound.ts dupReview exemption; never blocks),
 //   none             "item": the review of built ledger items.
@@ -49,10 +49,11 @@ const OCCASION_LINES: Partial<Record<Occasion, string>> = {
   "high-stakes": "occasion: high-stakes (the whole change on the high-stakes model: marks no items, opens no gate)",
 };
 
-/** The launch-result line of each non-item occasion a review child of the launch names (a misclassified review is visible before it runs). */
-export function occasionLinesOf(input: Json): string[] {
-  const named = new Set([...entryOccasions(input)].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o));
-  return [...named].flatMap((o) => OCCASION_LINES[o] ?? []);
+/** The launch-result line of each non-item occasion the review children of the launch were recorded with (taken at the launch, not from the rewritten task). */
+export function occasionLinesOf(occasions: Iterable<Occasion>, hsRequired = false): string[] {
+  const named = new Set(occasions);
+  // `hsRequired`: a high-stakes review is still due, so a `[pre-pr]` PASS does not open the PR gate by itself.
+  return [...named].flatMap((o) => (o === "pre-pr" && hsRequired ? `${OCCASION_LINES[o]}; a [high-stakes] review is necessary after this PASS` : OCCASION_LINES[o] ?? []));
 }
 
 /** One launched child, in launch order (launchEntries entries that name an agent). */

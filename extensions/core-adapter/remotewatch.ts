@@ -31,7 +31,7 @@ import { spawn } from "node:child_process";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { parseAskHeader } from "./askcontract.ts";
+import { parseAskHeader } from "./childask.ts";
 import { applyRemoteNotice, parseRemoteNotice } from "./remotesession.ts";
 import type { RemoteNotice } from "./remotesession.ts";
 import { readRegistry, writeRegistry } from "./session.ts";
@@ -502,9 +502,10 @@ export class RemoteWatcher {
     const prev = this.state;
     let dirty = false;
     for (const e of reg.sessions) {
-      const a = e.ask as { rulings?: unknown } | undefined;
-      if (e.ask && typeof e.ask === "object" && typeof a?.rulings === "number" && (typeof e.rulings === "number" ? e.rulings : 0) > a.rulings) {
-        delete e.ask; // a ruling was delivered (a plain brief does not count): the ask is answered
+      const a = e.ask as { answers?: unknown } | undefined;
+      // an ask written before `answers` existed carries `rulings` only: its missing count is 0
+      if (e.ask && typeof e.ask === "object" && (typeof e.answers === "number" ? e.answers : 0) > (typeof a?.answers === "number" ? a.answers : 0)) {
+        delete e.ask; // a brief or a `ruling-<n>.md` was delivered (a plan ruling or a steer does not count): the ask is answered
         dirty = true;
       }
     }
@@ -842,7 +843,7 @@ export class RemoteWatcher {
       if (a.kind === "ask") {
         // `n` and `topic` come from the mirrored ask.md header `# Ask <n>: <topic>`; `seq` is only the notice counter
         const head = buf ? parseAskHeader(buf.toString("utf8")) : null;
-        e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, rulings: typeof e.rulings === "number" ? e.rulings : 0, ...(head ? { n: head.n, topic: head.topic } : {}) };
+        e.ask = { seq: a.seq, path: hit.path, at: hit.entry.last?.at, answers: typeof e.answers === "number" ? e.answers : 0, ...(head ? { n: head.n, topic: head.topic } : {}) };
       }
       else delete e.ask;
       wake = { kind: hit.kind, path: hit.path };

@@ -1,17 +1,15 @@
 // Owner-readable text (docs/ceremony.md "Owner summary"): the `## For the owner` section every plan opens with, the
 // deterministic jargon rule shared by the plan-review facts, the question hint and the foreman_show hint, the
 // context prefix of ask_user_question questions, and the foreman_show opening check. Jargon is advice only; the plan form
-// (planFormIssues: presence, position, length, required headings) is what a `[plan-review]` launch is refused for (index.ts).
+// (planFormIssues: presence, position, required headings) is what a `[plan-review]` launch is refused for (index.ts).
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { clean, planBody } from "./checkpoint.ts";
 import { workspaceOf } from "./python.ts";
 
-/** The owner section is at most this many lines (wrapped at OWNER_COLS) and OWNER_CHARS characters. */
+/** The checkpoint dialog shows at most this many lines of the owner section (ownerSummary); the plan page shows all. */
 export const OWNER_LINES = 10;
-export const OWNER_COLS = 100;
-export const OWNER_CHARS = 1000;
 
 const OWNER_HEADING = /^##[ \t]+for the owner[ \t]*$/i;
 const LEVEL2 = /^##[ \t]+\S/;
@@ -86,11 +84,20 @@ export function jargonHits(text: string, max = 3): string[] {
   return hits;
 }
 
-/** The measured size of an owner section: the non-blank lines wrapped at OWNER_COLS (the number the length rule uses) and the characters. */
-const measure = (sec: OwnerSection): { wrapped: number; chars: number } => ({
-  wrapped: sec.lines.filter((l) => l.trim()).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / OWNER_COLS)), 0),
-  chars: sec.lines.join("\n").length,
-});
+const MERMAID_OPEN = /^[ \t]*(?:```|~~~)[ \t]*mermaid\b/;
+
+/** The first and last line index of each mermaid fence in a section (an unclosed one runs to the end). */
+function diagramSpans(lines: string[]): [number, number][] {
+  const spans: [number, number][] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!MERMAID_OPEN.test(lines[i])) continue;
+    let j = i + 1;
+    while (j < lines.length && !FENCE.test(lines[j])) j++;
+    spans.push([i, Math.min(j, lines.length - 1)]);
+    i = j;
+  }
+  return spans;
+}
 
 /** The rule violations of a plan's owner section; empty when it is fine. */
 export function ownerSectionIssues(text: string): string[] {
@@ -98,9 +105,8 @@ export function ownerSectionIssues(text: string): string[] {
   if (!sec) return ["missing"];
   const issues: string[] = [];
   if (!sec.first) issues.push("not the first ## section");
-  const { wrapped, chars } = measure(sec);
-  if (wrapped > OWNER_LINES || chars > OWNER_CHARS) issues.push(`too long (${wrapped} lines wrapped at ${OWNER_COLS} columns, ${chars} characters; at most ${OWNER_LINES} lines and ${OWNER_CHARS} characters)`);
   if (!sec.lines.some((l) => l.trim())) issues.push("empty");
+  if (diagramSpans(sec.lines).length > 1) issues.push("more than one diagram (one mermaid fence is allowed)");
   const jargon = jargonHits(sec.lines.join("\n"));
   if (jargon.length) issues.push(`jargon: ${jargon.join(" ")}`);
   return issues;
@@ -109,7 +115,7 @@ export function ownerSectionIssues(text: string): string[] {
 /** The headings a plan-first session's brief asks for (scripts/foreman_session.py), checked only in a session opened plan-first by a parent. */
 export const PLAN_FIRST_HEADINGS = ["Decisions and assumptions", "Open questions"] as const;
 
-/** The form faults a `[plan-review]` launch is refused for: the owner section's presence, position and length (not jargon), and each missing `opts.requiredHeadings` heading. */
+/** The form faults a `[plan-review]` launch is refused for: the owner section's presence and position (not jargon), and each missing `opts.requiredHeadings` heading. */
 export function planFormIssues(text: string, opts: { requiredHeadings?: readonly string[] }): string[] {
   const issues = ownerSectionIssues(text).filter((i) => !i.startsWith("jargon:"));
   let fenced = false;
@@ -123,26 +129,36 @@ export function planFormIssues(text: string, opts: { requiredHeadings?: readonly
   return issues;
 }
 
+/** The plain-language rule for owner text, in one place: instructions, hints and the plan-review facts point at it. */
+export const OWNER_TEXT_POINTS = "short sentences, one instruction or fact each; active voice; one word for one thing; common words, a needed term explained once; steps as a list";
+
 /** Facts lines of a `[plan-review]` launch, one per plan file (relative paths resolve against `cwd`). */
 export function ownerFactsLines(planPaths: readonly string[], cwd: string): string[] {
-  return planPaths.map((p) => {
-    let text: string;
-    try {
-      text = fs.readFileSync(path.resolve(cwd, p), "utf8");
-    } catch {
-      return `Owner section (${p}): plan not readable`;
-    }
-    const sec = ownerSection(text);
-    const issues = ownerSectionIssues(text);
-    return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : `present (${measure(sec).wrapped} lines, ${measure(sec).chars} characters; checked by the harness)`}`;
-  });
+  return planPaths.map((p) => `${ownerFactLine(p, cwd)}; judge it as owner text: ${OWNER_TEXT_POINTS}`);
+}
+
+function ownerFactLine(p: string, cwd: string): string {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.resolve(cwd, p), "utf8");
+  } catch {
+    return `Owner section (${p}): plan not readable`;
+  }
+  const sec = ownerSection(text);
+  const issues = ownerSectionIssues(text);
+  return `Owner section (${p}): ${!sec ? "missing" : issues.length ? `issues: ${issues.join("; ")}` : "present (checked by the harness)"}`;
 }
 
 /** The owner section for the checkpoint dialog (control characters stripped, 200 characters a line), or the warning line. */
 export function ownerSummary(text: string): string {
   const sec = ownerSection(text);
   if (!sec || !sec.lines.some((l) => l.trim())) return '⚠ No "For the owner" summary in this plan.';
-  const lines = sec.lines.filter((l) => l.trim());
+  const spans = diagramSpans(sec.lines);
+  const shown = sec.lines.flatMap((l, i) => {
+    const span = spans.find(([a, b]) => i >= a && i <= b);
+    return span ? (i === span[0] ? ["(diagram: see the plan page)"] : []) : [l];
+  });
+  const lines = shown.filter((l) => l.trim());
   return ["For the owner", ...lines.slice(0, OWNER_LINES).map((l) => `  ${clean(l)}`), ...(lines.length > OWNER_LINES ? ["  …"] : [])].join("\n");
 }
 
@@ -193,7 +209,7 @@ export function questionHint(input: unknown, prefix: string): string | null {
     for (const o of q?.options ?? []) if (typeof o?.description === "string") texts.push(o.description);
   }
   const hits = jargonHits(texts.join("\n"), 4);
-  return hits.length ? `pi-foreman: the question text reads like jargon (${hits.join(" ")}). The owner reads it cold: say in plain words what is decided and why, no paths, identifiers or ids, recommended option first with a one-line consequence.` : null;
+  return hits.length ? `pi-foreman: the question text reads like jargon (${hits.join(" ")}). The owner reads it cold: write it as owner text (plain, no jargon): say what is decided and why, no paths, identifiers or ids, recommended option first with a one-line consequence.` : null;
 }
 
 /** The hint for a foreman_show reply when the note does not open with a short plain paragraph, else null. */
@@ -207,5 +223,5 @@ export function showHint(markdown: string): string | null {
   const plain = text !== "" && !FENCE.test(para[0] ?? "") && !/^[|>#]/.test(text) && !/^(?:[-*+]|\d+[.)])[ \t]/.test(text);
   const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim()).length;
   if (plain && sentences <= 3) return null;
-  return "pi-foreman hint: open the note with a plain 2-3 sentence summary (what it is about and the answer), before tables, code or diagrams; the owner may open it cold.";
+  return "pi-foreman hint: write it as owner text and open the note with a plain 2-3 sentence summary (what it is about and the answer), before tables, code or diagrams; the owner may open it cold.";
 }

@@ -700,7 +700,7 @@ def absolute(text, cwd, lexical=True):
 
 DEFAULT_ALLOWED_DIRS = [".workflow"]
 # the fallback: the harness sends the one list as `handoff_names` in the payload (pathrules.ts HANDOFF_CHILD_NAMES)
-HANDOFF_CHILD_NAMES = ("plan.md", "result.md", "ask.md", ".ask", ".seen", ".steer-last-read.json")
+HANDOFF_CHILD_NAMES = ("plan.md", "result.md", "ask.md", ".steer-last-read.json")
 
 
 def _payload_handoff_names(v):
@@ -792,7 +792,7 @@ class Scope(object):
 
     def _handoff_refuses(self, abs_path, real):
         """True for a target inside the own child-side handoff dir that is not child-written: the allow-list is
-        plan.md, result.md, ask.md, ask-<n>.md, .ask, .seen, .steer-last-read.json and anything below work/.
+        plan.md, result.md, ask.md, ask-<n>.md, .steer-last-read.json and anything below work/.
         Judged on the realpath; a target whose parent resolves outside the dir is refused too (a symlinked
         `work`). On Windows the first name is compared case-folded without trailing dots and spaces; an NTFS
         stream (`name:s`) or a short name (`NAME~1`) never matches."""

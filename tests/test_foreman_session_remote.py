@@ -245,7 +245,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_defaults(self):
         sessions = self.load()["config"]["sessions"]
-        self.assertEqual(sessions, {"backend": "auto", "confirmWaitSeconds": 20, "hc": {"outliveParent": True}, "machines": {},
+        self.assertEqual(sessions, {"backend": "auto", "confirmWaitSeconds": 20, "hc": {"outliveParent": True, "resume": "auto"}, "machines": {},
                                     "remote": {"fetchTimeoutSeconds": 30}, "worktree": {"branchPrefix": "round"}})
 
     def test_machines_from_the_project_layer_are_ignored(self):
@@ -1208,14 +1208,14 @@ class BriefTest(RemoteBase):
             self.assertEqual((sent["kind"], sent["name"], sent["content"]), (kind, name, "content of " + name))
             self.assertEqual((self.rh / name).read_text("utf-8"), "content of " + name)
 
-    def test_rulings_are_counted_apart_from_briefs(self):
+    def test_briefs_are_counted_and_no_rulings_counter_is_written(self):
         reg = self.padir / "pi-foreman" / "state" / "sessions.json"
 
         def counts():
             e = [s for s in json.loads(reg.read_text("utf-8"))["sessions"] if s["child"] == self.entry["child"]][-1]
             return e.get("briefs"), e.get("rulings")
 
-        for name, want in (("brief-7.md", (1, None)), ("steer-1.md", (2, None)), ("ruling.md", (3, 1)), ("ruling-2.md", (4, 2))):
+        for name, want in (("brief-7.md", (1, None)), ("steer-1.md", (2, None)), ("ruling.md", (3, None)), ("ruling-2.md", (4, None))):
             f = self.tmp / name
             f.write_text("x", "utf-8")
             self.assertEqual(self.send(str(f))[0], 0, name)
@@ -1232,8 +1232,8 @@ class BriefTest(RemoteBase):
     def test_a_delivered_ruling_clears_the_pending_ask_at_once(self):
         for ask, name, cleared in (({"seq": 5, "n": 2}, "ruling-2.md", True), ({"seq": 5, "n": 2}, "ruling-3.md", True),
                                    ({"seq": 5, "n": 2}, "ruling-1.md", False), ({"seq": 5, "n": 2}, "steer-1.md", False),
-                                   ({"seq": 5}, "ruling-1.md", True), ({"seq": 5}, "ruling.md", True),
-                                   ({"seq": 5}, "brief-1.md", False)):
+                                   ({"seq": 5}, "ruling-1.md", True), ({"seq": 5}, "ruling.md", False),
+                                   ({"seq": 5}, "brief-1.md", True)):
             self.set_ask(ask)
             f = self.tmp / name
             f.write_text("x", "utf-8")
@@ -1601,8 +1601,10 @@ class FooterTest(unittest.TestCase):
                 self.assertNotIn("session remote", c)
                 self.assertNotIn("\n", c)
             self.assertEqual(any(c.endswith(" plan") for c in cmds), plan_first)
-            self.assertIn("ruling-<n>.md", text)
-            self.assertEqual("`ruling.md`" in text, plan_first)
+            self.assertNotIn("ruling-<n>.md", text)
+            self.assertIn("brief-<n>.md", text)
+            self.assertNotIn("kind `file` on `ruling.md`", text)  # PR 4: no wait on a parent's ruling
+            self.assertEqual("`ruling.md`" in text, plan_first)  # named in the plan-first item only, as a note
             for gone in ("outbox", "bytes (", "owner closes this pane"):
                 self.assertNotIn(gone, text)
 

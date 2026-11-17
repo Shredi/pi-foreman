@@ -54,6 +54,8 @@ const USAGE = [
   "  --enable/--disable  switch toggleable features on or off after the profile (comma lists, repeatable; `foreman features list` shows the ids)",
   "  --addon        install exactly these Pi add-ons from config/addons.json (repeatable); without it the default add-ons are installed (polish, background-tasks, quiver, memory)",
   "  --no-addons    install no add-on; --skip-addon <id> leaves one out (repeatable); --no-env does not write PI_BG_FEATURES to your shell profile or Windows user environment",
+  "  --no-resume-hook  write no resume block to your shell startup file (the block that restarts a crashed Pi session in its pane) and remove an existing one; --no-env writes none either",
+  "                 (`foreman setup --remove` removes it too; docs/install.md shows the block for adding it by hand)",
   "  --github-hosts the GitHub hosts the PR tracker covers (tools.prGithubHosts, 1-20 host names, comma list); the picker asks for them, a fresh install without the flag writes github.com",
   "  --pick         open the terminal picker again (needs a terminal; PI_FOREMAN_PICKER=off disables it, =force is a test aid)",
   "  --preview      draw a setup screen (home, plan, updates, config, models, workfolders, apply) from sample data; changes nothing and cannot be combined with other flags",
@@ -220,7 +222,7 @@ function hostsToWrite(merged, answer, fresh) {
 const withGithubHosts = (cfg, hosts) => (hosts ? { ...cfg, tools: { ...(isObj(cfg.tools) ? cfg.tools : {}), prGithubHosts: hosts } } : cfg);
 
 function parseArgs(argv) {
-  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], noAddons: false, skipAddon: [], noEnv: false, githubHosts: null, pick: false, preview: null, mods: false };
+  const o = { dryRun: false, project: false, remove: false, overlay: null, agentDir: null, noIntercom: false, intercomHc: false, machineName: null, develop: false, profile: null, enable: [], disable: [], addon: [], noAddons: false, skipAddon: [], noEnv: false, noResumeHook: false, githubHosts: null, pick: false, preview: null, mods: false };
   for (let i = 0; i < argv.length; i++) {
     const eq = argv[i].startsWith("--") ? argv[i].indexOf("=") : -1;
     const flag = eq >= 0 ? argv[i].slice(0, eq) : argv[i];
@@ -249,6 +251,7 @@ function parseArgs(argv) {
     else if (flag === "--no-addons") o.noAddons = true;
     else if (flag === "--skip-addon") o.skipAddon.push(...csv(value()));
     else if (flag === "--no-env") o.noEnv = true;
+    else if (flag === "--no-resume-hook") o.noResumeHook = true;
     else if (flag === "--github-hosts") {
       const r = validateHosts(csv(value()));
       if (!r.hosts) throw new Fatal(`${flag}: ${r.error}.\n${USAGE}`, 2);
@@ -1146,8 +1149,29 @@ async function main(argv) {
 
   return opts.remove ? removeAll() : install();
 
+  // ------------------------------------------------------------ resume hook
+  // The shell block that restarts a Pi session in its pane after a crash (setup/resume-hook.mjs). Written under the guard of the env block (the
+  // default agent dir or PI_FOREMAN_HOME; never in a dry run, never on win32, never with --no-env); --no-resume-hook and --remove take it out.
+  async function resumeHookStep({ remove = false } = {}) {
+    const platform = process.env.PI_FOREMAN_PLATFORM || process.platform;
+    if (platform === "win32") return;
+    const home = process.env.PI_FOREMAN_HOME || os.homedir();
+    const sandboxed = !process.env.PI_FOREMAN_HOME && agentDir !== path.join(os.homedir(), ".pi", "agent");
+    const bin = path.join(ROOT, "bin", "foreman");
+    const lines = async () => (await import("./setup/resume-hook.mjs")).applyResumeHook({ home, shell: process.env.SHELL ?? "", bin, dry, remove: remove || opts.noResumeHook });
+    if (remove || opts.noResumeHook) {
+      if (sandboxed) return;
+      for (const l of await lines()) say(`  ${l}`);
+      return;
+    }
+    if (opts.noEnv) say("resume hook: not written (--no-env); to restart a crashed session in its pane, add the block shown in docs/install.md to your shell startup file.");
+    else if (sandboxed) say("resume hook: custom agent dir, your shell startup files are left alone; see docs/install.md to add the block by hand.");
+    else for (const l of await lines()) say(`  ${l}`);
+  }
+
   // ------------------------------------------------------------ remove
-  function removeAll() {
+  async function removeAll() {
+    await resumeHookStep({ remove: true });
     const installed = (Array.isArray(settings.packages) ? settings.packages : []).find((e) => isForemanEntry(e, baseDir));
     const removeLine = `pi remove ${(installed && entrySource(installed)) || FOREMAN_SOURCE}${opts.project ? " -l" : ""}`;
     for (const a of addonsInstalled()) say(`add-ons installed: ${a.id} (${a.source}); kept, remove with: pi remove ${a.source}${a.scope === "project" ? " -l" : ""}`);
@@ -1818,6 +1842,7 @@ async function main(argv) {
       else if (sandboxed) say(`env: custom agent dir, your shell profile is left alone; set ${manual} permanently yourself, Pi reads it when it starts.`);
       else for (const l of (await import("./setup/persist-env.mjs")).persistEnv(envVars, { home, shell: process.env.SHELL ?? "", platform: process.env.PI_FOREMAN_PLATFORM || process.platform, setx: process.env.PI_FOREMAN_SETX_BIN ? (k, v) => { const r = spawnSync(process.execPath, [process.env.PI_FOREMAN_SETX_BIN, k, v], { encoding: "utf8" }); return { status: r.status, error: (r.stderr || "").trim() }; } : undefined, dry })) say(`  ${l}`);
     }
+    await resumeHookStep();
     for (const a of addonRegistry) {
       if (present.some((i) => i.id === a.id) || addonNew.some((n) => n.id === a.id)) continue;
       say(`optional add-on ${a.id}: ${a.purpose} Spec npm:${a.package}@${a.version}. ${a.clashes.join(" ")} Install with: foreman setup --addon ${a.id}`);

@@ -525,7 +525,7 @@ def render_prompt(text, values):
 
 
 LOOP_RULE = ("- Review and revise until a review passes; no count limits the rounds. The adapter stops you with `[review_loop]` when a review FAIL repeats the findings of the round before, "
-             "or brings no new finding and no change to the work since then. Then stop: report the open findings to the owner and ask with `ask_user_question` (an answer lifts the stop) or wait for a new prompt. A new owner prompt, an answered `ask_user_question`, a parent ruling or brief, "
+             "or brings no new finding and no change to the work since then. Then stop: report the open findings to the owner and ask with `ask_user_question` (an answer lifts the stop) or wait for a new prompt. A new owner prompt, an answered `ask_user_question`, a parent brief, "
              "or a `/ceremony` tier change by the user lifts the stop; your own `foreman_triage`, a ledger `Tier:` line or an automatic escalation does not. While it stands, builder and reviewer "
              "launches are refused; `[second-opinion]` and a `resume` are not.\n")
 
@@ -622,7 +622,7 @@ class PackageFilesTest(unittest.TestCase):
         self.assertIn(old_launch, expected)
         # token-diet item 9: the ask_user_question rule (schema, notes, ask by file when the tool is absent)
         old_ask = "- Plan mode is not part of the ceremony; the checkpoint is.\n"
-        new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask by file (`ask.md`).\n"
+        new_ask = "- Plan mode is not part of the ceremony; the checkpoint is. Questions to the owner go through `ask_user_question`: 1 to 4 questions, each with a `header` chip and 2 to 4 options that are objects with a `label` and a `description`. An answer may carry `user notes:` or a `global note:`; treat them as part of the answer. When `ask_user_question` is not in your tool list (no human at the pane), ask the parent in a message, or by file (`ask.md`) when intercom cannot reach it. Ask once: a question goes to the parent or, when a human is at the pane and the decision is the owner's, to the owner as a dialog, never both.\n"
         self.assertIn(old_ask, expected)
         want = expected.replace(old_wait, new_wait).replace(old_reads, new_reads).replace(old_pr, new_pr).replace(old_launch, new_launch).replace(old_ask, new_ask)
         for old_text, new_text in role_pairs:

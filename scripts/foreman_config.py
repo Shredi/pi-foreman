@@ -95,10 +95,10 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.orientation.<enabled|maxLines>   free per layer (no tighten rule)
     ceremony.ledgerHelper            tighten only, off < bash < tool (may only move toward off)
     ceremony.reviewPerRevision       only true is accepted (false lifts the one-review-per-revision refusal)
-    ceremony.checkpoint              ignored (who approves the plan checkpoint: L1/L3/L2 only)
+    ceremony.checkpoint              ignored (the checkpoint mode, human only; parent is refused: L1/L3/L2 only)
     ceremony.reviewModel             ignored (the fallback reviewer model or the pair map: L1/L3/L2 only)
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
-    ceremony.highStakes              ignored (the high-stakes review model and its size bounds: L1/L3/L2 only)
+    ceremony.highStakes              ignored (the high-stakes review model; lines, modules and paths are retired: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.planReviewRounds        free per layer (no tighten rule)
     ceremony.budgetUsd               lower only, minimum 0.01 (a higher cap, or none, lets a session spend more); unset = no cap
@@ -120,7 +120,7 @@ Keys outside safety that the project and session layers cannot loosen either
     sessions.backend, sessions.hc    ignored (where a local session opens and the herdr-core options: user or overlay config only)
     sessions.worktree                ignored (the branch prefix of `session open --worktree`: user or overlay config only)
     sessions.remote                  ignored (the fetch timeout of a remote child's notice file: user or overlay config only)
-    sessions.blockedNoticeSeconds    ignored (when a parent is told its child waits on the owner: user or overlay config only)
+    sessions.blockedNoticeSeconds    ignored (when a parent is told its child waits on the owner or for its answer: user or overlay config only)
     compaction.maxTokens             lower only, minimum 50000 (a higher cap compacts later); a null is dropped;
                                      the session layer is ignored with a warning (setup applies it)
     compaction.priceTiers, compaction.threshold   removed in r52: a warning, the keys are dropped (see REMOVED_COMPACTION_KEYS)
@@ -252,12 +252,12 @@ IGNORED_KEYS = [
     (("sessions", "backend"), "where a local session opens comes from the user or overlay config"),
     (("sessions", "hc"), "the herdr-core session options come from the user or overlay config"),
     (("sessions", "remote"), "the fetch timeout of a remote child's notice file comes from the user or overlay config"),
-    (("sessions", "blockedNoticeSeconds"), "when a parent is told its child waits on the owner comes from the user or overlay config"),
+    (("sessions", "blockedNoticeSeconds"), "when a parent is told its child waits on the owner or for its answer comes from the user or overlay config"),
     (("sessions", "worktree"), "the branch prefix of a session's own worktree comes from the user or overlay config"),
-    (("ceremony", "checkpoint"), "who approves the plan checkpoint comes from the user or overlay config"),
+    (("ceremony", "checkpoint"), "the checkpoint mode (human only; parent is refused) comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model and the reviewer pair map come from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
-    (("ceremony", "highStakes"), "the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config"),
+    (("ceremony", "highStakes"), "the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config"),
     (("resources", "sampleSeconds"), "the sampling interval comes from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),

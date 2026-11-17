@@ -1,7 +1,8 @@
 // R14 item 6 (P2): reload-safe round state. `<handoff>/round-state.json` keeps the plan hash and the review counters;
-// the checkpoint approval is never stored: after /reload it comes back only from the parent's ruling.md, newer (ctime)
-// than both plan files. Each case runs the real adapter twice over the same dirs (a fresh instance = a reload).
-import { test } from "node:test";
+// the checkpoint approval is never stored there. Since PR 4 (the child owns its plan) no parent file approves: after /reload the
+// session's own dialog approval comes back from its ceremony-state entry (never from the approval store in a session with a handoff dir),
+// while the plan version hash is unchanged, whatever ruling files the handoff dir holds. Each case runs the real adapter twice over the same dirs (a fresh instance = a reload).
+import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -40,24 +41,30 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   for (const d of [".git", ".workflow/scratch"]) fs.mkdirSync(path.join(project, d), { recursive: true });
   fs.mkdirSync(agentDir, { recursive: true });
   const roles = ["explorer", "builder", "reviewer"];
-  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, ceremony: { launchWait: "detach", default: "heavy" } }));
+  fs.writeFileSync(path.join(agentDir, "foreman.json"), JSON.stringify({ providers: { fake: { review: { model: "m" }, roles: Object.fromEntries(roles.map((r) => [r, { model: `fake/${r}` }])) } }, trace: { enabled: true }, radar: { openPrs: { enabled: false } }, ceremony: { launchWait: "detach", default: "heavy" } }));
   const sessionId = `r14-rs-${++n}`;
   const handoff = path.join(agentDir, "pi-foreman", "handoffs", "round");
   fs.mkdirSync(handoff, { recursive: true });
   fs.writeFileSync(path.join(handoff, "child"), `${sessionId}\n`);
   fs.writeFileSync(path.join(handoff, "parent"), "parent-session\n");
-  process.env.PI_CODING_AGENT_DIR = agentDir;
-  process.env.PI_INTERCOM_SESSION_ID = sessionId;
-  delete process.env.PI_INTERCOM_STABLE_ID;
-  delete process.env.PI_SUBAGENT_CHILD;
-  delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
-  delete process.env.PI_FOREMAN_PLAN_PHASE; // a plan-phase session running the suite would refuse builders as plan_phase, not plan_required
-  if (env) process.env.PI_FOREMAN_HANDOFF_DIR = handoff;
-  else delete process.env.PI_FOREMAN_HANDOFF_DIR;
+  const applyEnv = () => {
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PI_INTERCOM_SESSION_ID = sessionId;
+    delete process.env.PI_INTERCOM_STABLE_ID;
+    delete process.env.PI_SUBAGENT_CHILD;
+    delete process.env.PI_FOREMAN_PRESSURE_FIXTURE;
+    delete process.env.PI_FOREMAN_PLAN_PHASE; // a plan-phase session running the suite would refuse builders as plan_phase, not plan_required
+    if (env) process.env.PI_FOREMAN_HANDOFF_DIR = handoff;
+    else delete process.env.PI_FOREMAN_HANDOFF_DIR;
+  };
+  applyEnv();
   const planFile = path.join(project, ".workflow", "scratch", "plan-widget.md");
   fs.writeFileSync(planFile, PLAN);
   fs.writeFileSync(path.join(handoff, "plan.md"), PLAN);
   const stateFile = path.join(handoff, ROUND_STATE_FILE);
+  /** The fake session file: the custom entries the adapter appends, read back through getBranch by the next instance (a reload). */
+  const entries: unknown[] = [];
+  let snapEntries = "[]";
 
   /**
    * Until the clock is past every file the session will read. steerwatch.ts baseline counts a file as seen only when its mtime is
@@ -88,10 +95,11 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
       setModel: async () => true,
       setThinkingLevel: () => undefined,
       sendMessage: () => undefined,
+      appendEntry: (customType: string, data: unknown) => void entries.push({ type: "custom", customType, data: JSON.parse(JSON.stringify(data)) }),
     };
-    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }) });
+    coreAdapter(pi as never, { pressureNow: () => Date.now(), pressureRun: async () => ({ ok: true, text: "" }), worktreeSnapshot: async () => null });
     const ctx = {
-      sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => [], getBranch: () => [] },
+      sessionManager: { getSessionId: () => sessionId, getSessionFile: () => undefined, getEntries: () => entries, getBranch: () => entries },
       cwd: project,
       model: { provider: "fake", id: "foreman" },
       mode: "tui",
@@ -160,7 +168,56 @@ function world(t: { after(fn: () => void | Promise<void>): void }, env = true) {
   const stored = () => JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
   const forge = (data: Record<string, unknown>) => fs.writeFileSync(stateFile, JSON.stringify(data));
   const hash = () => planVersionHash(fs.readFileSync(planFile));
-  return { adapter, rule, pastPlans, stored, forge, hash, handoff, planFile, stateFile };
+  /** Shuts every adapter instance of the world down and waits until its state dir is quiet. */
+  async function settle() {
+    for (const s of shutdowns.splice(0)) {
+      try { await s(); } catch { /* best effort */ }
+    }
+    await waitQuiet(path.join(agentDir, "pi-foreman", "state"));
+  }
+  /** A copy of the world's files (all instances shut down), mtimes kept; `reset` puts it back at the same paths. */
+  async function snapshot(): Promise<string> {
+    await settle();
+    const copy = `${root}-snap`;
+    fs.cpSync(root, copy, { recursive: true, preserveTimestamps: true });
+    snapEntries = JSON.stringify(entries);
+    return copy;
+  }
+  /** Starts a case from `copy`: the instances of the case before are shut down, the files replaced, the env set again. */
+  async function reset(copy: string) {
+    await settle();
+    for (const name of fs.readdirSync(root)) fs.rmSync(path.join(root, name), { recursive: true, force: true });
+    fs.cpSync(copy, root, { recursive: true, preserveTimestamps: true });
+    entries.splice(0, entries.length, ...(JSON.parse(snapEntries) as unknown[]));
+    applyEnv();
+  }
+  t.after(() => rmTestTmp(`${root}-snap`));
+  return { adapter, rule, pastPlans, stored, forge, hash, snapshot, reset, handoff, planFile, stateFile };
+}
+
+type World = ReturnType<typeof world>;
+let approvedRound: { w: World; copy: string } | undefined;
+const fileEnd: (() => void | Promise<void>)[] = [];
+after(async () => {
+  for (const fn of fileEnd) await fn();
+});
+/**
+ * The world of the cases that start from one approved round: a session approved the plan by the owner's dialog, launched a builder and a
+ * reviewer, and shut down. It is built once per file; each case gets it back through a reset (same paths and session id, files restored).
+ */
+async function fromApprovedRound(): Promise<World> {
+  if (approvedRound) {
+    await approvedRound.w.reset(approvedRound.copy);
+    return approvedRound.w;
+  }
+  const w = world({ after: (fn) => void fileEnd.push(fn) }); // removed when the file's cases are done
+  const a = await w.adapter();
+  assert.equal(await a.checkpoint(), "approve");
+  assert.equal(await a.launch("builder"), undefined);
+  assert.equal(await a.launch("reviewer"), undefined);
+  await a.down();
+  approvedRound = { w, copy: await w.snapshot() };
+  return w;
 }
 
 const planRequired = (r: Block): boolean => r?.block === true && /\[launch_refused:plan_required\]/.test(r.reason ?? "");
@@ -178,22 +235,16 @@ test("approve -> persist -> fresh adapter instance over the same handoff dir -> 
   assert.deepEqual(s.round, { built: true, reviewOpen: true, revisionAnswered: true });
   assert.equal((s.plan as { hash: string }).hash, w.hash());
   assert.equal("approved" in s || JSON.stringify(s).includes("approved"), false, "no approval is stored");
-  await tick();
-  w.rule("ruling.md", "APPROVED\n");
   await a.down();
   const b = await w.adapter();
   assert.equal(await b.recheck(), "approve", "the plan-review verdict came back with the approval: no plan_review_required");
-  assert.equal(await b.launch("builder"), undefined, "approval from the parent's ruling.md; revision 2 of 2");
+  assert.equal(await b.launch("builder"), undefined, "the owner's dialog approval from the session entry; revision 2 of 2");
   assert.equal(await b.launch("reviewer"), undefined);
   assert.equal(await b.launch("builder"), undefined, "no revision limit: a third revision is allowed");
 });
 
-test("stale plan hash -> discarded, re-ceremony (builder refused plan_required)", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
-  assert.equal(await a.launch("builder"), undefined);
-  await a.down();
+test("stale plan hash -> discarded, re-ceremony (builder refused plan_required)", async () => {
+  const w = await fromApprovedRound();
   fs.appendFileSync(w.planFile, "\nOne more step.\n");
   fs.appendFileSync(path.join(w.handoff, "plan.md"), "\nOne more step.\n");
   await tick();
@@ -204,42 +255,31 @@ test("stale plan hash -> discarded, re-ceremony (builder refused plan_required)"
   assert.equal(w.stored().plan, null, "the stale file is not brought back");
 });
 
-test("plan rewritten after the ruling (plan ctime newer than ruling.md) -> re-ceremony", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
-  assert.equal(await a.launch("builder"), undefined);
-  assert.equal(await a.launch("reviewer"), undefined);
+test("plan rewritten after a ruling.md with the same bytes -> same version: the dialog approval comes back, the round state too", async () => {
+  const w = await fromApprovedRound();
   await tick();
   w.rule("ruling.md", "APPROVED\n");
-  await a.down();
   await tick();
   fs.writeFileSync(w.planFile, PLAN); // same bytes, same hash: only the ctime moved past the ruling
   const b = await w.adapter();
-  assert.ok(planRequired(await b.launch("builder")));
-  assert.deepEqual(w.stored().round, { built: true, reviewOpen: true }, "dir and hash match: the round state comes back, the approval does not");
+  assert.deepEqual(w.stored().round, { built: true, reviewOpen: true }, "dir and hash match: the round state comes back");
+  assert.equal(await b.launch("builder"), undefined, "no ctime binding to a parent file: the owner's approval of this version comes back from the session entry");
 });
 
-test("handoff plan.md rewritten after the ruling -> re-ceremony", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
+test("handoff plan.md rewritten after the ruling -> the scratch plan's dialog approval still comes back (plan.md is information)", async () => {
+  const w = await fromApprovedRound();
   await tick();
   w.rule("ruling.md", "APPROVED\n");
-  await a.down();
   await tick();
   fs.writeFileSync(path.join(w.handoff, "plan.md"), PLAN + "changed\n");
   const b = await w.adapter();
-  assert.ok(planRequired(await b.launch("builder")));
+  assert.equal(await b.launch("builder"), undefined);
 });
 
-test("old APPROVED ruling -> plan edited -> session rewrites matching hash -> fresh adapter -> nothing granted", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
+test("old APPROVED ruling -> plan edited -> session rewrites matching hash -> fresh adapter -> nothing granted", async () => {
+  const w = await fromApprovedRound();
   await tick();
   w.rule("ruling.md", "APPROVED\n");
-  await a.down();
   await tick();
   fs.appendFileSync(w.planFile, "\nA step the parent never saw.\n");
   w.forge({ ...w.stored(), plan: { topic: "widget", hash: w.hash() }, approved: true });
@@ -254,19 +294,16 @@ test("session-written round-state.json with approved: true and matching hash but
   assert.ok(planRequired(await b.launch("builder")));
 });
 
-test("ruling-<n>.md APPROVED only (no ruling.md APPROVED) -> nothing granted", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
+test("ruling-<n>.md APPROVED and ruling.md SHIP change nothing: the dialog approval comes back from the session entry", async () => {
+  const w = await fromApprovedRound();
   w.pastPlans();
   w.rule("ruling-2.md", "APPROVED\n");
   w.rule("ruling.md", "SHIP\n");
-  await a.down();
   const b = await w.adapter();
-  assert.ok(planRequired(await b.launch("builder")));
+  assert.equal(await b.launch("builder"), undefined);
 });
 
-test("scratch plan differs from the handoff plan.md the parent approved -> nothing granted", async (t) => {
+test("scratch plan differs from the handoff plan.md -> the scratch plan's dialog approval comes back, no parent file needed", async (t) => {
   const w = world(t);
   fs.writeFileSync(path.join(w.handoff, "plan.md"), PLAN + "\nThe version the parent read.\n");
   const a = await w.adapter();
@@ -276,25 +313,21 @@ test("scratch plan differs from the handoff plan.md the parent approved -> nothi
   await a.down();
   assert.equal((w.stored().plan as { hash: string }).hash, w.hash(), "dir and scratch hash match");
   const b = await w.adapter();
-  assert.ok(planRequired(await b.launch("builder")));
+  assert.equal(await b.launch("builder"), undefined);
 });
 
-test("different handoff dir -> discarded", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
-  assert.equal(await a.launch("builder"), undefined);
-  assert.equal(await a.launch("reviewer"), undefined);
-  await a.down();
+test("different handoff dir -> discarded", async () => {
+  const w = await fromApprovedRound();
   w.forge({ ...w.stored(), handoffDir: path.join(path.dirname(w.handoff), "other") });
   await tick();
   w.rule("ruling.md", "APPROVED\n");
   await tick();
   const b = await w.adapter();
-  const r = await b.launch("builder");
-  assert.ok(planRequired(r), JSON.stringify(r));
   assert.equal(w.stored().handoffDir, w.handoff);
   assert.deepEqual(w.stored().round, { built: false, reviewOpen: false }, "no round state came back");
+  const r = await b.launch("builder");
+  assert.equal(r, undefined, "the approval is the owner's, from the session entry, not from round-state.json");
+  assert.deepEqual(w.stored().round, { built: true, reviewOpen: false }, "a first build, not a revision of the discarded round");
 });
 
 test("no PI_FOREMAN_HANDOFF_DIR -> no file written", async (t) => {
@@ -308,19 +341,16 @@ test("no PI_FOREMAN_HANDOFF_DIR -> no file written", async (t) => {
   assert.deepEqual(fs.readdirSync(w.handoff).filter((f) => f.includes("round-state")), []);
 });
 
-test("an owner prompt clears the round state in the file", async (t) => {
-  const w = world(t);
+test("an owner prompt clears the round state in the file", async () => {
+  const w = await fromApprovedRound(); // approved, a builder and a reviewer ran
   const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
-  for (const r of ["builder", "reviewer", "builder"]) assert.equal(await a.launch(r), undefined);
+  assert.equal(await a.launch("builder"), undefined);
   assert.deepEqual(w.stored().round, { built: true, reviewOpen: false, revisionAnswered: true });
   await a.ownerPrompt();
   assert.deepEqual(w.stored().round, { built: false, reviewOpen: false });
-  await tick();
-  w.rule("ruling.md", "APPROVED\n");
   await a.down();
   const b = await w.adapter();
-  assert.equal(await b.launch("builder"), undefined, "approval restored from the ruling");
+  assert.equal(await b.launch("builder"), undefined, "the owner's approval restored from the session entry");
   assert.equal(await b.launch("reviewer"), undefined);
   assert.equal(await b.launch("builder"), undefined, "revision 1: the cleared count did not come back");
 });
@@ -332,18 +362,15 @@ test("a file of the older shape (chains, counters) restores its main chain's sta
   const r = restoreRoundState(w.handoff, () => null);
   assert.ok(r);
   assert.deepEqual(r.round, { built: true, reviewOpen: true });
-  assert.equal(r.approval, null);
+  assert.equal("approval" in r, false, "round-state.json never brings back an approval");
   // through the adapter: the counters are gone from the rewritten file
   const b = await w.adapter();
   assert.equal(await b.launch("reviewer"), undefined);
   assert.equal("reviewCount" in w.stored() || "chains" in w.stored(), false);
 });
 
-test("a ruling whose mtime is not before the session start is delivered before the launch, not as plan_required (flake cause)", async (t) => {
-  const w = world(t);
-  const a = await w.adapter();
-  assert.equal(await a.checkpoint(), "approve");
-  await a.down();
+test("a ruling whose mtime is not before the session start is delivered before the launch, not as plan_required (flake cause)", async () => {
+  const w = await fromApprovedRound();
   w.rule("ruling.md", "APPROVED\n");
   const future = (Date.now() + 60_000) / 1000;
   fs.utimesSync(path.join(w.handoff, "ruling.md"), future, future);

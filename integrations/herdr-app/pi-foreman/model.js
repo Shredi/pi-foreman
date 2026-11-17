@@ -157,6 +157,7 @@ function normOpenPrs(raw) {
     out.push({
       number: p.number, checks: jobs.map((j) => j.state), jobs, url: isSafeHttpsUrl(p.url) ? p.url : "", repo: str(p.repo),
       state: str(p.state), headRepo: str(p.headRepo), ...prExtras(p), ...(p.tracked === true ? { tracked: true } : {}),
+      ...(p.hiddenRepo === true ? { hiddenRepo: true } : {}),
     });
   }
   return out;
@@ -750,10 +751,14 @@ export function twinOf(pr, feed, fallbackRepo = "") {
 
 /** The "Open PRs" section. A PR is listed once, at the first place of: (a) the row of a shown session (then not here at all),
  *  (b) a session that is not shown (the first one owning it), (c) the radar `openPrs` feed. `shown` holds the nodes and/or the
- *  node keys drawn in the tree. One group per repo, `[{repo, prs: [{...pr, href, title}]}]`. Empty when there is nothing. */
+ *  node keys drawn in the tree. One group per repo, `[{repo, prs: [{...pr, href, title}]}]`. Empty when there is nothing.
+ *  A repo with a feed entry marked `hiddenRepo` (radar.openPrs.hideRepos, any machine's feed) is skipped in (b) and (c); a (b) PR of a repo
+ *  the feed does not list stays. */
 export function openPrGroups(openPrs, tops, shown = new Set()) {
   const groups = new Map();
   const feed = (Array.isArray(openPrs) ? openPrs : []).filter(isObj);
+  const hiddenRepos = new Set(feed.filter((p) => p.hiddenRepo === true).map((p) => nameOf(p.repo).toLowerCase()));
+  const hides = (repo) => nameOf(repo) !== "" && hiddenRepos.has(nameOf(repo).toLowerCase());
   // A PR counts once, as the feed entry it is, else by its URL, else by repo#number; with none of them it is its own entry.
   const claimed = new Set();
   const idOf = (s, pr) => {
@@ -779,13 +784,14 @@ export function openPrGroups(openPrs, tops, shown = new Set()) {
     if (isShown(s)) continue;
     for (const own of s.prs) {
       if (/^(merged|closed)$/.test(twinOf(own, feed, s.repoUrl)?.state ?? "")) continue;
+      if (hides(own.repo || s.repoUrl)) continue;
       const pr = enrichPrs([own], feed, s.repoUrl)[0];
       add(repoName(pr.repo || s.repoUrl, s.name || "other"), pr, prUrl(s, pr), idOf(s, own));
     }
   }
   // (c) the feed, under its repo
   feed.forEach((p) => {
-    if (p.state === "merged" || p.state === "closed") return;
+    if (p.state === "merged" || p.state === "closed" || hides(p.repo)) return;
     add(repoName(p.repo, p.repo || "") || "other", p, prUrl(null, p), idOf(null, p));
   });
   return [...groups].map(([repo, prs]) => ({ repo, prs: sortPrs(prs) }));
@@ -1096,7 +1102,9 @@ export function displayStatus(item, folded) {
 
 /** The dot of a PR: `pulse` (the dot pulses) while a job runs or the checks are not settled, unless a finished job failed (red never
  *  pulses); `fill` is "violet" for a work-in-progress PR, "blue" unreviewed, "amber" whenever the dot pulses or the merge is blocked or
- *  behind (still), "red" once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent. */
+ *  behind (still), "red" once a finished job failed, "green" when every finished job passed, "dim" when unknown. `conflict` is independent.
+ *  `mark: "check"` is set on a ready PR: a check mark replaces the dot, its fill stays green. A green dot without a mark says only "CI passing"
+ *  (an older feed, or a PR not known to be mergeable). */
 export function prDotState(pr) {
   const d = baseDot(pr);
   const p = pillOf(pr, d);
@@ -1104,19 +1112,19 @@ export function prDotState(pr) {
   if (p.state === "wip") return { pulse, fill: "violet", conflict: d.conflict };
   if (p.state === "unreviewed") return { pulse: false, fill: "blue", conflict: d.conflict };
   if (p.state === "waiting") return { pulse: false, fill: "amber", conflict: d.conflict };
-  if (p.state === "ready" && d.fill === "dim") return { pulse: false, fill: "green", conflict: d.conflict }; // no checks, confirmed
+  if (p.state === "ready") return { pulse: false, fill: "green", mark: "check", conflict: d.conflict }; // checks passed, or none confirmed
   return { pulse, fill: pulse ? "amber" : d.fill, conflict: d.conflict }; // one look for "checks run": partly passed is amber too
 }
 
 /**
  * The pill state from the host's current head, draft flag, checks and merge state plus the session's review fact (`pr.review`, set from the live file's
- * `review` list), `d` being the checks' dot. `state` is red | wip | running | waiting | unreviewed | ready, or null for a PR the pill has nothing to add to (today's dot):
+ * `review` list), `d` being the checks' dot. `state` is red | wip | running | waiting | unreviewed | ready, or null for a PR the pill has nothing to add to (the plain green or grey dot):
  * an older feed without head and merge state and without a session fact, a PR without checks, a green PR that is not mergeable.
  *  - red: a failed check, on a draft or work-in-progress PR too; wip: a draft on the host, or the session fact for the host's head is `wip`;
  *    running: checks running or unsettled;
  *  - waiting: settled (green, or no checks confirmed for the head) and the merge state is blocked or behind: amber and still;
  *  - unreviewed: settled green (or no checks confirmed for the head) and the fact is `unreviewed` or about another head than the host's;
- *  - ready: settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
+ *  - ready (the check mark, see prDotState): settled green, mergeable, merge state not blocked/behind/dirty/unknown, and the fact `ok` on the host's head; a PR without a fact is ready on host
  *    facts alone (`reviewed` false: no review claim).
  */
 function pillOf(pr, d) {
@@ -1300,6 +1308,25 @@ export function findPanelBlock(tree, mod) {
   const hidden = up.find((n) => n.hidden === true && typeof n.id === "string");
   const show = hidden ?? (si >= 0 ? up.slice(si + 1).find((n) => typeof n.id === "string") : null) ?? null;
   return { block: hit.block.id, stack: stack?.id ?? null, show: show?.id ?? null };
+}
+
+/** Agents grouped by space id: one group per id, groups in first-appearance order, members in list order. The key is the id
+ *  (two spaces with the same name stay two groups); the label is the first member's space name. */
+export function spaceGroups(list) {
+  const out = [];
+  const byId = new Map();
+  for (const a of Array.isArray(list) ? list : []) {
+    if (!isObj(a)) continue;
+    const id = `sp-${a.space}`;
+    let g = byId.get(id);
+    if (!g) {
+      g = { id, space: a.space, label: a.space_name || "", members: [] };
+      byId.set(id, g);
+      out.push(g);
+    }
+    g.members.push(a);
+  }
+  return out;
 }
 
 /** Tab name of an agent as a row label: empty when absent or just the tab's number. */

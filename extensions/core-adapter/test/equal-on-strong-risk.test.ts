@@ -8,8 +8,8 @@ import { r11Rig, reviewAllowOpts } from "./_r11rig.ts";
 
 const BIG = "x\n".repeat(1700);
 const RANKS = [{ match: "foreman", tier: 0 }, { match: "strong", tier: 0 }, { match: "*", tier: 3 }];
-// the text of today's refusal of a tie (the foreman and the child both on fake/foreman, tier 0)
-const TODAY = 'pi-foreman: launch refused [rank_policy:below]: child model fake/foreman (tier 0) is not below the foreman model fake/foreman (tier 0). Add a ranks entry for it, map the role to a lower-ranked model, or set ladder.childPolicy to "any" in the user or overlay config.';
+// the text of today's refusal of a tie (the foreman and the child both on fake/foreman, tier 0), ending with the cause: the builder's normal model
+const TODAY = 'pi-foreman: launch refused [rank_policy:below]: child model fake/foreman (tier 0) is not below the foreman model fake/foreman (tier 0). Add a ranks entry for it, map the role to a lower-ranked model, or set ladder.childPolicy to "any" in the user or overlay config. fake/foreman is the builder\'s normal model: run the foreman on a model ranked above it.';
 const NOTE = /ladder\.equalOnStrongRisk/;
 
 type Rig = Awaited<ReturnType<typeof r11Rig>>;
@@ -37,6 +37,14 @@ async function rig(t: Parameters<typeof r11Rig>[0], o: Opts = {}): Promise<Rig> 
 }
 
 const refusals = (a: Rig): Record<string, unknown>[] => a.events("launch_refused").filter((r) => r.reason === "rank_policy");
+// a harness-picked climb the rank policy refuses is skipped: launched on the normal model (the rank loop passed it), no tie, one rung_top
+const assertSkipped = (a: Rig, res: unknown, input: Record<string, unknown>, source: string): void => {
+  assert.equal(res, undefined);
+  assert.equal(input.model, "fake/builder");
+  assert.deepEqual(refusals(a), []);
+  assert.deepEqual(a.events("rank_equal_model"), []);
+  assert.deepEqual(a.events("rung_top").map((r) => [r.reason, r.source]), [["strong rung refused by rank policy", source]]);
+};
 
 test("key on, risk tag, parent on the strong model: launched, one launch line, one rank_equal_model event", async (t) => {
   const a = await rig(t, { key: true });
@@ -55,28 +63,20 @@ test("key on, risk tag, parent on the strong model: launched, one launch line, o
   assert.deepEqual(a.events("strong_unmapped"), []);
 });
 
-test("key off: refused, the reason names the key and keeps today's text before it", async (t) => {
+test("key off: the strong-risk climb is skipped, the builder launches on its normal model", async (t) => {
   for (const key of [undefined, false]) {
     const a = await rig(t, { key });
-    const res = (await a.launch(builder({ risk: ["guard"] }))).res;
-    assert.equal(res?.block, true);
-    assert.ok(res?.reason?.startsWith(TODAY), res?.reason);
-    assert.match(res?.reason ?? "", NOTE);
-    assert.equal(refusals(a).length, 1);
-    assert.deepEqual(a.events("rank_equal_model"), []);
+    const input = builder({ risk: ["guard"] });
+    assertSkipped(a, (await a.launch(input)).res, input, "sizing:risk_strong");
   }
 });
 
-test("an ordinary refusal is byte-identical to today's: a size-only climb, with the key on or off", async (t) => {
+test("a size-only climb is skipped, with the key on or off", async (t) => {
   for (const key of [true, false]) {
     const a = await rig(t, { key });
     fs.writeFileSync(path.join(a.project, "big.py"), BIG);
     const input = builder({ size: { files: ["big.py"] } });
-    const res = (await a.launch(input)).res;
-    assert.equal(input.model, "fake/foreman");
-    assert.equal(res?.block, true);
-    assert.equal(res?.reason, TODAY);
-    assert.deepEqual(a.events("rank_equal_model"), []);
+    assertSkipped(a, (await a.launch(input)).res, input, "sizing:large_file");
   }
 });
 
@@ -88,13 +88,11 @@ test("key on, bottom-rung launch on the parent's model: refused with today's tex
   assert.equal(noSize?.reason, TODAY);
 });
 
-test("key on, parent below the strong model: refused, the reason is not extended", async (t) => {
+test("key on, parent below the strong model: skipped, never a tie", async (t) => {
   const ranks = [{ match: "foreman", tier: 2 }, { match: "strong", tier: 0 }, { match: "*", tier: 3 }];
   const a = await rig(t, { key: true, strong: "fake/strong", ranks });
-  const res = (await a.launch(builder({ risk: ["guard"] }))).res;
-  assert.equal(res?.block, true);
-  assert.match(res?.reason ?? "", /\[rank_policy:below\].*fake\/strong \(tier 0\) is not below the foreman model fake\/foreman \(tier 2\)/);
-  assert.doesNotMatch(res?.reason ?? "", NOTE);
+  const input = builder({ risk: ["guard"] });
+  assertSkipped(a, (await a.launch(input)).res, input, "sizing:risk_strong");
 });
 
 test("key on, unranked models fail closed", async (t) => {
@@ -106,12 +104,10 @@ test("key on, unranked models fail closed", async (t) => {
   assert.deepEqual(a.events("rank_equal_model"), []);
 });
 
-test("key on, a different model of the same rank: refused, the reason is not extended", async (t) => {
+test("key on, a different model of the same rank: skipped, never a tie", async (t) => {
   const a = await rig(t, { key: true, strong: "fake/strong" });
-  const res = (await a.launch(builder({ risk: ["guard"] }))).res;
-  assert.equal(res?.block, true);
-  assert.match(res?.reason ?? "", /child model fake\/strong \(tier 0\) is not below the foreman model fake\/foreman \(tier 0\)/);
-  assert.doesNotMatch(res?.reason ?? "", NOTE);
+  const input = builder({ risk: ["guard"] });
+  assertSkipped(a, (await a.launch(input)).res, input, "sizing:risk_strong");
 });
 
 test("key on, a reviewer sharing the model in a parallel launch: refused", async (t) => {
@@ -122,13 +118,10 @@ test("key on, a reviewer sharing the model in a parallel launch: refused", async
   assert.deepEqual(a.events("rank_equal_model"), []);
 });
 
-test("key on, a design-only fallback to strong: refused", async (t) => {
+test("key on, a design-only fallback to strong: skipped, never a tie", async (t) => {
   const a = await rig(t, { key: true });
-  const res = (await a.launch(builder({ risk: ["design"] }))).res;
-  assert.equal(res?.block, true);
-  assert.ok(res?.reason?.startsWith(TODAY), res?.reason);
-  assert.doesNotMatch(res?.reason ?? "", NOTE);
-  assert.deepEqual(a.events("rank_equal_model"), []);
+  const input = builder({ risk: ["design"] });
+  assertSkipped(a, (await a.launch(input)).res, input, "sizing:risk_top");
 });
 
 test("key on, a risk tag but no strong model mapped and the normal model is the parent's: refused", async (t) => {

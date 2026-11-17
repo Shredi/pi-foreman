@@ -35,7 +35,7 @@ const REFUSED: Row[] = [
   ["redirect >|", (r) => `echo x >| ${r.H}/brief-a.md`],
   ["redirect with fd", (r) => `echo x 1>${r.H}/ruling.md`],
   ["tee", (r) => `echo x | tee ${r.H}/ruling.md`],
-  ["tee -a", (r) => `echo x | tee -a ${r.H}/ruling-plan.md`],
+  ["tee -a", (r) => `echo x | tee -a ${r.H}/ruling-2.md`],
   ["cp", (r) => `cp /tmp/x ${r.H}/ruling.md`],
   ["mv", (r) => `mv /tmp/x ${r.H}/ruling-2.md`],
   ["ln -s", (r) => `ln -s /tmp/x ${r.H}/ruling.md`],
@@ -81,6 +81,8 @@ const NOT_REFUSED: Row[] = [
   ["a read of the ruling copied to scratch", (r) => `cp ${r.H}/ruling.md ${r.S}/copy.md`],
   ["a write elsewhere on a line that only reads the ruling", (r) => `cat ${r.H}/ruling.md; echo x > ${r.S}/n.md`],
   ["a write of a non-ruling file of the handoff dir", (r) => `echo x > ${r.H}/plan.md`],
+  // #227: ruling-plan.md left the tracked names (no plan approval travels from a parent)
+  ["tee -a of ruling-plan.md", (r) => `echo x | tee -a ${r.H}/ruling-plan.md`],
   ["an .ack file", (r) => `echo x > ${r.H}/ruling-1.ack`],
   ["curl to scratch", (r) => `curl -o ${r.S}/f http://example.com/x`],
   ["wget -O -", () => `wget -q -O - http://example.com/x`],

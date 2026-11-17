@@ -114,7 +114,7 @@ class SessionTest(unittest.TestCase):
         words = shlex.split(calls[2][3].split("; ", 1)[1])  # after the status-line printf
         self.assertEqual(words, ["env", "PI_FOREMAN_HANDOFF_DIR=%s" % handoff, "PI_FOREMAN_PARENT_INTERCOM=parent-1",
                                  "PI_INTERCOM_STABLE_ID=%s" % entry["child"], "PI_FOREMAN_PARENT_LABEL=opener",
-                                 "PI_FOREMAN_SESSION_MODEL=prov/model-1", "pi", "--model", "prov/model-1",
+                                 "PI_FOREMAN_SESSION_MODEL=prov/model-1", "PI_CODING_AGENT_DIR=%s" % self.agent, "pi", "--model", "prov/model-1",
                                  "Read the handoff brief at %s and proceed." % (handoff / "brief.md").as_posix()])
 
     def test_group_tag_parent_slug_from_an_opened_child_and_off_switch(self):
@@ -235,7 +235,12 @@ class SessionTest(unittest.TestCase):
             code, out, err = self.run_main(*self.open_args("--dry-run", "--model", child), PI_FOREMAN_SESSION_MODEL="prov/mid-1")
             self.assertEqual(code, 0, err)
             self.assertIn("session model: %s" % child, out)
-            self.assertNotIn("rank", out + err)
+            # the checkout's own folder name (its path, its parent label) may contain "rank"; it is not CLI output about a rank rule
+            text = out + err
+            for name in {Path.cwd().name, SCRIPTS.parent.name}:
+                for own in sorted({name, fsn.slug_of(name)}, key=len, reverse=True):
+                    text = text.replace(own, "")
+            self.assertNotIn("rank", text)
 
     def test_footer_contract_and_no_home_path(self):
         code, _, _ = self.run_main(*self.open_args("--plan-first"))
@@ -442,8 +447,10 @@ class AskFooterTest(unittest.TestCase):
     def test_footer_names_the_ask_file_contract_in_both_variants(self):
         for plan_first in (True, False):
             text = fsn.footer("demo", plan_first)
-            for needle in ("# Ask <n>: <topic>", "ask.md", "ruling-<n>.md", ".seen", ".ask", "foreman_wait", "Session not found"):
+            for needle in ("# Ask <n>: <topic>", "ask.md", "brief-<n>.md", "foreman_wait", "Session not found"):
                 self.assertIn(needle, text)
+            for gone in ("ruling-<n>.md", ".seen", ".ask`"):
+                self.assertNotIn(gone, text)
             self.assertIn("Never ask by `herdr agent prompt`", text)
 
     def test_footer_says_session_not_found_means_no_intercom_retry(self):
@@ -454,11 +461,12 @@ class AskFooterTest(unittest.TestCase):
 
 
 class PlanFirstFooterTest(unittest.TestCase):
-    def test_plan_first_footer_names_the_ruling_handoff(self):
+    def test_plan_first_footer_has_no_parent_ruling_handoff(self):
+        # PR 4: the child owns its plan; the parent's ruling.md approves nothing and is named only as a note
         text = fsn.footer("demo", True)
-        self.assertIn("ruling.md", text)
-        self.assertIn("APPROVED", text)
-        self.assertIn("foreman session brief demo", text)
+        self.assertIn("A `ruling.md` the parent writes is a note like any other file; it approves nothing.", text)
+        self.assertNotIn("APPROVED", text)
+        self.assertNotIn("foreman session brief demo", text)
         self.assertNotIn("ruling.md", fsn.footer("demo", False))
 
 

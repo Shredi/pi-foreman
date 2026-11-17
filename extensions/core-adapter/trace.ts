@@ -23,7 +23,8 @@ export type TraceRecord = Partial<Record<TraceField, string | number | boolean |
 // Protected-target check `protected_check`: `kinds`, `globs`, `classes`, `remoteClasses`, `opaque`, `effect`, `confidence`, `accepted`, `away`, `cached`, `entry` (the cited D entry); `entries` the matched P ids.
 // Token diet `tools_deferred` (`names`, comma-joined tool names) and `tool_found` (`name`, `unhidden`; `kind` is a pinned field already).
 // Owner scripts (`script`, `script_fix`, `script_run`): `hash` (short), `added`, `seconds` (`removed`, `exit`, `kind`, `from`, `to` are pinned fields already).
-const ALLOWED = new Set<string>([...TRACE_FIELDS, "hash", "added", "seconds", "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "via", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry", "tags", "paths", "model_applied", "cap", "upfront", "reasoning", "on", "waitedMs"]);
+// `supervisor_reply` keys `replyTo` (the reply names a request id) and `isError`; `role` and `outcome` are pinned fields already.
+const ALLOWED = new Set<string>([...TRACE_FIELDS, "hash", "added", "seconds", "machine", "label", "entries", "error", "surface", "code", "attempts", "source", "spent", "cold", "share", "idleSeconds", "presence", "activity", "trigger", "tokens", "min", "base", "declaredLines", "modules", "declaredModules", "rated", "risk", "outside", "point", "allowance", "provider", "servers", "names", "name", "unhidden", "pin", "verdict", "head", "why", "via", "ttl", "kinds", "globs", "classes", "remoteClasses", "opaque", "effect", "confidence", "accepted", "away", "cached", "entry", "tags", "paths", "model_applied", "cap", "upfront", "reasoning", "on", "waitedMs", "replyTo", "isError"]);
 const MAX_STRING = 120;
 const MAX_NAMES = 600; // the deferred tool names of one session
 const MAX_COMMAND = 200; // a denied command (lane 3h)
@@ -46,10 +47,10 @@ export function redactCommand(cmd: string): string {
   // a run of few distinct characters ("xxxx…") is padding, not a key
   const keyish = (t: string): string => (new Set(t).size >= 6 ? R : t);
   let out = cmd
-    .replace(/(authorization\s*[:=]\s*)(?:bearer|basic|token)?\s*[^\s'"]+/gi, `$1${R}`)
+    .replace(/(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s*)?[^\s'"]+/gi, `$1${R}`)
     .replace(/\bbearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${R}`)
-    .replace(/\b((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
-    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `$1${R}@`)
+    .replace(/(?<![A-Za-z0-9_-])((?:[A-Za-z0-9_-]*(?:token|key|password|passwd|secret|pwd))\s*[=:]\s*)(?:"[^"]*"?|'[^']*'?|[^\s'"&;]+)/gi, `$1${R}`)
+    .replace(/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@'"]+@/gi, `${R}@`) // the scheme is only checked behind the userinfo: a start per letter of a long scheme run would be quadratic
     .replace(/((?:^|[\s;|&(])(?:-[A-Za-z]{0,8}[uU]\s{0,8}|--(?:proxy-)?user(?:\s{1,8}|=)))(?:("[^"\s:]{0,256}:)[^"]*|('[^'\s:]{0,256}:)[^']*|((?:"[^"\s:]{0,256}"|'[^'\s:]{0,256}'|[^\s:'"]{0,256}):)(?:"[^"]*"?|'[^']*'?|(?:\\.|[^\s'"\\])+))/g, (_m: string, p: string, a?: string, b?: string, c?: string) => p + (a ?? b ?? c ?? "") + R) // curl/wget `-u`/`-U`/`-vu user:pass` (quoted or not), `--user[=]`, `--proxy-user[=]`
     .replace(/((?:^|[\s;|&(])--(?:http-|ftp-|proxy-)?password(?:\s{1,8}|=))(?:"[^"]*"?|'[^']*'?|[^\s'"]+)/g, `$1${R}`) // wget `--password pass` (the closed `=` form is caught above; an unclosed quote by this rule)
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{12,}\b/g, R)

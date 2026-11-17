@@ -93,7 +93,7 @@ test("prpack: pr_create order, gate refusal traced, push refusal, upstream stale
   const ok = setup({ gateOn: false });
   const r3 = await ok.call("pr_create", { title: "t", body: "b" });
   assert.equal(r3.details.decision, "ran");
-  assert.match(r3.content[0].text, /^pr_create: \{"action":"pr_create","number":5,"url":"https:\/\/github\.com\/acme\/app\/pull\/5"\}\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\); no PR tracker running: start herdr-app or run `foreman prs poll`$/);
+  assert.match(r3.content[0].text, /^pr_create: \{"action":"pr_create","number":5,"url":"https:\/\/github\.com\/acme\/app\/pull\/5"\}\nthe PR is not a draft \(draft handling is off or does not cover this host\)\npr_watch: armed \(until the PR is merged or closed; pr_unwatch ends it\); no PR tracker running: start herdr-app or run `foreman prs poll`$/);
   assert.equal(ok.watches.size(), 1);
 });
 

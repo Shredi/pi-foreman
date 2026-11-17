@@ -8,6 +8,7 @@ import { foremanModelSpec, formatList, runSessionCommand, sessionForemanModel, s
 import type { SessionDeps } from "../session.ts";
 
 const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "pf-session-foreman-")));
+fs.writeFileSync(path.join(root, "b.md"), "brief\n");
 const ranks = [{ match: "claude-fable-*", tier: 0 }, { match: "claude-opus-*", tier: 1 }, { match: "claude-sonnet-*", tier: 2 }];
 const config = {
   providers: {

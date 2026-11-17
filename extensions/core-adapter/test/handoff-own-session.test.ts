@@ -27,8 +27,8 @@ const shell = (command: string, o: Partial<GateRoots> = {}): Seen => {
   return { ...(res?.allow ? { allow: res.rule } : {}), ...(res?.block ? { block: res.rule } : {}), danger: out.danger?.name ?? null };
 };
 
-const OWN = ["plan.md", "result.md", "ask.md", "ask-2.md", ".ask", ".seen", ".steer-last-read.json", "work/x.txt", "work/d/y.txt"];
-const REFUSED = ["some-other.md", "ruling.md", "ruling-plan.md", "brief.md", "brief-2.md", "steer.md", "parent", "child", "close.json", "live.json", "work", "work/", "work/../x", "../x"];
+const OWN = ["plan.md", "result.md", "ask.md", "ask-2.md", ".steer-last-read.json", "work/x.txt", "work/d/y.txt"];
+const REFUSED = [".ask", ".seen", "some-other.md", "ruling.md", "ruling-plan.md", "brief.md", "brief-2.md", "steer.md", "parent", "child", "close.json", "live.json", "work", "work/", "work/../x", "../x"];
 
 test("write tool: the child-written names of the own handoff dir are a default allow", () => {
   for (const n of OWN) assert.equal(tool(n), "path-write-handoff", n);
@@ -39,7 +39,7 @@ test("write tool: every other name stays refused", () => {
 });
 
 test("write tool: no ownHandoff root, no allow beyond the existing plan.md/result.md rule", () => {
-  for (const n of ["ask.md", ".seen", "work/x.txt", "plan.md", "result.md"]) assert.equal(tool(n, { ownHandoff: undefined }), undefined, n);
+  for (const n of ["ask.md", "ask-2.md", "work/x.txt", "plan.md", "result.md"]) assert.equal(tool(n, { ownHandoff: undefined }), undefined, n);
 });
 
 test("write tool: nothing below a .git segment, in any case", () => {
@@ -48,7 +48,7 @@ test("write tool: nothing below a .git segment, in any case", () => {
 });
 
 test("shell cp, and cat f >, into an own name are an allow", { skip: !posix }, () => {
-  for (const n of ["result.md", "plan.md", "ask.md", ".seen", "work/x.txt"]) {
+  for (const n of ["result.md", "plan.md", "ask.md", "ask-2.md", "work/x.txt"]) {
     assert.deepEqual(shell(`cp ${wt}/a ${H}/${n}`), { allow: "default-write-in", danger: null }, `cp ${n}`);
     assert.deepEqual(shell(`cat ${wt}/a > ${H}/${n}`), { allow: "default-write-in", danger: null }, `cat > ${n}`);
   }

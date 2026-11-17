@@ -22,6 +22,7 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   `../worktrees/<repo>/pi-worktree-<runId>-<n>`; the launch-wait result prints the exact path
   (`worktree: <path> (branch <b>)`). Any other linked worktree is `off-convention:` in a sweep.
 - The worktree root is `close.worktreeDir` ([below](#the-worktree-root)); the default and every example here use `../<repo>.worktrees`.
+- To have a builder work in a worktree under `close.worktreeDir`, create the worktree first, then launch the builder with `cwd` set to it: a child's write area is its launch cwd's worktree, so its `npm ci` writes `node_modules` there ([sessions](sessions.md#parallel-rounds)).
 - Worktree setup hook: `foreman setup` registers `bin/foreman-worktree-setup` as pi-subagents'
   `worktreeSetupHook` (Linux and macOS, only when unset; see [install](install.md)). pi-subagents symlinks the main
   checkout's `node_modules` into each managed worktree before the hook runs; for a repository with a lockfile the hook
@@ -51,6 +52,8 @@ Entries get there silently, with no model turn and no tokens:
   appends one by hand.
 
 A child's entries go into its parent session's manifest with `owner` = the child's launch id.
+
+A record call that fails (a time-out, a non-zero exit or a throw) is not retried; the trace gets `manifest_record_failed {kind, error}` (the first line of the script's text, paths scrubbed).
 
 ## CLOSE report
 
@@ -104,9 +107,9 @@ no lookup and starts at once. A lookup that fails keeps the watch, and so the re
 
 ## Self-finish on merge
 
-A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose watched PR is merged closes itself; the parent need not send `foreman:close`.
-When the watch reports `merged`, the adapter starts the normal close sequence with the source `pr-merged` (it is not a
-`close.from` source). The sequence is the one above, with these differences:
+A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose last watched PR is merged closes itself; the parent need not send `foreman:close`. With several watched PRs it closes at the last merge, or, after a merge, when the last watched PR is closed unmerged by the host (a `pr_unwatch` of the last watch starts no close).
+When the watch reports `merged` and no other watch is open, the adapter starts the normal close sequence with the source `pr-merged` (it is not a
+`close.from` source). If that close is refused because a child run is still active, it is tried once more when the last run ends (not after a reload; a close the parent sent is not retried). The sequence is the one above, with these differences:
 
 - **A close from any source.** The session remembers a watched PR it saw merged: the watch's `merged` event, or the fresh
   `pr_status` that ends the watch before a close (a PR closed without a merge is not remembered). The memory is saved with the
@@ -126,7 +129,7 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   before the section. When no cleanup starts, nothing is copied and the reply names the original file. Uncommitted files of another repository (a `sync.repos`
   entry) show in the CLOSE report but are no cleanup precondition: only the round's own worktree is checked.
 
-- The close prompt asks for the result file `<handoff dir>/result.md`: the PR number, the merge commit and anything left open.
+- The close prompt asks for the result file `<handoff dir>/result.md`: the PR numbers, the merge commits and anything left open.
 - After the result file the session tells its parent `PR #n merged, closing` and the usual `Result from <label>: <path>`.
 - **Target worktree.** The session cwd may be a subfolder: it is first resolved to its worktree root (the `git worktree list --porcelain` entry containing it, longest match, by real path) and that root is the worktree in every check and message. A cwd in no listed worktree refuses the cleanup with a line naming the cwd, removes nothing and prints no remove command; the cwd's `.workflow/` is still snapshotted. The adapter runs one `pr_status` first. When the session's cwd has the PR head ref checked out, that
   worktree is the target. Otherwise (a round that worked in a second worktree while the session sits in the main checkout)
@@ -142,7 +145,9 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   `foreman_close.py selfclean`. With it `not_merged` does not apply and the local branch is deleted with `git update-ref -d`
   against `<sha>`, for exactly that branch, and only while the branch tip and `HEAD` still are `<sha>` when the removal runs (a
   moved tip keeps the branch). Without it the rules
-  of [Cleanup preconditions](#cleanup-preconditions) stay (`git branch -d`, merged into the base or its pushed upstream).
+  of [Cleanup preconditions](#cleanup-preconditions) stay (`git branch -d`, merged into the base or its pushed upstream). The
+  `foreman_worktree_remove` tool asks the PR host for the same fact (a `pr_find` for the branch, then `pr_status`) and passes it as
+  an adapter-only request key; a refusal, a missing PR or a failed lookup leaves the tool as it was.
 - **`.workflow/` archive.** Before the checks the target worktree's `.workflow/` is snapshotted into
   `<handoff dir>/workflow/`; a session cwd that is another worktree gets `<handoff dir>/workflow-cwd/` by the same rule.
   The snapshot keeps only what the session itself produced. The age rule (only files written since the pi process started;
@@ -190,8 +195,9 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 - **Remote branch.** Nothing is deleted on the remote and no guard is lifted. If the remote head branch still exists, the report
   lists `kept: remote branch <b> (enable delete head branch on merge)`. Turn on the host's setting *Automatically delete head
   branches* (GitHub: repository settings, General, Pull Requests) so merging the PR removes it.
-- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup. The watch message says
-  `report to the parent: PR #n closed unmerged`, and the session waits for the parent.
+- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup on its own, except that when an earlier PR of the
+  session was merged and the closed one was the last watched PR, the merge-close starts (for the merged PR). The watch message says
+  `report to the parent: PR #n closed unmerged`, and otherwise the session waits for the parent.
 
 ## Pushed branches without a PR
 
@@ -216,7 +222,7 @@ otherwise the remote's default branch applies.
 
 Cleanup runs when `close.autoClean` is on and not `--dry-run`. Per manifest entry:
 
-- Worktree: clean including ignored files (outside `safety.ops.worktreeDisposable`; the defaults, listed in the `safety.ops.worktreeDisposable` row of [safety.md](safety.md), cover pi's task logs, OS litter and the caches of common Python and JavaScript tools; an entry is a glob matched against one path component, an entry without a trailing `/` matches a file only (write folder entries with a trailing `/`), and it belongs on the list only if a tool writes it, the next run rebuilds it and it never holds a person's work; a wholly ignored folder is walked file by file, symlinks are never followed, and a walk over 20 000 entries or an unreadable folder counts as an ignored file). `gpui-kit.d.ts` is covered; `jsconfig.json`, which `herdr-app check` (run on a mod folder) writes next to it, is not: it fails the last part of that rule, because people also write `jsconfig.json` by hand and nothing in the file tells the two apart, so it stays an `ignored_files` refusal. Run `herdr-app check` on a copy outside the worktree instead. The refusal names the first files: `ignored_files (a, b, c, +N more)` in the handover reason and in the sweep's `skipped:` line. Branch merged into the base
+- Worktree: clean (untracked files under `safety.ops.worktreeDisposable`, such as `node_modules/`, are deleted before the removal; links are never followed; a matched folder with a top-level `.git` refuses) including ignored files (outside `safety.ops.worktreeDisposable`; the defaults, listed in the `safety.ops.worktreeDisposable` row of [safety.md](safety.md), cover pi's task logs, OS litter and the caches of common Python and JavaScript tools; an entry is a glob matched against one path component, an entry without a trailing `/` matches a file only (write folder entries with a trailing `/`), and it belongs on the list only if a tool writes it, the next run rebuilds it and it never holds a person's work; a wholly ignored folder is walked file by file, symlinks are never followed, and a walk over 20 000 entries or an unreadable folder counts as an ignored file). `gpui-kit.d.ts` is covered; `jsconfig.json`, which `herdr-app check` (run on a mod folder) writes next to it, is not: it fails the last part of that rule, because people also write `jsconfig.json` by hand and nothing in the file tells the two apart, so it stays an `ignored_files` refusal. Run `herdr-app check` on a copy outside the worktree instead. The refusal names the first files: `ignored_files (a, b, c, +N more)` in the handover reason and in the sweep's `skipped:` line. Branch merged into the base
   branch or contained in its pushed upstream, not locked, no stash entry referencing the branch, no live session
   of another id with its cwd inside (a session on another machine never holds a local directory; a missing, empty or
   non-absolute working directory holds nothing). Removal is `git worktree remove` without `--force`, then `git branch -d`
