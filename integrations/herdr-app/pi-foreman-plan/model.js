@@ -259,7 +259,7 @@ export function rewriteRelative(html, base) {
     const t = v.trim();
     if (t === "" || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(t) || /^[\\/#]/.test(t)) return m;
     const q = dq !== undefined ? '"' : "'";
-    return `${pre}${name}${eq}${q}${base}${percent(v)}${q}`;
+    return `${pre}${name}${eq}${q}${base}${percent(t)}${q}`;
   });
 }
 

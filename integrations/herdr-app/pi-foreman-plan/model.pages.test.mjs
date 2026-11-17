@@ -117,7 +117,13 @@ test("rewriteRelative: the scheme and absolute test runs on the trimmed value", 
   for (const h of ['<img src=" https://e.org/a.png">', '<img src=" /abs.png">', '<img src=" javascript:alert(1)">', '<img src="\t//host/x.png">']) {
     assert.equal(rewriteRelative(h, BASE), h, h);
   }
-  assert.equal(rewriteRelative('<img src=" a.png">', BASE), `<img src="${BASE}%20a.png">`);
+  assert.equal(rewriteRelative('<img src=" a.png">', BASE), `<img src="${BASE}a.png">`);
+});
+
+test("rewriteRelative: a relative value is encoded trimmed, so whitespace the browser strips leaves no %20 or %09 behind", () => {
+  assert.equal(rewriteRelative('<img src="a.png ">', BASE), `<img src="${BASE}a.png">`);
+  assert.equal(rewriteRelative('<img src="\ta.png\n">', BASE), `<img src="${BASE}a.png">`);
+  assert.equal(rewriteRelative("<img src=' a b/x.png '>", BASE), `<img src='${BASE}a%20b/x.png'>`);
 });
 
 test("rewriteRelative: an encoded value cannot leave its attribute", () => {
