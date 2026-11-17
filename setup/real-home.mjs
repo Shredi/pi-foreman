@@ -61,7 +61,7 @@ const fold = (p, platform) => (platform === "win32" || platform === "darwin" ? p
 
 const inside = (place, target, platform) => {
   const rel = path.relative(fold(path.resolve(place), platform), fold(path.resolve(target), platform));
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 };
 
 /** The first target equal to or inside a protected place when the test runner signal is set and the override is not, else null. */
@@ -85,5 +85,5 @@ export function applyRealHomeGuard(refused, dry, { fatal = (m) => Object.assign(
     say(`real-home guard: would refuse ${refused}`);
     return;
   }
-  throw fatal(`pi-foreman setup: refusing to write ${refused}: the Node test runner runs setup (NODE_TEST_CONTEXT is set) and this is a real default place. Point HOME/PI_FOREMAN_HOME and --agent-dir at a temp dir, or set PI_FOREMAN_ALLOW_REAL_HOME=1.`);
+  throw fatal(`pi-foreman setup: refusing to write ${refused}: the Node test runner runs setup (NODE_TEST_CONTEXT is set) and this is a real default place. Point HOME/PI_FOREMAN_HOME and --agent-dir at a temp dir, or set PI_FOREMAN_ALLOW_REAL_HOME=1.${refused === QUERY_TARGET ? " For the PowerShell Documents folder set PI_FOREMAN_TEST_PS_DOCUMENTS to a temp dir (HOME does not help on Windows)." : ""}`);
 }

@@ -126,6 +126,38 @@ test("setup --dry-run with the signal and the real default places prints would r
   }
 });
 
+test("setup --dry-run with the picker allowed and the herdr-app home at the real default prints would refuse for it", () => {
+  const base = tmp("pf-rh-app-");
+  try {
+    const home = path.join(base, "home");
+    const agentDir = path.join(base, "agent");
+    fs.mkdirSync(home);
+    fs.mkdirSync(agentDir);
+    const app = path.join(os.userInfo().homedir, ".config", "herdr-app");
+    const env = { NODE_TEST_CONTEXT: "child-v8", PI_FOREMAN_PICKER: "force", PI_FOREMAN_HOME: home, PI_FOREMAN_PLATFORM: "linux", HOME: os.userInfo().homedir, SHELL: "/bin/zsh", HERDR_APP_HOME: undefined, FAKE_PI_LOG: path.join(base, "calls.jsonl"), PI_FOREMAN_PI_AI_DATA: path.join(base, "no-models") };
+    const r = setup(["--dry-run", "--no-addons", "--agent-dir", agentDir], env, base);
+    assert.match(r.out, new RegExp(`real-home guard: would refuse ${app.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    assert.deepEqual(fs.readdirSync(base).filter((f) => f !== "calls.jsonl").sort(), ["agent", "home"]);
+    assert.deepEqual(fs.readdirSync(home), []);
+    assert.deepEqual(fs.readdirSync(agentDir), []);
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("a child named ..x inside a protected place is inside, a parent-relative path is outside", () => {
+  const t = ["/fake/real-home/.pi/agent/..x/y"];
+  assert.equal(guard(t), t[0]);
+  assert.equal(guard(["/fake/real-home/.pi/agent/.."]), null);
+  assert.equal(guard(["/fake/real-home/.pi/agent/../other"]), null);
+});
+
+test("the PowerShell query refusal names PI_FOREMAN_TEST_PS_DOCUMENTS", () => {
+  const q = writeTargets({ env: SIGNAL, home: "/fake/real-home", platform: "win32" }).find((t) => /query/.test(t));
+  assert.throws(() => applyRealHomeGuard(q, false), (e) => /PI_FOREMAN_TEST_PS_DOCUMENTS/.test(e.message) && /PI_FOREMAN_ALLOW_REAL_HOME=1/.test(e.message));
+  assert.throws(() => applyRealHomeGuard("/real/.zshrc", false), (e) => !/PI_FOREMAN_TEST_PS_DOCUMENTS/.test(e.message));
+});
+
 test("setup --dry-run --mods with the herdr-app home at the real default prints would refuse", () => {
   const base = tmp("pf-rh-mods-");
   try {

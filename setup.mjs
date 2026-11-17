@@ -1120,7 +1120,7 @@ async function main(argv) {
   const agentDir = resolveAgentDir(opts.agentDir);
   guardRealHome(writeTargets({
     home: process.env.PI_FOREMAN_HOME || os.homedir(), agentDir, platform: process.env.PI_FOREMAN_PLATFORM || process.platform,
-    appHome: !opts.dryRun && pickerState().allowed ? appHome() : null,
+    appHome: pickerState().allowed ? appHome() : null,
   }));
   const projectDir = process.cwd();
   const settingsFile = opts.project ? path.join(projectDir, ".pi", "settings.json") : path.join(agentDir, "settings.json");
