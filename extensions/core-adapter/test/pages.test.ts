@@ -448,15 +448,14 @@ test("milestones: PR opened, ready and merged come from the PR watch", async () 
 const OWNER = (extra: string) => `# P\n\n## For the owner\nWe make it faster.\n${extra}\n## Goal\nx\n`;
 const FENCE_LINES = "```mermaid\ngraph TD\nA-->B\n```\n";
 
-test("owner diagram: one mermaid fence is allowed; a second is a plan-form issue", () => {
+test("owner diagram: any number of mermaid fences is allowed", () => {
   const manyLines = Array.from({ length: 9 }, (_, i) => `Line ${i} in plain words.`).join("\n");
   assert.deepEqual(ownerSectionIssues(OWNER(`${manyLines}\n${FENCE_LINES}`)), []);
   assert.deepEqual(ownerSectionIssues(OWNER(`${manyLines}\nTen.\nEleven.\n${FENCE_LINES}`)), [], "no length limit");
   const long = `${"graph TD\n"}${Array.from({ length: 200 }, (_, i) => `N${i}-->N${i + 1}`).join("\n")}`;
   assert.deepEqual(ownerSectionIssues(OWNER(`\`\`\`mermaid\n${long}\n\`\`\`\n`)), [], "the diagram's characters do not count");
-  const two = ownerSectionIssues(OWNER(`${FENCE_LINES}${FENCE_LINES}`));
-  assert.ok(two.some((i) => /more than one diagram/.test(i)), two.join());
-  assert.ok(planFormIssues(OWNER(`${FENCE_LINES}${FENCE_LINES}`), {}).some((i) => /more than one diagram/.test(i)));
+  assert.deepEqual(ownerSectionIssues(OWNER(`${FENCE_LINES}${FENCE_LINES}`)), []);
+  assert.deepEqual(planFormIssues(OWNER(`${FENCE_LINES}${FENCE_LINES}`), {}), []);
   assert.deepEqual(planFormIssues(OWNER(FENCE_LINES), {}), []);
 });
 

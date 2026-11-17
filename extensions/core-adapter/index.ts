@@ -153,7 +153,7 @@ import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
-import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
+import { ownerFactsLines, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -264,10 +264,9 @@ function launchDeny(input: Record<string, unknown>): { role: string; command: st
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
 }
-/** The form faults of a plan text: the headings of a plan-first brief count only in a session opened plan-first by a parent. */
+/** The form faults of a plan text: the owner section's presence and position. */
 function planFormOf(text: string): string[] {
-  const parented = process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim();
-  return planFormIssues(text, { requiredHeadings: parented ? PLAN_FIRST_HEADINGS : [] });
+  return planFormIssues(text, {});
 }
 const ADAPTER_ID = "pi-foreman-core-adapter";
 /** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
@@ -5518,9 +5517,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hint = inHerdr
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
-          const openHint = markdown === undefined ? null : showHint(markdown);
           const page = r.page ? ` It writes a page the owner opens in the browser: ${r.page}.` : " Its page could not be written.";
-          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
         }
