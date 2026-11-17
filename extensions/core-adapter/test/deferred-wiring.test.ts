@@ -108,9 +108,9 @@ test("a tool_search hit is traced as tool_found; without codemode the un-hidden 
   assert.equal((hiddenOf(r.registered.get("tool_search"), NAMES) ?? []).includes("bg_kill"), false);
 });
 
-test("a child without MCP or searchable names has tool_search taken out of its active set, so nothing is hidden", async (t) => {
+test("a child without MCP or searchable names keeps tool_search in its active set and hides nothing", async (t) => {
   const r = await rigWith(t, { child: true, roles: { builder: { searchable: [] } } });
-  assert.equal(r.active().includes("tool_search"), false);
+  assert.equal(r.active().includes("tool_search"), true);
   assert.deepEqual(r.rig.events("tools_deferred"), []);
   const event = { prompt: "go", systemPromptOptions: { sections: {} as Record<string, string> } };
   await r.rig.fire("before_agent_start", event);
@@ -122,13 +122,13 @@ test("a child whose role has searchable names keeps tool_search active", async (
   assert.equal(r.active().includes("tool_search"), true);
 });
 
-test("a child hides the names its role makes searchable and keeps tool_search active; the foreman does not", async (t) => {
+test("a child hides nothing, neither its role's searchable names nor tools.deferred, and keeps tool_search active; the foreman hides tools.deferred", async (t) => {
   const names = [...NAMES, "example_tool"];
   const roles = { builder: { searchable: ["example_tool", "read"] } };
   const config = { tools: { deferred: ["fusion_*"] } };
   const child = await rigWith(t, { child: true, active: names, all: names, roles, config });
   assert.equal(child.active().includes("tool_search"), true);
-  assert.deepEqual(hiddenOf(child.registered.get("tool_search"), child.active()), ["fusion_reason", "example_tool"]); // the floor (read) still wins
+  assert.equal(hiddenOf(child.registered.get("tool_search"), child.active()), undefined); // a child never removes an allowlisted tool (childtools.ts)
   const foreman = await rigWith(t, { active: names, all: names, roles, config });
   assert.equal(hiddenOf(foreman.registered.get("tool_search"), foreman.active())?.includes("example_tool"), false);
 });

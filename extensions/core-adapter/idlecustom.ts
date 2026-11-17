@@ -6,15 +6,21 @@
 // `triggerTurn: false` message to the session without an extension `message_end` (agent-session.js
 // _appendCustomMessage emits to session listeners only), so the adapter never saw those messages:
 // no supervisor window, no completion-notice bookkeeping, no `child` turn cause. A notice held after
-// an Esc (0.78.0) is appended the same way and reaches the parent with the next prompt.
+// an Esc (still so in 0.89.0) is appended the same way and reaches the parent with the next prompt.
 //
-// At each `input` the adapter reads the custom-message entries at the end of the branch (after the
+// From 0.89.0 the wake is a custom run with no `input`; the held, reserved and compaction-deferred notices
+// are still appended without a turn.
+//
+// At each `input` and each custom `message_end` the adapter reads the custom-message entries at the end of the branch (after the
 // last message entry) and handles those it has not seen through `message_end`.
 
 /**
  * pi-subagents' idle wake prompt (src/shared/parent-wake.js PARENT_WAKE_TEXT, 0.76.1–0.78.0), matched
  * exactly so an owner prompt that merely quotes it is never taken for the wake. A later pi-subagents
  * that rewords it falls back to the pre-ledger-11 handling (cause "other", prompt read as the owner's).
+ * Dormant under 0.89.0+: parent-wake.js sends the notice with triggerTurn:true and no wake text, so no
+ * `input` event fires; the wake is classified by its custom message type (usage.ts CHILD_MESSAGE_TYPES)
+ * and the trailing catch-up also runs at each custom `message_end` (index.ts).
  */
 export const SUBAGENT_WAKE_TEXT =
   "Inspect subagent updates above. Answer pending supervisor requests within your authority. For completed work, read saved results and resume the already-authorized parent task, or report completion. If approval is required, explicitly ask the user. Do not silently yield, rerun completed work, or infer new authorization.";

@@ -49,11 +49,11 @@ instruction text of that core, and are released under the same MIT License.
 The bundled dependencies below are installed with the package through node_modules; each ships its
 licence file there. The copyright lines and licence texts are taken from those files.
 
-- pi-subagents 0.78.0, MIT License, Copyright (c) 2026 Nico Bailon
+- pi-subagents 0.89.0, MIT License, Copyright (c) 2026 Nico Bailon
 - pi-intercom (fork pin, see docs/install.md), MIT License, Copyright (c) 2026 Nico Bailon
-- @inquirer/prompts 8.7.4, MIT License, Copyright (c) 2025 Simon Boudrias
+- @inquirer/prompts 8.8.0, MIT License, Copyright (c) 2025 Simon Boudrias
 - beautiful-mermaid 1.1.3 (optional), MIT License, Copyright (c) 2026 Craft Docs
-- unbash 6.0.1, ISC License, Copyright (c) Lars Kappert
+- unbash 6.0.4, ISC License, Copyright (c) Lars Kappert
 
 MIT License (pi-subagents, pi-intercom, beautiful-mermaid; the copyright line is the one named above):
 

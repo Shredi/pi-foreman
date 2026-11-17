@@ -112,10 +112,10 @@ test("denyTools is judged first: its reason wins over the scope reason", async (
   assert.deepEqual(rig.events("guard").filter((r) => r.guard === "mcp_scope"), []);
 });
 
-test("tool_search leaves the active set when the role allows nothing, and stays when it allows a server", async (t) => {
-  // the builder default has searchable names, which keep tool_search on: this case needs none
+test("tool_search stays in the active set when the role allows nothing, and when it allows a server", async (t) => {
+  // a child never removes an allowlisted tool (childtools.ts), searchable names or not
   const none = await childRig(t, { roles: { builder: { searchable: [] } } });
-  assert.deepEqual(none.active, ["read"]);
+  assert.deepEqual(none.active, ["read", "tool_search"]);
   const some = await childRig(t);
   assert.deepEqual(some.active, ["read", "tool_search"]);
 });
@@ -126,13 +126,13 @@ test("the MCP extension is created in every child with a loadConfig", async (t) 
   assert.equal(typeof (created[0] as { loadConfig?: unknown }).loadConfig, "function");
 });
 
-test("a missing loader refuses MCP in that child: trace mcp_child_unsupported, tool_search inactive, a prompt line", async (t) => {
+test("a missing loader refuses MCP in that child: trace mcp_child_unsupported, tool_search stays active, a prompt line", async (t) => {
   const { rig, active } = await childRig(t, { resolveRoot: () => null, roles: { builder: { mcp: ["fx"], searchable: [] } }, mcp: ["fx"] });
   const rows = rig.events("mcp_child_unsupported");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].role, "builder");
   assert.match(String(rows[0].reason), /no Pi package root/);
-  assert.deepEqual(active, ["read"]);
+  assert.deepEqual(active, ["read", "tool_search"]);
   const event = { prompt: "go", systemPromptOptions: { sections: {} as Record<string, string> } };
   await rig.fire("before_agent_start", event);
   assert.match(event.systemPromptOptions.sections["pi-foreman-mcp"] ?? "", /MCP is not available in this child .*Friction/);

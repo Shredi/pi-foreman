@@ -389,6 +389,37 @@ class ToolUsageRetroTest(unittest.TestCase):
         self.assertIn("skills found in 25% or more", text)
         self.assertNotIn("example_used", text)
 
+    def test_rarely_used_tool_in_child_role_gets_no_under_10_percent_line(self):
+        lines = []
+        for i in range(20):
+            used = ["read", "example_used"] + (["example_tool"] if i == 0 else [])
+            lines.append(tool_usage_line(i, role="builder", used=used, hidden=()))
+        self.write_sessions(lines)
+        text = "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
+        self.assertNotIn("used in under 10% (builder", text)
+        self.assertNotIn("roles.builder.searchable", text)
+        self.assertNotIn("roles.builder.tools: remove", text)
+
+    def child_text(self, searchable):
+        (self.agent / "foreman.json").write_text(json.dumps({"roles": {"builder": {"searchable": searchable}}}), encoding="utf-8")
+        lines = [tool_usage_line(i, role="builder", used=["read", "example_used", "example_tool"], hidden=("example_extra",),
+                                 found=["example_extra"] if i < 10 else []) for i in range(20)]
+        self.write_sessions(lines)
+        return "\n".join(fr.render_tool_usage(fr.tool_usage_metrics(str(self.agent), now=self.NOW)))
+
+    def test_never_used_child_tool_in_role_searchable_names_searchable(self):
+        text = self.child_text(["example_extra"])
+        self.assertIn("never used (builder, 20 sessions): example_extra (example-package) -> roles.builder.searchable", text)
+
+    def test_never_used_child_tool_in_role_tools_names_tools(self):
+        text = self.child_text(["foreman_move"])
+        self.assertIn("never used (builder, 20 sessions): example_extra (example-package) -> roles.builder.tools", text)
+        self.assertNotIn("roles.builder.searchable", text)
+
+    def test_child_role_gets_no_found_in_25_percent_line(self):
+        text = self.child_text(["example_extra"])
+        self.assertNotIn("found in 25% or more (builder", text)
+
     def test_unused_package_gets_pi_remove_and_bg_features_remedy(self):
         lines = []
         for i in range(20):

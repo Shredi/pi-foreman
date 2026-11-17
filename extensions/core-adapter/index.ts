@@ -168,7 +168,8 @@ import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
 import { createWarm, liveReplayApi } from "./warmwire.ts";
 import { doctorWarm } from "./doctorwarm.ts";
 import { warmRates } from "./warmbudget.ts";
-import { forcedProjection, replayable } from "./warmreplay.ts";
+import { hidesDeclaredTools } from "./childtools.ts";
+import { forcedProjection, replayable, subagentNoticeWrap } from "./warmreplay.ts";
 import { IDLE_ENTRY, IdleModel, ownerAnswered } from "./idlemodel.ts";
 import { coldAt as coldAtTouch } from "./warmcompact.ts";
 import { KeepaliveLog, type KeepaliveResult } from "./keepalive.ts";
@@ -1908,9 +1909,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // a host without the tool api hides nothing
     }
     // The hook runs only for an active tool_search, so without one nothing is hidden.
-    // A child also hides the names its role makes searchable (the floor still wins).
+    // A child hides nothing (childtools.ts): pi-subagents 0.89 aborts a child whose registered allowlisted tool is missing from the request.
+    // The branch that adds the role's searchable names for a child stays, behind that rule.
     const patterns = s.isChild ? [...deferred.patterns, ...searchableOf(get(s.config.config, "roles"), s.usage.line.role)] : deferred.patterns;
-    deferred.hidden = declared.includes("tool_search") ? hiddenSet({ patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
+    deferred.hidden = hidesDeclaredTools(s.isChild) && declared.includes("tool_search") ? hiddenSet({ patterns, declared, loaded: [...deferred.loaded], planMode: deferred.planMode }) : [];
     if (!recorded || recorded.planMode !== deferred.planMode) persistDeferred();
     if (deferred.hidden.length) {
       s.trace?.emit({ event: "tools_deferred", count: deferred.hidden.length, names: deferred.hidden.join(",") });
@@ -2288,7 +2290,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const midConvo = (ctx.model as { compat?: { supportsMidConvoSystemMessages?: boolean } } | undefined)?.compat?.supportsMidConvoSystemMessages === true;
     const live = livePrompt(ctx); // no prompt api: undefined, the order stays
     if (!midConvo && typeof live === "string") messages = alignSections(messages ?? event.messages, live) ?? messages;
-    s.selfWarm.capture(forcedProjection(messages ?? event.messages, live)); // Pi projects a forced prompt after this hook; the warm replays what the request carries
+    s.selfWarm.capture(forcedProjection(subagentNoticeWrap(messages ?? event.messages), live)); // pi-subagents wraps its notices after this hook, Pi projects a forced prompt after it; the warm replays what the request carries
     return messages ? { messages } : undefined;
   });
   // Review S12: each run (a wake or child-notice run too) gets its own single stop-gate continue.
@@ -4173,6 +4175,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const m = event.message as { role?: string; customType?: string; provider?: string; model?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } } };
     if (m.role === "custom") {
       const s = sessionFor(ctx);
+      // pi-subagents 0.89: the wake is a custom run with no `input`, so a notice appended with triggerTurn:false (held after an Esc, reserved, compaction) is caught up here: it is still the trailing entry before this message is saved
+      if (s && !s.isChild) for (const unseen of s.customSeen.unseenTrailing(ctx.sessionManager.getBranch?.() ?? [])) onCustomMessage(s, unseen);
       if (s) onCustomMessage(s, event.message);
       if (s && !s.isChild) s.customSeen.mark(event.message);
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
