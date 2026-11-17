@@ -600,6 +600,18 @@
       "enable": ""
     },
     {
+      "id": "session-resume",
+      "area": "sessions",
+      "title": "Crash restart of a Pi session in its pane (experimental)",
+      "purpose": "A Pi session in a kept herdr-core terminal (`HC_TERMINAL_ID` set) writes a pane note while it runs. When Pi dies in a crash (the machine, the herdr core or the terminal; not a normal quit) and the terminal comes back, a hook that `foreman setup` adds to your shell startup file runs `foreman pane-resume` at the first prompt: it shows a 5 s countdown (Enter starts now, another key cancels) and restarts the session in its folder with its permission profile, plan phase and opened-session identity. The restarted session gets one message that names the child runs and background tasks the crash left unfinished. A session idle for more than 14 days is not restarted. Not on Windows. `sessions.hc.resume` (`auto` or `off`) is user or overlay config only; `foreman setup --no-resume-hook` writes no hook.",
+      "doc": "docs/herdr.md#crash-restart",
+      "keys": ["sessions.hc.resume"],
+      "commands": ["foreman pane-resume", "foreman setup --no-resume-hook"],
+      "switch": null,
+      "state": "on",
+      "enable": ""
+    },
+    {
       "id": "session-worktree",
       "area": "sessions",
       "title": "Round worktree for a session open",

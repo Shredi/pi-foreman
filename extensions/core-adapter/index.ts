@@ -151,6 +151,8 @@ import { childBashTimeout, type ChildBashTimeout } from "./bashtimeout.ts";
 import { reviewFactsForHead } from "./prready.ts";
 import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
+import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
+import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
 import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, Show, SHOW_TOOL } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
@@ -499,6 +501,8 @@ interface Session {
   childRuns: ChildRuns;
   /** Presence file (livestate.ts); null for a subagent child or a print/json run. */
   live: LiveState | null;
+  /** The crash-restart note and the restart message (paneresume.ts); null without a presence file or outside a tui session. */
+  paneResume: PaneResume | null;
   /** Plan publication for the side panel (show.ts); null without a presence file or with the scratch dir disabled. */
   show: Show | null;
   /** Foreman only: the pressure sampler timer (pressure.ts), and the launches queued behind the one that runs under high pressure (per assistant message). */
@@ -807,6 +811,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     ctx.ui.notify(msg, level);
   };
 
+  const prevHeartbeats = new Map<string, number | null>();
+
   async function startSession(ctx: ExtensionContext): Promise<Session> {
     const id = ctx.sessionManager.getSessionId();
     const cwd = ctx.cwd;
@@ -1059,6 +1065,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       running: false,
       childRuns: new ChildRuns(new UsageTail(usageFile(agentDir, foremanSession), loadPrices(PKG_ROOT))),
       live: null,
+      paneResume: null,
       show: null,
       openPrs: null,
       pressureSampler: null,
@@ -1086,7 +1093,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           // the footer is cosmetic: Pi's own footer stays
         }
       }
-      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const pw = prWatchWait(sessions.get(id)?.prWatches.list() ?? [], sessions.get(id)?.prWatches.unreviewed() ?? [], sessions.get(id)?.prWatches.reviewLive() ?? []); return pw ? [...w, pw] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
+      prevHeartbeats.set(id, readLiveRecord(agentDir, id)?.heartbeatMs ?? null); // before the start below overwrites the record
+      s.live = LiveState.start({ agentDir, sessionId: id, cwd, mode: ctx.mode, env: process.env, endedBy: signalEnded, taskEnded: taskEndedCheck() }, () => s.childRuns.views(), () => usageFooter.totalsOf(id), () => { const w = waits.active(id); const pw = prWatchWait(sessions.get(id)?.prWatches.list() ?? [], sessions.get(id)?.prWatches.unreviewed() ?? [], sessions.get(id)?.prWatches.reviewLive() ?? []); return pw ? [...w, pw] : w; }, () => { const x = sessions.get(id); if (!x) return null; const p = pressureOf(x); return p.level === "ok" ? null : p; }, () => { const x = sessions.get(id); return x ? x.extStatus.items().map((i) => ({ n: null, state: i.state, label: i.label, src: "ext" as const })) : []; });
       if (s.live) {
         const live = s.live;
         s.show = Show.start({ agentDir, sessionId: id, cwd, home: os.homedir(), platform, scratchDir: editModeOfSession(s).scratchDir, handoffDir: (process.env.PI_FOREMAN_HANDOFF_DIR ?? "").trim() || null, trace: (r) => s.trace?.emit(r), onChange: () => live.flush() });
@@ -1698,6 +1706,24 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     // First: startSession, intercom and the sidebar read the identity env, and pi-intercom (loaded after this extension) reads PI_INTERCOM_STABLE_ID.
     const restored = restoreIdentity({ env: process.env, reason: event.reason, piSessionId: ctx.sessionManager.getSessionId?.() ?? "", branch: (ctx.sessionManager.getBranch?.() ?? []) as unknown[], currentName: pi.getSessionName?.(), setSessionName: (name) => pi.setSessionName?.(name) });
     const s = await startSession(ctx);
+    if (s.live && !s.isChild) {
+      s.paneResume = PaneResume.start({
+        agentDir: piAgentDir(process.env, os.homedir()),
+        sessionId: s.id,
+        sessionFile: ctx.sessionManager.getSessionFile?.(),
+        cwd: s.cwd,
+        mode: ctx.mode,
+        platform,
+        env: process.env,
+        reason: event.reason,
+        hcTerminal: (process.env.HERDR_PANE_ID ?? "").trim() ? null : (process.env.HC_TERMINAL_ID ?? "").trim() || null, // as the live record's hcTerminal (livestate.ts)
+        setting: readResumeSetting(piAgentDir(process.env, os.homedir())),
+        prevHeartbeatMs: prevHeartbeats.get(s.id) ?? null,
+        send: (text) => pi.sendMessage({ customType: RESTART_MESSAGE_TYPE, content: text, display: true }, { triggerTurn: false }), // appended, never system text: the cache prefix stays
+        trace: (r) => s.trace?.emit(r),
+      });
+      prevHeartbeats.delete(s.id);
+    }
     recordIdentity(s, ctx, event.reason, restored);
     readoptChildAsks(s, ctx);
     await initSkills(s);
@@ -1908,6 +1934,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     sweepScratch(s);
     closeChildAsks(s, event?.reason === "reload");
     await s.show?.idle();
+    s.paneResume?.stop(event?.reason); // before live.stop(): the signal flag it reads is also what stop() writes as endedBy
+    s.paneResume = null;
     s.live?.stop();
     s.openPrs?.stop();
     await s.pressureSampler?.stop();

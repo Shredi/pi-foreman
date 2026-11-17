@@ -107,7 +107,8 @@ Setup has a feature axis next to the model-map presets ([presets](presets.md)): 
   On Windows repeat the flag instead of using a comma list, because `cmd` splits arguments on commas.
 - `--addon <id>`: install exactly the named add-ons (repeatable), instead of the default set.
 - `--no-addons`: install no add-on. `--skip-addon <id>[,<id>]`: install the default set minus these. Both are refused together with `--addon` (and each other).
-- `--no-env`: do not write environment variables into your shell profile (see [Add-ons](#add-ons)).
+- `--no-env`: do not write environment variables into your shell profile (see [Add-ons](#add-ons)); the resume block (below) is not written either.
+- `--no-resume-hook`: write no [resume block](#the-resume-hook) and remove an existing one.
 - `--github-hosts <host>[,<host>]`: the GitHub hosts the PR tracker covers (`tools.prGithubHosts`, see [GitHub hosts for PR tracking](#github-hosts-for-pr-tracking)); 1 to 20 host names, lowercased and deduplicated. Counts as a flag (the picker does not open); refused with `--remove`, `--preview` and `--pick`.
 - `--pick`: open the picker again.
 - `--mods`: refresh the installed herdr-app mods (`pi-foreman`, `pi-foreman-plan`) from this package and stop; nothing else runs and no config is written. Only the files that differ are copied (never the test files or the app's `cache/`); a mod that is not installed is left alone. It prints the changed files and the next step (save reloads a mod, or restart the app; then `herdr-app check` the folder). `--dry-run` lists the changes and writes nothing. Run it in a terminal, since a session cannot write user config. A normal `foreman setup` lists installed mods that differ and asks before it refreshes them (no answer, or no terminal, leaves them as they are and prints this command). See [herdr](herdr.md#herdr-app-and-herdr-core).
@@ -200,6 +201,43 @@ alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 
 `--remove` lists installed add-ons as `add-ons installed: <id> (<source>); kept, remove with: pi remove <source>` and runs
 nothing for them.
+
+### The resume hook
+
+Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<`, under the same guard (default agent dir or
+`PI_FOREMAN_HOME`; never in a dry run, never on Windows, never with `--no-env`). It restarts a Pi session in its pane after a crash
+(see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). The block removes its marker when the check should repeat at the next prompt: Pi is still ending after a signal (exit code 75), or `node` was not found yet (exit code 127, for example a lazy-loaded nvm). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
+`~/.bash_login`, `~/.profile`; fish `~/.config/fish/conf.d/pi-foreman-resume.fish`. The block calls this checkout's `bin/foreman` by its absolute path, so
+re-run `foreman setup` after the package moved (an nvm switch that moves the global npm root, a `pi update` into a new folder). Run setup on a remote machine too
+if sessions there should come back. `--no-resume-hook` writes no block and removes an existing one; `foreman setup --remove` removes it too. With `--no-env`
+or a custom agent dir setup prints one line instead; to add it by hand, copy the block from `~/.zshrc` of a machine where setup wrote it, or write
+(bash; replace `<foreman>` with the absolute path of `bin/foreman`):
+
+```sh
+if [ -n "${BASH_VERSION:-}" ]; then
+  __pi_foreman_resume() {
+    __pi_foreman_rc=$?
+    [ -n "${HC_TERMINAL_ID:-}" ] || return "$__pi_foreman_rc"
+    [ -t 0 ] || return "$__pi_foreman_rc"
+    __pi_foreman_note="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/pi-foreman/state/panes/$HC_TERMINAL_ID.json"
+    [ -f "$__pi_foreman_note" ] || return "$__pi_foreman_rc"
+    __pi_foreman_mark="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-foreman-resume.$$"
+    if [ -n "${__pi_foreman_resume_seen:-}" ] && [ -e "$__pi_foreman_mark" ] && ! [ "$__pi_foreman_note" -nt "$__pi_foreman_mark" ]; then return "$__pi_foreman_rc"; fi
+    [ -x '<foreman>' ] || return "$__pi_foreman_rc"
+    __pi_foreman_resume_seen=1
+    : >| "$__pi_foreman_mark" 2>/dev/null
+    '<foreman>' pane-resume --shell-pid "$$"
+    case $? in 75|127) rm -f "$__pi_foreman_mark" ;; esac
+    return "$__pi_foreman_rc"
+  }
+  case "${PROMPT_COMMAND:-}" in
+    *__pi_foreman_resume*) ;;
+    *) PROMPT_COMMAND="__pi_foreman_resume${PROMPT_COMMAND:+;$PROMPT_COMMAND}" ;;
+  esac
+fi
+```
+
+To remove it by hand, delete the lines between the two markers.
 
 ### foreman features
 

@@ -625,6 +625,32 @@ The copy is the first install only. To update an installed copy, run `foreman se
 
 Tests: `node --test "integrations/herdr-app/pi-foreman/*.test.mjs" "integrations/herdr-app/pi-foreman-plan/*.test.mjs"` (both are part of `npm run test:node`).
 
+### Crash restart
+
+Experimental. A Pi session that runs in a kept `hc` terminal (`HC_TERMINAL_ID` set, no `HERDR_PANE_ID`) comes back in its pane after a crash
+of the machine, the herdr core or the terminal. `hc keep` restores the terminal with a fresh shell; pi-foreman restarts Pi in it.
+
+- **Pane note.** While Pi runs in the tui, it keeps `<agent dir>/pi-foreman/state/panes/<terminal id>.json`: the session id and file, the folder, the
+  terminal's creation time and socket, and the terminal's root program pid. A normal quit (`/quit`, Ctrl+D) deletes it; Pi ending on SIGHUP or SIGTERM
+  keeps it and writes `endedBy: "signal"` into the presence file. Notes of sessions idle for more than 14 days are swept at each start, and
+  `foreman radar` keeps the presence file a note names for up to 14 days (`radar.doneTtlMinutes` does not delete it).
+- **Hook.** `foreman setup` writes a marked block (`# >>> pi-foreman resume >>>`) into your shell startup file ([install](install.md#the-resume-hook)).
+  At a prompt it runs `foreman pane-resume --shell-pid <pid>` only when `HC_TERMINAL_ID` is set, stdin is a terminal, the note exists and this shell has
+  not checked it yet (the note is new, or newer than the shell's marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, touched before each check; a missing marker means check again); otherwise it
+  starts no process and prints nothing. With no note a prompt costs only file tests. The hook removes its marker, so the next prompt checks again, when the command exits 75 (Pi wrote `done` after a signal but is still ending) or 127 (`node` not found yet, for example a lazy-loaded nvm); a suspended Pi (record not `done`) is a plain keep.
+- **Decision.** `foreman pane-resume` restarts the session only when all of these hold: `sessions.hc.resume` is not `off`; `hc get` answers; the terminal
+  is the one the note names (same creation time and socket); this shell is the terminal's root program; the presence file exists, names this terminal and
+  is not a normal end; its Pi process is gone (heartbeat before the last boot, or the pid is dead); the terminal's root pid differs from the note's (a lone
+  Pi crash with the shell still the same program is not restarted: the note is cleared and the hand-resume line printed); the session was active within 14 days and its folder exists; and no other run holds the
+  session's lock. Otherwise it keeps the note (a kept note is not decided again at every prompt: only in a new shell, or after the note changed, for example when Pi ran again in this shell) or clears it and, where you can resume by hand, prints `pi --session <id>` (the session id; for a session in a custom session dir, which is never restarted, the session file path).
+- **Restart.** A 5 s countdown (Enter starts now, any other key cancels and deletes the note), then `pi --session <file>` in the note's folder with the
+  session's permission profile, plan phase and `PI_BG_*` variables again. The session comes back with its history, identity (an opened child keeps its parent
+  link) and ceremony state. It gets one message (appended, never system text, no turn) with the time of the last sign of life; waits are lost.
+- **Limits.** One herdr core, one note per terminal. A lone Pi crash is not restarted, and neither is Pi ending on a signal in a shell that stays; the next prompt of that shell clears the note and prints the hand-resume line. No Windows.
+  Herdr TUI panes (`HERDR_PANE_ID`) are not covered. A custom session dir (not `<agent dir>/sessions`) clears the note and prints the hand-resume line.
+  Pi as a kept terminal's own program that exits with an error code is final for hc and is not restored.
+- **Off.** `sessions.hc.resume: "off"` (user or overlay config) writes no note and makes the hook do nothing; `foreman setup --no-resume-hook` writes no block.
+
 ### Versions
 
 Minimum: Herdr app 0.1.13 with core 0.1.18. Recommended and tested: app 0.1.14 with core 0.1.19 (exec timeouts, per-copy state).
