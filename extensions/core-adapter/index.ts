@@ -153,7 +153,7 @@ import { highestRework } from "./rework.ts";
 import { LIVE_DEAD_MS, LiveState, intercomIdOf, labelOfHandoff, liveDir, prWatchWait } from "./livestate.ts";
 import { PaneResume, RESTART_MESSAGE_TYPE, signalEnded, taskEndedCheck } from "./paneresume.ts";
 import { readLiveRecord, readResumeSetting } from "./paneresume-core.ts";
-import { ownerFactsLines, ownerSummary, PLAN_FIRST_HEADINGS, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix, showHint } from "./ownertext.ts";
+import { ownerFactsLines, ownerSummary, planFormIssues, prefixQuestions, projectNameOf, questionHint, questionPrefix } from "./ownertext.ts";
 import { NOTE_MAX_BYTES, NOTE_TITLE_MAX, planPageLine, Show, SHOW_TOOL, showOffReason } from "./show.ts";
 import { OpenPrsRefresher, openPrsConfig, realGh } from "./openprs.ts";
 import { installSidebarLive } from "./sidebarlive.ts";
@@ -263,11 +263,6 @@ function sessionDirOf(ctx: ExtensionContext): string | undefined {
 function launchDeny(input: Record<string, unknown>): { role: string; command: string } {
   const roles = subagentAgents(input).join("+");
   return { role: roles, command: `subagent ${roles}`.trim() };
-}
-/** The form faults of a plan text: the headings of a plan-first brief count only in a session opened plan-first by a parent. */
-function planFormOf(text: string): string[] {
-  const parented = process.env.PI_FOREMAN_PLAN_PHASE === "1" && !!process.env.PI_FOREMAN_HANDOFF_DIR?.trim();
-  return planFormIssues(text, { requiredHeadings: parented ? PLAN_FIRST_HEADINGS : [] });
 }
 const ADAPTER_ID = "pi-foreman-core-adapter";
 /** The id of the removed git-guard child extension: a `safety.requiredChildExtensions` entry with it is still filtered out so configs written for it load. */
@@ -3731,7 +3726,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
             for (const p of planPathsOf(planReviewFiles(String(e.task ?? ""), null), editModeOfSession(s).scratchDir)) {
               const rp = readPlan(p, planOpts(s, ctx));
               if (!("plan" in rp)) continue;
-              const issues = planFormOf(rp.plan.bytes.toString("utf8"));
+              const issues = planFormIssues(rp.plan.bytes.toString("utf8"), {});
               if (issues.length > 0) faults.push(`${p}: ${issues.join("; ")}`);
             }
           }
@@ -4877,7 +4872,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (owner && !owner.isChild && !event.isError && (event.toolName === "write" || event.toolName === "edit") && isPlanPath((event.input as Record<string, unknown>).path, planOpts(owner, ctx))) {
       owner.trace?.emit({ event: "plan_written", tier: owner.ceremony.tier, by: "foreman" });
       const written = readPlan((event.input as Record<string, unknown>).path, planOpts(owner, ctx));
-      const issues = "plan" in written ? planFormOf(written.plan.bytes.toString("utf8")) : [];
+      const issues = "plan" in written ? planFormIssues(written.plan.bytes.toString("utf8"), {}) : [];
       if (issues.length > 0) planFormNote = `pi-foreman: the plan form is wrong (${issues.join("; ")}). Fix it now; a [plan-review] launch is refused until it is fixed.`;
     }
     // Plan publication (show.ts): the scratch plan of a foreman and `<handoff dir>/plan.md` of a child session; a refresh, no ruling point.
@@ -5518,9 +5513,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const hint = inHerdr
             ? " It is shown in the Herdr plan panel if your layout has a pi-foreman-plan block (see docs/herdr.md#notes)."
             : ` No Herdr pane was detected, so no panel can show it: the note is written at ${r.path}, and the Herdr layout needs a pi-foreman-plan panel block (see docs/herdr.md#notes).`;
-          const openHint = markdown === undefined ? null : showHint(markdown);
           const page = r.page ? ` It writes a page the owner opens in the browser: ${r.page}.` : " Its page could not be written.";
-          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}${openHint ? ` ${openHint}` : ""}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
+          return { content: [{ type: "text" as const, text: `shown: ${title} (v${r.v}, ${r.diagrams} diagram${r.diagrams === 1 ? "" : "s"}) at ${r.path}.${page}${hint}` }], details: { decision: "shown", v: r.v, diagrams: r.diagrams } };
         } catch {
           return refuse(`${SHOW_TOOL}: the note could not be written.`);
         }
