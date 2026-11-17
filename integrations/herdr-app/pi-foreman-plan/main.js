@@ -223,7 +223,7 @@ export default class PlanPanel extends View {
     });
   }
 
-  // Re-reads the page index of one session. A page that is new since the last read of it (a new id or a higher version) opens the panel
+  // Re-reads the page index of one session. A page that is new since the last read of it (a new id or a higher version of a page) opens the panel
   // on that session's tab; the first read of a session only records what is there, so starting the app does not pop the panel.
   async refresh(job, cx) {
     const dir = job.show.dir;
@@ -239,6 +239,7 @@ export default class PlanPanel extends View {
     const idx = text === null ? null : parsePages(text);
     const prev = rec.known;
     rec.text = text;
+    if (!idx && prev) return false; // a failed or unreadable read keeps the pages and what is known of them
     rec.pages = idx?.pages ?? [];
     rec.events = idx?.events ?? [];
     rec.known = new Map(rec.pages.map((p) => [p.id, p.version]));

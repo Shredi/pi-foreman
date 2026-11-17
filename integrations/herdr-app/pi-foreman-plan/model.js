@@ -256,7 +256,8 @@ const percent = (v) => v.replace(/%(?![0-9A-Fa-f]{2})/g, "%25").replace(/[^A-Za-
 export function rewriteRelative(html, base) {
   return String(html).replace(REL_ATTR, (m, pre, name, eq, dq, sq) => {
     const v = dq ?? sq;
-    if (v.trim() === "" || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(v) || /^[\\/#]/.test(v)) return m;
+    const t = v.trim();
+    if (t === "" || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(t) || /^[\\/#]/.test(t)) return m;
     const q = dq !== undefined ? '"' : "'";
     return `${pre}${name}${eq}${q}${base}${percent(v)}${q}`;
   });

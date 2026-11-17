@@ -113,6 +113,13 @@ test("rewriteRelative: absolute, scheme, # and empty values, links, srcset, data
   for (const h of same) assert.equal(rewriteRelative(h, BASE), h, h);
 });
 
+test("rewriteRelative: the scheme and absolute test runs on the trimmed value", () => {
+  for (const h of ['<img src=" https://e.org/a.png">', '<img src=" /abs.png">', '<img src=" javascript:alert(1)">', '<img src="\t//host/x.png">']) {
+    assert.equal(rewriteRelative(h, BASE), h, h);
+  }
+  assert.equal(rewriteRelative('<img src=" a.png">', BASE), `<img src="${BASE}%20a.png">`);
+});
+
 test("rewriteRelative: an encoded value cannot leave its attribute", () => {
   const out = rewriteRelative('<img src="x&quot;onerror=1 y\'z<q>.png">', BASE);
   assert.ok(!/[<>']/.test(out.slice(out.indexOf("src=") + 5, out.lastIndexOf('"'))));

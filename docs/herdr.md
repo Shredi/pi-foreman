@@ -784,7 +784,7 @@ Nothing is removed this round: the TUI path keeps working. This is what herdr-ap
 `integrations/herdr-app/pi-foreman-plan/` (the panel) and the Agents mod's "📄 Plan" header button that opens it. The panel is a list. It shows, for the foreman that owns the tab and for each of its child sessions (one tab each), the session's pages newest first, each with a state chip ("plan v3 · waits for you") and its age, and below them the milestones (plan review PASS/FAIL, checkpoint answered, PR opened, PR ready, PR merged, result written), newest first; a milestone that holds an `https://` link opens it. A click on a page opens it in the system browser (see Data). The panel does not render markdown, diagrams or diffs itself; the pages (see [Pages](#pages)) do. It only reads; approval stays in the Pi session. It needs the `pi-foreman` Agents mod
 (above): that mod publishes the radar the panel joins on, and it adds the "📄 plan vN · age" row under a session that has a plan, whose
 click opens the panel on that session's tab, even when the panel is closed: the click also leaves the request in `pi-foreman.show-pending`, which the
-panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A tab already read lists at once; a tab not read yet says "Loading pages…". A new page (a new id, or a higher version of the plan) opens the panel by itself on the session's tab, as a new note did; the first sight of a session only records its pages. A page not opened yet at its current state carries a ● on its entry, and a tab that is not on screen shows a ● on its label while one of its pages is unseen; opening the page clears the entry's dot. All sessions of the tab are read in the background after the first paint and again every 5 s. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
+panel reads when it mounts, applies once and clears. The panel follows a click in the next render. A tab already read lists at once; a tab not read yet says "Loading pages…". A new page (a new id, or a higher version of a page) opens the panel by itself on the session's tab, as a new note did; the first sight of a session only records its pages. A page not opened yet at its current state carries a ● on its entry, and a tab that is not on screen shows a ● on its label while one of its pages is unseen; opening the page clears the entry's dot. All sessions of the tab are read in the background after the first paint and again every 5 s. Clicked rows, chips and buttons in the Agents mod show a pending state (a lit row, a trailing …)
 in the same render. Install the panel together with the Agents mod; the two are one install.
 
 Install:
@@ -818,13 +818,13 @@ poll). An index entry counts only when its `file` is `plan.html`, `result.html` 
 id and kind come from that name. The panel writes only its page copies (below) and the clearing of `pi-foreman.show-pending`.
 
 **Opening a page.** A click reads the page (local or remote, at most 1 MiB), writes a copy into one of eight fixed files
-`mods/pi-foreman-plan/cache/pages/slot-<0-7>.html` in the app home (round robin, overwritten, never deleted; the host reads files only from there)
+`mods/pi-foreman-plan/cache/pages/slot-<0-7>.html` in the app home (round robin, overwritten, never deleted)
 and starts the platform opener on that copy and nothing else: `open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on
 Windows, no shell, only the exact slot path accepted. The opener runs the handler of the file type, so opening only our own `.html` copy keeps it to
 the browser, also when the source file is a symlink. For a local session the copy has its relative `src` and `poster` values (no scheme, not starting with `/`
 or `#`) made absolute against the `pages/` folder, so relative pictures and videos load; remote pages are copied as they are. Known limits: the
 rewrite does not touch `srcset`, `<link href>` or CSS `url()`, links and `#` anchors stay as written, and a `result.md` written by `cp` or a heredoc gets
-no page. An opener that fails raises an error notice ("Could not open the page"; "Could not open the link" for a milestone link) with the exit code and the first error line.
+no page; the unseen dots are kept in memory only, so they return when the panel is hidden and shown again or the app restarts. An opener that fails raises an error notice ("Could not open the page"; "Could not open the link" for a milestone link) with the exit code and the first error line.
 The page itself runs in the browser as written, with no script or network restriction.
 
 ### Pages
@@ -857,7 +857,7 @@ Limits: a plan written through the shell is not observed; remote child sessions 
 for them; sidecars of older versions stay in the session's show dir until the session's live file is gone and the dir is pruned; the panel's
 `mods/pi-foreman-plan/cache/pages/` holds at most the eight slot copies (older versions of the mod also left `cache/<sha>-<theme>.svg` files, which are no longer used and can be deleted).
 
-**What the mod does.** A new page (a new id, or a higher version of the plan; a first sight only records the pages there) selects the panel block and shows
+**What the mod does.** A new page (a new id, or a higher version of a page; a first sight only records the pages there) selects the panel block and shows
 its hidden panel, on the tab of the session that wrote it. Block and panel ids come from the shown layout, with the `foreman.json` ids as fallback. If the
 layout has no `pi-foreman-plan` block, this mod cannot run, so the Agents mod (`pi-foreman`, present in every layout) posts one notification per note version saying to add it (layout checked by name, cached).
 

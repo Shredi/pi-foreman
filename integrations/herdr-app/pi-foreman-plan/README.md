@@ -21,7 +21,7 @@ The Agents mod's header has a "📄 Plan" button that brings the panel forward.
 
 - Per tab, pages newest first with a state chip ("plan v3 · waits for you") and their age, then the milestones (plan review, checkpoint
   answer, PR opened, PR ready, PR merged, result written), newest first. A milestone with an `https://` link opens it.
-- A page that arrives (a new id, or a higher version of the plan; the first sight of a session only records) opens the panel (selects the
+- A page that arrives (a new id, or a higher version of a page; the first sight of a session only records) opens the panel (selects the
   block, shows the hidden panel around it) on the tab of the session that wrote it. Block and panel ids are found by searching the shown
   layout for this mod, with the `foreman.json` ids (`panel-body`, `plan`, `panel`) as fallback. When the layout has no such block this mod is
   not running; the Agents mod (`pi-foreman`) posts the notification that says to add `{ "mod": "pi-foreman-plan" }` to a stack.
