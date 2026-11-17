@@ -167,7 +167,7 @@ export function readRegularFile(real: string, maxBytes: number): { bytes: Buffer
   }
 }
 
-export const PLAN_FILE_REFUSAL: Record<FileRefusal, string> = {
+const PLAN_FILE_REFUSAL: Record<FileRefusal, string> = {
   missing: "the file does not exist or cannot be read",
   not_regular: "not a regular file",
   hard_link: "the file has more than one hard link",

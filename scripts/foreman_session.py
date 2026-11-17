@@ -380,7 +380,7 @@ def remote_footer(label, plan_first):
     if plan_first:
         lines += [
             "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
-            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir and run",
+            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir (an HTML plan stays in your scratch dir: copy its generated `plan-<topic>.md` there) and run",
             "       %s plan" % base,
             "   It informs the parent, so do not wait for an answer to it.",
             "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
