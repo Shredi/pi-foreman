@@ -74,6 +74,13 @@ for (const [map, policy] of CAPPED) {
     assert.deepEqual(a.events("rung_top").map((r) => [r.role, r.model, r.reason]), [["builder", "fake/builder", RANK_CAPPED_REASON]]);
     assert.deepEqual(a.events("rung_up"), []);
     assert.match(texts(await a.started(id, rev, "run-b2")), SKIP);
+    if (map === "B" && policy === "below") {
+      // same rig: a refused launch changes no state
+      const strong = await a.launch(builder({ task: "fix it", model: "strong" }));
+      assert.equal(strong.res?.block, true);
+      assert.match(strong.res?.reason ?? "", /rank_policy:below/);
+      assert.ok(strong.res?.reason?.includes(NEXT), strong.res?.reason);
+    }
   });
 }
 
@@ -90,33 +97,6 @@ test("FAIL revision, explicit lower model + reason, map A + below: launched on t
   assert.match(texts(await a.started(id, rev, "run-b2")), SKIP);
 });
 
-test("finish gate after FAIL, map A + below: no climb_available refusal", async (t) => {
-  const a = await rig(t, "A", "below");
-  await built(a);
-  await settle(a, 3);
-  const refused = a.events("finish_refused");
-  assert.ok(refused.length > 0);
-  assert.deepEqual(refused.filter((r) => r.climb_available === true), []);
-});
-
-test("RUNG_UP report, explicit lower model + reason, map B + below: honoured", async (t) => {
-  const a = await rig(t, "B", "below");
-  await built(a, "RUNG_UP: context\nDone: x", false);
-  const next = builder({ task: "go on", model: "fake/lower", reason: "small rest" });
-  const { res } = await a.launch(next);
-  assert.equal(res, undefined, res?.reason);
-  assert.equal(next.model, "fake/lower");
-  assert.deepEqual(refusals(a), []);
-});
-
-test("FAIL revision with model strong, map B + below: still refused [rank_policy] with the next step", async (t) => {
-  const a = await rig(t, "B", "below");
-  await built(a);
-  const { res } = await a.launch(builder({ task: "fix it", model: "strong" }));
-  assert.equal(res?.block, true);
-  assert.match(res?.reason ?? "", /rank_policy:below/);
-  assert.ok(res?.reason?.includes(NEXT), res?.reason);
-});
 
 // no live rung (the first builder launch of a session, or after a reload): the bare FAIL case is the launchPlanned unit below; a chain has no live rung either
 test("chain builder -> reviewer -> builder as the first launch of the session, map A + below: both builders on the bottom rung, not refused", async (t) => {
@@ -132,6 +112,15 @@ test("chain builder -> reviewer -> builder as the first launch of the session, m
 });
 
 // map A + at-or-below: the strong rung is allowed, the climb happens
+test("finish gate after FAIL, map A + below: no climb_available refusal", async (t) => {
+  const a = await rig(t, "A", "below");
+  await built(a);
+  await settle(a, 3);
+  const refused = a.events("finish_refused");
+  assert.ok(refused.length > 0);
+  assert.deepEqual(refused.filter((r) => r.climb_available === true), []);
+});
+
 test("FAIL revision, bare launch, map A + at-or-below: climbs to the foreman's own model", async (t) => {
   const a = await rig(t, "A", "at-or-below");
   await built(a);
@@ -152,11 +141,30 @@ test("FAIL revision, explicit lower model, map A + at-or-below: still rises to t
   assert.deepEqual(a.events("rung_top"), []);
 });
 
-test("finish gate after FAIL, map A + at-or-below: the climb is still offered", async (t) => {
+// D28: the climb refusal counts as one of the state's two refusals; an interactive input resets nothing
+test("finish gate after FAIL, map A + at-or-below: the climb is offered, counts toward two refusals (an input between), then ceremony_incomplete", async (t) => {
   const a = await rig(t, "A", "at-or-below");
   await built(a);
-  await settle(a, 3);
+  await commands.get("ceremony")!.handler("standard", a.ctx);
+  type R = { continue?: boolean; entries?: { customType?: string }[] } | undefined;
+  const settle1 = async (): Promise<R> => (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
+  const owner = () => a.fire("input", { source: "interactive", text: "next" });
+  const refusing = (r: R) => r?.continue === true && r.entries?.some((e) => e.customType === "pi-foreman-ceremony-gate") === true;
+  const turns: R[] = [];
+  for (let i = 0; i < 8 && turns.filter(refusing).length < 1; i++) turns.push(await settle1()); // the stop guard's reminder comes first
   assert.ok(a.events("finish_refused").some((r) => r.climb_available === true));
+  await owner();
+  assert.equal(refusing(await settle1()), true, "second refusal after an interactive input");
+  await owner();
+  const third = await settle1();
+  assert.notEqual(third?.continue, true, "the third turn end goes through");
+  assert.deepEqual((third?.entries ?? []).map((e) => e.customType), ["pi-foreman-ceremony-incomplete"]);
+  assert.equal(a.events("finish_refused").length, 2);
+  assert.equal(a.events("finish_refused").filter((r) => r.climb_available === true).length, 2);
+  assert.ok(a.events("ceremony_incomplete").length >= 1);
+  await owner();
+  assert.notEqual((await settle1())?.continue, true, "an input after the notice brings no new refusal");
+  assert.equal(a.events("finish_refused").length, 2);
 });
 
 // equalOnStrongRisk: the cap and the rank loop decide alike
@@ -196,6 +204,13 @@ for (const [map, policy] of CAPPED) {
     assert.match(res?.reason ?? "", new RegExp(`rank_policy:${policy}`));
     assert.equal(refusals(a).length, 1);
     assert.ok(res?.reason?.includes(NEXT), res?.reason);
+    if (map === "B" && policy === "below") {
+      // same rig: an explicit lower model with a reason is honoured
+      const next = builder({ task: "go on", model: "fake/lower", reason: "small rest" });
+      assert.equal((await a.launch(next)).res, undefined);
+      assert.equal(next.model, "fake/lower");
+      assert.equal(refusals(a).length, 1);
+    }
   });
 }
 
@@ -444,6 +459,12 @@ test("claude-bridge preset, Opus foreman, tier heavy, no model and no risk tag: 
 test("claude-bridge preset, Opus foreman, after a reviewer FAIL: a bare relaunch is capped on Sonnet, one with a strong-risk tag climbs to Opus", async (t) => {
   const a = await bridgeRig(t, "claude-bridge");
   await built(a);
+  const rejected = builder({ task: "fix", model: "claude-bridge/claude-opus-4-1", reason: "hard" });
+  const refused = await a.launch(rejected); // refused launches change no state
+  assert.equal(refused.res?.block, true);
+  assert.match(refused.res?.reason ?? "", /\[model_not_allowed\] claude-bridge\/claude-opus-4-1: .*rank_policy:below/);
+  assert.match(refused.res?.reason ?? "", /Allowed models for builder: .*claude-bridge\/claude-sonnet-5-5/);
+  assert.deepEqual(a.events("rung_top"), []);
   const plain = builder({ task: "fix it" });
   const { id, res } = await a.launch(plain);
   assert.equal(res, undefined, res?.reason);
@@ -459,17 +480,6 @@ test("claude-bridge preset, Opus foreman, after a reviewer FAIL: a bare relaunch
   assert.equal(a.events("rank_equal_model").length, 1);
   assert.deepEqual(a.events("rung_up").map((r) => [r.from, r.to, r.reason]), [[SONNET, OPUS, "review_fail"]]);
   assert.equal(a.events("rung_top").length, 1); // only the plain relaunch's
-});
-
-test("claude-bridge preset, Opus foreman, after a reviewer FAIL: an explicit model the policy rejects is refused [model_not_allowed] with the allowed models", async (t) => {
-  const a = await bridgeRig(t, "claude-bridge");
-  await built(a);
-  const input = builder({ task: "fix", model: "claude-bridge/claude-opus-4-1", reason: "hard" });
-  const { res } = await a.launch(input);
-  assert.equal(res?.block, true);
-  assert.match(res?.reason ?? "", /\[model_not_allowed\] claude-bridge\/claude-opus-4-1: .*rank_policy:below/);
-  assert.match(res?.reason ?? "", /Allowed models for builder: .*claude-bridge\/claude-sonnet-5-5/);
-  assert.deepEqual(a.events("rung_top"), []);
 });
 
 test("claude-bridge preset, Opus foreman, RUNG_UP: context, no FAIL: an explicit model the policy rejects is refused [model_not_allowed]", async (t) => {
@@ -570,31 +580,4 @@ test("plan + applyLaunchModels, strong rung allowed (Fable foreman), after a FAI
     assert.equal(r.refused, false, value);
     assert.equal(r.model, OPUS, value); // as on main: the strong rung
   }
-});
-
-// D28: the climb refusal counts as one of the state's two refusals; an interactive input resets nothing
-test("finish gate after FAIL with the climb open: two refusals (an interactive input between), then ceremony_incomplete; no new refusal after an input", async (t) => {
-  const a = await rig(t, "A", "at-or-below");
-  await built(a);
-  await commands.get("ceremony")!.handler("standard", a.ctx);
-  type R = { continue?: boolean; entries?: { customType?: string }[] } | undefined;
-  const settle1 = async (): Promise<R> => (await a.fire("agent_before_settle", { outcome: "completed", entries: [] })) as R;
-  const owner = () => a.fire("input", { source: "interactive", text: "next" });
-  const refusing = (r: R) => r?.continue === true && r.entries?.some((e) => e.customType === "pi-foreman-ceremony-gate") === true;
-  const turns: R[] = [];
-  for (let i = 0; i < 8 && turns.filter(refusing).length < 1; i++) turns.push(await settle1()); // the stop guard's reminder comes first
-  await owner();
-  const second = await settle1();
-  assert.equal(refusing(second), true, "second refusal after an interactive input");
-  await owner();
-  const third = await settle1();
-  assert.notEqual(third?.continue, true, "the third turn end goes through");
-  assert.deepEqual((third?.entries ?? []).map((e) => e.customType), ["pi-foreman-ceremony-incomplete"]);
-  assert.equal(a.events("finish_refused").length, 2);
-  assert.equal(a.events("finish_refused").filter((r) => r.climb_available === true).length, 2);
-  assert.ok(a.events("ceremony_incomplete").length >= 1);
-  await owner();
-  const after = await settle1();
-  assert.notEqual(after?.continue, true, "an input after the notice brings no new refusal");
-  assert.equal(a.events("finish_refused").length, 2);
 });
