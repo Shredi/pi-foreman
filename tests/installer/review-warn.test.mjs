@@ -1,6 +1,7 @@
 // Ledger item 26: `foreman setup` prints the no-review-model warning after a successful setup (bin/foreman runs
 // scripts/foreman_review_warn.mjs); nothing when a review model is configured.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";

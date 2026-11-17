@@ -204,13 +204,13 @@ nothing for them.
 
 ### The resume hook
 
-Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<`, under the same guard (default agent dir or
-`PI_FOREMAN_HOME`; nothing is written in a dry run or with `--no-env`). It restarts a Pi session in its pane after a crash
+Setup also writes a second marked block, `# >>> pi-foreman resume >>>` ... `# <<< pi-foreman resume <<<` (nothing is written in a dry run or with `--no-env`). With a custom agent dir (`--agent-dir` or `PI_CODING_AGENT_DIR`, not `~/.pi/agent`) the block carries that dir as the
+fallback of its note lookup (a `PI_CODING_AGENT_DIR` set in the shell still wins) and gives it to the restarted Pi for that one call, without exporting it. It restarts a Pi session in its pane after a crash
 (see [herdr](herdr.md#crash-restart)). At a prompt with no pane note the block runs only file tests; a note is checked once per change (a marker file `pi-foreman-resume.<pid>` in `$XDG_RUNTIME_DIR` when set, else `$TMPDIR`, records the check; a missing marker means check again). The block removes its marker when the check should repeat at the next prompt: Pi is still ending after a signal (exit code 75), or `node` was not found yet (exit code 127, for example a lazy-loaded nvm). Files by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` and, when it exists, the first of `~/.bash_profile`,
 `~/.bash_login`, `~/.profile`; fish `~/.config/fish/conf.d/pi-foreman-resume.fish`. The block calls this checkout's `bin/foreman` by its absolute path, so
 re-run `foreman setup` after the package moved (an nvm switch that moves the global npm root, a `pi update` into a new folder). Run setup on a remote machine too
 if sessions there should come back. `--no-resume-hook` writes no block and removes an existing one; `foreman setup --remove` removes it too. With `--no-env`
-or a custom agent dir setup prints one line instead; to add it by hand, copy the block from `~/.zshrc` of a machine where setup wrote it, or write
+setup prints one line instead; to add it by hand, copy the block from `~/.zshrc` of a machine where setup wrote it, or write
 (bash; replace `<foreman>` with the absolute path of `bin/foreman`):
 
 ```sh

@@ -177,10 +177,6 @@
     "model": "foreman-fake/builder"
    },
    {
-    "event": "tools_deferred",
-    "role": "builder"
-   },
-   {
     "event": "llm",
     "role": "builder",
     "model": "foreman-fake/builder"
@@ -227,10 +223,6 @@
     "event": "compaction_point",
     "role": "builder",
     "model": "foreman-fake/builder"
-   },
-   {
-    "event": "tools_deferred",
-    "role": "builder"
    },
    {
     "event": "llm",

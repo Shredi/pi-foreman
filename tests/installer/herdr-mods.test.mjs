@@ -1,6 +1,7 @@
 // Ledger items 1 to 3 and 5: the installed herdr-app mods against the package (profiles.mjs), `foreman setup --mods`, and the setup offer.
 // Every test sets HERDR_APP_HOME to a temp dir; nothing touches the real app home and herdr-app is never run.
 import { test, after } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

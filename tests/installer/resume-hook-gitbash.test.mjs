@@ -2,6 +2,7 @@
 // keeps `$?` and starts nothing without a terminal id or a tty, and the shell can read its Windows pid from /proc/$$/winpid. The tty path (the countdown,
 // key reading under mintty) has no pty on a CI runner and is covered by the live test noted in docs/herdr.md.
 import { test } from "node:test";
+import "./_sandbox-home.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";

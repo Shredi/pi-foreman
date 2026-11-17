@@ -462,8 +462,13 @@ export function formatSummary(sum: UsageSummary, title: string): string {
 
 export type TurnCause = "user" | "child" | "intercom" | "wake" | "close" | "other";
 
-/** pi-subagents 0.75.0 custom messages that report a child's end (notify.js, subagent-executor.js, wait-subscriptions.js). */
-export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription"];
+/**
+ * pi-subagents custom messages that report a child's end (notify.js, subagent-executor.js, wait-subscriptions.js) or wake the parent
+ * about a child. 0.89 sends the wake itself with triggerTurn (a custom run, no `input`), so these types are the only child signal:
+ * control notices (src/extension/control-notices.js), steering notices (steering-notices.js) and the compaction resume (src/extension/index.js).
+ * `subagent_watchdog_clarification` (the main session's watchdog, src/watchdog/register-main.js) is not a child message.
+ */
+export const CHILD_MESSAGE_TYPES = ["subagent-notify", "subagent-incremental-child-notify", "subagent-wait-subscription", "subagent_control_notice", "subagent_steering_notice", "subagent-compaction-resume"];
 /**
  * Its native intercom (supervisor) channel: a child's contact_supervisor request (intercom/native-supervisor-channel.js),
  * and pi-intercom's inbound message (fork 5f184cc index.ts:1370-1378).

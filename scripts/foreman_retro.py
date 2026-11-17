@@ -504,7 +504,13 @@ def tool_usage_metrics(agent_dir, now=None):
         for name in declared:
             pkg_tools[sources.get(name, "unknown")].add(name)
         removable = sorted(p for p, ts in pkg_tools.items() if p not in NO_REMOVE_SOURCES and not (ts & used))
-        rep["suggestions"] = {"groups": groups, "sources": {k: sources.get(k, "unknown") for g in groups for k in g["never_used"]},
+        try:
+            roles = fc.load_config(agent_dir)["config"].get("roles") or {}
+        except Exception:  # noqa: BLE001 - without the config a child remedy names both keys
+            roles = None
+        role_searchable = ({r: [x for x in (v.get("searchable") or []) if isinstance(x, str)]
+                            for r, v in roles.items() if isinstance(v, dict)} if isinstance(roles, dict) else None)
+        rep["suggestions"] = {"groups": groups, "role_searchable": role_searchable, "sources": {k: sources.get(k, "unknown") for g in groups for k in g["never_used"]},
                               "remove_packages": removable}
     return rep
 
@@ -512,6 +518,13 @@ def tool_usage_metrics(agent_dir, now=None):
 def _list(names, limit=12):
     names = list(names)
     return ", ".join(names[:limit]) + (" (+%d more)" % (len(names) - limit) if len(names) > limit else "") if names else "none"
+
+
+def _child_key(role, name, role_searchable):
+    """The config key a never-used child tool is removed from."""
+    if role_searchable is None:
+        return "roles.%s.tools or roles.%s.searchable" % (role, role)
+    return "roles.%s.%s" % (role, "searchable" if name in role_searchable.get(role, ()) else "tools")
 
 
 def render_tool_usage(t):
@@ -537,20 +550,18 @@ def render_tool_usage(t):
             for name in g["never_used"]:
                 pkg = srcs.get(name, "unknown")
                 rem = ("pi remove npm:%s" % pkg if pkg in removable else "PI_BG_FEATURES=process" if _bg_feature(name)
-                       else "tools.deferred" if g["role"] == "foreman" else "roles.%s.searchable" % g["role"])
+                       else "tools.deferred" if g["role"] == "foreman" else _child_key(g["role"], name, s.get("role_searchable")))
                 by_rem.setdefault((pkg, rem), []).append(name)
             for (pkg, rem), names in by_rem.items():
                 L.append("  never used (%s): %s (%s) -> %s" % (who, ", ".join(names), pkg, rem))
         # a never-used tool already has its remedy above
         searchable = [x for x in g["searchable"] if x not in g["never_used"]]
-        if searchable:
-            if g["role"] == "foreman":
-                L.append('  used in under 10%% (%s): tools.deferred: add %s' % (who, ", ".join('"%s"' % x for x in searchable)))
-            else:
-                L.append('  used in under 10%% (%s): roles.%s.searchable: add %s' % (who, g["role"], ", ".join('"%s"' % x for x in searchable)))
-        if g["always_on"]:
-            where = "tools.deferred" if g["role"] == "foreman" else "roles.%s.searchable" % g["role"]
-            L.append("  found in 25%% or more (%s): always on, remove from %s: %s" % (who, where, ", ".join(g["always_on"])))
+        # a child declares every allowlisted tool, so only the foreman has a remedy
+        if searchable and g["role"] == "foreman":
+            L.append('  used in under 10%% (%s): tools.deferred: add %s' % (who, ", ".join('"%s"' % x for x in searchable)))
+        # a child hides nothing, so only the foreman has a tool found on demand
+        if g["always_on"] and g["role"] == "foreman":
+            L.append("  found in 25%% or more (%s): always on, remove from tools.deferred: %s" % (who, ", ".join(g["always_on"])))
         if g["skills_never_read"]:
             L.append("  skills never read (%s): %s -> skills.hidden or remove the skill directory" % (who, ", ".join(g["skills_never_read"])))
         hide = [x for x in g["skills_hide"] if x not in g["skills_never_read"]]

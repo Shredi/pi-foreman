@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import "./_sandbox-home.mjs";
 import { unifiedDiff } from "../../setup.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

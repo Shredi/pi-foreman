@@ -14,6 +14,7 @@ import * as path from "node:path";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import { getCurrentSystemMessage, getCurrentTools, getSystemMessageText, normalizeContext } from "@earendil-works/pi-ai";
 import { r11Rig } from "./_r11rig.ts";
+import { subagentsHandlers } from "./_subagents-handlers.ts";
 
 type Msg = { role: string } & Record<string, unknown>;
 type Json = Record<string, unknown>;
@@ -106,6 +107,8 @@ test("the idle warm equals the last real request after every stage of a scripted
   const foreignHandlers: Record<string, Handler[]> = {
     before_agent_start: [async (event) => (foreign.forcing ? { systemPrompt: `${(event as { systemPrompt: string }).systemPrompt}\n\n## Memory\n${"m".repeat(200)}` } : undefined)],
   };
+  // pi-subagents loads after the adapter and wraps its notices on context_with_system (0.89): the real request carries its handler's result
+  foreignHandlers.context_with_system = (await subagentsHandlers()).context_with_system as Handler[];
   const registry = {
     find: (provider: string, id: string) => ({ provider, id, api: "openai-responses", contextWindow: 200_000, cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 10 } }),
     getProviderAuthStatus: () => ({ configured: true }),

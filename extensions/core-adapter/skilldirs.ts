@@ -21,9 +21,20 @@ export function roleSkillNames(configRoles: unknown, role: string | null | undef
 
 type ResolveSkills = (names: string[], cwd: string) => { resolved: { path: string; name?: string; description?: string }[] };
 
+/** The pi-subagents package root: the walk up from its entry to its package.json (0.89 resolves the entry to bundle/index.js, below the root). */
+function subagentsRoot(): string {
+  let dir = path.dirname(createRequire(import.meta.url).resolve("pi-subagents"));
+  for (let i = 0; i < 4; i++) {
+    const file = path.join(dir, "package.json");
+    if (fs.existsSync(file) && (JSON.parse(fs.readFileSync(file, "utf8")) as { name?: unknown }).name === "pi-subagents") return dir;
+    dir = path.dirname(dir);
+  }
+  throw new Error("pi-subagents package root not found");
+}
+
 /** pi-subagents' resolveSkills: the exports map hides the deep path, so import it by file URL from the package root. */
-async function loadResolveSkills(): Promise<ResolveSkills> {
-  const root = path.dirname(createRequire(import.meta.url).resolve("pi-subagents"));
+export async function loadResolveSkills(): Promise<ResolveSkills> {
+  const root = subagentsRoot();
   const mod = (await import(pathToFileURL(path.join(root, "src", "agents", "skills.js")).href)) as { resolveSkills: ResolveSkills };
   return mod.resolveSkills;
 }
