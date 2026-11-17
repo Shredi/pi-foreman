@@ -1276,7 +1276,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   }
 
   /** The directory of each reviewer entry of a fresh launch (not `launchCwds`, which always adds the session cwd). */
-  const reviewDirs = (ctx: ExtensionContext, input: Record<string, unknown>, countingOnly = false): string[] => launchEntries(input).filter((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && (!countingOnly || countsForItems(occasionOf(e.task, e.reason ?? input.reason)))).map((e) => hsDirOf(ctx, input, e));
+  const reviewDirs = (ctx: ExtensionContext, input: Record<string, unknown>, keep: (e: Record<string, unknown>) => boolean = () => true): string[] => launchEntries(input).filter((e) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && keep(e)).map((e) => hsDirOf(ctx, input, e));
 
   /** Work happened in `roots` (null: unknown): their gate entries go stale; a builder raises the builder count of each (an unknown root: of every counted one). */
   function reviseGates(s: Session, roots: readonly string[] | null, builder: boolean): void {
@@ -2719,7 +2719,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           const got = reviewVerdictsOfRunEnd(counted);
           // fewer counting results than counting entries: a PASS cannot be assigned to a checkout, so it is no verdict
           const owed = reviewLaunch?.entries.filter((e) => REVIEW_ROLES.includes(e.role) && e.shadow === null && countsForItems(e.occasion)).length ?? 0;
-          const verdicts = got.length < owed && !got.includes("fail") ? [] : got;
+          const finished = reviewResults.filter((r) => r.counts).length;
+          const verdicts = finished < owed && !got.includes("fail") ? [] : got;
           const roots = s.isChild ? null : (s.reviewRoots.get(runId) ?? null); // a launch whose checkout is unknown (or evicted) clears the session-wide entry only
           s.reviewGates = gatesVerdict(s.reviewGates, roots, verdicts, Date.now(), runId);
           persistCeremonyState(s);
@@ -4141,7 +4142,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           capSet(s.launchHeadsByCall, event.toolCallId, heads);
           capSet(s.launchTreesByCall, event.toolCallId, trees);
           // the checkouts the verdict applies to (reviewgates.ts): each reviewer entry's own dir; a resume keeps its target's; one unresolved: unknown
-          if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, true)));
+          if (!s.isChild) capSet(s.reviewRootsByCall, event.toolCallId, action === "resume" ? (s.reviewRoots.get(resumeTarget(input) ?? "") ?? null) : await rootsOf(reviewDirs(ctx, input, (e) => { const o = occasions.get(e); return o !== undefined && countsForItems(o); })));
         }
       }
       // Kept for the tool result only once the launch passed every check.
