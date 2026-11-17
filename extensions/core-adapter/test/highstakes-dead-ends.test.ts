@@ -8,7 +8,8 @@ import { test } from "node:test";
 import { initialReviewGate, onReviewVerdicts } from "../bound.ts";
 import { emptyState, HighStakes, prRefusal, readyOverride } from "../highstakes.ts";
 import { gatesClearFail, gatesVerdict } from "../reviewgates.ts";
-import { build, commitIn, end, git, hsRun, launch, pr, settle, setup, worktree } from "./_hsrig.ts";
+import { entryOccasions, namesBothTags } from "../occasion.ts";
+import { build, commitIn, end, git, hsRun, launch, pr, settle, setup, traces, worktree } from "./_hsrig.ts";
 import { rmTestTmp } from "./_tmpbase.ts";
 
 const X = "a".repeat(40);
@@ -151,4 +152,32 @@ test("D39: a FAIL checkout outside git: a findings run that passes in the same d
   await end(a, r, "reviewer", "Overall verdict: PASS", dir);
   const fin = await settle(a);
   assert.doesNotMatch(fin, /FAILED|revise or answer|re-review needed/, fin);
+});
+
+test("namesBothTags: only a prose [pre-pr] next to a prose [high-stakes] counts; backticks, [second-opinion] and [plan-review] decide otherwise", () => {
+  const of = (task: string) => namesBothTags(entryOccasions({ agent: "reviewer", task }));
+  assert.equal(of("[pre-pr] and [high-stakes] review"), true);
+  assert.equal(of("[high-stakes] review, not a [pre-pr]"), true);
+  assert.equal(of("[pre-pr] review, `[high-stakes]` is quoted"), false);
+  assert.equal(of("[high-stakes] review"), false);
+  assert.equal(of("[second-opinion] [pre-pr] [high-stakes]"), false);
+  assert.equal(of("[plan-review] [pre-pr] [high-stakes]"), false);
+  assert.equal(namesBothTags(entryOccasions({ agent: "builder", task: "[pre-pr] [high-stakes]" })), false, "a builder task is no review");
+});
+
+test("D23: a task naming both tags is refused and traced; a quoted tag is a normal [pre-pr]; after a high-stakes FAIL a [pre-pr] launch is accepted, its PASS clears the FAIL and opens the gate on its head", async (t) => {
+  const { w, a } = await setup(t);
+  commitIn(w.project, "src/a/x.ts");
+  await build(a, sized(["design"]));
+  const both = await launch(a, "reviewer", "[pre-pr] review the branch; also [high-stakes]");
+  assert.match(both.blocked ?? "", /\[review_occasion_ambiguous\]/);
+  assert.equal((await traces(w, "review_occasion_ambiguous")).length, 1);
+  await hsRun(a, "FAIL");
+  assert.match(await pr(a), FAILED);
+  const quoted = await launch(a, "reviewer", "[pre-pr] review the branch, not a `[high-stakes]` one");
+  assert.equal(quoted.blocked, null, String(quoted.blocked));
+  assert.ok(String(quoted.input.task).startsWith(FINDINGS), "it gets the findings");
+  await end(a, quoted, "reviewer", "Overall verdict: PASS");
+  assert.equal(await pr(a), "", "counts as a normal PASS: the gate opens on its head");
+  assert.doesNotMatch(await settle(a), /FAILED|revise or answer/);
 });

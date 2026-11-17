@@ -230,7 +230,7 @@ import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
 import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
-import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
+import { countingView, entryOccasions, namesBothTags, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
 import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, persistedGate, type PlanPhaseOrigin, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
@@ -3764,6 +3764,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
         // Review occasions (occasion.ts) from the task markers, before any rewrite or facts block.
         if (!s.isChild && actionOf(input) === null) occasions = entryOccasions(input);
+        // A task that names both [pre-pr] and [high-stakes] in prose would silently become a high-stakes review: refused, the foreman keeps one.
+        if (namesBothTags(occasions)) {
+          s.trace?.emit({ event: "review_occasion_ambiguous" });
+          return { block: true, reason: "pi-foreman: launch refused [review_occasion_ambiguous]: the task names both [pre-pr] and [high-stakes]; keep one, or quote the other in backticks." };
+        }
         // Review panel (panel.ts): a `[panel-shadow:<model>]` launch binds to a pending panel and gets the primary's task, or is refused.
         const foremanAt = foremanBaseModel(ctx);
         // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.

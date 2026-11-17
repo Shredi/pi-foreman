@@ -39,6 +39,10 @@ export function occasionOf(text: unknown, reason?: unknown): Occasion {
   return "item";
 }
 
+/** A reviewer entry classed `high-stakes` whose prose also names `[pre-pr]` (a `[second-opinion]` or `[plan-review]` tag would have won): the tags contradict. */
+export const namesBothTags = (occasions: Map<Json, Occasion>): boolean =>
+  [...occasions].some(([e, o]) => o === "high-stakes" && typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent) && typeof e.task === "string" && tagIn(prose(e.task), "pre-pr"));
+
 /** Whether a review of this occasion counts for items, the review gate, the climb and the PR gate. */
 export const countsForItems = (o: Occasion): boolean => o === "item" || o === "pre-pr";
 
