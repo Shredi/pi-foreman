@@ -674,10 +674,11 @@ startup file runs `foreman pane-resume`, which shows a 5 s countdown and starts 
 [herdr](herdr.md#crash-restart); the hook: [install](install.md#the-resume-hook)).
 
 What comes back by itself: the history; the identity of an opened child (intercom id, parent, label, model); the permission profile, the plan phase and
-the `PI_BG_*` variables the session was opened with; the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
+the `PI_BG_*` variables the session was opened with (on Windows not `PI_BG_SHELL` and `PI_BG_SHELL_PATH`: pi-foreman sets those itself at every start, and the shell's own values stay); the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
 (`foreman_wait`), running child runs and background tasks. The restarted session gets one appended message with the time of the last sign of life, and
 once, ten seconds after the start, one message holding everything it found: the child runs that pi-subagents still lists as running although the machine restarted and the
 background tasks that are gone (on a start or resume only, not on /new or /reload). A session idle for more than 14 days is not restarted and its note is swept. `sessions.hc.resume` `off` turns it off.
+On Windows the hook is a block in the PowerShell profiles and in Git Bash; the one of `hc`'s configured shell runs (see [herdr](herdr.md#crash-restart)).
 
 ## pi-intercom
 

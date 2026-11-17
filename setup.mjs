@@ -100,6 +100,61 @@ export function findGitBash({ env = process.env, platform = process.platform, ex
   return null;
 }
 
+/** The PowerShell 7 executable (`pwsh.exe` on PATH, else `%ProgramFiles%\PowerShell\7`), or null. Pure over env and exists. */
+export function findPwsh({ env = process.env, exists = fs.existsSync, pathApi = path.win32 } = {}) {
+  for (const raw of envGet(env, "PATH").split(pathApi.delimiter)) {
+    const dir = raw.trim().replace(/^"(.*)"$/, "$1");
+    if (dir && exists(pathApi.join(dir, "pwsh.exe"))) return pathApi.join(dir, "pwsh.exe");
+  }
+  const root = envGet(env, "ProgramFiles");
+  const candidate = root ? pathApi.join(root, "PowerShell", "7", "pwsh.exe") : "";
+  return candidate && exists(candidate) ? candidate : null;
+}
+
+// `[Documents folder, effective execution policy]` as one PowerShell edition reports them, or null.
+function queryPowerShell(exe) {
+  const r = spawnSync(exe, ["-NoProfile", "-NonInteractive", "-Command", "[Environment]::GetFolderPath('MyDocuments'); Get-ExecutionPolicy"], { encoding: "utf8", timeout: 15_000, windowsHide: true });
+  if (r.status !== 0 || typeof r.stdout !== "string") return null;
+  const [documents, policy] = r.stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  return documents ? { documents, policy } : null;
+}
+
+/**
+ * What the resume hook needs on Windows: the PowerShell editions present, the Documents folder, the execution policy per edition and whether Git Bash is there.
+ * With `PI_FOREMAN_HOME` set (a user setting too) no PowerShell is started: Documents is `<home>\Documents`, the editions come from the files on disk and no policy is read.
+ * `PI_FOREMAN_TEST_PS_EDITIONS` ("pwsh,powershell") and `PI_FOREMAN_TEST_PS_POLICY` ("pwsh=Restricted,powershell=RemoteSigned") are test seams, read only when set.
+ * `query` false (a removal) reads no policy and takes both editions, so a block is stripped wherever it is; Documents is resolved the same way as for the write.
+ * `PI_FOREMAN_TEST_PS_DOCUMENTS` is a third test seam: it replaces the Documents folder.
+ */
+export function windowsResumeContext(home, { env = process.env, query = true } = {}) {
+  const gitBash = Boolean(findGitBash({ env })) || fs.existsSync(path.join(home, ".bashrc"));
+  const pwsh = findPwsh({ env });
+  let editions = [...(pwsh ? ["pwsh"] : []), "powershell"];
+  let documents = path.join(home, "Documents");
+  const policy = {};
+  if (env.PI_FOREMAN_HOME === undefined || env.PI_FOREMAN_HOME === "") {
+    let found = false;
+    for (const [edition, exe] of [["pwsh", pwsh], ["powershell", "powershell"]]) {
+      if (!exe || !editions.includes(edition)) continue;
+      const q = queryPowerShell(exe);
+      if (!q) continue;
+      if (!found) documents = q.documents;
+      found = true;
+      if (query && q.policy) policy[edition] = q.policy;
+    }
+  }
+  if (env.PI_FOREMAN_TEST_PS_EDITIONS !== undefined) editions = env.PI_FOREMAN_TEST_PS_EDITIONS.split(",").map((s) => s.trim()).filter(Boolean);
+  if (env.PI_FOREMAN_TEST_PS_DOCUMENTS) documents = env.PI_FOREMAN_TEST_PS_DOCUMENTS;
+  if (!query) editions = ["pwsh", "powershell"];
+  if (env.PI_FOREMAN_TEST_PS_POLICY !== undefined) {
+    for (const pair of env.PI_FOREMAN_TEST_PS_POLICY.split(",")) {
+      const [k, v] = pair.split("=").map((s) => s.trim());
+      if (k && v) policy[k] = v;
+    }
+  }
+  return { documents, editions, policy, gitBash };
+}
+
 const readJsonObject = (file) => {
   let text;
   try {
@@ -1151,14 +1206,19 @@ async function main(argv) {
 
   // ------------------------------------------------------------ resume hook
   // The shell block that restarts a Pi session in its pane after a crash (setup/resume-hook.mjs). Written under the guard of the env block (the
-  // default agent dir or PI_FOREMAN_HOME; never in a dry run, never on win32, never with --no-env); --no-resume-hook and --remove take it out.
+  // default agent dir or PI_FOREMAN_HOME; nothing is written in a dry run or with --no-env); --no-resume-hook and --remove take it out. On win32 it writes the
+  // PowerShell profile block of each edition and the Git Bash block instead of the block of $SHELL.
   async function resumeHookStep({ remove = false } = {}) {
     const platform = process.env.PI_FOREMAN_PLATFORM || process.platform;
-    if (platform === "win32") return;
     const home = process.env.PI_FOREMAN_HOME || os.homedir();
     const sandboxed = !process.env.PI_FOREMAN_HOME && agentDir !== path.join(os.homedir(), ".pi", "agent");
     const bin = path.join(ROOT, "bin", "foreman");
-    const lines = async () => (await import("./setup/resume-hook.mjs")).applyResumeHook({ home, shell: process.env.SHELL ?? "", bin, dry, remove: remove || opts.noResumeHook });
+    const lines = async () => {
+      const gone = remove || opts.noResumeHook;
+      const base = { home, shell: process.env.SHELL ?? "", bin, dry, remove: gone };
+      const win = platform === "win32" ? { platform, cli: path.join(ROOT, "extensions", "core-adapter", "paneresume-cli.ts"), ...windowsResumeContext(home, { query: !gone }) } : {};
+      return (await import("./setup/resume-hook.mjs")).applyResumeHook({ ...base, ...win });
+    };
     if (remove || opts.noResumeHook) {
       if (sandboxed) return;
       for (const l of await lines()) say(`  ${l}`);

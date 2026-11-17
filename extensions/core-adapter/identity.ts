@@ -47,7 +47,8 @@ export function captureIdentity(env: Env, piSessionId: string, sessionName: stri
   const child = text(env[STABLE_ID_ENV]);
   if (!handoff || !child) return null;
   const permsProfile = text(env[PERMS_PROFILE_ENV]);
-  const bgEnv = process.platform === "win32" ? undefined : bgKeys(Object.entries(env));
+  // on win32 pi-foreman sets PI_BG_SHELL and PI_BG_SHELL_PATH itself at every start (a backslash path would not pass BG_VALUE_RE anyway)
+  const bgEnv = bgKeys(Object.entries(env).filter(([k]) => process.platform !== "win32" || (k !== "PI_BG_SHELL" && k !== "PI_BG_SHELL_PATH")));
   return { v: 1, piSessionId, child, parentLabel: text(env[PARENT_LABEL_ENV]), handoff, model: text(env[SESSION_MODEL_ENV]), remoteParent: text(env[REMOTE_PARENT_ENV]), sessionName: text(sessionName), ...(permsProfile ? { permsProfile } : {}), ...(env[PLAN_PHASE_ENV] === "1" ? { planPhase: "1" as const } : {}), ...(bgEnv ? { bgEnv } : {}) };
 }
 

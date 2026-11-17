@@ -646,9 +646,18 @@ of the machine, the herdr core or the terminal. `hc keep` restores the terminal 
 - **Restart.** A 5 s countdown (Enter starts now, any other key cancels and deletes the note), then `pi --session <file>` in the note's folder with the
   session's permission profile, plan phase and `PI_BG_*` variables again. The session comes back with its history, identity (an opened child keeps its parent
   link) and ceremony state. It gets one message (appended, never system text, no turn) with the time of the last sign of life; waits are lost.
-- **Limits.** One herdr core, one note per terminal. A lone Pi crash is not restarted, and neither is Pi ending on a signal in a shell that stays; the next prompt of that shell clears the note and prints the hand-resume line. No Windows.
+- **Limits.** One herdr core, one note per terminal. A lone Pi crash is not restarted, and neither is Pi ending on a signal in a shell that stays; the next prompt of that shell clears the note and prints the hand-resume line.
   Herdr TUI panes (`HERDR_PANE_ID`) are not covered. A custom session dir (not `<agent dir>/sessions`) clears the note and prints the hand-resume line.
   Pi as a kept terminal's own program that exits with an error code is final for hc and is not restored.
+- **Windows.** Works the same, with these differences. The terminal app restores a pane with its configured `shell` (default PowerShell 7), whatever ran in the
+  pane before, so the block that fires is the one of that shell: `foreman setup` writes the PowerShell profile block (`Documents\PowerShell` for 7,
+  `Documents\WindowsPowerShell` for 5.1) and the Git Bash block (`~/.bashrc` and the first login file), and only the one of the configured shell runs. A 5.1
+  or Git Bash block therefore acts after a crash of the machine only when `hc`'s `shell` is that shell; in a 5.1 or Git Bash pane whose Pi alone crashed it prints the hand-resume line.
+  The block wraps the `prompt` function that exists when the profile loads, so a prompt theme or a `prompt` defined later (in the same file after the block, or in a profile that loads later) turns the hook off.
+  Under the execution policy `Restricted` or `AllSigned` a profile does not load; setup writes the block anyway and prints the line to change the policy (it never changes it). In Git Bash `$HOME`
+  must be the Windows home so `~/.bashrc` is the file setup wrote. The pane note stays on every end but a normal quit: Pi has no SIGHUP handler on Windows, and closing the console, logging off, shutting down or killing the process end it without a clean quit. <!-- CI pending --> Checked in CI: the PowerShell block in PowerShell 7 and 5.1 with a fake `node`
+  (prompt wrapper, marker, exit codes, `$?`, `$LASTEXITCODE`), the Git Bash block parses and keeps `$?`, the decision logic with injected process data. <!-- live test pending -->
+  Not tested live: Windows 10 and 11 desktops; Fast Startup (after such a boot `os.uptime()` is not reset, so the start notice may miss dead background tasks). Not supported: `cmd.exe` or WSL as the configured shell, Git Bash in its own window.
 - **Off.** `sessions.hc.resume: "off"` (user or overlay config) writes no note and makes the hook do nothing; `foreman setup --no-resume-hook` writes no block.
 
 ### Versions
