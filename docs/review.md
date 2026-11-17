@@ -261,7 +261,7 @@ done there afterwards keeps it open until a review there passes. Meanwhile:
 
 - A fresh normal reviewer launch (item or `[pre-pr]`) is never refused for a missing revision: while the FAIL is uncleared,
   every one of them, in any checkout, gets the findings prepended, fenced and marked as data from an earlier review, with
-  review tags defused, and it is never refused as a repeat of a standing PASS. `[second-opinion]` and `[plan-review]`
+  review tags defused. While `highStakes.model` is set the findings count as a change, so it is not refused as a repeat of a standing PASS (with no model set, today's repeat refusal stays). `[second-opinion]` and `[plan-review]`
   launches stay allowed. Any reviewer `resume` in the FAIL's checkout is refused (`high_stakes_unrevised`) until the FAIL is
   cleared, since a resume gets no findings block.
 - A `[pre-pr]` launch after a FAIL is accepted like any normal reviewer: its PASS counts as a normal PASS, opens the PR gate on its head and can clear the FAIL.
@@ -285,7 +285,7 @@ also `pr_create {cwd}` for a sibling; the refusal names the checkout of the FAIL
 `ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish gate holds a standard or heavy
 session once per set of reasons (once every ledger item except V is marked; no bound ledger, or an unreadable one, counts
 as marked) with the reminder, then lets the next finish go with a one-line owner notice and the trace
-`high_stakes_skipped`; a new reason holds once more. The hold is no refusal and does not count toward the two per prompt.
+`high_stakes_skipped`; a new reason holds once more. The hold itself traces `high_stakes_reminded {reasons}`. The hold is no refusal and does not count toward the two per prompt.
 The FAIL entry of the finish gate does not depend on the ledger. A session that changed nothing is not held. A PR that is
 already open is held session-wide only by a FAIL: its readiness answers `wip` while a FAIL stands uncleared or when the PR
 head is the head of a high-stakes FAIL; a due pass never changes it. Under the draft flow the PR then goes back to draft until
