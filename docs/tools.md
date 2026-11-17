@@ -229,7 +229,7 @@ With `ceremony.reviewBeforePr` on, the ready line also needs the [readiness rule
 
 A session cannot close while it holds a watch on an open PR: the close is refused with `PR #n open and watched (wait for the merge, or
 pr_unwatch)` after one fresh `pr_status` per watched PR (a PR merged since the last tick does not block). In a child session the
-watch's `merged` message starts the child's own close and cleanup (see [close](close.md#self-finish-on-merge)).
+last watched PR's `merged` message starts the child's own close and cleanup; a merge while another PR is still watched starts nothing (see [close](close.md#self-finish-on-merge)).
 
 A session's work on a PR ends at ready: checks green, mergeable, a reviewer PASS on the head, out of draft. It reports that once (a child with the watch's `ready to merge` line to its parent; a session without a parent to the owner, judged from the watch's check result, the mergeable state and its own PASS) and waits. No session merges a PR; the host decides how it lands, and the watch reports the merge. A review or comment the watch reports while the PR waits is feedback: rework, a reviewer PASS on the new head, ready again. A moved base is no reason to merge it into the PR or to rerun CI.
 
