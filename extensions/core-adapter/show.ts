@@ -484,7 +484,9 @@ export class Show {
 
   /** The tracked plan is a scratch HTML page: the handoff `plan.md` of a child is its text copy for the parent, never the page source. */
   private trackedHtml(): boolean {
-    return this.tracked?.kind === "scratch" && this.tracked.path.endsWith(".html");
+    // after a reload or resume nothing is tracked in memory: the page loaded from plan.json still counts
+    const p = this.tracked ? (this.tracked.kind === "scratch" ? this.tracked.path : null) : (this.meta?.path ?? null);
+    return !!p && p.endsWith(".html");
   }
 
   private trackedFor(raw: unknown): Tracked | null {
@@ -529,7 +531,7 @@ export class Show {
 
   /** The scratch plan a task names that passes the guarded read: the tracked one when it is named, else the first. */
   private scratchNamedIn(task: string): Tracked | null {
-    if (this.tracked && this.trackedHtml() && this.namesHandoff(task)) return this.tracked; // the review of the child's text copy is the review of its page
+    if (this.trackedHtml() && this.namesHandoff(task)) return this.tracked ?? (this.meta?.path ? { kind: "scratch", path: this.meta.path } : null); // the review of the child's text copy is the review of its page
     const f = fold(this.init.platform);
     const named = planPathsOf(planReviewFiles(task, null), this.init.scratchDir)
       .map((p) => resolveToolPath(p, this.init.cwd, this.init.home))
