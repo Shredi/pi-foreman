@@ -603,12 +603,15 @@ class PackageFilesTest(unittest.TestCase):
             ("a commit made after the PASS, a finalizer's included, makes the review stale. Heavy order: builder, finalizer, reviewer, PR.", "a commit made after the PASS makes the review stale. Heavy order: builder(s), reviewer, PR."),
             ("a `reviewer` (or `senior-reviewer`) PASS.", "a `reviewer` PASS."),
             ("- heavy: ledger, then `planner` (single launch; it writes `.workflow/scratch/plan-<topic>.md`), then `foreman_checkpoint({path})`, then builder(s), `finalizer`, `reviewer`, PR. Builders may fan out up to the configured width. `finalizer` closes the task; it is also required before you may finish.",
-             "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.md`, then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
+             "- heavy: ledger, then your own plan in `.workflow/scratch/plan-<topic>.html` (an HTML page the owner reads in the browser; `plan-<topic>.md` also works), then plan review, then `foreman_checkpoint({path})`, then builder(s), `reviewer`, PR. Builders may fan out up to the configured width. Heavy follows standard for commit and Changelog: after the `reviewer` PASS you stage explicit paths and commit, and you draft `## Changelog` in the scratch dir."),
             ("Call it only after the planner's completion notice (refused while a planner runs) and change nothing", "Change nothing"),
             ("re-plan (relaunch `planner` or edit the plan yourself), then checkpoint again.", "revise the plan yourself, then checkpoint again."),
             ("closed only by a fresh `reviewer` or `senior-reviewer` launch", "closed only by a fresh `reviewer` launch"),
             ("- Launch only the roles `explorer`, `planner`, `builder`, `reviewer`, `senior-reviewer`, `finalizer`. Other agents are refused. `planner` only as a single launch, never in `tasks`, `chain` or `resume`; it writes only under `.workflow/`.",
              "- Launch only the roles `explorer`, `builder`, `reviewer`. Other agents are refused."),
+            # html plans: the standard line names the HTML plan form
+            ("then your own short plan in `.workflow/scratch/plan-<topic>.md` (scratchpad mode allows it)",
+             "then your own short plan in `.workflow/scratch/plan-<topic>.html` (an HTML page, or `plan-<topic>.md`; scratchpad mode allows it)"),
             # the SECURITY: revision-cap rule lost its removed `planner` tag, so it renders in every variant (eee843d never had it)
             ("raise the tier with `/ceremony`.\n- The count starts again", "raise the tier with `/ceremony`. A builder launch that answers a reviewer FAIL with a `SECURITY:` finding does not count against that limit (at most twice the limit in all).\n- The count starts again"),
             # git guard removed: the PR tool refuses without a PASS, a shell-opened PR is not refused, a watch follows it

@@ -307,7 +307,7 @@ def footer(label, plan_first):
     if plan_first:
         lines += [
             "%d. Plan first: you own your plan; the parent does not approve it. Record your tier with `foreman_triage` and" % n,
-            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir and send",
+            "   have the plan reviewed (`[plan-review]`) until it passes. Then write `plan.md` in the handoff dir (an HTML plan stays in your scratch dir: copy its generated `plan-<topic>.md` there) and send",
             "   `Plan from %s: <absolute path of plan.md>`; it informs the parent, so do not wait for an answer to it." % label,
             "   - Below tier heavy: the plan review's PASS on the current plan version ends the plan phase; go on and build.",
             "   - Tier heavy: send the parent the plain line `%s waits on the owner at its plan checkpoint`, then call" % label,
