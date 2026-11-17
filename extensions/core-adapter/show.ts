@@ -470,6 +470,7 @@ export class Show {
     if (!isStr(message) || !PLAN_NOTICE.test(message)) return;
     const named = this.trackedFor(message.replace(PLAN_NOTICE, "").split(/\r?\n/, 1)[0].trim());
     if (named) this.tracked = named;
+    else if (!this.tracked && this.trackedHtml() && this.meta?.path) this.tracked = { kind: "scratch", path: this.meta.path }; // after a reload the page from plan.json is the plan
     if (!this.tracked) return;
     this.enqueue("send", async () => {
       await this.sync(true);
@@ -486,7 +487,7 @@ export class Show {
   private trackedHtml(): boolean {
     // after a reload or resume nothing is tracked in memory: the page loaded from plan.json still counts
     const p = this.tracked ? (this.tracked.kind === "scratch" ? this.tracked.path : null) : (this.meta?.path ?? null);
-    return !!p && p.endsWith(".html");
+    return !!p && p.endsWith(".html") && fs.existsSync(p); // a deleted page is no page source: the handoff plan.md is the plan again
   }
 
   private trackedFor(raw: unknown): Tracked | null {

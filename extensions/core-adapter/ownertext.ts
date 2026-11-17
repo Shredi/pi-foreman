@@ -138,8 +138,11 @@ export function ownerFactsLines(planPaths: readonly string[], cwd: string, opts?
 function ownerFactLine(p: string, cwd: string, opts?: PlanOpts): string {
   let text: string;
   try {
-    const r = opts ? readPlan(path.resolve(cwd, p), opts) : null;
-    if (r && "error" in r) return `Owner section (${p}): plan not readable`;
+    const abs = path.resolve(cwd, p);
+    const r = opts ? readPlan(abs, opts) : null;
+    // a markdown file readPlan refuses (outside the scratch dir) and with no page beside it: the direct read, as without opts
+    const lone = abs.endsWith(".md") && !fs.existsSync(abs.replace(/\.md$/, ".html"));
+    if (r && "error" in r && !lone) return `Owner section (${p}): plan not readable`;
     text = r && "plan" in r ? r.plan.markdown : fs.readFileSync(path.resolve(cwd, p), "utf8");
   } catch {
     return `Owner section (${p}): plan not readable`;
