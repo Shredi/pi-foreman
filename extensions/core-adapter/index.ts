@@ -129,7 +129,7 @@ import type { GuardName } from "./toolmap.ts";
 import { evaluateRun, planModeOn, spawnPermissionMode, translateStop, translateToolCall } from "./translate.ts";
 import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf, headsAt, isPrToolName, launchCwds, passHeads, prGateRefusal, reviewedHeadVia, toplevelOf, treesAt, reviewsOfRunEnd, reviewsWithOutput } from "./reviews.ts";
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
-import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
+import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
 import { markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
@@ -4159,6 +4159,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       // R12 item 9: a needs-attention notice for a run that ended is no longer displayed
       const hidden = s && !s.isChild ? hideStaleNotice(s.attention, event.message) : null;
       if (hidden) return { message: hidden };
+      // D18: the open-tool signal shows once per run and tool call; a repeat is hidden (the context filter drops it too)
+      const openEv = s && !s.isChild ? noticeEvent(event.message) : null;
+      if (s && openEv && isRepeatOpenNotice(s.attention, openEv)) {
+        s.trace?.emit({ event: "notify_deduped", reason: "tool_open_repeat", runId: openEv.runId });
+        return { message: { ...(event.message as object), display: false } as typeof event.message };
+      }
       // Open-command notices: a known long command (test runner) is hidden; a child without a command controller loses the `command.*` lines.
       const ev = s && !s.isChild ? noticeEvent(event.message) : null;
       if (s && ev && ev.reason === "tool_open_threshold" && typeof ev.runId === "string") {
@@ -4283,9 +4289,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         idleCause = causeOfCustom(msg.customType) ?? idleCause;
       }
       // R26 item 2: a wake that carries only needs-attention notices for runs already ended starts no turn
-      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns, s.attention.suppressed) : null;
+      // a repeat of an open-tool signal (same run and tool call, delivered again or on a second channel) is stale too
+      const repeated = new Set<string>();
+      const stale = isSubagentWake(event.source, event.text) ? staleNoticeRunIds(unseen, s.attention.endedRuns, s.attention.suppressed, (ev) => (isRepeatOpenNotice(s.attention, ev) ? (repeated.add(String(ev.runId)), true) : false)) : null;
       if (stale) {
-        for (const runId of stale) s.trace?.emit({ event: "notify_deduped", reason: "run_ended", runId });
+        for (const runId of stale) s.trace?.emit({ event: "notify_deduped", reason: repeated.has(runId) ? "tool_open_repeat" : "run_ended", runId });
         return { action: "handled" as const };
       }
     }
