@@ -14,6 +14,7 @@ import { createInterface } from "node:readline/promises";
 import {
   MODS, appHome, assignment, diffMods, equivalentCommand, installedAddons, loadAddons, loadFeatures, loadProfiles, planChanges, refreshMods, resolveSetupPython, splitBlockedMods, toggleable,
 } from "./extensions/core-adapter/profiles.mjs";
+import { applyRealHomeGuard, realHomeDir, realHomeGuard, writeTargets } from "./setup/real-home.mjs";
 import { isolationDir, loginSigns } from "./extensions/core-adapter/bridgelogin.mjs";
 import { migrateGateConfig } from "./scripts/foreman_migrate_gate.mjs";
 
@@ -1110,9 +1111,17 @@ async function main(argv) {
     process.exitCode = await runPreview(opts.preview || undefined, { stdout: process.stdout, isTTY: !!(process.stdin.isTTY && process.stdout.isTTY), columns: process.stdout.columns, rows: process.stdout.rows });
     return;
   }
-  if (opts.mods) return refreshModsCli(opts.dryRun);
+  const guardRealHome = (targets) => applyRealHomeGuard(realHomeGuard({ targets, realHome: realHomeDir(), platform: process.platform }), opts.dryRun, { fatal: (m) => new Fatal(m, 2), say });
+  if (opts.mods) {
+    guardRealHome(writeTargets({ appHome: appHome() }));
+    return refreshModsCli(opts.dryRun);
+  }
   const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "packages.lock.json"), "utf8"));
   const agentDir = resolveAgentDir(opts.agentDir);
+  guardRealHome(writeTargets({
+    home: process.env.PI_FOREMAN_HOME || os.homedir(), agentDir, platform: process.env.PI_FOREMAN_PLATFORM || process.platform,
+    appHome: !opts.dryRun && pickerState().allowed ? appHome() : null,
+  }));
   const projectDir = process.cwd();
   const settingsFile = opts.project ? path.join(projectDir, ".pi", "settings.json") : path.join(agentDir, "settings.json");
   const baseDir = path.dirname(settingsFile);

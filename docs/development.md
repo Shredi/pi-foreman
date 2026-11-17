@@ -33,6 +33,8 @@ node setup.mjs --dry-run                          # installer preview, writes no
 
 The installer suite preloads `tests/installer/_hermetic-env.mjs`, which points `HERDR_APP_HOME` at an empty temp dir so no installer test reads the real app home.
 
+**Real places under the test runner.** A child of `node --test` has `NODE_TEST_CONTEXT` set, and setup (`setup/real-home.mjs`) then refuses to write or remove the real default places: the shell startup files, the PowerShell profile folders (and the Documents query on Windows when neither `PI_FOREMAN_HOME` nor `PI_FOREMAN_TEST_PS_DOCUMENTS` is set), `~/.pi/agent` and `~/.config/herdr-app`, of the account in the user database (`os.userInfo().homedir`, so a test's `HOME` does not change it). A test that spawns setup points `PI_FOREMAN_HOME`, `--agent-dir` and `HERDR_APP_HOME` at temp dirs (`import "./_sandbox-home.mjs"` does the first); `PI_FOREMAN_ALLOW_REAL_HOME=1` lifts the guard. With `--dry-run` the guard prints `real-home guard: would refuse <path>` instead of refusing. `sandbox-import-lint.test.mjs` requires that every test file under `tests/installer` (nested folders included) that starts a process (`spawn*`, `execFile*`, `fork`, `execSync`, `exec` from `child_process`) imports `_sandbox-home.mjs` or `_hermetic-env.mjs`.
+
 A fresh worktree needs `npm ci` before `npm run test:node`.
 
 A new `context` or `before_agent_start` hook must keep the messages already sent byte-identical (the rules are in [cache](cache.md#stable-prefix)). `extensions/core-adapter/test/prefix-stable-catchall.test.ts` collects every such handler the adapter registers and fails when one rewrites a sent message or the system prompt, so a new hook needs no entry there.

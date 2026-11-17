@@ -187,6 +187,8 @@ When an add-on needs an environment variable (`env` in `addons.json`), setup wri
 is not rewritten. `--no-env` skips it; with a custom `--agent-dir` setup leaves your profile
 alone unless `PI_FOREMAN_HOME` is set. Open a new shell for it to take effect.
 
+When the Node test runner starts setup (`NODE_TEST_CONTEXT` is set), setup refuses to write or remove the real startup files, PowerShell profile folders, agent dir and herdr-app home, says why and exits 2; `PI_FOREMAN_ALLOW_REAL_HOME=1` allows it. With `--dry-run` it prints `real-home guard: would refuse <path>`. A person who runs setup by hand never sees this.
+
 - `polish` (`pi-polish`): compact tool output; registers renderers only. It ships a second extension (`chrome`) you may filter.
 - `background-tasks` (`pi-background-tasks`): `bg_run`. It needs `PI_BG_FEATURES=process`, which the add-on reads **when Pi
   starts**: setup writes it into your shell profile (see above). Without `process`, its attribution hook
