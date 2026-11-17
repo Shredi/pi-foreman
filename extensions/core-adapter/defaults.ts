@@ -210,11 +210,16 @@ const REFLOG_WRITE = new Set(["expire", "delete", "drop"]);
 
 /**
  * A read-table subcommand (`GIT_READ`, `GIT_READ_MORE`) in a form that writes or runs a program: a long output or program option (`gitWriteOption`: `--output*`, `--exec`,
- * `--upload-pack`, `--ext-diff`, `--textconv`, by any prefix), `reflog expire|delete|drop`. A short `-o` or `-c` is no write here (`ls-files -o`, `log -c` mean other things).
+ * `--upload-pack`, `--ext-diff`, `--textconv`, by any prefix), `reflog expire|delete|drop`, `ls-remote -u`. A short `-o` or `-c` is no write here (`ls-files -o`, `log -c` mean other things).
  */
 export function gitReadSubWrite(sub: string | undefined, rest: string[]): boolean {
   if (sub === undefined || !(GIT_READ.has(sub) || GIT_READ_MORE.has(sub))) return false;
-  return gitReadWrites(rest.filter((w) => w !== "-c" && w !== "-o")) || (sub === "reflog" && rest.some((w) => REFLOG_WRITE.has(w)));
+  return (
+    gitReadWrites(rest.filter((w) => w !== "-c" && w !== "-o")) ||
+    (sub === "reflog" && rest.some((w) => REFLOG_WRITE.has(w))) ||
+    // `ls-remote -u <cmd>` is the short form of `--upload-pack`, as for `clone`
+    (sub === "ls-remote" && gitProgOpt(rest, "--upload-pack", "u"))
+  );
 }
 
 /** The push shape: `git push [-u|--set-upstream] origin <own branch>|HEAD`, nothing else, never a protected branch. Own = the cwd branch or a branch of a linked worktree of the same repo. */

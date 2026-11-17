@@ -48,7 +48,7 @@ import { forceDetached } from "./detach.ts";
 import { forceUserScope, SHADOW_FIX, shadowedRoles } from "./agentscope.ts";
 import { actionOf, endActive, isManagementCall, launchId, outputPathBlock, recordLaunch, recordLaunchRoles, resumeTarget, trackActive, roundSteps, subagentActionCheck, uncheckedHeavyBlock } from "./actions.ts";
 import { dupRefusalText, repeatSignals, type PassMark, addChange, boundRefusal, emptySteps, finishLine, emptyTally, finishRefusal, initialReviewGate, onReviewVerdicts, onRevision, openSteps, noChange, overBound, pendingChange, readBound, dupReview, reopened, requiredSteps, reviewGateMode, reviewHint, reviewVerdictsOfRunEnd, SECOND_OPINION, stepsOfRunEnd, type ReviewGate } from "./bound.ts";
-import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings } from "./ruling.ts";
+import { isBriefName, isCapsResetName, isRulingName, isTrackedRulingName, parentApproval, rulingNeeded, rulingOverrideNote, selfRulingRefusal, SelfRulings, snapshotRulings, toolWriteRuling } from "./ruling.ts";
 import type { Change, Step, StepCounts, Tally } from "./bound.ts";
 import type { RunRegistry } from "./actions.ts";
 import { dropDeadPathRewrite, guardPayloadBlock } from "./guardgaps.ts";
@@ -4701,14 +4701,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const given = (event.input as Record<string, unknown>).path;
       if (typeof given === "string") {
         if (askContractFor(owner).onFileWritten(path.resolve(ctx.cwd, given)) === "note") owner.trace?.emit({ event: "ask_note", needs_ruling: "no" });
-        if (isTrackedRulingName(path.basename(given))) {
-          const abs = path.resolve(ctx.cwd, given);
-          let real = abs;
-          try {
-            real = path.join(fs.realpathSync.native(path.dirname(abs)), path.basename(abs));
-          } catch {
-            // keep the resolved path
-          }
+        const real = toolWriteRuling(path.resolve(ctx.cwd, given));
+        if (real !== null) {
           // R41 item 17: the parent pane's harness stamps the plan version into a plan ruling it wrote for a CHILD's handoff dir (never the caller's own dir)
           if (event.toolName === "write" || event.toolName === "edit") stampParentRuling(owner, real);
           selfRulingsFor(owner).mark(real);

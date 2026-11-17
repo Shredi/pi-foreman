@@ -6,9 +6,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { forEachChild, parse } from "unbash";
 import type { Command, Redirected, SyntaxNode } from "unbash";
-import { inlineCode, shellWriteTargets, unresolvedWriteWords } from "./defaults.ts";
+import { inlineCode, shellWriteTargets, unresolvedShellWriteWords, unresolvedWriteWords } from "./defaults.ts";
 import { MAX_DEPTH, parseShell as parsePs, psDashes, psProfile } from "./psunits.ts";
 import { braceVariants } from "./floors.ts";
+import { realDefault, realSpelling } from "./pathrules.ts";
 import { isRulingName, RULING_RE } from "./rulingname.ts";
 import { MAX_DEPTH as SH_DEPTH, parseShell, SHELLS } from "./shellast.ts";
 import type { ShellSegment } from "./shellast.ts";
@@ -96,6 +97,13 @@ export function snapshotRulings(dirs: string[]): Map<string, number> {
     }
   }
   return out;
+}
+
+/** The path a write/edit tool call onto `abs` records as self-written: the name as typed when it is a ruling name, else the real path a link reaches (a dangling one too) when that is one; null when neither. */
+export function toolWriteRuling(abs: string): string | null {
+  if (isTrackedRulingName(path.basename(abs))) return realKey(abs);
+  const via = realSpelling(process.platform, abs, realDefault);
+  return isTrackedRulingName(path.basename(via)) ? via : null;
 }
 
 /**
@@ -338,6 +346,18 @@ function posixNames(cmd: string, cwd: string, start: string, childDirs: string[]
     const targets = shellWriteTargets([s], process.platform);
     const tvars = targets.map((t) => variants(t.path, s.cwd));
     if (tvars.some((vs) => vs.some((v) => inChild(v) || (s.cwd !== null && inChild(path.resolve(start, path.relative(s.cwd, v))))))) return true;
+    // a write target with an unquoted glob that can match a protected name, in a child dir (also a glob dir part); a target below a directory that does not exist (a failed or unresolved `cd`)
+    for (const t of targets) {
+      if (GLOB_RE.test(t.path) && canHitName(path.basename(t.path))) {
+        const dirOf = (abs: string): string => path.dirname(abs);
+        if (globDirHits(dirOf(t.path), forms) || (s.cwd !== null && globDirHits(dirOf(path.resolve(start, path.relative(s.cwd, t.path))), forms))) return true;
+      }
+      if (s.cwd !== null && s.cwd !== start && !fs.existsSync(s.cwd) && fold(t.path).startsWith(`${fold(s.cwd)}/`) && canHitName(path.basename(t.path))) return true;
+    }
+    // a write word the parse cannot place (`cd "$X"`, `$D/..`) whose name is, or by its prefix can match, a protected name
+    for (const w of unresolvedShellWriteWords([s], process.platform)) {
+      if ((/[$`{]/.test(w) || !(path.isAbsolute(w) || w.startsWith("~"))) && canHitName(path.basename(fold(w)))) return true;
+    }
     if (MODE_WRITERS.has(p) && hits([...operands, ...s.argv.filter((a) => /^--[\w-]+=./.test(a)).map((a) => a.slice(a.indexOf("=") + 1))], s.cwd)) return true;
     // a copy into a directory writes <dir>/<name of the operand>; the last operand is the old layer's target even after `-t`; another operand alone is a read
     if (COPIERS.has(p)) {
@@ -372,6 +392,35 @@ function posixNames(cmd: string, cwd: string, start: string, childDirs: string[]
     }
   }
   return refused || ((unresolved || unresolvedWriteWords(segs).length > 0) && namesDirOrRuling(cmd));
+}
+
+const GLOB_RE = /[*?[]/;
+/** The fixed stems of the names the refusal protects: `ruling*.md` (also `ruling-plan.md`) and `brief-<x>.md`. */
+const PROTECTED_STEMS = ["ruling", "brief-"];
+
+/** `base` (a file name, maybe with an unquoted glob) is, or by its literal prefix can match, a protected name. */
+function canHitName(base: string): boolean {
+  const g = base.search(GLOB_RE);
+  if (g < 0) return isTrackedRulingName(base);
+  const p = base.slice(0, g);
+  return PROTECTED_STEMS.some((s) => s.startsWith(p) || p.startsWith(s));
+}
+
+/** The glob `dir` (a directory part with `*`, `?`, `[..]`) can name one of the dir spellings `forms`; a literal `dir` is compared by its real path. */
+function globDirHits(dir: string, forms: string[]): boolean {
+  if (!GLOB_RE.test(dir)) return forms.some((f) => fold(f) === fold(realDir(dir)));
+  let re = "";
+  const d = fold(dir);
+  for (let i = 0; i < d.length; i++) {
+    const c = d[i];
+    const close = c === "[" ? d.indexOf("]", i + 2) : -1;
+    if (close > 0) {
+      re += `[${d[i + 1] === "!" ? "^" : ""}${d.slice(d[i + 1] === "!" ? i + 2 : i + 1, close).replace(/[\\\]]/g, "\\$&")}]`;
+      i = close;
+    } else re += c === "*" ? "[^/]*" : c === "?" ? "[^/]" : c.replace(/[.+^${}()|\\[\]]/g, "\\$&");
+  }
+  const rx = new RegExp(`^${re}$`);
+  return forms.some((f) => rx.test(fold(f)));
 }
 
 /** The programs the parse names for a select, coproc or arithmetic for: opaque, with no inner segments. */
