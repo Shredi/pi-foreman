@@ -89,7 +89,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { findingsBlock, finishNeeds, highStakesConfig, HighStakes, launchRefusal, resumeRefusal, measureCheckout, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal, firedBy, type HsFired, type Measure } from "./highstakes.ts";
+import { findingsBlock, finishNeeds, highStakesConfig, HighStakes, launchRefusal, resumeRefusal, measureCheckout, prHoldFacts, prRefusal, stakesTrace, taskLine, unrevisedRefusal, firedBy, type HsFired, type Measure } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -212,7 +212,7 @@ import { addonPeerRangeLine, addonPresent, bgFeaturesDoctor, optionalAddonsDocto
 import { registerWait, waitLimits } from "./wait.ts";
 import { CRITICAL_WAIT_SECONDS, criticalReason, explorerOnly, narrowTasks, PRESSURE_FIXTURE_ENV, limitsOf, PressureSampler, pressureDoctorLine, pressurePath, pressureStatusLine, queuedReason, readPressure, sampleSecondsOf, type PressureState } from "./pressure.ts";
 import { dedupeNotices, dedupeOn, detachedLaunchLine, dropAsyncGuidance, holdCap, LaunchBatch, launchWaitMode, openRequestLine, launchWaitText, LaunchWaits, noticeRuns, REPEAT_REFUSAL_ERROR, REPEAT_STOP_REASONS, runEndOf, SUPERVISOR_SURFACED_EVENT } from "./launchwait.ts";
-import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, parseCloseReport, prMergedPrompt, readCloseJson, registerClose, syncCommand } from "./close.ts";
+import { HANDOFF_DIR_ENV, REMOTE_PARENT_ENV, closeReportArgs, parentIntercomId, mergeCloseRequest, parseCloseReport, readCloseJson, registerClose, syncCommand } from "./close.ts";
 import { mergedReturn, realGit } from "./returntobase.ts";
 import { selfFinish, spawnDetached, verifiedMergeFor } from "./selffinish.ts";
 import type { CloseReport } from "./close.ts";
@@ -855,6 +855,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const sessionDir = sessionDirOf(ctx);
     const buildOverlay = (o: OwnedRoots): OverlayRules | null => (baseline ? buildOverlayRules(baseline, get(config.config, "safety.permissions"), config.basePermissions, agentDir, PKG_ROOT, undefined, selfHost, o, sessionDir) : null);
     const warm = createWarm({ pi, pkgRoot: PKG_ROOT, isChild, bridgeTtl: () => bridgeTtlS, ctx: () => s.idleCtx, config: () => s.config.config, usage: () => s.usage, trace: (r) => s.trace?.emit(r), signals: () => warmSignals(s), queued: () => warmQueued(s), compact: () => idleCompact(s), contextTokens: () => s.idleCtx?.getContextUsage()?.tokens ?? null, contextWindow: () => s.idleCtx?.getContextUsage()?.contextWindow ?? null, driftPending: () => warmDriftPending(s), hidden: () => deferred.hidden, setGlyph: (on) => { if (s.isChild) return; if (s.idleCtx) idleBind = { s, ctx: s.idleCtx }; idleModel.setWarming(on); } });
+    // A child foreman session (handoff dir set) whose last watched PR was merged closes itself (close.ts `pr-merged`, selffinish.ts); one close per tick.
+    const mergeClose = (n: number | null): void => {
+      const ctx = s.prCtx;
+      const req = mergeCloseRequest({ handoff: process.env[HANDOFF_DIR_ENV], watched: s.prWatches.numbers(), n, parent: parentIntercomId(process.env) });
+      if (!req || !ctx || close.closing(s.id)) return;
+      void close.start(ctx, req).catch(() => undefined);
+    };
     const s: Session = {
       id,
       cwd,
@@ -897,8 +904,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         reviewGate: () => get(s.config.config, "ceremony.reviewBeforePr") !== false,
         // the readiness rule (prready.ts)
         reviewFacts: (head) => {
-          // an open PR is not ready while a high-stakes pass is due or a FAIL stands (session-wide: the head alone does not name its checkout)
-          return holdFacts(reviewFactsForHead(s.reviews, head, s.sentBackHeads), hsModel(s) ? readyOverride(s.hs.all(), head) : null);
+          // an open PR is not ready while a high-stakes pass is due or a FAIL stands in its own checkout (the checkout of its head's review records)
+          return hsModel(s) ? prHoldFacts(s.reviews, s.hs.all(), head, s.sentBackHeads) : reviewFactsForHead(s.reviews, head, s.sentBackHeads);
         },
         tick: () => reworkScan(s),
         draftFlow: () => draftFlowOn(s),
@@ -916,14 +923,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return st === "open" || st === "merged" || st === "closed" ? st : "unknown";
         },
         // A child foreman session (handoff dir set) whose PR was merged closes itself (close.ts `pr-merged`, selffinish.ts).
-        onMerged: (info) => {
-          const handoff = process.env[HANDOFF_DIR_ENV]?.trim();
-          const ctx = s.prCtx;
-          if (!handoff || !ctx) return;
-          const label = path.basename(handoff).replace(/^\d{8}-\d{6}-/, "");
-          const file = path.join(handoff, "result.md");
-          void close.start(ctx, { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, info.key.n), pr: { n: info.key.n, parent: parentIntercomId(process.env), label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } }).catch(() => undefined);
-        },
+        onMerged: (info) => mergeClose(info.key.n),
+        // The last watch ended unmerged (the host closed it) after a merge: the close the merge did not start.
+        onLastEnded: () => mergeClose(s.prWatches.mergedPrs().at(-1)?.n ?? null),
         returnToBase: ({ key, cwd }) => {
           const dir = cwd || (s.prCtx?.cwd ?? s.cwd);
           return mergedReturn({
@@ -2539,6 +2541,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const s of sessions.values()) {
         s.supervisor.onRunEnd(data);
         endActive(s.activeRuns, data);
+        try {
+          void Promise.resolve(close.onRunsDone(s.id)).catch(() => undefined);
+        } catch {
+          // a refused merge close is not retried
+        }
         const runId = data && typeof data === "object" ? (data as { runId?: unknown }).runId : undefined;
         if (typeof runId === "string") s.attention.onRunEnd(runId);
         if (typeof runId === "string") s.hs.ended(runId); // a run that ended, with or without a verdict, no longer counts as running

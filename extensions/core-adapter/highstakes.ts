@@ -14,6 +14,8 @@ import * as path from "node:path";
 import { get, type Json } from "./config.ts";
 import { git as gitIn } from "./diffscan.ts";
 import { componentOf } from "./sizing.ts";
+import { reviewFactsForHead, type ReviewFacts } from "./prready.ts";
+import type { ReviewRecord } from "./reviews.ts";
 import type { Verdict } from "./rounds.ts";
 
 const isObj = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
@@ -465,6 +467,17 @@ export function readyOverride(list: readonly HsCheckout[], head: string): "wip" 
 /** An open PR's review facts with the high-stakes hold of readyOverride: `wip` wins; `unreviewed` replaces any answer but `wip`. */
 export function holdFacts<F extends string>(facts: F, held: "wip" | "unreviewed" | null): F | "wip" | "unreviewed" {
   return held === "wip" ? "wip" : held === "unreviewed" && facts !== "wip" ? "unreviewed" : facts;
+}
+
+/**
+ * An open PR's review facts held by the high-stakes state of its own checkout only: the checkouts named by the `cwd` of the non-plan review records of its head
+ * (all checkouts when those records carry none: the session-wide hold). A head a high-stakes FAIL named is `wip` whichever checkout the FAIL ran in.
+ */
+export function prHoldFacts(records: readonly ReviewRecord[], checkouts: readonly HsCheckout[], head: string, sentBackHeads: readonly string[]): ReviewFacts | "wip" | "unreviewed" {
+  const cwds = new Set(records.filter((r) => r.head === head && r.kind !== "plan" && r.cwd).map((r) => r.cwd));
+  const scoped = cwds.size > 0 ? checkouts.filter((c) => cwds.has(c.cwd)) : checkouts;
+  const failed = checkouts.some((c) => c.runs.some((r) => r.verdict === "fail" && r.head !== null && r.head === head));
+  return holdFacts(reviewFactsForHead(records, head, sentBackHeads), failed ? "wip" : readyOverride(scoped, head));
 }
 
 const TAGS = /\[(high-stakes|pre-pr|second-opinion|plan-review)\]/gi;

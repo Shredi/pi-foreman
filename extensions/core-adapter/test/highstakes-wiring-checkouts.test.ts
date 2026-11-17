@@ -5,10 +5,9 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { holdFacts, HighStakes, readyOverride } from "../highstakes.ts";
+import { holdFacts, HighStakes, prHoldFacts } from "../highstakes.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { StoreRead, WatchSnapshot } from "../prwatch.ts";
-import { reviewFactsForHead } from "../prready.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import { tick, world } from "./_r46world.ts";
 
@@ -161,7 +160,7 @@ test("item 7/2: a high-stakes run that ends after the model was unset (a reload)
 
 // ---------------------------------------------------------------- an open PR's readiness (the reviewFacts wiring of the PR watch)
 
-test("item 4/6: an open PR from a second checkout is held through the PR watch's review facts: unreviewed while a pass is due in any checkout, wip while a FAIL stands or on a FAIL head", async () => {
+test("item 4/6: an open PR is held through the PR watch's review facts per checkout: unreviewed while a pass is due in its checkout, wip while a FAIL stands there or on a FAIL head", async () => {
   const H = "c".repeat(40);
   const FAILH = "d".repeat(40);
   const rec: ReviewRecord = { role: "reviewer", verdict: "pass", head: H, occasion: "pre-pr", cwd: "/w/sib" } as ReviewRecord;
@@ -169,11 +168,11 @@ test("item 4/6: an open PR from a second checkout is held through the PR watch's
   const key = { host: "github.com", repo: "acme/app", n: 7 };
   const snap: WatchSnapshot = { state: "open", mergeable: "mergeable", head: H, base: "main", updatedAt: "t0", runs: [] };
   const store: StoreRead = { kind: "entry", snap, okAt: 1 };
-  // the closure is the wiring of index.ts: the head's own records, then the hold over every checkout of the session
+  // the closure is the wiring of index.ts: the head's own records, then the hold of the checkouts those records name
   const watches = new PrWatches({
     storeEntry: () => store,
     githubHosts: () => ({ hosts: ["github.com"] }),
-    reviewFacts: (head) => holdFacts(reviewFactsForHead([rec], head, []), readyOverride(hs.all(), head)),
+    reviewFacts: (head) => prHoldFacts([rec], hs.all(), head, []),
     reviewGate: () => true,
     cwd: () => "/w/own",
     send: () => {},
@@ -187,11 +186,11 @@ test("item 4/6: an open PR from a second checkout is held through the PR watch's
   const state = () => watches.reviewLive()[0]?.state;
   assert.equal(state(), "ok", "no high-stakes state: the head's own PASS rules");
   hs.fire("/w/sib", { reasons: ["lines"], files: 1, lines: 100, modules: 1 });
-  assert.equal(state(), "unreviewed", "a pass is due in the other checkout");
+  assert.equal(state(), "unreviewed", "a pass is due in the checkout of the head's records");
   hs.begin("c1", "/w/sib");
   hs.settle("c1", "run-1", false);
   hs.record("/w/sib", "fail", FAILH, "1. FAIL x");
-  assert.equal(state(), "wip", "a FAIL stands in the other checkout");
+  assert.equal(state(), "wip", "a FAIL stands in the checkout of the head's records");
   hs.revision("/w/sib");
   hs.normalPass("/w/sib");
   assert.equal(state(), "unreviewed", "cleared: the second pass is due");

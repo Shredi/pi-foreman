@@ -42,7 +42,7 @@ The ledger is the scope source. The adapter prepends the ledger text to every `r
 
 The review record in the session keeps the occasion of the review (`item`, `pre-pr` and so on). A record from an older session entry has none and never counts as a `[pre-pr]` PASS.
 
-A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), except that a large change also needs its [high-stakes review](#high-stakes) first, and an open PR is held while that pass is due.
+A PR is ready to merge only on a `[pre-pr]` PASS that is the newest code review recorded for the pushed head, with no send-back since (other work in the session does not count; see [draft handling](tools.md#draft) for the whole rule). An `item` PASS is not enough; an `item` review after the `[pre-pr]` PASS ends readiness until a new `[pre-pr]` PASS. The PR gate itself is unchanged: `pr_create` still opens on any code review PASS for the head (see [safety](safety.md)), except that a large change also needs its [high-stakes review](#high-stakes) first, and an open PR is held while that pass is due in its own checkout (the checkout named by the review records of its head; a head whose records name none is held by any checkout).
 
 ## Verdict file
 
@@ -269,11 +269,11 @@ session applies, since the head may come from any of them. The refusal names the
 it is not the session's own. With `ceremony.reviewBeforePr: false` the PR gate is off and this check with it. The finish
 gate adds "a high-stakes review must run" for standard and heavy sessions, for the first and the second pass, but asks only
 once every ledger item except V is marked (no bound ledger, or an unreadable one, counts as marked); the FAIL entry does
-not depend on the ledger. A session that changed nothing is not asked. A PR that is already open is held session-wide:
-its readiness answers `unreviewed` while any checkout has a pass due and `wip` while any checkout has an uncleared FAIL or
-when the PR head is the head of a high-stakes FAIL. Under the draft flow the PR then goes back to draft until the pass ran
-and passed, or the FAIL was cleared and the head moved; a PR from one checkout is held by the state of another checkout of
-the same session. A PR opened from the shell is not refused; the rules text carries the duty.
+not depend on the ledger. A session that changed nothing is not asked. A PR that is already open is held per checkout:
+its readiness answers `unreviewed` while its own checkout has a pass due and `wip` while its own checkout has an uncleared FAIL or
+when the PR head is the head of a high-stakes FAIL (in any checkout). Under the draft flow the PR then goes back to draft until the pass ran
+and passed, or the FAIL was cleared and the head moved. The checkout is the one named by the review records of the PR head; a PR whose head has
+no such record is held session-wide, by the state of any checkout. A review or high-stakes state of another checkout never re-drafts a PR whose head has its own `[pre-pr]` PASS. A PR opened from the shell is not refused; the rules text carries the duty.
 
 **Traces and the PR body.** `review_stakes {level: high, reasons, files, lines, modules, base}` is written once per checkout
 when the trigger first fires (reasons `modules`, `lines`, `design`, `foreman`): the pass is then required. `role_launch` and

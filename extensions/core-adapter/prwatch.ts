@@ -870,6 +870,8 @@ export interface PrWatchesDeps {
   child?(): boolean;
   /** The watched PR was merged (the watch has ended and its message is sent). */
   onMerged?(info: MergedInfo): void;
+  /** A watch ended by the host's `closed` (the tick's final; not a refresh, not pr_unwatch) and no watch is left. */
+  onLastEnded?(info: { key: PrKey; final: "closed" }): void;
   /**
    * The merged PR's checkout goes back to the base branch (returntobase.ts mergedReturn): the line for the merged message and the outcome; null: nothing to say (the key is off).
    * Not called in a child session. `cwd` is the watch's directory. A throw is reported in the line; it never stops the ending.
@@ -1519,6 +1521,13 @@ export class PrWatches {
     if (d.final === "merged") {
       try {
         this.deps.onMerged?.({ key: w.key, head: d.head, base: d.base });
+      } catch {
+        // the hook must not break the watch
+      }
+    }
+    if (d.final === "closed" && this.numbers().length === 0) {
+      try {
+        this.deps.onLastEnded?.({ key: w.key, final: "closed" });
       } catch {
         // the hook must not break the watch
       }
