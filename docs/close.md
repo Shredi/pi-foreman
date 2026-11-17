@@ -22,6 +22,7 @@ A close cancels the session's own pending `foreman_wait`s (trace `waits_cancelle
   `../worktrees/<repo>/pi-worktree-<runId>-<n>`; the launch-wait result prints the exact path
   (`worktree: <path> (branch <b>)`). Any other linked worktree is `off-convention:` in a sweep.
 - The worktree root is `close.worktreeDir` ([below](#the-worktree-root)); the default and every example here use `../<repo>.worktrees`.
+- To have a builder work in a worktree under `close.worktreeDir`, create the worktree first, then launch the builder with `cwd` set to it: a child's write area is its launch cwd's worktree, so its `npm ci` writes `node_modules` there ([sessions](sessions.md#parallel-rounds)).
 - Worktree setup hook: `foreman setup` registers `bin/foreman-worktree-setup` as pi-subagents'
   `worktreeSetupHook` (Linux and macOS, only when unset; see [install](install.md)). pi-subagents symlinks the main
   checkout's `node_modules` into each managed worktree before the hook runs; for a repository with a lockfile the hook

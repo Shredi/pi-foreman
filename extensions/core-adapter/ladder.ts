@@ -231,6 +231,8 @@ export interface Climb {
   skipped?: string;
   /** With RANK_CAPPED_REASON, a climb the harness picked itself: `sizing:<rule>` or `heavy` (traced as `source`). */
   source?: string;
+  /** With RANK_CAPPED_REASON on an automatic revision climb: the revision reason (`review_fail` or `revision`). */
+  revisionReason?: string;
   /** The strong rung model the rank policy refuses: the pending handoff went to this default-rung launch instead of a strong one. */
   handoffFor?: string;
 }
@@ -364,7 +366,7 @@ export class LadderState {
           const kept = keyword.includes("/") && (opts.explicitAllowed?.(keyword) ?? true) ? keyword : null;
           if (!kept && lv && from !== to) e.model = lv; // the live rung stays (applyLaunchModels honours it as an explicit model)
           const stays = kept ?? (from === to ? bottom : from);
-          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong });
+          climbs.push({ entry: e, role, from: stays, to: stays, reason: RANK_CAPPED_REASON, top: true, skipped: strong, revisionReason: opts.revisionReason ?? "revision" });
           continue;
         }
         // review_fail: the target is max(current, strong) by provider rank; current = the explicit launch model, else the live rung.
