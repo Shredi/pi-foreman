@@ -196,7 +196,6 @@ jobs:
         include:
           - {os: ubuntu-latest, npm: bundled}
           - {os: windows-latest, npm: bundled}
-          - {os: macos-latest, npm: bundled}
           - {os: ubuntu-latest, npm: "11.13.0"}
           - {os: ubuntu-latest, npm: "11.12.1", expect-fail: true}
     name: fresh-install (${{ matrix.os }}, npm ${{ matrix.npm }}${{ matrix.expect-fail && ', expected to fail' || '' }})
@@ -239,16 +238,19 @@ jobs:
           $NPM_CMD install --omit=dev --legacy-peer-deps
           test -f node_modules/pi-intercom/package.json
           test -f node_modules/@juicesharp/rpiv-ask-user-question/package.json
-  fresh-install-latest:
-    # Advisory (not in ci-ok): the newest npm, so a new npm release cannot block all work.
+  fresh-install-advisory:
+    # Advisory (not in ci-ok): the newest npm, so a new npm release cannot block all work. macOS (bundled npm) runs here when runner capacity allows; it never blocks merging.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-    name: fresh-install-latest (${{ matrix.os }})
+        include:
+          - {os: ubuntu-latest, npm: "latest"}
+          - {os: windows-latest, npm: "latest"}
+          - {os: macos-latest, npm: bundled}
+    name: fresh-install-advisory (${{ matrix.os }}, npm ${{ matrix.npm }})
     runs-on: ${{ matrix.os }}
     env:
-      NPM_CMD: npx -y npm@latest
+      NPM_CMD: ${{ matrix.npm == 'bundled' && 'npm' || format('npx -y npm@{0}', matrix.npm) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
