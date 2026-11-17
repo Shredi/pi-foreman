@@ -223,7 +223,7 @@ The gate names a write from the words of a line. Two forms it does not name, for
 
 For a line that does carry a danger label, the permissions mode step decides (the classifier in mode `auto`, a dialog otherwise): the judge decides on a label. An interpreter one-liner (`python3 -c "…"`, `node -e "…"`) and a heredoc fed to a shell (`bash <<'EOF'`) carry `danger-opaque`. `git add .git/x` carries no label: it is the built-in `default-git-add` allow for main and a builder (a reviewer is refused it, `child-readonly-write`).
 
-**Writes through a link into `.git`.** A `write` or `edit` whose path reaches `.git` through a link (a link to an existing folder, a dangling link, a link to a link, a link in the scratch folder) gets the verdict of the plain `.git` path: `child-write-outside` for a builder and a reviewer, no decision for the main session. Known limit: a chain of more than 8 links is not followed to its end and keeps the verdict of the link's own spelling (a builder's write to a 9-link chain ending in `.git` is allowed).
+**Writes through a link into `.git`.** A `write` or `edit` whose path reaches `.git` through a link (a link to an existing folder, a dangling link, a link to a link, a link in the scratch folder) gets the verdict of the plain `.git` path: `child-write-outside` for a builder and a reviewer, no decision for the main session. Known limit: a chain of more than 8 links whose end does not exist yet is followed for 8 links and gets the verdict of the place reached (a builder's write to a 9-link chain ending in a new file in `.git` is allowed). A chain that ends at an existing file is followed to its end, whatever its length.
 
 ## Known limit: network reads (R31c)
 

@@ -238,13 +238,15 @@ test("realSpelling of an existing file makes exactly one native realpath call", 
   assert.equal(n, 1);
 });
 
-// A chain of links: 8 are followed to the end (the git folder), a longer chain keeps the plain spelling (known limit: more than 8 links).
+// A chain of links: 8 are followed to the end (the git folder); a longer chain whose end does not exist yet is followed for 8 links and gets the verdict of the place reached (known limit); a chain that ends at an existing file is followed to its end, whatever its length.
 const chain = (name: string, len: number, end: string): void => {
   for (let i = 1; i <= len; i++) fs.symlinkSync(i === len ? end : `${name}${i + 1}`, path.join(wt, `${name}${i}`));
 };
 if (posix) {
   chain("c8_", 8, path.join(G, "hooks", "x"));
   chain("c9_", 9, path.join(G, "hooks", "x"));
+  fs.writeFileSync(path.join(wt, G, "hooks", "ex"), "x\n");
+  chain("e10_", 10, path.join(G, "hooks", "ex"));
 }
 
 test("write tool: a chain of 8 dangling links ending in the git folder is blocked for a builder", { skip: !posix }, () => {
@@ -252,8 +254,12 @@ test("write tool: a chain of 8 dangling links ending in the git folder is blocke
   assert.equal(got("builder", "write", { path: path.join(wt, "c8_1"), content: "x" }), CWO);
 });
 
-test("write tool: a chain of more than 8 links is not followed to the end (known limit: more than 8 links)", { skip: !posix }, () => {
+test("write tool: a chain of 9 links whose end does not exist yet is followed for 8 links only (known limit)", { skip: !posix }, () => {
   assert.equal(got("builder", "write", { path: "c9_1", content: "x" }), ALLOW);
+});
+
+test("write and edit tools: a chain of 10 links ending at an existing file in the git folder gets what the plain spelling gets", { skip: !posix }, () => {
+  pathRow("e10_1", [CWO, CWO, NONE]);
 });
 
 test("write tool: a link loop ends at the hop bound without hanging", { skip: !posix }, () => {
