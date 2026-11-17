@@ -650,7 +650,7 @@ Rows of finished or lost sessions disappear from radar after `--since` hours; th
 show dir `<scratchDir>/show/<sessionId>/` with `plan.json` (path, title, version `v`, time, hashes) and two snapshots, `plan.ruled.md` and
 `plan.prev.md`, rolled at the ruling points: a `foreman_checkpoint`, a `[plan-review]` launch, and a child's `Plan from` message to its parent. The
 live file then carries `show: {dir, plan?, note?}` (`plan` and `note` are version hints), which radar passes through on the session node; the
-[herdr-app plan panel](herdr.md#plan-panel) renders it. Plans written through the shell are not observed, and a remote child's live file is
+[herdr-app plan panel](herdr.md#plan-panel) reads the session's `pages/pages.json` from that dir and lists its pages. Plans written through the shell are not observed, and a remote child's live file is
 on the remote machine, so a parent shows no plan for it.
 
 A `done` session expires sooner: once its last activity (newest of `heartbeatAt`, `lastEventAt`, the trace mtime) is older
@@ -663,6 +663,21 @@ deleted; unparseable or unreadable files are skipped. `working`, `blocked`, `los
 its child id or handoff dir) and whose file is neither done nor fresh shows as closed; a fresh heartbeat wins over the registry.
 Radar deletes such a file once its last activity is older than the done TTL and the session is provably closed (pid dead
 and pane gone), the same condition as for a done file.
+
+Exception: a presence file that a pane note names (`state/panes/<terminal>.json`, written by a session in a kept `hc` terminal) is kept while its
+last activity is within 14 days, so a crash restart can read it (see [Crash restart](#crash-restart)).
+
+## Crash restart
+
+A session in a kept `hc` terminal is restarted in its pane after a crash of the machine, the herdr core or the terminal: a hook in your shell
+startup file runs `foreman pane-resume`, which shows a 5 s countdown and starts `pi --session <file>` in the session's folder (design, hook and limits:
+[herdr](herdr.md#crash-restart); the hook: [install](install.md#the-resume-hook)).
+
+What comes back by itself: the history; the identity of an opened child (intercom id, parent, label, model); the permission profile, the plan phase and
+the `PI_BG_*` variables the session was opened with; the ceremony state, including the plan phase and a checkpoint approval. What does not: waits
+(`foreman_wait`), running child runs and background tasks. The restarted session gets one appended message with the time of the last sign of life, and
+once, ten seconds after the start, one message holding everything it found: the child runs that pi-subagents still lists as running although the machine restarted and the
+background tasks that are gone (on a start or resume only, not on /new or /reload). A session idle for more than 14 days is not restarted and its note is swept. `sessions.hc.resume` `off` turns it off.
 
 ## pi-intercom
 
@@ -764,7 +779,8 @@ add-on's `bg_run` tool; `/foreman waits` then also lists its running tasks, and 
 | Key | Meaning and layer rule |
 |---|---|
 | `sync.runRetro` | Run the retro step during `/sync`, before the repository commits (default `true`). |
-| `radar.doneTtlMinutes` | Minutes after which `foreman radar` hides a finished session and deletes its presence file (default 30). Radar reads the harness, organisation and user layers, no project file. |
+| `sessions.hc.resume` | `auto` (default) or `off`: restart a Pi session in its kept `hc` terminal after a crash (see [Crash restart](#crash-restart)). User or overlay config only. |
+| `radar.doneTtlMinutes` | A presence file that a pane note names is kept for up to 14 days. Minutes after which `foreman radar` hides a finished session and deletes its presence file (default 30). Radar reads the harness, organisation and user layers, no project file. |
 | `retro.proposalMinReviews` | Reviews needed before a retro proposal (default 5). User or overlay config only. |
 | `retro.enabled`, `retro.workspaceKey`, `retro.backlogDir`, `retro.repoBacklog`, `retro.expireDays`, `retro.askThreshold` | Retro backlog switches and store (see [retro](retro.md)). `retro.enabled` null is on in tui and rpc, off in json and print. `workspaceKey`, `backlogDir` and `repoBacklog` are user or overlay config only. |
 | `compaction.maxTokens` | Cap in tokens on where `foreman setup` makes Pi compact (default 200000, minimum 50000, null = no cap); a project can only lower it, and a session layer value is ignored with a warning (setup applies it). See [cache](cache.md#where-compaction-fires). `compaction.priceTiers` and `compaction.threshold` were removed: a warning, the keys are ignored. |

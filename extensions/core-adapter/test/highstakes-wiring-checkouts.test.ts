@@ -5,9 +5,10 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
-import { holdFacts, HighStakes, prHoldFacts } from "../highstakes.ts";
+import { dueReasons, holdFacts, HighStakes, readyOverride } from "../highstakes.ts";
 import { PrWatches } from "../prwatch.ts";
 import type { StoreRead, WatchSnapshot } from "../prwatch.ts";
+import { reviewFactsForHead } from "../prready.ts";
 import type { ReviewRecord } from "../reviews.ts";
 import { tick, world } from "./_r46world.ts";
 
@@ -21,7 +22,7 @@ const lines = (n: number) => "x\n".repeat(n);
 
 /** A standard-tier world over a real git repo: `main` seeded, the session on `feature`; `commit` false leaves the repo without a commit and without a base. */
 async function setup(t: Parameters<typeof world>[0], o: { commit?: boolean } = {}) {
-  const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL, modules: 0, lines: 50 } } });
+  const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL } } });
   const presenceFile = path.join(w.project, "..", "agent", "foreman.json");
   fs.writeFileSync(presenceFile, JSON.stringify({ ...(JSON.parse(fs.readFileSync(presenceFile, "utf8")) as object), presence: { enabled: false } })); // an owner dialog must not depend on the host's idle state
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
@@ -74,40 +75,32 @@ const recorded = async (w: World, n: number) => {
   while ((await traces(w, "review_recorded")).length < n && Date.now() < stop) await tick(100);
   assert.ok((await traces(w, "review_recorded")).length >= n, `${n} review records`);
 };
-const builder = async (a: Rig, cwd?: string) => end(a, await launch(a, "builder", "build the widget", cwd ? { cwd } : {}), "builder", "done", cwd);
+const builder = async (a: Rig, cwd?: string, extra: Record<string, unknown> = {}) => end(a, await launch(a, "builder", "build the widget", { ...(cwd ? { cwd } : {}), ...extra }), "builder", "done", cwd);
 const normalPass = async (a: Rig, cwd?: string) => end(a, await launch(a, "reviewer", "[pre-pr] review the branch", cwd ? { cwd } : {}), "reviewer", "Overall verdict: PASS", cwd);
 
-test("item 4/6: a second checkout: pr_create {head} for its branch is refused from the session's checkout while it has the pass due, naming it; a pass the foreman launches fires its checkout with reason foreman; a second pass is refused while another checkout's PASS set the session gate", async (t) => {
+test("item 4/6: a tagged builder in a second checkout makes the session's review due (the refusal names the reasons, one state for the session); the FAIL in that checkout is cleared only there: a revision and a normal PASS in the own checkout leave it uncleared", async (t) => {
   const { w, a } = await setup(t);
   const wt2Real = path.join(fs.realpathSync.native(path.join(w.project, "..")), "wt2");
   git(w.project, "worktree", "add", "-q", "-b", "other", wt2Real);
   w.state.answer = "allow once"; // a launch in the second checkout asks the gate
 
-  // own checkout: small change, normal PASS; the second checkout: a large change, normal PASS
+  // own checkout: an untagged change, normal PASS; the second checkout: a tagged builder, normal PASS
   commitIn(w.project, "src/a/small.ts", 2);
   await builder(a);
   await normalPass(a);
   await recorded(w, 1);
-  assert.equal(await pr(a), "", "own checkout is below the bound");
+  assert.equal(await pr(a), "", "nothing fired: no tag, no heavy tier");
   commitIn(wt2Real, "src/b/big.ts", 100);
-  await builder(a, wt2Real);
+  await builder(a, wt2Real, { size: { files: ["src/b/big.ts"] }, risk: ["design"] });
   await normalPass(a, wt2Real);
   await recorded(w, 2);
-  const fired = await traces(w, "review_stakes");
-  assert.equal(fired.length, 1, "only the large checkout fired");
+  assert.deepEqual((await traces(w, "review_stakes")).map((e) => e.reasons), ["design"]);
   const refusal = await pr(a, { head: "other" });
   assert.match(refusal, /\[pr_refused:high_stakes_required\]/);
-  assert.ok(refusal.includes(wt2Real), "the refusal names the second checkout");
-  assert.match(refusal, /cwd /, "the hint says to launch with cwd <root>");
+  assert.match(refusal, /\(risk tag design\)/);
+  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/, "the same state from the own checkout");
 
-  // the foreman raises a pass in the own checkout, below the bound: accepted, the trigger is recorded with reason foreman and traced
-  const own = await launch(a, "reviewer", "[high-stakes] review the whole change");
-  assert.equal(own.blocked, null, String(own.blocked));
-  const stakes = await traces(w, "review_stakes");
-  assert.deepEqual(stakes.map((e) => e.reasons), ["lines", "foreman"]);
-  await end(a, own, "reviewer", "Overall verdict: PASS");
-
-  // the second checkout's pass FAILs; then a normal PASS in the own checkout sets the session's gate; the second pass of the second checkout is still refused
+  // the session's first run FAILs in the second checkout; a revision and a normal PASS in the own checkout leave it uncleared
   const hs = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wt2Real });
   assert.equal(hs.blocked, null, String(hs.blocked));
   await end(a, hs, "reviewer", "1. FAIL src/b/big.ts:1 broken\nOverall verdict: FAIL", wt2Real);
@@ -117,21 +110,22 @@ test("item 4/6: a second checkout: pr_create {head} for its branch is refused fr
   const again = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wt2Real });
   assert.match(again.blocked ?? "", /\[high_stakes_early\]/, "the FAIL of the second checkout is not cleared by a PASS elsewhere");
   assert.match(await pr(a, { head: "other" }), /\[pr_refused:high_stakes_failed\]/);
+  assert.match(await pr(a), /\[pr_refused:high_stakes_failed\]/, "the FAIL also refuses a PR from the own checkout (one state)");
+  assert.match(await settle(a), /high-stakes review in the checkout .* FAILED/, "the finish hint names the checkout of the FAIL");
 });
 
-test("item 4: an unmeasurable checkout (no commit, no base) fires nothing and is traced once; a session with no bound ledger is asked for the pass at the finish gate", async (t) => {
+test("item 4: a repository without a commit measures nothing and asks nothing; a session with no bound ledger is asked for the pass at the finish gate", async (t) => {
   const bad = await setup(t, { commit: false });
   fs.mkdirSync(path.join(bad.w.project, "src/a"), { recursive: true });
   fs.writeFileSync(path.join(bad.w.project, "src/a/big.ts"), lines(100));
   await builder(bad.a);
   await settle(bad.a);
-  await settle(bad.a);
   assert.deepEqual(await traces(bad.w, "review_stakes"), [], "nothing fired");
-  assert.equal((await traces(bad.w, "review_stakes_unmeasured")).length, 1, "traced once");
+  assert.deepEqual(await traces(bad.w, "review_stakes_unmeasured"), [], "nothing is measured any more");
 
   const { w, a } = await setup(t);
   commitIn(w.project, "src/a/big.ts", 100);
-  await builder(a);
+  await builder(a, undefined, { size: { files: ["src/a/big.ts"] }, risk: ["design"] });
   await normalPass(a);
   fs.rmSync(path.join(w.project, ".workflow", "LEDGER-x.md")); // the marker still names it: the bound ledger cannot be read
   assert.match(await settle(a), /a high-stakes review must run/, "no bound ledger: asked as if every item were marked");
@@ -160,7 +154,7 @@ test("item 7/2: a high-stakes run that ends after the model was unset (a reload)
 
 // ---------------------------------------------------------------- an open PR's readiness (the reviewFacts wiring of the PR watch)
 
-test("item 4/6: an open PR is held through the PR watch's review facts per checkout: unreviewed while a pass is due in its checkout, wip while a FAIL stands there or on a FAIL head", async () => {
+test("item 4/6: an open PR is held through the PR watch's review facts by the session's state: unreviewed while a pass is due, wip while a FAIL stands or on a FAIL head", async () => {
   const H = "c".repeat(40);
   const FAILH = "d".repeat(40);
   const rec: ReviewRecord = { role: "reviewer", verdict: "pass", head: H, occasion: "pre-pr", cwd: "/w/sib" } as ReviewRecord;
@@ -168,11 +162,11 @@ test("item 4/6: an open PR is held through the PR watch's review facts per check
   const key = { host: "github.com", repo: "acme/app", n: 7 };
   const snap: WatchSnapshot = { state: "open", mergeable: "mergeable", head: H, base: "main", updatedAt: "t0", runs: [] };
   const store: StoreRead = { kind: "entry", snap, okAt: 1 };
-  // the closure is the wiring of index.ts: the head's own records, then the hold of the checkouts those records name
+  // the closure is the wiring of index.ts: the head's own records, then the hold over every checkout of the session
   const watches = new PrWatches({
     storeEntry: () => store,
     githubHosts: () => ({ hosts: ["github.com"] }),
-    reviewFacts: (head) => prHoldFacts([rec], hs.all(), head, []),
+    reviewFacts: (head) => holdFacts(reviewFactsForHead([rec], head, []), readyOverride(hs.state(), dueReasons(hs.state(), false), head)),
     reviewGate: () => true,
     cwd: () => "/w/own",
     send: () => {},
@@ -185,12 +179,12 @@ test("item 4/6: an open PR is held through the PR watch's review facts per check
   watches.start(key, snap, 1, true);
   const state = () => watches.reviewLive()[0]?.state;
   assert.equal(state(), "ok", "no high-stakes state: the head's own PASS rules");
-  hs.fire("/w/sib", { reasons: ["lines"], files: 1, lines: 100, modules: 1 });
-  assert.equal(state(), "unreviewed", "a pass is due in the checkout of the head's records");
+  hs.fire(["design"]);
+  assert.equal(state(), "unreviewed", "a pass is due");
   hs.begin("c1", "/w/sib");
   hs.settle("c1", "run-1", false);
   hs.record("/w/sib", "fail", FAILH, "1. FAIL x");
-  assert.equal(state(), "wip", "a FAIL stands in the checkout of the head's records");
+  assert.equal(state(), "wip", "a FAIL stands");
   hs.revision("/w/sib");
   hs.normalPass("/w/sib");
   assert.equal(state(), "unreviewed", "cleared: the second pass is due");

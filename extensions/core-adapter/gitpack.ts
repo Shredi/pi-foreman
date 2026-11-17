@@ -606,11 +606,11 @@ async function armWatch(s: PrPackSession, ctx: ExtensionContext, n: number, url:
     tracked ??= await track();
     // the watch owns the PR's draft state only when it was opened as a draft, a tracker runs and it will report the PR
     const owned = draftAsked && st?.kind !== "down" && (tracked === "added" || tracked === "present");
-    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned);
+    if (st?.kind === "entry") s.watches.start(key, st.snap, st.okAt, owned, created);
     else {
       // pr_create opened the PR on a head that passed the gate: a pending watch starts from it, so a push before the first poll is seen
       const seed = createdHead && (await s.reviewed()).includes(createdHead) ? createdHead : undefined;
-      s.watches.startPending(key, undefined, seed, owned);
+      s.watches.startPending(key, undefined, seed, owned, created);
     }
     s.trace({ event: "pr_watch", outcome: "started" });
     return { key, snap: st?.kind === "entry" ? st.snap : null, down: st?.kind === "down", tracked, owned };

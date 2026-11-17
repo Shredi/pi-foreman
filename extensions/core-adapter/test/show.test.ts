@@ -35,7 +35,8 @@ function env(t: { after: (fn: () => void) => void }) {
 
 const json = (show: Show, file = "plan.json") => JSON.parse(fs.readFileSync(path.join(show.dir, file), "utf8")) as PlanJson;
 const text = (show: Show, file: string) => fs.readFileSync(path.join(show.dir, file), "utf8");
-const names = (show: Show) => fs.readdirSync(show.dir).sort();
+const names = (show: Show) => fs.readdirSync(show.dir).filter((n) => n !== "pages").sort(); // pages/ has its own tests (pages.test.ts)
+const inPages = (f: string) => path.basename(path.dirname(f)) === "pages";
 
 test("show: a plan write publishes plan.json with the version hash, title and live field", async (t) => {
   const e = env(t);
@@ -122,6 +123,18 @@ test("show: foreman_checkpoint rolls the snapshots (first roll has no prev, the 
   assert.equal(text(show, "plan.prev.md"), A);
   assert.deepEqual([j.ruledHash, j.prevHash, j.hash, j.v], [planVersionHash(Buffer.from(B)), planVersionHash(Buffer.from(A)), planVersionHash(Buffer.from(B)), 2]);
   assert.deepEqual(names(show), ["plan.json", "plan.prev.md", "plan.ruled.md"]);
+});
+
+test("show: the plan page folds a reviewer section in details and keeps the owner section open", async (t) => {
+  const e = env(t);
+  fs.writeFileSync(e.plan(), "# Plan A\n\n## For the owner\nWe ship it.\n\n## Goal\nShip it.\n");
+  const { show } = e.start();
+  const out = await show.checkpointed(e.plan());
+  assert.ok("path" in out);
+  const html = fs.readFileSync(out.path, "utf8");
+  assert.match(html, /<details><summary>Goal<\/summary>[\s\S]*Ship it\.[\s\S]*<\/details>/);
+  assert.doesNotMatch(html, /<summary>For the owner<\/summary>/);
+  assert.match(html, /<h2[^>]*>For the owner<\/h2>/);
 });
 
 test("show: a roll at the ruled version is a no-op", async (t) => {
@@ -312,7 +325,7 @@ test("show: an EPERM on rename is retried once after a delay, a second EPERM kee
   let planJsonFails = 1;
   const io: Partial<ShowIo> = {
     rename: async (from, to) => {
-      seen.push(base(to));
+      if (!inPages(to)) seen.push(base(to));
       if (base(to) === "plan.json" && planJsonFails-- > 0) throw Object.assign(new Error("busy"), { code: "EPERM" });
       await fs.promises.rename(from, to);
     },
@@ -339,11 +352,11 @@ test("show: plan.json is written atomically (temp then rename, no temp left)", a
   const ops: string[] = [];
   const io: Partial<ShowIo> = {
     writeFile: async (file, data) => {
-      ops.push(`write ${base(file).replace(/\.\d+\.\d+\.tmp$/, ".tmp")}`);
+      if (!inPages(file)) ops.push(`write ${base(file).replace(/\.\d+\.\d+\.tmp$/, ".tmp")}`);
       await fs.promises.writeFile(file, data, { flag: "wx" });
     },
     rename: async (from, to) => {
-      ops.push(`rename ${base(from).replace(/\.\d+\.\d+\.tmp$/, ".tmp")} ${base(to)}`);
+      if (!inPages(to)) ops.push(`rename ${base(from).replace(/\.\d+\.\d+\.tmp$/, ".tmp")} ${base(to)}`);
       await fs.promises.rename(from, to);
     },
   };
@@ -374,7 +387,8 @@ test("show: a symlinked handoff plan is refused, path is cleared and the live pl
   assert.equal(j.path, null);
   assert.equal(j.hash, planVersionHash(Buffer.from(A))); // the foreign bytes were never hashed
   assert.deepEqual(show.field(), { dir: show.dir });
-  assert.equal(fs.readdirSync(show.dir).some((n) => fs.readFileSync(path.join(show.dir, n), "utf8").includes("not mine")), false);
+  const files = fs.readdirSync(show.dir).flatMap((n) => (n === "pages" ? fs.readdirSync(path.join(show.dir, n)).map((p) => path.join(n, p)) : [n]));
+  assert.equal(files.some((n) => fs.readFileSync(path.join(show.dir, n), "utf8").includes("not mine")), false);
   show.checkpointed(hp); // a ruling point does not copy it either
   await show.idle();
   assert.equal(fs.existsSync(path.join(show.dir, "plan.ruled.md")), false);
@@ -779,7 +793,7 @@ test("foreman_show: registered for the foreman, with a description that names it
   const d = tools.get("foreman_show")!;
   assert.ok(d);
   assert.match(d.description, /explain/);
-  assert.match(d.description, /replaces the previous note/);
+  assert.match(d.description, /adds a page to the panel's list/);
   assert.match(d.description, /mermaid/);
   assert.match(d.description, /never a file path/);
   const child = await showTool(t, true);

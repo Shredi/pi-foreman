@@ -1,4 +1,4 @@
-// Facts of a `[plan-review]` launch: the owner line with the wrapped line count, the character count and "checked by the harness";
+// Facts of a `[plan-review]` launch: the owner line "present (checked by the harness)";
 // on a re-review the diff of the plan against the last reviewed version (planreview.ts planDiffLines, PlanReviews.noteLaunch /
 // keepReviewed / reviewedText), kept in memory only and cleared when the plan changed while the reviewer ran.
 import { test } from "node:test";
@@ -52,12 +52,12 @@ test("PlanReviews: the text noted at launch is kept at the verdict only when the
   assert.equal(r.reviewedText("/p/plan-a.md"), null, "cleared");
 });
 
-test("ownerFactsLines: wrapped line count, characters and the harness check", () => {
+test("ownerFactsLines: the harness check", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-owner-"));
   try {
     fs.writeFileSync(path.join(dir, "a.md"), `# P\n\n## For the owner\n\n${"word ".repeat(30).trim()}\nshort\n\n## Goal\nx\n`);
     const [line] = ownerFactsLines(["a.md"], dir);
-    assert.match(line, /present \(3 lines, \d+ characters; checked by the harness\)/);
+    assert.match(line, /present \(checked by the harness\)/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -76,7 +76,7 @@ test("facts: no diff on a first review; a diff and the instruction on a re-revie
   const w = world(t);
   const a = await w.adapter("startup");
   const first = await launch(a, "f1");
-  assert.match(first, /present \(1 lines, \d+ characters; checked by the harness\)/);
+  assert.match(first, /present \(checked by the harness\)/);
   assert.ok(!/Re-review of/.test(first), first);
   a.endRun("f1", "Overall verdict: FAIL\n");
   await tick();

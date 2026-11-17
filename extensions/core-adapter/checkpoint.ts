@@ -206,9 +206,21 @@ export const HANDOFF_PLAN = "plan.md";
  * of at most 256 KiB, opened with O_NOFOLLOW and checked again by fstat (same inode and size). A file that fails is not read.
  */
 export function readHandoffPlan(handoffDir: string, platform: string): { plan: { path: string; bytes: Buffer; hash: string } } | { error: string } {
+  const r = readHandoffFile(handoffDir, HANDOFF_PLAN, platform);
+  return "error" in r ? r : { plan: { path: r.path, bytes: r.bytes, hash: planVersionHash(r.bytes) } };
+}
+
+export const HANDOFF_RESULT = "result.md";
+
+/** The guarded read of `<handoff dir>/result.md` (a child session's result page): the same checks as readHandoffPlan. */
+export function readHandoffResult(handoffDir: string, platform: string): { path: string; bytes: Buffer } | { error: string } {
+  return readHandoffFile(handoffDir, HANDOFF_RESULT, platform);
+}
+
+function readHandoffFile(handoffDir: string, name: string, platform: string): { path: string; bytes: Buffer } | { error: string } {
   const f = fold(platform);
   if (!path.isAbsolute(handoffDir)) return { error: "the handoff dir is not absolute" };
-  const candidate = path.join(realDeep(path.resolve(handoffDir)), HANDOFF_PLAN);
+  const candidate = path.join(realDeep(path.resolve(handoffDir)), name);
   if (f(realDeep(candidate)) !== f(candidate)) return { error: "the path passes through a symlink" };
   let fd: number;
   let first: fs.Stats;
@@ -226,7 +238,7 @@ export function readHandoffPlan(handoffDir: string, platform: string): { plan: {
     if (!st.isFile() || st.nlink !== 1 || st.size > PLAN_MAX_BYTES || st.ino !== first.ino || st.size !== first.size) return { error: "the file changed while it was read" };
     const bytes = fs.readFileSync(fd);
     if (bytes.length > PLAN_MAX_BYTES) return { error: "the file is larger than 256 KiB" };
-    return { plan: { path: candidate, bytes, hash: planVersionHash(bytes) } };
+    return { path: candidate, bytes };
   } catch {
     return { error: "the file cannot be read" };
   } finally {

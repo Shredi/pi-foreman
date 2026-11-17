@@ -17,6 +17,11 @@ class OwnerSectionNoteTest(unittest.TestCase):
         self.assertIn("## For the owner", text)
         self.assertLess(text.index("## For the owner"), text.index("## Decisions and assumptions"))
 
+    def test_plan_first_footer_points_at_the_owner_text_rule(self):
+        text = fsn.footer("demo", True)
+        self.assertIn("as owner text (your owner-text rule)", text)
+        self.assertNotIn("in plain words", text)
+
     def test_non_plan_footer_does_not(self):
         self.assertNotIn("## For the owner", fsn.footer("demo", False))
 

@@ -223,7 +223,7 @@ function stringLeaves(v: unknown, out: string[] = [], depth = 0, skipProse = fal
 }
 
 /** Free-text fields of pi-foreman's own tools (notes, plans, messages, PR text, dialog questions): quoting a floored command there is prose, not a command. */
-export const PROSE_FIELDS = new Set(["markdown", "brief", "text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
+export const PROSE_FIELDS = new Set(["markdown", "html", "brief", "text", "note", "notes", "plan", "message", "reason", "question", "questions", "title", "body", "summary", "answer", "description", "details", "detail", "content", "findings", "comment", "prompt", "context", "label", "options", "report"]);
 /** Fields that name a file or directory: a secret path there is a floor deny. */
 const PATH_FIELD = /^(?:path|paths|cwd|worktree|file|files|dir|dirs|directory|target|dest|destination|src|source|from|to|root|repo|output|outputPath|output_path|outputFile)$/i;
 
