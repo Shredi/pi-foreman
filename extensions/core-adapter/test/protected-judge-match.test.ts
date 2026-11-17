@@ -100,6 +100,23 @@ test("table A: the switch maps every parser reason, and a reason outside the lis
   assert.equal(remoteReasonClass("some_future_reason" as OpaqueReason), "opaque");
 });
 
+test("table A: a construct whose body the parser does not walk is remote opaque and asks, a redirect inside it included", () => {
+  for (const r of ["for ((i=0;i<1;i++)); do echo a > /etc/f; done", "select x in a; do echo a > /etc/f; done", "coproc echo a > /etc/f"]) {
+    const m = ssh(r);
+    assert.equal(m.remoteOpaque, true, r);
+    assert.equal(accept(m), "ask", r);
+  }
+});
+
+test("table A: unsupported stays judged for a body-less program ([[, a runner)", () => {
+  for (const r of ["[[ -f /etc/app.conf ]] && cat /etc/app.conf", "sudo journalctl -n 5"]) {
+    const m = ssh(r);
+    assert.equal(m.remoteOpaque, false, r);
+    assert.ok(m.remoteClasses.includes("unknown"), r);
+    assert.equal(accept(m), "allow", r);
+  }
+});
+
 test("B: transport opacity still asks", () => {
   for (const line of [
     "ssh prod-db",
