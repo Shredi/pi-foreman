@@ -13,6 +13,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
 const PTY = path.join(HERE, "fixtures", "pty_run.py");
 const { renderResumeBlock } = await import(pathToFileURL(path.join(ROOT, "setup", "resume-hook.mjs")).href);
+// A fixed prompt in the test's own rc, so host prompt text (user, host, directory names) can never match an output check.
+const NEUTRAL = { bash: "PS1='> '\n", zsh: "PROMPT='> '\nRPROMPT=''\n", fish: "function fish_prompt; echo -n '> '; end\nfunction fish_right_prompt; end\n" };
 
 const has = (cmd) => spawnSync(cmd, ["--version"], { encoding: "utf8" }).status === 0 || spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).status === 0;
 const PYTHON = ["python3", "python"].find((p) => spawnSync(p, ["-c", "import pty"], { encoding: "utf8" }).status === 0);
@@ -27,7 +29,7 @@ function world(flavor, { note = true, bin = true } = {}) {
   fs.mkdirSync(path.join(agentDir, "pi-foreman", "state", "panes"), { recursive: true });
   if (note) fs.writeFileSync(path.join(agentDir, "pi-foreman", "state", "panes", "t1.json"), "{}");
   const rc = path.join(base, "rc");
-  fs.writeFileSync(rc, `${renderResumeBlock({ bin: stub, flavor })}\n`);
+  fs.writeFileSync(rc, `${NEUTRAL[flavor]}${renderResumeBlock({ bin: stub, flavor })}\n`);
   return { base, marker, stub, agentDir, rc };
 }
 

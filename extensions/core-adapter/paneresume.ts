@@ -7,7 +7,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { readOwnAddonTasks } from "./bg.ts";
+import { readAllOwnAddonTasks } from "./bg.ts";
 import type { AddonTask } from "./bg.ts";
 import { NOTE_MAX_AGE_MS, SESSION_ID_RE, TERMINAL_RE, deleteNote, hcGet, notePath, panesDir, pidAlive, readLiveRecord, readNoteRaw, writeNote } from "./paneresume-core.ts";
 
@@ -110,10 +110,10 @@ export function taskEndedCheck(uptimeS: () => number = () => os.uptime(), alive:
   return (t) => t.ageSeconds > uptimeS() || (typeof t.pid === "number" && !alive(t.pid));
 }
 
-/** The session's dead bg tasks: `readOwnAddonTasks` output filtered by `taskEndedCheck`. */
+/** The session's dead bg tasks: `readAllOwnAddonTasks` output (uncapped) filtered by `taskEndedCheck`. */
 export function deadTasks(cwd: string, sessionId: string, ended: (task: AddonTask) => boolean = taskEndedCheck()): AddonTask[] {
   try {
-    return readOwnAddonTasks(cwd, sessionId).filter(ended);
+    return readAllOwnAddonTasks(cwd, sessionId).filter(ended);
   } catch {
     return [];
   }

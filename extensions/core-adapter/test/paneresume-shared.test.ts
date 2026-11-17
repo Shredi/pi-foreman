@@ -1,5 +1,5 @@
 // Crash restart, shared modules it changed: floors protect state/panes, the identity entry carries the launch keys (shape, no-append rule),
-// LiveInit.endedBy is read by stop(), LiveInit.taskEnded drops tasks before the MAX_WAITS slice.
+// LiveInit.endedBy is read by stop(), LiveInit.taskEnded drops ended tasks from the record.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -81,15 +81,33 @@ test("LiveInit.endedBy is read by stop() for its last write; without it the reco
   assert.equal(JSON.parse(fs.readFileSync(path.join(liveDir(agentDir), "sess-c.json"), "utf8")).state, "done", "a throwing callback does not break stop()");
 });
 
-test("LiveInit.taskEnded drops tasks in taskList before the MAX_WAITS slice; default keeps all", (t) => {
+test("LiveInit.taskEnded drops ended tasks from the record; default keeps all (sliced to 20)", (t) => {
   const { agentDir, cwd } = liveRig(t);
   for (let i = 0; i < 25; i++) task(cwd, "sess-t", `dead${String(i).padStart(2, "0")}`, { pid: 1, startTime: Date.now() - 9000 });
   task(cwd, "sess-t", "live-one", { pid: 2, startTime: Date.now() - 1000 });
   const read = (id: string): { tasks?: { id: string }[] } => JSON.parse(fs.readFileSync(path.join(liveDir(agentDir), `${id}.json`), "utf8"));
   const kept = LiveState.start({ agentDir, sessionId: "sess-t", cwd, mode: "tui", env: {}, taskEnded: (x) => x.pid === 1 }, () => [], NO, () => [], NO, () => []) as LiveState;
-  assert.deepEqual(read("sess-t").tasks?.map((x) => x.id), ["live-one"], "the live task is not pushed out of the 20-entry slice by dead ones");
+  assert.deepEqual(read("sess-t").tasks?.map((x) => x.id), ["live-one"], "dead tasks are dropped from the record");
   kept.stop();
   const all = LiveState.start({ agentDir, sessionId: "sess-t", cwd, mode: "tui", env: {} }, () => [], NO, () => [], NO, () => []) as LiveState;
   assert.equal(read("sess-t").tasks?.length, 20, "default: none dropped, sliced to 20");
   all.stop();
+});
+
+test("LiveInit.taskEnded: a live task older than 25 newer dead ones is still in the record", (t) => {
+  const { agentDir, cwd } = liveRig(t);
+  for (let i = 0; i < 25; i++) task(cwd, "sess-o", `dead${String(i).padStart(2, "0")}`, { pid: 1, startTime: Date.now() - 5000 - i });
+  task(cwd, "sess-o", "live-one", { pid: 2, startTime: Date.now() - 600_000 });
+  const live = LiveState.start({ agentDir, sessionId: "sess-o", cwd, mode: "tui", env: {}, taskEnded: (x) => x.pid === 1 }, () => [], NO, () => [], NO, () => []) as LiveState;
+  const rec = JSON.parse(fs.readFileSync(path.join(liveDir(agentDir), "sess-o.json"), "utf8")) as { tasks?: { id: string }[] };
+  assert.deepEqual(rec.tasks?.map((x) => x.id), ["live-one"], "ended tasks are dropped before the 20-entry cap");
+  live.stop();
+});
+
+test("deadTasks names a dead task older than 20 newer live ones", async (t) => {
+  const { cwd } = liveRig(t);
+  for (let i = 0; i < 20; i++) task(cwd, "sess-d", `live${String(i).padStart(2, "0")}`, { pid: 2, startTime: Date.now() - 5000 - i });
+  task(cwd, "sess-d", "dead-old", { pid: 1, startTime: Date.now() - 600_000 });
+  const { deadTasks } = await import("../paneresume.ts");
+  assert.deepEqual(deadTasks(cwd, "sess-d", (x) => x.pid === 1).map((x) => x.id), ["dead-old"]);
 });

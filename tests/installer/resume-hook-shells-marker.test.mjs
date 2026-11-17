@@ -13,6 +13,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = fs.realpathSync(path.resolve(HERE, "..", ".."));
 const PTY = path.join(HERE, "fixtures", "pty_run.py");
 const { renderResumeBlock } = await import(pathToFileURL(path.join(ROOT, "setup", "resume-hook.mjs")).href);
+// A fixed prompt in the test's own rc, so host prompt text (user, host, directory names) can never match an output check.
+const NEUTRAL = { bash: "PS1='> '\n", zsh: "PROMPT='> '\nRPROMPT=''\n", fish: "function fish_prompt; echo -n '> '; end\nfunction fish_right_prompt; end\n" };
 
 const has = (cmd) => spawnSync("sh", ["-c", `command -v ${cmd}`], { encoding: "utf8" }).status === 0;
 const PYTHON = ["python3", "python"].find((p) => spawnSync(p, ["-c", "import pty"], { encoding: "utf8" }).status === 0);
@@ -32,7 +34,7 @@ function run(flavor, runtime, input) {
   const panes = path.join(agentDir, "pi-foreman", "state", "panes");
   fs.mkdirSync(panes, { recursive: true });
   const rc = path.join(base, "rc");
-  fs.writeFileSync(rc, `${renderResumeBlock({ bin: stub, flavor })}\n`);
+  fs.writeFileSync(rc, `${NEUTRAL[flavor]}${renderResumeBlock({ bin: stub, flavor })}\n`);
   const note = path.join(panes, "t1.json");
   const env = { PATH: process.env.PATH, HOME: base, TERM: "dumb", PI_CODING_AGENT_DIR: agentDir, HC_TERMINAL_ID: "t1" };
   if (runtime) {

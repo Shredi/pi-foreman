@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Rung, RunState, RunView } from "./runs.ts";
 import { openerIntercomId } from "./session.ts";
-import { readOwnAddonTasks } from "./bg.ts";
+import { readAllOwnAddonTasks } from "./bg.ts";
 import type { AddonTask } from "./bg.ts";
 import { UNCLASSED, uiKeyAction } from "./herdr.ts";
 import type { BlockClass, BlockKind, BlockOn } from "./herdr.ts";
@@ -327,7 +327,7 @@ export class LiveState {
   private taskList(): AddonTask[] {
     try {
       const ended = this.taskEnded;
-      return readOwnAddonTasks(this.cwd, this.sessionId).filter((t) => !ended?.(t)).slice(0, MAX_WAITS).map((t) => ({ ...t, tail: [] }));
+      return readAllOwnAddonTasks(this.cwd, this.sessionId).filter((t) => !ended?.(t)).slice(0, MAX_WAITS).map((t) => ({ ...t, tail: [] }));
     } catch {
       return []; // tasks are best effort
     }

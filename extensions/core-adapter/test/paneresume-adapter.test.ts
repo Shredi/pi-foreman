@@ -372,7 +372,7 @@ test("the runs root mirrors pi-subagents (scope id, PI_SUBAGENTS_TEMP_ROOT, asyn
   assert.equal(mod.subagentsScopeId(process.env), resolveTempScopeId());
   assert.equal(mod.subagentsRunsDir({ ...process.env, PI_SUBAGENTS_TEMP_ROOT: undefined }), path.join(os.tmpdir(), `pi-subagents-${resolveTempScopeId()}`, "async-subagent-runs"));
   assert.equal(mod.subagentsRunsDir(process.env), ASYNC_DIR);
-  assert.equal(mod.subagentsRunsDir({ PI_SUBAGENTS_TEMP_ROOT: " /x/y " }), path.join("/x/y", "async-subagent-runs"));
+  assert.equal(mod.subagentsRunsDir({ PI_SUBAGENTS_TEMP_ROOT: " /x/y " }), path.join(path.resolve("/x/y"), "async-subagent-runs"));
 });
 
 test("D12: the package fails a dead pid's run (a failed result no gate counts); an unknown pid namespace keeps it running, and pi-foreman names it", async (t) => {
