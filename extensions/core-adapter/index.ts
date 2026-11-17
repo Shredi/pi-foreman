@@ -689,6 +689,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   const bottomNotes = new Map<string, Map<string, string>>();
   /** Per launch call, the roles' rung phrase from the ladder's climbs and the sizing plans (launchreceipt.ts); read and deleted with bottomNotes. */
   const climbNotes = new Map<string, Map<string, string>>();
+  /** Per launch call, the occasions its review children were recorded with (taken before any rewrite); read and deleted at the tool result for the occasion lines. */
+  const launchOccasions = new Map<string, Occasion[]>();
   /** The ledger items a launch cited, taken before the high-stakes findings block went into its task (for the ledger notes at the tool result). */
   const hsCited = new Map<string, string[]>();
   /** Tool call ids of `subagent` launches that carried size/risk outside the top level (sizing.ts liftSizing); read at their tool_result. */
@@ -4026,6 +4028,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       // Kept for the tool result only once the launch passed every check.
       if (pendingBottom) capSet(bottomNotes, event.toolCallId, pendingBottom);
+      const reviewOccasions = [...occasions].filter(([e]) => typeof e.agent === "string" && REVIEW_ROLES.includes(e.agent)).map(([, o]) => o);
+      if (reviewOccasions.length > 0) capSet(launchOccasions, event.toolCallId, reviewOccasions);
       if (climbs.length > 0 || heavyDefault.length > 0) {
         const cn = climbNotesOf(climbs, sizedPlans, sizingConfig(s.config.config), heavyDefault);
         if (cn.size > 0) capSet(climbNotes, event.toolCallId, cn);
@@ -4974,8 +4978,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const modelLine = s && !s.isChild && !event.isError && launchedOn.size > 0 ? `pi-foreman: launched ${[...launchedOn].map(([role, model]) => `${role} on ${model}${rungNote(bottomNotes.get(event.toolCallId)?.get(role), climbNotes.get(event.toolCallId)?.get(role))}`).join(", ")}.` : null;
       bottomNotes.delete(event.toolCallId);
       climbNotes.delete(event.toolCallId);
+      const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
+      launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(event.input as Record<string, unknown>, hsRequired(s)) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, hsRequired(s)) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;
