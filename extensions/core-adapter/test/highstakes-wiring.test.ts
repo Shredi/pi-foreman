@@ -194,7 +194,7 @@ test("item 4/8: a risky change: the PR gate refuses until the pass ran; the trig
   assert.deepEqual((await traces(w, "review_stakes")).map((e) => e.reasons), ["design", "foreman"], "the foreman's own launch adds its reason once");
 });
 
-// an untagged large change asks nothing: asserted in highstakes-wiring-risk-gaps.test.ts (the parser tag and a large untagged change)
+// the parser tag alone and an untagged large change (900 lines, 6 modules) ask nothing, with sizing on and off: asserted in highstakes-wiring-risk-gaps.test.ts
 test("item 4: with reviewBeforePr false there is no PR check; with no model nothing is required", async (t) => {
   const off = await setup(t, { model: MODEL }, { reviewBeforePr: false });
   await built(off.w, off.a);

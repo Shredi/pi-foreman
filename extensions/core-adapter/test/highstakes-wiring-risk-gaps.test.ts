@@ -19,17 +19,21 @@ const TAGS = ["security", "permission", "guard", "concurrency", "design"];
 for (const sizing of [true, false]) {
   test(`risk tags ${TAGS.join(", ")} on a one-line change each fire the review with sizing ${sizing ? "on" : "off"}${sizing ? "; the pass stays valid after a fast-forward into the base branch" : ""}`, async (t) => {
     const { w, a } = await setup(t, sizing ? {} : SIZING_OFF);
-    if (sizing) {
-      for (const m of ["a", "b", "c", "d", "e", "f"]) {
-        fs.mkdirSync(path.join(w.project, "src", m), { recursive: true });
-        fs.writeFileSync(path.join(w.project, "src", m, "big.ts"), "x\n".repeat(150)); // 900 lines in 6 modules, one commit
-      }
+    for (const m of ["a", "b", "c", "d", "e", "f"]) {
+      fs.mkdirSync(path.join(w.project, "src", m), { recursive: true });
+      fs.writeFileSync(path.join(w.project, "src", m, "big.ts"), "x\n".repeat(150)); // 900 lines in 6 modules, one commit
     }
     commitIn(w.project, "src/a/x.ts");
+    // the parser tag alone fires nothing (the parser tag is no trigger)
+    const parser = await launch(a, "builder", "build the widget", tagged(["parser"], sizing));
+    assert.equal(parser.blocked, null, String(parser.blocked));
+    assert.deepEqual(await stakes(w), [], "the parser tag alone fires nothing");
+    assert.doesNotMatch(await pr(a), /high_stakes/, "the PR gate asks for no high-stakes review");
+    await end(a, parser, "builder", "done");
     if (sizing) {
-      // the parser tag alone fires nothing, and neither does a large change (the parser tag is no trigger, the size is none)
-      await build(a, { size: { files: ["src/a/big.ts", "src/b/big.ts", "src/c/big.ts", "src/d/big.ts", "src/e/big.ts", "src/f/big.ts"] }, risk: ["parser"] });
-      assert.deepEqual(await stakes(w), [], "parser and a large change fire nothing");
+      // an untagged large change (900 lines, 6 modules) fires nothing: the size is no trigger
+      await build(a, { size: { files: ["src/a/big.ts", "src/b/big.ts", "src/c/big.ts", "src/d/big.ts", "src/e/big.ts", "src/f/big.ts"] } });
+      assert.deepEqual(await stakes(w), [], "an untagged large change fires nothing");
       assert.equal(await pr(a), "");
       assert.equal(await settle(a), "");
       // a heavy builder launch needs an approved plan; the tier is raised after the build (the gates read it)
@@ -40,11 +44,10 @@ for (const sizing of [true, false]) {
       await a.command("ceremony", "standard");
       assert.doesNotMatch(await pr(a), /high_stakes/, "the owner's standard drops the heavy reason");
     } else {
-      const parser = await launch(a, "builder", "build the widget", { risk: ["parser"] });
-      assert.equal(parser.blocked, null, String(parser.blocked));
-      assert.deepEqual(await stakes(w), [], "the parser tag alone fires nothing with sizing off");
-      assert.doesNotMatch(await pr(a), /high_stakes/, "the PR gate asks for no high-stakes review");
-      await end(a, parser, "builder", "done");
+      const large = await launch(a, "builder", "build the widget", {});
+      assert.equal(large.blocked, null, String(large.blocked));
+      assert.deepEqual(await stakes(w), [], "an untagged large change fires nothing with sizing off");
+      await end(a, large, "builder", "done");
     }
     await build(a, tagged(TAGS, sizing));
     const fired = await stakes(w);

@@ -42,8 +42,12 @@ test("a [high-stakes] FAIL of a sibling worktree is restored after a reload with
   assert.ok(fs.existsSync(path.join(sib, "src/b/fix.ts")));
 
   // the same session, a second reload: an old per-checkout array entry loads (reasons migrated, retired ones dropped) and its seenHead (a real SHA) becomes the review base
-  // the PASS (reviews) lands after the builder launch wrote the fired tag: wait for both
-  await persisted(w, (hs, en) => (en?.reviews?.length ?? 0) > 0 && hs?.fired?.reasons?.includes("design"));
+  // the sibling PASS that cleared the FAIL (the last review record) lands after the builder launch wrote the fired tag: wait for both
+  const fixHead = git(sib, "rev-parse", "HEAD");
+  await persisted(w, (hs, en) => {
+    const last = en?.reviews?.at(-1) as { verdict?: string; head?: string | null } | undefined;
+    return last?.verdict === "pass" && last.head === fixHead && hs?.fired?.reasons?.includes("design");
+  });
   const e = w.ceremonyEntries().at(-1)!.data as { highStakes?: unknown };
   await b.down();
   const e2 = w.ceremonyEntries().at(-1)!.data as { highStakes?: unknown };
