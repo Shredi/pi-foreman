@@ -5114,7 +5114,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const recordedOccasions = launchOccasions.get(event.toolCallId) ?? [];
       launchOccasions.delete(event.toolCallId);
       // R27 item 4: a non-item review occasion is named in the launch result, so a misclassified review is visible before it runs.
-      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, recordedOccasions.includes("pre-pr") && hsRequired(s)) : [];
+      const occasionLines = s && !s.isChild && !event.isError ? occasionLinesOf(recordedOccasions, (recordedOccasions.includes("pre-pr") || recordedOccasions.includes("item")) && hsRequired(s) ? dueReminder(hsDue(s)) : null) : [];
       const notices = modelLine || occasionLines.length > 0 ? [...(s?.launchNotices.get(event.toolCallId) ?? []), ...(modelLine ? [modelLine] : []), ...occasionLines] : s?.launchNotices.get(event.toolCallId);
       if (s && notices) s.launchNotices.delete(event.toolCallId);
       const held = s ? await holdLaunch(s, ctx, event.toolCallId, event.input, event.details, event.isError) : null;

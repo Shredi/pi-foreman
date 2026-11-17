@@ -12,7 +12,7 @@ type Rig = Awaited<ReturnType<ReturnType<typeof world>["adapter"]>>;
 
 const MODEL = "fake/hs";
 const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", ...a], { encoding: "utf8" }).trim();
-const LEDGER = '# Ledger: x\nTier: standard\n\n- [ ] 1. the receipt says "a [high-stakes] review is necessary after this PASS" when so\n';
+const LEDGER = '# Ledger: x\nTier: standard\n\n- [ ] 1. the receipt says "a [high-stakes] review is due" when so\n';
 
 async function setup(t: Parameters<typeof world>[0]) {
   const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL } } });
@@ -52,7 +52,7 @@ test("a [pre-pr] launch citing a ledger item that names [high-stakes] in plain t
   await launch(a, { agent: "builder", task: "build the widget", size: { files: ["src/a/big.ts"] }, risk: ["design"] });
   const r = await launch(a, { agent: "reviewer", task: "[pre-pr] review items 1" });
   assert.ok(JSON.stringify(r.input.task).includes("[high-stakes]"), "the rewritten task carries the tag text from the ledger item");
-  assert.ok(r.texts.some((x) => x.startsWith("occasion: pre-pr") && x.includes("a [high-stakes] review is necessary after this PASS")), JSON.stringify(r.texts));
+  assert.ok(r.texts.some((x) => x.startsWith("occasion: pre-pr") && x.includes("a [high-stakes] review is due (")), JSON.stringify(r.texts));
   assert.ok(!r.texts.some((x) => x.startsWith("occasion: high-stakes")), JSON.stringify(r.texts));
 });
 
