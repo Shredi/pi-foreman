@@ -2,7 +2,7 @@
 // `foreman knowledge check|accept|nudge` (docs/sessions.md, "Knowledge sources"). Plain Node >= 22 ESM, standard library only.
 //   check [--json] [--agent-dir <dir>]   fetch every source of config/knowledge.json, normalise, hash and compare with the manifest;
 //                                        reports changed, new, unreachable and newly discovered pages; caches the normalised text under
-//                                        <agent dir>/pi-foreman/knowledge/<id>.md and records <agent dir>/pi-foreman/state/knowledge-check.json
+//                                        <agent dir>/pi-foreman/knowledge/<id>.md (<id>.pdf for a PDF, hashed as raw bytes) and records <agent dir>/pi-foreman/state/knowledge-check.json
 //   accept <id>... | --all [--agent-dir <dir>]   write the hash and today's date of the last check into the manifest
 //   nudge [--agent-dir <dir>] [--days N]   one line when the last check is older than knowledge.nudgeDays (default 30) or never ran
 // Exit 0 always, 2 when the manifest is unreadable or invalid (or the arguments are). PI_FOREMAN_KNOWLEDGE_FIXTURE_DIR reads <dir>/<id> instead of the network.
@@ -24,6 +24,9 @@ const KEY_ORDER = ["id", "url", "target", "sha256", "checkedOn", "discover"];
 
 /** HTML by the response content-type when there is one, else by a leading doctype or html element. */
 const looksHtml = (raw, contentType) => (contentType ? /html/i.test(contentType) : /^<(?:!doctype\s+html|html)[\s>]/i.test(raw.trim()));
+
+/** A PDF by the response content-type or a leading `%PDF-`; it is hashed and cached as its raw bytes. */
+const isPdf = (bytes, contentType) => /application\/pdf/i.test(contentType ?? "") || bytes.subarray(0, 5).toString("latin1") === "%PDF-";
 
 function decode(text) {
   return text
@@ -146,12 +149,12 @@ export function knowledgeNudge(agentDir, nudgeDays = 30, now = Date.now()) {
 async function fetchSource(entry) {
   const fixtureDir = process.env.PI_FOREMAN_KNOWLEDGE_FIXTURE_DIR;
   if (fixtureDir) {
-    try { return { body: fs.readFileSync(path.join(fixtureDir, entry.id), "utf8") }; } catch { return { error: "fixture missing" }; }
+    try { return { body: fs.readFileSync(path.join(fixtureDir, entry.id)) }; } catch { return { error: "fixture missing" }; }
   }
   try {
     const res = await fetch(entry.url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { "user-agent": "pi-foreman-knowledge-check" }, redirect: "follow" });
     if (!res.ok) return { error: `HTTP ${res.status}` };
-    return { body: await res.text(), contentType: res.headers.get("content-type") ?? undefined };
+    return { body: Buffer.from(await res.arrayBuffer()), contentType: res.headers.get("content-type") ?? undefined };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -180,10 +183,13 @@ export async function runCheck(manifest, agentDir, now = new Date()) {
     const r = { id: entry.id, url: entry.url, ...(entry.target ? { target: entry.target } : {}) };
     const got = await fetchSource(entry);
     if (got.error !== undefined) return { ...r, state: "unreachable", error: got.error };
-    const text = normalise(got.body, got.contentType);
+    // TextDecoder drops a leading BOM as Response.text() did, so the text of a page hashes as before.
+    const pdf = isPdf(got.body, got.contentType);
+    const raw = pdf ? undefined : new TextDecoder().decode(got.body);
+    const text = pdf ? got.body : normalise(raw, got.contentType);
     let writeError = cacheError;
-    if (entry.target && !writeError) { try { fs.writeFileSync(path.join(cacheDir, `${entry.id}.md`), text); } catch (e) { writeError = errText(e); } }
-    const discovered = entry.discover ? discoverLinks(got.body, entry.url, entry.discover, knownUrls) : [];
+    if (entry.target && !writeError) { try { fs.writeFileSync(path.join(cacheDir, `${entry.id}.${pdf ? "pdf" : "md"}`), text); } catch (e) { writeError = errText(e); } }
+    const discovered = entry.discover && !pdf ? discoverLinks(raw, entry.url, entry.discover, knownUrls) : [];
     const cmp = entry.target || entry.sha256 ? compareSource(entry, text) : { state: "unchanged", sha256: undefined };
     return { ...r, state: cmp.state === "unchanged" && discovered.length && !entry.target ? "discovered" : cmp.state, ...(cmp.sha256 ? { sha256: cmp.sha256 } : {}), ...(discovered.length ? { discovered } : {}), ...(entry.target && writeError ? { writeError } : {}) };
   }));
