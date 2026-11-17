@@ -125,6 +125,18 @@ test("show: foreman_checkpoint rolls the snapshots (first roll has no prev, the 
   assert.deepEqual(names(show), ["plan.json", "plan.prev.md", "plan.ruled.md"]);
 });
 
+test("show: the plan page folds a reviewer section in details and keeps the owner section open", async (t) => {
+  const e = env(t);
+  fs.writeFileSync(e.plan(), "# Plan A\n\n## For the owner\nWe ship it.\n\n## Goal\nShip it.\n");
+  const { show } = e.start();
+  const out = await show.checkpointed(e.plan());
+  assert.ok("path" in out);
+  const html = fs.readFileSync(out.path, "utf8");
+  assert.match(html, /<details><summary>Goal<\/summary>[\s\S]*Ship it\.[\s\S]*<\/details>/);
+  assert.doesNotMatch(html, /<summary>For the owner<\/summary>/);
+  assert.match(html, /<h2[^>]*>For the owner<\/h2>/);
+});
+
 test("show: a roll at the ruled version is a no-op", async (t) => {
   const e = env(t);
   fs.writeFileSync(e.plan(), A);
