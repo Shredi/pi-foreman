@@ -461,8 +461,9 @@ function tableBlock(el: El): Blk[] {
   const cols = rows.reduce((m, r) => Math.max(m, r.length), 0);
   const cap: Blk[] = caption ? [{ text: paragraph(caption), kind: "p" }] : [];
   if (!cols) return cap;
-  const line = (cells: string[]): string => `| ${Array.from({ length: cols }, (_c, i) => cells[i] ?? "").join(" | ")} |`;
-  const text = [line(rows[0]), line(Array.from({ length: cols }, () => "---")), ...rows.slice(1).map(line)].join("\n");
+  // Only the header and delimiter rows carry the full column count; the other rows keep their own cells, so the output stays linear in the input.
+  const line = (cells: string[], n = cells.length): string => `| ${Array.from({ length: n }, (_c, i) => cells[i] ?? "").join(" | ")} |`;
+  const text = [line(rows[0], cols), line(Array.from({ length: cols }, () => "---")), ...rows.slice(1).map((r) => line(r))].join("\n");
   return [...cap, { text, kind: "other" }];
 }
 

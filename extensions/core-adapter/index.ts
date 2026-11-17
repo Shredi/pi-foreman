@@ -1481,7 +1481,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.roundStateOn = true;
     if (!dir) return;
     const o = planOpts(s, ctx);
-    const r = restoreRoundState(dir, (topic) => { const page = path.join(o.scratchDir, `plan-${topic}.html`); const p = readPlan(fs.existsSync(page) ? page : path.join(o.scratchDir, `plan-${topic}.md`), o); return "plan" in p ? { path: p.plan.path, hash: p.plan.hash } : null; });
+    const r = restoreRoundState(dir, (topic) => { const p = readPlan(path.join(o.scratchDir, `plan-${topic}.md`), o); return "plan" in p ? { path: p.plan.path, hash: p.plan.hash } : null; });
     if (!r) {
       // discarded: the file now holds the fresh state, so nothing of the old one can come back later
       if (fs.existsSync(path.join(dir, ROUND_STATE_FILE))) persistRounds(s);
@@ -2182,7 +2182,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     }
     if (instructionsCache === undefined) {
       try {
-        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", path.join(PKG_ROOT, "instructions", "plan-skeleton.html")); // fixed per installation: the same bytes every turn
+        instructionsCache = fs.readFileSync(path.join(PKG_ROOT, "instructions", "foreman.md"), "utf8").replaceAll("{{planSkeleton}}", () => path.join(PKG_ROOT, "instructions", "plan-skeleton.html")); // fixed per installation: the same bytes every turn
       } catch {
         instructionsCache = null;
       }

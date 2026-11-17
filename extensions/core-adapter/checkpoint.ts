@@ -252,7 +252,12 @@ function readHtmlPlan(topic: string, page: string, realRoot: string, o: PlanOpts
   const side = readRegularFile(path.join(dir, rulingsFile), PLAN_MAX_BYTES);
   if ("refusal" in side && side.refusal !== "missing") return refused(`${rulingsFile}: ${PLAN_FILE_REFUSAL[side.refusal]}`, o.scratchDir);
   const rulings = "bytes" in side ? side.bytes.toString("utf8") : "";
-  const conv = htmlToMarkdown(file.bytes.toString("utf8"));
+  let conv: ReturnType<typeof htmlToMarkdown>;
+  try {
+    conv = htmlToMarkdown(file.bytes.toString("utf8"));
+  } catch (e) {
+    return refused(`${path.basename(page)} could not be converted to markdown (${e instanceof Error ? e.message : "error"})`, o.scratchDir);
+  }
   const appendix = rulings.trim() ? `\n<!-- plan-appendix -->\n${rulings}${rulings.endsWith("\n") ? "" : "\n"}` : "";
   const copy = `${generatedMarker(topic)}\n${escapeAppendixLines(conv.markdown)}${appendix}`;
   const copyBytes = Buffer.from(copy, "utf8");
