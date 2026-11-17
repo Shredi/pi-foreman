@@ -288,6 +288,9 @@ function applyPowerShell(t, { bin, cli, dry, remove, policy }) {
       fs.writeFileSync(t.file, encode(next));
       return [`resume hook: removed the pi-foreman block from ${t.file}`];
     }
+    if (!buf && policy && NO_PROFILE_POLICY.has(policy)) {
+      return [`resume hook: not written to ${t.file}: ${label} blocks profile scripts (policy ${policy === "Undefined" ? "Restricted" : policy}); to enable: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then run foreman setup again`];
+    }
     let block = renderResumeBlock({ bin, flavor: "powershell", cli });
     if (buf && enc === "latin1" && !isAscii(block)) {
       let valid = null;

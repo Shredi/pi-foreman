@@ -244,7 +244,7 @@ The terminal app restores a pane with its configured `shell`, so only the block 
 `prompt` function that exists at that point and starts `node` itself (Node 22.6 or newer), not `bin/foreman`; `foreman pane-resume` also runs from PowerShell and `cmd` by hand. Encodings: a new profile is UTF-8 with a byte order mark; a file with a UTF-8 or
 UTF-16LE mark keeps it; a UTF-16BE file is skipped with a line; a file without a mark is read and written byte for byte, so ANSI characters survive a write, a re-run and a removal. A block with
 non-ASCII characters (a user name in a path) goes into a file without a mark only for PowerShell 7 and only when the file is valid UTF-8; for 5.1 setup prints a line and you add the block by hand. Setup reads the execution policy and, under
-`Restricted` or `AllSigned` (or none set), writes the block anyway and prints that the profile does not load and the command to change the policy; it never changes it. A prompt theme or `prompt` set after the block replaces the hook. To add it
+`Restricted` or `AllSigned` (or none set), creates no new profile for that edition: it prints that the profile was not written and the `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` command, then you run setup again. A profile that already exists still gets the block, with a line that it does not load. Setup never changes the policy. A prompt theme or `prompt` set after the block replaces the hook. To add it
 to a PowerShell profile by hand (replace `<cli>` with the absolute path of `extensions/core-adapter/paneresume-cli.ts`):
 
 ```powershell

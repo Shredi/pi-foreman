@@ -223,10 +223,14 @@ test("a changed block is replaced in place with the text around it kept", () => 
 
 test("a dry run writes nothing and names the policy; Restricted, AllSigned and Undefined give the policy line, RemoteSigned and Bypass do not; removal prints none", () => {
   const home = tmp();
+  for (const e of ["pwsh", "powershell"]) {
+    fs.mkdirSync(path.dirname(profile(home, e)), { recursive: true });
+    fs.writeFileSync(profile(home, e), "# p\n");
+  }
   const dry = apply(home, { dry: true, policy: { pwsh: "Restricted", powershell: "RemoteSigned" } });
   assert.match(dry[0], /would write the pi-foreman resume block to .*; the PowerShell 7 profile does not load under execution policy Restricted, allow it with: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned/);
   assert.doesNotMatch(dry[1], /execution policy/);
-  assert.equal(fs.existsSync(path.join(home, "Documents")), false);
+  assert.equal(fs.readFileSync(profile(home, "pwsh"), "utf8"), "# p\n");
   const real = apply(home, { policy: { pwsh: "AllSigned", powershell: "Undefined" } });
   assert.match(real[0], /wrote .*does not load under execution policy AllSigned/);
   assert.match(real[1], /Windows PowerShell 5\.1 profile does not load under execution policy Restricted/, "Undefined resolves to Restricted");
@@ -299,7 +303,7 @@ test("setup on win32: a dry run, a custom agent dir and --no-env write nothing; 
   const dry = fresh();
   const d = run(dry, ["--dry-run", "--no-addons"], { PI_FOREMAN_TEST_PS_POLICY: "pwsh=Restricted" });
   assert.equal(d.code, 0, d.out);
-  assert.match(d.out, /would write the pi-foreman resume block to .*PowerShell.*; the PowerShell 7 profile does not load under execution policy Restricted/);
+  assert.match(d.out, /resume hook: not written to .*PowerShell.*: PowerShell 7 blocks profile scripts \(policy Restricted\); to enable: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then run foreman setup again/);
   assert.deepEqual(fs.readdirSync(dry.home), []);
   const custom = fresh();
   const c = run(custom, ["--no-addons"], { PI_FOREMAN_HOME: undefined, HOME: custom.home, USERPROFILE: custom.home });
@@ -338,4 +342,27 @@ test("setup on win32: a redirected Documents folder and a missing pwsh do not st
   const rm = run(env, ["--remove"], { PI_FOREMAN_TEST_PS_DOCUMENTS: docs, PI_FOREMAN_TEST_PS_EDITIONS: "powershell" });
   assert.equal(rm.code, 0, rm.out);
   for (const e of ["pwsh", "powershell"]) assert.equal(fs.readFileSync(at(e), "utf8").includes(RESUME_START), false, e);
+});
+
+test("A3: a blocking policy creates no new profile and prints how to enable it; an existing profile still gets the block; an unknown policy writes", () => {
+  const LINE = /resume hook: not written to .*: (PowerShell 7|Windows PowerShell 5\.1) blocks profile scripts \(policy (Restricted|AllSigned)\); to enable: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned, then run foreman setup again/;
+  const home = tmp();
+  const r = apply(home, { policy: { pwsh: "Restricted", powershell: "AllSigned" } });
+  assert.equal(r.length, 2);
+  for (const l of r) assert.match(l, LINE);
+  for (const e of ["pwsh", "powershell"]) assert.equal(fs.existsSync(profile(home, e)), false, e);
+  const dry = apply(home, { dry: true, policy: { pwsh: "Restricted", powershell: "AllSigned" } });
+  assert.deepEqual(dry, r);
+  assert.equal(fs.existsSync(path.join(home, "Documents")), false);
+  fs.mkdirSync(path.dirname(profile(home, "powershell")), { recursive: true });
+  fs.writeFileSync(profile(home, "powershell"), "# mine\n");
+  const mixed = apply(home, { policy: { pwsh: "RemoteSigned", powershell: "Restricted" } });
+  assert.match(mixed[0], /wrote the pi-foreman resume block/);
+  assert.match(mixed[1], /wrote .*does not load under execution policy Restricted/);
+  assert.ok(fs.existsSync(profile(home, "pwsh")));
+  assert.ok(fs.readFileSync(profile(home, "powershell"), "utf8").includes(RESUME_START));
+  const home2 = tmp();
+  assert.match(apply(home2, { policy: {} }).join("\n"), /wrote the pi-foreman resume block/);
+  assert.ok(fs.existsSync(profile(home2, "pwsh")));
+  for (const h of [home, home2]) fs.rmSync(h, { recursive: true, force: true });
 });
