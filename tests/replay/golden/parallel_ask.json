@@ -114,6 +114,9 @@
    "decision": "allowed"
   },
   {
+   "event": "supervisor_reply"
+  },
+  {
    "event": "supervisor_request",
    "role": "builder",
    "decision": "replied"

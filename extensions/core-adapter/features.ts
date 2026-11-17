@@ -38,6 +38,22 @@ export function dormantFeatures(map: FeatureMap, config: unknown): string[] {
     .map((f) => f.id);
 }
 
+/**
+ * `config` as the dormant check should see it: when the built-in cache table keeps `provider` warm (`active`) and
+ * `providers.<provider>.cache.keepalive.enabled` is unset, a copy with that key true; else `config` itself.
+ */
+export function withBuiltinKeepalive(config: unknown, provider: string | undefined | null, active: boolean): unknown {
+  if (!active || !provider || config === null || typeof config !== "object" || Array.isArray(config)) return config;
+  if (lookup(config, ["providers", provider, "cache", "keepalive", "enabled"]).length) return config;
+  const sub = (o: unknown): Record<string, unknown> => (o !== null && typeof o === "object" && !Array.isArray(o) ? { ...(o as Record<string, unknown>) } : {});
+  const root = sub(config);
+  const providers = sub(root.providers);
+  const entry = sub(providers[provider]);
+  const cache = sub(entry.cache);
+  cache.keepalive = { ...sub(cache.keepalive), enabled: true };
+  return { ...root, providers: { ...providers, [provider]: { ...entry, cache } } };
+}
+
 /** The INFO/WARN doctor line for config/features.json under `pkgRoot`; never throws. */
 export function dormantDoctorLine(pkgRoot: string, config: unknown): string {
   try {

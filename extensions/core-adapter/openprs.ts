@@ -12,7 +12,7 @@ import { globMatch, parseGlobs } from "./prwake.ts";
 import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
 import { dropLock, takeLock, writeAtomic } from "./statefile.ts";
-import { resolveGh } from "./wait.ts";
+import { resolveGh } from "./ghbin.ts";
 import { redactCommand } from "./trace.ts";
 
 const DEFAULT_HOSTS: GithubHosts = { hosts: ["github.com"] };

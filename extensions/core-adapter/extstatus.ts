@@ -10,7 +10,7 @@ import { realTimers } from "./prwatch.ts";
 import type { Timers } from "./prwatch.ts";
 import { redactCommand } from "./trace.ts";
 import { realDeep, under } from "./triage.ts";
-import { resolveBin } from "./wait.ts";
+import { resolveBin } from "./ghbin.ts";
 
 export const STATUS_TIMEOUT_MS = 10_000;
 export const MAX_STDOUT = 16 * 1024;

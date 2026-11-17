@@ -5,7 +5,8 @@
 
 `sweep` walks every linked worktree of the repository at --cwd (default: the current dir) and
 removes each one that passes the session-close preconditions, whether or not a manifest lists it:
-safe_ops.check_worktree (clean including ignored files outside safety.ops.worktreeDisposable,
+safe_ops.check_worktree (clean; untracked and ignored files only under safety.ops.worktreeDisposable,
+the untracked ones deleted just before the removal;
 merged into the base branch or contained in its pushed upstream, not locked, no stash) plus no
 live non-done session other than S (default CLAUDE_CODE_SESSION_ID) with its cwd inside, and never the
 worktree that contains --cwd itself (`in_use_by_caller`). Removal is
