@@ -160,7 +160,7 @@ outside it:
 
 - Overlay: a child may `cd` into its own scratch dir (literal or `$FOREMAN_SCRATCH`); every other rule applies there too.
 - Overlay: a child with a bound scratch dir is denied, not asked, any write below `/tmp` or the resolved OS temp dir outside that scratch dir and its own workspace: a write or edit tool path, a shell redirect (`> /tmp/out.txt`), and the targets of `tee`, `touch`, `mkdir`, `mv`, `cp` (last operand), `install` and `ln`. The reason names the path and the scratch dir (`write to /tmp/out.txt denied for a child: use FOREMAN_SCRATCH (<scratch dir>)`). Reads from `/tmp` and the foreman's own `/tmp` rules are unchanged.
-- Gate (default `default-write-in`): `cp`, `mkdir`, `rm` and `cd` with every destination or operand inside a live scratch dir of the asking role, and path-tool writes inside such a dir, are allowed without the model. POSIX shell forms only.
+- Gate (default `default-write-in`): `cp`, `mkdir`, `rm` and `cd` with every destination or operand inside a live scratch dir of the asking role, and path-tool writes inside such a dir, are allowed without the model. POSIX shell forms only. For any child (every child role, explorer included) only, a `mkdir` or `mkdir -p` of its scratch dir itself (`mkdir -p $FOREMAN_SCRATCH`) counts as inside; the main session's verdicts are unchanged; `rm`, `mv`, `touch`, a redirect or `cp` onto the scratch dir itself stay refused, and so does the dir above it.
 - The destructive guard still refuses `rm -r` with a variable operand: use the literal path.
 - The harness removes the dir at run end only after a realpath check that it is a real directory below the
   `pi-foreman-scratch` root and neither inside nor around the repository.

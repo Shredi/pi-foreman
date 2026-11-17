@@ -105,6 +105,7 @@ export function effectCtxOf(c: Pick<DefaultCtx, "roots" | "platform" | "cwd">): 
   const ec = effectCtx(c.cwd, r.scratch, c.platform);
   ec.root = r.worktree;
   ec.noTmp = r.child || !r.tmpAccess;
+  ec.child = r.child;
   if (!ec.noTmp && c.platform === "win32") ec.tmpWrite = r.tmp;
   if (r.realpath) {
     const real = r.realpath;

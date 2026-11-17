@@ -42,6 +42,8 @@ export interface EffectCtx {
   scratch?: string[];
   /** /tmp is not a write target here (the owned-roots path: every write target must be an owned root). */
   noTmp?: boolean;
+  /** The asking session is a child (a `mkdir [-p] <root>` of its own write root counts as inside). */
+  child?: boolean;
   /** safety.permissions.readRoots as real absolute dirs (readRootsOf): extra places for reads only. */
   readRoots?: string[];
   platform?: string;
@@ -188,6 +190,10 @@ function bases(c: EffectCtx, write: boolean): string[] {
 
 /** A read (`write` false) or write path inside the worktree or a scratch dir; writes also under /tmp, reads also under read roots (see the header). */
 export function contained(c: EffectCtx, cwd: string | null, word: string, write: boolean, only?: string[], link = false): boolean {
+  return containedIn(c, cwd, word, write, only, link, false);
+}
+
+function containedIn(c: EffectCtx, cwd: string | null, word: string, write: boolean, only: string[] | undefined, link: boolean, rootSelf: boolean): boolean {
   const abs = resolveWord(c, cwd, word);
   if (!abs) return false;
   const x = px(c);
@@ -197,11 +203,13 @@ export function contained(c: EffectCtx, cwd: string | null, word: string, write:
   for (const b of only ?? bases(c, write)) {
     // win32: the word and the base may spell one dir differently (8.3 `RUNNER~1` vs `runneradmin`): compare the real spellings too
     const rb = alt ? longForm(plat(c), x.resolve(c.cwd, b), real) : b;
-    const [base, p] = within(c, b, abs, write) ? [b, abs] : alt && within(c, rb, alt, write) ? [rb, alt] : [null, null];
+    // rootSelf (`mkdir [-p] <root>`): a write that only creates the root itself is inside
+    const strict = write && !rootSelf;
+    const [base, p] = within(c, b, abs, strict) ? [b, abs] : alt && within(c, rb, alt, strict) ? [rb, alt] : [null, null];
     if (base === null || p === null) continue;
     if (write && hasGitPart(c, x.relative(x.resolve(c.cwd, base), p))) return false;
     if (write && c.extraWriteGuard && (c.extraWriteRoots ?? []).includes(b) && c.extraWriteGuard(p)) return false;
-    if (realInside(c, base, p, write, write, link)) return true;
+    if (realInside(c, base, p, strict, write, link)) return true;
   }
   return false;
 }
@@ -446,7 +454,7 @@ function writeVerb(c: EffectCtx, cwd: string | null, prog: string, args: string[
       movedIntoDir = prog === "mv";
     }
   }
-  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => contained(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o)) || (prog === "mv" && i === writes.length - 1 && (movedIntoDir || handoffTarget(c, cwd, o)))) ? "write-in" : "write-out";
+  return (c.cpSourceRead || reads.every((o) => contained(c, cwd, o, false))) && writes.every((o, i) => containedIn(c, cwd, o, true, where, prog === "rm" && !args.some((a) => /^-[A-Za-z]*[rR]/.test(a)) && !/[\\/]$/.test(o), prog === "mkdir" && !!c.child) || (prog === "mv" && i === writes.length - 1 && (movedIntoDir || handoffTarget(c, cwd, o)))) ? "write-in" : "write-out";
 }
 
 export const GIT_READ = new Set(["status", "log", "diff", "show"]);
