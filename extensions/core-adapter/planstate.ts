@@ -52,7 +52,7 @@ export interface PersistedGate {
   passMark: (PassMark & { cwd: string }) | null;
 }
 
-/** The foreman's work in a session: builder launches and project-file edits through its tools (index.ts Session.work). */
+/** The foreman's work in a session: builder launches or builder run ends, and project-file edits through its tools (index.ts Session.work). */
 export interface WorkCount {
   builders: number;
   edits: number;

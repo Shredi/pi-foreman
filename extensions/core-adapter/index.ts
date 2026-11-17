@@ -411,7 +411,7 @@ interface Session {
   finishKey: string;
   /** The `ceremony incomplete` message was appended for this state key (once per key). */
   incompleteKey: string;
-  /** Foreman work: builder launches and project-file edits through its tools, and the count at the last owner prompt (a turn end with open ledger items and no new work is a pause). */
+  /** Foreman work: builder launches or builder run ends, and project-file edits through its tools, and the count at the last owner prompt (a turn end with open ledger items and no new work is a pause). */
   work: WorkCount;
   workAtPrompt: WorkCount;
   /** What the session entry holds of work and refusals: written at an owner input and at a settle only, not on each edit. */
