@@ -243,6 +243,10 @@ pi-subagents delivers `subagent_control_notice` custom messages with `pi.sendMes
 - **Nested-checkout rule.** A git checkout inside a workspace or round tree counts as part of it only when its `.git` file points into that repo's `modules/` admin area and the admin dir points back at that exact `.git` file (linked submodule worktree), or the submodule's `core.worktree` names the checkout (plain submodule). A forged `.git` file aimed at another round's admin dir fails this check; forging it would need a write under `.git/`, which children cannot make. The lift stops at the session's workspace or round. A round worktree never lifts into the main checkout or another round.
 - **Inside such a tree** the gate's write roots treat the nested checkout as inside the child's own tree, so a child's writes and git commands there are not `child-write-outside`; every other foreign repository stays fenced. `git submodule` verbs are not read specially: the path rules and the URL rule for `update`, `sync`, `init` and `foreach`, and the refusal of `--recursive`, are gone, and a `.gitmodules` URL is not compared with the configured one (a known limit: a child's `git submodule sync` or `init` writes URLs into shared git config). Cleanup never deletes nested checkouts pi-foreman did not create.
 
+## Known limit: stream suffix on a Windows folder
+
+On Windows every self-modification rule folds trailing dots and spaces of a path component, but a stream suffix on a folder component (`.claude::$INDEX_ALLOCATION\settings.json`) is not folded, so such a write is not caught.
+
 ## Known limit: worktrees on Windows
 
 On Windows pi-subagents cannot spawn a script hook without a shell, so the `foreman-worktree-setup` hook does not run there. Managed worktrees keep a symlinked `node_modules`, and builders must not run `npm ci` in them (it would rewrite the main checkout's `node_modules`). `/foreman doctor` WARNs on a symlinked `node_modules` in a live worktree.

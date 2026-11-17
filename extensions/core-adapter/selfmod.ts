@@ -55,6 +55,12 @@ function leaf(platform: string, name: string): string {
   return platform === "darwin" ? name.toLowerCase() : name;
 }
 
+/** win32 drops trailing dots and spaces of a path component (`.claude.` is `.claude`); `.` and `..` stay. */
+function dotFold(platform: string, p: string): string {
+  if (platform !== "win32") return p;
+  return p.split(/([\\/]+)/).map((s, i) => (i % 2 === 0 && s.replace(/[. ]+$/, "") !== "" ? s.replace(/[. ]+$/, "") : s)).join("");
+}
+
 /** The agent dir folders and files that change what Pi loads and runs (each directly under the agent dir, folders with everything below them). */
 const AGENT_HARNESS = ["extensions", "npm", "agents", "intercom", "claude-config", "foreman.json", "claude-bridge.json"];
 
@@ -110,7 +116,8 @@ function classify(abs: string, dir: Dir, cwd: string, r: GateRoots, platform: st
   const agentDirs = [...agent, ...agent.map((a) => x.dirname(a)), ...agent.map((a) => x.join(a, "pi-foreman"))];
   const sessionDirs = r.sessionDir ? sessionDirChain(platform, spellings(platform, r.sessionDir, real), agent.map((a) => x.join(a, "sessions"))) : [];
   // win32: a short-name segment (`CLAUDE~1`) that fits a name the rules below compare is also judged as that name
-  const real_ = spellings(platform, abs, real);
+  // win32: a component with trailing dots or spaces is judged as the name without them, for every rule below
+  const real_ = spellings(platform, abs, real).flatMap((s) => [...new Set([s, dotFold(platform, s)])]);
   for (const c of [...real_, ...real_.flatMap((s) => shortNameSpellings(platform, s, RULE_NAMES))]) {
     if (dir === "read") {
       if (r.child && states.some((s) => under(platform, s, c)) && !own.some((d) => under(platform, d, c))) return hit("selfmod-state-read");

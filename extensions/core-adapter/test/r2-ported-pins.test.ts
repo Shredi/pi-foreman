@@ -1595,7 +1595,7 @@ test("winpaths", posixOnly, () => {
     [25,"write",{"path":".mcp.json."},"m","ask:selfmod-project-claude"],
     [25,"write",{"path":".mcp.json."},"b","block:selfmod-project-claude"],
     // winpaths.test.ts:28 
-    [25,"bash","echo x > .claude./settings.json","b","block:child-write-outside"],
+    [25,"bash","echo x > .claude./settings.json","b","block:selfmod-project-claude"],
     // winpaths.test.ts:29 
     [25,"powershell",{"command":"Set-Content -Path .git.\\config -Value x"},"b","block:child-write-outside"],
     // winpaths.test.ts:30 
