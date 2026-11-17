@@ -93,11 +93,21 @@ test("table A: stdin_fed, a parse error and an empty remote command are remote o
 });
 
 test("table A: the switch maps every parser reason, and a reason outside the list is remote opaque", () => {
-  const judged: OpaqueReason[] = ["unresolved_var", "glob_target", "process_substitution", "nonliteral_script", "depth", "function_def", "shell_builtin", "assignment", "xargs_stdin", "wrapper_option", "unsupported", "foreign_shell"];
+  const judged: OpaqueReason[] = ["unresolved_var", "glob_target", "process_substitution", "nonliteral_script", "function_def", "shell_builtin", "assignment", "xargs_stdin", "wrapper_option", "unsupported", "foreign_shell"];
   for (const r of judged) assert.equal(remoteReasonClass(r), "unknown", r);
   assert.equal(remoteReasonClass("stdin_fed"), "opaque");
   assert.equal(remoteReasonClass("parse_error"), "opaque");
+  assert.equal(remoteReasonClass("depth"), "opaque");
   assert.equal(remoteReasonClass("some_future_reason" as OpaqueReason), "opaque");
+});
+
+test("table A: nesting deeper than the walker limit is remote opaque and asks; at the limit the write is seen", () => {
+  const deep = ssh("echo $(echo $(echo $(echo $(echo $(echo a > /etc/f)))))");
+  assert.equal(deep.remoteOpaque, true);
+  assert.equal(accept(deep), "ask");
+  const four = ssh("echo $(echo $(echo $(echo $(echo a > /etc/f))))");
+  assert.ok(four.remoteClasses.includes("write-out"));
+  assert.equal(accept(four), "ask");
 });
 
 test("table A: a construct whose body the parser does not walk is remote opaque and asks, a redirect inside it included", () => {

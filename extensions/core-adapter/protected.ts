@@ -263,7 +263,7 @@ const WRITE_PATH_TOOLS: ReadonlySet<string> = new Set(["write", "edit", "foreman
 
 /**
  * What one opaque reason of a remote segment means (docs/permissions.md, the remote class table): `writing_wrapper` is a write; the reasons the parser
- * cannot state but the judge can read in the command text are `unknown`; `stdin_fed`, `parse_error` and any reason not listed here (a later parser
+ * cannot state but the judge can read in the command text are `unknown`; `stdin_fed`, `parse_error`, `depth` (the walker does not read inside a segment cut at the nesting limit) and any reason not listed here (a later parser
  * version) make the remote command opaque, which always asks.
  */
 export function remoteReasonClass(reason: OpaqueReason): EffectClass | "opaque" {
@@ -274,7 +274,6 @@ export function remoteReasonClass(reason: OpaqueReason): EffectClass | "opaque" 
     case "glob_target":
     case "process_substitution":
     case "nonliteral_script":
-    case "depth":
     case "function_def":
     case "shell_builtin":
     case "assignment":
@@ -285,6 +284,7 @@ export function remoteReasonClass(reason: OpaqueReason): EffectClass | "opaque" 
       return "unknown";
     case "stdin_fed":
     case "parse_error":
+    case "depth":
       return "opaque";
     default:
       return "opaque";
