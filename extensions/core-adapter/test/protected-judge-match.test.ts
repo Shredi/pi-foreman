@@ -73,7 +73,7 @@ test("table A: writing_wrapper (tee) is write-out", () => {
 });
 
 test("table A: loop, variable, glob, eval, source, zsh -c are unknown and judged", () => {
-  for (const r of ['for q in a b; do echo "$q"; done', 'echo "$HOME"', "ls /var/log/*.log", 'eval "$X"', "source /opt/x.sh", 'zsh -c "$X"', "[[ -f /x ]] && cat /x"]) {
+  for (const r of ['for q in a b; do echo "$q"; done', 'echo "$HOME"', "ls /var/log/*.log", 'eval "$X"', "source /opt/x.sh", 'zsh -c "$X"']) {
     const m = ssh(r);
     assert.equal(m.remoteOpaque, false, r);
     assert.ok(m.remoteClasses.includes("unknown"), r);
@@ -108,12 +108,17 @@ test("table A: a construct whose body the parser does not walk is remote opaque 
   }
 });
 
-test("table A: unsupported stays judged for a body-less program ([[, a runner)", () => {
-  for (const r of ["[[ -f /etc/app.conf ]] && cat /etc/app.conf", "sudo journalctl -n 5"]) {
+test("table A: unsupported stays judged for a runner only; [[ and (( are remote opaque and ask", () => {
+  for (const r of ["sudo journalctl -n 5"]) {
     const m = ssh(r);
     assert.equal(m.remoteOpaque, false, r);
     assert.ok(m.remoteClasses.includes("unknown"), r);
     assert.equal(accept(m), "allow", r);
+  }
+  for (const r of ["[[ -f /etc/app.conf ]] && cat /etc/app.conf", "[[ -n $(rm /etc/f) ]]", "(( $(touch /etc/f) ))", "[[ `touch /etc/f` ]]", "if [[ -n $(cp a /etc/f) ]]; then ls; fi"]) {
+    const m = ssh(r);
+    assert.equal(m.remoteOpaque, true, r);
+    assert.equal(accept(m), "ask", r);
   }
 });
 

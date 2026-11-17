@@ -294,8 +294,8 @@ export function remoteReasonClass(reason: OpaqueReason): EffectClass | "opaque" 
 /** An output redirect that writes somewhere other than the literal /dev/null (a string compare on every platform); an fd dup never counts. */
 const writesFile = (r: { op: string; target: string }): boolean => r.op !== "<" && r.op !== "dup" && r.target !== "/dev/null";
 
-/** `unsupported` is judged only for a program with no body to hide a write in: a runner (sudo, su, ...), `[[` or `((`; `select`, `coproc`, a C-style `for` and an unmapped node are opaque. */
-const bodyless = (program: string): boolean => RUNNERS.has(program) || program === "[[" || program === "((";
+/** `unsupported` is judge-only (unknown) just for a runner (sudo, su, ...), whose wrapped write the harness does not see (a documented limit); every other unsupported node (`[[`, `((`, `select`, `coproc`, a C-style `for`, an unmapped node) is remote opaque, because its words are not walked. */
+const judgeOnly = (program: string): boolean => RUNNERS.has(program);
 
 /** Classify one remote command: each of its segments (the remote class table); zero segments or a segment the harness cannot see into makes it opaque. */
 function remoteClasses(argv: string[], env: ProtectedEnv): { classes: EffectClass[]; opaque: boolean } {
@@ -307,7 +307,7 @@ function remoteClasses(argv: string[], env: ProtectedEnv): { classes: EffectClas
     const redirected = s.redirects.some(writesFile);
     if (redirected) classes.push("write-out");
     if (s.opaque !== null) {
-      const c = s.opaque === "unsupported" && !bodyless(s.program) ? "opaque" : remoteReasonClass(s.opaque);
+      const c = s.opaque === "unsupported" && !judgeOnly(s.program) ? "opaque" : remoteReasonClass(s.opaque);
       if (c === "opaque") opaque = true;
       if (!redirected || c !== "write-out") classes.push(c === "opaque" ? "unknown" : c);
       continue;
