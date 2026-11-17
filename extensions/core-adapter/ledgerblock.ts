@@ -58,7 +58,7 @@ function protectedLine(task: string): string {
  * head that FAIL reviewed; null when it is unknown.
  */
 export function reReviewLine(sha: string | null): string {
-  return `[pi-foreman re-review] Review the revision diff since ${sha ?? "the reviewed head"} and run only the targeted tests the task names; do not run tsc or full suites (the foreman reports them).\n`;
+  return `[pi-foreman re-review] Review the revision diff since ${sha ?? "the reviewed head"} and run the tests the fix touches, and the full suites again when the fix since the last review can affect them.\n`;
 }
 
 /**
