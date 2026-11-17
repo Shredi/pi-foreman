@@ -16,6 +16,7 @@ function reset() {
   put("/s/fm", [entry("plan")]);
   put("/s/b", [entry("plan"), entry("note-1", { at: "2026-11-06T11:00:00Z" })]);
   world.reads = []; world.writes = []; world.runCalls = []; world.notices = []; world.layout = null; world.execCalls = [];
+  world.platform = "macos"; world.execFn = () => ({ code: 0, stdout: "", stderr: "" }); // a page counts as seen once its opener worked
   world.shared = { "pi-foreman.radar": { machines: { local: [sess("fm", "t1", "/s/fm"), sess("both", "tc2", "/s/b", "fm")] } } };
   world.agents = [{ address: "t1", tab: "tabA", pane: "p1" }];
   world.panes = [{ pane: "p1", tab: "tabA", terminal: "t1" }];

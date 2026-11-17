@@ -132,3 +132,8 @@ test("rewriteRelative: an encoded value cannot leave its attribute", () => {
   assert.ok(out.startsWith(`<img src="${BASE}x&quot;onerror=1%20y%27z%3Cq%3E.png"`));
   assert.equal(rewriteRelative("<img src='a%zz%20b.png'>", BASE), `<img src='${BASE}a%25zz%20b.png'>`);
 });
+
+test("rewriteRelative: a non-BMP character is encoded as one code point and a lone surrogate does not throw", () => {
+  assert.equal(rewriteRelative('<img src="a 🎉.png">', "file:///d/"), '<img src="file:///d/a%20%F0%9F%8E%89.png">');
+  assert.equal(rewriteRelative('<img src="a\ud83d.png">', "file:///d/"), '<img src="file:///d/a%EF%BF%BD.png">');
+});

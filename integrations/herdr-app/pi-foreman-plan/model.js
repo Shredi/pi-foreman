@@ -248,7 +248,9 @@ export function dirFileUrl(dir) {
 }
 
 const REL_ATTR = /([\s"'/]|^)(src|poster)(\s*=\s*)(?:"([^"]*)"|'([^']*)')/gi;
-const percent = (v) => v.replace(/%(?![0-9A-Fa-f]{2})/g, "%25").replace(/[^A-Za-z0-9\-._~!$&()*+,;=:@/?#%]/g, (c) => encodeURIComponent(c).replace(/'/g, "%27"));
+// One code point at a time (`u`); a lone surrogate cannot be encoded and becomes U+FFFD.
+const encodePoint = (c) => { try { return encodeURIComponent(c).replace(/'/g, "%27"); } catch { return "%EF%BF%BD"; } };
+const percent = (v) => v.replace(/%(?![0-9A-Fa-f]{2})/g, "%25").replace(/[^A-Za-z0-9\-._~!$&()*+,;=:@/?#%]/gu, encodePoint);
 
 /** `html` with every relative `src` and `poster` attribute value (quoted; no scheme, not starting with `/` or `#`) made absolute
  *  against `base` (a `file://` folder URL ending in `/`). Links, `#` anchors, absolute and scheme values, `srcset`, `<link href>` and

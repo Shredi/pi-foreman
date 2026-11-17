@@ -15,6 +15,7 @@ import {
 const TICK_MS = 1000;
 const OPEN_TIMEOUT_MS = 10000; // exec `timeout` of the platform opener
 const POLL_MS = 5000;
+const FAILED = Symbol("read failed");
 const MOD = "pi-foreman-plan";
 const PAGES_DIR = "pages";
 // the ids of layouts/foreman.json, used when the shown layout cannot be searched
@@ -233,8 +234,10 @@ export default class PlanPanel extends View {
     const seq = rec.seq = (rec.seq ?? 0) + 1;
     const pages = joinPath(dir, PAGES_DIR);
     if (!job.machine) { this.watch(pages, cx); this.watch(dir, cx); }
-    const text = await this.read(joinPath(pages, "pages.json"), job.machine);
+    // null is a missing index (the readTextFile contract); a rejection is another failure and is told apart
+    const text = await readTextFile(joinPath(pages, "pages.json"), { on: job.machine }).catch(() => FAILED);
     if (rec.seq !== seq) return false;
+    if (text === FAILED) return false; // a failed read records nothing: with no known map yet, the next good read only records
     if (text === rec.text) return false;
     const idx = text === null ? null : parsePages(text);
     const prev = rec.known;
@@ -268,8 +271,9 @@ export default class PlanPanel extends View {
     try {
       const r = await this.execT(argv[0], argv.slice(1), {}, OPEN_TIMEOUT_MS);
       const bad = openFailure(r);
-      if (bad) this.fail(title, bad);
-    } catch (e) { this.fail(title, openFailure(e) || "the opener could not run"); }
+      if (bad) { this.fail(title, bad); return false; }
+      return true;
+    } catch (e) { this.fail(title, openFailure(e) || "the opener could not run"); return false; }
   }
 
   openUrl(url, cx) {
@@ -285,25 +289,27 @@ export default class PlanPanel extends View {
   openPage(tab, p, cx) {
     const key = this.keyOf(tab);
     if (!key || !PAGE_FILE.test(p.file)) return;
-    this.seen.set(`${key}|${p.id}`, pageStamp(p));
-    cx.notify();
     const dir = joinPath(tab.node.show.dir, PAGES_DIR);
     const machine = this.cur.machine;
     const title = "Could not open the page";
     cx.spawn(async () => {
-      const text = await this.read(joinPath(dir, p.file), machine);
-      if (text === null) { this.fail(title, "the page could not be read"); return; }
-      if (text.length > MAX_PAGE_CHARS) { this.fail(title, "the page is larger than 1 MiB"); return; }
-      const base = machine ? null : dirFileUrl(dir);
-      const body = base ? rewriteRelative(text, base) : text;
-      const home = guard(() => appHome(), "");
-      const copy = slotPath(home, this.slot);
-      const argv = copy ? pageOpenerArgv(osOf(), home, copy) : null;
-      if (!argv) { this.fail(title, "no opener for this platform"); return; }
-      this.slot = (this.slot + 1) % SLOTS;
-      const have = await this.read(copy, null);
-      try { await writeTextFile(copy, body, have); } catch { this.fail(title, "the copy could not be written"); return; }
-      await this.launch(argv, title);
+      let argv;
+      try {
+        const text = await this.read(joinPath(dir, p.file), machine);
+        if (text === null) { this.fail(title, "the page could not be read"); return; }
+        if (text.length > MAX_PAGE_CHARS) { this.fail(title, "the page is larger than 1 MiB"); return; }
+        const base = machine ? null : dirFileUrl(dir);
+        const body = base ? rewriteRelative(text, base) : text;
+        const home = guard(() => appHome(), "");
+        const copy = slotPath(home, this.slot);
+        argv = copy ? pageOpenerArgv(osOf(), home, copy) : null;
+        if (!argv) { this.fail(title, "no opener for this platform"); return; }
+        this.slot = (this.slot + 1) % SLOTS;
+        const have = await this.read(copy, null);
+        try { await writeTextFile(copy, body, have); } catch { this.fail(title, "the copy could not be written"); return; }
+      } catch { this.fail(title, "the page could not be prepared"); return; }
+      // seen only once the opener worked: a failed open keeps the dot
+      if (await this.launch(argv, title)) { this.seen.set(`${key}|${p.id}`, pageStamp(p)); cx.notify(); }
     });
   }
 
