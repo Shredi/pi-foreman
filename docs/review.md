@@ -273,7 +273,7 @@ not depend on the ledger. A session that changed nothing is not asked. A PR that
 its readiness answers `unreviewed` while its own checkout has a pass due and `wip` while its own checkout has an uncleared FAIL or
 when the PR head is the head of a high-stakes FAIL (in any checkout). Under the draft flow the PR then goes back to draft until the pass ran
 and passed, or the FAIL was cleared and the head moved. The checkout is the one named by the review records of the PR head; a PR whose head has
-no such record is held session-wide, by the state of any checkout. A review or high-stakes state of another checkout never re-drafts a PR whose head has its own `[pre-pr]` PASS. A PR opened from the shell is not refused; the rules text carries the duty.
+no such record is held session-wide, by the state of any checkout. A review or high-stakes state of another checkout never re-drafts a PR whose head has its own `[pre-pr]` PASS, with the two exceptions above (records without a checkout are held by the whole session; a high-stakes FAIL naming that head holds it from any checkout). A PR opened from the shell is not refused; the rules text carries the duty.
 
 **Traces and the PR body.** `review_stakes {level: high, reasons, files, lines, modules, base}` is written once per checkout
 when the trigger first fires (reasons `modules`, `lines`, `design`, `foreman`): the pass is then required. `role_launch` and

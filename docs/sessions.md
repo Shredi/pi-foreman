@@ -135,8 +135,8 @@ ready to merge (or, when the checks passed but a draft state, a review or a bran
 without a `foreman:close` (a `foreman:close` sent after the merge, or after a refused self-close, runs the same worktree and branch cleanup; a refused cleanup reaches the parent as a `PR #n merged, closing (cleanup: not started (<reason>); ...)` reply before the `foreman:closed` line): it writes `<handoff dir>/result.md` (PR numbers, merge commits, anything left open), sends the parent
 `PR #n merged, closing` and `Result from <label>: <path>`, archives its `.workflow/` files (a linked worktree keeps every regular file whatever its age; the written-since-start rule is only for the main checkout's shared `.workflow/`; capped at 16 MiB, never `closed/` or `archive/`, no links; see [Self-finish on merge](close.md#self-finish-on-merge)) into `<handoff dir>/workflow/` and exits.
 A detached process then removes its worktree and local branch and writes `<handoff dir>/cleanup.json`; a failed precondition
-keeps both and is named in `result.md` and in the message to the parent. A PR closed without a merge starts nothing: the child
-reports `PR #n closed unmerged` and waits for the parent. See [close](close.md#self-finish-on-merge).
+keeps both and is named in `result.md` and in the message to the parent. A PR closed without a merge starts nothing on its own: the child
+reports `PR #n closed unmerged` and waits for the parent, except that when an earlier PR of the session was merged and the closed one was the last watched PR, the merge-close starts (for the merged PR). See [close](close.md#self-finish-on-merge).
 
 ### Closing the children with the parent
 

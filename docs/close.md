@@ -194,8 +194,9 @@ When the watch reports `merged` and no other watch is open, the adapter starts t
 - **Remote branch.** Nothing is deleted on the remote and no guard is lifted. If the remote head branch still exists, the report
   lists `kept: remote branch <b> (enable delete head branch on merge)`. Turn on the host's setting *Automatically delete head
   branches* (GitHub: repository settings, General, Pull Requests) so merging the PR removes it.
-- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup. The watch message says
-  `report to the parent: PR #n closed unmerged`, and the session waits for the parent.
+- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup on its own, except that when an earlier PR of the
+  session was merged and the closed one was the last watched PR, the merge-close starts (for the merged PR). The watch message says
+  `report to the parent: PR #n closed unmerged`, and otherwise the session waits for the parent.
 
 ## Pushed branches without a PR
 
