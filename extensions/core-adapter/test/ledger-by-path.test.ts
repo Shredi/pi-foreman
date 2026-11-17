@@ -121,6 +121,16 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
     assert.doesNotMatch(read(fb), /run run-r1/);
   });
 
+  await t.test("a resumed reviewer run keeps the route of the run it resumes (its PASS comes with the notices below)", async () => {
+    await launched({ agent: "reviewer", task: `review item 10 of ${fa}` }, "run-rs1");
+    a.end({ runId: "run-rs1", agent: "reviewer", status: "timed-out", success: false, output: "ran out of time" });
+    const resume = { action: "resume", id: "run-rs1", message: "finish the review" };
+    const l = await a.launch(resume);
+    assert.equal(l.res, undefined, l.res?.reason);
+    await a.started(l.id, resume, "run-rs2");
+    assert.ok((entries as { data: { run: string; paths: unknown[] } }[]).some((e) => e.data.run === "run-rs2" && e.data.paths[0] === fa), "the resumed run's route is persisted");
+  });
+
   await t.test("PASS marks: each result marks the ledger its own entry named; a second opinion marks nothing; the repeat after a PASS is refused", async () => {
     const chain = { chain: [{ parallel: [{ agent: "reviewer", task: `review item 1 of ${fa}` }, { agent: "reviewer", task: `review item 2 of ${fb}` }] }] };
     const tasks = { tasks: [{ agent: "reviewer", task: `[second-opinion] look at ${fb}` }, { agent: "reviewer", task: "review item 5" }, { agent: "reviewer", task: `review item 6 of ${fa}` }, { agent: "reviewer", task: `review item 3 of ${fa}` }, { agent: "reviewer", task: `review item 7 of ${fb}` }] };
@@ -149,6 +159,11 @@ test("a launch task names its ledger by path", { skip }, async (t) => {
   });
 
   await t.test("notices, before and after a reload: the ledger the run named, else the bound ledger", async () => {
+    a.end({ runId: "run-rs2", agent: "reviewer", status: "completed", success: true, results: [pass(10)] });
+    await settle(1000);
+    assert.ok(done(read(fa), 10) && !done(read(fb), 10), "a resumed run's PASS marks the ledger the resumed run named: " + read(fa));
+    assert.ok(await hintsIn(fa, "run-rs2"), "its hints land in A");
+    assert.doesNotMatch(read(fb), /run-rs2/);
     await a.notice(noticeOf("run-n2", 8));
     await settle();
     assert.ok(done(read(fa), 8) && !done(read(fb), 8), "a named run's notice marks A");

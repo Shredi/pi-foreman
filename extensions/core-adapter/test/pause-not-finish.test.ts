@@ -96,4 +96,19 @@ test("a foreman edit of a project file in this prompt (trivial tier, then escala
   assert.equal(r?.continue, true, JSON.stringify(await events(w, "ceremony_gate")));
   assert.deepEqual(types(r), ["pi-foreman-ceremony-gate"]);
   assert.equal(await pauses(w), 0);
+
+  // a builder launched before an owner prompt that ends after it is work of that prompt: the turn end is refused, not a pause
+  await a.ownerPrompt();
+  const run = await a.agentLaunch("builder", "build more");
+  assert.equal(run.blocked, null);
+  await a.ownerPrompt(); // the owner types while the builder runs
+  const refusedBefore = (await events(w, "finish_refused")).length;
+  assert.equal(await finishAnswer(a), undefined, "waiting for the run is not a refusal");
+  assert.equal((await events(w, "finish_refused")).length, refusedBefore);
+  a.endRunAs(run.id, "builder", "done", undefined, "built");
+  await new Promise((x) => setTimeout(x, 50));
+  const ended = await finishAnswer(a);
+  assert.equal(ended?.continue, true);
+  assert.deepEqual(types(ended), ["pi-foreman-ceremony-gate"]);
+  assert.equal((await events(w, "finish_refused")).length, refusedBefore + 1);
 });

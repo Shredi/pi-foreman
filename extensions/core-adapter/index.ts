@@ -2656,6 +2656,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         if (typeof runId === "string" && !s.isChild) {
           s.childRuns.onRunEnd(runId);
           s.live?.touch();
+          // D27: a builder run that ends (any outcome) is work of the prompt it ends in, also when it was launched before that prompt
+          if ((s.launchedRoles.get(runId) ?? []).includes("builder")) s.work.builders++;
         }
         if (typeof runId === "string" && s.launchedRoles.has(runId)) {
           const ended = runEndOf(data);
@@ -4156,6 +4158,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         for (let i = 0; i < rounds.revisions; i++) s.trace?.emit({ event: "revision", role: "builder", tier: s.ceremony.tier, decision: kind });
       }
       if (rounds) persistRounds(s);
+      // the ledger each launch entry resolved to, by entry: the roots block and the ladder handoff read it, not the task text (which holds the injected block by then)
+      const entryLedger = new Map<object, string | null>();
       if (event.toolName === "subagent" && !s.isChild) {
         const lf = boundLedger(s.markerDir, s.id);
         const lg = (() => { try { return lf ? fs.readFileSync(lf, "utf8") : null; } catch { return null; } })();
@@ -4168,7 +4172,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // one named path per agent entry (a parallel group is flattened, its own object is no entry); null = the bound ledger
         const agentEntries = launchEntries(input).filter((e) => typeof e.agent === "string");
         const perEntry = agentEntries.map((e) => { const p = typeof e.task === "string" ? pickLedger(e.task) : null; return p?.named && p.path ? p.path : null; });
-        capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
+        agentEntries.forEach((e, i) => entryLedger.set(e, perEntry[i] ?? lf));
+        if (actionOf(input) !== "resume") capSet(s.ledgerByCall, event.toolCallId, { paths: perEntry, cited: agentEntries.map((e) => citedItems(typeof e.task === "string" ? e.task : "")) });
         // R26 item 3: a reviewer launched after an open FAIL names the head that FAIL reviewed (its record's head lands in reviewSync)
         if (s.reviewFailOpen) await s.reviewSync;
         const reReview = s.reviewFailOpen ? { sha: [...s.reviews].reverse().find((r) => r.verdict === "fail" && r.head)?.head ?? null } : null;
@@ -4176,13 +4181,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       }
       if (event.toolName === "subagent" && !s.isChild) for (const r of s.brief.apply(input)) s.trace?.emit(r);
       // R41 Ruling: the roots of Pi and npm (and a builder's absolute plan and ledger paths) in every fresh child brief
-      if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id), ledgerFor: (task) => taskLedger(task, ctx.cwd, boundLedger(s.markerDir, s.id), [s.cwd, ctx.cwd]).path })) s.trace?.emit(r);
+      if (event.toolName === "subagent" && !s.isChild) for (const r of applyRootsBlock(input, await piRootsOf(s), { plan: s.plan && s.plan.status === "approved" ? s.plan.path : null, ledger: boundLedger(s.markerDir, s.id), ledgerFor: (task, e) => (entryLedger.has(e) ? entryLedger.get(e) ?? null : taskLedger(task, ctx.cwd, boundLedger(s.markerDir, s.id), [s.cwd, ctx.cwd]).path) })) s.trace?.emit(r);
       if (event.toolName === "subagent" && climbs.length > 0) {
         const ledgerFile = boundLedger(s.markerDir, s.id);
         const readLedger = (f: string | null) => { try { return f ? fs.readFileSync(f, "utf8") : null; } catch { return null; } };
         if (climbs.some((c) => c.handoff && !c.handoffFor) && !kind) kind = "strong-relaunch";
         if (kind === "strong-relaunch" && climbs.every((c) => c.skipped)) kind = "revision"; // every climb was capped by the rank policy: no strong launch
-        for (const r of s.ladder.apply(climbs, (task) => ledgerLines(readLedger(taskLedger(task, ctx.cwd, ledgerFile, [s.cwd, ctx.cwd]).path), task))) s.trace?.emit(r);
+        for (const r of s.ladder.apply(climbs, (task, e) => ledgerLines(readLedger(entryLedger.has(e) ? entryLedger.get(e) ?? null : taskLedger(task, ctx.cwd, ledgerFile, [s.cwd, ctx.cwd]).path), task))) s.trace?.emit(r);
         const was = s.ceremony.tier;
         setCeremony(s, onStrongLaunch(s.ceremony, climbs.map((c) => c.reason)));
         if (s.ceremony.tier !== was) s.trace?.emit({ event: "triage_escalated", from: was, to: s.ceremony.tier, reason: "strong" });
@@ -5119,6 +5124,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.reviewRuns.byCall.delete(event.toolCallId);
         const namedLedger = s.ledgerByCall.get(event.toolCallId);
         s.ledgerByCall.delete(event.toolCallId);
+        // a resume names no ledger: the resumed run's route carries over (same or new run id), persisted like the others
+        const resumed = !namedLedger && runId && actionOf(event.input as Record<string, unknown>) === "resume" ? s.ledgerByRun.get(resumeTarget(event.input as Record<string, unknown>) ?? "") : undefined;
+        if (resumed && runId) {
+          capSet(s.ledgerByRun, runId, resumed);
+          if (resumed.paths.some((p) => p !== null) && resumeTarget(event.input as Record<string, unknown>) !== runId) {
+            try {
+              pi.appendEntry(LEDGER_ROUTE_ENTRY, { v: 1, run: runId, paths: resumed.paths, cited: resumed.cited });
+            } catch {
+              // the session file is not writable now: the route stays in memory
+            }
+          }
+        }
         if (namedLedger && runId) {
           capSet(s.ledgerByRun, runId, namedLedger);
           if (namedLedger.paths.some((p) => p !== null)) {
