@@ -92,11 +92,13 @@ test("the foreman reads the kept log through the gate after the run", () => {
 });
 
 test("expandOutVar reads only plain references", () => {
-  assert.equal(expandOutVar('cat > "$FOREMAN_OUT/a" && ls ${FOREMAN_OUT}', "/o"), 'cat > "/o/a" && ls /o');
+  // win32 accepts only a drive path (shellSafeDir), so the fixture dir is platform-correct
+  const o = posix ? "/o" : "C:/o";
+  assert.equal(expandOutVar('cat > "$FOREMAN_OUT/a" && ls ${FOREMAN_OUT}', o), `cat > "${o}/a" && ls ${o}`);
   for (const c of ["FOREMAN_OUT=/x; ls $FOREMAN_OUT", "ls '$FOREMAN_OUT'", "ls \\$FOREMAN_OUT", "ls ${FOREMAN_OUT:-x}", "ls $FOREMAN_OUTX"]) {
-    assert.equal(expandOutVar(c, "/o"), c, c);
+    assert.equal(expandOutVar(c, o), c, c);
   }
-  assert.equal(expandOutVar("ls $FOREMAN_OUT", "/o p"), "ls $FOREMAN_OUT", "a dir with a shell character is never put in");
+  assert.equal(expandOutVar("ls $FOREMAN_OUT", `${o} p`), "ls $FOREMAN_OUT", "a dir with a shell character is never put in");
 });
 
 test("an apostrophe in a heredoc body or a comment never lets a quoted $FOREMAN_OUT through", { skip: !posix }, () => {
