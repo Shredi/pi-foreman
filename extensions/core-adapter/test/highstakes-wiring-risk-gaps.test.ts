@@ -43,6 +43,7 @@ for (const sizing of [true, false]) {
       const parser = await launch(a, "builder", "build the widget", { risk: ["parser"] });
       assert.equal(parser.blocked, null, String(parser.blocked));
       assert.deepEqual(await stakes(w), [], "the parser tag alone fires nothing with sizing off");
+      assert.doesNotMatch(await pr(a), /high_stakes/, "the PR gate asks for no high-stakes review");
       await end(a, parser, "builder", "done");
     }
     await build(a, tagged(TAGS, sizing));
