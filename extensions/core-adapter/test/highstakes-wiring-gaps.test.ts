@@ -16,7 +16,7 @@ const LEDGER = "# Ledger: x\nTier: standard\n\n- [x] 1. first thing\n- [x] 3. th
 
 /** A standard-tier world over a real git repo: `main` seeded, the session on `feature`; `base` false leaves no base branch configured (the fallback applies). */
 async function setup(t: Parameters<typeof world>[0], o: { base?: boolean; strong?: boolean } = {}) {
-  const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL, modules: 0, lines: 50 } } });
+  const w = world(t, { ceremony: { default: "standard", highStakes: { model: MODEL } } });
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
   git(w.project, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(w.project, ".gitignore"), ".workflow/\n");
@@ -104,23 +104,54 @@ test("item 2: a [high-stakes] launch is never refused as a repeat: right after a
   assert.deepEqual((await traces(w, "review_high_stakes_refused")), []);
 });
 
-test("item 3: the fallback base of the own checkout is its HEAD at session start (no base branch resolvable): work committed before the first builder launch counts; a reload keeps it", async (t) => {
+test("item 3: the fallback base is the first HEAD the session saw in the repository, recorded at session start (no base branch resolvable): work committed before the first builder launch counts; a worktree shares it; a reload keeps it", async (t) => {
   const { w, a, seed } = await setup(t, { base: false });
-  work(w, "src/a/big.ts", 100); // HEAD moves after the session start, before any builder launch or measurement
+  work(w, "src/a/big.ts", 100); // HEAD moves after the session start, before any builder launch
   await builder(a);
   await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
-  const stop = Date.now() + 15000; // the record of the normal PASS is written by an async chain (git calls)
-  while ((await traces(w, "review_recorded")).length < 1 && Date.now() < stop) await tick(100);
-  assert.match(await pr(a), /\[pr_refused:high_stakes_required\]/, "measured from the session-start HEAD");
-  const fired = await traces(w, "review_stakes");
-  assert.equal(fired.length, 1);
-  assert.equal(fired[0].base, seed.slice(0, 12));
-  assert.equal(fired[0].lines, 100);
+  const s = await launch(a, "reviewer", "[high-stakes] review the whole change");
+  assert.equal(s.blocked, null, String(s.blocked));
+  assert.ok(String(s.input.task).includes(`against ${seed.slice(0, 12)}`), "the task line names the HEAD of the session start");
+  await end(a, s, "reviewer", "Overall verdict: FAIL\n1. FAIL a");
   await a.down();
-  fs.writeFileSync(path.join(w.project, "src/a/more.ts"), "x\n".repeat(5)); // uncommitted: the head stays the reviewed one
+  work(w, "src/a/more.ts", 5);
   const b = await w.adapter("reload");
-  assert.match(await pr(b), /high_stakes_required/);
-  assert.equal((await traces(w, "review_stakes")).length, 1, "the stored base was not replaced, the firing stays one");
+  work(w, "src/a/fix.ts", 1);
+  await end(b, await launch(b, "builder", "fix"), "builder", "done");
+  await end(b, await launch(b, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
+  const again = await launch(b, "reviewer", "[high-stakes] review the whole change");
+  assert.equal(again.blocked, null, String(again.blocked));
+  assert.ok(String(again.input.task).includes(`against ${seed.slice(0, 12)}`), "the stored base was not replaced by the reload");
+});
+
+test("item 3: a worktree of the repository reviews against the same recorded first HEAD; neither a base nor a recorded head resolves: the task line names no base", async (t) => {
+  const { w, a, seed } = await setup(t, { base: false });
+  const wt = path.join(fs.realpathSync.native(path.join(w.project, "..")), "wt-base");
+  git(w.project, "worktree", "add", "-q", "-b", "other", wt);
+  w.state.answer = "allow once";
+  fs.writeFileSync(path.join(wt, "w.txt"), "w\n");
+  git(wt, "add", "-A");
+  git(wt, "commit", "-q", "-m", "w");
+  await end(a, await launch(a, "builder", "build", { cwd: wt }), "builder", "done");
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch", { cwd: wt }), "reviewer", "Overall verdict: PASS");
+  const s = await launch(a, "reviewer", "[high-stakes] review the whole change", { cwd: wt });
+  assert.equal(s.blocked, null, String(s.blocked));
+  assert.ok(String(s.input.task).includes(`against ${seed.slice(0, 12)}`), "the worktree shares the repository's recorded first HEAD");
+});
+
+test("item 3: with neither a merge-base nor a recorded ancestor the task line names no base", async (t) => {
+  const { w, a } = await setup(t, { base: false });
+  // the recorded head is no ancestor of HEAD any more: history rewritten to an unrelated root
+  git(w.project, "checkout", "-q", "--orphan", "fresh");
+  fs.writeFileSync(path.join(w.project, "n.txt"), "n\n");
+  git(w.project, "add", "-A");
+  git(w.project, "commit", "-q", "-m", "unrelated");
+  await builder(a);
+  await end(a, await launch(a, "reviewer", "[pre-pr] review the branch"), "reviewer", "Overall verdict: PASS");
+  const s = await launch(a, "reviewer", "[high-stakes] review the whole change");
+  assert.equal(s.blocked, null, String(s.blocked));
+  assert.doesNotMatch(String(s.input.task), /the whole change against /);
+  assert.match(String(s.input.task), /occasion: high-stakes \(the whole change: /);
 });
 
 test("item 6: a normal reviewer launched right after a high-stakes FAIL ended waits for the FAIL to be recorded and is refused until the revision", async (t) => {

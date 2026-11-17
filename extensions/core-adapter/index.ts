@@ -89,7 +89,7 @@ import { gateMigrationLines } from "./gatemigrate.ts";
 import { reviewTarget, userPromptOf } from "./review.ts";
 import { git, ReviewFacts } from "./diffscan.ts";
 import { applyFactCriticalRungs, applyResearchFloor, entryTraces, floorMarker, markedEntries, researchTraces } from "./research.ts";
-import { findingsBlock, finishNeeds, highStakesConfig, HighStakes, launchRefusal, resumeRefusal, measureCheckout, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal, firedBy, type HsFired, type Measure } from "./highstakes.ts";
+import { dueReasons, findingsBlock, finishNeeds, highStakesConfig, HighStakes, HS_RISKS, launchRefusal, resumeRefusal, reviewBaseOf, repoKeyOf, holdFacts, prRefusal, readyOverride, stakesTrace, taskLine, unrevisedRefusal } from "./highstakes.ts";
 import { applyOccasionOverrides, applyReviewModelRule, applySecurityRungs, cappedRung, markPolicyOverrides, missingPairWarning, planReviewerClimbs, ReviewerFails, reviewerTextsOfRunEnd, type ReviewerClimb, type ReviewPin } from "./reviewerclimb.ts";
 import type { RoleResolution } from "./roles.ts";
 import { buildGuardEnv, msysEnv, patchShellEnv, piAgentDir } from "./env.ts";
@@ -159,7 +159,7 @@ import { CompactionGate } from "./compaction.ts";
 import { runtimePoint } from "./compaction-point.mjs";
 import { piModelDataDir } from "./pi-model-data.mjs";
 import { resolveCachePolicy, resolveWarmPolicy } from "./cachepolicy.ts";
-import { bridgeTtlDoctorLines, cacheDoctorLines, deprecatedKeepaliveLines } from "./doctorcache.ts";
+import { bridgeTtlDoctorLines, cacheDoctorLines, deprecatedKeepaliveLines, retiredHighStakesLines } from "./doctorcache.ts";
 import { BridgeCacheTtl, bridgeTtlSetting, derivedBridgeTtlS, type BridgeTtlSetting } from "./bridgettl.ts";
 import type { Presence } from "./presence.ts";
 import type { SelfWarm, WarmSignals } from "./selfwarm.ts";
@@ -439,7 +439,7 @@ interface Session {
   reviews: ReviewRecord[];
   /** R26 item 3: the latest counted review verdict is FAIL and no owner prompt came since; the next reviewer launch is a re-review (ledgerblock.ts reReviewLine). */
   reviewFailOpen: boolean;
-  /** The high-stakes state per checkout (highstakes.ts); persisted with the ceremony state. */
+  /** The session-wide high-stakes state (highstakes.ts); persisted with the ceremony state. */
   hs: HighStakes;
   /** Real path of the session's own checkout root (read once). */
   hsOwn: string | null;
@@ -898,7 +898,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         // the readiness rule (prready.ts)
         reviewFacts: (head) => {
           // an open PR is not ready while a high-stakes pass is due or a FAIL stands (session-wide: the head alone does not name its checkout)
-          return holdFacts(reviewFactsForHead(s.reviews, head, s.sentBackHeads), hsModel(s) ? readyOverride(s.hs.all(), head) : null);
+          return holdFacts(reviewFactsForHead(s.reviews, head, s.sentBackHeads), hsModel(s) ? readyOverride(s.hs.state(), hsDue(s), head) : null);
         },
         tick: () => reworkScan(s),
         draftFlow: () => draftFlowOn(s),
@@ -1222,66 +1222,58 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     return s.hsOwn;
   }
 
-  /** The checkout `dir` belongs to, noted as seen (its HEAD is the base fallback); null outside git. */
+  /** The checkout `dir` belongs to, its repository noted as seen (the first HEAD is the review base when no merge-base resolves); null outside git. */
   async function hsSee(s: Session, dir: string): Promise<string | null> {
     const root = await toplevelOf(dir);
-    if (root && !s.hs.get(root)?.seenHead) s.hs.seen(root, await headOf(root));
+    if (!root) return null;
+    const key = await repoKeyOf(root);
+    const head = key && !s.hs.base(key) ? await headOf(root) : null;
+    if (key && head && s.hs.noteBase(key, head)) persistCeremonyState(s);
     return root;
   }
 
-  /** Fire the trigger of a checkout (sticky); the first firing is traced. */
-  function hsFire(s: Session, root: string, f: HsFired, base: string | null): void {
-    if (s.hs.fire(root, f)) s.trace?.emit(stakesTrace(f, base));
-  }
-
-  /** Measure the checkout of `dir` against its merge-base and fire the trigger (`design`: a builder with risk tag design ran in it). Returns the base measured against. */
-  async function hsMeasure(s: Session, dir: string, design = false): Promise<{ base: string; measure: Measure } | null> {
-    if (!hsModel(s)) return null;
-    const root = await hsSee(s, dir);
-    if (!root) return null;
-    const seen = s.hs.get(root)?.seenHead;
-    const configured = get(s.config.config, "safety.ops.baseBranch");
-    const m = await measureCheckout(root, { baseBranch: typeof configured === "string" ? configured : null, ...(seen ? { seenHead: seen } : {}) });
-    if (!m.ok) {
-      if (s.hs.failedOnce(root)) s.trace?.emit({ event: "review_stakes_unmeasured" });
-      if (design) hsFire(s, root, { reasons: ["design"], files: 0, lines: 0, modules: 0 }, null);
-    } else {
-      const reasons = [...firedBy(m.measure, highStakesConfig(s.config.config)), ...(design ? ["design"] : [])];
-      if (reasons.length > 0) hsFire(s, root, { reasons, ...m.measure }, m.base);
-    }
+  /** The session's high-stakes state is session-wide: reasons that fire are sticky and each new one is traced. */
+  function hsFire(s: Session, reasons: readonly string[]): void {
+    const added = s.hs.fire(reasons);
+    if (added.length === 0) return;
+    s.trace?.emit(stakesTrace(added));
     persistCeremonyState(s);
-    return m.ok ? { base: m.base, measure: m.measure } : null;
   }
 
-  /** The PR gate or the finish gate asks: measure `scope` (one checkout), else the own checkout and every checkout with state. */
-  async function hsMeasureAll(s: Session, scope: string | null): Promise<void> {
-    if (!hsModel(s)) return;
-    const dirs = scope !== null ? [scope] : [...new Set([await hsOwnRoot(s), ...s.hs.all().map((c) => c.cwd)])];
-    for (const d of dirs) await hsMeasure(s, d);
+  /** The task is heavy and the session built something: `heavy` counts toward a due review. Once stored it stays until the owner's `/ceremony` tier (`userTier`) is below heavy; a foreman triage or a ledger line cannot drop it, and a raise back to heavy brings the reason back. */
+  const hsHeavyOn = (s: Session): boolean => {
+    if (s.hs.state().fired?.reasons.includes("heavy") === true) return s.ceremony.tier === "heavy" || !s.ceremony.userTier || s.ceremony.userTier === "heavy";
+    return s.ceremony.tier === "heavy" && (s.steps.builder > 0 || s.tally.files.length > 0);
+  };
+
+  /** The reasons that count now (empty: no pass is due). */
+  const hsDue = (s: Session): string[] => dueReasons(s.hs.state(), hsHeavyOn(s));
+
+  /** A gate asks: the heavy reason is recorded when it applies. */
+  function hsRefresh(s: Session): void {
+    if (hsHeavyOn(s)) hsFire(s, ["heavy"]);
   }
 
-  /** The high-stakes test of the PR gate (reviews.ts prGateRefusal). */
-  const hsGate = (s: Session): HighStakesGate => async (scope, heads) => {
+  /** The high-stakes test of the PR gate (reviews.ts prGateRefusal): session-wide, `scope` does not narrow it. */
+  const hsGate = (s: Session): HighStakesGate => async (_scope, heads) => {
     if (!hsModel(s)) return null;
-    await hsMeasureAll(s, scope);
-    const r = prRefusal(s.hs.all(), scope, heads, await hsOwnRoot(s));
+    hsRefresh(s);
+    const r = prRefusal(s.hs.state(), hsDue(s), heads, await hsOwnRoot(s));
     return r ? { reason: r.reason, message: r.message } : null;
   };
 
-  /** A revision happened in the checkout of `dir` (a builder run, a project edit): an uncleared high-stakes FAIL there counts as revised. */
+  /** A revision happened in the checkout of `dir` (a builder run, a project edit): an uncleared high-stakes FAIL that ran there counts as revised. */
   async function hsRevised(s: Session, dir: string | null): Promise<void> {
-    if (!hsModel(s) || s.hs.all().length === 0) return;
+    if (!hsModel(s) || !s.hs.hasRuns()) return;
     const root = await toplevelOf(dir ?? s.cwd);
     if (root && s.hs.revision(root)) persistCeremonyState(s);
   }
 
-  /** A normal PASS (item or [pre-pr]) was recorded in `cwd`: after the revision it clears an uncleared high-stakes FAIL there; then the checkout is measured. */
+  /** A normal PASS (item or [pre-pr]) was recorded in `cwd`: after the revision it clears an uncleared high-stakes FAIL that ran there. */
   async function hsNormalPass(s: Session, cwd: string): Promise<void> {
-    if (!hsModel(s)) return;
-    const root = await hsSee(s, cwd);
-    if (!root) return;
-    s.hs.normalPass(root);
-    await hsMeasure(s, root);
+    if (!hsModel(s) || !s.hs.hasRuns()) return;
+    const root = await toplevelOf(cwd);
+    if (root && s.hs.normalPass(root)) persistCeremonyState(s);
   }
 
   /** The directory a launch entry runs in. */
@@ -1296,9 +1288,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /**
    * The guards of the `[high-stakes]` launch (highstakes.ts launchRefusal, in the plan's order), of a normal reviewer launch while a high-stakes FAIL awaits its
    * revision and of a reviewer resume while it is not cleared. Each refusal is traced. An accepted `[high-stakes]` launch fills `hsEntries` and returns its checkout
-   * and the merge-base its facts are collected against; null otherwise.
+   * and the base its facts are collected against; null otherwise.
    */
-  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; base: string | null; measure: Measure | null } | null> {
+  async function hsLaunchGuard(s: Session, ctx: ExtensionContext, input: Record<string, unknown>, occasions: Map<Json, Occasion>, hsEntries: Set<Json>): Promise<string | { root: string; base: string | null } | null> {
     const refused = (r: { reason: string; text: string }): string => {
       s.trace?.emit({ event: "review_high_stakes_refused", reason: r.reason });
       return r.text;
@@ -1313,7 +1305,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         await s.reviewSync; // a FAIL still being recorded lands before it is read
         for (const d of launchCwds(input, ctx.cwd)) {
           const root = await toplevelOf(d);
-          const r = root ? unrevisedRefusal(s.hs.get(root), { resume: true, builder: false }) : null;
+          const r = root ? unrevisedRefusal(s.hs.state(), { resume: true, builder: false, cwd: root }) : null;
           if (r) return refused(r);
         }
       }
@@ -1328,7 +1320,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       for (const [e, o] of reviews) {
         if (o !== "item" && o !== "pre-pr") continue;
         const root = await toplevelOf(hsDirOf(ctx, input, e));
-        const r = root ? unrevisedRefusal(s.hs.get(root), { resume: false, builder }) : null;
+        const r = root ? unrevisedRefusal(s.hs.state(), { resume: false, builder, cwd: root }) : null;
         if (r) return refused(r);
       }
     }
@@ -1336,16 +1328,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     await s.reviewSync; // a review round still being recorded lands before the gate is read
     const dir = hsDirOf(ctx, input, marked[0]);
     const root = (await toplevelOf(dir)) ?? dir;
-    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.get(root), running: s.hs.isRunning(root), gate: s.reviewGate, own: await hsOwnRoot(s), cwd: root });
+    const r = launchRefusal({ model, single: singleLaunchRole(input) !== null && !Array.isArray(input.parallel), resume: false, state: s.hs.state(), running: s.hs.isRunning(), gate: s.reviewGate });
     if (r) return refused(r);
-    // the whole change: the diff facts are collected against the merge-base, and the task names it
-    const m = await hsMeasure(s, root);
+    // the whole change: the diff facts are collected against the merge-base (else the first HEAD the session saw in the repository), and the task names it
+    const key = await repoKeyOf(root);
+    const configured = get(s.config.config, "safety.ops.baseBranch");
+    const base = await reviewBaseOf(root, { baseBranch: typeof configured === "string" ? configured : null, ...(key && s.hs.base(key) ? { recorded: s.hs.base(key) } : {}) });
     for (const e of marked) {
-      if (m) reviewFacts.setStepBase(e, m.base);
-      if (typeof e.task === "string") e.task = taskLine(m?.base ?? null) + e.task;
+      if (base) reviewFacts.setStepBase(e, base);
+      if (typeof e.task === "string") e.task = taskLine(base) + e.task;
       hsEntries.add(e);
     }
-    return { root, base: m?.base ?? null, measure: m?.measure ?? null };
+    return { root, base };
   }
 
   /** The review results of a run end; a run of a high-stakes launch (its id is kept in the state) reads as `high-stakes` and counts nowhere, with or without bookkeeping. */
@@ -1373,7 +1367,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /** The finish gate's high-stakes entries and hint (the pass only once every ledger item but V is marked). */
   async function hsFinish(s: Session): Promise<{ missing: string[]; hint: string }> {
     if (!hsModel(s)) return { missing: [], hint: "" };
-    await hsMeasureAll(s, null);
+    hsRefresh(s);
     const file = boundLedger(s.markerDir, s.id);
     let done = true;
     try {
@@ -1381,7 +1375,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     } catch {
       done = true;
     }
-    return finishNeeds(s.hs.all(), { ledgerDone: done, own: await hsOwnRoot(s) });
+    return finishNeeds(s.hs.state(), { due: hsDue(s), ledgerDone: done, own: await hsOwnRoot(s) });
   }
 
   /**
@@ -1416,7 +1410,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.planPhase = e.planPhase;
     s.planPhaseOrigin = e.planPhaseOrigin ?? "owner"; // an entry without the field: the owner's origin (a PASS does not end it)
     if (s.reviews.length === 0) s.reviews.push(...e.reviews); // the PR gate's verdicts and heads (reviews.ts)
-    if (e.highStakes && s.hs.all().length === 0) s.hs.load(e.highStakes); // nothing counts as running after a reload
+    if (e.highStakes && s.hs.isEmpty()) s.hs.load(e.highStakes); // nothing counts as running after a reload
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
@@ -1713,7 +1707,11 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     restoreCeremonyState(s, ctx, event.reason);
     restoreRounds(s, ctx, event.reason);
     if (hsModel(s)) {
-      // the own checkout's fallback base: its HEAD now (an already stored one is kept)
+      // the review base fallback: the first HEAD of each repository the session saw (a pre-upgrade entry's per-checkout sightings first; the first one wins)
+      for (const l of s.hs.takeLegacy()) if (fs.existsSync(l.cwd)) {
+        const key = await repoKeyOf(l.cwd);
+        if (key) s.hs.noteBase(key, l.seenHead);
+      }
       await hsSee(s, s.cwd);
       persistCeremonyState(s);
     }
@@ -2619,7 +2617,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
               const top = await toplevelOf(cwd);
               const rec: ReviewRecord = { role: r.role, verdict: r.verdict, head: h.head, ...(top ? { cwd: top } : {}), ...(h.why ? { why: h.why } : {}), ...(full && (full.occasion === "pre-pr" || full.occasion === "item") ? { occasion: full.occasion } : {}), ...(await loopFieldsOf(s, runId, full, "code", worktreeTree(cwd))) };
               appendReview(s.reviews, rec);
-              if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd).catch(() => undefined); // clears a high-stakes FAIL after its revision; measures the checkout
+              if (rec.verdict === "pass" && (rec.occasion === "pre-pr" || rec.occasion === "item")) await hsNormalPass(s, rec.cwd ?? cwd).catch(() => undefined); // clears a high-stakes FAIL after its revision
               if (rec.verdict === "pass" && rec.occasion === "pre-pr") s.sentBack = false; // only a [pre-pr] PASS ends a send-back
               s.sentBackHeads = sentBackUnmark(s.sentBackHeads, rec);
               s.live?.flush(); // the pill's review facts
@@ -3517,7 +3515,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       let shadow: ShadowDecision = { kind: "none" };
       /** The `[high-stakes]` entries of this launch (highstakes.ts) and the checkout they review. */
       const hsEntries = new Set<Json>();
-      let hsLaunch: { root: string; base: string | null; measure: Measure | null } | null = null;
+      let hsLaunch: { root: string; base: string | null } | null = null;
       if (event.toolName === "subagent") {
         // D8: only the adapter writes the pi-foreman usage binding (single launches, below).
         stripBinding(input);
@@ -4044,8 +4042,6 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         s.ladder.noteLaunched(input);
         if (hsEntries.size > 0) liveReviewer === undefined ? s.ladder.live.delete("reviewer") : s.ladder.live.set("reviewer", liveReviewer); // the high-stakes model is no live rung of the reviewer
         for (const p of sizedPlans) for (const t of p.probe) s.ladder.probeRisks.add(t);
-        // a builder with risk tag design fires the trigger of the checkout it runs in (highstakes.ts)
-        if (!s.isChild) for (const p of sizedPlans) if (p.role === "builder" && p.risk.includes("design")) await hsMeasure(s, hsDirOf(ctx, input, p.entry), true);
       }
       let limits: LadderLimits | undefined;
       const single = event.toolName === "subagent" && !s.isChild ? singleLaunchRole(input) : null;
@@ -4056,9 +4052,14 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         limits = { bottom, maxTurns: childMaxTurns(s.config.config, p, single), ...(bottom ? { strongAbove: strongAbove(s.config.config, p, single) } : {}) };
       }
       if (event.toolName === "subagent" && !s.isChild && hsModel(s)) {
-        // High stakes: a builder's checkout is seen (its HEAD is the base fallback); the findings of an uncleared FAIL go once into the next normal review task of that checkout,
+        // High stakes: a builder's repository is seen (its first HEAD is the base fallback); a risk tag of the builder entries (read with the ladder or sizing off too) and a heavy task fire the review;
+        // the findings of an uncleared FAIL go once into the next normal review task of that checkout,
         // as the last change to the task text, so no parser of the launch path reads them; the cited items are taken before.
-        if (launchRoles(s, input).includes("builder")) for (const d of builderDirs(ctx, input)) await hsSee(s, d);
+        if (launchRoles(s, input).includes("builder")) {
+          for (const d of builderDirs(ctx, input)) await hsSee(s, d);
+          const tags = [...(sized?.entries ?? [])].filter(([e]) => e.agent === "builder").flatMap(([, d]) => d.risk ?? []).filter((t) => HS_RISKS.includes(t));
+          hsFire(s, [...tags, ...(s.ceremony.tier === "heavy" ? ["heavy"] : [])]);
+        }
         if (actionOf(input) === null) for (const [e, o] of occasions) {
           if ((o !== "item" && o !== "pre-pr") || typeof e.agent !== "string" || !REVIEW_ROLES.includes(e.agent) || typeof e.task !== "string") continue;
           const root = await toplevelOf(hsDirOf(ctx, input, e));
@@ -4071,9 +4072,9 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         }
       }
       if (event.toolName === "subagent" && !s.isChild && hsLaunch) {
-        // the launch passed every check: it counts as running; a pass without a fired trigger records the trigger as fired (reason foreman)
+        // the launch passed every check: it counts as running; the foreman's own request is a reason too (foreman)
         s.hs.begin(event.toolCallId, hsLaunch.root);
-        hsFire(s, hsLaunch.root, { reasons: ["foreman"], files: hsLaunch.measure?.files ?? 0, lines: hsLaunch.measure?.lines ?? 0, modules: hsLaunch.measure?.modules ?? 0 }, hsLaunch.base);
+        hsFire(s, ["foreman"]);
         persistCeremonyState(s);
       }
       if (event.toolName === "subagent") {
@@ -4829,7 +4830,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     questionHints.delete(event.toolCallId);
     const withNote = () => (readNote || qHint || planFormNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : [])] } : undefined);
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
-    if (owner && !owner.isChild && !event.isError && owner.hs.all().length > 0 && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
+    if (owner && !owner.isChild && !event.isError && owner.hs.hasRuns() && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
       await hsRevised(owner, edited ? path.dirname(edited) : ctx.cwd);
     }
@@ -6377,6 +6378,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       const idleSpec = get(s.config.config, `providers.${dm?.provider}.roles.foreman.idle.model`);
       const idleRef = typeof idleSpec === "string" && idleSpec && dm ? splitSpec(idleSpec, dm.provider) : null;
       out.push(...deprecatedKeepaliveLines(s.config.config));
+      out.push(...retiredHighStakesLines(s.config.config));
       out.push(...cacheDoctorLines({
         provider: dm?.provider,
         policy: resolveWarmPolicy(s.config.config, dm?.provider, dm?.id, bridgeTtlS),

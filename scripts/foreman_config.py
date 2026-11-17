@@ -98,7 +98,7 @@ Keys outside safety that the project and session layers cannot loosen either
     ceremony.checkpoint              ignored (the checkpoint mode, human only; parent is refused: L1/L3/L2 only)
     ceremony.reviewModel             ignored (the fallback reviewer model or the pair map: L1/L3/L2 only)
     ceremony.reviewByOccasion        ignored (per-occasion reviewer thinking/model: L1/L3/L2 only)
-    ceremony.highStakes              ignored (the high-stakes review model and its size bounds: L1/L3/L2 only)
+    ceremony.highStakes              ignored (the high-stakes review model; lines, modules and paths are retired: L1/L3/L2 only)
     ceremony.planReview.<tier>       only true is accepted (false skips the plan review)
     ceremony.planReviewRounds        free per layer (no tighten rule)
     ceremony.budgetUsd               lower only, minimum 0.01 (a higher cap, or none, lets a session spend more); unset = no cap
@@ -257,7 +257,7 @@ IGNORED_KEYS = [
     (("ceremony", "checkpoint"), "the checkpoint mode (human only; parent is refused) comes from the user or overlay config"),
     (("ceremony", "reviewModel"), "the fallback reviewer model and the reviewer pair map come from the user or overlay config"),
     (("ceremony", "reviewByOccasion"), "the per-occasion reviewer overrides come from the user or overlay config"),
-    (("ceremony", "highStakes"), "the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config"),
+    (("ceremony", "highStakes"), "the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config"),
     (("resources", "sampleSeconds"), "the sampling interval comes from the user or overlay config"),
     (("ladder", "strongAbove"), "the ladder and the child rank policy come from the user or overlay config"),
     (("ladder", "childMaxTurns"), "the ladder and the child rank policy come from the user or overlay config"),

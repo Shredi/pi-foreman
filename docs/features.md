@@ -55,7 +55,7 @@ State is the fresh-install state with the package defaults: `on`, `off` (a switc
 | [review-panel](#review-panel) | review |  | opt-in | Adds shadow reviewer models beside the primary on the named occasions; their findings are reported but never block, mark items or satisfy the PR gate. | `{"ladder": {"reviewPanel": {"shadows": ["<other-provider>/<other-model>"], "gates": ["pre-pr"]}}}` | [review](review.md#review-panel) |
 | [different-model-rule](#different-model-rule) | review |  | on | Moves a reviewer launch off the foreman's live model to the next differing rung, else to `ceremony.reviewModel`, which may also be a map pairing each foreman model with a reviewer model. | on by default | [review](review.md#different-model-rule) |
 | [review-overrides](#review-overrides) | review |  | opt-in | Sets the thinking level and/or model of a reviewer launch per occasion (`item`, `plan-review`, `pre-pr`, `second-opinion`). | `{"ceremony": {"reviewByOccasion": {"pre-pr": {"thinking": "high"}}}}` | [review](review.md#per-occasion-overrides) |
-| [review-high-stakes](#review-high-stakes) | review |  | opt-in | One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a large change (`modules` or `lines`, measured by the adapter) or after a `design` builder risk tag. The PR gate and the finish gate ask for it; a FAIL gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`. | `{"ceremony": {"highStakes": {"model": "provider-b/top"}}}` | [review](review.md#high-stakes) |
+| [review-high-stakes](#review-high-stakes) | review |  | opt-in | One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a risky change: a builder launch with risk tag `security`, `permission`, `guard`, `concurrency` or `design`, a heavy task that built something, or the foreman's own request. One per session; any pass opens its PRs. The PR gate and the finish gate ask for it; a FAIL gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`. | `{"ceremony": {"highStakes": {"model": "provider-b/top"}}}` | [review](review.md#high-stakes) |
 | [checkpoint-verdict](#checkpoint-verdict) | ceremony |  | on | The plan checkpoint is the owner's dialog in the session's own pane, also in a session opened by a parent; no file from a parent (`ruling.md`, `ruling-plan.md`) approves a plan, and `ceremony.checkpoint: parent` is refused. A plan phase that a parent's launch started (`--plan-first`) ends below tier heavy with the session's own plan-review PASS on the current plan version. Plan state, the user tier and the plan phase with its origin survive `/reload` and resume. | on by default | [ceremony](ceremony.md) |
 | [plan-review](#plan-review) | review | toggle | off | Refuses the owner checkpoint until a `[plan-review]` reviewer verdict exists for the current plan version (the body above any ruling, decision-log or addendum appendix, so an appended ruling needs no new review); on for heavy by default, opt-in for trivial and standard. | `{"ceremony": {"planReview": {"standard": true}}}` | [review](review.md#plan-review) |
 | [findings](#findings) | review |  | on | Records every reviewer run's located findings locally, with `foreman findings` to list, dismiss or export them and `foreman retro models` to compare reviewer models. | on by default | [review](review.md#findings-store) |
@@ -336,16 +336,16 @@ Switch: `ceremony.reviewByOccasion` is non-empty.
 
 ### review-high-stakes
 
-**High-stakes review.** One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a large change (`modules` or `lines`, measured by the adapter) or after a `design` builder risk tag. The PR gate and the finish gate ask for it; a FAIL gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`.
+**High-stakes review.** One extra `[high-stakes]` review on `ceremony.highStakes.model` after the normal review passed, only for a risky change: a builder launch with risk tag `security`, `permission`, `guard`, `concurrency` or `design`, a heavy task that built something, or the foreman's own request. One per session; any pass opens its PRs. The PR gate and the finish gate ask for it; a FAIL gets one second and last pass. Other reviews are unchanged. Traces `review_stakes` and `review_high_stakes`.
 
 Switch: `ceremony.highStakes.model` is non-empty.
 
 | Key | Default | Layer |
 |---|---|---|
-| `ceremony.highStakes.model` | `null` | not in project/session (the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config) |
-| `ceremony.highStakes.modules` | `5` | not in project/session (the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config) |
-| `ceremony.highStakes.lines` | `700` | not in project/session (the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config) |
-| `ceremony.highStakes.paths` | unset | not in project/session (the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config) |
+| `ceremony.highStakes.model` | `null` | not in project/session (the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config) |
+| `ceremony.highStakes.modules` | unset | not in project/session (the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config) |
+| `ceremony.highStakes.lines` | unset | not in project/session (the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config) |
+| `ceremony.highStakes.paths` | unset | not in project/session (the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config) |
 
 ### checkpoint-verdict
 
@@ -1050,7 +1050,7 @@ Keys the project and session layers may not set (`IGNORED_KEYS`; `*` = any entry
 | `ceremony.checkpoint` | the checkpoint mode (human only; parent is refused) comes from the user or overlay config |
 | `ceremony.reviewModel` | the fallback reviewer model and the reviewer pair map come from the user or overlay config |
 | `ceremony.reviewByOccasion` | the per-occasion reviewer overrides come from the user or overlay config |
-| `ceremony.highStakes` | the high-stakes review model and its size bounds (modules, lines; paths is retired) come from the user or overlay config |
+| `ceremony.highStakes` | the high-stakes review model (lines, modules and paths are retired) comes from the user or overlay config |
 | `resources.sampleSeconds` | the sampling interval comes from the user or overlay config |
 | `ladder.strongAbove` | the ladder and the child rank policy come from the user or overlay config |
 | `ladder.childMaxTurns` | the ladder and the child rank policy come from the user or overlay config |
