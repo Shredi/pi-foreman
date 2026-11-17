@@ -107,9 +107,9 @@ no lookup and starts at once. A lookup that fails keeps the watch, and so the re
 
 ## Self-finish on merge
 
-A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose watched PR is merged closes itself; the parent need not send `foreman:close`.
-When the watch reports `merged`, the adapter starts the normal close sequence with the source `pr-merged` (it is not a
-`close.from` source). The sequence is the one above, with these differences:
+A child foreman session (`PI_FOREMAN_HANDOFF_DIR` set) whose last watched PR is merged closes itself; the parent need not send `foreman:close`. With several watched PRs it closes at the last merge, or, after a merge, when the last watched PR is closed unmerged by the host (a `pr_unwatch` of the last watch starts no close).
+When the watch reports `merged` and no other watch is open, the adapter starts the normal close sequence with the source `pr-merged` (it is not a
+`close.from` source). If that close is refused because a child run is still active, it is tried once more when the last run ends (not after a reload; a close the parent sent is not retried). The sequence is the one above, with these differences:
 
 - **A close from any source.** The session remembers a watched PR it saw merged: the watch's `merged` event, or the fresh
   `pr_status` that ends the watch before a close (a PR closed without a merge is not remembered). The memory is saved with the
@@ -129,7 +129,7 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
   before the section. When no cleanup starts, nothing is copied and the reply names the original file. Uncommitted files of another repository (a `sync.repos`
   entry) show in the CLOSE report but are no cleanup precondition: only the round's own worktree is checked.
 
-- The close prompt asks for the result file `<handoff dir>/result.md`: the PR number, the merge commit and anything left open.
+- The close prompt asks for the result file `<handoff dir>/result.md`: the PR numbers, the merge commits and anything left open.
 - After the result file the session tells its parent `PR #n merged, closing` and the usual `Result from <label>: <path>`.
 - **Target worktree.** The session cwd may be a subfolder: it is first resolved to its worktree root (the `git worktree list --porcelain` entry containing it, longest match, by real path) and that root is the worktree in every check and message. A cwd in no listed worktree refuses the cleanup with a line naming the cwd, removes nothing and prints no remove command; the cwd's `.workflow/` is still snapshotted. The adapter runs one `pr_status` first. When the session's cwd has the PR head ref checked out, that
   worktree is the target. Otherwise (a round that worked in a second worktree while the session sits in the main checkout)
@@ -195,8 +195,9 @@ When the watch reports `merged`, the adapter starts the normal close sequence wi
 - **Remote branch.** Nothing is deleted on the remote and no guard is lifted. If the remote head branch still exists, the report
   lists `kept: remote branch <b> (enable delete head branch on merge)`. Turn on the host's setting *Automatically delete head
   branches* (GitHub: repository settings, General, Pull Requests) so merging the PR removes it.
-- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup. The watch message says
-  `report to the parent: PR #n closed unmerged`, and the session waits for the parent.
+- **Closed unmerged.** A PR that is closed without a merge starts no close and no cleanup on its own, except that when an earlier PR of the
+  session was merged and the closed one was the last watched PR, the merge-close starts (for the merged PR). The watch message says
+  `report to the parent: PR #n closed unmerged`, and otherwise the session waits for the parent.
 
 ## Pushed branches without a PR
 

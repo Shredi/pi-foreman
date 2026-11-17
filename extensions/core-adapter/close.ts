@@ -300,9 +300,34 @@ export interface CloseRequest {
 /** Who hears a refusal of `req`: its requester; for the adapter's own `pr-merged` close, the parent named in `pr`. */
 const answerTo = (req: CloseRequest): string | undefined => req.replyTo ?? (req.source === "pr-merged" ? req.pr?.parent : undefined);
 
-/** The `pr-merged` close prompt: the result file asks for the PR number, the merge commit and what is left open. */
+/** The `pr-merged` close prompt: the result file asks for the PR numbers, the merge commits and what is left open. */
 export function prMergedPrompt(file: string, n: number): string {
-  return `pi-foreman close: PR #${n} was merged and this session closes now. Write your result file at ${file} (the PR number, the merge commit, anything left open; link the PR and the commits). Do not start new work.`;
+  return `pi-foreman close: PR #${n} was merged and this session closes now. Write your result file at ${file} (the PR numbers, the merge commits, anything left open; link the PR and the commits). Do not start new work.`;
+}
+
+/**
+ * The `pr-merged` close request of a child session (handoff dir set) once no watch is left, naming the merged PR `n`; null while a watch remains,
+ * with no handoff dir or with no merged PR.
+ */
+export function mergeCloseRequest(o: { handoff: string | undefined; watched: readonly number[]; n: number | null | undefined; parent: string | undefined }): CloseRequest | null {
+  const handoff = o.handoff?.trim();
+  if (!handoff || o.watched.length > 0 || o.n === null || o.n === undefined) return null;
+  const label = path.basename(handoff).replace(/^\d{8}-\d{6}-/, "");
+  const file = path.join(handoff, "result.md");
+  return { source: "pr-merged", file, shown: file, prompt: prMergedPrompt(file, o.n), pr: { n: o.n, parent: o.parent, label: /^[A-Za-z0-9._-]{1,40}$/.test(label) ? label : "child" } };
+}
+
+/**
+ * The merge-close starter of one session: a close is started once at a time. `closing` only turns true after `start` has awaited the session,
+ * so a synchronous in-flight flag, set before `start` runs and cleared when its promise settles, skips a second merge on the same tick.
+ */
+export function mergeCloseStarter(start: (ctx: ExtensionContext, req: CloseRequest) => Promise<void>, closing: () => boolean): (ctx: ExtensionContext, req: CloseRequest) => void {
+  let inFlight = false;
+  return (ctx, req) => {
+    if (inFlight || closing()) return;
+    inFlight = true;
+    void start(ctx, req).catch(() => undefined).finally(() => { inFlight = false; });
+  };
 }
 
 type Phase = "refreshing" | "idle-wait" | "result-turn" | "finishing";
@@ -316,6 +341,10 @@ export class CloseFlow {
   /** The close prompt passed the `input` handlers / reached the model (security review S5). */
   private promptSeen = false;
   private started = false;
+  /** A `pr-merged` close refused for active runs: tried once more by onRunsDone. */
+  private pending: CloseRequest | null = null;
+  /** The request onRunsDone retries now: its own refusal is final. */
+  private retried: CloseRequest | null = null;
   private clearDeadline: (() => void) | null = null;
   private readonly d: CloseDeps;
 
@@ -335,10 +364,15 @@ export class CloseFlow {
     else if (replyTo) this.d.reply(replyTo, text);
   }
 
-  private waitsBlock(source: CloseSource, replyTo?: string): boolean {
+  private waitsBlock(req: CloseRequest): boolean {
+    const source = req.source;
+    const replyTo = answerTo(req);
     const runs = this.d.activeRuns();
     if (runs > 0) {
-      this.refuse(`${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
+      // the adapter's own `pr-merged` close is tried once more when the last run ends (onRunsDone); a retry that is refused again is final
+      const again = source === "pr-merged" && req !== this.retried;
+      if (again) this.pending = req;
+      this.refuse(again ? `${runs} child run(s) still active; this close is tried again once they end` : `${runs} child run(s) still active; let them finish (a close never cancels them), then close again`, source, replyTo);
       return true;
     }
     const prs = this.d.watchedPrs?.() ?? [];
@@ -391,10 +425,12 @@ export class CloseFlow {
   }
 
   private begin(req: CloseRequest, ctx: { isIdle(): boolean }, viaIntercomWake: boolean, refreshed: boolean, inRun: boolean): void {
-    if (this.waitsBlock(req.source, answerTo(req))) {
+    if (this.waitsBlock(req)) {
       this.wakePending = false;
       return;
     }
+    this.pending = null;
+    if (req !== this.retried) this.retried = null;
     this.req = req;
     this.wakePending = viaIntercomWake;
     this.d.trace({ event: "close", cause: req.source, decision: "accepted" });
@@ -418,7 +454,7 @@ export class CloseFlow {
       await this.fresh();
       if (this.phase !== "refreshing" || !this.req) return;
     }
-    if (this.waitsBlock(this.req.source, answerTo(this.req))) return this.reset();
+    if (this.waitsBlock(this.req)) return this.reset();
     this.phase = "result-turn";
     this.promptPending = !inRun;
     this.d.trace({ event: "close", cause: this.req.source, decision: "turn" });
@@ -481,6 +517,15 @@ export class CloseFlow {
     return false;
   }
 
+  /** The last child run ended: try the refused `pr-merged` close once more (no close phase active and no run left). */
+  onRunsDone(ctx: { isIdle(): boolean }): void | Promise<void> {
+    const req = this.pending;
+    if (!req || this.phase || this.d.activeRuns() > 0) return;
+    this.pending = null;
+    this.retried = req;
+    return this.request(req, ctx);
+  }
+
   /** `agent_settled`: advance the sequence. */
   async onSettled(ctx: { isIdle(): boolean; shutdown(): void }): Promise<void> {
     if (!this.phase || !this.req) return;
@@ -497,7 +542,7 @@ export class CloseFlow {
     }
     this.phase = "finishing";
     const req = this.req;
-    if (this.waitsBlock(req.source, answerTo(req))) return this.reset();
+    if (this.waitsBlock(req)) return this.reset();
     let childLines: string[] = [];
     try {
       childLines = this.d.closeChildren ? await this.d.closeChildren() : [];
@@ -699,7 +744,7 @@ export async function outboxSend(events: Bus, to: string, message: string, kind:
 export function registerClose(
   pi: ExtensionAPI,
   deps: { session: (ctx: ExtensionContext) => Promise<CloseSession>; activeWaits: (sessionId: string) => { id: string; kind: string; note: string }[]; activeRuns: (sessionId: string) => number; cancelWaits?: (sessionId: string) => string[]; platform: string },
-): { command: (args: string, ctx: ExtensionContext) => Promise<void>; start: (ctx: ExtensionContext, req: CloseRequest) => Promise<void>; closing: (sessionId: string) => boolean } {
+): { command: (args: string, ctx: ExtensionContext) => Promise<void>; start: (ctx: ExtensionContext, req: CloseRequest) => Promise<void>; closing: (sessionId: string) => boolean; onRunsDone: (sessionId: string) => void | Promise<void> } {
   const flows = new Map<string, { flow: CloseFlow; ctx: ExtensionContext }>();
   const flowFor = (s: CloseSession, ctx: ExtensionContext): CloseFlow => {
     const slot = flows.get(s.id);
@@ -827,6 +872,11 @@ export function registerClose(
   return {
     /** True while this session's close flow is active (a triggered run was claimed as the close turn). */
     closing: (sessionId) => flows.get(sessionId)?.flow.active === true,
+    /** A child run of the session ended: the flow tries a refused `pr-merged` close once more. */
+    onRunsDone: (sessionId) => {
+      const slot = flows.get(sessionId);
+      return slot ? slot.flow.onRunsDone(slot.ctx) : undefined;
+    },
     command: async (args, ctx) => {
       const s = await deps.session(ctx);
       if (s.isChild) {
