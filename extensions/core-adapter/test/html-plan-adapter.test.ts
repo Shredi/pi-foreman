@@ -24,49 +24,38 @@ function htmlWorld(t: Parameters<typeof world>[0], page = PAGE) {
 
 const refusedWith = (b: { blocked: string | null }, re: RegExp): boolean => re.test(b.blocked ?? "");
 
-test("html plan: a [plan-review] launch naming the page or its copy starts and writes the copy", async (t) => {
+test("html plan: a [plan-review] launch naming the page or its copy starts and writes the copy; the checkpoint tool text names both extensions; a write over the copy is refused or repaired", async (t) => {
   const { w, copy } = htmlWorld(t);
   const a = await w.adapter("startup");
   assert.equal((await a.reviewLaunch(HTML_TASK)).blocked, null);
   assert.match(fs.readFileSync(copy, "utf8"), /## For the owner/);
   assert.equal((await a.reviewLaunch()).blocked, null, "the default task names plan-widget.md, the copy");
-});
-
-test("html plan: the form check of a launch runs on the copy", async (t) => {
-  const { w } = htmlWorld(t, BAD);
-  const a = await w.adapter("startup");
-  const r = await a.reviewLaunch(HTML_TASK);
-  assert.ok(refusedWith(r, /\[plan_form\]/), String(r.blocked));
-  assert.match(r.blocked ?? "", /plan-widget\.html/);
-});
-
-test("html plan: a write of the page reports the form faults, a write of a clean page adds nothing", async (t) => {
-  const { w, pagePath } = htmlWorld(t, BAD);
-  const a = await w.adapter("startup");
-  assert.match((await a.call("write", { path: pagePath, content: "x" })).note, /plan form is wrong/);
-  fs.writeFileSync(pagePath, PAGE);
-  assert.equal((await a.call("write", { path: pagePath, content: "x" })).note, "");
-});
-
-test("html plan: a write over the generated copy is told to edit the page, and the copy is written again", async (t) => {
-  const { w, copy } = htmlWorld(t);
-  const a = await w.adapter("startup");
-  assert.equal((await a.reviewLaunch(HTML_TASK)).blocked, null);
+  // the same world: the checkpoint tool text names both extensions
+  const tool = a.tool("foreman_checkpoint") as unknown as { description: string; parameters: { properties: { path: { description: string } } } };
+  assert.match(tool.description, /plan-<topic>\.html/);
+  assert.match(tool.parameters.properties.path.description, /\.html/);
+  // the same world: a write over the generated copy is told to edit the page and the copy is written again
   const marker = fs.readFileSync(copy, "utf8");
   fs.writeFileSync(copy, `${marker}\nedited\n`);
-  const r = await a.call("write", { path: copy, content: "x" });
-  assert.match(r.note, /generated from plan-widget\.html/);
+  const first = await a.call("write", { path: copy, content: "x" });
+  assert.match(first.note, /generated from plan-widget\.html/);
   assert.equal(fs.readFileSync(copy, "utf8"), marker);
-});
-
-test("html plan: a write that drops the marker of the copy puts the readPlan refusal into the write result", async (t) => {
-  const { w, copy } = htmlWorld(t);
-  const a = await w.adapter("startup");
-  assert.equal((await a.reviewLaunch(HTML_TASK)).blocked, null);
+  // and a write that drops the marker of the copy puts the readPlan refusal into the write result
   fs.writeFileSync(copy, "# mine\n");
   const r = await a.call("write", { path: copy, content: "x" });
   assert.match(r.note, /plan-widget\.md/);
   assert.equal(fs.readFileSync(copy, "utf8"), "# mine\n", "a hand-written file is never overwritten");
+});
+
+test("html plan: the form check of a launch runs on the copy; a write of the page reports the form faults, a write of a clean page adds nothing", async (t) => {
+  const { w, pagePath } = htmlWorld(t, BAD);
+  const a = await w.adapter("startup");
+  const r = await a.reviewLaunch(HTML_TASK);
+  assert.ok(refusedWith(r, /\[plan_form\]/), String(r.blocked));
+  assert.match(r.blocked ?? "", /plan-widget\.html/);
+  assert.match((await a.call("write", { path: pagePath, content: "x" })).note, /plan form is wrong/);
+  fs.writeFileSync(pagePath, PAGE);
+  assert.equal((await a.call("write", { path: pagePath, content: "x" })).note, "");
 });
 
 test("html plan: plan_copy_stale refuses a review launch when the copy cannot be written", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async (t) => {
@@ -116,12 +105,4 @@ test("html plan: checkpoint on the page; a page edit is plan_changed; a ruling k
   fs.writeFileSync(pagePath, PAGE.replace("<p>x</p>", "<p>y</p>"));
   const changed = (await a.launch("builder")) as Block;
   assert.match(changed?.reason ?? "", /plan_changed/);
-});
-
-test("html plan: the foreman_checkpoint description and path text name both extensions", async (t) => {
-  const { w } = htmlWorld(t);
-  const a = await w.adapter("startup");
-  const tool = a.tool("foreman_checkpoint") as unknown as { description: string; parameters: { properties: { path: { description: string } } } };
-  assert.match(tool.description, /plan-<topic>\.html/);
-  assert.match(tool.parameters.properties.path.description, /\.html/);
 });

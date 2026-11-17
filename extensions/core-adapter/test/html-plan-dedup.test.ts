@@ -21,17 +21,14 @@ function htmlWorld(t: Parameters<typeof world>[0], page: string) {
   return w;
 }
 
-test("a task naming plan-widget.html and plan-widget.md: one form check", async (t) => {
+test("a task naming plan-widget.html and plan-widget.md: one form check; then one facts line, one verdict, no review_loop after a first FAIL", async (t) => {
   const w = htmlWorld(t, BAD);
   const a = await w.adapter("startup");
-  const r = await a.reviewLaunch(BOTH);
-  assert.match(r.blocked ?? "", /\[plan_form\]/);
-  assert.equal(count(r.blocked ?? "", /plan-widget\.(html|md): /g), 1, String(r.blocked));
-});
-
-test("a task naming plan-widget.html and plan-widget.md: one facts line, one verdict, no review_loop after a first FAIL", async (t) => {
-  const w = htmlWorld(t, PAGE);
-  const a = await w.adapter("startup");
+  const refused = await a.reviewLaunch(BOTH);
+  assert.match(refused.blocked ?? "", /\[plan_form\]/);
+  assert.equal(count(refused.blocked ?? "", /plan-widget\.(html|md): /g), 1, String(refused.blocked));
+  fs.writeFileSync(path.join(path.dirname(w.planFile), "plan-widget.html"), PAGE);
+  readPlan(".workflow/scratch/plan-widget.html", { cwd: w.project, home: path.dirname(w.project), platform: process.platform, scratchDir: ".workflow/scratch" });
   const r = await a.reviewLaunch(BOTH);
   assert.equal(r.blocked, null);
   assert.equal(count(r.task, /^Plan page /gm), 1, r.task);

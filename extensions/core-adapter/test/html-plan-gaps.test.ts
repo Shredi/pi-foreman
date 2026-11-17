@@ -37,7 +37,7 @@ test("restoreFromStore: a page and its generated copy are one plan", (t) => {
   assert.equal(viaCopy.plan.kind, "html", "the copy's name reads as the page");
 });
 
-test("foreman_checkpoint does not accept rulings-x.md as a plan", async (t) => {
+test("foreman_checkpoint does not accept rulings-x.md as a plan; the loaded instructions carry the skeleton path, byte-identical on every load", async (t) => {
   const w = world(t);
   const a = await w.adapter("startup");
   const scratch = path.dirname(w.planFile);
@@ -46,6 +46,18 @@ test("foreman_checkpoint does not accept rulings-x.md as a plan", async (t) => {
   const tool = a.tool("foreman_checkpoint")!;
   const res = (await tool.execute("ck", { path: ".workflow/scratch/rulings-x.md" }, undefined, undefined, a.ctx)) as { details: { decision: string } };
   assert.equal(res.details.decision, "refused");
+  // the same world: the skeleton placeholder becomes the absolute skeleton path
+  const load = async (): Promise<string> => {
+    const event = { prompt: "go", systemPrompt: "", systemPromptOptions: { sections: {} as Record<string, string> } };
+    await a.fire("before_agent_start", event);
+    return event.systemPromptOptions.sections["pi-foreman"] ?? "";
+  };
+  const one = await load();
+  const two = await load();
+  const skeleton = path.join(root, "instructions", "plan-skeleton.html");
+  assert.ok(one.includes(skeleton), "the absolute skeleton path is in the text");
+  assert.ok(!one.includes("{{planSkeleton}}"));
+  assert.equal(one, two);
 });
 
 test("html plan: a rulings write leaves plan.json and the snapshots as they were", async (t) => {
@@ -68,22 +80,6 @@ test("html plan: a rulings write leaves plan.json and the snapshots as they were
   show.rulingsWritten(page);
   await show.idle();
   assert.deepEqual(state(), before);
-});
-
-test("instructions: the skeleton placeholder becomes the absolute skeleton path, byte-identical on every load", async (t) => {
-  const w = world(t);
-  const a = await w.adapter("startup");
-  const load = async (): Promise<string> => {
-    const event = { prompt: "go", systemPrompt: "", systemPromptOptions: { sections: {} as Record<string, string> } };
-    await a.fire("before_agent_start", event);
-    return event.systemPromptOptions.sections["pi-foreman"] ?? "";
-  };
-  const one = await load();
-  const two = await load();
-  const skeleton = path.join(root, "instructions", "plan-skeleton.html");
-  assert.ok(one.includes(skeleton), "the absolute skeleton path is in the text");
-  assert.ok(!one.includes("{{planSkeleton}}"));
-  assert.equal(one, two);
 });
 
 test("htmlmd: a wide-and-tall table converts fast and the output stays linear in the input", () => {
