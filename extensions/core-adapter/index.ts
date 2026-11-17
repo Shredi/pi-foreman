@@ -228,7 +228,7 @@ import { allowedShellDirs, editModeAdvice, editModeBlock, editModeOf, projectCha
 import type { EditMode } from "./editmode.ts";
 import { familyWarnings, modelGaps, splitSpec } from "./modelcheck.ts";
 import { ChildLadder, childMaxTurns, climbHint, hasStrongRung, LadderState, ledgerLines, onBottomRung, RANK_CAPPED_REASON, revisionClimb, strongAbove, strongOnRevision, type Climb } from "./ladder.ts";
-import { equalKeySentence, equalOnStrongRisk, explicitModelAllowed, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
+import { allowedExplicitModels, equalKeySentence, equalOnStrongRisk, explicitModelAllowed, explicitModelReason, launchedModels, normalModelSentence, rankDoctorFindings, rankRefusal, rankRefusalFor, rankTie, ranksOf, rolePolicy, rolesOfModel } from "./ranks.ts";
 import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
@@ -1205,6 +1205,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const gap = providerGapNotice({ provider, config: config.config, presets: presetProviders(PKG_ROOT), mode: ctx.mode, isChild: s.isChild });
     if (gap) notifyOnce(s, ctx, "provider-gap", gap, "warning");
     if (!s.isChild) for (const sh of shadowedRoles(cwd, childRoleIds(get(config.config, "roles")), home)) ctx.ui.notify(`pi-foreman: project agent shadows a role (${sh}); ${SHADOW_FIX}`, "warning");
+    if (!s.isChild && ranksOf(config.config).size === 0) notifyOnce(s, ctx, "no-rank-rules", "pi-foreman: no model rank rules: builder launches that name a model outside the builder's own models are refused; run foreman config apply-preset", "warning");
     return s;
   }
 
@@ -3723,6 +3724,38 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const foremanAt = foremanBaseModel(ctx);
         // The entries the foreman passed the `strong` keyword to, read before sizing, the ladder and applyLaunchModels write their models: a refused strong rung names the next step.
         // (the keyword, or the role's strong model itself)
+        // D36: an explicit builder model equal to the strong rung's is the keyword `strong` (its `:level` kept; the default reason keeps `[strong_no_reason]` out of a launch that works today)
+        const strongModelAsKeyword = (): void => {
+          for (const e of launchEntries(input)) {
+            if (e.agent !== "builder") continue;
+            const m = e.model ?? input.model;
+            const rung = (resolution.roles.builder?.strong as Json | undefined)?.model;
+            if (typeof m !== "string" || typeof rung !== "string") continue;
+            const split = splitLevel(m.trim());
+            if (split.base === "" || split.base !== splitLevel(rung).base) continue;
+            e.model = split.level ? `strong:${split.level}` : "strong";
+            const has = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
+            if (!has(e.reason) && !has(input.reason)) e.reason = "explicit strong model named";
+          }
+        };
+        // D36: any other explicit builder model the rank rules do not allow is refused, read from the raw input before sizing and the ladder (the rank cap could drop it unseen)
+        if (!s.isChild && actionOf(input) === null) {
+          strongModelAsKeyword();
+          const foremanRaw = foremanBaseModel(ctx);
+          const mappedBase = typeof resolution.roles.builder?.model === "string" ? splitLevel(resolution.roles.builder.model).base : "";
+          for (const e of launchEntries(input)) {
+            const m = e.model ?? input.model;
+            if (e.agent !== "builder" || typeof m !== "string") continue;
+            const base = splitLevel(m.trim()).base;
+            if (base === "" || (STRENGTHS as readonly string[]).includes(base) || base === mappedBase) continue;
+            const why = explicitModelReason(s.config.config, foremanRaw, base, "builder");
+            if (why === null) continue;
+            const known = Object.values(resolution.roles).flatMap((r) => [r.model, (r.strong as Json | undefined)?.model]).filter((x): x is string => typeof x === "string");
+            const allowed = ranksOf(s.config.config).size > 0 ? allowedExplicitModels(s.config.config, foremanRaw, "builder", known) : [];
+            s.trace?.emit({ event: "launch_refused", reason: "model_not_allowed", tier: s.ceremony.tier, ...launchDeny(input) });
+            return { block: true, reason: `pi-foreman: launch refused [model_not_allowed] ${base}: ${why}${why.endsWith(".") ? "" : "."}${allowed.length > 0 ? ` Allowed models for builder: ${allowed.join(", ")}. Drop \`model\` or pick one of them.` : " Drop `model` to launch on the builder's own model."}` };
+          }
+        }
         const strongKeyed = new Set(launchEntries(input).filter((e) => {
           const m = e.model ?? input.model;
           const rung = (resolution.roles[String(e.agent)]?.strong as Json | undefined)?.model;
@@ -3965,7 +3998,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
           return `pi-foreman: the climb of ${c.role} to its strong rung ${c.skipped} was skipped: the rank policy (${no?.policy ?? "below"}) does not allow that model for the ${c.role} under the foreman ${foremanAt0 ?? "unknown"}; it launches on ${c.to}.`;
         });
         const handoffLines = climbs.filter((c) => c.handoffFor).map((c) => `pi-foreman: the earlier report of the ${c.role} run ${c.handoff!.runId} (${c.handoff!.cause}) was prepended to this launch because the strong rung ${c.handoffFor} is not allowed by the rank policy.`);
-        notices = [...launched.notices.map((n) => n.text), ...equalLines, ...cappedLines, ...handoffLines];
+        const switchedLines = launched.overrides.map((o) => `model switched: ${o.requested} -> ${o.model} (${explicitModelReason(s.config.config, foremanAt0, o.requested, o.role) ?? "not honoured"})`);
+        notices = [...launched.notices.map((n) => n.text), ...switchedLines, ...equalLines, ...cappedLines, ...handoffLines];
         const clamp = applyLaunchTimeouts(input, get(s.config.config, "roles"), get(s.config.config, "ceremony.childTimeoutSeconds"), get(s.config.config, "ceremony.launchTimeoutCapMinutes"));
         if (clamp) s.trace?.emit({ event: "launch_timeout", ...clamp, reason: "cap" });
       }

@@ -56,7 +56,7 @@ The live rung, `rung_top`, the reviewer's own climb (`ladder.reviewerClimb`) and
 `ladder.childPolicy` (one value for all providers) is `below` (default: children strictly below the foreman's
 tier), `at-or-below`, or `any`; `ladder.rolePolicy.<role>` overrides it for one role (unset = `childPolicy`). An
 explicit launch `model: "<provider>/<id>"` is passed through when the rank policy allows it for that role (ranks
-configured, model ranked); otherwise the role map decides. Tiers are compared across providers, so a foreman on one provider may launch
+configured, model ranked). A builder launch naming any other model (not the role's mapped model, `strong`, `default` or the strong rung's own model) is refused `[model_not_allowed]` with the reason and, with ranks, the allowed models; with no ranks configured that means every model outside the builder's own. For the other roles the role map replaces the model and the launch result says so (`model switched: <requested> -> <used> (<reason>)`). Tiers are compared across providers, so a foreman on one provider may launch
 rank-compatible children on another. Once any ranks exist, a model in no list is allowed only under `any`. With
 no ranks anywhere the policy does nothing. A refused launch is traced `launch_refused {policy, foreman, requested}`. There is no automatic climb.
 
