@@ -111,6 +111,18 @@ test("an apostrophe in a heredoc body or a comment never lets a quoted $FOREMAN_
   assert.equal(expandOutVar('cat > "$FOREMAN_OUT/a" <<EOF\nplain\nEOF', "/o"), 'cat > "/o/a" <<EOF\nplain\nEOF', "a heredoc without an apostrophe still resolves");
 });
 
+test("an apostrophe anywhere leaves $FOREMAN_OUT unresolved: nested-quote bypasses are refused", { skip: !posix }, () => {
+  const outside = path.join(base, "elsewhere2");
+  for (const command of [
+    `cd ${outside} && case "$(mkdir -p '$FOREMAN_OUT' && touch '$FOREMAN_OUT/y')" in *) ;; esac`,
+    `cd ${outside} && case "\`touch '$FOREMAN_OUT/y'\`" in *) ;; esac`,
+    `cd ${outside} && case "\${u:-"'"}" in *) ;; esac; touch '$FOREMAN_OUT'; case "\${u:-"'"}" in *) ;; esac`,
+  ]) {
+    assert.equal(expandOutVar(command, "/o"), command, command);
+    assert.equal(allowed("bash", { command }), false, command);
+  }
+});
+
 // ----------------------------------------------------------------------------------------------------------------- the sweep
 const DAY = 86400000;
 const root = path.join(agentDir, "pi-foreman", "child-out");

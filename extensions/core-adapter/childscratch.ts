@@ -323,12 +323,13 @@ export function expandScratchVar(command: string, dir0: string, platform: string
 
 /**
  * `command` with `$FOREMAN_OUT` / `${FOREMAN_OUT}` read as the child's kept output dir `dir`, for the guards only (the shell sees the variable).
- * Unchanged when any mention of the name is not a plain reference outside single quotes (an assignment, `export`, `env FOREMAN_OUT=`,
- * `${FOREMAN_OUT:-x}`, `'$FOREMAN_OUT'`, `\$FOREMAN_OUT`): the variable may then not hold `dir`, and the call stays unresolved as before.
+ * Unchanged when the line holds an apostrophe, or when any mention of the name is not a plain reference (an assignment, `export`, `env FOREMAN_OUT=`,
+ * `${FOREMAN_OUT:-x}`, `\$FOREMAN_OUT`): the variable may then not hold `dir`, and the call stays unresolved as before.
+ * Without an apostrophe the quote tracker and bash agree on every executed `$FOREMAN_OUT`.
  */
 export function expandOutVar(command: string, dir: string, platform: string = process.platform): string {
-  // the text pass tracks quotes without reading heredoc bodies or comments, where an apostrophe is no quote: with both, it refuses
-  if (command.includes("'") && (command.includes("<<") || command.includes("#"))) return command;
+  // the text pass cannot track quotes as bash does (nested quoting in `$(...)`, backticks, `${u:-"..."}`, heredoc bodies, comments): any apostrophe leaves the line unresolved
+  if (command.includes("'")) return command;
   const r = substVar(command, OUT_ENV, dir, platform);
   const mentions = command.match(/(?<![A-Za-z0-9_])FOREMAN_OUT(?![A-Za-z0-9_])/g)?.length ?? 0;
   return r && r.hits === mentions ? r.text : command;

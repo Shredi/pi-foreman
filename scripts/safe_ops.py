@@ -204,8 +204,10 @@ class Paths(object):
             if exc.name != "not_a_git_repo":
                 raise
             # no git at all: the session working folder (any folder) is the root; every other limit stays. A folder git does know (inside `.git`, a bare repo,
-            # a refused owner) keeps the refusal: its `.git` checks would see nothing relative to the folder itself.
-            if git(["rev-parse", "--git-dir"], cwd)[0] == 0:
+            # a refused owner) keeps the refusal: its `.git` checks would see nothing relative to the folder itself. Only git's own "not a git repository"
+            # (stderr, LC_ALL=C) is no git: every other failure of `rev-parse --git-dir` (dubious ownership included) keeps `not_a_git_repo`.
+            code, _, err = git(["rev-parse", "--git-dir"], cwd)
+            if code == 0 or "not a git repository" not in err.lower():
                 raise
             self.root = os.path.realpath(cwd)
         src_full, src_parent, src_name = resolve_arg(cwd, args.get("src"), "src")

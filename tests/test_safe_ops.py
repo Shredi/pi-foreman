@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -339,6 +340,16 @@ class NonGitWorkspaceTest(SafeOpsCase):
         self.assertTrue(os.path.isfile(hook))
         self.failed(self.op("copy", cwd=gitdir, src="hooks/pre-commit.sample", dst="hooks/pc-x"), "not_a_git_repo")
         self.assertFalse(os.path.exists(os.path.join(gitdir, "hooks", "pc-x")))
+
+    def test_a_refused_owner_keeps_the_refusal(self):
+        self.git("init", "-q", self.repo)
+        self.write("a.txt", "x")
+        gitdir = os.path.join(self.repo, ".git")
+        with mock.patch.dict(os.environ, {"GIT_TEST_ASSUME_DIFFERENT_OWNER": "1"}):
+            self.failed(self.op("move", cwd=self.repo, src="a.txt", dst="b.txt"), "not_a_git_repo")
+            self.failed(self.op("copy", cwd=gitdir, src="hooks/pre-commit.sample", dst="hooks/pc-b"), "not_a_git_repo")
+        self.assertTrue(os.path.isfile(os.path.join(self.repo, "a.txt")))
+        self.assertFalse(os.path.exists(os.path.join(gitdir, "hooks", "pc-b")))
 
     def test_a_bare_repo_as_the_folder_keeps_the_refusal(self):
         bare = os.path.join(self.tmp, "bare.git")
