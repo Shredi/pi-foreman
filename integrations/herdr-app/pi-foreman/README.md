@@ -6,7 +6,7 @@ shipped `agents` block in your cloned layout. Own code on the public mod API (`a
 
 ## What it shows
 
-Agents are grouped by space, in the order `agents()` gives (the same order goes to `setAgentOrder`). Under an agent that joins
+Agents are grouped by space (one heading per space id, groups in the order their first agent appears in `agents()`, agents in that order inside a group; the unchanged `agents()` order goes to `setAgentOrder`). Under an agent that joins
 a top-most foreman session, one tree:
 
 - the agent row itself carries the session's tier, cost (the session plus every nested session, `$x.xx`, as the TUI sidebar prints it) and "N sessions" when N > 1; a joined radar node is merged into this row, there is no second session row; the open ask (red while the session is blocked), else the background task or the waits, sits on a line under it;
