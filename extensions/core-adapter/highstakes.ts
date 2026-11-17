@@ -142,11 +142,17 @@ export class HighStakes {
   private readonly pending = new Map<string, string>();
   /** runId -> checkout: a high-stakes run launched in this process with no run end yet. */
   private readonly running = new Map<string, string>();
+  /** callId -> the review gate key of the checkout of an accepted launch (the toplevel, or "" when it did not resolve). */
+  private readonly pendingKeys = new Map<string, string>();
+  /** runId -> the same key, kept after the run ends so its FAIL finds its gate entry (memory only, at most MAX_RUN_IDS). */
+  private readonly gateKeys = new Map<string, string>();
 
   /** Replace the state with a persisted one (a reload or resume); nothing counts as running after it. */
   load(state: HsState): void {
     this.pending.clear();
     this.running.clear();
+    this.pendingKeys.clear();
+    this.gateKeys.clear();
     this.st = hsStateOfEntry(JSON.parse(JSON.stringify(state))) ?? emptyState();
     const legacy = (state.legacy ?? []).filter((l) => l.cwd && sha(l.seenHead));
     if (legacy.length > 0) this.st.legacy = legacy.map((l) => ({ ...l }));
@@ -201,12 +207,29 @@ export class HighStakes {
     this.pending.set(callId, cwd);
   }
 
+  /** As `begin`, with the review gate key of the launch's checkout (reviewgates.ts: the toplevel, "" when it did not resolve). */
+  beginKeyed(callId: string, cwd: string, gateKey: string): void {
+    this.begin(callId, cwd);
+    this.pendingKeys.set(callId, gateKey);
+  }
+
+  /** The gate key of a high-stakes run launched in this process; null when unknown (evicted, or the run ended before a reload): then the FAIL is session-wide. */
+  gateKeyOf(runId: string): string | null {
+    return this.gateKeys.get(runId) ?? null;
+  }
+
   /** The launch's tool result: a failed launch drops the mark; a run id moves it onto the run and records the id. Returns the checkout, or null. */
   settle(callId: string, runId: string | null, failed: boolean): string | null {
     const cwd = this.pending.get(callId);
     if (cwd === undefined) return null;
     this.pending.delete(callId);
+    const key = this.pendingKeys.get(callId);
+    this.pendingKeys.delete(callId);
     if (failed || !runId) return cwd;
+    if (key !== undefined) {
+      this.gateKeys.set(runId, key);
+      for (const k of [...this.gateKeys.keys()].slice(0, Math.max(0, this.gateKeys.size - MAX_RUN_IDS))) this.gateKeys.delete(k);
+    }
     this.running.set(runId, cwd);
     if (!this.st.runIds.some((r) => r.id === runId)) this.st.runIds = [...this.st.runIds, { id: runId, cwd }].slice(-MAX_RUN_IDS);
     return cwd;

@@ -26,11 +26,13 @@ export interface SetupOpts {
   onMain?: boolean;
   /** No `/ceremony` command and no ledger: the tier comes from `ceremony.default` alone (source default). */
   noOwner?: boolean;
+  /** More options of the world (e.g. a handoff dir and a parent: a session opened by another session). */
+  world?: Record<string, unknown>;
 }
 
 export async function setup(t: Parameters<typeof world>[0], o: SetupOpts = {}) {
   const tier = o.tier ?? "standard";
-  const w = world(t, { ceremony: { default: tier, highStakes: { model: MODEL }, ...o.ceremony } });
+  const w = world(t, { ...o.world, ceremony: { default: tier, highStakes: { model: MODEL }, ...o.ceremony } });
   fs.rmSync(path.join(w.project, ".git"), { recursive: true });
   git(w.project, "init", "-q", "-b", "main");
   fs.writeFileSync(path.join(w.project, ".gitignore"), ".workflow/\n");
