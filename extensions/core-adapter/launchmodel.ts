@@ -175,6 +175,16 @@ export function roleModelsOf(input: unknown): Map<string, string> {
   return out;
 }
 
+/**
+ * The model a child run row shows: the single launch's own (`bound`), else the builder's among the roles of a composite
+ * launch (the first role's when there is no builder), else the model of the run a resume continues (`resumed`), else null.
+ */
+export function rowModelOf(input: unknown, bound: string | null, resumed: string | null = null): string | null {
+  if (bound) return bound;
+  const models = roleModelsOf(input);
+  return models.get("builder") ?? models.values().next().value ?? resumed ?? null;
+}
+
 const posInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 
 /** `roles.<id>.timeoutMinutes` of the merged config in ms, or undefined when unset. */

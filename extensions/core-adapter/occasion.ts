@@ -1,7 +1,7 @@
 // Review occasions (docs/review.md): one launch path, climb rung, model rule and extractor for every
 // review, told apart by a marker in the reviewer's task text:
 //   [plan-review]    the plan before the checkpoint (ceremony.planReview),
-//   [high-stakes]    the extra whole-change pass of a large change (highstakes.ts; not config-facing, never counts),
+//   [high-stakes]    the extra whole-change pass of a risky change (highstakes.ts; not config-facing, never counts),
 //   [pre-pr]         the whole branch diff before a pull request,
 //   [second-opinion] optional advice on unchanged work (bound.ts dupReview exemption; never blocks),
 //   none             "item": the review of built ledger items.

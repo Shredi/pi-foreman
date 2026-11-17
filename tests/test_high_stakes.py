@@ -82,23 +82,29 @@ class ConfigKeys(unittest.TestCase):
         props = SCHEMA["properties"]["ceremony"]["properties"]["highStakes"]
         self.assertIs(props["additionalProperties"], False)
         self.assertEqual(set(props["properties"]), {"model", "modules", "lines", "paths"})
+        for key in ("modules", "lines", "paths"):
+            self.assertIn("Retired", props["properties"][key]["description"])
         for key in ("modules", "lines"):
-            self.assertEqual((props["properties"][key]["type"], props["properties"][key]["minimum"]), ("integer", 0))
+            self.assertEqual(set(props["properties"][key]), {"description"})
         self.assertEqual(props["properties"]["model"]["type"], ["string", "null"])
-        self.assertIn("Retired", props["properties"]["paths"]["description"])
 
     def test_defaults(self):
-        self.assertEqual(DEFAULTS["ceremony"]["highStakes"], {"model": None, "modules": 5, "lines": 700})
+        self.assertEqual(DEFAULTS["ceremony"]["highStakes"], {"model": None})
 
     def test_keys_load_and_paths_is_accepted_and_ignored(self):
         res = self.load({"model": "p/x", "modules": 0, "lines": 10, "paths": ["src/**"]})
         self.assertEqual(res["errors"], [])
         self.assertEqual([w for w in res["warnings"] if "highStakes" in w], [])
-        hs = res["config"]["ceremony"]["highStakes"]
-        self.assertEqual((hs["model"], hs["modules"], hs["lines"]), ("p/x", 0, 10))
+        self.assertEqual(res["config"]["ceremony"]["highStakes"]["model"], "p/x")
+
+    def test_the_retired_size_keys_load_with_any_value(self):
+        for retired in ({"lines": 2000}, {"modules": -1}, {"lines": "many"}, {"modules": 1.5, "lines": -1}):
+            res = self.load(copy.deepcopy(retired))
+            self.assertEqual(res["errors"], [], retired)
+            self.assertEqual([w for w in res["warnings"] if "highStakes" in w], [], retired)
 
     def test_bad_values_are_errors(self):
-        for bad in ({"lines": -1}, {"modules": "many"}, {"lines": 1.5}, {"bogus": 1}):
+        for bad in ({"model": 5}, {"bogus": 1}):
             res = self.load(copy.deepcopy(bad))
             self.assertTrue(res["errors"] or any("bogus" in w for w in res["warnings"]), bad)
 

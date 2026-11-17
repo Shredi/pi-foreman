@@ -57,6 +57,11 @@ export function unmatchedPatterns(patterns: readonly string[], registered: reado
   return patterns.filter((p) => !registered.some((name) => matchesPattern(p, name)));
 }
 
+/** The patterns of `merged` that are not in the shipped defaults: added by user or overlay config, a project or the session (doctor warns only for these). */
+export function addedPatterns(merged: readonly string[], shipped: readonly string[]): string[] {
+  return merged.filter((p) => !shipped.includes(p));
+}
+
 /** Doctor WARN lines: a pattern that matches no registered tool, and the add-on's optional tools that `PI_BG_FEATURES=process` would not register at all. */
 export function deferredDoctorLines(patterns: readonly string[], registered: readonly string[]): string[] {
   const out = unmatchedPatterns(patterns, registered).map((p) => `WARN tools.deferred pattern "${p}" matches no registered tool — fix: correct the name or remove it from tools.deferred (a package may not be installed)`);

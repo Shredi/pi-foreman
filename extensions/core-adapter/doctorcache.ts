@@ -73,6 +73,12 @@ export function deprecatedKeepaliveLines(config: unknown): string[] {
   }
   return out;
 }
+/** One WARN when the merged config still sets a retired size bound of the high-stakes review (`lines`, `modules`); none otherwise. */
+export function retiredHighStakesLines(config: unknown): string[] {
+  const box = isObj(config) && isObj(config.ceremony) ? config.ceremony.highStakes : undefined;
+  if (!isObj(box) || !("lines" in box || "modules" in box)) return [];
+  return ["WARN ceremony.highStakes.lines/modules are retired and ignored; the high-stakes review fires from risk tags, tier heavy or the foreman (docs/review.md)"];
+}
 /** The note the claude-bridge presets used to write on their `claude-*` 3600 row. */
 const OLD_PRESET_NOTE = "subscription within plan usage; 300 on extra-usage credits or API key";
 
