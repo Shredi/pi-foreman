@@ -131,7 +131,7 @@ import { appendHeadLine, appendReview, capSet, checksLine, headlessPass, headOf,
 import type { HighStakesGate, ReviewRecord } from "./reviews.ts";
 import { AttentionNotices, dedupeToolCallNotices, dropEndedRunNotices, dropSuppressedNotices, hideStaleNotice, isRepeatOpenNotice, noticeEvent, staleNoticeRunIds, stableNoticeFilter, trimNoticeMessage } from "./notices.ts";
 import { clearOpenCommand, DEFAULT_LONG_COMMANDS, isLongCommand, readOpenCommand, writeOpenCommand } from "./opencommand.ts";
-import { markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
+import { hasOpenLedgerLine, markPassItems, MARK_NOTE, openItemsOf, reviewerPassOfNotice, reviewerPassOfRunEnd } from "./reviewmarks.ts";
 import { commentOnlySince, treeChangedSince, worktreeTree, type TreeSnap } from "./commentonly.ts";
 import { denyFields, openTrace, toolErrorRecord, traceFile } from "./trace.ts";
 import type { TraceWriter } from "./trace.ts";
@@ -232,7 +232,7 @@ import type { RegistryLike } from "./modelcheck.ts";
 import { countingView, entryOccasions, occasionLinesOf, occasionOf, reviewLaunchOf, reviewResultsOfRunEnd, type Occasion, type ReviewLaunch, type ReviewResult } from "./occasion.ts";
 import { panelConfig, PendingPanels, primaryPanel, shadowInstruction, shadowLaunch, type ShadowDecision } from "./panel.ts";
 import { diffLinesOf, filesOfDiff, onReviewRunEnd, planReviewFiles, RECORD_TIMEOUT_MS, type RunEndFindings } from "./findings.ts";
-import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, type PlanPhaseOrigin, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
+import { buildCeremonyState, CEREMONY_ENTRY, emptyCeremonyState, latestCeremonyState, type PersistedWork, type PlanPhaseOrigin, type WorkCount, restorableApproval, sentBackMark, sentBackRestore, sentBackUnmark, type CeremonyStateEntry } from "./planstate.ts";
 import { PlanReviews, planDiffLines, planFactsBlock, planPathsOf, planReviewOn, planReviewRounds, planReviewRefusalText, planReviewResults, planReviewSection } from "./planreview.ts";
 import { restoreRoundState, ROUND_STATE_FILE, roundStateDir, writeRoundState } from "./roundstate.ts";
 import { launchEntries } from "./ladder.ts";
@@ -396,8 +396,18 @@ interface Session {
   /** The heads a send-back covered that no `[pre-pr]` PASS on the head has cleared (planstate.ts sentBackMark); persisted beside the flag. */
   sentBackHeads: string[];
   reworkSeen: number;
-  /** Finish refusals since the last user prompt (at most 2, then a forced pass). */
+  /** Finish refusals of the unchanged state `finishKey` (at most 2, then a forced pass); an owner prompt does not reset it. */
   finishRefusals: number;
+  finishKey: string;
+  /** The `ceremony incomplete` message was appended for this state key (once per key). */
+  incompleteKey: string;
+  /** Foreman work: builder launches and project-file edits through its tools, and the count at the last owner prompt (a turn end with open ledger items and no new work is a pause). */
+  work: WorkCount;
+  workAtPrompt: WorkCount;
+  /** What the session entry holds of work and refusals: written at an owner input and at a settle only, not on each edit. */
+  pauseSaved: PersistedWork;
+  /** A review reminder is queued for the next turn (one per pause). */
+  reminderQueued: boolean;
   /** Foreman only: a handoff wait or a pending checkpoint waits for the parent/owner; the finish gate lets the turn end. Cleared by the next user/parent input. */
   waitingForParent: boolean;
   /** Foreman only: ids of the active waits that set waitingForParent (cleared with it). */
@@ -1017,6 +1027,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       sentBackHeads: [],
       reworkSeen: 0,
       finishRefusals: 0,
+      finishKey: "",
+      incompleteKey: "",
+      work: { builders: 0, edits: 0 },
+      workAtPrompt: { builders: 0, edits: 0 },
+      pauseSaved: { work: { builders: 0, edits: 0 }, atPrompt: { builders: 0, edits: 0 }, refusals: null },
+      reminderQueued: false,
       waitingForParent: false,
       handoffWaits: new Set(),
       carry: new IntercomCarry(),
@@ -1218,6 +1234,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       sentBackHeads: s.sentBackHeads,
       reworkSeen: s.reworkSeen,
       highStakes: s.hs.snapshot(),
+      pause: s.pauseSaved,
     });
     const json = JSON.stringify(data);
     if (json === s.ceremonyEntry) return;
@@ -1424,6 +1441,12 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     });
   }
 
+  /** Records the work counters and the refusal count in the session entry; called at an owner input and at a settle only, never per edit. */
+  function savePause(s: Session): void {
+    s.pauseSaved = { work: { ...s.work }, atPrompt: { ...s.workAtPrompt }, refusals: s.finishKey ? { n: s.finishRefusals, key: s.finishKey } : null };
+    persistCeremonyState(s);
+  }
+
   /** session_start: what the latest ceremony-state entry of the branch brings back; an approval never on a fork. */
   function restoreCeremonyState(s: Session, ctx: ExtensionContext, reason: string): void {
     if (s.isChild) return;
@@ -1438,6 +1461,13 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     s.loopStop = e.loopStop ?? null;
     if (reason !== "fork") restoreGate(s, e);
     if (reason !== "fork") (s.sentBack = e.sentBack === true), (s.sentBackHeads = sentBackRestore(e)), (s.reworkSeen = e.reworkSeen ?? 0);
+    if (reason !== "fork" && e.pause) {
+      s.work = { ...e.pause.work };
+      s.workAtPrompt = { ...e.pause.atPrompt };
+      s.finishRefusals = e.pause.refusals?.n ?? 0;
+      s.finishKey = e.pause.refusals?.key ?? "";
+      s.pauseSaved = e.pause;
+    }
     if (e.tier && e.tierSource && e.tierSource !== "default") {
       // a reload never lowers the tier: the persisted effective tier (auto escalations included) or the user's, whichever is higher, unless the last change was /ceremony
       const tier = e.tierSource === "user" || !e.userTier || TIERS.indexOf(e.tier) >= TIERS.indexOf(e.userTier) ? e.tier : e.userTier;
@@ -4141,7 +4171,10 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         const b = recordLaunchUsage(s, ctx, input, event.toolCallId, kind, limits, launchMcp, { ...launchFlags, ...(hsLaunch ? { highStakes: true } : {}) });
         if (!s.isChild) s.childRuns.onLaunchCall(event.toolCallId, { launchId: b?.launchId ?? null, role: single ?? "", rung: single ? rungOf(ladderRoles, single, limits?.bottom === true) : null, model: rowModelOf(input, b?.model ?? null, actionOf(input) === "resume" ? s.launches.get(parkFor(s).launchFor(resumeTarget(input)) ?? "")?.model ?? null : null) });
       }
-      if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) s.pendingLaunches.add(event.toolCallId);
+      if (event.toolName === "subagent" && !s.isChild && !isManagementCall(input)) {
+        s.pendingLaunches.add(event.toolCallId);
+        if (launchRoles(s, input).includes("builder")) s.work.builders++;
+      }
       return undefined;
     } catch (err) {
       return { block: true, reason: `pi-foreman: adapter error before ${event.toolName} (${(err as Error).message}); the call is blocked. Run /foreman doctor.` };
@@ -4326,7 +4359,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
       s.reviewFailOpen = false;
       s.trace?.emit({ event: "chain_clear", kind: event.source });
     }
-    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) s.finishRefusals = 0;
+    // The refusal count belongs to the unchanged state, not to the prompt (D28); the prompt only opens a new pause window (D27).
+    if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.workAtPrompt = { ...s.work }), savePause(s);
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.waitingForParent = false), s.handoffWaits.clear();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) ownAskFor(s).typed();
     if (s && !s.isChild && (event.source === "interactive" || event.source === "rpc")) (s.climbRefusals = 0), persistRounds(s);
@@ -4343,7 +4377,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   // Intercom turns get a notice only; every gate applies unchanged (ledger item 4).
   pi.on("agent_start", async (_event, ctx) => {
     const s = sessionFor(ctx);
-    if (s) s.inRun = true;
+    if (s) (s.inRun = true), (s.reminderQueued = false); // a queued review reminder rides with this turn
     if (!s || s.isChild || s.turn.cause !== "intercom" || !s.turn.intercomFrom) return;
     if (ctx.mode === "tui" || ctx.mode === "rpc") ctx.ui.notify(`pi-foreman: this turn was started by an intercom message from ${s.turn.intercomFrom}`, "info");
   });
@@ -4899,6 +4933,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const qHint = questionHints.get(event.toolCallId);
     questionHints.delete(event.toolCallId);
     const withNote = () => (readNote || qHint || planFormNote ? { content: [...(readNote ? [{ type: "text" as const, text: readNote }] : []), ...event.content, ...(qHint ? [{ type: "text" as const, text: qHint }] : []), ...(planFormNote ? [{ type: "text" as const, text: planFormNote }] : [])] } : undefined);
+    // D27: a project-file edit through the foreman's own tools is work, at every tier.
+    if (owner && !owner.isChild && !event.isError && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) owner.work.edits++;
     // A project-file change is a revision of its checkout for an uncleared high-stakes FAIL (highstakes.ts).
     if (owner && !owner.isChild && !event.isError && owner.hs.hasRuns() && projectChange(event.toolName, event.input as Record<string, unknown>, editModeOfSession(owner).scratchDir, { cwd: ctx.cwd, home: os.homedir(), platform })) {
       const edited = resolveToolPath(changedFileOf(event.toolName, event.input as Record<string, unknown>), ctx.cwd, os.homedir());
@@ -5139,6 +5175,7 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     if (event.outcome !== "completed") return undefined;
     const s = await ensureSession(ctx);
     await s.reviewSync; // PASS marks and the comment-only check land before the stop guard reads the ledger
+    if (!s.isChild) savePause(s); // the work of this run reaches the session entry at the settle (D27)
     // A source that starts a turn by itself when it ends makes this settle a pause, not a finish: neither gate runs (the stop guard's once-per-session reminder and the refusal counter stay unspent).
     const pending = pendingWakeSources(s);
     if (pending.length > 0) {
@@ -5173,7 +5210,8 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
   /**
    * D2: a triaged standard/heavy session finishes only after its required steps
    * (ceremony.required). Not while a child of this session still runs (its completion starts the
-   * next turn). At most 2 refusals per user prompt; then the settle passes, visibly.
+   * next turn). A turn end with open ledger items and no new work since the last owner prompt is a pause (D27). At most 2
+   * refusals per unchanged state (missing steps, work, review verdict); then the settle passes, visibly (D28).
    */
   async function ceremonyFinishGate<E>(s: Session, ctx: ExtensionContext, entries: E[]) {
     if (s.isChild || !isTriaged(s.ceremony) || s.activeRuns.size > 0) return undefined;
@@ -5195,6 +5233,18 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
     const hsNeeds = s.ceremony.tier === "standard" || s.ceremony.tier === "heavy" ? await hsFinish(s) : { missing: [] as string[], hint: "" };
     missing.push(...hsNeeds.missing);
     if (missing.length === 0) return undefined;
+    // D27: open ledger items and no builder run or foreman edit since the last owner prompt: a pause, not a finish.
+    const lf = boundLedger(s.markerDir, s.id);
+    const openLedger = (() => { try { return lf ? hasOpenLedgerLine(fs.readFileSync(lf, "utf8")) : false; } catch { return false; } })();
+    if (!rejected && openLedger && s.work.builders === s.workAtPrompt.builders && s.work.edits === s.workAtPrompt.edits) {
+      s.trace?.emit({ event: "ceremony_gate", reason: "pause", tier: s.ceremony.tier });
+      // work from an earlier prompt that no PASS covers: one reminder with the next turn (appended, never system text)
+      if (missing.includes("reviewer") && s.work.builders + s.work.edits > 0 && !s.reminderQueued) {
+        s.reminderQueued = true;
+        pi.sendMessage({ customType: "pi-foreman-review-reminder", content: "pi-foreman: unreviewed work: a reviewer PASS is still missing before finish or PR.", display: true }, { deliverAs: "nextTurn" });
+      }
+      return undefined;
+    }
     // The no-change valve (ledger nochange-finish): git runs only when the counters already say nothing was built or edited.
     if (!rejected && s.steps.builder === 0 && s.tally.files.length === 0) {
       const porcelain = await git(ctx.cwd, ["status", "--porcelain"]);
@@ -5214,12 +5264,19 @@ export default function coreAdapter(pi: ExtensionAPI, deps: AdapterDeps = {}): v
         continue: true,
       };
     }
+    // D28: the count belongs to the state the refusal answers (missing steps, work, review verdict); a new state starts at zero.
+    const stateKey = [missing.join(","), `${s.work.builders}.${s.work.edits}`, gate.last ?? "", gate.failAt ?? ""].join("|");
+    if (s.finishKey !== stateKey) (s.finishKey = stateKey), (s.finishRefusals = 0);
     if (s.finishRefusals >= 2) {
+      const text = `pi-foreman: finished with ceremony incomplete: missing ${missing.join(", ")}`;
       s.trace?.emit({ event: "ceremony_incomplete", tier: s.ceremony.tier, missing: missing.join(",") });
-      ctx.ui.notify(`pi-foreman: finished with ceremony incomplete: missing ${missing.join(", ")}`, "warning");
-      return undefined;
+      ctx.ui.notify(text, "warning");
+      if (s.incompleteKey === stateKey) return undefined;
+      s.incompleteKey = stateKey;
+      return { entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-incomplete", content: text, display: true }] };
     }
     s.finishRefusals++;
+    savePause(s);
     s.trace?.emit({ event: "finish_refused", tier: s.ceremony.tier, missing: missing.join(",") });
     return {
       entries: [...entries, { type: "custom_message" as const, customType: "pi-foreman-ceremony-gate", content: finishRefusal(s.ceremony.tier, missing as Step[], gateMode === "pass" && missing.includes("reviewer") ? reviewHint(gate) : "") + (hsNeeds.hint ? ` ${hsNeeds.hint}` : "") + escalated + (missing.includes("reviewer") && gate.last === "fail" && gate.failAt !== undefined ? rulingNote(s, gate.failAt) : "") + (rejected ? ` The owner rejected the plan: launch no builder; report to the owner, and get a new plan approved with ${CHECKPOINT_TOOL} before going on.` : ""), display: true }],

@@ -52,6 +52,19 @@ export interface PersistedGate {
   passMark: (PassMark & { cwd: string }) | null;
 }
 
+/** The foreman's work in a session: builder launches and project-file edits through its tools (index.ts Session.work). */
+export interface WorkCount {
+  builders: number;
+  edits: number;
+}
+
+/** The pause and refusal-cap state (index.ts): work now, work at the last owner prompt, the finish refusals of the unchanged state `key`. */
+export interface PersistedWork {
+  work: WorkCount;
+  atPrompt: WorkCount;
+  refusals: { n: number; key: string } | null;
+}
+
 export interface CeremonyStateEntry {
   v: 1;
   plan: PersistedPlan | null;
@@ -78,6 +91,8 @@ export interface CeremonyStateEntry {
   reworkSeen?: number;
   /** The session-wide high-stakes state (highstakes.ts); absent in an older entry (loads as empty); an array of per-checkout records is migrated on load. */
   highStakes?: HsState;
+  /** The pause window and the refusal count (D27, D28); absent in an older entry or while all of it is empty (loads as zero). */
+  pause?: PersistedWork;
 }
 
 /** Heads whose newest code verdict is a `[pre-pr]` PASS. */
@@ -107,7 +122,7 @@ export function emptyCeremonyState(): CeremonyStateEntry {
   return { v: 1, plan: null, lineages: [], userTier: null, tier: null, tierSource: null, planPhase: false, reviews: [] };
 }
 
-export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState }): CeremonyStateEntry {
+export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: PersistedLineage[]; userTier?: Tier; tier?: Tier; tierSource?: TierSource; planPhase: boolean; planPhaseOrigin?: PlanPhaseOrigin; reviews?: readonly ReviewRecord[]; loopStop?: LoopStop | null; gate?: PersistedGate; sentBack?: boolean; sentBackHeads?: readonly string[]; reworkSeen?: number; highStakes?: HsState; pause?: PersistedWork }): CeremonyStateEntry {
   const p = o.plan;
   return {
     v: 1,
@@ -125,8 +140,11 @@ export function buildCeremonyState(o: { plan: PlanRecord | null; lineages: Persi
     ...(o.sentBackHeads && (o.sentBackHeads.length > 0 || o.sentBack) ? { sentBackHeads: [...o.sentBackHeads] } : {}),
     ...(o.reworkSeen ? { reworkSeen: o.reworkSeen } : {}),
     ...(o.highStakes && !hsEmpty(o.highStakes) ? { highStakes: JSON.parse(JSON.stringify(o.highStakes)) as HsState } : {}),
+    ...(o.pause && !pauseEmpty(o.pause) ? { pause: { work: { ...o.pause.work }, atPrompt: { ...o.pause.atPrompt }, refusals: o.pause.refusals ? { ...o.pause.refusals } : null } } : {}),
   };
 }
+
+const pauseEmpty = (p: PersistedWork): boolean => p.work.builders + p.work.edits + p.atPrompt.builders + p.atPrompt.edits === 0 && !p.refusals;
 
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 const STATUS = new Set(["pending", "approved", "revise", "rejected"]);
@@ -170,9 +188,30 @@ export function latestCeremonyState(entries: unknown[]): CeremonyStateEntry | nu
     if (rw) out.reworkSeen = rw;
     const hs = hsStateOfEntry(d.highStakes);
     if (hs && !hsEmpty(hs)) out.highStakes = hs;
+    const pause = pauseOfEntry(d.pause);
+    if (pause) out.pause = pause;
     return out;
   }
   return null;
+}
+
+const workOf = (v: unknown): WorkCount | null => {
+  const w = v as Record<string, unknown> | null | undefined;
+  const builders = count(w?.builders);
+  const edits = count(w?.edits);
+  return w && typeof w === "object" && builders !== null && edits !== null ? { builders, edits } : null;
+};
+
+/** The pause state of an entry, shape-checked; null (the field is ignored) when anything is off. */
+function pauseOfEntry(v: unknown): PersistedWork | null {
+  const p = v as Record<string, unknown> | null | undefined;
+  if (!p || typeof p !== "object") return null;
+  const work = workOf(p.work);
+  const atPrompt = workOf(p.atPrompt);
+  if (!work || !atPrompt) return null;
+  const r = p.refusals as Record<string, unknown> | null | undefined;
+  const n = count(r?.n);
+  return { work, atPrompt, refusals: r && typeof r === "object" && n !== null && typeof r.key === "string" ? { n, key: r.key } : null };
 }
 
 const nullable = (v: unknown): v is string | null => v === null || typeof v === "string";

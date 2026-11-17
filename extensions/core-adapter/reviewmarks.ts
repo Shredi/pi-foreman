@@ -85,6 +85,16 @@ export function openItemsOf(ledger: string): Set<string> {
   return open;
 }
 
+/** True when a ledger holds an open item line (`- [ ]`, the V item included), outside ``` fences. */
+export function hasOpenLedgerLine(ledger: string): boolean {
+  let fenced = false;
+  for (const line of ledger.split(/\r?\n/)) {
+    if (line.trimStart().startsWith("```")) fenced = !fenced;
+    if (!fenced && ITEM_LINE.exec(line)?.[1] === " ") return true;
+  }
+  return false;
+}
+
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object";
 
 /** The output of the completed `reviewer` results with an overall PASS in a run-end event ("" = none). */
